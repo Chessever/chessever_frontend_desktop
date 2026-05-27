@@ -225,11 +225,13 @@ void main() {
       );
       expect(
         shortcuts[BoardActionKey.rightRailPreviousTab],
-        contains(
-          KeyChord(
-            keyId: LogicalKeyboardKey.arrowLeft.keyId,
-            meta: true,
-            crossPlatform: true,
+        isNot(
+          contains(
+            KeyChord(
+              keyId: LogicalKeyboardKey.arrowLeft.keyId,
+              meta: true,
+              crossPlatform: true,
+            ),
           ),
         ),
       );
@@ -246,11 +248,13 @@ void main() {
       );
       expect(
         shortcuts[BoardActionKey.rightRailNextTab],
-        contains(
-          KeyChord(
-            keyId: LogicalKeyboardKey.arrowRight.keyId,
-            meta: true,
-            crossPlatform: true,
+        isNot(
+          contains(
+            KeyChord(
+              keyId: LogicalKeyboardKey.arrowRight.keyId,
+              meta: true,
+              crossPlatform: true,
+            ),
           ),
         ),
       );
