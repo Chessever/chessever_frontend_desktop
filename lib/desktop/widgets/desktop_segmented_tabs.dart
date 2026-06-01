@@ -7,12 +7,12 @@ class DesktopSegmentedTab<T> {
   const DesktopSegmentedTab({
     required this.value,
     required this.label,
-    required this.icon,
+    this.icon,
   });
 
   final T value;
   final String label;
-  final IconData icon;
+  final IconData? icon;
 }
 
 /// forui-backed segmented control for desktop pane chrome.
@@ -81,12 +81,13 @@ class DesktopSegmentedTabs<T> extends StatelessWidget {
 
   Widget _segmentButton({required DesktopSegmentedTab<T> tab}) {
     final isSelected = tab.value == selected;
+    final icon = tab.icon;
     return FButton(
       style: _segmentStyle(selected: isSelected, wrap: wrap),
       mainAxisSize:
           (expand && !wrap) ? MainAxisSize.max : MainAxisSize.min,
       onPress: () => onChanged(tab.value),
-      prefix: Icon(tab.icon),
+      prefix: icon == null ? null : Icon(icon),
       child: Text(tab.label),
     );
   }
