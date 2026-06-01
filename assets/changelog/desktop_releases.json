@@ -1,0 +1,122 @@
+{
+  "releases": [
+    {
+      "version": "11.1.0",
+      "date": "2026-05-29",
+      "title": "What’s new in ChessEver Desktop v11.1",
+      "subtitle": "A smoother desktop workspace for tournaments, databases, and analysis.",
+      "entries": [
+        {
+          "type": "Improved",
+          "impact": 96,
+          "title": "Tournament tabs keep your place",
+          "summary": "When you open a game and return, tournament Games, Standings, and About tabs restore your search text and scroll position."
+        },
+        {
+          "type": "New",
+          "impact": 92,
+          "title": "Open local databases in the current app",
+          "summary": "PGN and database files now open in ChessEver’s existing desktop window instead of starting a separate app session."
+        },
+        {
+          "type": "Improved",
+          "impact": 89,
+          "title": "Easier My Databases workflow",
+          "summary": "Library has smoother local database handling, drag-and-drop polish, clearer sidebar behavior, and cleaner game previews."
+        },
+        {
+          "type": "Improved",
+          "impact": 86,
+          "title": "Select and copy multiple games",
+          "summary": "Library game lists support Shift multi-select and copying several games at once for faster database work."
+        },
+        {
+          "type": "Improved",
+          "impact": 84,
+          "title": "Cleaner notation by default",
+          "summary": "Board notation now starts with letter pieces and inline variations, with event, date, and ECO shown above the moves."
+        },
+        {
+          "type": "New",
+          "impact": 81,
+          "title": "Mute sounds for one board tab",
+          "summary": "Turn off move sounds for a single board tab without muting the rest of the desktop app."
+        },
+        {
+          "type": "Improved",
+          "impact": 78,
+          "title": "Offline App usage",
+          "summary": "Use ChessEver Desktop when your connection drops."
+        }
+      ]
+    },
+    {
+      "version": "10.4.1",
+      "date": "2026-05-26",
+      "entries": [
+        {
+          "type": "New",
+          "impact": 96,
+          "title": "Database workspace",
+          "summary": "Open databases in their own workspace with search, a preview board, notation, and keyboard navigation."
+        },
+        {
+          "type": "New",
+          "impact": 92,
+          "title": "My Databases home",
+          "summary": "Library now starts as a database manager with cloud, TWIC, and local source tiles plus a quick preview area."
+        },
+        {
+          "type": "Improved",
+          "impact": 88,
+          "title": "Better notation navigation",
+          "summary": "Arrow-key navigation now follows visible expanded and collapsed variations more naturally."
+        },
+        {
+          "type": "Improved",
+          "impact": 84,
+          "title": "Notation collapse shortcuts",
+          "summary": "Collapse or expand notation variations from the board with matching Windows/Linux and macOS shortcuts.",
+          "shortcut": "Ctrl/Cmd + [ or ]"
+        },
+        {
+          "type": "Improved",
+          "impact": 82,
+          "title": "Copy and paste full games",
+          "summary": "Board copy now preserves full PGN variations, and paste can insert games into the active board flow."
+        },
+        {
+          "type": "Improved",
+          "impact": 80,
+          "title": "Keyboard-first game lists",
+          "summary": "Tournament, Favorites, Countrymen, and For You game screens are easier to browse with keyboard selection and paging."
+        },
+        {
+          "type": "Fixed",
+          "impact": 78,
+          "title": "More reliable live game cards",
+          "summary": "Live game cards and opened board views stay in sync as moves, clocks, and results update."
+        },
+        {
+          "type": "Improved",
+          "impact": 74,
+          "title": "Smarter desktop search shortcut",
+          "summary": "Find/search shortcuts open search instead of interfering with board actions.",
+          "shortcut": "Ctrl/Cmd + F"
+        },
+        {
+          "type": "Fixed",
+          "impact": 70,
+          "title": "Consistent player flags",
+          "summary": "Player flags now match more consistently across cards, game lists, and opened board views."
+        },
+        {
+          "type": "Performance",
+          "impact": 68,
+          "title": "Safer whole-database explorer",
+          "summary": "Whole Database filters are gated for launch stability while focused player and scoped explorer views remain available."
+        }
+      ]
+    }
+  ]
+}

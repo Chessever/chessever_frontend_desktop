@@ -1,0 +1,107 @@
+import 'package:chessground/chessground.dart';
+import 'package:dartchess/dartchess.dart';
+import 'package:flutter/widgets.dart';
+
+import 'responsive_helper.dart';
+
+/// Map piece letters to PieceKind for figurine notation.
+/// Uses white pieces for clean, elegant appearance on dark backgrounds.
+const pieceLetterToKind = {
+  'K': PieceKind.whiteKing,
+  'Q': PieceKind.whiteQueen,
+  'R': PieceKind.whiteRook,
+  'B': PieceKind.whiteBishop,
+  'N': PieceKind.whiteKnight,
+};
+
+/// Build rich text spans with inline piece images for figurine notation.
+/// Creates an elegant display where piece letters are replaced with actual
+/// piece images from the user's selected piece set.
+List<InlineSpan> buildFigurineSpans({
+  required String text,
+  required PieceAssets pieceAssets,
+  required TextStyle style,
+  required double pieceSize,
+  TextStyle? numberStyle,
+}) {
+  final spans = <InlineSpan>[];
+  final buffer = StringBuffer();
+  var i = 0;
+  var pastMoveNumber = false;
+
+  void flushBuffer() {
+    if (buffer.isNotEmpty) {
+      final effectiveStyle = pastMoveNumber ? style : (numberStyle ?? style);
+      spans.add(TextSpan(text: buffer.toString(), style: effectiveStyle));
+      buffer.clear();
+    }
+  }
+
+  while (i < text.length) {
+    final char = text[i];
+
+    // Track if we're past move number (e.g., "1. " or "12... ")
+    final c = char.codeUnitAt(0);
+    if (!pastMoveNumber && (char == '.' || (c >= 48 && c <= 57))) {
+      buffer.write(char);
+      i++;
+      continue;
+    }
+
+    if (!pastMoveNumber && char == ' ') {
+      buffer.write(char);
+      i++;
+      continue;
+    }
+
+    // We've reached the actual move notation
+    if (!pastMoveNumber) {
+      flushBuffer();
+      pastMoveNumber = true;
+    }
+
+    // Check if this is a piece letter that should be converted
+    final pieceKind = pieceLetterToKind[char];
+    if (pieceKind != null) {
+      flushBuffer();
+      final pieceImage = pieceAssets[pieceKind];
+      if (pieceImage != null) {
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Padding(
+              padding: EdgeInsets.only(right: 1.sp),
+              child: Builder(
+                builder: (context) {
+                  final dpr =
+                      MediaQuery.maybeDevicePixelRatioOf(context) ?? 2.0;
+                  final cachePx = (pieceSize * dpr).ceil();
+                  return Image(
+                    image: ResizeImage.resizeIfNeeded(
+                      cachePx,
+                      cachePx,
+                      pieceImage,
+                    ),
+                    width: pieceSize,
+                    height: pieceSize,
+                    fit: BoxFit.contain,
+                    filterQuality: FilterQuality.medium,
+                    isAntiAlias: true,
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+      } else {
+        buffer.write(char);
+      }
+    } else {
+      buffer.write(char);
+    }
+    i++;
+  }
+
+  flushBuffer();
+  return spans;
+}

@@ -1,0 +1,1 @@
+enum PlayerProfileDataSource { supabase, twic }

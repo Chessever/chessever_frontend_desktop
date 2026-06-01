@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+		Sandbox is intentionally OFF: Chessever ships as a direct .dmg
+		download (Developer ID signed + notarized), not via the Mac App
+		Store. Sandboxed apps cannot exec the bundled Stockfish binary
+		even from within their own container — the sandbox forbids
+		spawning arbitrary executables. External engines, automation tools, and
+		every other Mac chess client that runs a UCI engine ship
+		unsandboxed for the same reason. If we ever distribute via the
+		App Store, the binary will need to live inside Contents/Helpers/
+		signed with our Team ID and we'll re-enable the sandbox.
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<!-- Outbound HTTPS to Google, Supabase, Lichess, etc. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- Bind 127.0.0.1 for the OAuth loopback flow -->
+	<key>com.apple.security.network.server</key>
+	<true/>
+	<!-- Associated domains let macOS deliver chessever.com universal links
+		 (for example /broadcast/<slug>/<id>) to the desktop app when the
+		 website's apple-app-site-association file includes this bundle/team. -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:chessever.com</string>
+		<string>applinks:www.chessever.com</string>
+	</array>
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
+</dict>
+</plist>

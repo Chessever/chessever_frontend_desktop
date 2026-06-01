@@ -1,0 +1,273 @@
+import 'package:chessever/screens/group_event/widget/filter_popup/filter_popup_provider.dart';
+import 'package:chessever/screens/group_event/widget/filter_popup/filter_popup_state.dart';
+import 'package:chessever/screens/group_event/widget/filter_popup/group_event_filter_provider.dart';
+import 'package:chessever/utils/responsive_helper.dart';
+import 'package:chessever/widgets/game_filter/game_filter_model.dart';
+import 'package:flutter/material.dart';
+import 'package:chessever/utils/app_typography.dart';
+import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/widgets/back_drop_filter_widget.dart';
+import 'package:chessever/widgets/game_filter/wheel_range_filter.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+
+class FilterPopup extends ConsumerWidget {
+  const FilterPopup({
+    required this.onApplyFilters,
+    required this.onResetFilters,
+    super.key,
+  });
+
+  final ValueChanged<FilterPopupState> onApplyFilters;
+  final VoidCallback onResetFilters;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final filterState = ref.watch(filterPopupProvider);
+    final dialogWidth = 280.w;
+    final horizontalPadding = 20.w;
+    final verticalPadding = 16.h;
+
+    final readableFormat =
+        ref.read(groupEventFilterProvider).getReadableFormats();
+    final formats = ref.read(groupEventFilterProvider).getFormats();
+    final readableGameState =
+        ref.read(groupEventFilterProvider).getReadableGameState();
+    final gameStates = ref.read(groupEventFilterProvider).getGameState();
+
+    return GestureDetector(
+      onTap: () => Navigator.of(context).pop(),
+      child: Stack(
+        children: [
+          const Positioned.fill(child: BackDropFilterWidget()),
+          GestureDetector(
+            onTap: () {},
+            child: Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: EdgeInsets.zero,
+              child: Container(
+                width: dialogWidth,
+                constraints: BoxConstraints(maxHeight: 500.h),
+                decoration: BoxDecoration(
+                  color: kBlackColor,
+                  borderRadius: BorderRadius.circular(4.br),
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: EdgeInsets.only(
+                          left: horizontalPadding,
+                          right: horizontalPadding,
+                          top: verticalPadding,
+                          bottom: 0,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Format',
+                              style: AppTypography.textXsMedium.copyWith(
+                                color: kWhiteColor,
+                              ),
+                            ),
+                            SizedBox(height: 8.h),
+                            GridView.builder(
+                              shrinkWrap: true,
+                              padding: EdgeInsets.zero,
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: 2,
+                                    mainAxisSpacing: 8,
+                                    crossAxisSpacing: 8,
+                                    childAspectRatio: 3,
+                                  ),
+                              itemCount: readableFormat.length,
+                              itemBuilder: (context, index) {
+                                final current = readableFormat[index];
+                                final raw = formats[index];
+                                final isSelected = filterState.formatsAndStates
+                                    .contains(raw);
+                                return GestureDetector(
+                                  onTap:
+                                      () => ref
+                                          .read(filterPopupProvider.notifier)
+                                          .toggleFormatOrState(raw),
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 150),
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color:
+                                          isSelected
+                                              ? kPrimaryColor
+                                              : kBlack2Color,
+                                      borderRadius: BorderRadius.circular(8.br),
+                                    ),
+                                    child: Text(
+                                      current,
+                                      style: AppTypography.textXsMedium
+                                          .copyWith(
+                                            color:
+                                                isSelected
+                                                    ? kBlackColor
+                                                    : kWhiteColor,
+                                          ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                            SizedBox(height: 24.h),
+                            Text(
+                              'Event Status',
+                              style: AppTypography.textXsMedium.copyWith(
+                                color: kWhiteColor,
+                              ),
+                            ),
+                            SizedBox(height: 8.h),
+                            GridView.builder(
+                              shrinkWrap: true,
+                              padding: EdgeInsets.zero,
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: 2,
+                                    mainAxisSpacing: 8,
+                                    crossAxisSpacing: 8,
+                                    childAspectRatio: 3,
+                                  ),
+                              itemCount: readableGameState.length,
+                              itemBuilder: (context, index) {
+                                final current = readableGameState[index];
+                                final raw = gameStates[index];
+                                final isSelected = filterState.formatsAndStates
+                                    .contains(raw);
+                                return GestureDetector(
+                                  onTap:
+                                      () => ref
+                                          .read(filterPopupProvider.notifier)
+                                          .toggleFormatOrState(raw),
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 150),
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color:
+                                          isSelected
+                                              ? kPrimaryColor
+                                              : kBlack2Color,
+                                      borderRadius: BorderRadius.circular(8.br),
+                                    ),
+                                    child: Text(
+                                      current,
+                                      style: AppTypography.textXsMedium
+                                          .copyWith(
+                                            color:
+                                                isSelected
+                                                    ? kBlackColor
+                                                    : kWhiteColor,
+                                          ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                            SizedBox(height: 24.h),
+                            Text(
+                              'ELO Range',
+                              style: AppTypography.textXsMedium.copyWith(
+                                color: kWhiteColor,
+                              ),
+                            ),
+                            SizedBox(height: 8.h),
+                            WheelRangeFilter(
+                              minValue: GameFilter.absoluteMinRating.toDouble(),
+                              maxValue: 3200,
+                              currentStart: filterState.eloRange.start,
+                              currentEnd: filterState.eloRange.end,
+                              divisions:
+                                  (3200 - GameFilter.absoluteMinRating) ~/ 50,
+                              onChanged:
+                                  (v) => ref
+                                      .read(filterPopupProvider.notifier)
+                                      .setEloRange(v),
+                            ),
+                            SizedBox(height: 16.h),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: EdgeInsets.all(20.sp),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: SizedBox(
+                                height: 40.h,
+                                child: OutlinedButton(
+                                  onPressed: () {
+                                    onResetFilters();
+                                    ref
+                                        .read(filterPopupProvider.notifier)
+                                        .resetFilters(context);
+                                  },
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: kWhiteColor,
+                                    backgroundColor: kBlack2Color,
+                                    side: BorderSide.none,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(4.br),
+                                    ),
+                                    padding: EdgeInsets.zero,
+                                  ),
+                                  child: Text(
+                                    'Reset',
+                                    style: AppTypography.textSmMedium.copyWith(
+                                      color: kWhiteColor,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: 12.w),
+                            Expanded(
+                              child: SizedBox(
+                                height: 40.h,
+                                child: ElevatedButton(
+                                  onPressed: () async {
+                                    onApplyFilters(filterState);
+                                    Navigator.of(context).pop();
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: kPrimaryColor,
+                                    foregroundColor: kBlackColor,
+                                    elevation: 0,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(4.br),
+                                    ),
+                                    padding: EdgeInsets.zero,
+                                  ),
+                                  child: Text(
+                                    'Apply Filters',
+                                    style: AppTypography.textSmMedium,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

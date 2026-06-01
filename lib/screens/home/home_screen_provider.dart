@@ -1,0 +1,33 @@
+import 'package:chessever/screens/group_event/providers/group_event_screen_provider.dart';
+import 'package:chessever/screens/home/widget/bottom_nav_bar.dart';
+import 'package:chessever/utils/haptic_feedback_service.dart';
+import 'package:flutter/material.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+
+final homeScreenProvider = AutoDisposeProvider<_HomeScreenController>(
+  (ref) => _HomeScreenController(ref),
+);
+
+class _HomeScreenController {
+  _HomeScreenController(this.ref);
+
+  final Ref ref;
+
+  Future<void> onPullRefresh() async {
+    HapticFeedbackService.medium();
+    final currentItem = ref.read(selectedBottomNavBarItemProvider);
+
+    // Handle refresh based on current screen
+    switch (currentItem) {
+      case BottomNavBarItem.tournaments:
+        ref.read(groupEventScreenProvider.notifier).onRefresh();
+        break;
+      case BottomNavBarItem.calendar:
+        debugPrint('Refreshing calendar...');
+        break;
+      case BottomNavBarItem.library:
+        debugPrint('Refreshing library...');
+        break;
+    }
+  }
+}

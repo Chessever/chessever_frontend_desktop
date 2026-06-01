@@ -1,0 +1,138 @@
+import 'package:chessever/repository/supabase/tour/tour.dart';
+
+class PlayerStandingModel {
+  final String countryCode;
+  final String? title;
+  final String name;
+  final int score;
+  final int scoreChange;
+  final String? matchScore;
+  final int? fideId;
+  final String? gamebasePlayerId;
+
+  /// 1-based position in the *unfiltered* sorted standings. Preserved across
+  /// search so filtered results still display the player's overall standing
+  /// (e.g. "#42") instead of re-numbering the filtered list from 1.
+  final int? overallRank;
+
+  const PlayerStandingModel({
+    required this.countryCode,
+    this.title,
+    required this.name,
+    required this.score,
+    required this.scoreChange,
+    required this.matchScore,
+    this.fideId,
+    this.gamebasePlayerId,
+    this.overallRank,
+  });
+
+  factory PlayerStandingModel.fromPlayer(TournamentPlayer player) {
+    return PlayerStandingModel(
+      countryCode: player.federation ?? '',
+      title: player.title,
+      name: player.name,
+      score: player.rating ?? 0, // ELO rating for display
+      scoreChange: player.ratingDiff ?? 0,
+      matchScore: _formatTournamentScore(player.score, player.played),
+      fideId: player.fideId,
+      gamebasePlayerId: null,
+    );
+  }
+
+  /// Formats tournament score as "score / games_played" or null if no score
+  static String? _formatTournamentScore(double? score, int played) {
+    if (score == null) {
+      return played > 0 ? '0.0 / $played' : null;
+    }
+
+    // Format score with 1 decimal place if needed, otherwise as integer
+    final scoreStr =
+        score % 1 == 0 ? score.toInt().toString() : score.toStringAsFixed(1);
+    return '$scoreStr / $played';
+  }
+
+  // Copy with method to create a new instance with some changes
+  PlayerStandingModel copyWith({
+    String? countryCode,
+    String? title,
+    String? name,
+    int? score,
+    int? scoreChange,
+    String? matchScore,
+    int? fideId,
+    String? gamebasePlayerId,
+    int? overallRank,
+  }) {
+    return PlayerStandingModel(
+      countryCode: countryCode ?? this.countryCode,
+      title: title ?? this.title,
+      name: name ?? this.name,
+      score: score ?? this.score,
+      scoreChange: scoreChange ?? this.scoreChange,
+      matchScore: matchScore ?? this.matchScore,
+      fideId: fideId ?? this.fideId,
+      gamebasePlayerId: gamebasePlayerId ?? this.gamebasePlayerId,
+      overallRank: overallRank ?? this.overallRank,
+    );
+  }
+
+  factory PlayerStandingModel.fromJson(Map<String, dynamic> json) {
+    return PlayerStandingModel(
+      countryCode: (json['countryCode'] as String?) ?? '',
+      title: json['title'] as String?,
+      name: (json['name'] as String?) ?? 'Unknown',
+      score: (json['score'] as int?) ?? 0,
+      scoreChange: (json['scoreChange'] as int?) ?? 0,
+      matchScore: json['matchScore'] as String?,
+      fideId: json['fideId'] as int?,
+      gamebasePlayerId: json['gamebasePlayerId'] as String?,
+      overallRank: json['overallRank'] as int?,
+    );
+  }
+
+  // Method to convert PlayerStanding object to JSON
+  Map<String, dynamic> toJson() {
+    return {
+      'countryCode': countryCode,
+      'title': title,
+      'name': name,
+      'score': score,
+      'scoreChange': scoreChange,
+      'matchScore': matchScore,
+      'fideId': fideId,
+      'gamebasePlayerId': gamebasePlayerId,
+      'overallRank': overallRank,
+    };
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is PlayerStandingModel &&
+        other.countryCode == countryCode &&
+        other.title == title &&
+        other.name == name &&
+        other.score == score &&
+        other.scoreChange == scoreChange &&
+        other.matchScore == matchScore &&
+        other.fideId == fideId &&
+        other.gamebasePlayerId == gamebasePlayerId &&
+        other.overallRank == overallRank;
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(
+      countryCode,
+      title,
+      name,
+      score,
+      scoreChange,
+      matchScore,
+      fideId,
+      gamebasePlayerId,
+      overallRank,
+    );
+  }
+}

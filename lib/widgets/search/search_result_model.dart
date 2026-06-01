@@ -1,0 +1,20 @@
+import 'package:chessever/repository/supabase/game/games.dart';
+import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
+
+class SearchResult {
+  final GroupEventCardModel tournament;
+  final double score;
+  final String matchedText;
+  final SearchResultType type;
+  final SearchPlayer? player;
+
+  const SearchResult({
+    required this.tournament,
+    required this.score,
+    required this.matchedText,
+    required this.type,
+    this.player,
+  });
+}
+
+enum SearchResultType { tournament, player }

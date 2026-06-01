@@ -1,0 +1,469 @@
+import 'package:chessever/providers/event_favorite_players_provider.dart';
+import 'package:chessever/providers/favorite_events_provider.dart';
+import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
+import 'package:flutter/foundation.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+
+final tournamentSortingServiceProvider =
+    AutoDisposeProvider<TournamentSortingService>((ref) {
+      return TournamentSortingService(ref);
+    });
+
+class TournamentSortingService {
+  final Ref ref;
+
+  TournamentSortingService(this.ref);
+
+  List<GroupEventCardModel> sortAllTours(
+    List<GroupEventCardModel> tours, {
+    Map<String, EventFavoritePlayers>? eventFavoritePlayersMap,
+  }) {
+    final filteredList = tours.toList();
+
+    filteredList.sort((a, b) {
+      final isHighEloA = a.maxAvgElo > 3200;
+      final isHighEloB = b.maxAvgElo > 3200;
+
+      // If one has high ELO and the other doesn't, put high ELO at the end
+      if (isHighEloA && !isHighEloB) return 1;
+      if (!isHighEloA && isHighEloB) return -1;
+
+      // If both are high ELO or both are normal ELO, sort by ELO descending
+      final eloComparison = b.maxAvgElo.compareTo(a.maxAvgElo);
+      if (eloComparison != 0) return eloComparison;
+
+      // FINAL PRIORITY: Sort by title if everything else is equal
+      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+    });
+
+    // Apply favorite sorting (favorited events on top)
+    return _applyFavoriteSorting(
+      filteredList,
+      eventFavoritePlayersMap: eventFavoritePlayersMap,
+    );
+  }
+
+  List<GroupEventCardModel> sortCalendarEvents(
+    List<GroupEventCardModel> tours, {
+    Map<String, EventFavoritePlayers>? eventFavoritePlayersMap,
+    bool prioritizeFavorites = true,
+  }) {
+    final filteredList = tours.toList();
+
+    filteredList.sort((a, b) {
+      final dateA = a.startDate ?? a.endDate;
+      final dateB = b.startDate ?? b.endDate;
+
+      if (dateA != null && dateB != null) {
+        return dateA.compareTo(dateB);
+      }
+      if (dateA != null) return -1;
+      if (dateB != null) return 1;
+      return 0;
+    });
+
+    if (!prioritizeFavorites) {
+      return filteredList;
+    }
+
+    // Apply favorite sorting (favorited events on top)
+    return _applyFavoriteSorting(
+      filteredList,
+      eventFavoritePlayersMap: eventFavoritePlayersMap,
+    );
+  }
+
+  List<GroupEventCardModel> sortUpcomingTours(
+    List<GroupEventCardModel> tours, {
+    Map<String, EventFavoritePlayers>? eventFavoritePlayersMap,
+  }) {
+    final filteredList = tours.toList();
+
+    filteredList.sort((a, b) {
+      // For upcoming tournaments, also sort by maxElo after favorites
+      // Special handling for tournaments with maxElo > 3200
+      final eloA = a.maxAvgElo;
+      final eloB = b.maxAvgElo;
+
+      final isHighEloA = eloA > 3200;
+      final isHighEloB = eloB > 3200;
+
+      // If one has high ELO and the other doesn't, put high ELO at the end
+      if (isHighEloA && !isHighEloB) return 1;
+      if (!isHighEloA && isHighEloB) return -1;
+
+      // If both are high ELO or both are normal ELO, sort by ELO descending
+      final eloComparison = eloB.compareTo(eloA);
+      if (eloComparison != 0) return eloComparison;
+
+      final daysA = _extractDaysFromTimeUntilStart(a.timeUntilStart);
+      final daysB = _extractDaysFromTimeUntilStart(b.timeUntilStart);
+      final daysComparison = daysA.compareTo(daysB);
+      if (daysComparison != 0) return daysComparison;
+      // Finally sort by title
+      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+    });
+
+    // Apply favorite sorting (favorited events on top)
+    return _applyFavoriteSorting(
+      filteredList,
+      eventFavoritePlayersMap: eventFavoritePlayersMap,
+    );
+  }
+
+  List<GroupEventCardModel> sortPastTours(
+    List<GroupEventCardModel> tours, {
+    bool ascending = false,
+    Map<String, EventFavoritePlayers>? eventFavoritePlayersMap,
+    bool prioritizeFavorites = true,
+  }) {
+    var sortedTours = <GroupEventCardModel>[];
+    sortedTours = tours;
+
+    sortedTours.sort((a, b) {
+      final datesA = _extractDates(a.dates);
+      final datesB = _extractDates(b.dates);
+
+      if (datesA == null && datesB == null) return 0;
+      if (datesA == null) return 1;
+      if (datesB == null) return -1;
+
+      final endDateA = datesA['end']!;
+      final endDateB = datesB['end']!;
+
+      final endComparison = endDateA.compareTo(endDateB);
+
+      if (endComparison != 0) {
+        return ascending ? endComparison : -endComparison;
+      } else {
+        final startDateA = datesA['start']!;
+        final startDateB = datesB['start']!;
+        final startComparison = startDateA.compareTo(startDateB);
+        return ascending ? startComparison : -startComparison;
+      }
+    });
+
+    if (!prioritizeFavorites) {
+      return sortedTours;
+    }
+
+    // Apply favorite sorting (favorited events on top)
+    return _applyFavoriteSorting(
+      sortedTours,
+      eventFavoritePlayersMap: eventFavoritePlayersMap,
+    );
+  }
+
+  int _extractDaysFromTimeUntilStart(String txt) {
+    if (txt.isEmpty) return 999999;
+    final s = txt.trim().toLowerCase().replaceAll('in', '').trim();
+
+    if (s.contains('minute') || s.contains('hour')) return 0;
+
+    final dayMatch = RegExp(r'(\d+)\s*day').firstMatch(s);
+    if (dayMatch != null) return int.parse(dayMatch.group(1)!);
+
+    final monMatch = RegExp(r'(\d+)\s*month').firstMatch(s);
+    if (monMatch != null) return int.parse(monMatch.group(1)!) * 30;
+
+    final yrMatch = RegExp(r'(\d+)\s*year').firstMatch(s);
+    if (yrMatch != null) return int.parse(yrMatch.group(1)!) * 365;
+
+    return 999999;
+  }
+
+  List<GroupEventCardModel> sortBasedOnFavorite({
+    required List<GroupEventCardModel> tours,
+    required List<String> favorites,
+    Map<String, EventFavoritePlayers>? eventFavoritePlayersMap,
+    Map<String, DateTime>? favoriteTimestamps,
+  }) {
+    return _sortWithHeartPriority(
+      tours,
+      favorites,
+      eventFavoritePlayersMap,
+      favoriteTimestamps,
+    );
+  }
+
+  /// Sorts events with priority: Starred > Hearted (by count) > Regular
+  /// Within each group, sorts by timestamp (most recent first), then by event date (latest event first)
+  List<GroupEventCardModel> _sortWithHeartPriority(
+    List<GroupEventCardModel> tours,
+    List<String> starredFavorites,
+    Map<String, EventFavoritePlayers>? eventFavoritePlayersMap,
+    Map<String, DateTime>? favoriteTimestamps,
+  ) {
+    // Get favorite player counts for all events
+    final eventFavoritePlayerCounts = <String, int>{};
+
+    if (eventFavoritePlayersMap != null) {
+      for (final tour in tours) {
+        final data = eventFavoritePlayersMap[tour.id];
+        if (data != null && data.hasFavorites) {
+          eventFavoritePlayerCounts[tour.id] = data.count;
+        }
+      }
+    }
+
+    // Categorize events into three groups
+    final starredEvents = <GroupEventCardModel>[];
+    final heartedEvents = <GroupEventCardModel>[];
+    final regularEvents = <GroupEventCardModel>[];
+
+    for (final tour in tours) {
+      if (starredFavorites.contains(tour.id)) {
+        // Priority 1: Starred by user
+        starredEvents.add(tour);
+      } else if ((eventFavoritePlayerCounts[tour.id] ?? 0) > 0) {
+        // Priority 2: Has favorite players (hearted)
+        heartedEvents.add(tour);
+      } else {
+        // Priority 3: Regular events
+        regularEvents.add(tour);
+      }
+    }
+
+    // Sort starred events by timestamp (most recent first), then by event date
+    starredEvents.sort((a, b) {
+      final timestampA = favoriteTimestamps?[a.id];
+      final timestampB = favoriteTimestamps?[b.id];
+
+      // Primary sort: by favorite timestamp (newest first)
+      if (timestampA != null && timestampB != null) {
+        final timestampComparison = timestampB.compareTo(timestampA);
+        if (timestampComparison != 0) return timestampComparison;
+      }
+
+      // If only one has timestamp, prioritize it
+      if (timestampA != null) return -1;
+      if (timestampB != null) return 1;
+
+      // Tertiary sort: by event date (latest event first)
+      // For starred events, use startDate primarily (for upcoming) or endDate (for past)
+      final dateA = a.startDate ?? a.endDate;
+      final dateB = b.startDate ?? b.endDate;
+
+      if (dateA != null && dateB != null) {
+        return dateB.compareTo(dateA); // Latest event first
+      }
+      if (dateA != null) return -1;
+      if (dateB != null) return 1;
+
+      return 0;
+    });
+
+    // Sort hearted events by favorite player count (descending), then by ELO average, then by event date
+    // High ELO events (>3200, typically engine/AI events) are pushed to bottom of this group
+    heartedEvents.sort((a, b) {
+      final eloA = a.maxAvgElo;
+      final eloB = b.maxAvgElo;
+      final isHighEloA = eloA > 3200;
+      final isHighEloB = eloB > 3200;
+
+      // First: push high ELO events (engine/AI) to the bottom
+      if (isHighEloA && !isHighEloB) return 1;
+      if (!isHighEloA && isHighEloB) return -1;
+
+      final countA = eventFavoritePlayerCounts[a.id] ?? 0;
+      final countB = eventFavoritePlayerCounts[b.id] ?? 0;
+
+      // Primary sort: by count (more favorites first)
+      if (countA != countB) {
+        return countB.compareTo(countA);
+      }
+
+      // Secondary sort: by max average ELO (higher ELO first when heart counts are equal)
+      if (eloA != eloB) {
+        return eloB.compareTo(eloA); // Higher ELO first
+      }
+
+      // Tertiary sort: by timestamp (if ELOs are also equal, show most recent first)
+      final timestampA = favoriteTimestamps?[a.id];
+      final timestampB = favoriteTimestamps?[b.id];
+
+      if (timestampA != null && timestampB != null) {
+        final timestampComparison = timestampB.compareTo(timestampA);
+        if (timestampComparison != 0) return timestampComparison;
+      }
+
+      // Quaternary sort: by event date (latest event first)
+      final dateA = a.startDate ?? a.endDate;
+      final dateB = b.startDate ?? b.endDate;
+
+      if (dateA != null && dateB != null) {
+        return dateB.compareTo(dateA); // Latest event first
+      }
+      if (dateA != null) return -1;
+      if (dateB != null) return 1;
+
+      return 0;
+    });
+
+    // Sort regular events: push high ELO events (>3200, engine/AI) to bottom, then sort by ELO descending
+    regularEvents.sort((a, b) {
+      final eloA = a.maxAvgElo;
+      final eloB = b.maxAvgElo;
+      final isHighEloA = eloA > 3200;
+      final isHighEloB = eloB > 3200;
+
+      // First: push high ELO events (engine/AI) to the bottom
+      if (isHighEloA && !isHighEloB) return 1;
+      if (!isHighEloA && isHighEloB) return -1;
+
+      // Then sort by ELO descending
+      if (eloA != eloB) {
+        return eloB.compareTo(eloA);
+      }
+
+      // Finally by title
+      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+    });
+
+    // Return: starred first, then hearted (sorted by count), then regular
+    return [...starredEvents, ...heartedEvents, ...regularEvents];
+  }
+
+  /// Apply favorite sorting to put favorited events on top
+  /// Uses the favoriteEventsProvider to get the list of favorited event IDs
+  List<GroupEventCardModel> _applyFavoriteSorting(
+    List<GroupEventCardModel> tours, {
+    Map<String, EventFavoritePlayers>? eventFavoritePlayersMap,
+  }) {
+    final favoritesAsync = ref.read(favoriteEventsProvider);
+
+    // If favorites are loading or failed, still check for hearted events
+    final favorites = favoritesAsync.valueOrNull;
+    final favoriteIds =
+        favorites
+            ?.map((e) => e.eventId)
+            .where((id) => id.isNotEmpty)
+            .toList() ??
+        <String>[];
+
+    // Build timestamp map for sorting within groups
+    final favoriteTimestamps = <String, DateTime>{};
+    if (favorites != null) {
+      for (final fav in favorites) {
+        favoriteTimestamps[fav.eventId] = fav.createdAt;
+      }
+    }
+
+    // Use updated sortBasedOnFavorite method with heart priority
+    return sortBasedOnFavorite(
+      tours: tours,
+      favorites: favoriteIds,
+      eventFavoritePlayersMap: eventFavoritePlayersMap,
+      favoriteTimestamps: favoriteTimestamps,
+    );
+  }
+
+  static Map<String, DateTime>? _extractDates(String dateString) {
+    try {
+      final cleaned = dateString.trim();
+
+      final parts = cleaned.split(',');
+      if (parts.length != 2) return null;
+
+      final year = parts[1].trim();
+      final datePart = parts[0].trim();
+
+      if (datePart.contains('-')) {
+        final rangeParts = datePart.split('-').map((e) => e.trim()).toList();
+        if (rangeParts.length != 2) return null;
+
+        final startDateStr = rangeParts[0].trim();
+        final endDateStr = rangeParts[1].trim();
+
+        final startParts = startDateStr.split(' ');
+        final endParts = endDateStr.split(' ');
+
+        DateTime? startDate;
+        DateTime? endDate;
+
+        if (startParts.length == 2) {
+          final startMonth = _monthToNumber(startParts[0]);
+          final startDay = int.parse(startParts[1]);
+          final yearInt = int.parse(year);
+          startDate = DateTime(yearInt, startMonth, startDay);
+
+          if (endParts.length == 2) {
+            final endDay = int.parse(endParts[0]);
+            final endMonth = _monthToNumber(endParts[1]);
+            endDate = DateTime(yearInt, endMonth, endDay);
+          } else if (endParts.length == 1) {
+            final endDay = int.parse(endParts[0]);
+            endDate = DateTime(yearInt, startMonth, endDay);
+          }
+        } else if (startParts.length == 1 && endParts.length == 2) {
+          final endDay = int.parse(endParts[0]);
+          final endMonth = _monthToNumber(endParts[1]);
+          final yearInt = int.parse(year);
+          endDate = DateTime(yearInt, endMonth, endDay);
+
+          final startDay = int.parse(startParts[0]);
+          startDate = DateTime(yearInt, endMonth, startDay);
+        }
+
+        if (startDate == null || endDate == null) return null;
+
+        return {'start': startDate, 'end': endDate};
+      } else {
+        final date = _parseDate(datePart, year);
+        if (date == null) return null;
+        return {'start': date, 'end': date};
+      }
+    } catch (e) {
+      debugPrint('Error parsing date "$dateString": $e');
+      return null;
+    }
+  }
+
+  static DateTime? _parseDate(String datePart, String year) {
+    try {
+      final parts = datePart.trim().split(' ');
+
+      if (parts.length == 2) {
+        final firstPart = parts[0];
+        final secondPart = parts[1];
+
+        final firstNum = int.tryParse(firstPart);
+
+        if (firstNum != null) {
+          final day = firstNum;
+          final month = _monthToNumber(secondPart);
+          final yearInt = int.parse(year);
+          return DateTime(yearInt, month, day);
+        } else {
+          final month = _monthToNumber(firstPart);
+          final day = int.parse(secondPart);
+          final yearInt = int.parse(year);
+          return DateTime(yearInt, month, day);
+        }
+      }
+
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  static int _monthToNumber(String month) {
+    final monthMap = {
+      'Jan': 1,
+      'Feb': 2,
+      'Mar': 3,
+      'Apr': 4,
+      'May': 5,
+      'Jun': 6,
+      'Jul': 7,
+      'Aug': 8,
+      'Sep': 9,
+      'Oct': 10,
+      'Nov': 11,
+      'Dec': 12,
+    };
+
+    return monthMap[month] ?? 1;
+  }
+}

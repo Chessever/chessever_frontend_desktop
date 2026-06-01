@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleDisplayName</key>
+	<string>ChessEver</string>
+	<key>CFBundleIconFile</key>
+	<string></string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>ChessEver</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(FLUTTER_BUILD_NAME)</string>
+	<key>CFBundleVersion</key>
+	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>$(PRODUCT_COPYRIGHT)</string>
+	<key>NSMainNibFile</key>
+	<string>MainMenu</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<!-- chessever:// custom URL scheme. Used by the website checkout success
+	     redirect (chessever://billing/success?session_id=…) and the Stripe
+	     Customer Portal return (chessever://billing/portal-return). The
+	     DesktopDeepLinkListener service translates these into entitlement
+	     refreshes via app_links. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.chessEver.app.billing</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>chessever</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Chess file/database document types. Finder/Open With delivers these
+	     paths to AppDelegate.application(_:openFiles:), which forwards them
+	     through chessever.desktop/file_open into the local Library browser. -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Chess files</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>pgn</string>
+				<string>pgn.gz</string>
+				<!-- Finder dispatches compressed PGNs by the final extension. -->
+				<string>gz</string>
+				<string>fen</string>
+				<string>epd</string>
+				<string>cbh</string>
+				<string>cbv</string>
+				<string>cbf</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

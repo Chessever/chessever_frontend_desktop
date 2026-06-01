@@ -1,0 +1,253 @@
+import 'package:chessever/utils/png_asset.dart';
+import 'package:chessever/utils/responsive_helper.dart';
+import 'package:country_flags/country_flags.dart';
+import 'package:flutter/material.dart';
+import '../../../utils/app_typography.dart';
+import '../../../theme/app_theme.dart';
+import '../../../utils/svg_asset.dart';
+import '../../../widgets/svg_widget.dart';
+
+class PlayerCard extends StatefulWidget {
+  const PlayerCard({
+    super.key,
+    required this.rank,
+    required this.playerId,
+    required this.playerName,
+    required this.countryCode,
+    required this.elo,
+    required this.age,
+    this.isFavorite = false,
+    this.onFavoriteToggle,
+    this.onBeforeToggle,
+
+    required this.index,
+    required this.isFirst,
+    required this.isLast,
+  });
+
+  final int rank;
+  final String playerId;
+  final String playerName;
+  final String countryCode;
+  final int elo;
+  final int age;
+  final bool isFavorite;
+  final VoidCallback? onFavoriteToggle;
+  final Future<bool> Function()? onBeforeToggle;
+  final int index;
+  final bool isFirst;
+  final bool isLast;
+
+  @override
+  State<PlayerCard> createState() => _PlayerCardState();
+}
+
+class _PlayerCardState extends State<PlayerCard>
+    with SingleTickerProviderStateMixin {
+  late bool _isFavorite;
+  late AnimationController _animationController;
+  late Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _isFavorite = widget.isFavorite;
+
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.2).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void didUpdateWidget(PlayerCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // This ensures the _isFavorite state is always updated when widget.isFavorite changes
+    if (oldWidget.isFavorite != widget.isFavorite) {
+      setState(() {
+        _isFavorite = widget.isFavorite;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _toggleFavorite() async {
+    if (widget.onBeforeToggle != null) {
+      final allowed = await widget.onBeforeToggle!();
+      if (!allowed) return;
+    }
+
+    if (widget.onFavoriteToggle == null) return;
+
+    setState(() {
+      _isFavorite = !_isFavorite;
+    });
+
+    // Animate heart icon
+    if (_isFavorite) {
+      _animationController.forward().then((_) {
+        _animationController.reverse();
+      });
+    }
+
+    widget.onFavoriteToggle!();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Color backgroundColor =
+        widget.index.isOdd ? kBlack2Color : Color(0xff111111);
+    BorderRadius? borderRadius;
+    if (widget.isFirst) {
+      borderRadius = BorderRadius.only(
+        topLeft: Radius.circular(4.br),
+        topRight: Radius.circular(4.br),
+      );
+    } else if (widget.isLast) {
+      borderRadius = BorderRadius.only(
+        bottomLeft: Radius.circular(4.br),
+        bottomRight: Radius.circular(4.br),
+      );
+    }
+    return GestureDetector(
+      onTap: () {
+        // Navigate to standings screen when the card is tapped
+        // Navigator.pushNamed(context, '/standings');
+      },
+      child: Container(
+        height: 49.h,
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: borderRadius,
+        ),
+        padding: EdgeInsets.symmetric(horizontal: 16.sp, vertical: 14.sp),
+        child: Row(
+          children: [
+            // Rank number
+            SizedBox(
+              width: 24.w,
+              child: Text(
+                '${widget.rank}.',
+                style: AppTypography.textXsMedium.copyWith(color: kWhiteColor),
+              ),
+            ),
+
+            // Country flag
+            Container(
+              margin: EdgeInsets.only(right: 8.sp),
+              child:
+                  widget.countryCode.toUpperCase() == 'FID'
+                      ? Image.asset(
+                        PngAsset.fideLogo,
+                        height: 14.h,
+                        width: 20.w,
+                        fit: BoxFit.cover,
+                        cacheWidth: 48,
+                        cacheHeight: 36,
+                      )
+                      : CountryFlag.fromCountryCode(
+widget.countryCode,
+  theme: ImageTheme(height: 14.h,
+                        width: 20.w,),
+),
+            ),
+
+            // GM prefix and player name
+            Expanded(
+              flex: 3,
+              child: RichText(
+                textAlign: TextAlign.start,
+                text: TextSpan(
+                  children: [
+                    TextSpan(
+                      text: widget.playerName,
+                      style: AppTypography.textXsMedium.copyWith(
+                        color: kWhiteColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // ELO rating with right alignment - using Expanded to match header position
+            Expanded(
+              flex: 1,
+              child: Text(
+                widget.elo.toString(),
+                textAlign: TextAlign.center,
+                style: AppTypography.textXsMedium.copyWith(color: kWhiteColor),
+              ),
+            ),
+
+            // Age - using Expanded to match header and center alignment
+            Expanded(
+              flex: 1,
+              child: Text(
+                widget.age.toString(),
+                textAlign: TextAlign.center,
+                style: AppTypography.textXsMedium.copyWith(color: kWhiteColor),
+              ),
+            ),
+
+            // Add to library icon with animated feedback
+            GestureDetector(
+              onTap: () {
+                // Since this is just a UI task and we might not have the full routing logic,
+                // we'll show a snackbar for now to guide the user to the profile games tab,
+                // or ideally push to the player profile games tab.
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Open ${widget.playerName}\'s profile to select and add games.',
+                    ),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              },
+              behavior: HitTestBehavior.opaque,
+              child: SizedBox(
+                width: 32.w,
+                child: Icon(
+                  Icons.library_add_outlined,
+                  size: 16.h,
+                  color: kWhiteColor.withValues(alpha: 0.5),
+                ),
+              ),
+            ),
+            // Favorite icon with animated scale effect
+            GestureDetector(
+              onTap: () {
+                _toggleFavorite();
+              },
+              behavior: HitTestBehavior.opaque,
+              child: SizedBox(
+                width: 32.w,
+                child: ScaleTransition(
+                  scale: _scaleAnimation,
+                  child: SvgWidget(
+                    _isFavorite
+                        ? SvgAsset.favouriteRedIcon
+                        : SvgAsset.favouriteIcon2,
+                    semanticsLabel: 'Favorite Icon',
+                    height: 14.h,
+                    width: 14.w,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

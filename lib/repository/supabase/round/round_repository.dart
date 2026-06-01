@@ -1,0 +1,256 @@
+// repositories/round_repository.dart
+import 'package:chessever/repository/supabase/base_repository.dart';
+import 'package:chessever/repository/supabase/round/round.dart';
+import 'package:flutter/foundation.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+
+final roundRepositoryProvider = AutoDisposeProvider<RoundRepository>((ref) {
+  return RoundRepository();
+});
+
+class RoundRepository extends BaseRepository {
+  Future<List<Round>> getRoundsByIds(List<String> roundIds) async {
+    if (roundIds.isEmpty) return <Round>[];
+
+    return handleApiCall(() async {
+      final response = await supabase
+          .from('rounds')
+          .select()
+          .inFilter('id', roundIds)
+          .order('created_at', ascending: true);
+
+      return (response as List).map((json) => Round.fromJson(json)).toList();
+    });
+  }
+
+  // Fetch rounds by tour ID
+  Future<List<Round>> getRoundsByTourId(String tourId) async {
+    return handleApiCall(() async {
+      final response = await supabase
+          .from('rounds')
+          .select()
+          .eq('tour_id', tourId)
+          .order('created_at', ascending: true);
+
+      return (response as List).map((json) => Round.fromJson(json)).toList();
+    });
+  }
+
+  Future<Map<String, List<Round>>> getRoundsByTourIds(
+    List<String> tourIds,
+  ) async {
+    if (tourIds.isEmpty) return <String, List<Round>>{};
+
+    return handleApiCall(() async {
+      final response = await supabase
+          .from('rounds')
+          .select()
+          .inFilter('tour_id', tourIds)
+          .order('created_at', ascending: true);
+
+      final rounds =
+          (response as List).map((json) => Round.fromJson(json)).toList();
+      return groupRoundsByTourIdPreservingOrder(
+        rounds: rounds,
+        tourIds: tourIds,
+      );
+    });
+  }
+
+  // Fetch rounds by tour slug
+  Future<List<Round>> getRoundsByTourSlug(String tourSlug) async {
+    return handleApiCall(() async {
+      final response = await supabase
+          .from('rounds')
+          .select()
+          .eq('tour_slug', tourSlug)
+          .order('created_at', ascending: true);
+
+      return (response as List).map((json) => Round.fromJson(json)).toList();
+    });
+  }
+
+  // Fetch round by ID
+  Future<Round> getRoundById(String id) async {
+    return handleApiCall(() async {
+      final response =
+          await supabase.from('rounds').select().eq('id', id).single();
+
+      return Round.fromJson(response);
+    });
+  }
+
+  // Fetch round by slug within a tour
+  Future<Round> getRoundBySlug(String roundSlug, String tourSlug) async {
+    return handleApiCall(() async {
+      final response =
+          await supabase
+              .from('rounds')
+              .select()
+              .eq('slug', roundSlug)
+              .eq('tour_slug', tourSlug)
+              .single();
+
+      return Round.fromJson(response);
+    });
+  }
+
+  // Fetch ongoing rounds
+  Future<List<Round>> getOngoingRounds({String? tourId}) async {
+    return handleApiCall(() async {
+      var query = supabase.from('rounds').select().eq('ongoing', true);
+
+      if (tourId != null) {
+        query = query.eq('tour_id', tourId);
+      }
+
+      final response = await query.order('starts_at', ascending: true);
+
+      return (response as List).map((json) => Round.fromJson(json)).toList();
+    });
+  }
+
+  // Fetch upcoming rounds
+  Future<List<Round>> getUpcomingRounds({String? tourId, int? limit}) async {
+    return handleApiCall(() async {
+      final now = DateTime.now().toIso8601String();
+      var query = supabase
+          .from('rounds')
+          .select()
+          .eq('ongoing', false)
+          .gte('starts_at', now);
+
+      if (tourId != null) {
+        query = query.eq('tour_id', tourId);
+      }
+
+      // Only call .limit() and .order() at the end, without reassigning
+      if (limit != null) {
+        final response = await query
+            .limit(limit)
+            .order('starts_at', ascending: true);
+        return (response as List).map((json) => Round.fromJson(json)).toList();
+      } else {
+        final response = await query.order('starts_at', ascending: true);
+        return (response as List).map((json) => Round.fromJson(json)).toList();
+      }
+    });
+  }
+
+  Future<List<Round>> getCompletedRounds({String? tourId, int? limit}) async {
+    return handleApiCall(() async {
+      var query = supabase
+          .from('rounds')
+          .select()
+          .eq('ongoing', false)
+          .lt('starts_at', DateTime.now().toIso8601String());
+
+      if (tourId != null) {
+        query = query.eq('tour_id', tourId);
+      }
+
+      if (limit != null) {
+        final response = await query
+            .limit(limit)
+            .order('starts_at', ascending: false);
+        return (response as List).map((json) => Round.fromJson(json)).toList();
+      } else {
+        final response = await query.order('starts_at', ascending: false);
+        return (response as List).map((json) => Round.fromJson(json)).toList();
+      }
+    });
+  }
+
+  // Get round with game count
+  Future<Map<String, dynamic>> getRoundWithStats(String roundId) async {
+    return handleApiCall(() async {
+      final round = await getRoundById(roundId);
+
+      final gamesResponse = await supabase
+          .from('games')
+          .select('id, status')
+          .eq('round_id', roundId);
+
+      final games = gamesResponse as List;
+      final totalGames = games.length;
+      final ongoingGames = games.where((game) => game['status'] == '*').length;
+      final completedGames = totalGames - ongoingGames;
+
+      return {
+        'round': round,
+        'totalGames': totalGames,
+        'ongoingGames': ongoingGames,
+        'completedGames': completedGames,
+      };
+    });
+  }
+
+  Future<Round?> getLatestRoundByLastMove(String tourId) async {
+    return handleApiCall(() async {
+      // Primary: find round with most recent last_move_time (precise timestamp)
+      final response = await supabase
+          .from('games')
+          .select(
+            'round:round_id(id,slug,tour_id,tour_slug,name,created_at,starts_at,url),round_id,last_move_time',
+          )
+          .eq('tour_id', tourId)
+          .not('last_move_time', 'is', null)
+          .order('last_move_time', ascending: false)
+          .limit(1);
+
+      if (response.isNotEmpty) {
+        final round = _roundFromRow(response.first);
+        if (round != null) return round;
+      }
+
+      // Fallback: use game_day (date-only, near-universal coverage)
+      final fallbackResponse = await supabase
+          .from('games')
+          .select(
+            'round:round_id(id,slug,tour_id,tour_slug,name,created_at,starts_at,url),round_id,game_day',
+          )
+          .eq('tour_id', tourId)
+          .not('last_move', 'is', null)
+          .not('game_day', 'is', null)
+          .order('game_day', ascending: false)
+          .limit(1);
+
+      if (fallbackResponse.isNotEmpty) {
+        final round = _roundFromRow(fallbackResponse.first);
+        if (round != null) return round;
+      }
+
+      return null;
+    });
+  }
+
+  Round? _roundFromRow(Map<String, dynamic> row) {
+    final roundJson = row['round'];
+    if (roundJson is Map<String, dynamic>) {
+      try {
+        return Round.fromJson(roundJson);
+      } catch (_) {}
+    }
+    return null;
+  }
+}
+
+@visibleForTesting
+Map<String, List<Round>> groupRoundsByTourIdPreservingOrder({
+  required List<Round> rounds,
+  required Iterable<String> tourIds,
+}) {
+  final grouped = <String, List<Round>>{
+    for (final tourId in tourIds) tourId: <Round>[],
+  };
+
+  for (final round in rounds) {
+    grouped.putIfAbsent(round.tourId, () => <Round>[]).add(round);
+  }
+
+  for (final groupedRounds in grouped.values) {
+    groupedRounds.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  return grouped;
+}

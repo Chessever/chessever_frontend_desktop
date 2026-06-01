@@ -1,0 +1,34 @@
+import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/app_typography.dart';
+import 'package:chessever/utils/responsive_helper.dart';
+import 'package:flutter/material.dart';
+
+class AppBarWithTitle extends StatelessWidget {
+  const AppBarWithTitle({required this.title, super.key});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox(width: 20.w),
+        IconButton(
+          iconSize: 24.ic,
+          padding: EdgeInsets.zero,
+          onPressed: () {
+            Navigator.of(context).pop();
+          },
+          icon: Icon(Icons.arrow_back_ios_new_outlined, size: 24.ic),
+        ),
+        Spacer(),
+        Text(
+          title,
+          style: AppTypography.textMdRegular.copyWith(color: kWhiteColor),
+        ),
+        Spacer(),
+        SizedBox(width: 44.w),
+      ],
+    );
+  }
+}

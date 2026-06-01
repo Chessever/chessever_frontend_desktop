@@ -1,0 +1,272 @@
+import 'package:chessever/e2e/e2e_ids.dart';
+import 'package:chessever/screens/calendar/calendar_screen.dart';
+import 'package:chessever/screens/calendar/provider/calendar_screen_provider.dart';
+import 'package:chessever/screens/group_event/group_event_screen.dart';
+import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
+import 'package:chessever/screens/calendar/provider/calendar_detail_screen_provider.dart';
+import 'package:chessever/screens/group_event/providers/sorting_all_event_provider.dart';
+import 'package:chessever/screens/group_event/widget/all_events_tab_widget.dart';
+import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/app_typography.dart';
+import 'package:chessever/utils/month_provider.dart';
+import 'package:chessever/utils/responsive_helper.dart';
+import 'package:chessever/widgets/event_card/starred_provider.dart';
+import 'package:chessever/widgets/generic_error_widget.dart';
+import 'package:chessever/widgets/simple_search_bar.dart';
+import 'package:chessever/widgets/skeleton_widget.dart';
+import 'package:flutter/material.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+
+class CalendarDetailsScreen extends ConsumerStatefulWidget {
+  const CalendarDetailsScreen({super.key});
+
+  @override
+  ConsumerState<CalendarDetailsScreen> createState() =>
+      _CalendarDetailsScreenState();
+}
+
+class _CalendarDetailsScreenState extends ConsumerState<CalendarDetailsScreen> {
+  final TextEditingController searchController = TextEditingController();
+  final FocusNode focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    searchController.text = ref.read(calendarSearchQueryProvider);
+  }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedMonth = ref.read(selectedMonthProvider);
+    final selectedYear = ref.read(selectedYearProvider);
+    final filteredTours = ref.watch(
+      calendarDetailScreenProvider(
+        CalendarFilterArgs(month: selectedMonth, year: selectedYear),
+      ),
+    );
+
+    final horizontalPadding = ResponsiveHelper.adaptive(
+      phone: 20.sp,
+      tablet: 32.sp,
+    );
+
+    return GestureDetector(
+      onTap: FocusScope.of(context).unfocus,
+      child: Scaffold(
+        key: e2eKey(E2eIds.calendarDetailRoot),
+        body: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: ResponsiveHelper.contentMaxWidth,
+            ),
+            child: Column(
+              children: [
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        height: 24.h + MediaQuery.of(context).viewPadding.top,
+                      ),
+                      AnimatedBuilder(
+                        animation: focusNode,
+                        builder: (cxt, _) {
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              SizedBox(
+                                width: 24.ic,
+                                height: 24.ic,
+                                child: IconButton(
+                                  padding: EdgeInsets.zero,
+                                  onPressed: () => Navigator.of(context).pop(),
+                                  icon: Icon(
+                                    Icons.arrow_back_ios_new_outlined,
+                                    size: 24.ic,
+                                  ),
+                                ),
+                              ),
+
+                              SizedBox(width: 11.w),
+                              Expanded(
+                                child: Hero(
+                                  tag: 'search_bar',
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: AnimatedContainer(
+                                      duration: const Duration(
+                                        milliseconds: 300,
+                                      ),
+                                      curve: Curves.easeInOut,
+                                      padding: EdgeInsets.all(2.sp),
+                                      decoration: BoxDecoration(
+                                        color: kGrey900,
+                                        borderRadius: BorderRadius.circular(
+                                          8.br,
+                                        ),
+                                        border: Border.all(
+                                          color:
+                                              focusNode.hasFocus
+                                                  ? kPrimaryColor.withValues(
+                                                    alpha: 0.5,
+                                                  )
+                                                  : Colors.transparent,
+                                          width: 2.0,
+                                        ),
+                                        boxShadow:
+                                            focusNode.hasFocus
+                                                ? [
+                                                  BoxShadow(
+                                                    color: kPrimaryColor
+                                                        .withValues(
+                                                          alpha: 0.15,
+                                                        ),
+                                                    blurRadius: 12,
+                                                    offset: const Offset(0, 4),
+                                                  ),
+                                                ]
+                                                : [],
+                                      ),
+                                      child: SimpleSearchBar(
+                                        controller: searchController,
+                                        hintText: 'Search',
+                                        focusNode: focusNode,
+                                        onCloseTap: () {
+                                          searchController.clear();
+                                          focusNode.unfocus();
+                                          ref
+                                              .read(
+                                                calendarSearchQueryProvider
+                                                    .notifier,
+                                              )
+                                              .state = '';
+                                        },
+                                        onChanged:
+                                            (query) =>
+                                                ref
+                                                    .read(
+                                                      calendarSearchQueryProvider
+                                                          .notifier,
+                                                    )
+                                                    .state = query,
+                                        onOpenFilter: null,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                            ],
+                          );
+                        },
+                      ),
+                      SizedBox(height: 32.h),
+                      Text(
+                        "Tournaments in ${ref.read(monthProvider).monthNumberToName(selectedMonth)} $selectedYear",
+                        style: AppTypography.textLgBold,
+                      ),
+                      SizedBox(height: 20.h),
+                    ],
+                  ),
+                ),
+                filteredTours.when(
+                  data: (filteredEvents) {
+                    final currentFav = ref.watch(
+                      starredProvider(GroupEventCategory.current.name),
+                    );
+
+                    final pastFav = ref.watch(
+                      starredProvider(GroupEventCategory.past.name),
+                    );
+
+                    final liveFav = ref.watch(
+                      starredProvider(GroupEventCategory.forYou.name),
+                    );
+
+                    final starredFavorites = [
+                      ...currentFav,
+                      ...pastFav,
+                      ...liveFav,
+                    ];
+
+                    // Combine both lists
+                    final allFavorites = <String>{...starredFavorites}.toList();
+
+                    final isSearching = searchController.text.trim().isNotEmpty;
+                    final filterMode = ref.watch(calendarFilterModeProvider);
+
+                    // For favorites/upcoming modes, use isolate-sorted results (date-based)
+                    // For 'all' mode when not searching, apply favorite sorting
+                    final finalEvents =
+                        (filterMode != CalendarFilterMode.all || isSearching)
+                            ? filteredEvents
+                            : ref
+                                .read(tournamentSortingServiceProvider)
+                                .sortBasedOnFavorite(
+                                  tours: filteredEvents,
+                                  favorites: allFavorites,
+                                );
+                    return Expanded(
+                      child: AllEventsTabWidget(
+                        filteredEvents: finalEvents,
+                        onSelect: (event) {
+                          ref
+                              .read(
+                                calendarDetailScreenProvider(
+                                  CalendarFilterArgs(
+                                    month: selectedMonth,
+                                    year: selectedYear,
+                                  ),
+                                ).notifier,
+                              )
+                              .onSelectTournament(
+                                context: context,
+                                id: event.id,
+                              );
+                        },
+                      ),
+                    );
+                  },
+                  loading: () {
+                    // Generate unique skeleton cards to avoid duplicate hero tags
+                    final skeletonCards = List.generate(
+                      10,
+                      (index) => GroupEventCardModel(
+                        id: 'skeleton_loading_$index', // Unique ID for each skeleton
+                        title: 'Loading Tournament $index',
+                        dates: 'Loading...',
+                        maxAvgElo: 2000 + (index * 50),
+                        timeUntilStart: 'Loading...',
+                        tourEventCategory: TourEventCategory.upcoming,
+                        timeControl: 'Standard',
+                        endDate: null,
+                        startDate: null,
+                      ),
+                    );
+                    return Expanded(
+                      child: SkeletonWidget(
+                        child: AllEventsTabWidget(
+                          filteredEvents: skeletonCards,
+                          onSelect: (_) {},
+                        ),
+                      ),
+                    );
+                  },
+                  error: (error, stackTrace) => const GenericErrorWidget(),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

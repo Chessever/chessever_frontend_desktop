@@ -1,0 +1,15 @@
+// Application-level settings for the Runner target.
+
+// The product filename matches pubspec.yaml so desktop_updater:release can
+// locate the built .app without custom staging.
+PRODUCT_NAME = chessever
+
+// The application's bundle identifier
+PRODUCT_BUNDLE_IDENTIFIER = com.chessever.desktop
+
+// Keep the Runner target aligned with Podfile and project-level settings.
+// Flutter uses this value when generating the plugin Swift package.
+MACOSX_DEPLOYMENT_TARGET = 14.0
+
+// The copyright displayed in application information
+PRODUCT_COPYRIGHT = Copyright © 2026 ChessEver. All rights reserved.

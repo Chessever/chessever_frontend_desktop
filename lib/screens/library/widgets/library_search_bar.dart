@@ -1,0 +1,453 @@
+import 'dart:async';
+
+import 'package:chessever/repository/library/models/library_folder.dart';
+import 'package:chessever/repository/library/models/saved_analysis.dart';
+import 'package:chessever/screens/gamebase/models/models.dart';
+import 'package:chessever/screens/library/widgets/animated_search_hint.dart';
+import 'package:chessever/screens/library/widgets/library_search_overlay.dart';
+import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/app_typography.dart';
+import 'package:chessever/utils/responsive_helper.dart';
+import 'package:chessever/utils/svg_asset.dart';
+import 'package:chessever/widgets/simple_search_bar.dart';
+import 'package:chessever/widgets/svg_widget.dart';
+
+import 'package:easy_debounce/easy_debounce.dart';
+import 'package:flutter/material.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:motor/motor.dart';
+
+class LibrarySearchBar extends ConsumerStatefulWidget {
+  final TextEditingController controller;
+  final Function(String) onChanged;
+  final Function(LibraryFolder)? onFolderTap;
+  final Function(SavedAnalysis)? onAnalysisTap;
+  final Function(GamebasePlayer)? onPlayerTap;
+  final Function(Map<String, dynamic>)? onGameTap;
+  final VoidCallback? onProfileTap;
+  final VoidCallback? onFilterTap;
+  final bool enableOverlay;
+  final bool showFilterIcon;
+  final String hintText;
+  final FocusNode? focusNode;
+  final List<String>? hintPhrases;
+
+  /// Words cycled after [hintText] (e.g. "Search player" → "Search event").
+  /// When set, only the trailing word animates with a spring swap — matching
+  /// the home-page search. Takes precedence over [hintPhrases].
+  final List<String>? rotatingHints;
+  final Duration rotationInterval;
+  final Key? textFieldKey;
+  final Key? filterButtonKey;
+  final int filterBadgeCount;
+
+  const LibrarySearchBar({
+    super.key,
+    required this.controller,
+    required this.onChanged,
+    this.onFolderTap,
+    this.onAnalysisTap,
+    this.onPlayerTap,
+    this.onGameTap,
+    this.onProfileTap,
+    this.onFilterTap,
+    this.enableOverlay = true,
+    this.showFilterIcon = true,
+    this.hintText = 'Search',
+    this.focusNode,
+    this.hintPhrases,
+    this.rotatingHints,
+    this.rotationInterval = const Duration(seconds: 2),
+    this.textFieldKey,
+    this.filterButtonKey,
+    this.filterBadgeCount = 0,
+  });
+
+  @override
+  ConsumerState<LibrarySearchBar> createState() => _LibrarySearchBarState();
+}
+
+class _LibrarySearchBarState extends ConsumerState<LibrarySearchBar> {
+  bool _showOverlay = false;
+  final FocusNode _internalFocusNode = FocusNode();
+  late final FocusNode _effectiveFocusNode;
+
+  Timer? _rotationTimer;
+  Timer? _fadeOutTimer;
+  int _hintIndex = 0;
+  // One full pass through [rotatingHints], then we freeze on plain hintText.
+  bool _cycleDone = false;
+  // Brief window after the final tick where SpringHintWord is given an
+  // empty word so the last entry spring-fades out before we hand back to
+  // the static hintText — fixes the abrupt "snap" at cycle end.
+  bool _cycleFadingOut = false;
+  static const Duration _cycleFadeOutDuration = Duration(milliseconds: 460);
+
+  @override
+  void initState() {
+    super.initState();
+    _effectiveFocusNode = widget.focusNode ?? _internalFocusNode;
+    _effectiveFocusNode.addListener(_onFocusChange);
+    widget.controller.addListener(_onTextChange);
+    _restartRotation();
+  }
+
+  @override
+  void didUpdateWidget(covariant LibrarySearchBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_listsEqual(oldWidget.rotatingHints, widget.rotatingHints) ||
+        oldWidget.rotationInterval != widget.rotationInterval) {
+      _hintIndex = 0;
+      _cycleDone = false;
+      _cycleFadingOut = false;
+      _fadeOutTimer?.cancel();
+      _restartRotation();
+    }
+  }
+
+  @override
+  void dispose() {
+    _rotationTimer?.cancel();
+    _fadeOutTimer?.cancel();
+    _effectiveFocusNode.removeListener(_onFocusChange);
+    if (widget.focusNode == null) _internalFocusNode.dispose();
+    widget.controller.removeListener(_onTextChange);
+    EasyDebounce.cancel('lib_search_debounce');
+    super.dispose();
+  }
+
+  bool _listsEqual(List<String>? a, List<String>? b) {
+    if (identical(a, b)) return true;
+    if (a == null || b == null) return false;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  bool get _canRotate {
+    final h = widget.rotatingHints;
+    return h != null && h.length > 1 && !_cycleDone;
+  }
+
+  bool get _showRotatingOverlay => _canRotate || _cycleFadingOut;
+
+  void _restartRotation() {
+    _rotationTimer?.cancel();
+    if (!_canRotate ||
+        widget.controller.text.isNotEmpty ||
+        _effectiveFocusNode.hasFocus ||
+        _cycleFadingOut) {
+      return;
+    }
+    _rotationTimer = Timer.periodic(widget.rotationInterval, (_) {
+      if (!mounted) return;
+      final next = _hintIndex + 1;
+      if (next >= widget.rotatingHints!.length) {
+        _rotationTimer?.cancel();
+        setState(() => _cycleFadingOut = true);
+        _fadeOutTimer?.cancel();
+        _fadeOutTimer = Timer(_cycleFadeOutDuration, () {
+          if (!mounted) return;
+          setState(() => _cycleDone = true);
+        });
+      } else {
+        setState(() => _hintIndex = next);
+      }
+    });
+  }
+
+  void _onFocusChange() {
+    setState(() {
+      _showOverlay =
+          widget.enableOverlay &&
+          _effectiveFocusNode.hasFocus &&
+          widget.controller.text.isNotEmpty;
+    });
+    // Rotation pauses while the field is focused so the hint is stable
+    // under the caret, and resumes once focus leaves an empty field.
+    if (_effectiveFocusNode.hasFocus) {
+      _rotationTimer?.cancel();
+    } else {
+      _restartRotation();
+    }
+  }
+
+  void _onTextChange() {
+    final hasText = widget.controller.text.isNotEmpty;
+    final shouldShowOverlay =
+        widget.enableOverlay && _effectiveFocusNode.hasFocus && hasText;
+
+    if (shouldShowOverlay != _showOverlay) {
+      setState(() => _showOverlay = shouldShowOverlay);
+    }
+
+    final isRunning = _rotationTimer?.isActive ?? false;
+    if (hasText && isRunning) {
+      _rotationTimer?.cancel();
+    } else if (!hasText && !isRunning && !_effectiveFocusNode.hasFocus) {
+      _restartRotation();
+    }
+
+    EasyDebounce.debounce(
+      'lib_search_debounce',
+      const Duration(milliseconds: 100),
+      () => widget.onChanged(widget.controller.text),
+    );
+  }
+
+  void _hideOverlay() {
+    setState(() => _showOverlay = false);
+    _effectiveFocusNode.unfocus();
+  }
+
+  void _clearSearch() {
+    widget.controller.clear();
+    widget.onChanged('');
+    _hideOverlay();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        if (_showOverlay && widget.enableOverlay)
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: _hideOverlay,
+              behavior: HitTestBehavior.opaque,
+              child: Container(color: Colors.transparent),
+            ),
+          ),
+        Column(
+          children: [
+            // CSS: bg #1A1A1C, radius 12px, height 40px, no border
+            SingleMotionBuilder(
+              motion: CupertinoMotion.snappy(),
+              value: _effectiveFocusNode.hasFocus ? 1.0 : 0.0,
+              builder: (context, value, child) {
+                final clamped = value.clamp(0.0, 1.0);
+                return Transform.scale(
+                  scale: 0.98 + (clamped * 0.02),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1A1A1C),
+                      borderRadius: BorderRadius.circular(12.br),
+                    ),
+                    child: child,
+                  ),
+                );
+              },
+              child: _buildInputRow(),
+            ),
+            if (widget.enableOverlay)
+              SingleMotionBuilder(
+                motion: CupertinoMotion.bouncy(),
+                value: _showOverlay ? 1.0 : 0.0,
+                builder: (context, value, child) {
+                  if (value < 0.01) return const SizedBox.shrink();
+                  return ClipRect(
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      heightFactor: value,
+                      child: Container(
+                        margin: EdgeInsets.only(top: 8.h),
+                        child: Transform.translate(
+                          offset: Offset(0, (1 - value) * -20),
+                          child: Opacity(
+                            opacity: value.clamp(0.0, 1.0),
+                            child: child,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+                child: LibrarySearchOverlay(
+                  query: widget.controller.text,
+                  onFolderTap: (f) {
+                    _hideOverlay();
+                    widget.onFolderTap?.call(f);
+                  },
+                  onAnalysisTap: (a) {
+                    _hideOverlay();
+                    widget.onAnalysisTap?.call(a);
+                  },
+                  onPlayerTap: (p) {
+                    _hideOverlay();
+                    widget.onPlayerTap?.call(p);
+                  },
+                  onGameTap: (g) {
+                    _hideOverlay();
+                    widget.onGameTap?.call(g);
+                  },
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRotatingHint() {
+    final hints = widget.rotatingHints!;
+    // Empty word during fade-out lets SpringHintWord animate the last entry
+    // away before the hint reverts to static text.
+    final word =
+        _cycleFadingOut ? '' : hints[_hintIndex % hints.length];
+    final prefix = widget.hintText.isEmpty ? '' : '${widget.hintText} ';
+    final style = AppTypography.textXsRegular.copyWith(
+      color: const Color(0xFFFFFFFF).withValues(alpha: 0.7),
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (prefix.isNotEmpty) Text(prefix, style: style),
+        Flexible(child: SpringHintWord(word: word, style: style)),
+      ],
+    );
+  }
+
+  Widget _buildInputRow() {
+    final isEmpty = widget.controller.text.isEmpty;
+
+    // CSS: height 40px, padding 4px 12px
+    return SizedBox(
+      height: 40.h,
+      child: Row(
+        children: [
+          SizedBox(width: 12.w),
+          // CSS: search icon 16x16, rgba(255,255,255,0.7)
+          Icon(
+            Icons.search,
+            size: 16.sp,
+            color: const Color(0xFFFFFFFF).withValues(alpha: 0.7),
+          ),
+          SizedBox(width: 4.w),
+          Expanded(
+            child: Stack(
+              alignment: Alignment.centerLeft,
+              children: [
+                // Animated hint text (shown when empty and not focused)
+                if (isEmpty && !_effectiveFocusNode.hasFocus)
+                  if (_showRotatingOverlay)
+                    _buildRotatingHint()
+                  else if (widget.hintPhrases != null &&
+                      widget.hintPhrases!.length > 1)
+                    AnimatedSearchHint(
+                      textColor: const Color(0xFFFFFFFF).withValues(alpha: 0.7),
+                      textStyle: AppTypography.textXsRegular,
+                      phrases: widget.hintPhrases!,
+                    )
+                  else
+                    Text(
+                      widget.hintText,
+                      style: AppTypography.textXsRegular.copyWith(
+                        color: const Color(0xFFFFFFFF).withValues(alpha: 0.7),
+                      ),
+                    ),
+                // CSS: 12px, Inter, rgba(255,255,255,0.7)
+                TextField(
+                  key: widget.textFieldKey,
+                  controller: widget.controller,
+                  focusNode: _effectiveFocusNode,
+                  onTapOutside: (_) => _effectiveFocusNode.unfocus(),
+                  style: AppTypography.textXsRegular.copyWith(
+                    color: const Color(0xFFFAFAFA),
+                  ),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText:
+                        _effectiveFocusNode.hasFocus ? widget.hintText : null,
+                    hintStyle: AppTypography.textXsRegular.copyWith(
+                      color: const Color(0xFFFFFFFF).withValues(alpha: 0.7),
+                    ),
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (widget.controller.text.isNotEmpty)
+            GestureDetector(
+              onTap: _clearSearch,
+              behavior: HitTestBehavior.opaque,
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
+                child: Icon(
+                  Icons.close,
+                  size: 16.sp,
+                  color: const Color(0xFFFFFFFF).withValues(alpha: 0.7),
+                ),
+              ),
+            ),
+          if (widget.showFilterIcon) ...[
+            if (widget.controller.text.isNotEmpty) SizedBox(width: 4.w),
+            // CSS: list-filter icon 24x24 in 32x32 container, radius 4px
+            GestureDetector(
+              key: widget.filterButtonKey,
+              onTap: widget.onFilterTap,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    width: 32.h,
+                    height: 32.h,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1A1A1C),
+                      borderRadius: BorderRadius.circular(4.br),
+                    ),
+                    child: Center(
+                      child: SvgWidget(
+                        SvgAsset.listFilterIcon,
+                        width: 24.sp,
+                        height: 24.sp,
+                        colorFilter: ColorFilter.mode(
+                          widget.filterBadgeCount > 0
+                              ? kWhiteColor
+                              : _effectiveFocusNode.hasFocus
+                              ? kPrimaryColor
+                              : Colors.grey[400]!,
+                          BlendMode.srcIn,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (widget.filterBadgeCount > 0)
+                    Positioned(
+                      right: -4.w,
+                      top: -4.h,
+                      child: Container(
+                        padding: EdgeInsets.all(4.w),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFEF4444),
+                          shape: BoxShape.circle,
+                        ),
+                        constraints: BoxConstraints(
+                          minWidth: 16.w,
+                          minHeight: 16.h,
+                        ),
+                        child: Text(
+                          '${widget.filterBadgeCount}',
+                          style: AppTypography.textXsBold.copyWith(
+                            color: kWhiteColor,
+                            fontSize: 10.sp,
+                            height: 1,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+          SizedBox(width: widget.showFilterIcon ? 4.w : 12.w),
+        ],
+      ),
+    );
+  }
+}

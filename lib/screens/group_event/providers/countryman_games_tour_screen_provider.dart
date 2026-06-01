@@ -1,0 +1,159 @@
+import 'package:chessever/providers/country_dropdown_provider.dart';
+import 'package:chessever/repository/local_storage/tournament/games/games_local_storage.dart';
+import 'package:chessever/repository/supabase/game/game_repository.dart';
+import 'package:chessever/repository/supabase/game/games.dart';
+import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/repository/local_storage/tournament/games/pin_games_local_storage.dart';
+import 'package:flutter/foundation.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+
+final countrymanGamesTourScreenProvider = StateNotifierProvider.autoDispose<
+  CountrymanGamesTourScreenProvider,
+  AsyncValue<GamesScreenModel>
+>((ref) {
+  final selectedCountry = ref.read(countryDropdownProvider).value?.countryCode;
+
+  return CountrymanGamesTourScreenProvider(
+    ref: ref,
+    currentCountry: selectedCountry,
+  );
+});
+
+class CountrymanGamesTourScreenProvider
+    extends StateNotifier<AsyncValue<GamesScreenModel>> {
+  CountrymanGamesTourScreenProvider({
+    required this.ref,
+    required this.currentCountry,
+  }) : super(AsyncValue.loading()) {
+    _init();
+  }
+
+  final Ref ref;
+  final String? currentCountry;
+
+  Future<void> _init() async {
+    final initialGames = await ref
+        .read(gamesLocalStorage)
+        .getCountrymanGames(currentCountry ?? 'USA');
+
+    final pinnedIds = await ref.read(pinGameLocalStorage).getPinnedGameIds('');
+
+    // Sort initial games: pinned on top
+    initialGames.sort((a, b) {
+      final aPinned = pinnedIds.contains(a.id);
+      final bPinned = pinnedIds.contains(b.id);
+      if (aPinned && !bPinned) return -1;
+      if (!aPinned && bPinned) return 1;
+      return 0;
+    });
+
+    final gamesTourModels =
+        initialGames.map((game) => GamesTourModel.fromGame(game)).toList();
+
+    state = AsyncValue.data(
+      GamesScreenModel(
+        gamesTourModels: gamesTourModels,
+        pinnedGamedIs: pinnedIds,
+      ),
+    );
+
+    /// ✅ Listen for full isolate-parsed games
+    ref.listen<List<Games>>(fullGamesProvider, (previous, next) async {
+      if (next.length > initialGames.length) {
+        final pinnedIds = await ref
+            .read(pinGameLocalStorage)
+            .getPinnedGameIds('');
+
+        final sortedGames = [...next]..sort((a, b) {
+          final aPinned = pinnedIds.contains(a.id);
+          final bPinned = pinnedIds.contains(b.id);
+          if (aPinned && !bPinned) return -1;
+          if (!aPinned && bPinned) return 1;
+          return 0;
+        });
+
+        final updatedModels =
+            sortedGames.map((game) => GamesTourModel.fromGame(game)).toList();
+
+        state = AsyncValue.data(
+          GamesScreenModel(
+            gamesTourModels: updatedModels,
+            pinnedGamedIs: pinnedIds,
+          ),
+        );
+      }
+    });
+  }
+
+  Future<void> togglePinGame(String gameId) async {
+    debugPrint('Toggle pin called for gameId: $gameId');
+
+    final pinnedIds = await ref.read(pinGameLocalStorage).getPinnedGameIds('');
+    debugPrint('Currently pinned IDs before toggle: $pinnedIds');
+
+    if (pinnedIds.contains(gameId)) {
+      debugPrint('Game is already pinned, removing pin for gameId: $gameId');
+      await ref.read(pinGameLocalStorage).removePinnedGameId(gameId, '');
+    } else {
+      debugPrint('Game is not pinned, adding pin for gameId: $gameId');
+      await ref.read(pinGameLocalStorage).addPinnedGameId(gameId, '');
+    }
+
+    final updatedPinnedIds = await ref
+        .read(pinGameLocalStorage)
+        .getPinnedGameIds('');
+    debugPrint('Pinned IDs after toggle: $updatedPinnedIds');
+
+    debugPrint('Refreshing games list...');
+    await _init();
+    debugPrint('Games list refreshed');
+  }
+
+  Future<void> unpinAllGames() async {
+    debugPrint('Unpin All tapped');
+    await ref.read(pinGameLocalStorage).clearAllPinnedGames();
+    await _init();
+  }
+
+  // TODO(dev): Not implemented yet, only returns a default all games list
+  Future<void> searchGames(String query) async {
+    final normalizedQuery = query.trim();
+    if (normalizedQuery.isEmpty) {
+      await _init();
+      return;
+    }
+
+    final countryCode = currentCountry ?? 'USA';
+    final matchingGames = await ref
+        .read(gameRepositoryProvider)
+        .searchCountrymenGames(
+          countryCode: countryCode,
+          query: normalizedQuery,
+          limit: 30,
+        );
+
+    final pinnedIds = await ref.read(pinGameLocalStorage).getPinnedGameIds('');
+    final gamesTourModels =
+        matchingGames.map((game) => GamesTourModel.fromGame(game)).toList()
+          ..sort((a, b) {
+            final aPinned = pinnedIds.contains(a.gameId);
+            final bPinned = pinnedIds.contains(b.gameId);
+            if (aPinned && !bPinned) return -1;
+            if (!aPinned && bPinned) return 1;
+            return 0;
+          });
+
+    state = AsyncValue.data(
+      GamesScreenModel(
+        gamesTourModels: gamesTourModels,
+        pinnedGamedIs: pinnedIds,
+        isSearchMode: true,
+        searchQuery: normalizedQuery,
+      ),
+    );
+  }
+
+  Future<void> refreshGames() async {
+    await _init();
+  }
+}

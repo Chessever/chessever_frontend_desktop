@@ -1,0 +1,327 @@
+name: chessever
+description: "A new Flutter project."
+# The following line prevents the package from being accidentally published to
+# pub.dev using `flutter pub publish`. This is preferred for private packages.
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+
+# The following defines the version and build number for your application.
+# A version number is three numbers separated by dots, like 1.2.43
+# followed by an optional build number separated by a +.
+# Both the version and the builder number may be overridden in flutter
+# build by specifying --build-name and --build-number, respectively.
+# In Android, build-name is used as versionName while build-number used as versionCode.
+# Read more about Android versioning at https://developer.android.com/studio/publish/versioning
+# In iOS, build-name is used as CFBundleShortVersionString while build-number is used as CFBundleVersion.
+# Read more about iOS versioning at
+# https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
+# In Windows, build-name is used as the major, minor, and patch parts
+# of the product and file versions while build-number is used as the build suffix.
+version: 13.0.0+137
+
+environment:
+  sdk: ^3.7.2
+
+# Dependencies specify other packages that your package needs in order to work.
+# To automatically upgrade your package dependencies to the latest versions
+# consider running `flutter pub upgrade --major-versions`. Alternatively,
+# dependencies can be manually updated by changing the version numbers below to
+# the latest version available on pub.dev. To see which dependencies have newer
+# versions available, run `flutter pub outdated`.
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  #for localization
+  intl: ^0.20.2
+
+  #for network query
+  http: ^1.2.1
+
+  # The following adds the Cupertino Icons font to your application.
+  # Use with the CupertinoIcons class for iOS style icons.
+  cupertino_icons: ^1.0.8
+
+  #for widget testing
+  # device_preview_plus: ^2.4.2
+
+  #for state management
+  flutter_hooks: ^0.21.2
+  hooks_riverpod: ^2.6.1
+
+  #for icons library
+  font_awesome_flutter: ^10.8.0
+  #render svg icons
+  flutter_svg: ^2.2.4
+
+  #for custom dropdown button and country picker and flags
+  country_flags: ^4.1.2
+  flutter_country_flags: ^0.0.1  # For England, Scotland, Wales flags
+  dropdown_button2: ^2.3.9
+  country_picker: ^2.0.25
+  country_code: ^1.1.0
+  skeletonizer: ^2.1.3
+
+  #cached network image
+  cached_network_image: ^3.4.1
+
+
+  #supabase
+  supabase_flutter: ^2.12.0
+
+  #authentication
+  google_sign_in: ^7.2.0
+  sign_in_with_apple: ^7.0.1
+  sentry_flutter: ^9.10.0
+
+  #for hashing
+  crypto: ^3.0.6
+
+  #for generated bot identity names (decoupled from real chess players)
+  faker: ^2.2.0
+
+  # Engine download/install pipeline: zip + tar extraction for Stockfish /
+  # lc0 / Maia release archives.
+  archive: ^4.0.7
+
+  #secure key storage
+  flutter_dotenv: ^5.1.0
+
+
+  #for settings persistence (minimal - only Supabase auth)
+  shared_preferences: ^2.5.4
+
+  #for SQLite local storage (replacing most SharedPreferences usage)
+  sqflite: ^2.4.1
+  path: ^1.9.0
+
+  #for class origin
+  equatable: ^2.0.7
+
+  #for late action for frequent calls
+  easy_debounce: ^2.0.3
+
+  #for launching url
+  url_launcher: ^6.3.1
+
+  chess: ^0.8.1
+  stockfish: ^1.8.1
+  onesignal_flutter: ^5.1.2
+  firebase_core: ^3.4.0
+
+  permission_handler: ^12.0.0+1
+
+  flutter_native_splash: ^2.4.7
+  logger: ^2.6.1
+  collection: ^1.19.1
+
+  chessground: ^9.0.0
+  dartchess: ^0.12.3
+  fast_immutable_collections: ^11.0.4
+  flutter_soloud: ^4.0.4
+
+  scrollable_positioned_list: ^0.3.8
+  smooth_page_indicator: ^1.2.1
+  sprung: ^3.0.1
+  clarity_flutter: ^1.1.0
+  upgrader: ^12.1.0
+  screenshot: ^3.0.0
+  share_plus: ^10.1.4
+  path_provider: ^2.1.5
+  flutter_animate: ^4.5.0
+  package_info_plus: ^8.1.3
+  dart_mappable: ^4.2.2
+  icons_launcher: ^3.1.0
+  heroine: ^0.7.2
+  motor: ^1.0.0-dev.0
+  cue: ^0.2.1
+  smooth_sheets: ^0.15.0
+  app_links: ^6.4.1
+  dio: ^5.9.0
+  app_settings: ^7.0.0
+  terminate_restart: ^1.1.0
+  shorebird_code_push: ^2.0.5
+  showcaseview: ^5.0.1
+  in_app_review: ^2.0.11
+  image: ^4.7.2
+  marionette_flutter: ^0.3.0
+  appsflyer_sdk: ^6.17.9+1-rc1
+  app_tracking_transparency: ^2.0.6+1
+
+  # PGN import: browse device files (both platforms) + handle files opened
+  # from Files / file managers / share sheets (iOS CFBundleDocumentTypes,
+  # Android ACTION_VIEW intent-filters).
+  file_picker: ^8.1.4
+  receive_sharing_intent: ^1.8.1
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # DESKTOP (macOS + Windows). See CLAUDE.md §6 for the migration matrix.
+  # The packages above this block include several mobile-only deps that will
+  # be removed as their call-sites migrate to the desktop equivalents below.
+  # ─────────────────────────────────────────────────────────────────────────
+  forui: ^0.16.0                  # desktop-friendly UI primitives (shell, dialogs, dropdowns)
+  window_manager: ^0.5.1          # window bounds, min size, hide-before-first-frame
+  screen_retriever: ^0.2.0        # display work-area bounds for safe window sizing
+  hotkey_manager: ^0.2.3          # global hotkeys (when Flutter Shortcuts/Actions aren't enough)
+  local_notifier: ^0.1.6          # transient desktop notifications (replaces OneSignal on desktop)
+  desktop_drop: ^0.6.0            # drag-drop files into the window (replaces receive_sharing_intent)
+  sqflite_common_ffi: ^2.3.6      # sqflite on Windows/Linux/macOS via FFI (replaces sqflite on desktop)
+  ffi: ^2.1.4
+  desktop_updater: 2.0.0-dev.1    # pinned: dev release, no semver-range pulls. archive at chessever.com/updates
+  flutter_onnxruntime: 1.6.4
+  dart_frog: ^1.2.6
+  dart_frog_web_socket: ^1.0.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_launcher_icons: ^0.14.4
+
+  # The "flutter_lints" package below contains a set of recommended lints to
+  # encourage good coding practices. The lint set provided by the package is
+  # activated in the `analysis_options.yaml` file located at the root of your
+  # package. See that file for information about deactivating specific lint
+  # rules and activating additional ones.
+  flutter_lints: ^5.0.0
+  build_runner: ^2.4.15
+  dart_mappable_builder: ^4.2.3
+  # riverpod_generator: ^2.6.5
+  riverpod_annotation: ^2.6.1
+  patrol: ^4.3.0
+  patrol_finders: ^3.1.0
+  xml: ^6.6.1
+
+
+dependency_overrides:
+  app_links: ^6.4.1
+  desktop_updater:
+    path: third_party/desktop_updater
+
+# For information on the generic Dart part of this file, see the
+# following page: https://dart.dev/tools/pub/pubspec
+
+# The following section is specific to Flutter packages.
+flutter:
+  # The following line ensures that the Material Icons font is
+  # included with your application, so that you can use the icons in
+  # the material Icons class.
+  uses-material-design: true
+
+  generate: true # Added for localization
+
+  # To add assets to your application, add an assets section, like this:
+  assets:
+    - assets/changelog/desktop_releases.json
+    - assets/fonts/Geist-VariableFont_wght.ttf
+    - assets/fonts/Geist-Italic-VariableFont_wght.ttf
+    - assets/svgs/
+    - assets/svgs/hamburger/
+    - assets/pngs/
+    - assets/play/achievements/
+    - assets/sfx/
+    - assets/cursor/
+    # Bundled Stockfish 17.1 binaries — engine "just works" out of the box.
+    # The desktop driver (lib/desktop/services/engine/uci_engine.dart) copies
+    # the right one to the app-support dir at first launch, chmod +x on macOS.
+    # Mobile builds also include these in the asset manifest but never read
+    # them (mobile uses package:stockfish on its own runtime branch).
+    - assets/engine/macos/stockfish
+    - assets/engine/windows/stockfish.exe
+    - assets/launch.webp
+    - assets/app_icon.png
+    # Keep local secrets out of desktop release bundles.
+    # - .env
+    - shorebird.yaml
+
+  # An image asset can refer to one or more resolution-specific "variants", see
+  # https://flutter.dev/to/resolution-aware-images
+
+  # For details regarding adding assets from package dependencies, see
+  # https://flutter.dev/to/asset-from-package
+
+  # To add custom fonts to your application, add a fonts section here,
+  # in this "flutter" section. Each entry in this list should have a
+  # "family" key with the font family name, and a "fonts" key with a
+  # list giving the asset and other descriptors for the font. For
+  # example:
+  fonts:
+    - family: Geist
+      fonts:
+        # Single variable font file carries the full weight axis (100–900).
+        # Flutter picks the closest available weight per TextStyle.fontWeight,
+        # so chip / mainline / bracket weights all resolve from one ~165 KB
+        # asset instead of bundling a static file per weight.
+        - asset: assets/fonts/Geist-VariableFont_wght.ttf
+        - asset: assets/fonts/Geist-Italic-VariableFont_wght.ttf
+          style: italic
+
+patrol:
+  android:
+    package_name: com.chessEver.app
+  ios:
+    bundle_id: com.chessever.app
+  #   - family: Schyler
+  #     fonts:
+  #       - asset: fonts/Schyler-Regular.ttf
+  #       - asset: fonts/Schyler-Italic.ttf
+  #         style: italic
+  #   - family: Trajan Pro
+  #     fonts:
+  #       - asset: fonts/TrajanPro.ttf
+  #       - asset: fonts/TrajanPro_Bold.ttf
+  #         weight: 700
+  #
+  # For details regarding fonts from package dependencies,
+  # see https://flutter.dev/to/font-from-package
+
+#setting up splash screen settings
+flutter_native_splash:
+  color: "#0C0C0E"
+  image: assets/launch.webp
+  color_dark: "#0C0C0E"
+  image_dark: assets/launch.webp
+
+  # Platform settings
+  android: true
+  ios: true
+  web: false
+
+  # Fullscreen settings
+  fullscreen: false
+
+  # Additional settings for better fullscreen experience
+  android_gravity: fill
+  ios_content_mode: aspectFill
+
+  # Android 12+ specific settings (required for proper splash on modern Android)
+  android_12:
+    color: "#0C0C0E"
+    color_dark: "#0C0C0E"
+    # Use the app logo as the centered icon (Android 12 forces centered icon)
+    # Icon should be 1152x1152 pixels, will be shown in a circle
+    image: assets/pngs/new_app_logo.webp
+    image_dark: assets/pngs/new_app_logo.webp
+    # Dark background for the icon circle
+    icon_background_color: "#0C0C0E"
+    icon_background_color_dark: "#0C0C0E"
+
+icons_launcher:
+  image_path: "assets/pngs/new_app_logo.png"
+  platforms:
+    android:
+      enable: true
+      adaptive_background_color: '#0C0C0E'
+      adaptive_foreground_image: "assets/pngs/new_app_logo.png"
+      notification_image: "assets/pngs/notification_icon.png"
+    ios:
+      enable: true
+    # Same logo on desktop — keeps brand consistent with mobile. icons_launcher
+    # does not accept webp, so this points at a PNG export of the same artwork.
+    macos:
+      enable: true
+      image_path: "assets/pngs/new_app_logo.png"
+    windows:
+      enable: true
+      image_path: "assets/pngs/new_app_logo.png"

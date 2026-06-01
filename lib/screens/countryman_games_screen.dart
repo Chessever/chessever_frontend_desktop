@@ -1,0 +1,473 @@
+import 'package:chessever/e2e/e2e_ids.dart';
+import 'package:chessever/screens/chessboard/chess_board_screen_new.dart';
+import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
+import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
+import 'package:chessever/screens/chessboard/widgets/chess_board_from_fen_new.dart';
+import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
+import 'package:chessever/screens/group_event/providers/countryman_games_tour_screen_provider.dart';
+import 'package:chessever/screens/group_event/widget/empty_widget.dart';
+import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card.dart';
+import 'package:chessever/screens/group_event/widget/tour_loading_widget.dart';
+import 'package:chessever/screens/tour_detail/games_tour/widgets/games_tour_content_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
+import 'package:chessever/widgets/generic_error_widget.dart';
+import 'package:chessever/widgets/paywall/premium_paywall_sheet.dart';
+import 'package:chessever/widgets/screen_wrapper.dart';
+import 'package:flutter/material.dart';
+import 'package:chessever/screens/group_event/widget/appbar_icons_widget.dart';
+import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/app_typography.dart';
+import 'package:chessever/utils/responsive_helper.dart';
+import 'package:chessever/utils/svg_asset.dart';
+import 'package:chessever/utils/tablet_safe_menu.dart';
+import 'package:flutter_svg/svg.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+
+class CountrymanGamesScreen extends StatelessWidget {
+  const CountrymanGamesScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ScreenWrapper(
+      child: Scaffold(
+        key: e2eKey(E2eIds.countrymenRoot),
+        body: Column(
+          children: [
+            SizedBox(height: MediaQuery.of(context).viewPadding.top + 24),
+            CountrymanGamesAppBar(),
+            Expanded(child: CountrymanGamesList()),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class CountrymanGamesList extends ConsumerWidget {
+  const CountrymanGamesList({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final gamesListViewMode = ref.watch(gamesListViewModeProvider);
+
+    return ref
+        .watch(countrymanGamesTourScreenProvider)
+        .when(
+          data: (data) {
+            if (data.gamesTourModels.isEmpty) {
+              return EmptyWidget(
+                title:
+                    "No games available yet. Check back soon or set a\nreminder for updates.",
+              );
+            }
+
+            final horizontalPadding = ResponsiveHelper.adaptive(
+              phone: 20.sp,
+              tablet: 32.sp,
+            );
+            final isTablet = ResponsiveHelper.isTablet;
+            final bottomPadding = MediaQuery.of(context).viewPadding.bottom;
+
+            Widget buildGameItem(int index) {
+              final baseGame = data.gamesTourModels[index];
+              final game = watchLiveGame(ref, baseGame);
+              final updatedGames = List<GamesTourModel>.from(
+                data.gamesTourModels,
+              );
+              if (index >= 0 && index < updatedGames.length) {
+                updatedGames[index] = game;
+              }
+
+              return gamesListViewMode == GamesListViewMode.chessBoard
+                  ? ChessBoardFromFENNew(
+                    pinnedIds: data.pinnedGamedIs,
+                    onPinToggle: (gamesTourModel) async {
+                      await ref
+                          .read(countrymanGamesTourScreenProvider.notifier)
+                          .togglePinGame(gamesTourModel.gameId);
+                    },
+                    onChanged: () async {
+                      final hasPremium = await requirePremiumGuard(
+                        context,
+                        ref,
+                      );
+                      if (!hasPremium) return;
+                      if (!context.mounted) return;
+
+                      ref.read(chessboardViewFromProviderNew.notifier).state =
+                          ChessboardView.countryman;
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder:
+                              (_) => ChessBoardScreenNew(
+                                games: updatedGames,
+                                currentIndex: index,
+                              ),
+                        ),
+                      ).then((_) {
+                        if (context.mounted) {
+                          ref.invalidate(gameUpdatesStreamProvider);
+                          ref.invalidate(liveGameUpdateStreamProvider);
+                          ref.invalidate(gameUpdatesBatchStreamProvider);
+                        }
+                      });
+                    },
+                    gamesTourModel: game,
+                  )
+                  : GameCard(
+                    onTap: () async {
+                      final hasPremium = await requirePremiumGuard(
+                        context,
+                        ref,
+                      );
+                      if (!hasPremium) return;
+                      if (!context.mounted) return;
+
+                      ref.read(chessboardViewFromProviderNew.notifier).state =
+                          ChessboardView.countryman;
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder:
+                              (_) => ChessBoardScreenNew(
+                                games: updatedGames,
+                                currentIndex: index,
+                              ),
+                        ),
+                      ).then((_) {
+                        if (context.mounted) {
+                          ref.invalidate(gameUpdatesStreamProvider);
+                          ref.invalidate(liveGameUpdateStreamProvider);
+                          ref.invalidate(gameUpdatesBatchStreamProvider);
+                        }
+                      });
+                    },
+                    matchComparison: MatchWithComparison(
+                      game: game,
+                      comparison: MatchComparison.sameOrder,
+                    ),
+                    pinnedIds: data.pinnedGamedIs,
+                    onPinToggle: (gamesTourModel) async {
+                      await ref
+                          .read(countrymanGamesTourScreenProvider.notifier)
+                          .togglePinGame(gamesTourModel.gameId);
+                    },
+                  );
+            }
+
+            return Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: ResponsiveHelper.contentMaxWidth,
+                ),
+                child:
+                    isTablet
+                        ? GridView.builder(
+                          padding: EdgeInsets.only(
+                            left: horizontalPadding,
+                            right: horizontalPadding,
+                            top: 12.sp,
+                            bottom: bottomPadding,
+                          ),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount:
+                                    ResponsiveHelper.tabletGridColumns,
+                                crossAxisSpacing: 16.sp,
+                                mainAxisSpacing: 16.sp,
+                                childAspectRatio:
+                                    ResponsiveHelper.isLandscape ? 2.2 : 1.8,
+                              ),
+                          itemCount: data.gamesTourModels.length,
+                          itemBuilder: (context, index) => buildGameItem(index),
+                        )
+                        : ListView.builder(
+                          padding: EdgeInsets.only(
+                            left: horizontalPadding,
+                            right: horizontalPadding,
+                            top: 12.sp,
+                            bottom: bottomPadding,
+                          ),
+                          itemCount: data.gamesTourModels.length,
+                          itemBuilder: (context, index) {
+                            return Padding(
+                              padding: EdgeInsets.only(bottom: 12.sp),
+                              child: buildGameItem(index),
+                            );
+                          },
+                        ),
+              ),
+            );
+          },
+          error: (_, __) => GenericErrorWidget(),
+          loading: () => TourLoadingWidget(),
+        );
+  }
+}
+
+class CountrymanGamesAppBar extends ConsumerStatefulWidget {
+  const CountrymanGamesAppBar({super.key});
+
+  @override
+  ConsumerState<CountrymanGamesAppBar> createState() =>
+      _GamesAppBarWidgetState();
+}
+
+class _GamesAppBarWidgetState extends ConsumerState<CountrymanGamesAppBar> {
+  bool isSearching = false;
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _focusNode = FocusNode();
+  late final GlobalKey _menuKey;
+
+  @override
+  void initState() {
+    _menuKey = GlobalKey();
+    super.initState();
+  }
+
+  void _startSearch() {
+    setState(() {
+      isSearching = true;
+    });
+    _focusNode.requestFocus();
+  }
+
+  Future<void> _closeSearch() async {
+    setState(() {
+      isSearching = false;
+    });
+    _searchController.clear();
+    await ref.read(countrymanGamesTourScreenProvider.notifier).refreshGames();
+    _focusNode.unfocus();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: () {
+        if (isSearching) _closeSearch();
+      },
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 300),
+        transitionBuilder: (child, animation) {
+          return FadeTransition(
+            opacity: animation,
+            child: SizeTransition(
+              sizeFactor: animation,
+              axis: Axis.horizontal,
+              child: child,
+            ),
+          );
+        },
+        child:
+            isSearching
+                ? Row(
+                  key: const ValueKey('search_mode'),
+                  children: [
+                    Expanded(
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                        // height: 45.h,
+                        margin: EdgeInsets.symmetric(horizontal: 20.sp),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 12.sp,
+                          vertical: 5.sp,
+                        ),
+                        decoration: BoxDecoration(
+                          color: kBlack2Color,
+                          borderRadius: BorderRadius.circular(4.br),
+                        ),
+                        child: Row(
+                          children: [
+                            SvgPicture.asset(
+                              SvgAsset.searchIcon,
+                              colorFilter: const ColorFilter.mode(
+                                kWhiteColor,
+                                BlendMode.srcIn,
+                              ),
+                            ),
+                            SizedBox(width: 4.w),
+                            Expanded(
+                              child: TextField(
+                                key: e2eKey(E2eIds.countrymenSearchField),
+                                controller: _searchController,
+                                focusNode: _focusNode,
+                                style: const TextStyle(color: kWhiteColor70),
+                                decoration: const InputDecoration(
+                                  hintText: 'Search',
+
+                                  hintStyle: TextStyle(color: kWhiteColor70),
+                                  border: InputBorder.none,
+                                  isDense: true,
+                                ),
+                                onChanged:
+                                    ref
+                                        .read(
+                                          countrymanGamesTourScreenProvider
+                                              .notifier,
+                                        )
+                                        .searchGames,
+                              ),
+                            ),
+                            GestureDetector(
+                              onTap: _closeSearch,
+                              child: const Icon(
+                                Icons.close,
+                                color: kWhiteColor70,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+                : Row(
+                  key: const ValueKey(
+                    'app_bar_mode',
+                  ), // uniquely identifies this Row
+                  children: [
+                    SizedBox(width: 20.w),
+                    IconButton(
+                      iconSize: 24.ic,
+                      padding: EdgeInsets.zero,
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                      },
+                      icon: Icon(
+                        Icons.arrow_back_ios_new_outlined,
+                        size: 24.ic,
+                      ),
+                    ),
+                    Spacer(),
+                    Text(
+                      'Countrymen',
+                      style: AppTypography.textMdMedium.copyWith(
+                        color: kWhiteColor,
+                      ),
+                    ),
+                    Spacer(),
+                    AppBarIcons(
+                      key: e2eKey(E2eIds.countrymenSearchToggle),
+                      image: SvgAsset.searchIcon,
+                      onTap: _startSearch,
+                    ),
+                    SizedBox(width: 18.w),
+                    AppBarIcons(
+                      image: SvgAsset.chase_grid,
+                      onTap: () {
+                        ref.read(gamesListViewModeSwitcher).toggleViewMode();
+                      },
+                    ),
+                    SizedBox(width: 18.w),
+                    AppBarIcons(
+                      key: _menuKey,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 2.sp,
+                        vertical: 1.sp,
+                      ),
+                      image: SvgAsset.threeDots,
+                      onTap: () {
+                        final RenderBox? renderBox =
+                            _menuKey.currentContext?.findRenderObject()
+                                as RenderBox?;
+
+                        if (renderBox != null) {
+                          final Offset offset = renderBox.localToGlobal(
+                            Offset.zero,
+                          );
+
+                          showTabletSafeMenu(
+                            context: context,
+                            position: RelativeRect.fromLTRB(
+                              offset.dx,
+                              offset.dy + renderBox.size.height,
+                              offset.dx + renderBox.size.width,
+                              offset.dy,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12.br),
+                            ),
+                            color: kBlack2Color,
+                            items: <PopupMenuEntry<String>>[
+                              PopupMenuItem<String>(
+                                value: 'Unpin all',
+                                child: InkWell(
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    ref
+                                        .read(
+                                          countrymanGamesTourScreenProvider
+                                              .notifier,
+                                        )
+                                        .unpinAllGames();
+                                  },
+                                  child: SizedBox(
+                                    width: 200,
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                          "Unpin all",
+                                          style: AppTypography.textXsMedium
+                                              .copyWith(color: kWhiteColor),
+                                        ),
+                                        SvgPicture.asset(
+                                          SvgAsset.unpine,
+                                          height: 13.h,
+                                          width: 13.w,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              PopupMenuDivider(
+                                height: 1.h,
+                                thickness: 0.5.w,
+                                color: kDividerColor,
+                              ),
+                              PopupMenuItem<String>(
+                                value: 'share',
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      "Active games on top",
+                                      style: AppTypography.textXsMedium
+                                          .copyWith(color: kWhiteColor),
+                                    ),
+                                    SvgPicture.asset(
+                                      SvgAsset.active,
+                                      height: 13.h,
+                                      width: 13.w,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          );
+                        }
+                      },
+                    ),
+
+                    SizedBox(width: 20.w),
+                  ],
+                ),
+      ),
+    );
+  }
+}

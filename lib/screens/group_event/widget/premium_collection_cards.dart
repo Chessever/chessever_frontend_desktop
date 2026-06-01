@@ -1,0 +1,650 @@
+import 'dart:math' as math;
+
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:chessever/providers/country_dropdown_provider.dart';
+import 'package:chessever/providers/favorite_players_provider.dart';
+import 'package:chessever/repository/favorites/models/favorite_player.dart';
+import 'package:chessever/screens/countrymen/countrymen_tab_screen.dart';
+import 'package:chessever/screens/favorites/favorites_tab_screen.dart';
+import 'package:chessever/screens/premium_games/premium_games_screen.dart';
+import 'package:chessever/services/fide_photo_service.dart';
+import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/app_typography.dart';
+import 'package:chessever/utils/haptic_feedback_service.dart';
+import 'package:chessever/utils/responsive_helper.dart';
+
+import 'package:country_flags/country_flags.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:flutter_hooks/flutter_hooks.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+
+/// Collection cards displayed at the top of For You tab.
+/// Shows "Favorites" and "Countrymen" cards that navigate to combined game lists.
+class PremiumCollectionCards extends StatelessWidget {
+  const PremiumCollectionCards({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: 20.sp),
+      child: Row(
+        children: [
+          Expanded(
+            child: _PremiumCollectionCard(
+              type: PremiumGamesType.favorites,
+              title: 'Favorites',
+            ),
+          ),
+          SizedBox(width: 12.sp),
+          Expanded(
+            child: _PremiumCollectionCard(
+              type: PremiumGamesType.countrymen,
+              title: 'Countrymen',
+            ),
+          ),
+        ],
+      ),
+    ).animate().fadeIn(duration: 300.ms).slideY(begin: -0.05, end: 0);
+  }
+}
+
+class _PremiumCollectionCard extends ConsumerWidget {
+  const _PremiumCollectionCard({required this.type, required this.title});
+
+  final PremiumGamesType type;
+  final String title;
+
+  // Neutral accent color for all card types
+  Color get _accentColor => kWhiteColor;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return GestureDetector(
+      onTap: () => _handleTap(context, ref),
+      child: Container(
+        height: 108.sp,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12.br),
+          border: Border.all(
+            color: _accentColor.withValues(alpha: 0.25),
+            width: 1,
+          ),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12.br),
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              // Full background fill - player grid for favorites, flag for countrymen
+              if (type == PremiumGamesType.favorites)
+                const Positioned.fill(child: FavoritePlayersGridBackground())
+              else
+                const FlagFullBackground(),
+              // Gradient overlay for text readability
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        kBlack2Color.withValues(alpha: 0.6),
+                        kBlack2Color.withValues(alpha: 0.95),
+                      ],
+                      stops: const [0.0, 0.5, 1.0],
+                    ),
+                  ),
+                ),
+              ),
+              // Foreground content - clean text-only design
+              Padding(
+                padding: EdgeInsets.all(12.sp),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Text(
+                      title,
+                      style: AppTypography.textMdBold.copyWith(
+                        color: kWhiteColor,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                    SizedBox(height: 2.sp),
+                    Text(
+                      'Tap to view→',
+                      style: AppTypography.textXsRegular.copyWith(
+                        color: kWhiteColor.withValues(alpha: 0.7),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _handleTap(BuildContext context, WidgetRef ref) {
+    HapticFeedbackService.cardTap();
+
+    // Navigate freely - paywall is shown on actions (tapping games, saving to book)
+    // This creates FOMO by letting users see what they're missing
+    if (type == PremiumGamesType.favorites) {
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const FavoritesTabScreen()));
+    } else {
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const CountrymenTabScreen()));
+    }
+  }
+}
+
+/// Auto-scrolling irregular player photo grid background for Favorites card.
+/// Creates a visually interesting mosaic of player photos that scrolls indefinitely.
+class FavoritePlayersGridBackground extends HookConsumerWidget {
+  const FavoritePlayersGridBackground({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final favoritesAsync = ref.watch(favoritePlayersProviderNew);
+    final favorites = favoritesAsync.valueOrNull ?? [];
+
+    // Animation controller for infinite horizontal scroll
+    final animationController = useAnimationController(
+      duration: const Duration(seconds: 45),
+    );
+
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+
+    // Start infinite animation unless the OS requests reduced motion.
+    useEffect(() {
+      if (disableAnimations) {
+        animationController.stop();
+        animationController.value = 0;
+      } else {
+        animationController.repeat();
+      }
+      return null;
+    }, [animationController, disableAnimations]);
+
+    if (favorites.isEmpty) {
+      return const _EmptyFavoritesPlaceholder();
+    }
+
+    // Smart grid configuration based on favorites count
+    final gridConfig = _calculateGridConfig(favorites.length);
+    final patternCellCount = math.min(
+      favorites.length,
+      gridConfig.maxVisibleCells,
+    );
+    final patternFavorites =
+        favorites.length > patternCellCount
+            ? favorites.take(patternCellCount).toList(growable: false)
+            : favorites;
+    final photoUrls =
+        ref
+            .watch(_favoritePhotoUrlsProvider(_photoUrlKey(patternFavorites)))
+            .valueOrNull ??
+        const <String, String?>{};
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cardWidth = constraints.maxWidth;
+        final cardHeight = constraints.maxHeight;
+
+        // Bail out on degenerate constraints (zero/negative/non-finite). Without
+        // this guard the math below collapses cellWithSpacing to zero and
+        // (cardWidth / 0).ceil() throws "Infinity or NaN toInt".
+        if (!cardWidth.isFinite ||
+            !cardHeight.isFinite ||
+            cardWidth <= 0 ||
+            cardHeight <= 8) {
+          return const SizedBox.shrink();
+        }
+
+        const cellSpacing = 4.0;
+        final rowHeight =
+            (cardHeight - (gridConfig.rows - 1) * cellSpacing) /
+            gridConfig.rows;
+        final actualCellSize = math.max(
+          1.0,
+          math.min(gridConfig.baseCellSize, rowHeight - 2),
+        );
+        final verticalPadding = (rowHeight - actualCellSize) / 2;
+        final cellWithSpacing = actualCellSize + cellSpacing;
+
+        // Keep the animated strip bounded. The old version repeated every
+        // favorite, so users with large favorite lists rendered hundreds of
+        // clipped image widgets behind a tiny card.
+        final scrollDistance = patternCellCount * cellWithSpacing;
+        final stripCellsPerRow =
+            ((cardWidth + scrollDistance) / cellWithSpacing).ceil() + 2;
+
+        // Build the cell grid ONCE and pass as `child` to AnimatedBuilder.
+        // The inner RepaintBoundary caches the grid to a layer, so per-frame
+        // work collapses to a cheap GPU transform of a pre-rasterized image.
+        // No ClipRect here: the parent _PremiumCollectionCard already wraps
+        // everything in a ClipRRect, so off-card cells are already clipped.
+        final grid = RepaintBoundary(
+          child: _StaticPlayerGrid(
+            favorites: patternFavorites,
+            photoUrls: photoUrls,
+            patternCellCount: patternCellCount,
+            rows: gridConfig.rows,
+            cellsPerRow: stripCellsPerRow,
+            cellSize: actualCellSize,
+            cellSpacing: cellSpacing,
+            cellWithSpacing: cellWithSpacing,
+            verticalPadding: verticalPadding,
+          ),
+        );
+
+        if (disableAnimations) {
+          return RepaintBoundary(child: grid);
+        }
+
+        return RepaintBoundary(
+          child: AnimatedBuilder(
+            animation: animationController,
+            child: grid,
+            builder: (context, child) {
+              return Transform.translate(
+                offset: Offset(-animationController.value * scrollDistance, 0),
+                child: child,
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  /// Smart algorithm: adapt grid based on number of players.
+  /// Key insight: keep maximum 9 visible cells per frame to ensure photos
+  /// remain recognizable. Fewer players = larger cells.
+  _GridConfig _calculateGridConfig(int playerCount) {
+    if (playerCount == 1) {
+      // Single player: large prominent photo
+      return const _GridConfig(rows: 2, baseCellSize: 56.0, maxVisibleCells: 4);
+    } else if (playerCount == 2) {
+      return const _GridConfig(rows: 2, baseCellSize: 52.0, maxVisibleCells: 5);
+    } else if (playerCount <= 4) {
+      return const _GridConfig(rows: 2, baseCellSize: 48.0, maxVisibleCells: 6);
+    } else if (playerCount <= 6) {
+      return const _GridConfig(rows: 2, baseCellSize: 44.0, maxVisibleCells: 7);
+    } else if (playerCount <= 9) {
+      return const _GridConfig(rows: 3, baseCellSize: 38.0, maxVisibleCells: 9);
+    } else {
+      // Many players: smaller cells, 3 rows
+      return const _GridConfig(rows: 3, baseCellSize: 34.0, maxVisibleCells: 9);
+    }
+  }
+}
+
+/// Configuration for the irregular grid layout
+class _GridConfig {
+  const _GridConfig({
+    required this.rows,
+    required this.baseCellSize,
+    required this.maxVisibleCells,
+  });
+
+  final int rows;
+  final double baseCellSize;
+  final int maxVisibleCells;
+}
+
+/// Renders the grid of player photos at fixed positions. The parent wraps
+/// this in an AnimatedBuilder + Transform.translate, so this widget is built
+/// once per layout and reused across all animation frames.
+class _StaticPlayerGrid extends StatelessWidget {
+  const _StaticPlayerGrid({
+    required this.favorites,
+    required this.photoUrls,
+    required this.patternCellCount,
+    required this.rows,
+    required this.cellsPerRow,
+    required this.cellSize,
+    required this.cellSpacing,
+    required this.cellWithSpacing,
+    required this.verticalPadding,
+  });
+
+  final List<FavoritePlayer> favorites;
+  final Map<String, String?> photoUrls;
+  final int patternCellCount;
+  final int rows;
+  final int cellsPerRow;
+  final double cellSize;
+  final double cellSpacing;
+  final double cellWithSpacing;
+  final double verticalPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    final cells = <Widget>[];
+    for (int row = 0; row < rows; row++) {
+      final rowStagger = row.isOdd ? cellWithSpacing * 0.5 : 0.0;
+      final y = row * (cellSize + cellSpacing) + verticalPadding;
+      for (int i = 0; i < cellsPerRow; i++) {
+        final patternIndex = i % patternCellCount;
+        final playerIndex = patternIndex % favorites.length;
+        final player = favorites[playerIndex];
+        final sizeVariation = _getSizeVariation(patternIndex, row);
+        final finalCellSize = cellSize * sizeVariation;
+        final sizeOffset = (cellSize - finalCellSize) / 2;
+        final x = i * cellWithSpacing + rowStagger + sizeOffset;
+        cells.add(
+          Positioned(
+            key: ValueKey('${player.fideId ?? player.playerName}_${row}_$i'),
+            left: x,
+            top: y + sizeOffset,
+            child: _PlayerPhotoCell(
+              player: player,
+              photoUrl: player.fideId == null ? null : photoUrls[player.fideId],
+              size: finalCellSize,
+            ),
+          ),
+        );
+      }
+    }
+    // Clip.none: cells extend beyond the Stack's card-width constraints (up
+    // to stripWidth). The RepaintBoundary must cache all of them so the
+    // Transform.translate can slide them into view. The outer ClipRRect on
+    // _PremiumCollectionCard handles the final visible clip.
+    return Stack(clipBehavior: Clip.none, children: cells);
+  }
+
+  /// Deterministic size variation (0.88–1.0) for organic feel.
+  double _getSizeVariation(int playerIndex, int row) {
+    final seed = (playerIndex * 7 + row * 13) % 10;
+    return 0.88 + (seed / 10) * 0.12;
+  }
+}
+
+/// One bounded lookup for the whole mosaic. This avoids each repeated visual
+/// cell becoming its own Consumer while the animated layer is being cached.
+final _favoritePhotoUrlsProvider = FutureProvider.family
+    .autoDispose<Map<String, String?>, String>((ref, key) async {
+      if (key.isEmpty) return const <String, String?>{};
+
+      final ids = key.split('|').where((id) => id.isNotEmpty).toSet();
+      if (ids.isEmpty) return const <String, String?>{};
+
+      final entries = await Future.wait(
+        ids.map((id) async {
+          final url = await FidePhotoService.getPhotoUrlOrNull(id);
+          return MapEntry(id, url);
+        }),
+      );
+      return Map<String, String?>.fromEntries(entries);
+    });
+
+String _photoUrlKey(List<FavoritePlayer> favorites) {
+  return favorites
+      .map((player) => player.fideId ?? '')
+      .where((id) => id.isNotEmpty)
+      .join('|');
+}
+
+/// Individual player photo cell with loading and error states
+class _PlayerPhotoCell extends StatelessWidget {
+  const _PlayerPhotoCell({
+    required this.player,
+    required this.photoUrl,
+    required this.size,
+  });
+
+  final FavoritePlayer player;
+  final String? photoUrl;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: kWhiteColor.withValues(alpha: 0.35),
+          width: 1.5,
+        ),
+      ),
+      child: ClipOval(
+        child:
+            photoUrl != null
+                ? CachedNetworkImage(
+                  imageUrl: photoUrl!,
+                  fit: BoxFit.cover,
+                  filterQuality: FilterQuality.low,
+                  memCacheWidth:
+                      (size * MediaQuery.devicePixelRatioOf(context)).toInt(),
+                  memCacheHeight:
+                      (size * MediaQuery.devicePixelRatioOf(context)).toInt(),
+                  fadeInDuration: Duration.zero,
+                  fadeOutDuration: Duration.zero,
+                  placeholder: (_, __) => _buildPlaceholder(),
+                  errorWidget: (_, __, ___) => _buildInitials(),
+                )
+                : _buildInitials(),
+      ),
+    );
+  }
+
+  Widget _buildPlaceholder() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            kWhiteColor.withValues(alpha: 0.15),
+            kWhiteColor.withValues(alpha: 0.08),
+          ],
+        ),
+      ),
+      child: Center(
+        child: Icon(
+          Icons.person_rounded,
+          size: size * 0.5,
+          color: kWhiteColor.withValues(alpha: 0.4),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInitials() {
+    // Parse initials from "Lastname, Firstname" format
+    final nameParts = player.playerName.split(',');
+    String initials;
+    if (nameParts.length > 1) {
+      final lastName = nameParts[0].trim();
+      final firstName = nameParts[1].trim();
+      initials =
+          '${lastName.isNotEmpty ? lastName[0] : ''}'
+          '${firstName.isNotEmpty ? firstName[0] : ''}';
+    } else {
+      // Fallback for "Firstname Lastname" format
+      final parts = player.playerName.split(' ');
+      initials =
+          parts
+              .take(2)
+              .map((w) => w.isNotEmpty ? w[0].toUpperCase() : '')
+              .join();
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            kWhiteColor.withValues(alpha: 0.2),
+            kWhiteColor.withValues(alpha: 0.1),
+          ],
+        ),
+      ),
+      child: Center(
+        child: Text(
+          initials.toUpperCase(),
+          style: TextStyle(
+            fontSize: size * 0.32,
+            fontWeight: FontWeight.w700,
+            color: Colors.white.withValues(alpha: 0.9),
+            letterSpacing: -0.5,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Empty state placeholder when no favorites - shows floating hearts pattern
+class _EmptyFavoritesPlaceholder extends StatelessWidget {
+  const _EmptyFavoritesPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            kWhiteColor.withValues(alpha: 0.1),
+            kWhiteColor.withValues(alpha: 0.05),
+            kWhiteColor.withValues(alpha: 0.07),
+          ],
+        ),
+      ),
+      child: CustomPaint(
+        painter: _FloatingHeartsPainter(accentColor: kWhiteColor),
+        size: Size.infinite,
+      ),
+    );
+  }
+}
+
+/// Paints floating hearts pattern for empty favorites state
+class _FloatingHeartsPainter extends CustomPainter {
+  _FloatingHeartsPainter({required this.accentColor});
+
+  final Color accentColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint =
+        Paint()
+          ..color = accentColor.withValues(alpha: 0.15)
+          ..style = PaintingStyle.fill;
+
+    // Draw scattered hearts at various positions and sizes
+    final positions = [
+      (0.15, 0.2, 12.0),
+      (0.45, 0.35, 16.0),
+      (0.75, 0.15, 10.0),
+      (0.25, 0.7, 14.0),
+      (0.65, 0.65, 11.0),
+      (0.85, 0.5, 13.0),
+      (0.35, 0.45, 9.0),
+    ];
+
+    for (final (xRatio, yRatio, heartSize) in positions) {
+      final x = size.width * xRatio;
+      final y = size.height * yRatio;
+      _drawHeart(canvas, Offset(x, y), heartSize, paint);
+    }
+  }
+
+  void _drawHeart(Canvas canvas, Offset center, double size, Paint paint) {
+    final path = Path();
+    final w = size;
+    final h = size;
+
+    path.moveTo(center.dx, center.dy + h * 0.3);
+    path.cubicTo(
+      center.dx - w * 0.5,
+      center.dy - h * 0.1,
+      center.dx - w * 0.5,
+      center.dy - h * 0.5,
+      center.dx,
+      center.dy - h * 0.25,
+    );
+    path.cubicTo(
+      center.dx + w * 0.5,
+      center.dy - h * 0.5,
+      center.dx + w * 0.5,
+      center.dy - h * 0.1,
+      center.dx,
+      center.dy + h * 0.3,
+    );
+
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _FloatingHeartsPainter oldDelegate) => false;
+}
+
+/// Full background country flag for Countrymen card
+class FlagFullBackground extends ConsumerWidget {
+  const FlagFullBackground({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final countryAsync = ref.watch(effectiveCountryProvider);
+
+    return countryAsync.when(
+      data:
+          (country) => SizedBox.expand(
+            child: Opacity(
+              opacity: 0.25,
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: CountryFlag.fromCountryCode(
+                  country.countryCode,
+                  theme: ImageTheme(width: 200, height: 150),
+                ),
+              ),
+            ),
+          ),
+      loading: () => _FlagPlaceholder(),
+      error: (_, __) => _FlagPlaceholder(),
+    );
+  }
+}
+
+class _FlagPlaceholder extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            kWhiteColor.withValues(alpha: 0.1),
+            kWhiteColor.withValues(alpha: 0.05),
+          ],
+        ),
+      ),
+      child: Center(
+        child: Icon(
+          Icons.public_rounded,
+          size: 48.sp,
+          color: kWhiteColor.withValues(alpha: 0.15),
+        ),
+      ),
+    );
+  }
+}

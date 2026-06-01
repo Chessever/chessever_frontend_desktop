@@ -1,0 +1,42 @@
+title = "Chessever secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "CocoaPods spec checksums are deterministic dependency hashes."
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''(^|/)ios/Podfile\.lock$''',
+  '''(^|/)macos/Podfile\.lock$''',
+]
+regexes = [
+  '''^\s+(AppAuth|GTMAppAuth): [0-9a-f]{40}$''',
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Historical cache-key examples are not credentials."
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''(^|/)PROGRESSIVE_DEPTH_LADDER_FIX\.md$''',
+]
+regexes = [
+  '''^\s*Cache key: "fen_depth_(12|14|16|18|20)_pv5_w"\s*$''',
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Empty RevenueCat env example variable name, not a credential value."
+condition = "AND"
+regexTarget = "secret"
+paths = [
+  '''(^|/)\.env\.example$''',
+  '''(^|/)\.env\.e2e\.example$''',
+]
+regexes = [
+  '''^RevenueCatAPIKey=$''',
+]
