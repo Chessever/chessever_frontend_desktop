@@ -8,7 +8,13 @@ import 'package:chessever/repository/library/models/library_folder.dart';
 /// Logical actions a folder row can dispatch from its right-click menu.
 /// Mirrors the icon set the mobile folder header surfaces in
 /// `folder_contents_screen.dart`.
-enum LibraryFolderAction { rename, newSubfolder, exportPgn, delete }
+enum LibraryFolderAction {
+  addToMyDatabase,
+  rename,
+  newSubfolder,
+  exportPgn,
+  delete,
+}
 
 /// Opens the same actions menu the folder rows use, anchored at a global
 /// offset (the bottom-left of an overflow button, etc.). Lets the right-pane
@@ -91,6 +97,14 @@ Future<void> _showFolderMenu({
     position: anchor,
     width: 236,
     entries: [
+      if (!isSubscribed) ...[
+        const DesktopContextMenuItem(
+          value: LibraryFolderAction.addToMyDatabase,
+          icon: Icons.add_circle_outline_rounded,
+          label: 'Add to My Database...',
+        ),
+        const DesktopContextMenuDivider(),
+      ],
       DesktopContextMenuItem(
         value: LibraryFolderAction.exportPgn,
         icon: Icons.save_alt_rounded,
