@@ -78,7 +78,7 @@ String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
     headers.putIfAbsent('SetUp', () => '1');
   }
 
-  final sans = <String>[];
+  final moves = <_RenderedGamebaseMove>[];
   try {
     final setup = Setup.parseFen(effectiveFen);
     Position position = Chess.fromSetup(setup);
@@ -91,6 +91,7 @@ String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
       // 4. Plain string SAN: "e4"
       String? uci;
       String? san;
+      final clock = _clockStringFromGamebaseMove(item);
 
       if (item is Map) {
         uci = (item['u'] ?? item['uci'])?.toString();
@@ -110,7 +111,7 @@ String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
         final move = position.parseSan(san);
         if (move != null) {
           position = position.play(move);
-          sans.add(san);
+          moves.add(_RenderedGamebaseMove(san, clock));
           continue;
         }
       }
@@ -130,7 +131,7 @@ String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
       final move = NormalMove(from: from, to: to, promotion: promotion);
       final result = position.makeSan(move);
       position = result.$1;
-      sans.add(result.$2);
+      moves.add(_RenderedGamebaseMove(result.$2, clock));
     }
   } catch (e) {
     if (kDebugMode) {
@@ -139,7 +140,7 @@ String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
     return null;
   }
 
-  if (sans.isEmpty) {
+  if (moves.isEmpty) {
     if (kDebugMode) {
       debugPrint('[GamebasePgnBuilder] No valid moves parsed');
     }
@@ -147,7 +148,9 @@ String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
   }
 
   if (kDebugMode) {
-    debugPrint('[GamebasePgnBuilder] Successfully parsed ${sans.length} moves');
+    debugPrint(
+      '[GamebasePgnBuilder] Successfully parsed ${moves.length} moves',
+    );
   }
 
   final sb = StringBuffer();
@@ -156,17 +159,36 @@ String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
   }
   sb.writeln();
 
-  for (var i = 0; i < sans.length; i++) {
+  for (var i = 0; i < moves.length; i++) {
     if (i.isEven) {
       final moveNo = (i ~/ 2) + 1;
       sb.write('$moveNo. ');
     }
-    sb.write('${sans[i]} ');
+    final move = moves[i];
+    sb.write(move.san);
+    if (move.clock != null) {
+      sb.write(' { [%clk ${move.clock}] }');
+    }
+    sb.write(' ');
   }
 
   sb.write(headers['Result'] ?? '*');
 
   return sb.toString().trim();
+}
+
+class _RenderedGamebaseMove {
+  const _RenderedGamebaseMove(this.san, this.clock);
+
+  final String san;
+  final String? clock;
+}
+
+String? _clockStringFromGamebaseMove(Object? item) {
+  if (item is! Map) return null;
+  final raw = item['ct'] ?? item['clock'] ?? item['clockTime'] ?? item['clk'];
+  final clock = raw?.toString().trim();
+  return clock == null || clock.isEmpty ? null : clock;
 }
 
 /// Checks if a string looks like a UCI move (e.g., "e2e4", "e7e8q")
