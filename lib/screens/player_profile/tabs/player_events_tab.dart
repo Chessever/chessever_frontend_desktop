@@ -138,18 +138,14 @@ class _PlayerEventsTabState extends ConsumerState<PlayerEventsTab>
       );
       if (!mounted || token != _loadToken) return;
 
-      final incoming = response.events
-          .where((item) => item.event.trim().isNotEmpty)
-          .map(playerEventDataFromGamebaseEvent)
-          .toList(growable: false);
+      final incoming = mergeTwicPlayerEvents(
+        response.events
+            .where((item) => item.event.trim().isNotEmpty)
+            .map(playerEventDataFromGamebaseEvent),
+      );
 
-      final byTourId = <String, PlayerEventData>{
-        for (final event in _twicEvents) event.tourId: event,
-      };
-      for (final event in incoming) {
-        byTourId[event.tourId] = event;
-      }
-      _twicEvents = byTourId.values.toList(growable: false)..sort((a, b) {
+      _twicEvents = mergeTwicPlayerEvents([..._twicEvents, ...incoming])
+        ..sort((a, b) {
         final aDate = a.endDate ?? a.startDate ?? DateTime(1900);
         final bDate = b.endDate ?? b.startDate ?? DateTime(1900);
         return bDate.compareTo(aDate);
