@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -476,6 +477,115 @@ void main() {
     expect(selectedDecoration.color, isNotNull);
     expect(selectedDecoration.border, isNotNull);
     expect(selectedDecoration.boxShadow, isNotEmpty);
+  });
+
+  testWidgets('single click moves the only highlighted game row', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'event-game-1',
+          pgn: '1. e4 e5 *',
+          label: 'Event game',
+          whiteName: 'White One',
+          blackName: 'Black One',
+          tournamentTitle: 'Event',
+          eventGames: [
+            _summary(
+              id: 'event-game-1',
+              roundLabel: 'R5',
+              whitePlayer: 'White One',
+              blackPlayer: 'Black One',
+            ),
+            _summary(
+              id: 'event-game-2',
+              roundLabel: 'R5',
+              whitePlayer: 'White Two',
+              blackPlayer: 'Black Two',
+            ),
+          ],
+          gameListSelectedId: 'event-game-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    var table = tester.widget<Table>(find.byType(Table));
+    var firstDecoration = table.children[1].decoration as BoxDecoration;
+    var secondDecoration = table.children[2].decoration as BoxDecoration;
+    expect(firstDecoration.color, isNot(Colors.transparent));
+    expect(secondDecoration.color, Colors.transparent);
+
+    await tester.tap(find.text('Black Two'));
+    await tester.pump(const Duration(milliseconds: 350));
+
+    table = tester.widget<Table>(find.byType(Table));
+    firstDecoration = table.children[1].decoration as BoxDecoration;
+    secondDecoration = table.children[2].decoration as BoxDecoration;
+    expect(firstDecoration.color, Colors.transparent);
+    expect(secondDecoration.color, isNot(Colors.transparent));
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(EventGamesTable)),
+    );
+    final args = container.read(boardTabGameArgsByTabIdProvider).values.single;
+    expect(args.gameId, 'event-game-1');
+    expect(args.gameListSelectedId, 'event-game-1');
+  });
+
+  testWidgets('Ctrl click opens a game row in a new tab', (tester) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'event-game-1',
+          pgn: '1. e4 e5 *',
+          label: 'Event game',
+          whiteName: 'White One',
+          blackName: 'Black One',
+          tournamentTitle: 'Event',
+          eventGames: [
+            _summary(
+              id: 'event-game-1',
+              roundLabel: 'R5',
+              whitePlayer: 'White One',
+              blackPlayer: 'Black One',
+            ),
+            _summary(
+              id: 'event-game-2',
+              roundLabel: 'R5',
+              whitePlayer: 'White Two',
+              blackPlayer: 'Black Two',
+            ),
+          ],
+          gameListSelectedId: 'event-game-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.control);
+    final ctrlClick = await tester.startGesture(
+      tester.getCenter(find.text('Black Two')),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    await ctrlClick.up();
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.control);
+    await tester.pump(const Duration(milliseconds: 350));
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(EventGamesTable)),
+    );
+    final gamesByTab = container.read(boardTabGameArgsByTabIdProvider);
+    expect(
+      gamesByTab.values.map((args) => args.gameId),
+      contains('event-game-1'),
+    );
+    expect(
+      gamesByTab.values.map((args) => args.gameId),
+      contains('event-game-2'),
+    );
+    expect(gamesByTab.length, 2);
   });
 
   testWidgets('event games show loading shimmer while context hydrates', (

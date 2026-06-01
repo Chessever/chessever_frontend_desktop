@@ -366,6 +366,17 @@ class _SingleTableBody<T> extends StatefulWidget {
 
 class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
   int? _hoveredIndex;
+  bool _lastPointerDownInNewTab = false;
+
+  void _captureNewTabModifier(TapDownDetails _) {
+    _lastPointerDownInNewTab = isNewTabModifierPressed();
+  }
+
+  bool _newTabForGesture() {
+    final inNewTab = _lastPointerDownInNewTab || isNewTabModifierPressed();
+    _lastPointerDownInNewTab = false;
+    return inNewTab;
+  }
 
   void _setHover(int? next) {
     if (!widget.enableRowHover) return;
@@ -527,18 +538,19 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
       onEnter: widget.enableRowHover ? (_) => _setHover(rowIndex) : null,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTapDown:
+            widget.onRowTap == null && widget.onRowDoubleTap == null
+                ? null
+                : _captureNewTabModifier,
         onTap:
             widget.onRowTap == null
                 ? null
-                : () =>
-                    widget.onRowTap!(row, inNewTab: isNewTabModifierPressed()),
+                : () => widget.onRowTap!(row, inNewTab: _newTabForGesture()),
         onDoubleTap:
             widget.onRowDoubleTap == null
                 ? null
-                : () => widget.onRowDoubleTap!(
-                  row,
-                  inNewTab: isNewTabModifierPressed(),
-                ),
+                : () =>
+                    widget.onRowDoubleTap!(row, inNewTab: _newTabForGesture()),
         onSecondaryTapUp:
             widget.onRowSecondaryTap == null
                 ? null
@@ -629,18 +641,19 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
       onEnter: widget.enableRowHover ? (_) => _setHover(rowIndex) : null,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTapDown:
+            widget.onRowTap == null && widget.onRowDoubleTap == null
+                ? null
+                : _captureNewTabModifier,
         onTap:
             widget.onRowTap == null
                 ? null
-                : () =>
-                    widget.onRowTap!(row, inNewTab: isNewTabModifierPressed()),
+                : () => widget.onRowTap!(row, inNewTab: _newTabForGesture()),
         onDoubleTap:
             widget.onRowDoubleTap == null
                 ? null
-                : () => widget.onRowDoubleTap!(
-                  row,
-                  inNewTab: isNewTabModifierPressed(),
-                ),
+                : () =>
+                    widget.onRowDoubleTap!(row, inNewTab: _newTabForGesture()),
         onSecondaryTapUp:
             widget.onRowSecondaryTap == null
                 ? null
