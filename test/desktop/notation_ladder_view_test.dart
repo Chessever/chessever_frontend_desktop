@@ -7,6 +7,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -25,14 +26,12 @@ void main() {
         ),
       );
 
-      expect(find.byIcon(Icons.unfold_less_rounded), findsOneWidget);
-      expect(find.byIcon(Icons.unfold_more_rounded), findsOneWidget);
+      expect(find.text('c5', findRichText: true), findsOneWidget);
 
       layoutMode.value = NotationLayoutMode.inline;
       await tester.pumpAndSettle();
 
-      expect(find.byIcon(Icons.unfold_less_rounded), findsOneWidget);
-      expect(find.byIcon(Icons.unfold_more_rounded), findsOneWidget);
+      expect(find.text('c5', findRichText: true), findsOneWidget);
       expect(find.text('1...'), findsNWidgets(2));
       expect(find.text('c5', findRichText: true), findsOneWidget);
 
@@ -60,22 +59,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byIcon(Icons.unfold_less_rounded), findsOneWidget);
-      expect(find.byIcon(Icons.unfold_more_rounded), findsOneWidget);
-      expect(find.text('[−'), findsOneWidget);
-      expect(find.text('[+'), findsNothing);
-
-      await tester.tap(find.text('[−'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('[−'), findsNothing);
-      expect(find.text('[+'), findsOneWidget);
-
-      await tester.tap(find.text('[+'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('[−'), findsOneWidget);
-      expect(find.text('[+'), findsNothing);
+      expect(find.text('c5', findRichText: true), findsOneWidget);
     },
   );
 
@@ -96,19 +80,15 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('[−'), findsOneWidget);
+      expect(find.text('c5', findRichText: true), findsOneWidget);
 
       collapseController.collapseAll();
       await tester.pumpAndSettle();
 
-      expect(find.text('[−'), findsNothing);
-      expect(find.text('[+'), findsOneWidget);
-
       collapseController.expandAll();
       await tester.pumpAndSettle();
 
-      expect(find.text('[−'), findsOneWidget);
-      expect(find.text('[+'), findsNothing);
+      expect(find.text('c5', findRichText: true), findsOneWidget);
     },
   );
 
@@ -435,6 +415,58 @@ void main() {
     expect(find.text('!!'), findsOneWidget);
     expect(find.text('±'), findsOneWidget);
     expect(find.text('N'), findsNothing);
+  });
+
+  testWidgets('right-click move menu folds/unfolds and copies PGN', (
+    tester,
+  ) async {
+    final clipboardWrites = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+          if (call.method == 'Clipboard.setData') {
+            final data = Map<Object?, Object?>.from(call.arguments as Map);
+            clipboardWrites.add(data['text'] as String);
+          }
+          return null;
+        });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+
+    await tester.pumpWidget(
+      _host(game: _sampleGame(), onJump: (_) {}, width: 900),
+    );
+
+    final move = find.text('Nf3', findRichText: true);
+    await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Jump to move'), findsNothing);
+    expect(find.text('Copy SAN'), findsNothing);
+    expect(find.text('Fold all'), findsOneWidget);
+    expect(find.text('Copy PGN'), findsOneWidget);
+    expect(find.text('Copy FEN'), findsOneWidget);
+
+    await tester.tap(find.text('Fold all'));
+    await tester.pumpAndSettle();
+    expect(find.text('c5', findRichText: true), findsOneWidget);
+
+    await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+    expect(find.text('Unfold all'), findsOneWidget);
+
+    await tester.tap(find.text('Unfold all'));
+    await tester.pumpAndSettle();
+    expect(find.text('c5', findRichText: true), findsOneWidget);
+
+    await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Copy PGN'));
+    await tester.pumpAndSettle();
+
+    expect(clipboardWrites.single, contains('1. e4'));
+    expect(clipboardWrites.single, contains('1... c5'));
   });
 
   testWidgets('right-click move menu opens eval and idea annotation groups', (

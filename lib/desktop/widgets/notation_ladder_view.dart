@@ -14,6 +14,7 @@ import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/screens/chessboard/notation/notation_pointer.dart';
+import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
 import 'package:chessever/screens/chessboard/widgets/nag_display.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -103,8 +104,8 @@ class NotationLadderView extends StatefulWidget {
     this.onPromoteVariation,
     this.onDeleteVariation,
     this.onTrimContinuation,
-    this.autoCollapseDepth = 3,
-    this.autoCollapseMoveThreshold = 12,
+    this.autoCollapseDepth = 1 << 30,
+    this.autoCollapseMoveThreshold = 1 << 30,
     this.scrollController,
     this.useFigurine = false,
     this.pieceAssets,
@@ -181,7 +182,8 @@ class NotationLadderView extends StatefulWidget {
   /// Trim everything after [pointer] in the current line.
   final void Function(ChessMovePointer pointer)? onTrimContinuation;
 
-  /// Mobile uses 3 / 12 here too (see `notation_token_builder.dart`).
+  /// Variations are unfolded by default on desktop; callers may pass finite
+  /// thresholds to opt back into mobile-style auto-collapse.
   final int autoCollapseDepth;
   final int autoCollapseMoveThreshold;
 
@@ -318,6 +320,26 @@ class _NotationLadderViewState extends State<NotationLadderView> {
       _expanded.clear();
       _expanded.addAll(_allCollapsibleVariationIds(widget.game.mainline));
     });
+  }
+
+  bool get _hasCollapsibleVariations =>
+      _allCollapsibleVariationIds(widget.game.mainline).isNotEmpty;
+
+  bool get _allVariationsManuallyCollapsed {
+    final ids = _allCollapsibleVariationIds(widget.game.mainline);
+    return ids.isNotEmpty && ids.every(_collapsed.contains);
+  }
+
+  Future<void> _copyPgnToClipboard() async {
+    await Clipboard.setData(ClipboardData(text: exportGameToPgn(widget.game)));
+  }
+
+  void _toggleAllVariationsFromMenu() {
+    if (_allVariationsManuallyCollapsed) {
+      _expandAllVariations();
+    } else {
+      _collapseAllVariations();
+    }
   }
 
   void _scrollActiveIntoView() {
@@ -3003,6 +3025,7 @@ class _LadderChipState extends State<_LadderChip> {
     final canPromote = widget.onPromoteVariation != null;
     final canDelete = widget.onDeleteVariation != null;
     final canTrim = widget.onTrimFromHere != null;
+    final notationState = context.findAncestorStateOfType<_NotationLadderViewState>();
     final selected = await showMenu<_LadderAction>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -3013,13 +3036,23 @@ class _LadderChipState extends State<_LadderChip> {
       ),
       color: kBlack2Color,
       items: [
+        if (notationState?._hasCollapsibleVariations ?? false)
+          PopupMenuItem<_LadderAction>(
+            value: _LadderAction.toggleAllVariations,
+            child: _MenuLabel(
+              icon:
+                  (notationState?._allVariationsManuallyCollapsed ?? false)
+                      ? Icons.unfold_more_rounded
+                      : Icons.unfold_less_rounded,
+              label:
+                  (notationState?._allVariationsManuallyCollapsed ?? false)
+                      ? 'Unfold all'
+                      : 'Fold all',
+            ),
+          ),
         const PopupMenuItem<_LadderAction>(
-          value: _LadderAction.jump,
-          child: _MenuLabel(icon: Icons.gps_fixed, label: 'Jump to move'),
-        ),
-        const PopupMenuItem<_LadderAction>(
-          value: _LadderAction.copySan,
-          child: _MenuLabel(icon: Icons.copy_rounded, label: 'Copy SAN'),
+          value: _LadderAction.copyPgn,
+          child: _MenuLabel(icon: Icons.copy_all_rounded, label: 'Copy PGN'),
         ),
         const PopupMenuItem<_LadderAction>(
           value: _LadderAction.copyFen,
@@ -3111,10 +3144,10 @@ class _LadderChipState extends State<_LadderChip> {
     if (selected == null) return;
     if (!mounted) return;
     switch (selected) {
-      case _LadderAction.jump:
-        widget.onTap();
-      case _LadderAction.copySan:
-        await Clipboard.setData(ClipboardData(text: widget.san));
+      case _LadderAction.toggleAllVariations:
+        notationState?._toggleAllVariationsFromMenu();
+      case _LadderAction.copyPgn:
+        await notationState?._copyPgnToClipboard();
       case _LadderAction.copyFen:
         if (widget.fen.isNotEmpty) {
           await Clipboard.setData(ClipboardData(text: widget.fen));
@@ -3365,8 +3398,8 @@ class _LadderChipState extends State<_LadderChip> {
 }
 
 enum _LadderAction {
-  jump,
-  copySan,
+  toggleAllVariations,
+  copyPgn,
   copyFen,
   trim,
   promote,
