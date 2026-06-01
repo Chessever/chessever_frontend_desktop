@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -62,6 +63,9 @@ class DefaultGamesTable extends ConsumerStatefulWidget {
 }
 
 class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
+  static const double _rowHeight = 34;
+  static const double _headerHeight = 26;
+
   AdaptiveSortState? _sortState;
   String? _highlightedGameId;
 
@@ -143,6 +147,89 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
     }
   }
 
+  void _highlight(GamesTourModel game) {
+    if (_highlightedGameId == game.gameId) return;
+    setState(() => _highlightedGameId = game.gameId);
+  }
+
+  KeyEventResult _handleKey(
+    FocusNode node,
+    KeyEvent event,
+    List<GamesTourModel> rows,
+  ) {
+    if (event is! KeyDownEvent || rows.isEmpty) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    final currentIndex = _currentHighlightedIndex(rows);
+    int? nextIndex;
+    if (key == LogicalKeyboardKey.arrowDown) {
+      nextIndex = (currentIndex < 0 ? 0 : currentIndex + 1).clamp(
+        0,
+        rows.length - 1,
+      );
+    } else if (key == LogicalKeyboardKey.arrowUp) {
+      nextIndex = (currentIndex < 0 ? 0 : currentIndex - 1).clamp(
+        0,
+        rows.length - 1,
+      );
+    } else if (key == LogicalKeyboardKey.pageDown) {
+      nextIndex = (currentIndex < 0 ? 0 : currentIndex + _pageJump).clamp(
+        0,
+        rows.length - 1,
+      );
+    } else if (key == LogicalKeyboardKey.pageUp) {
+      nextIndex = (currentIndex < 0 ? 0 : currentIndex - _pageJump).clamp(
+        0,
+        rows.length - 1,
+      );
+    } else if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      final index = currentIndex < 0 ? 0 : currentIndex;
+      _highlight(rows[index]);
+      _openGame(rows[index], inNewTab: false);
+      return KeyEventResult.handled;
+    } else {
+      return KeyEventResult.ignored;
+    }
+
+    final index = nextIndex.toInt();
+    _highlight(rows[index]);
+    _scrollIndexIntoView(index);
+    return KeyEventResult.handled;
+  }
+
+  int _currentHighlightedIndex(List<GamesTourModel> rows) {
+    final id = _highlightedGameId;
+    if (id == null) return -1;
+    return rows.indexWhere((game) => game.gameId == id);
+  }
+
+  int get _pageJump {
+    if (!widget.controller.hasClients) return 10;
+    final viewport = widget.controller.position.viewportDimension;
+    if (!viewport.isFinite || viewport <= 0) return 10;
+    return (viewport / _rowHeight).floor().clamp(8, 30);
+  }
+
+  void _scrollIndexIntoView(int index) {
+    if (!widget.controller.hasClients) return;
+    final position = widget.controller.position;
+    final rowTop = _headerHeight + (index * _rowHeight);
+    final rowBottom = rowTop + _rowHeight;
+    var target = position.pixels;
+    if (rowTop < position.pixels) {
+      target = rowTop;
+    } else if (rowBottom > position.pixels + position.viewportDimension) {
+      target = rowBottom - position.viewportDimension;
+    } else {
+      return;
+    }
+    widget.controller.animateTo(
+      target.clamp(position.minScrollExtent, position.maxScrollExtent),
+      duration: const Duration(milliseconds: 90),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
   void _openGame(GamesTourModel game, {required bool inNewTab}) {
     final customOpen = widget.onOpenGame;
     if (customOpen != null) {
@@ -168,17 +255,21 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
   @override
   Widget build(BuildContext context) {
     final rows = _rows;
-    return AdaptiveGamesTable<GamesTourModel>(
-      columns: _buildColumns(rows),
-      rows: rows,
-      scrollController: widget.controller,
-      rowMinHeight: 34,
-      headerHeight: 26,
-      minTableWidth: 1320,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      sortState: _sortState,
-      onSortChanged: (next) => setState(() => _sortState = next),
-      rowDecorationBuilder: (game, hovered) {
+    return Focus(
+      autofocus: widget.active,
+      canRequestFocus: widget.active,
+      onKeyEvent: (node, event) => _handleKey(node, event, rows),
+      child: AdaptiveGamesTable<GamesTourModel>(
+        columns: _buildColumns(rows),
+        rows: rows,
+        scrollController: widget.controller,
+        rowMinHeight: _rowHeight,
+        headerHeight: _headerHeight,
+        minTableWidth: 1320,
+        padding: const EdgeInsets.only(right: 8),
+        sortState: _sortState,
+        onSortChanged: (next) => setState(() => _sortState = next),
+        rowDecorationBuilder: (game, hovered) {
         if (widget.selectedIds.contains(game.gameId) ||
             _highlightedGameId == game.gameId) {
           return BoxDecoration(
@@ -199,9 +290,9 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         }
         return null;
       },
-      rowKeyBuilder:
+        rowKeyBuilder:
           (game) => ValueKey('${widget.rowKeyPrefix}-${game.gameId}'),
-      onRowTap: (game, {required bool inNewTab}) {
+        onRowTap: (game, {required bool inNewTab}) {
         if (widget.selectionMode) {
           widget.onToggleSelection?.call(game.gameId);
           return;
@@ -209,22 +300,23 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         // Table view: a single click only selects/highlights the row.
         // Opening a game belongs to double-click (Cmd/Ctrl held opens a new
         // tab) so accidental single clicks no longer swap the active board.
-        setState(() => _highlightedGameId = game.gameId);
+        _highlight(game);
       },
-      onRowDoubleTap: (game, {required bool inNewTab}) {
+        onRowDoubleTap: (game, {required bool inNewTab}) {
         if (widget.selectionMode) {
           widget.onToggleSelection?.call(game.gameId);
           return;
         }
-        setState(() => _highlightedGameId = game.gameId);
+        _highlight(game);
         _openGame(game, inNewTab: inNewTab);
       },
-      onRowSecondaryTap:
+        onRowSecondaryTap:
           widget.onContext == null
               ? null
               : (game, position) =>
                   unawaited(widget.onContext!(globalPos: position, game: game)),
-      footer: widget.footer,
+        footer: widget.footer,
+      ),
     );
   }
 

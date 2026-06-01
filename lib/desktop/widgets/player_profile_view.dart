@@ -2719,7 +2719,7 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+          padding: const EdgeInsets.fromLTRB(0, 12, 20, 8),
           child: Row(
             children: [
               Expanded(
