@@ -681,21 +681,9 @@ class _SegmentBar extends StatelessWidget {
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 500;
         final tabs = [
-          DesktopSegmentedTab(
-            value: 0,
-            label: 'Notation',
-            icon: Icons.format_list_numbered_rounded,
-          ),
-          DesktopSegmentedTab(
-            value: 1,
-            label: 'Explorer',
-            icon: Icons.menu_book_outlined,
-          ),
-          const DesktopSegmentedTab(
-            value: 2,
-            label: 'Games',
-            icon: Icons.list_alt_rounded,
-          ),
+          const DesktopSegmentedTab(value: 0, label: 'Notation'),
+          const DesktopSegmentedTab(value: 1, label: 'Tree'),
+          const DesktopSegmentedTab(value: 2, label: 'Games'),
         ];
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
