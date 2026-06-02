@@ -17,10 +17,10 @@ void main() {
     expect(labels[labels.indexOf('Play') + 1], 'Feedback / Report issue');
   });
 
-  test('Search appears as the first sidebar action', () {
+  test('Search appears as the last sidebar action', () {
     final labels = debugDesktopSidebarLabelsInOrder();
 
-    expect(labels.first, 'Search');
+    expect(labels.last, 'Search');
   });
 
   test('Search entry is an action, not a pane route', () {

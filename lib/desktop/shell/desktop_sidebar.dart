@@ -88,12 +88,6 @@ class DesktopSidebar extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          _SidebarItem(
-            entry: _searchEntry,
-            expanded: expanded,
-            selected: false,
-            onTap: ({required bool inNewTab}) => onSearch(),
-          ),
           for (final entry in _primaryNav) ...[
             _SidebarItem(
               entry: entry,
@@ -131,6 +125,13 @@ class DesktopSidebar extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           _VersionFooter(expanded: expanded),
+          const SizedBox(height: 8),
+          _SidebarItem(
+            entry: _searchEntry,
+            expanded: expanded,
+            selected: false,
+            onTap: ({required bool inNewTab}) => onSearch(),
+          ),
           const SizedBox(height: 10),
         ],
       ),
@@ -540,7 +541,7 @@ const _NavEntry _settingsEntry = _NavEntry(
 
 @visibleForTesting
 List<String> debugDesktopSidebarLabelsInOrder() {
-  final labels = <String>[_searchEntry.label];
+  final labels = <String>[];
   for (final entry in _primaryNav) {
     labels.add(entry.label);
     if (entry.pane == DesktopPane.play) {
@@ -548,6 +549,7 @@ List<String> debugDesktopSidebarLabelsInOrder() {
     }
   }
   labels.add(_settingsEntry.label);
+  labels.add(_searchEntry.label);
   return labels;
 }
 
