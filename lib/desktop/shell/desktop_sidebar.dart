@@ -31,6 +31,7 @@ class DesktopSidebar extends StatelessWidget {
     required this.onSelect,
     required this.feedbackScreenshotKey,
     required this.onToggleExpanded,
+    required this.onSearch,
     this.expanded = true,
     this.autoCollapsed = false,
   });
@@ -45,6 +46,7 @@ class DesktopSidebar extends StatelessWidget {
   final void Function(DesktopPane pane, {required bool inNewTab}) onSelect;
   final GlobalKey feedbackScreenshotKey;
   final VoidCallback onToggleExpanded;
+  final VoidCallback onSearch;
   final bool expanded;
   final bool autoCollapsed;
 
@@ -86,6 +88,12 @@ class DesktopSidebar extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
+          _SidebarItem(
+            entry: _searchEntry,
+            expanded: expanded,
+            selected: false,
+            onTap: ({required bool inNewTab}) => onSearch(),
+          ),
           for (final entry in _primaryNav) ...[
             _SidebarItem(
               entry: entry,
@@ -93,7 +101,7 @@ class DesktopSidebar extends StatelessWidget {
               selected: entry.pane == current,
               onTap:
                   ({required bool inNewTab}) =>
-                      onSelect(entry.pane, inNewTab: inNewTab),
+                      onSelect(entry.pane!, inNewTab: inNewTab),
             ),
             if (entry.pane == DesktopPane.play)
               _SidebarItem(
@@ -438,12 +446,12 @@ class _SidebarItemState extends State<_SidebarItem> {
 
 class _NavEntry {
   const _NavEntry({
-    required this.pane,
     required this.label,
     required this.icon,
+    this.pane,
     this.shortcut,
   });
-  final DesktopPane pane;
+  final DesktopPane? pane;
   final String label;
 
   /// Material `_outlined` icon. The brand SVGs under `assets/svgs/` were
@@ -456,6 +464,12 @@ class _NavEntry {
   final IconData icon;
   final String? shortcut;
 }
+
+const _NavEntry _searchEntry = _NavEntry(
+  label: 'Search',
+  icon: Icons.search,
+  shortcut: '⌘F',
+);
 
 const List<_NavEntry> _primaryNav = [
   _NavEntry(
@@ -526,7 +540,7 @@ const _NavEntry _settingsEntry = _NavEntry(
 
 @visibleForTesting
 List<String> debugDesktopSidebarLabelsInOrder() {
-  final labels = <String>[];
+  final labels = <String>[_searchEntry.label];
   for (final entry in _primaryNav) {
     labels.add(entry.label);
     if (entry.pane == DesktopPane.play) {
@@ -539,6 +553,7 @@ List<String> debugDesktopSidebarLabelsInOrder() {
 
 @visibleForTesting
 DesktopPane? debugDesktopSidebarPaneForLabel(String label) {
+  if (_searchEntry.label == label) return _searchEntry.pane;
   for (final entry in _primaryNav) {
     if (entry.label == label) return entry.pane;
   }
