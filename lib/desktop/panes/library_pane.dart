@@ -8,6 +8,7 @@ import 'package:fast_immutable_collections/fast_immutable_collections.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -1131,7 +1132,7 @@ class _SortConfig {
 
 enum _LibraryDatabaseKind { cloud, local }
 
-enum _DatabaseBoardAction { preview, open, remove }
+enum _DatabaseBoardAction { addToMyDatabase, preview, open, remove }
 
 class _MyDatabasesHomeView extends HookConsumerWidget {
   const _MyDatabasesHomeView({
@@ -1439,8 +1440,10 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           ),
         ],
       );
-      if (picked == null) return;
+      if (picked == null || !context.mounted) return;
       switch (picked) {
+        case _DatabaseBoardAction.addToMyDatabase:
+          return;
         case _DatabaseBoardAction.preview:
           await previewLocalEntry(entry);
         case _DatabaseBoardAction.open:
@@ -1465,32 +1468,49 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       Offset position,
     ) async {
       if (folder.id == kTwicBookId) return;
+      final canImport = isWritableLibraryFolder(folder);
       final picked = await showDesktopContextMenu<_DatabaseBoardAction>(
         context: context,
         position: position,
         width: 230,
-        entries: const [
-          DesktopContextMenuItem(
+        entries: [
+          if (canImport) ...[
+            const DesktopContextMenuItem(
+              value: _DatabaseBoardAction.addToMyDatabase,
+              icon: Icons.add_circle_outline_rounded,
+              label: 'Add to My Database...',
+            ),
+            const DesktopContextMenuDivider(),
+          ],
+          const DesktopContextMenuItem(
             value: _DatabaseBoardAction.preview,
             icon: Icons.table_rows_outlined,
             label: 'Preview database',
           ),
-          DesktopContextMenuItem(
+          const DesktopContextMenuItem(
             value: _DatabaseBoardAction.open,
             icon: Icons.open_in_new_rounded,
             label: 'Open full database',
           ),
-          DesktopContextMenuDivider(),
-          DesktopContextMenuItem(
-            value: _DatabaseBoardAction.remove,
-            icon: Icons.delete_outline_rounded,
-            label: 'Remove from My Databases',
-            destructive: true,
-          ),
+          if (canImport) ...[
+            const DesktopContextMenuDivider(),
+            const DesktopContextMenuItem(
+              value: _DatabaseBoardAction.remove,
+              icon: Icons.delete_outline_rounded,
+              label: 'Remove from My Databases',
+              destructive: true,
+            ),
+          ],
         ],
       );
-      if (picked == null) return;
+      if (picked == null || !context.mounted) return;
       switch (picked) {
+        case _DatabaseBoardAction.addToMyDatabase:
+          await _pickAndImportFilesToFolder(
+            context: context,
+            ref: ref,
+            folder: folder,
+          );
         case _DatabaseBoardAction.preview:
           onSelectFolder(folder);
         case _DatabaseBoardAction.open:
@@ -1498,6 +1518,50 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         case _DatabaseBoardAction.remove:
           await removeCloudFolderFromBoard(folder);
       }
+    }
+
+    Widget buildBoardTile(_DatabaseBoardItem item) {
+      final folder = item.folder;
+      final entry = item.entry;
+      final tile = _DatabaseBoardTile(
+        title: item.title,
+        icon: item.icon,
+        selected:
+            folder != null
+                ? folder.id == selectedFolderId && selectedLocalPath == null
+                : selectedLocalPath == entry!.path ||
+                    (localSource?.paths.contains(entry.path) == true &&
+                        selectedLocalPath == localSource?.root.path),
+        onSelect:
+            folder != null
+                ? () => onSelectFolder(folder)
+                : () => unawaited(previewLocalEntry(entry!)),
+        onOpen:
+            folder != null
+                ? () => onOpenFolder(folder)
+                : () => unawaited(openLocalEntry(entry!)),
+        onContextMenu:
+            folder != null
+                ? (folder.id == kTwicBookId
+                    ? null
+                    : (position) =>
+                        unawaited(showCloudContextMenu(folder, position)))
+                : (position) =>
+                    unawaited(showLocalContextMenu(entry!, position)),
+      );
+      if (folder == null) return tile;
+      return FolderDropTarget(
+        enabled: isWritableLibraryFolder(folder),
+        folderName: folder.name,
+        onAcceptPaths:
+            (paths) => quickImportPathsToFolder(
+              context: context,
+              ref: ref,
+              folder: folder,
+              paths: paths,
+            ),
+        child: tile,
+      );
     }
 
     return DragTarget<LibraryDatabaseDragPayload>(
@@ -1524,45 +1588,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
               Wrap(
                 spacing: 10,
                 runSpacing: 10,
-                children: [
-                  for (final item in items)
-                    _DatabaseBoardTile(
-                      title: item.title,
-                      icon: item.icon,
-                      selected:
-                          item.folder != null
-                              ? item.folder!.id == selectedFolderId &&
-                                  selectedLocalPath == null
-                              : selectedLocalPath == item.entry!.path ||
-                                  (localSource?.paths.contains(
-                                            item.entry!.path,
-                                          ) ==
-                                          true &&
-                                      selectedLocalPath ==
-                                          localSource?.root.path),
-                      onSelect:
-                          item.folder != null
-                              ? () => onSelectFolder(item.folder!)
-                              : () => unawaited(previewLocalEntry(item.entry!)),
-                      onOpen:
-                          item.folder != null
-                              ? () => onOpenFolder(item.folder!)
-                              : () => unawaited(openLocalEntry(item.entry!)),
-                      onContextMenu:
-                          item.folder != null
-                              ? (item.folder!.id == kTwicBookId
-                                  ? null
-                                  : (position) => unawaited(
-                                    showCloudContextMenu(
-                                      item.folder!,
-                                      position,
-                                    ),
-                                  ))
-                              : (position) => unawaited(
-                                showLocalContextMenu(item.entry!, position),
-                              ),
-                    ),
-                ],
+                children: [for (final item in items) buildBoardTile(item)],
               ),
             ],
           ),
@@ -4944,6 +4970,39 @@ Future<void> _onCreateFolder({
   }
 }
 
+Future<void> _pickAndImportFilesToFolder({
+  required BuildContext context,
+  required WidgetRef ref,
+  required LibraryFolder folder,
+}) async {
+  if (!isWritableLibraryFolder(folder)) {
+    _toast(context, '"${folder.name}" is read-only.', error: true);
+    return;
+  }
+  final result = await FilePicker.platform.pickFiles(
+    dialogTitle: 'Add to My Database',
+    type: FileType.custom,
+    allowedExtensions: localChessPickerExtensions,
+    allowMultiple: true,
+    withData: false,
+    lockParentWindow: true,
+  );
+  if (result == null || result.files.isEmpty) return;
+  final paths = result.files
+      .map((file) => file.path)
+      .whereType<String>()
+      .where((path) => path.isNotEmpty)
+      .toList(growable: false);
+  if (paths.isEmpty) return;
+  if (!context.mounted) return;
+  await quickImportPathsToFolder(
+    context: context,
+    ref: ref,
+    folder: folder,
+    paths: paths,
+  );
+}
+
 Future<void> _onFolderAction({
   required BuildContext context,
   required WidgetRef ref,
@@ -4952,6 +5011,12 @@ Future<void> _onFolderAction({
   required List<LibraryFolder> allFolders,
 }) async {
   switch (action) {
+    case LibraryFolderAction.addToMyDatabase:
+      await _pickAndImportFilesToFolder(
+        context: context,
+        ref: ref,
+        folder: folder,
+      );
     case LibraryFolderAction.exportPgn:
       await _onExport(
         context: context,
@@ -7529,10 +7594,8 @@ class _TwicDatabaseWorkspace extends HookConsumerWidget {
                   if (index >= 0) selectTwicIndex(index);
                 },
                 onOpenGame:
-                    (game) => openBoardGameTab(
-                      ref,
-                      _buildTwicBoardArgs(ref, game),
-                    ),
+                    (game) =>
+                        openBoardGameTab(ref, _buildTwicBoardArgs(ref, game)),
                 onContextMenuGame:
                     (game, position) => unawaited(
                       _showTwicGameContextMenu(
