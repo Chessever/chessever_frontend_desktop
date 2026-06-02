@@ -151,7 +151,7 @@ class LocalChessFilesView extends HookConsumerWidget {
                   ],
                 ),
               ),
-            if (node is LocalChessFolderNode && node.children.isNotEmpty)
+            if (isBrowsingFolder && node.children.isNotEmpty)
               _LocalChildrenStrip(
                 folder: node,
                 selectedPath: selectedPath,
@@ -205,6 +205,8 @@ class _LocalHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final selectedDatabase = selectedLocalChessDatabaseFile(node);
+    final isDatabaseView = selectedDatabase != null;
     final (gameCount, fileCount, unsupportedCount) = switch (node) {
       LocalChessFolderNode(
         :final gameCount,
@@ -219,6 +221,10 @@ class _LocalHeader extends StatelessWidget {
       ),
       _ => (0, 0, 0),
     };
+    final countLabel =
+        selectedDatabase == null
+            ? '$fileCount files · ${localChessEntryCountLabel(gameCount)}'
+            : localChessEntryCountLabel(selectedDatabase.games.length);
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 16, 12),
       child: Row(
@@ -254,20 +260,19 @@ class _LocalHeader extends StatelessWidget {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    const _ReadOnlyLocalBadge(),
                   ],
                 ),
-                const SizedBox(height: 6),
-                _Breadcrumb(
-                  source: source,
-                  node: node,
-                  onSelectPath: onSelectPath,
-                ),
+                if (!isDatabaseView) ...[
+                  const SizedBox(height: 6),
+                  _Breadcrumb(
+                    source: source,
+                    node: node,
+                    onSelectPath: onSelectPath,
+                  ),
+                ],
                 const SizedBox(height: 6),
                 Text(
-                  '$fileCount files · ${localChessEntryCountLabel(gameCount)}'
-                  '${unsupportedCount == 0 ? '' : ' · $unsupportedCount recognized only'}',
+                  '$countLabel${unsupportedCount == 0 ? '' : ' · $unsupportedCount recognized only'}',
                   style: const TextStyle(
                     color: kLightGreyColor,
                     fontSize: 12,
@@ -300,7 +305,7 @@ class _LocalHeader extends StatelessWidget {
             message:
                 onSave == null
                     ? 'No parsed local entries here'
-                    : 'Save visible local entries to your library',
+                    : 'Save visible local entries to your cloud library',
             child: FButton(
               style: FButtonStyle.primary(),
               onPress: onSave,
@@ -309,7 +314,7 @@ class _LocalHeader extends StatelessWidget {
                 children: [
                   Icon(Icons.library_add_outlined, size: 14),
                   SizedBox(width: 7),
-                  Text('Save to library'),
+                  Text('Save To Cloud'),
                 ],
               ),
             ),
@@ -446,31 +451,6 @@ FBaseButtonStyle Function(FButtonStyle style) _breadcrumbButtonStyle() {
           ),
     ),
   );
-}
-
-class _ReadOnlyLocalBadge extends StatelessWidget {
-  const _ReadOnlyLocalBadge();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: kBlack3Color,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: kDividerColor),
-      ),
-      child: const Text(
-        'Not imported',
-        style: TextStyle(
-          color: kLightGreyColor,
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0,
-        ),
-      ),
-    );
-  }
 }
 
 class _LocalCountPill extends StatelessWidget {
