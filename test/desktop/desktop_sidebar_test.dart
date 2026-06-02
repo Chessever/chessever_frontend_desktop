@@ -11,10 +11,20 @@ void main() {
   test('Board Editor is launched from board context, not the sidebar', () {
     expect(debugDesktopSidebarPaneForLabel('Board Editor'), isNull);
   });
-  test('Feedback report entry appears directly under Play', () {
+  test('Search appears directly under Play', () {
     final labels = debugDesktopSidebarLabelsInOrder();
 
-    expect(labels[labels.indexOf('Play') + 1], 'Feedback / Report issue');
+    expect(labels[labels.indexOf('Play') + 1], 'Search');
+  });
+
+  test('Feedback report entry appears directly under Search', () {
+    final labels = debugDesktopSidebarLabelsInOrder();
+
+    expect(labels[labels.indexOf('Search') + 1], 'Feedback / Report issue');
+  });
+
+  test('Search entry is an action, not a pane route', () {
+    expect(debugDesktopSidebarPaneForLabel('Search'), isNull);
   });
 
   test('Feedback report entry is an action, not a pane route', () {

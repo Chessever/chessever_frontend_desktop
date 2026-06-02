@@ -31,6 +31,7 @@ class DesktopSidebar extends StatelessWidget {
     required this.onSelect,
     required this.feedbackScreenshotKey,
     required this.onToggleExpanded,
+    required this.onSearch,
     this.expanded = true,
     this.autoCollapsed = false,
   });
@@ -45,6 +46,7 @@ class DesktopSidebar extends StatelessWidget {
   final void Function(DesktopPane pane, {required bool inNewTab}) onSelect;
   final GlobalKey feedbackScreenshotKey;
   final VoidCallback onToggleExpanded;
+  final VoidCallback onSearch;
   final bool expanded;
   final bool autoCollapsed;
 
@@ -93,9 +95,15 @@ class DesktopSidebar extends StatelessWidget {
               selected: entry.pane == current,
               onTap:
                   ({required bool inNewTab}) =>
-                      onSelect(entry.pane, inNewTab: inNewTab),
+                      onSelect(entry.pane!, inNewTab: inNewTab),
             ),
-            if (entry.pane == DesktopPane.play)
+            if (entry.pane == DesktopPane.play) ...[
+              _SidebarItem(
+                entry: _searchEntry,
+                expanded: expanded,
+                selected: false,
+                onTap: ({required bool inNewTab}) => onSearch(),
+              ),
               _SidebarItem(
                 entry: _feedbackEntry,
                 expanded: expanded,
@@ -106,6 +114,7 @@ class DesktopSidebar extends StatelessWidget {
                       screenshotKey: feedbackScreenshotKey,
                     ),
               ),
+            ],
           ],
           const Spacer(),
           _PremiumSidebarSlot(
@@ -438,12 +447,12 @@ class _SidebarItemState extends State<_SidebarItem> {
 
 class _NavEntry {
   const _NavEntry({
-    required this.pane,
     required this.label,
     required this.icon,
+    this.pane,
     this.shortcut,
   });
-  final DesktopPane pane;
+  final DesktopPane? pane;
   final String label;
 
   /// Material `_outlined` icon. The brand SVGs under `assets/svgs/` were
@@ -456,6 +465,12 @@ class _NavEntry {
   final IconData icon;
   final String? shortcut;
 }
+
+const _NavEntry _searchEntry = _NavEntry(
+  label: 'Search',
+  icon: Icons.search,
+  shortcut: '⌘F',
+);
 
 const List<_NavEntry> _primaryNav = [
   _NavEntry(
@@ -530,6 +545,7 @@ List<String> debugDesktopSidebarLabelsInOrder() {
   for (final entry in _primaryNav) {
     labels.add(entry.label);
     if (entry.pane == DesktopPane.play) {
+      labels.add(_searchEntry.label);
       labels.add(_feedbackEntry.label);
     }
   }
@@ -539,6 +555,7 @@ List<String> debugDesktopSidebarLabelsInOrder() {
 
 @visibleForTesting
 DesktopPane? debugDesktopSidebarPaneForLabel(String label) {
+  if (_searchEntry.label == label) return _searchEntry.pane;
   for (final entry in _primaryNav) {
     if (entry.label == label) return entry.pane;
   }

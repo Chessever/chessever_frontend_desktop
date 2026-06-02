@@ -463,13 +463,15 @@ class DesktopShell extends HookConsumerWidget {
         // keymaps. Re-apply after board bindings so Ctrl/Cmd+F always opens
         // the compact shell search instead of being swallowed by a pane.
         shellShortcuts[const SingleActivator(
-          LogicalKeyboardKey.keyF,
-          meta: true,
-        )] = const _OpenCommandPaletteIntent();
+              LogicalKeyboardKey.keyF,
+              meta: true,
+            )] =
+            const _OpenCommandPaletteIntent();
         shellShortcuts[const SingleActivator(
-          LogicalKeyboardKey.keyF,
-          control: true,
-        )] = const _OpenCommandPaletteIntent();
+              LogicalKeyboardKey.keyF,
+              control: true,
+            )] =
+            const _OpenCommandPaletteIntent();
 
         return Focus(
           onKeyEvent: (node, event) {
@@ -491,151 +493,154 @@ class DesktopShell extends HookConsumerWidget {
             autofocus: true,
             shortcuts: shellShortcuts,
             actions: <Type, Action<Intent>>{
-            SwitchPaneIntent: CallbackAction<SwitchPaneIntent>(
-              onInvoke: (intent) {
-                openPane(intent.pane);
-                return null;
-              },
-            ),
-            _ToggleSidebarIntent: CallbackAction<_ToggleSidebarIntent>(
-              onInvoke: (_) {
-                toggleSidebar();
-                return null;
-              },
-            ),
-            _OpenCommandPaletteIntent:
-                CallbackAction<_OpenCommandPaletteIntent>(
-                  onInvoke: (_) {
-                    openCommandPalette();
-                    return null;
+              SwitchPaneIntent: CallbackAction<SwitchPaneIntent>(
+                onInvoke: (intent) {
+                  openPane(intent.pane);
+                  return null;
+                },
+              ),
+              _ToggleSidebarIntent: CallbackAction<_ToggleSidebarIntent>(
+                onInvoke: (_) {
+                  toggleSidebar();
+                  return null;
+                },
+              ),
+              _OpenCommandPaletteIntent:
+                  CallbackAction<_OpenCommandPaletteIntent>(
+                    onInvoke: (_) {
+                      openCommandPalette();
+                      return null;
+                    },
+                  ),
+              _ImportPgnIntent: CallbackAction<_ImportPgnIntent>(
+                onInvoke: (_) {
+                  () async {
+                    await PgnFilePicker(ref).pickAndLoad();
+                  }();
+                  return null;
+                },
+              ),
+              _PastePgnIntent: CallbackAction<_PastePgnIntent>(
+                onInvoke: (_) {
+                  unawaited(pastePgnFromClipboard());
+                  return null;
+                },
+              ),
+              _CloseTabIntent: CallbackAction<_CloseTabIntent>(
+                onInvoke: (_) {
+                  final id = tabsState.activeId;
+                  if (id != null) tabsNotifier.close(id);
+                  return null;
+                },
+              ),
+              _NewTabIntent: CallbackAction<_NewTabIntent>(
+                onInvoke: (_) {
+                  tabsNotifier.open(
+                    TabKind.board,
+                    reuseExisting: false,
+                    focus: true,
+                  );
+                  return null;
+                },
+              ),
+              _SwitchLastTabIntent: CallbackAction<_SwitchLastTabIntent>(
+                onInvoke: (_) {
+                  tabsNotifier.activateLast();
+                  return null;
+                },
+              ),
+              _NextTabIntent: CallbackAction<_NextTabIntent>(
+                onInvoke: (_) {
+                  tabsNotifier.activateNext();
+                  return null;
+                },
+              ),
+              _PreviousTabIntent: CallbackAction<_PreviousTabIntent>(
+                onInvoke: (_) {
+                  tabsNotifier.activatePrevious();
+                  return null;
+                },
+              ),
+              _BoardShortcutIntent: CallbackAction<_BoardShortcutIntent>(
+                onInvoke: (intent) {
+                  if (tabsState.active?.kind != TabKind.board) return null;
+                  foregroundBoardShortcutDispatcher?.invoke(intent.action);
+                  return null;
+                },
+              ),
+            },
+            child: Scaffold(
+              backgroundColor: kBackgroundColor,
+              body: RepaintBoundary(
+                key: feedbackScreenshotKey,
+                child: LocalChessDropZone(
+                  onChessPathsDropped: (paths) async {
+                    // The Library and Board Editor panes wrap their own drop
+                    // zones with pane-specific local-file handling.
+                    // desktop_drop's nested targets *both* fire, so when
+                    // either is foreground we leave handling to the pane.
+                    final activePane = ref.read(desktopPaneProvider);
+                    if (activePane == DesktopPane.library ||
+                        activePane == DesktopPane.boardEditor) {
+                      return;
+                    }
+                    final opened = await ref
+                        .read(localChessLibraryProvider.notifier)
+                        .openPaths(paths, sourceLabel: 'Dropped local files');
+                    if (!opened) return;
+                    ref
+                        .read(desktopTabsProvider.notifier)
+                        .open(TabKind.library);
                   },
-                ),
-            _ImportPgnIntent: CallbackAction<_ImportPgnIntent>(
-              onInvoke: (_) {
-                () async {
-                  await PgnFilePicker(ref).pickAndLoad();
-                }();
-                return null;
-              },
-            ),
-            _PastePgnIntent: CallbackAction<_PastePgnIntent>(
-              onInvoke: (_) {
-                unawaited(pastePgnFromClipboard());
-                return null;
-              },
-            ),
-            _CloseTabIntent: CallbackAction<_CloseTabIntent>(
-              onInvoke: (_) {
-                final id = tabsState.activeId;
-                if (id != null) tabsNotifier.close(id);
-                return null;
-              },
-            ),
-            _NewTabIntent: CallbackAction<_NewTabIntent>(
-              onInvoke: (_) {
-                tabsNotifier.open(
-                  TabKind.board,
-                  reuseExisting: false,
-                  focus: true,
-                );
-                return null;
-              },
-            ),
-            _SwitchLastTabIntent: CallbackAction<_SwitchLastTabIntent>(
-              onInvoke: (_) {
-                tabsNotifier.activateLast();
-                return null;
-              },
-            ),
-            _NextTabIntent: CallbackAction<_NextTabIntent>(
-              onInvoke: (_) {
-                tabsNotifier.activateNext();
-                return null;
-              },
-            ),
-            _PreviousTabIntent: CallbackAction<_PreviousTabIntent>(
-              onInvoke: (_) {
-                tabsNotifier.activatePrevious();
-                return null;
-              },
-            ),
-            _BoardShortcutIntent: CallbackAction<_BoardShortcutIntent>(
-              onInvoke: (intent) {
-                if (tabsState.active?.kind != TabKind.board) return null;
-                foregroundBoardShortcutDispatcher?.invoke(intent.action);
-                return null;
-              },
-            ),
-          },
-          child: Scaffold(
-            backgroundColor: kBackgroundColor,
-            body: RepaintBoundary(
-              key: feedbackScreenshotKey,
-              child: LocalChessDropZone(
-                onChessPathsDropped: (paths) async {
-                // The Library and Board Editor panes wrap their own drop
-                // zones with pane-specific local-file handling.
-                // desktop_drop's nested targets *both* fire, so when
-                // either is foreground we leave handling to the pane.
-                final activePane = ref.read(desktopPaneProvider);
-                if (activePane == DesktopPane.library ||
-                    activePane == DesktopPane.boardEditor) {
-                  return;
-                }
-                final opened = await ref
-                    .read(localChessLibraryProvider.notifier)
-                    .openPaths(paths, sourceLabel: 'Dropped local files');
-                if (!opened) return;
-                ref.read(desktopTabsProvider.notifier).open(TabKind.library);
-              },
-              // The "Update" chip used to float here as a Positioned overlay
-              // at top:8, left:8 — that landed on top of the sidebar's brand
-              // header and looked misaligned. It now lives inside DesktopTopBar
-              // (right after the sidebar-toggle button) so it aligns to the
-              // top bar's baseline like a real toolbar chip.
-              child: Row(
-                children: [
-                  if (!boardFocusActive)
-                    DesktopSidebar(
-                      current: activePane,
-                      expanded: sidebarExpanded,
-                      autoCollapsed: autoCollapsed,
-                      onToggleExpanded: toggleSidebar,
-                      onSelect: handleSidebarSelect,
-                      feedbackScreenshotKey: feedbackScreenshotKey,
-                    ),
-                  Expanded(
-                    child: Column(
-                      children: [
-                        if (!boardFocusActive)
-                          DesktopTabBar(
-                            onOpenUserProfile:
-                                () => openCurrentUserProfileTab(ref),
-                          ),
-                        Expanded(
-                          // One cursor-proximity field over all pane content:
-                          // every MotionCard inside magnifies by the cursor's
-                          // nearness instead of binary hover.
-                          child: CursorProximityScope(
-                            child: PageStorage(
-                              bucket: tabPageStorageBucket,
-                              child: _DesktopTabStack(
-                                tabs: tabsState.tabs,
-                                activeId: tabsState.activeId,
+                  // The "Update" chip used to float here as a Positioned overlay
+                  // at top:8, left:8 — that landed on top of the sidebar's brand
+                  // header and looked misaligned. It now lives inside DesktopTopBar
+                  // (right after the sidebar-toggle button) so it aligns to the
+                  // top bar's baseline like a real toolbar chip.
+                  child: Row(
+                    children: [
+                      if (!boardFocusActive)
+                        DesktopSidebar(
+                          current: activePane,
+                          expanded: sidebarExpanded,
+                          autoCollapsed: autoCollapsed,
+                          onToggleExpanded: toggleSidebar,
+                          onSearch: () => unawaited(openCommandPalette()),
+                          onSelect: handleSidebarSelect,
+                          feedbackScreenshotKey: feedbackScreenshotKey,
+                        ),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            if (!boardFocusActive)
+                              DesktopTabBar(
+                                onOpenUserProfile:
+                                    () => openCurrentUserProfileTab(ref),
+                              ),
+                            Expanded(
+                              // One cursor-proximity field over all pane content:
+                              // every MotionCard inside magnifies by the cursor's
+                              // nearness instead of binary hover.
+                              child: CursorProximityScope(
+                                child: PageStorage(
+                                  bucket: tabPageStorageBucket,
+                                  child: _DesktopTabStack(
+                                    tabs: tabsState.tabs,
+                                    activeId: tabsState.activeId,
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
+                          ],
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
               ),
             ),
           ),
-        ),
-      );
+        );
       },
     );
   }
