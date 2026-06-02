@@ -6,8 +6,10 @@ import 'package:flutter/services.dart';
 /// so external keyboards and tests don't need platform branches.
 bool isNewTabModifierPressed() {
   final pressed = HardwareKeyboard.instance.logicalKeysPressed;
-  return pressed.contains(LogicalKeyboardKey.metaLeft) ||
+  return pressed.contains(LogicalKeyboardKey.meta) ||
+      pressed.contains(LogicalKeyboardKey.metaLeft) ||
       pressed.contains(LogicalKeyboardKey.metaRight) ||
+      pressed.contains(LogicalKeyboardKey.control) ||
       pressed.contains(LogicalKeyboardKey.controlLeft) ||
       pressed.contains(LogicalKeyboardKey.controlRight);
 }

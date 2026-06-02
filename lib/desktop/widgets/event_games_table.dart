@@ -73,6 +73,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
   String? _lastScrollSignature;
   String? _loadingDatabaseTabId;
   String? _databaseLoadErrorTabId;
+  String? _highlightedGameId;
   String? _databaseLoadError;
   String? _loadingContinuationKey;
   String? _continuationLoadErrorKey;
@@ -696,10 +697,11 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
                   _EventRoundSection(
                     group: group,
                     selectedGameId: selectedGameId,
+                    highlightedGameId: _highlightedGameId,
                     selectedRowKey:
-                        selectedGameId == null
+                        (_highlightedGameId ?? selectedGameId) == null
                             ? null
-                            : _rowKeyFor(selectedGameId),
+                            : _rowKeyFor(_highlightedGameId ?? selectedGameId!),
                     liveSummaries: liveSummaries,
                     eventGames:
                         resolved.kind == _GameListKind.event
@@ -709,6 +711,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
                     kind: resolved.kind,
                     activeArgs: effectiveArgs,
                     showBoardColumn: showBoardColumn,
+                    onHighlightGame:
+                        (game) => setState(() => _highlightedGameId = game.id),
                   ),
                 if (resolved.kind == _GameListKind.database &&
                     (isLoadingMoreDatabase ||
@@ -1973,22 +1977,26 @@ class _UpcomingRoundsToggleState extends State<_UpcomingRoundsToggle> {
 /// the outer ListView in [EventGamesTable] owns vertical scrolling). Lets
 /// the framework compute column widths from the actual flag chips, name
 /// strings, and Elo digits per round.
-class _EventRoundTable extends StatefulWidget {
+class _EventRoundTable extends StatelessWidget {
   const _EventRoundTable({
     required this.games,
     required this.selectedGameId,
+    required this.highlightedGameId,
     required this.selectedRowKey,
     required this.liveSummaries,
     required this.showBoardColumn,
+    required this.onHighlightGame,
     required this.onOpenGame,
     required this.onInsertGame,
   });
 
   final List<TournamentGameSummary> games;
   final String? selectedGameId;
+  final String? highlightedGameId;
   final GlobalKey? selectedRowKey;
   final _EventLiveSummaries liveSummaries;
   final bool showBoardColumn;
+  final void Function(TournamentGameSummary game) onHighlightGame;
   final Future<void> Function(
     TournamentGameSummary game, {
     required bool inNewTab,
@@ -1996,20 +2004,14 @@ class _EventRoundTable extends StatefulWidget {
   onOpenGame;
   final Future<void> Function(TournamentGameSummary game) onInsertGame;
 
-  @override
-  State<_EventRoundTable> createState() => _EventRoundTableState();
-}
+  String? get _activeSelectionId => highlightedGameId ?? selectedGameId;
 
-class _EventRoundTableState extends State<_EventRoundTable> {
-  String? _highlightedGameId;
-
-  bool _isSelected(TournamentGameSummary game) =>
-      game.id == widget.selectedGameId || game.id == _highlightedGameId;
+  bool _isSelected(TournamentGameSummary game) => game.id == _activeSelectionId;
 
   @override
   Widget build(BuildContext context) {
     final columns = <AdaptiveColumn<TournamentGameSummary>>[
-      if (widget.showBoardColumn)
+      if (showBoardColumn)
         AdaptiveColumn<TournamentGameSummary>(
           id: 'board',
           label: 'BD',
@@ -2050,7 +2052,7 @@ class _EventRoundTableState extends State<_EventRoundTable> {
         headerAlignment: Alignment.center,
         cellAlignment: Alignment.center,
         cellBuilder: (_, game) {
-          final live = widget.liveSummaries[game.id];
+          final live = liveSummaries[game.id];
           final liveStatus = GameStatus.fromString(live?.status);
           final status =
               liveStatus == GameStatus.unknown ? game.status : liveStatus;
@@ -2077,7 +2079,7 @@ class _EventRoundTableState extends State<_EventRoundTable> {
 
     return AdaptiveGamesTable<TournamentGameSummary>(
       columns: columns,
-      rows: widget.games,
+      rows: games,
       // Round-section tables sit inside the outer rail ListView, so they
       // can't own internal vertical scrolling. `useFixedRowAlignment` flips
       // the body to a single [Table] (no inner ListView) — column widths
@@ -2089,14 +2091,16 @@ class _EventRoundTableState extends State<_EventRoundTable> {
       padding: const EdgeInsets.symmetric(horizontal: 6),
       rowMinHeight: 50,
       rowKeyBuilder:
-          (game) =>
-              game.id == widget.selectedGameId ? widget.selectedRowKey : null,
+          (game) => game.id == _activeSelectionId ? selectedRowKey : null,
       onRowTap: (game, {required bool inNewTab}) {
-        setState(() => _highlightedGameId = game.id);
+        onHighlightGame(game);
+        if (inNewTab) {
+          unawaited(onOpenGame(game, inNewTab: true));
+        }
       },
       onRowDoubleTap: (game, {required bool inNewTab}) {
-        setState(() => _highlightedGameId = game.id);
-        unawaited(widget.onOpenGame(game, inNewTab: inNewTab));
+        onHighlightGame(game);
+        unawaited(onOpenGame(game, inNewTab: inNewTab));
       },
       onRowSecondaryTap: (game, position) async {
         final action = await showDesktopContextMenu<_GameRowAction>(
@@ -2107,7 +2111,7 @@ class _EventRoundTableState extends State<_EventRoundTable> {
               value: _GameRowAction.openInNewTab,
               icon: Icons.open_in_new_rounded,
               label: 'Open game in new tab',
-              shortcut: '⌘·Click',
+              shortcut: 'Ctrl/⌘·Click',
             ),
             DesktopContextMenuItem<_GameRowAction>(
               value: _GameRowAction.insertGame,
@@ -2119,9 +2123,9 @@ class _EventRoundTableState extends State<_EventRoundTable> {
         if (action == null) return;
         switch (action) {
           case _GameRowAction.openInNewTab:
-            await widget.onOpenGame(game, inNewTab: true);
+            await onOpenGame(game, inNewTab: true);
           case _GameRowAction.insertGame:
-            await widget.onInsertGame(game);
+            await onInsertGame(game);
         }
       },
       rowDecorationBuilder: (game, hovered) {
@@ -2159,6 +2163,7 @@ class _EventRoundSection extends ConsumerWidget {
   const _EventRoundSection({
     required this.group,
     required this.selectedGameId,
+    required this.highlightedGameId,
     required this.selectedRowKey,
     required this.liveSummaries,
     required this.eventGames,
@@ -2166,10 +2171,12 @@ class _EventRoundSection extends ConsumerWidget {
     required this.kind,
     required this.activeArgs,
     required this.showBoardColumn,
+    required this.onHighlightGame,
   });
 
   final _EventRoundGroup group;
   final String? selectedGameId;
+  final String? highlightedGameId;
   final GlobalKey? selectedRowKey;
   final _EventLiveSummaries liveSummaries;
   final List<TournamentGameSummary> eventGames;
@@ -2177,6 +2184,7 @@ class _EventRoundSection extends ConsumerWidget {
   final _GameListKind kind;
   final BoardTabGameArgs? activeArgs;
   final bool showBoardColumn;
+  final void Function(TournamentGameSummary game) onHighlightGame;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -2201,9 +2209,11 @@ class _EventRoundSection extends ConsumerWidget {
             _EventRoundTable(
               games: group.games,
               selectedGameId: selectedGameId,
+              highlightedGameId: highlightedGameId,
               selectedRowKey: selectedRowKey,
               liveSummaries: liveSummaries,
               showBoardColumn: showBoardColumn,
+              onHighlightGame: onHighlightGame,
               onOpenGame: (game, {required bool inNewTab}) async {
                 await _openEventGame(
                   ref: ref,
