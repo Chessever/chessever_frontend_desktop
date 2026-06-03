@@ -2459,8 +2459,18 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
     }
 
     bool openSelectedLocal() {
-      if (onOpen == null) return false;
-      onOpen!.call();
+      final current = selectedGame;
+      if (current == null) return false;
+      _openLocalPreviewGame(
+        ref,
+        current,
+        databaseTitle: node.name.isEmpty ? source!.label : node.name,
+        databaseGames: games,
+        initialFen: _initialFenForPreviewPly(
+          selectedPreviewGame,
+          plyIndex.value,
+        ),
+      );
       return true;
     }
 
@@ -2547,6 +2557,16 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                                                   .isShiftPressed
                                               ? rangeSelectLocalIndex(index)
                                               : selectLocalIndex(index),
+                                  onDoubleTap:
+                                      () => _openLocalPreviewGame(
+                                        ref,
+                                        game,
+                                        databaseTitle:
+                                            node.name.isEmpty
+                                                ? source!.label
+                                                : node.name,
+                                        databaseGames: games,
+                                      ),
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: 12,
@@ -2624,7 +2644,20 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                           game: selectedGame,
                           plyIndex: plyIndex.value,
                           onPlyChanged: setSelectedLocalPly,
-                          onOpen: onOpen,
+                          onOpen:
+                              () => _openLocalPreviewGame(
+                                ref,
+                                selectedGame,
+                                databaseTitle:
+                                    node.name.isEmpty
+                                        ? source!.label
+                                        : node.name,
+                                databaseGames: games,
+                                initialFen: _initialFenForPreviewPly(
+                                  selectedPreviewGame,
+                                  plyIndex.value,
+                                ),
+                              ),
                         ),
                       ),
                     ],
@@ -4676,6 +4709,113 @@ String _short(String n) {
   if (t.contains(',')) return t.split(',').first.trim();
   final parts = t.split(RegExp(r'\s+'));
   return parts.length == 1 ? parts.first : parts.last;
+}
+
+void _openLocalPreviewGame(
+  WidgetRef ref,
+  LocalChessGame localGame, {
+  required String databaseTitle,
+  required List<LocalChessGame> databaseGames,
+  String? initialFen,
+  bool focus = true,
+}) {
+  final pgn = localGame.rawPgn.trim();
+  if (pgn.isEmpty) return;
+  openBoardGameTab(
+    ref,
+    _boardArgsForLocalPreviewGame(
+      localGame,
+      databaseTitle: databaseTitle,
+      databaseGames: databaseGames,
+      initialFen: initialFen,
+    ),
+    reuseExisting: false,
+    focus: focus,
+  );
+}
+
+BoardTabGameArgs _boardArgsForLocalPreviewGame(
+  LocalChessGame localGame, {
+  required String databaseTitle,
+  required List<LocalChessGame> databaseGames,
+  String? initialFen,
+}) {
+  final game = localGame.game;
+  final md = game.metadata;
+  String s(String key) => (md[key]?.toString() ?? '').trim();
+  int rating(String key) => int.tryParse(s(key)) ?? 0;
+  int? fideId(String key) {
+    final value = rating(key);
+    return value > 0 ? value : null;
+  }
+
+  return BoardTabGameArgs(
+    pgn: localGame.rawPgn,
+    label: localGame.title,
+    whiteName: s('White'),
+    blackName: s('Black'),
+    whiteFederation:
+        s('WhiteFederation').isNotEmpty ? s('WhiteFederation') : s('WhiteFed'),
+    blackFederation:
+        s('BlackFederation').isNotEmpty ? s('BlackFederation') : s('BlackFed'),
+    whiteTitle: s('WhiteTitle'),
+    blackTitle: s('BlackTitle'),
+    whiteRating: rating('WhiteElo'),
+    blackRating: rating('BlackElo'),
+    whiteFideId: fideId('WhiteFideId'),
+    blackFideId: fideId('BlackFideId'),
+    fenSeed: game.startingFen,
+    initialFen: initialFen,
+    databaseTitle: databaseTitle,
+    databaseGames: [
+      for (final game in databaseGames) _summaryFromLocalPreviewGame(game),
+    ],
+    gameListSelectedId: localGame.id,
+    librarySaveOrigin: BoardTabLibrarySaveOrigin.localPgnFile(
+      sourcePath: localGame.sourcePath,
+      sourceIndex: localGame.indexInFile,
+      sourceFileGameCount: localGame.fileGameCount,
+      title: localGame.title,
+    ),
+  );
+}
+
+TournamentGameSummary _summaryFromLocalPreviewGame(LocalChessGame localGame) {
+  final game = localGame.game;
+  final md = game.metadata;
+  String s(String key) => (md[key]?.toString() ?? '').trim();
+  int rating(String key) => int.tryParse(s(key)) ?? 0;
+  int? fideId(String key) {
+    final value = rating(key);
+    return value > 0 ? value : null;
+  }
+
+  final pgn = localGame.rawPgn.trim();
+  final lastFen =
+      game.mainline.isNotEmpty ? game.mainline.last.fen : game.startingFen;
+  return TournamentGameSummary(
+    id: localGame.id,
+    name: localGame.title,
+    whitePlayer: s('White'),
+    blackPlayer: s('Black'),
+    whiteFederation:
+        s('WhiteFederation').isNotEmpty ? s('WhiteFederation') : s('WhiteFed'),
+    blackFederation:
+        s('BlackFederation').isNotEmpty ? s('BlackFederation') : s('BlackFed'),
+    whiteTitle: s('WhiteTitle'),
+    blackTitle: s('BlackTitle'),
+    whiteRating: rating('WhiteElo'),
+    blackRating: rating('BlackElo'),
+    whiteFideId: fideId('WhiteFideId'),
+    blackFideId: fideId('BlackFideId'),
+    hasPgn: pgn.isNotEmpty,
+    pgn: pgn.isEmpty ? null : pgn,
+    fen: lastFen,
+    roundLabel: s('Round'),
+    status: _statusFromResult(s('Result')),
+    openingName: s('Opening').isNotEmpty ? s('Opening') : s('ECO'),
+    hasStarted: localGame.hasMoves,
+  );
 }
 
 void _openAnalysis(
@@ -8244,7 +8384,7 @@ class _LibraryChessGamePreviewPanel extends StatelessWidget {
 /// Shared board + move readout used by the library table preview panels.
 /// Renders a static chessground at [fen], highlights [lastMoveUci] and shows
 /// the current ply / total beneath the board.
-class _LibraryBoardPreviewPanel extends ConsumerWidget {
+class _LibraryBoardPreviewPanel extends ConsumerStatefulWidget {
   const _LibraryBoardPreviewPanel({
     required this.fen,
     required this.lastMoveUci,
@@ -8272,18 +8412,30 @@ class _LibraryBoardPreviewPanel extends ConsumerWidget {
   final ValueChanged<int> onPlyChanged;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_LibraryBoardPreviewPanel> createState() =>
+      _LibraryBoardPreviewPanelState();
+}
+
+class _LibraryBoardPreviewPanelState
+    extends ConsumerState<_LibraryBoardPreviewPanel> {
+  bool _flipped = false;
+
+  @override
+  Widget build(BuildContext context) {
     final settings =
         ref.watch(boardSettingsProviderNew).valueOrNull ??
         const BoardSettingsNew();
-    final canGoBack = ply > 0;
-    final canGoForward = ply < totalPlies;
-    final playerLine = _previewPlayerLine(game, fallbackTitle: title);
+    final canGoBack = widget.ply > 0;
+    final canGoForward = widget.ply < widget.totalPlies;
+    final playerLine = _previewPlayerLine(
+      widget.game,
+      fallbackTitle: widget.title,
+    );
     return Padding(
       padding: const EdgeInsets.all(14),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onDoubleTap: onOpen,
+        onDoubleTap: widget.onOpen,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -8292,32 +8444,34 @@ class _LibraryBoardPreviewPanel extends ConsumerWidget {
               blackName: playerLine.black,
             ),
             const SizedBox(height: 4),
-            _PreviewGameMeta(game: game, fallbackTitle: title),
+            _PreviewGameMeta(game: widget.game, fallbackTitle: widget.title),
             const SizedBox(height: 10),
             Expanded(
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   final sideBySide = constraints.maxWidth >= 560;
                   final notation = _LibraryNotationPreview(
-                    game: game,
-                    activePly: ply,
-                    isResolvingNotation: isResolvingNotation,
+                    game: widget.game,
+                    activePly: widget.ply,
+                    isResolvingNotation: widget.isResolvingNotation,
                     layoutMode: NotationLayoutMode.inline,
                     useFigurine: settings.useFigurine,
                     pieceAssets: settings.pieceAssets,
                     onLayoutModeChanged: (_) {},
-                    onPlyChanged: onPlyChanged,
-                    onFirst: () => onPlyChanged(0),
-                    onPrevious: () => onPlyChanged(ply - 1),
-                    onNext: () => onPlyChanged(ply + 1),
-                    onLast: () => onPlyChanged(totalPlies),
+                    onPlyChanged: widget.onPlyChanged,
+                    onFirst: () => widget.onPlyChanged(0),
+                    onPrevious: () => widget.onPlyChanged(widget.ply - 1),
+                    onNext: () => widget.onPlyChanged(widget.ply + 1),
+                    onLast: () => widget.onPlyChanged(widget.totalPlies),
                     canGoBack: canGoBack,
                     canGoForward: canGoForward,
                   );
                   final board = _LibraryPreviewBoard(
-                    fen: fen,
-                    lastMoveUci: lastMoveUci,
+                    fen: widget.fen,
+                    lastMoveUci: widget.lastMoveUci,
                     settings: settings,
+                    isFlipped: _flipped,
+                    onFlip: () => setState(() => _flipped = !_flipped),
                   );
                   if (!sideBySide) {
                     final notationHeight =
@@ -8476,34 +8630,73 @@ class _LibraryPreviewBoard extends StatelessWidget {
     required this.fen,
     required this.lastMoveUci,
     required this.settings,
+    required this.isFlipped,
+    required this.onFlip,
   });
 
   final String fen;
   final String? lastMoveUci;
   final BoardSettingsNew settings;
+  final bool isFlipped;
+  final VoidCallback onFlip;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final side = math.min(constraints.maxWidth, constraints.maxHeight);
+        final orientation = isFlipped ? Side.black : Side.white;
         return Center(
           child: SizedBox.square(
             dimension: side,
-            child: cg.Chessboard.fixed(
-              key: ValueKey<String>(
-                'library-preview-board:$fen:${lastMoveUci ?? ''}',
-              ),
-              size: side,
-              fen: fen,
-              orientation: Side.white,
-              settings: cg.ChessboardSettings(
-                enableCoordinates: false,
-                colorScheme: settings.colorScheme,
-                pieceAssets: settings.pieceAssets,
-              ),
-              shapes: const ISet<cg.Shape>.empty(),
-              lastMove: _uciToLastMove(lastMoveUci ?? ''),
+            child: Stack(
+              children: [
+                cg.Chessboard.fixed(
+                  key: ValueKey<String>(
+                    'library-preview-board:$fen:${lastMoveUci ?? ''}:$orientation',
+                  ),
+                  size: side,
+                  fen: fen,
+                  orientation: orientation,
+                  settings: cg.ChessboardSettings(
+                    enableCoordinates: false,
+                    colorScheme: settings.colorScheme,
+                    pieceAssets: settings.pieceAssets,
+                  ),
+                  shapes: const ISet<cg.Shape>.empty(),
+                  lastMove: _uciToLastMove(lastMoveUci ?? ''),
+                ),
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: DesktopTooltip(
+                    message: isFlipped ? 'Show White side' : 'Show Black side',
+                    child: ClickCursor(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: onFlip,
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: kBlack2Color.withValues(alpha: 0.86),
+                            borderRadius: BorderRadius.circular(7),
+                            border: Border.all(
+                              color: kWhiteColor.withValues(alpha: 0.18),
+                            ),
+                          ),
+                          child: Icon(
+                            Icons.flip_camera_android_rounded,
+                            size: 15,
+                            color: isFlipped ? kPrimaryColor : kWhiteColor70,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         );
