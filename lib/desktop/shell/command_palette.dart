@@ -122,9 +122,12 @@ class CommandPalette extends HookConsumerWidget {
     // and short-query bail-out, but we still gate on length here so the empty
     // state doesn't flicker between "no query" and "0 results".
     final hasRemoteQuery = debounced.value.trim().length >= 2;
-    final remoteSearch = hasRemoteQuery
-        ? ref.watch(supabaseCombinedSearchProvider(debounced.value))
-        : AsyncValue<EnhancedSearchResult>.data(EnhancedSearchResult.empty());
+    final remoteSearch =
+        hasRemoteQuery
+            ? ref.watch(supabaseCombinedSearchProvider(debounced.value))
+            : AsyncValue<EnhancedSearchResult>.data(
+              EnhancedSearchResult.empty(),
+            );
 
     final remoteResult = remoteSearch.maybeWhen(
       data: (data) => data,
@@ -138,18 +141,25 @@ class CommandPalette extends HookConsumerWidget {
         query.value.trim().length >= 2 &&
         debounced.value.trim() != query.value.trim();
 
-    // Build a flat ordered list of selectable rows so arrow-key navigation
-    // can walk across sections without caring about layout.
+    // Build a flat ordered list of selectable rows so keyboard navigation can
+    // walk across adaptive sections without caring about the current layout.
+    // Display order is intentionally events first, then players, then other
+    // command/jump rows. The initial highlight is chosen separately by score.
     final flat = <_PaletteRowData>[];
-    for (final p in remoteResult.playerResults.take(10)) {
-      flat.add(_PaletteRowData.player(p));
-    }
     for (final t in remoteResult.tournamentResults.take(10)) {
       flat.add(_PaletteRowData.tournament(t));
+    }
+    for (final p in remoteResult.playerResults.take(10)) {
+      flat.add(_PaletteRowData.player(p));
     }
     for (final entry in filteredPanes) {
       flat.add(_PaletteRowData.entry(entry));
     }
+
+    final rowKeys = useMemoized(
+      () => List<GlobalKey>.generate(flat.length, (_) => GlobalKey()),
+      [flat.length, debounced.value, filteredPanes.length],
+    );
 
     void invokeRow(_PaletteRowData row) {
       ref.read(desktopGlobalSearchQueryProvider.notifier).state = null;
@@ -213,12 +223,17 @@ class CommandPalette extends HookConsumerWidget {
           direction: -1,
         );
       } else if (event.logicalKey == LogicalKeyboardKey.pageDown) {
-        highlighted.value = ((highlighted.value ?? -1) + kDesktopListPageStep)
-            .clamp(0, flat.length - 1);
+        highlighted.value = pageCommandPaletteHighlight(
+          current: highlighted.value,
+          itemCount: flat.length,
+          direction: 1,
+        );
       } else if (event.logicalKey == LogicalKeyboardKey.pageUp) {
-        highlighted.value =
-            ((highlighted.value ?? flat.length) - kDesktopListPageStep)
-                .clamp(0, flat.length - 1);
+        highlighted.value = pageCommandPaletteHighlight(
+          current: highlighted.value,
+          itemCount: flat.length,
+          direction: -1,
+        );
       } else if (event.logicalKey == LogicalKeyboardKey.home) {
         highlighted.value = 0;
       } else if (event.logicalKey == LogicalKeyboardKey.end) {
@@ -236,19 +251,41 @@ class CommandPalette extends HookConsumerWidget {
       }
     }
 
-    // Reset highlight when the row count shrinks below the cursor.
+    // Keep the cursor valid, and when fresh search results arrive, start on
+    // the strongest match overall instead of forcing the user to arrow first.
     useEffect(() {
       final selected = highlighted.value;
-      if (selected != null && selected >= flat.length) {
-        highlighted.value = null;
+      if (flat.isEmpty) {
+        if (selected != null) highlighted.value = null;
+        return null;
+      }
+      if (selected == null || selected >= flat.length) {
+        highlighted.value = _bestCommandPaletteInitialHighlight(flat);
       }
       return null;
-    }, [flat.length]);
+    }, [flat.length, debounced.value]);
+
+    useEffect(() {
+      final selected = highlighted.value;
+      if (selected == null || selected < 0 || selected >= rowKeys.length) {
+        return null;
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final context = rowKeys[selected].currentContext;
+        if (context == null) return;
+        Scrollable.ensureVisible(
+          context,
+          duration: const Duration(milliseconds: 110),
+          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+        );
+      });
+      return null;
+    }, [highlighted.value, rowKeys.length]);
 
     return Align(
       alignment: const Alignment(0, -0.4),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 720, maxHeight: 560),
+        constraints: const BoxConstraints(maxWidth: 920, maxHeight: 560),
         child: Material(
           color: Colors.transparent,
           child: KeyboardListener(
@@ -286,8 +323,9 @@ class CommandPalette extends HookConsumerWidget {
                       hasRemoteQuery: hasRemoteQuery,
                       highlighted: highlighted.value,
                       flat: flat,
-                      onTap: invokeRow,
-                      onHover: (i) => highlighted.value = i,
+                      rowKeys: rowKeys,
+                      onSelect: (i) => highlighted.value = i,
+                      onOpen: invokeRow,
                     ),
                   ),
                   const Divider(height: 1, color: kDividerColor),
@@ -309,8 +347,9 @@ class CommandPalette extends HookConsumerWidget {
     required bool hasRemoteQuery,
     int? highlighted,
     required List<_PaletteRowData> flat,
-    required ValueChanged<_PaletteRowData> onTap,
-    required ValueChanged<int> onHover,
+    required List<GlobalKey> rowKeys,
+    required ValueChanged<int> onSelect,
+    required ValueChanged<_PaletteRowData> onOpen,
   }) {
     if (flat.isEmpty) {
       if (isLoading) return const _LoadingState();
@@ -323,62 +362,116 @@ class CommandPalette extends HookConsumerWidget {
     final hasPlayers = remote.playerResults.isNotEmpty;
     final hasTournaments = remote.tournamentResults.isNotEmpty;
     final hasPanes = panes.isNotEmpty;
+    final hasSearchResults = hasPlayers || hasTournaments;
 
-    return ListView(
-      shrinkWrap: true,
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      children: [
-        if (hasPlayers) ...[
-          _SectionHeader(
-            label: 'Players',
-            count: remote.playerResults.length,
-            icon: Icons.person_rounded,
-          ),
-          for (var i = 0; i < remote.playerResults.take(10).length; i++)
-            _PlayerRow(
-              player: remote.playerResults[i],
-              selected: highlighted == _indexOf(flat, _RowKind.player, i),
-              onTap: () => onTap(flat[_indexOf(flat, _RowKind.player, i)]),
-              onHover: () => onHover(_indexOf(flat, _RowKind.player, i)),
-              query: query,
-            ),
-        ],
-        if (hasTournaments) ...[
-          _SectionHeader(
-            label: 'Tournaments',
-            count: remote.tournamentResults.length,
-            icon: Icons.emoji_events_rounded,
-          ),
-          for (var i = 0; i < remote.tournamentResults.take(10).length; i++)
-            _TournamentRow(
-              result: remote.tournamentResults[i],
-              selected: highlighted == _indexOf(flat, _RowKind.tournament, i),
-              onTap: () => onTap(flat[_indexOf(flat, _RowKind.tournament, i)]),
-              onHover: () => onHover(_indexOf(flat, _RowKind.tournament, i)),
-              query: query,
-            ),
-        ],
-        if (isLoading)
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: _InlineLoading(),
-          ),
-        if (hasPanes) ...[
-          _SectionHeader(
-            label: hasPlayers || hasTournaments ? 'Jump to' : 'Navigate',
-            count: panes.length,
-            icon: Icons.arrow_forward_rounded,
-          ),
-          for (var i = 0; i < panes.length; i++)
-            _PaletteRow(
-              entry: panes[i],
-              selected: highlighted == _indexOf(flat, _RowKind.entry, i),
-              onTap: () => onTap(flat[_indexOf(flat, _RowKind.entry, i)]),
-              onHover: () => onHover(_indexOf(flat, _RowKind.entry, i)),
-            ),
-        ],
-      ],
+    final sections = <_PaletteSection>[];
+    if (hasTournaments) {
+      sections.add(
+        _PaletteSection(
+          label: 'Events',
+          count: remote.tournamentResults.length,
+          icon: Icons.emoji_events_rounded,
+          children: [
+            for (var i = 0; i < remote.tournamentResults.take(10).length; i++)
+              _keyedRow(
+                rowKeys,
+                _indexOf(flat, _RowKind.tournament, i),
+                _TournamentRow(
+                  result: remote.tournamentResults[i],
+                  selected:
+                      highlighted == _indexOf(flat, _RowKind.tournament, i),
+                  onSelect:
+                      () => onSelect(_indexOf(flat, _RowKind.tournament, i)),
+                  onOpen:
+                      () =>
+                          onOpen(flat[_indexOf(flat, _RowKind.tournament, i)]),
+                  query: query,
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+    if (hasPlayers) {
+      sections.add(
+        _PaletteSection(
+          label: 'Players',
+          count: remote.playerResults.length,
+          icon: Icons.person_rounded,
+          children: [
+            for (var i = 0; i < remote.playerResults.take(10).length; i++)
+              _keyedRow(
+                rowKeys,
+                _indexOf(flat, _RowKind.player, i),
+                _PlayerRow(
+                  player: remote.playerResults[i],
+                  selected: highlighted == _indexOf(flat, _RowKind.player, i),
+                  onSelect: () => onSelect(_indexOf(flat, _RowKind.player, i)),
+                  onOpen:
+                      () => onOpen(flat[_indexOf(flat, _RowKind.player, i)]),
+                  query: query,
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+    if (hasPanes) {
+      sections.add(
+        _PaletteSection(
+          label: hasSearchResults ? 'Others' : 'Navigate',
+          count: panes.length,
+          icon: Icons.arrow_forward_rounded,
+          children: [
+            for (var i = 0; i < panes.length; i++)
+              _keyedRow(
+                rowKeys,
+                _indexOf(flat, _RowKind.entry, i),
+                _PaletteRow(
+                  entry: panes[i],
+                  selected: highlighted == _indexOf(flat, _RowKind.entry, i),
+                  onSelect: () => onSelect(_indexOf(flat, _RowKind.entry, i)),
+                  onOpen: () => onOpen(flat[_indexOf(flat, _RowKind.entry, i)]),
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final useColumns = sections.length > 1 && constraints.maxWidth >= 640;
+        final content =
+            useColumns
+                ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (var i = 0; i < sections.length; i++) ...[
+                      if (i > 0)
+                        const VerticalDivider(width: 1, color: kDividerColor),
+                      Expanded(
+                        child: _PaletteSectionColumn(section: sections[i]),
+                      ),
+                    ],
+                  ],
+                )
+                : _PaletteSectionColumn(section: sections.first);
+
+        return Stack(
+          children: [
+            Positioned.fill(child: content),
+            if (isLoading)
+              const Positioned(right: 16, bottom: 10, child: _InlineLoading()),
+          ],
+        );
+      },
     );
+  }
+
+  Widget _keyedRow(List<GlobalKey> rowKeys, int index, Widget child) {
+    if (index < 0 || index >= rowKeys.length) return child;
+    return KeyedSubtree(key: rowKeys[index], child: child);
   }
 
   /// Index of the i-th row of [kind] within the flat list. Linear scan,
@@ -392,6 +485,49 @@ class CommandPalette extends HookConsumerWidget {
       }
     }
     return 0;
+  }
+}
+
+class _PaletteSection {
+  const _PaletteSection({
+    required this.label,
+    required this.count,
+    required this.icon,
+    required this.children,
+  });
+
+  final String label;
+  final int count;
+  final IconData icon;
+  final List<Widget> children;
+}
+
+class _PaletteSectionColumn extends StatelessWidget {
+  const _PaletteSectionColumn({required this.section});
+
+  final _PaletteSection section;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionHeader(
+          label: section.label,
+          count: section.count,
+          icon: section.icon,
+        ),
+        Expanded(
+          child: Scrollbar(
+            thumbVisibility: false,
+            child: ListView(
+              padding: const EdgeInsets.only(bottom: 6),
+              children: section.children,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -495,15 +631,15 @@ class _PlayerRow extends StatelessWidget {
   const _PlayerRow({
     required this.player,
     required this.selected,
-    required this.onTap,
-    required this.onHover,
+    required this.onSelect,
+    required this.onOpen,
     required this.query,
   });
 
   final SearchResult player;
   final bool selected;
-  final VoidCallback onTap;
-  final VoidCallback onHover;
+  final VoidCallback onSelect;
+  final VoidCallback onOpen;
   final String query;
 
   @override
@@ -511,90 +647,89 @@ class _PlayerRow extends StatelessWidget {
     final p = player.player;
     if (p == null) return const SizedBox.shrink();
     return ClickCursor(
-      child: MouseRegion(
-        onEnter: (_) => onHover(),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onTap,
-          child: SingleMotionBuilder(
-            value: selected ? 1.01 : 1.0,
-            motion: DesktopMotion.hover,
-            builder: (context, scale, child) =>
-                Transform.scale(scale: scale, child: child),
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: selected ? kPrimaryColor.withValues(alpha: 0.18) : null,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Row(
-                children: [
-                  _AvatarBadge(text: p.title ?? _initial(p.name)),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (p.fed != null && p.fed!.isNotEmpty) ...[
-                              FederationFlag(
-                                federation: p.fed,
-                                width: 16,
-                                height: 11,
-                                borderRadius: BorderRadius.circular(2),
-                              ),
-                              const SizedBox(width: 8),
-                            ],
-                            Flexible(
-                              child: Text(
-                                p.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: selected ? kWhiteColor : kWhiteColor70,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onSelect,
+        onDoubleTap: onOpen,
+        child: SingleMotionBuilder(
+          value: selected ? 1.01 : 1.0,
+          motion: DesktopMotion.hover,
+          builder:
+              (context, scale, child) =>
+                  Transform.scale(scale: scale, child: child),
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: selected ? kPrimaryColor.withValues(alpha: 0.18) : null,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              children: [
+                _AvatarBadge(text: p.title ?? _initial(p.name)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (p.fed != null && p.fed!.isNotEmpty) ...[
+                            FederationFlag(
+                              federation: p.fed,
+                              width: 16,
+                              height: 11,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          Flexible(
+                            child: Text(
+                              p.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: selected ? kWhiteColor : kWhiteColor70,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          _playerSubtitle(p),
-                          style: const TextStyle(
-                            color: kLightGreyColor,
-                            fontSize: 11,
                           ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _playerSubtitle(p),
+                        style: const TextStyle(
+                          color: kLightGreyColor,
+                          fontSize: 11,
                         ),
-                      ],
+                      ),
+                    ],
+                  ),
+                ),
+                if (p.rating != null && p.rating! > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: kBlack3Color,
+                      borderRadius: BorderRadius.circular(3),
+                      border: Border.all(color: kDividerColor),
+                    ),
+                    child: Text(
+                      p.rating.toString(),
+                      style: const TextStyle(
+                        color: kWhiteColor70,
+                        fontSize: 10,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
                     ),
                   ),
-                  if (p.rating != null && p.rating! > 0)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: kBlack3Color,
-                        borderRadius: BorderRadius.circular(3),
-                        border: Border.all(color: kDividerColor),
-                      ),
-                      child: Text(
-                        p.rating.toString(),
-                        style: const TextStyle(
-                          color: kWhiteColor70,
-                          fontSize: 10,
-                          fontFeatures: [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+              ],
             ),
           ),
         ),
@@ -622,91 +757,90 @@ class _TournamentRow extends StatelessWidget {
   const _TournamentRow({
     required this.result,
     required this.selected,
-    required this.onTap,
-    required this.onHover,
+    required this.onSelect,
+    required this.onOpen,
     required this.query,
   });
 
   final SearchResult result;
   final bool selected;
-  final VoidCallback onTap;
-  final VoidCallback onHover;
+  final VoidCallback onSelect;
+  final VoidCallback onOpen;
   final String query;
 
   @override
   Widget build(BuildContext context) {
     final t = result.tournament;
     return ClickCursor(
-      child: MouseRegion(
-        onEnter: (_) => onHover(),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onTap,
-          child: SingleMotionBuilder(
-            value: selected ? 1.01 : 1.0,
-            motion: DesktopMotion.hover,
-            builder: (context, scale, child) =>
-                Transform.scale(scale: scale, child: child),
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: selected ? kPrimaryColor.withValues(alpha: 0.18) : null,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Row(
-                children: [
-                  _StatusDot(category: t.tourEventCategory),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          t.title,
-                          style: TextStyle(
-                            color: selected ? kWhiteColor : kWhiteColor70,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onSelect,
+        onDoubleTap: onOpen,
+        child: SingleMotionBuilder(
+          value: selected ? 1.01 : 1.0,
+          motion: DesktopMotion.hover,
+          builder:
+              (context, scale, child) =>
+                  Transform.scale(scale: scale, child: child),
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: selected ? kPrimaryColor.withValues(alpha: 0.18) : null,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              children: [
+                _StatusDot(category: t.tourEventCategory),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        t.title,
+                        style: TextStyle(
+                          color: selected ? kWhiteColor : kWhiteColor70,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          _subtitle(t),
-                          style: const TextStyle(
-                            color: kLightGreyColor,
-                            fontSize: 11,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _subtitle(t),
+                        style: const TextStyle(
+                          color: kLightGreyColor,
+                          fontSize: 11,
                         ),
-                      ],
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                if (t.maxAvgElo > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: kBlack3Color,
+                      borderRadius: BorderRadius.circular(3),
+                      border: Border.all(color: kDividerColor),
+                    ),
+                    child: Text(
+                      'avg ${t.maxAvgElo}',
+                      style: const TextStyle(
+                        color: kWhiteColor70,
+                        fontSize: 10,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
                     ),
                   ),
-                  if (t.maxAvgElo > 0)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: kBlack3Color,
-                        borderRadius: BorderRadius.circular(3),
-                        border: Border.all(color: kDividerColor),
-                      ),
-                      child: Text(
-                        'avg ${t.maxAvgElo}',
-                        style: const TextStyle(
-                          color: kWhiteColor70,
-                          fontSize: 10,
-                          fontFeatures: [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+              ],
             ),
           ),
         ),
@@ -743,9 +877,12 @@ class _StatusDot extends StatelessWidget {
       decoration: BoxDecoration(
         color: color,
         shape: BoxShape.circle,
-        boxShadow: category == TourEventCategory.live
-            ? [BoxShadow(color: color.withValues(alpha: 0.6), blurRadius: 6)]
-            : null,
+        boxShadow:
+            category == TourEventCategory.live
+                ? [
+                  BoxShadow(color: color.withValues(alpha: 0.6), blurRadius: 6),
+                ]
+                : null,
       ),
     );
   }
@@ -880,88 +1017,87 @@ class _PaletteRow extends StatelessWidget {
   const _PaletteRow({
     required this.entry,
     required this.selected,
-    required this.onTap,
-    required this.onHover,
+    required this.onSelect,
+    required this.onOpen,
   });
 
   final _PaletteEntry entry;
   final bool selected;
-  final VoidCallback onTap;
-  final VoidCallback onHover;
+  final VoidCallback onSelect;
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
     return ClickCursor(
-      child: MouseRegion(
-        onEnter: (_) => onHover(),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onTap,
-          child: SingleMotionBuilder(
-            value: selected ? 1.01 : 1.0,
-            motion: DesktopMotion.hover,
-            builder: (context, scale, child) =>
-                Transform.scale(scale: scale, child: child),
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: selected ? kPrimaryColor.withValues(alpha: 0.18) : null,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    entry.icon,
-                    size: 18,
-                    color: selected ? kPrimaryColor : kWhiteColor70,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onSelect,
+        onDoubleTap: onOpen,
+        child: SingleMotionBuilder(
+          value: selected ? 1.01 : 1.0,
+          motion: DesktopMotion.hover,
+          builder:
+              (context, scale, child) =>
+                  Transform.scale(scale: scale, child: child),
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: selected ? kPrimaryColor.withValues(alpha: 0.18) : null,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  entry.icon,
+                  size: 18,
+                  color: selected ? kPrimaryColor : kWhiteColor70,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        entry.title,
+                        style: TextStyle(
+                          color: selected ? kWhiteColor : kWhiteColor70,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (entry.subtitle != null)
                         Text(
-                          entry.title,
-                          style: TextStyle(
-                            color: selected ? kWhiteColor : kWhiteColor70,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
+                          entry.subtitle!,
+                          style: const TextStyle(
+                            color: kLightGreyColor,
+                            fontSize: 11,
                           ),
                         ),
-                        if (entry.subtitle != null)
-                          Text(
-                            entry.subtitle!,
-                            style: const TextStyle(
-                              color: kLightGreyColor,
-                              fontSize: 11,
-                            ),
-                          ),
-                      ],
+                    ],
+                  ),
+                ),
+                if (entry.shortcut != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: kBlack3Color,
+                      borderRadius: BorderRadius.circular(3),
+                      border: Border.all(color: kDividerColor),
+                    ),
+                    child: Text(
+                      entry.shortcut!,
+                      style: const TextStyle(
+                        color: kWhiteColor70,
+                        fontSize: 10,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
                     ),
                   ),
-                  if (entry.shortcut != null)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: kBlack3Color,
-                        borderRadius: BorderRadius.circular(3),
-                        border: Border.all(color: kDividerColor),
-                      ),
-                      child: Text(
-                        entry.shortcut!,
-                        style: const TextStyle(
-                          color: kWhiteColor70,
-                          fontSize: 10,
-                          fontFeatures: [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+              ],
             ),
           ),
         ),
@@ -1189,6 +1325,35 @@ int? nextCommandPaletteHighlight({
   if (itemCount <= 0) return null;
   if (current == null) return direction >= 0 ? 0 : itemCount - 1;
   return (current + direction + itemCount) % itemCount;
+}
+
+@visibleForTesting
+int? pageCommandPaletteHighlight({
+  required int? current,
+  required int itemCount,
+  required int direction,
+}) {
+  if (itemCount <= 0) return null;
+  final base = current ?? (direction >= 0 ? -1 : itemCount);
+  return (base + (kDesktopListPageStep * direction)).clamp(0, itemCount - 1);
+}
+
+int? _bestCommandPaletteInitialHighlight(List<_PaletteRowData> rows) {
+  if (rows.isEmpty) return null;
+  var bestIndex = 0;
+  var bestScore = double.negativeInfinity;
+  for (var i = 0; i < rows.length; i++) {
+    final score = switch (rows[i].kind) {
+      _RowKind.tournament => rows[i].tournament?.score ?? 0,
+      _RowKind.player => rows[i].player?.score ?? 0,
+      _RowKind.entry => -1,
+    };
+    if (score > bestScore) {
+      bestScore = score.toDouble();
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
 }
 
 @visibleForTesting
