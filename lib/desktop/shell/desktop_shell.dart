@@ -24,6 +24,7 @@ import 'package:chessever/desktop/panes/settings_pane.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart';
 import 'package:chessever/desktop/panes/tournaments_pane.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
+import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/services/pgn_file_picker.dart';
 import 'package:chessever/desktop/shell/command_palette.dart';
 import 'package:chessever/desktop/shell/desktop_pane.dart';
@@ -231,18 +232,6 @@ class DesktopShell extends HookConsumerWidget {
           }
         }
 
-        Future<void> openLocalChessFolder() async {
-          final opened =
-              await ref.read(localChessLibraryProvider.notifier).pickFolder();
-          if (opened) openPane(DesktopPane.library);
-        }
-
-        Future<void> openLocalChessFiles() async {
-          final opened =
-              await ref.read(localChessLibraryProvider.notifier).pickFiles();
-          if (opened) openPane(DesktopPane.library);
-        }
-
         Future<void> openCommandPalette() {
           return CommandPalette.show(
             context,
@@ -255,10 +244,9 @@ class DesktopShell extends HookConsumerWidget {
                   openPane(DesktopPane.settings);
                 case CommandAction.importPgn:
                   await PgnFilePicker(ref).pickAndLoad();
-                case CommandAction.openLocalChessFolder:
-                  await openLocalChessFolder();
                 case CommandAction.openLocalChessFiles:
-                  await openLocalChessFiles();
+                  final staged = await pickAndStageLibraryPgnImport(ref);
+                  if (staged) openPane(DesktopPane.library);
                 case CommandAction.flipBoard:
                   // Owned by the Board pane via the F shortcut.
                   break;

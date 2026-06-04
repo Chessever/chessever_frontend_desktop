@@ -51,7 +51,6 @@ import 'package:chessever/desktop/widgets/library/library_folder_dialogs.dart';
 import 'package:chessever/desktop/widgets/library/library_game_context_menu.dart';
 import 'package:chessever/desktop/widgets/library/library_game_dialogs.dart';
 import 'package:chessever/desktop/widgets/library/library_database_drag_payload.dart';
-import 'package:chessever/desktop/widgets/library/local_chess_files_rail.dart';
 import 'package:chessever/desktop/widgets/library/local_chess_files_view.dart';
 import 'package:chessever/desktop/widgets/library/library_pgn_preview_panel.dart';
 import 'package:chessever/desktop/widgets/library/twic_filter_dialog.dart';
@@ -130,7 +129,7 @@ class LibraryPane extends HookConsumerWidget {
     final localFullViewPath = useState<String?>(null);
     // Default Library landing is still the user's database home, with TWIC
     // selected for the bottom reference-style preview until they pick another
-    // cloud or local database tile.
+    // cloud database tile.
     useEffect(() {
       selectedFolderId.value ??= kTwicBookId;
       return null;
@@ -189,14 +188,6 @@ class LibraryPane extends HookConsumerWidget {
           isSubscribed: folder.isSubscribed,
         ),
       );
-    }
-
-    Future<void> openLocalFolder() async {
-      final opened =
-          await ref.read(localChessLibraryProvider.notifier).pickFolder();
-      if (!opened) return;
-      final path = ref.read(localChessLibraryProvider).selectedPath;
-      if (path != null) activateLocalPath(path);
     }
 
     Future<void> openLocalFiles() async {
@@ -316,7 +307,6 @@ class LibraryPane extends HookConsumerWidget {
                       }
                     },
                     onOpen: (folder) => openCloudDatabase(folder),
-                    onSelectLocal: activateLocalPath,
                     onAction:
                         (folder, action) => _onFolderAction(
                           context: context,
@@ -360,7 +350,6 @@ class LibraryPane extends HookConsumerWidget {
                             onOpenFolder: (folder) => openCloudDatabase(folder),
                             onSelectLocalPath: activateLocalPath,
                             onOpenLocalPath: openLocalFullView,
-                            onOpenLocalFolder: openLocalFolder,
                             onOpenLocalFiles: openLocalFiles,
                             onDropDatabase: addDatabaseDragShortcut,
                             onNewFolder:
@@ -450,7 +439,6 @@ class _FolderRail extends StatelessWidget {
     required this.selectedLocalPath,
     required this.onSelect,
     required this.onOpen,
-    required this.onSelectLocal,
     required this.onAction,
     required this.onCreateRoot,
     required this.onCollapse,
@@ -464,7 +452,6 @@ class _FolderRail extends StatelessWidget {
   final String? selectedLocalPath;
   final ValueChanged<String> onSelect;
   final ValueChanged<LibraryFolder> onOpen;
-  final ValueChanged<String> onSelectLocal;
   final void Function(LibraryFolder folder, LibraryFolderAction action)
   onAction;
   final VoidCallback onCreateRoot;
@@ -493,12 +480,7 @@ class _FolderRail extends StatelessWidget {
       physics: const DesktopScrollPhysics(),
       padding: const EdgeInsets.symmetric(vertical: 12),
       children: [
-        LocalChessFilesRailSection(
-          selectedPath: selectedLocalPath,
-          onSelect: onSelectLocal,
-        ),
         if (ownedFolders.isNotEmpty) ...[
-          const SizedBox(height: 14),
           _RailGroupHeader(label: 'My folders', count: ownedFolders.length),
           for (final folder in ownedFolders)
             _FolderRow(
@@ -1143,7 +1125,6 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
     required this.onOpenFolder,
     required this.onSelectLocalPath,
     required this.onOpenLocalPath,
-    required this.onOpenLocalFolder,
     required this.onOpenLocalFiles,
     required this.onDropDatabase,
     required this.onNewFolder,
@@ -1156,7 +1137,6 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
   final ValueChanged<LibraryFolder> onOpenFolder;
   final ValueChanged<String> onSelectLocalPath;
   final ValueChanged<String> onOpenLocalPath;
-  final VoidCallback onOpenLocalFolder;
   final VoidCallback onOpenLocalFiles;
   final Future<void> Function(LibraryDatabaseDragPayload payload)
   onDropDatabase;
@@ -1180,7 +1160,6 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
       children: [
         _MyDatabasesHeader(
           onNewFolder: onNewFolder,
-          onOpenLocalFolder: onOpenLocalFolder,
           onOpenLocalFiles: onOpenLocalFiles,
         ),
         const FDivider(),
@@ -1237,12 +1216,10 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
 class _MyDatabasesHeader extends StatelessWidget {
   const _MyDatabasesHeader({
     required this.onNewFolder,
-    required this.onOpenLocalFolder,
     required this.onOpenLocalFiles,
   });
 
   final VoidCallback onNewFolder;
-  final VoidCallback onOpenLocalFolder;
   final VoidCallback onOpenLocalFiles;
 
   @override
@@ -1285,11 +1262,7 @@ class _MyDatabasesHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          LibraryActionsToolbar(
-            onNewFolder: onNewFolder,
-            onOpenLocalFolder: onOpenLocalFolder,
-            onOpenLocalFiles: onOpenLocalFiles,
-          ),
+          LibraryActionsToolbar(onNewFolder: onNewFolder),
         ],
       ),
     );
@@ -2718,7 +2691,6 @@ class _FolderContentView extends HookConsumerWidget {
   const _FolderContentView({
     required this.folderId,
     required this.folders,
-    required this.onOpenLocalFolder,
     required this.onOpenLocalFiles,
     required this.onNewFolder,
     required this.onOpenEditor,
@@ -2727,7 +2699,6 @@ class _FolderContentView extends HookConsumerWidget {
 
   final String? folderId;
   final List<LibraryFolder> folders;
-  final VoidCallback onOpenLocalFolder;
   final VoidCallback onOpenLocalFiles;
   final VoidCallback onNewFolder;
   final VoidCallback onOpenEditor;
@@ -2751,7 +2722,6 @@ class _FolderContentView extends HookConsumerWidget {
     if (folderId == kTwicBookId) {
       return _TwicContentView(
         onNewFolder: onNewFolder,
-        onOpenLocalFolder: onOpenLocalFolder,
         onOpenLocalFiles: onOpenLocalFiles,
         onOpenEditor: onOpenEditor,
         onOpenExplorer: onOpenExplorer,
@@ -2889,7 +2859,6 @@ class _FolderContentView extends HookConsumerWidget {
                   allFolders: folders,
                 ),
             onNewFolder: onNewFolder,
-            onOpenLocalFolder: onOpenLocalFolder,
             onOpenLocalFiles: onOpenLocalFiles,
             onOpenEditor: onOpenEditor,
             onOpenExplorer: onOpenExplorer,
@@ -3066,7 +3035,6 @@ class _FolderHeader extends StatelessWidget {
     required this.hasGames,
     required this.onAction,
     required this.onNewFolder,
-    required this.onOpenLocalFolder,
     required this.onOpenLocalFiles,
     required this.onOpenEditor,
     required this.onOpenExplorer,
@@ -3083,7 +3051,6 @@ class _FolderHeader extends StatelessWidget {
   final bool hasGames;
   final ValueChanged<LibraryFolderAction>? onAction;
   final VoidCallback onNewFolder;
-  final VoidCallback onOpenLocalFolder;
   final VoidCallback onOpenLocalFiles;
   final VoidCallback onOpenEditor;
   final VoidCallback onOpenExplorer;
@@ -3180,8 +3147,6 @@ class _FolderHeader extends StatelessWidget {
                     ? null
                     : folder.id,
             onNewFolder: onNewFolder,
-            onOpenLocalFolder: onOpenLocalFolder,
-            onOpenLocalFiles: onOpenLocalFiles,
           ),
           if (showOverflow && onAction != null) ...[
             const SizedBox(width: 8),
@@ -5341,14 +5306,12 @@ class _ExportProgressDialogState extends State<_ExportProgressDialog> {
 class _TwicContentView extends HookConsumerWidget {
   const _TwicContentView({
     required this.onNewFolder,
-    required this.onOpenLocalFolder,
     required this.onOpenLocalFiles,
     required this.onOpenEditor,
     required this.onOpenExplorer,
   });
 
   final VoidCallback onNewFolder;
-  final VoidCallback onOpenLocalFolder;
   final VoidCallback onOpenLocalFiles;
   final VoidCallback onOpenEditor;
   final VoidCallback onOpenExplorer;
@@ -5474,7 +5437,6 @@ class _TwicContentView extends HookConsumerWidget {
             hasGames: paginationState.games.isNotEmpty,
             onAction: null,
             onNewFolder: onNewFolder,
-            onOpenLocalFolder: onOpenLocalFolder,
             onOpenLocalFiles: onOpenLocalFiles,
             onOpenEditor: onOpenEditor,
             onOpenExplorer: onOpenExplorer,
