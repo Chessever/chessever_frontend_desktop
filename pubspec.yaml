@@ -229,7 +229,11 @@ flutter:
     # them (mobile uses package:stockfish on its own runtime branch).
     - assets/engine/macos/stockfish
     - assets/engine/windows/stockfish.exe
-    - assets/engine/linux/stockfish
+    # NOTE: assets/engine/linux/stockfish is intentionally NOT listed here.
+    # pubspec assets are shared across platforms, so listing the 78 MB Linux
+    # engine would bundle it into the macOS/Windows apps too. The Linux build
+    # script (scripts/codemagic_build_linux_release.sh) injects this line at
+    # build time so only the Linux bundle carries it.
     - assets/launch.webp
     - assets/app_icon.png
     # Keep local secrets out of desktop release bundles.

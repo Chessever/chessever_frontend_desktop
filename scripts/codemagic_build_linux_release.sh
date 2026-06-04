@@ -18,6 +18,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+# The Linux Stockfish engine asset is intentionally NOT listed in pubspec.yaml
+# (assets are shared across platforms — listing it would bundle the 78 MB
+# binary into the macOS/Windows apps too). Inject it here so only the Linux
+# build carries it. Idempotent; the binary is committed at the path below.
+LINUX_ENGINE_ASSET='    - assets/engine/linux/stockfish'
+[ -f assets/engine/linux/stockfish ] || die "assets/engine/linux/stockfish missing — Linux engine binary not committed"
+if ! grep -qF "$LINUX_ENGINE_ASSET" pubspec.yaml; then
+  # Insert right after the bundled Windows engine asset line (awk: portable,
+  # no GNU/BSD sed newline differences).
+  awk -v ins="$LINUX_ENGINE_ASSET" \
+    '{print} /^    - assets\/engine\/windows\/stockfish\.exe$/{print ins}' \
+    pubspec.yaml > pubspec.yaml.tmp && mv pubspec.yaml.tmp pubspec.yaml
+  grep -qF "$LINUX_ENGINE_ASSET" pubspec.yaml || die "failed to inject Linux engine asset into pubspec.yaml"
+  echo "Injected Linux engine asset into pubspec.yaml for this build."
+fi
+
 # Same dart-define contract as scripts/codemagic_publish_macos.sh so the three
 # desktop platforms ship with an identical configuration surface.
 # Matches the keys the desktop app actually compiles (lib/desktop/services/
