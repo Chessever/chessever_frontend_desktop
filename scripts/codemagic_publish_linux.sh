@@ -2,12 +2,12 @@
 # Publishes the Linux desktop release, mirroring scripts/codemagic_publish_macos.sh:
 #   1. validates the desktop_updater archive contract,
 #   2. runs the release-env dart-define check against the built binary,
-#   3. packages the bundle into a portable AppImage (GTK bundled),
+#   3. packages the bundle into a Debian package,
 #   4. uploads the archive + ingests it on the update server (auto-update channel),
-#   5. publishes the AppImage to the stable website download URL.
+#   5. publishes the .deb to the stable website download URL.
 #
-# Linux has no Developer ID / notarization step — AppImages are distributed
-# unsigned, the same way the Windows installer is. Everything else matches the
+# Linux has no Developer ID / notarization step — Debian packages are
+# distributed unsigned, the same way the Windows installer is. Everything else matches the
 # macOS publish contract, including the server `prepare`/`ingest` commands.
 #
 # Additive: Linux-only. The macOS/Windows publish scripts are untouched and
@@ -50,6 +50,7 @@ cd "$REPO_ROOT"
 
 require_command curl
 require_command dart
+require_command dpkg-deb
 require_command python3
 require_command rsync
 require_command ssh
@@ -160,57 +161,40 @@ print(f"Validated desktop_updater archive contract: {len(listed)} hashed files")
 PY
 }
 
-# Packages the staged Linux bundle into a portable AppImage. Uses linuxdeploy +
-# the GTK plugin to bundle the GTK runtime so the AppImage runs on distros that
-# don't ship GTK3. APPIMAGE_EXTRACT_AND_RUN avoids the FUSE requirement on CI.
-build_appimage() {
+# Packages the staged Linux bundle into a Debian package. The Flutter Linux
+# bundle is installed intact under /opt/chessever so the executable can still
+# resolve lib/ via $ORIGIN/lib and data/ relative to itself.
+build_deb() {
   local bundle_dir="$1"
   local out_path="$2"
-  local arch="x86_64"
-  # appimagetool runs from $WORKDIR (subshells below), so a relative out_path
-  # would resolve under $WORKDIR/dist (which doesn't exist) and mksquashfs dies
-  # with "Could not create destination file". Resolve to an absolute path
-  # against the repo root (current $PWD) and ensure the directory exists.
   case "$out_path" in
     /*) ;;
     *) out_path="$PWD/$out_path" ;;
   esac
   mkdir -p "$(dirname "$out_path")"
-  local tools_dir="$WORKDIR/appimagetools"
-  local appdir="$WORKDIR/AppDir"
-  mkdir -p "$tools_dir"
-  rm -rf "$appdir"
-  mkdir -p "$appdir/usr/bin"
-  export APPIMAGE_EXTRACT_AND_RUN=1
+  local pkgroot="$WORKDIR/debroot"
+  rm -rf "$pkgroot"
+  mkdir -p \
+    "$pkgroot/DEBIAN" \
+    "$pkgroot/opt/chessever" \
+    "$pkgroot/usr/share/applications" \
+    "$pkgroot/usr/share/icons/hicolor/256x256/apps"
 
-  curl -sSL --retry 3 -o "$tools_dir/linuxdeploy" \
-    "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${arch}.AppImage"
-  curl -sSL --retry 3 -o "$tools_dir/linuxdeploy-plugin-gtk.sh" \
-    "https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh"
-  curl -sSL --retry 3 -o "$tools_dir/appimagetool" \
-    "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${arch}.AppImage"
-  chmod +x "$tools_dir/linuxdeploy" "$tools_dir/linuxdeploy-plugin-gtk.sh" "$tools_dir/appimagetool"
-  export PATH="$tools_dir:$PATH"
+  cp -a "$bundle_dir/." "$pkgroot/opt/chessever/"
 
-  # Flutter's bundle is self-contained: the executable finds lib/ via an
-  # $ORIGIN/lib rpath and data/ relative to itself. Copy the whole bundle into
-  # usr/bin so those relative lookups still resolve inside the AppImage.
-  cp -a "$bundle_dir/." "$appdir/usr/bin/"
-
-  local desktop_file="$WORKDIR/com.chessever.desktop.desktop"
-  cat > "$desktop_file" <<EOF
+  cat > "$pkgroot/usr/share/applications/com.chessever.desktop.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Chessever
-Exec=$PACKAGE_BINARY
+Exec=/opt/chessever/$PACKAGE_BINARY
 Icon=chessever
 Categories=Game;BoardGame;
 Terminal=false
 EOF
 
-  # Reuse an in-repo PNG icon if one exists; otherwise synthesize a 1x1 so
-  # linuxdeploy has something to install (the real icon ships inside the app).
-  local icon_path="$WORKDIR/chessever.png"
+  # Reuse an in-repo PNG icon if one exists; otherwise synthesize a 1x1 so the
+  # desktop entry always references an installed icon.
+  local icon_path="$pkgroot/usr/share/icons/hicolor/256x256/apps/chessever.png"
   local icon_src=""
   for cand in \
     "$REPO_ROOT/assets/app_icon.png" \
@@ -230,17 +214,31 @@ EOF
       > "$icon_path"
   fi
 
-  ( cd "$WORKDIR" && "$tools_dir/linuxdeploy" \
-      --appdir "$appdir" \
-      --executable "$appdir/usr/bin/$PACKAGE_BINARY" \
-      --desktop-file "$desktop_file" \
-      --icon-file "$icon_path" \
-      --plugin gtk )
+  local installed_size
+  installed_size="$(du -sk "$pkgroot/opt/chessever" "$pkgroot/usr/share" | awk '{sum += $1} END {print sum}')"
+  cat > "$pkgroot/DEBIAN/control" <<EOF
+Package: chessever
+Version: $RELEASE_VERSION
+Section: games
+Priority: optional
+Architecture: amd64
+Depends: libc6, libgtk-3-0 | libgtk-3-0t64, libstdc++6, libkeybinder-3.0-0, libnotify4, libcurl4 | libcurl4t64, libasound2 | libasound2t64
+Installed-Size: $installed_size
+Maintainer: ChessEver LLC <support@chessever.com>
+Description: Chessever desktop app
+ Chessever desktop release for Linux.
+EOF
 
-  ( cd "$WORKDIR" && OUTPUT="$out_path" "$tools_dir/appimagetool" "$appdir" "$out_path" )
-  [ -f "$out_path" ] || die "AppImage was not produced at $out_path"
-  chmod +x "$out_path"
-  echo "Built AppImage $out_path"
+  find "$pkgroot" -type d -exec chmod 755 {} +
+  chmod 644 \
+    "$pkgroot/DEBIAN/control" \
+    "$pkgroot/usr/share/applications/com.chessever.desktop.desktop" \
+    "$icon_path"
+  chmod 755 "$pkgroot/opt/chessever/$PACKAGE_BINARY"
+
+  dpkg-deb --build --root-owner-group "$pkgroot" "$out_path"
+  [ -f "$out_path" ] || die "Debian package was not produced at $out_path"
+  echo "Built Debian package $out_path"
 }
 
 VERSION_RAW="$(awk '/^version:/{print $2; exit}' pubspec.yaml)"
@@ -289,8 +287,8 @@ validate_desktop_updater_archive "$ARCHIVE_DIR"
 
 echo "Prepared desktop_updater Linux archive $ARCHIVE_DIR"
 
-APPIMAGE_PATH="dist/Chessever-${RELEASE_VERSION}-x86_64.AppImage"
-build_appimage "$BUNDLE" "$APPIMAGE_PATH"
+DEB_PATH="dist/Chessever-${RELEASE_VERSION}-amd64.deb"
+build_deb "$BUNDLE" "$DEB_PATH"
 
 if [ "$SKIP_UPLOAD" -eq 1 ]; then
   echo "Skip upload set; not uploading or ingesting app archive."
@@ -312,12 +310,12 @@ rsync -az --delete -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
   "$ARCHIVE_DIR/" "$REMOTE:/var/www/updates/desktop/archive/$ARCHIVE_NAME/"
 ssh "${SSH_OPTS[@]}" "$REMOTE" "ingest linux $ARCHIVE_NAME $RELEASE_VERSION"
 
-# Publish the latest AppImage to a stable URL for the website "Download for
-# Linux" button. A versioned copy lives next to it for reference.
+# Publish the latest Debian package to a stable URL for the website "Download
+# for Linux" button. A versioned copy lives next to it for reference.
 rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
-  "$APPIMAGE_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever-${RELEASE_VERSION}-x86_64.AppImage"
+  "$DEB_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever-${RELEASE_VERSION}-amd64.deb"
 rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
-  "$APPIMAGE_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever.AppImage"
+  "$DEB_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever.deb"
 
 echo "Published Linux desktop_updater archive $RELEASE_VERSION"
-echo "Published Linux AppImage: https://chessever.com/updates/desktop/downloads/Chessever.AppImage"
+echo "Published Linux Debian package: https://chessever.com/updates/desktop/downloads/Chessever.deb"

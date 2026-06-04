@@ -206,7 +206,7 @@ workflows:
         script: |
           bash ./scripts/codemagic_publish_linux.sh
     artifacts:
-      - dist/**/*.AppImage
+      - dist/**/*.deb
       - dist/**/*.json
       - dist/**/*-linux/**
       - build/linux/x64/release/bundle/**
