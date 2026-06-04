@@ -41,10 +41,10 @@ class LibrarySaveOutcome {
   /// Number of cloud folders that received at least one row.
   final int folderCount;
 
-  /// Number of `.pgn` files written to disk across local folders.
+  /// Number of games written to disk across local destinations.
   final int localFilesWritten;
 
-  /// Number of local folders that received at least one file.
+  /// Number of local destinations that received at least one game.
   final int localFoldersUsed;
 
   /// True when the caller updated the source library game rather than saving a
@@ -68,11 +68,13 @@ class LibrarySaveOutcome {
       );
     }
     if (localFilesWritten > 0) {
-      final folderHint =
-          localFoldersUsed > 1 ? ' across $localFoldersUsed local folders' : '';
+      final destinationHint =
+          localFoldersUsed > 1
+              ? ' across $localFoldersUsed local destinations'
+              : '';
       parts.add(
         '$localFilesWritten ${localFilesWritten == 1 ? 'entry' : 'entries'} '
-        'on this computer$folderHint',
+        'on this computer$destinationHint',
       );
     }
     if (parts.isEmpty) return 'Nothing saved.';
@@ -289,15 +291,21 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     return Platform.isWindows ? normalized.toLowerCase() : normalized;
   }
 
-  Future<void> _onAddLocalFolder() async {
+  Future<void> _onAddLocalPgnFile() async {
     if (_isSaving) return;
-    final directory = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: 'Choose local folder',
+    final result = await FilePicker.platform.pickFiles(
+      dialogTitle: 'Choose PGN file',
+      type: FileType.custom,
+      allowedExtensions: const ['pgn'],
+      allowMultiple: false,
+      withData: false,
       lockParentWindow: true,
     );
-    if (directory == null || directory.isEmpty || !mounted) return;
+    final files = result?.files ?? const <PlatformFile>[];
+    final filePath = files.isEmpty ? null : files.first.path;
+    if (filePath == null || filePath.isEmpty || !mounted) return;
     final registry = ref.read(localLibraryRegistryProvider.notifier);
-    final registeredPath = await registry.register(directory);
+    final registeredPath = await registry.register(filePath);
     if (!mounted) return;
     setState(() {
       _selectedLocalPaths.add(_normalizeLocalPath(registeredPath));
@@ -602,7 +610,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                             onAddLocal:
                                 (_isSaving || _isUpdatingOriginal)
                                     ? null
-                                    : _onAddLocalFolder,
+                                    : _onAddLocalPgnFile,
                           );
                         }
                         return SingleChildScrollView(
@@ -698,7 +706,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                   onTap:
                                       (_isSaving || _isUpdatingOriginal)
                                           ? null
-                                          : _onAddLocalFolder,
+                                          : _onAddLocalPgnFile,
                                 ),
                               ),
                             ],
@@ -1204,7 +1212,7 @@ class _EmptyHint extends StatelessWidget {
           const SizedBox(height: 12),
           const Text(
             'No destinations yet. Save to the cloud library, or pick a '
-            'folder on this computer to keep games locally.',
+            'PGN file on this computer to keep games locally.',
             style: TextStyle(color: kWhiteColor70, fontSize: 13),
             textAlign: TextAlign.center,
           ),
@@ -1220,8 +1228,8 @@ class _EmptyHint extends StatelessWidget {
               ),
               const SizedBox(width: 10),
               DesktopDialogButton(
-                label: 'Local folder',
-                icon: Icons.folder_open_outlined,
+                label: 'PGN file',
+                icon: Icons.description_outlined,
                 onPress: onAddLocal,
               ),
             ],
@@ -1300,11 +1308,11 @@ class _AddLocalFolderTileState extends State<_AddLocalFolderTile> {
                 children: [
                   Icon(Icons.add_rounded, color: fg, size: 16),
                   const SizedBox(width: 8),
-                  Icon(Icons.folder_open_outlined, color: fg, size: 16),
+                  Icon(Icons.description_outlined, color: fg, size: 16),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Choose a folder on this computer…',
+                      'Choose a PGN file on this computer…',
                       style: TextStyle(
                         color: fg,
                         fontSize: 13,
@@ -1352,6 +1360,7 @@ class _LocalFolderRowState extends State<_LocalFolderRow> {
         widget.selected
             ? kPrimaryColor.withValues(alpha: 0.10)
             : (_hovered ? kBlack3Color : Colors.transparent);
+    final isPgnFile = p.extension(widget.entry.path).toLowerCase() == '.pgn';
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -1385,7 +1394,9 @@ class _LocalFolderRowState extends State<_LocalFolderRow> {
                   ),
                   const SizedBox(width: 10),
                   Icon(
-                    Icons.folder_special_outlined,
+                    isPgnFile
+                        ? Icons.description_outlined
+                        : Icons.folder_special_outlined,
                     size: 16,
                     color: kWhiteColor70,
                   ),
@@ -1420,7 +1431,7 @@ class _LocalFolderRowState extends State<_LocalFolderRow> {
                   if (widget.onForget != null)
                     DesktopDialogIconButton(
                       icon: Icons.close_rounded,
-                      tooltip: 'Forget this folder',
+                      tooltip: 'Forget this destination',
                       onPress: widget.onForget,
                     ),
                 ],
