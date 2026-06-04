@@ -13,12 +13,16 @@ import 'package:url_launcher/url_launcher.dart';
 ///   - `/functions/v1/stripe-checkout`  — creates a Stripe Checkout Session
 ///                                        for a (tier, interval) pair and
 ///                                        returns the redirect URL.
-///   - `/functions/v1/stripe-portal`    — issues a Stripe Customer Portal
-///                                        session URL.
 ///   - `/functions/v1/entitlement`      — returns the user's premium status,
 ///                                        backed by public.subscriptions.
 ///
-/// All three require the user's Supabase access token in `Authorization:
+/// Managing an existing Stripe subscription (cancel / change plan / invoices)
+/// is intentionally NOT done in-app: the Stripe customer portal needs a real
+/// http(s) `return_url`, which a `chessever://` desktop deep link can't
+/// satisfy. The Settings pane sends Stripe users to chessever.com/account
+/// instead, which opens the portal with a valid web return URL.
+///
+/// Both require the user's Supabase access token in `Authorization:
 /// Bearer …`. Override the base URL with
 /// `--dart-define=BILLING_API_BASE=https://…/functions/v1` if you ever need
 /// to point at a fork or a local supabase functions serve.
@@ -120,16 +124,6 @@ class DesktopBillingService {
     yield* _pollEntitlement(authToken: session.accessToken);
   }
 
-  /// Open the Stripe Customer Portal for the signed-in user.
-  Future<bool> openCustomerPortal() async {
-    final session = await _activeSession(forceRefresh: true);
-    if (session == null) {
-      throw StateError('Sign in to manage your subscription.');
-    }
-    final url = await _createPortalUrl(authToken: session.accessToken);
-    return launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-  }
-
   /// Returns the user's current entitlement snapshot once. Used by the
   /// subscription notifier to drive [subscriptionProvider] state.
   Future<EntitlementSnapshot?> currentEntitlement({
@@ -186,26 +180,6 @@ class DesktopBillingService {
     final body = jsonDecode(resp.body) as Map<String, dynamic>;
     final url = body['url'] as String?;
     if (url == null) throw StateError('checkout response missing url');
-    return url;
-  }
-
-  Future<String> _createPortalUrl({required String authToken}) async {
-    final resp = await http.post(
-      Uri.parse('$_baseUrl/stripe-portal'),
-      headers: <String, String>{
-        'authorization': 'Bearer $authToken',
-        'content-type': 'application/json',
-      },
-      body: jsonEncode({'return_to': 'desktop'}),
-    );
-    if (resp.statusCode != 200) {
-      throw StateError(
-        'stripe-portal returned ${resp.statusCode}: ${resp.body}',
-      );
-    }
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    final url = body['url'] as String?;
-    if (url == null) throw StateError('portal response missing url');
     return url;
   }
 

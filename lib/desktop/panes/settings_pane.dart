@@ -7,6 +7,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:chessever/desktop/services/auth/desktop_auth_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
@@ -437,13 +438,22 @@ class _SubscriptionSection extends HookConsumerWidget {
             : 'Pro · cancels at term end';
     final statusColor = isPro ? kGreenColor : kLightGreyColor;
 
-    Future<void> openPortal() async {
+    // Stripe subscriptions are managed on the web. Opening the Stripe
+    // customer portal directly from the desktop app is unreliable — the
+    // portal's `return_url` cannot be a `chessever://` deep link — so we
+    // send the user to chessever.com/account, which signs them in and
+    // opens the portal with a valid web return URL. There they can cancel
+    // or change their plan. The desktop entitlement mirrors the change on
+    // the next refresh.
+    Future<void> openManageOnWeb() async {
       error.value = null;
       loading.value = true;
       try {
-        final ok = await DesktopBillingService.instance.openCustomerPortal();
+        final uri = Uri.https('chessever.com', '/account');
+        final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
         if (!ok) {
-          error.value = 'Could not open billing portal in browser.';
+          error.value =
+              'Could not open chessever.com/account in your browser.';
         }
       } catch (e) {
         error.value = e.toString();
@@ -492,9 +502,9 @@ class _SubscriptionSection extends HookConsumerWidget {
                 _SecondaryButton(
                   label:
                       loading.value
-                          ? 'Opening billing portal…'
-                          : 'Manage subscription',
-                  onTap: loading.value ? null : openPortal,
+                          ? 'Opening browser…'
+                          : 'Cancel or manage on web',
+                  onTap: loading.value ? null : openManageOnWeb,
                 ),
             ],
           ),
@@ -503,7 +513,7 @@ class _SubscriptionSection extends HookConsumerWidget {
             managedByStore
                 ? 'Your subscription is managed by ${_storeLabel(provider)}. Open the store on your phone to cancel or change your plan — changes will sync here within a few minutes.'
                 : isStripe
-                ? 'Manage your billing details, cancel anytime, or download invoices in the Stripe customer portal.'
+                ? 'Manage billing, download invoices, or cancel anytime at chessever.com/account. Sign in with this account to open your secure billing portal — changes sync back here within a few minutes.'
                 : 'Subscribe on the web or in the iOS / Android app. One plan unlocks every ChessEver surface.',
             style: const TextStyle(
               color: kWhiteColor70,
