@@ -110,4 +110,13 @@ int _countLegacyDatabaseShells(LocalChessNode node) {
   };
 }
 
-const _legacyDatabaseShellExtensions = <String>{'.cbv', '.cbf'};
+const _legacyDatabaseShellExtensions = <String>{
+  '.cbh',
+  '.cbv',
+  '.cbf',
+  '.cbg',
+  '.cba',
+  '.cbb',
+  '.cbp',
+  '.ctg',
+};

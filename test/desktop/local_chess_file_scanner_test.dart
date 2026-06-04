@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -20,7 +19,8 @@ void main() {
       }
     });
 
-    test('picker extensions track recognized local chess formats', () {
+    test('picker extensions only allow PGN files', () {
+      expect(localChessSupportedExtensions, {'.pgn'});
       expect(
         localChessRecognizedExtensions,
         containsAll(localChessSupportedExtensions),
@@ -29,16 +29,14 @@ void main() {
         localChessPickerExtensions.toSet(),
         hasLength(localChessPickerExtensions.length),
       );
-      expect(localChessPickerExtensions, contains('gz'));
-      expect(localChessPickerExtensions, isNot(contains('pgn.gz')));
-      expect(
-        localChessPickerExtensions.map((extension) => '.$extension').toSet(),
-        {'.pgn', '.gz', '.fen', '.epd', '.cbh', '.cbv', '.cbf'},
-      );
-      expect(looksLikeLocalChessFile('/tmp/lines.pgn.gz'), isTrue);
+      expect(localChessPickerExtensions, <String>['pgn']);
+      expect(looksLikeLocalChessFile('/tmp/lines.pgn'), isTrue);
+      expect(looksLikeLocalChessFile('/tmp/lines.pgn.gz'), isFalse);
       expect(looksLikeLocalChessFile('/tmp/notes.gz'), isFalse);
       expect(looksLikeLocalChessFile('/tmp/archive.zip'), isFalse);
       expect(looksLikeLocalChessFile('/tmp/archive.cbz'), isFalse);
+      expect(looksLikeLocalChessFile('/tmp/mega.cbh'), isTrue);
+      expect(isSupportedLocalChessFile('/tmp/mega.cbh'), isFalse);
     });
 
     test('entry count labels cover games and positions', () {
@@ -82,7 +80,7 @@ void main() {
       },
     );
 
-    test('marks lone CBH headers as incomplete', () async {
+    test('marks ChessBase database formats as unsupported', () async {
       await File('${temp.path}/mega.cbh').writeAsString('binary-ish');
 
       final source = await scanLocalChessPaths(<String>[temp.path]);
@@ -91,30 +89,10 @@ void main() {
       expect(file.extension, '.cbh');
       expect(file.status, LocalChessFileStatus.unsupported);
       expect(file.games, isEmpty);
-      expect(file.message, contains('matching .cbg moves file'));
-    });
-
-    test('parses CBH databases into playable PGN entries', () async {
-      await _writeTinyCbhDatabase(temp.path, 'tiny');
-
-      final source = await scanLocalChessPaths(<String>[
-        '${temp.path}/tiny.cbh',
-      ]);
-      final scanned = source.root.files.single;
-      final game = scanned.games.single;
-
-      expect(scanned.extension, '.cbh');
-      expect(scanned.status, LocalChessFileStatus.parsed);
-      expect(source.root.gameCount, 1);
-      expect(game.game.metadata['White'], 'Carlsen, Magnus');
-      expect(game.game.metadata['Black'], 'Nakamura, Hikaru');
-      expect(game.rawPgn, contains('1. e4 e5 (1... c5) 1-0'));
-      expect(game.game.mainline.map((move) => move.uci), <String>[
-        'e2e4',
-        'e7e5',
-      ]);
-      expect(game.game.mainline.first.variations, hasLength(1));
-      expect(game.game.mainline.first.variations!.single.single.uci, 'c7c5');
+      expect(
+        file.message,
+        'Only PGN databases are currently supported. Please export this database as PGN and import the PGN file.',
+      );
     });
 
     test('single PGN file opens as a one-file source', () async {
@@ -194,16 +172,14 @@ void main() {
       );
     });
 
-    test('compressed PGN databases are parsed directly', () async {
+    test('compressed PGN databases are rejected', () async {
       final file = File('${temp.path}/archive.pgn.gz');
       await file.writeAsBytes(gzip.encode(utf8.encode(_samplePgn)));
 
-      final source = await scanLocalChessPaths(<String>[file.path]);
-      final scanned = source.root.files.single;
-
-      expect(scanned.extension, '.pgn.gz');
-      expect(scanned.status, LocalChessFileStatus.parsed);
-      expect(scanned.games.single.game.metadata['Black'], 'Nakamura, Hikaru');
+      await expectLater(
+        scanLocalChessPaths(<String>[file.path]),
+        throwsA(isA<ArgumentError>()),
+      );
     });
 
     test(
@@ -243,121 +219,20 @@ void main() {
       );
     });
 
-    test('FEN and EPD position collections open as local entries', () async {
+    test('FEN and EPD position collections are rejected', () async {
       final fen = File('${temp.path}/prep.fen');
-      await fen.writeAsString('''
-8/8/8/8/8/8/8/K6k w - - 0 1
-# ignored
-invalid fen
-''');
+      await fen.writeAsString('8/8/8/8/8/8/8/K6k w - - 0 1');
       final epd = File('${temp.path}/training.epd');
       await epd.writeAsString(
         'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - bm e4;',
       );
 
-      final source = await scanLocalChessPaths(<String>[fen.path, epd.path]);
-
-      expect(source.root.fileCount, 2);
-      expect(source.root.gameCount, 2);
-      final positions = source.games;
-      expect(positions.first.game.mainline, isEmpty);
-      expect(
-        positions.first.rawPgn,
-        contains('[FEN "8/8/8/8/8/8/8/K6k w - - 0 1"]'),
-      );
-      expect(
-        positions.last.game.startingFen,
-        'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+      await expectLater(
+        scanLocalChessPaths(<String>[fen.path, epd.path]),
+        throwsA(isA<ArgumentError>()),
       );
     });
   });
-}
-
-Future<void> _writeTinyCbhDatabase(String directory, String name) async {
-  await File('$directory/$name.cbh').writeAsBytes(_tinyCbhBytes());
-  await File('$directory/$name.cbg').writeAsBytes(_tinyCbgBytes());
-  await File('$directory/$name.cbp').writeAsBytes(_tinyCbpBytes());
-  await File('$directory/$name.cbt').writeAsBytes(_tinyCbtBytes());
-}
-
-List<int> _tinyCbhBytes() {
-  final bytes = Uint8List(46 * 2);
-  final record = 46;
-  bytes[record] = 0x01; // game record
-  _writeU32(bytes, record + 1, 0); // game offset in .cbg
-  _writeU24(bytes, record + 9, 0); // white player
-  _writeU24(bytes, record + 12, 1); // black player
-  _writeU24(bytes, record + 15, 0); // tournament
-  _writeU24(bytes, record + 24, (2024 << 9) | (4 << 5) | 4);
-  bytes[record + 27] = 2; // 1-0
-  bytes[record + 29] = 1; // round
-  _writeU16(bytes, record + 31, 2830);
-  _writeU16(bytes, record + 33, 2780);
-  return bytes;
-}
-
-List<int> _tinyCbgBytes() {
-  final bytes = Uint8List(10);
-  _writeU32(bytes, 0, 10);
-  bytes[4] = 0xFF; // e2-e4
-  bytes[5] = 0xDD; // variation start: 0xdc plus processed-move offset 1
-  bytes[6] = 0xDB; // c7-c5 in variation: 0xda plus processed-move offset 1
-  bytes[7] = 0x0E; // variation end: 0x0c plus processed-move offset 2
-  bytes[8] = 0x01; // e7-e5: 0xff plus processed-move offset 2
-  bytes[9] = 0x0F; // final 0x0c marker plus processed-move offset 3
-  return bytes;
-}
-
-List<int> _tinyCbpBytes() {
-  final bytes = Uint8List(28 + (2 * 67));
-  bytes[0x18] = 0;
-  _writeCbpPlayer(bytes, 0, last: 'Carlsen', first: 'Magnus');
-  _writeCbpPlayer(bytes, 1, last: 'Nakamura', first: 'Hikaru');
-  return bytes;
-}
-
-List<int> _tinyCbtBytes() {
-  final bytes = Uint8List(28 + 99);
-  bytes[0x18] = 0;
-  const offset = 28;
-  _writeAscii(bytes, offset + 9, 40, 'Candidates');
-  _writeAscii(bytes, offset + 49, 30, 'Toronto');
-  return bytes;
-}
-
-void _writeCbpPlayer(
-  Uint8List bytes,
-  int player, {
-  required String last,
-  required String first,
-}) {
-  final offset = 28 + (player * 67);
-  _writeAscii(bytes, offset + 9, 30, last);
-  _writeAscii(bytes, offset + 39, 20, first);
-}
-
-void _writeAscii(Uint8List bytes, int offset, int length, String value) {
-  final encoded = ascii.encode(value);
-  final count = encoded.length < length ? encoded.length : length;
-  bytes.setRange(offset, offset + count, encoded.take(count));
-}
-
-void _writeU16(Uint8List bytes, int offset, int value) {
-  bytes[offset] = (value >> 8) & 0xff;
-  bytes[offset + 1] = value & 0xff;
-}
-
-void _writeU24(Uint8List bytes, int offset, int value) {
-  bytes[offset] = (value >> 16) & 0xff;
-  bytes[offset + 1] = (value >> 8) & 0xff;
-  bytes[offset + 2] = value & 0xff;
-}
-
-void _writeU32(Uint8List bytes, int offset, int value) {
-  bytes[offset] = (value >> 24) & 0xff;
-  bytes[offset + 1] = (value >> 16) & 0xff;
-  bytes[offset + 2] = (value >> 8) & 0xff;
-  bytes[offset + 3] = value & 0xff;
 }
 
 const _samplePgn = '''

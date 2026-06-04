@@ -3,55 +3,41 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:crypto/crypto.dart';
-import 'package:dartchess/dartchess.dart' show Setup;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
-import 'package:chessever/desktop/services/legacy_cbh_reader.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
-const localChessSupportedExtensions = <String>{
-  '.pgn',
-  '.pgn.gz',
-  '.fen',
-  '.epd',
-  '.cbh',
-};
+const localChessSupportedExtensions = <String>{'.pgn'};
 
 const localChessRecognizedExtensions = <String>{
   '.pgn',
-  '.fen',
-  '.epd',
   '.cbh',
   '.cbv',
   '.cbf',
-  '.pgn.gz',
+  '.cbg',
+  '.cba',
+  '.cbb',
+  '.cbp',
+  '.ctg',
 };
 
-// Native file pickers filter by the last extension segment, so `gz` is the
-// picker-side proxy for `.pgn.gz`. The scanner still rejects generic `.gz`.
-const localChessPickerExtensions = <String>[
-  'pgn',
-  'gz',
-  'fen',
-  'epd',
-  'cbh',
-  'cbv',
-  'cbf',
-];
+const localChessPickerExtensions = <String>['pgn'];
 
-const localChessReadableFormatsLabel =
-    'PGN, compressed PGN, FEN, EPD, and CBH databases';
+const localChessReadableFormatsLabel = 'PGN databases';
 
 const localChessRecognizedFormatsLabel =
-    '$localChessReadableFormatsLabel, plus CBV/CBF files';
+    '$localChessReadableFormatsLabel. Other chess database formats are not supported.';
 
-const localChessDropFormatsMessage =
-    'PGN, FEN/EPD, CBH, and folders browse locally';
+const localChessDropFormatsMessage = 'PGN files and folders browse locally';
 
 const localChessEmptyFolderFormatsMessage =
-    '$localChessRecognizedFormatsLabel. CBV/CBF are recognized but not '
-    'decoded yet.';
+    'Only PGN databases are currently supported. Export other chess database '
+    'formats as PGN, then import the PGN file.';
+
+const localChessUnsupportedFormatMessage =
+    'Only PGN databases are currently supported. Please export this database '
+    'as PGN and import the PGN file.';
 
 // Files larger than this are skipped during scan to avoid OOM. The user can
 // still open them directly through the Board pane PGN importer.
@@ -549,10 +535,6 @@ class _ScanWorker {
       );
     }
 
-    if (extension == '.cbh') {
-      return _scanLegacyCbhFile(path, rootPath: rootPath, stat: stat);
-    }
-
     if (stat.size > _kMaxParseBytes) {
       return LocalChessFileNode(
         name: _basename(path),
@@ -666,122 +648,11 @@ class _ScanWorker {
       );
     }
   }
-
-  LocalChessFileNode _scanLegacyCbhFile(
-    String path, {
-    required String rootPath,
-    required FileStat stat,
-  }) {
-    if (_atCap) {
-      return LocalChessFileNode(
-        name: _basename(path),
-        path: path,
-        relativePath: _relative(rootPath, path),
-        extension: '.cbh',
-        status: LocalChessFileStatus.unsupported,
-        games: const <LocalChessGame>[],
-        sizeBytes: stat.size,
-        modifiedAt: stat.modified,
-        message: _capReachedMessage,
-      );
-    }
-
-    try {
-      final entries = readLegacyCbhGamesSync(
-        path,
-        maxGames: _kMaxTotalGames - _totalGames,
-      );
-      if (entries.isEmpty) {
-        return LocalChessFileNode(
-          name: _basename(path),
-          path: path,
-          relativePath: _relative(rootPath, path),
-          extension: '.cbh',
-          status: LocalChessFileStatus.noGames,
-          games: const <LocalChessGame>[],
-          sizeBytes: stat.size,
-          modifiedAt: stat.modified,
-          message: 'No playable CBH games were found.',
-        );
-      }
-
-      final granted = _claim(entries.length);
-      final accepted = entries.take(granted).toList(growable: false);
-      final relativePath = _relative(rootPath, path);
-      final games = <LocalChessGame>[];
-      for (var i = 0; i < accepted.length; i++) {
-        final entry = accepted[i];
-        final id = 'local_${_stableId('$path#$i')}';
-        games.add(
-          LocalChessGame(
-            id: id,
-            game: entry.game.copyWith(gameId: id),
-            rawPgn: entry.rawPgn,
-            sourcePath: path,
-            sourceRelativePath: relativePath,
-            fileName: _basename(path),
-            indexInFile: i,
-            fileGameCount: entries.length,
-            hasMoves: entry.hasMoves,
-          ),
-        );
-      }
-
-      if (games.isEmpty) {
-        return LocalChessFileNode(
-          name: _basename(path),
-          path: path,
-          relativePath: relativePath,
-          extension: '.cbh',
-          status: LocalChessFileStatus.unsupported,
-          games: const <LocalChessGame>[],
-          sizeBytes: stat.size,
-          modifiedAt: stat.modified,
-          message: _capReachedMessage,
-        );
-      }
-
-      return LocalChessFileNode(
-        name: _basename(path),
-        path: path,
-        relativePath: relativePath,
-        extension: '.cbh',
-        status: LocalChessFileStatus.parsed,
-        games: games,
-        sizeBytes: stat.size,
-        modifiedAt: stat.modified,
-        message: granted < entries.length
-            ? 'Showing first $granted of ${entries.length} '
-                  'entries; the rest were skipped to stay within the index cap.'
-            : null,
-      );
-    } catch (e) {
-      final unsupported = e is LegacyCbhReadException;
-      return LocalChessFileNode(
-        name: _basename(path),
-        path: path,
-        relativePath: _relative(rootPath, path),
-        extension: '.cbh',
-        status: unsupported
-            ? LocalChessFileStatus.unsupported
-            : LocalChessFileStatus.failed,
-        games: const <LocalChessGame>[],
-        sizeBytes: stat.size,
-        modifiedAt: stat.modified,
-        message: unsupported
-            ? e.toString()
-            : 'Could not read this CBH database: $e',
-      );
-    }
-  }
 }
 
 Future<String> _readTextFile(String path) async {
   final bytes = await File(path).readAsBytes();
-  final decodedBytes = path.toLowerCase().endsWith('.pgn.gz')
-      ? gzip.decode(bytes)
-      : bytes;
-  return _decodeTextBytes(decodedBytes);
+  return _decodeTextBytes(bytes);
 }
 
 String _decodeTextBytes(List<int> bytes) {
@@ -797,11 +668,7 @@ List<_ParsedLocalChessGame> _parseSupportedFile(
 }) {
   switch (extension.toLowerCase()) {
     case '.pgn':
-    case '.pgn.gz':
       return _parsePgnHeadersOnly(text);
-    case '.fen':
-    case '.epd':
-      return _parsePositions(text, sourceName: _basename(path));
     default:
       return const <_ParsedLocalChessGame>[];
   }
@@ -887,91 +754,8 @@ String _unescapePgnHeader(String value) {
   return value.replaceAll(r'\"', '"').replaceAll(r'\\', r'\');
 }
 
-List<_ParsedLocalChessGame> _parsePositions(
-  String text, {
-  required String sourceName,
-}) {
-  final entries = <_ParsedLocalChessGame>[];
-  final lines = const LineSplitter().convert(text);
-  for (var i = 0; i < lines.length; i++) {
-    final fen = _fenFromPositionLine(lines[i]);
-    if (fen == null) continue;
-    try {
-      // Validate the setup before surfacing it in the UI. The board pane
-      // also validates, but failing here lets a bad line be skipped while
-      // the rest of the position collection remains usable.
-      Setup.parseFen(fen);
-    } catch (_) {
-      continue;
-    }
-    final title = lines.length == 1
-        ? sourceName
-        : '$sourceName position ${entries.length + 1}';
-    final rawPgn = _pgnForFen(fen: fen, event: title);
-    entries.add(
-      _ParsedLocalChessGame(
-        game: ChessGame(
-          gameId: 'position_${entries.length}',
-          startingFen: fen,
-          metadata: <String, dynamic>{
-            'Event': title,
-            'Site': '?',
-            'Date': '????.??.??',
-            'Round': '?',
-            'White': 'Position',
-            'Black': '${entries.length + 1}',
-            'Result': '*',
-            'SetUp': '1',
-            'FEN': fen,
-          },
-          mainline: const [],
-        ),
-        rawPgn: rawPgn,
-        hasMoves: false,
-      ),
-    );
-  }
-  return entries;
-}
-
-String? _fenFromPositionLine(String line) {
-  final trimmed = line.trim();
-  if (trimmed.isEmpty || trimmed.startsWith('#')) return null;
-  final tokens = trimmed.split(RegExp(r'\s+'));
-  if (tokens.length < 4) return null;
-  final board = tokens[0];
-  final side = tokens[1];
-  final castling = tokens[2];
-  final ep = tokens[3];
-  final halfmove = tokens.length >= 5 && int.tryParse(tokens[4]) != null
-      ? tokens[4]
-      : '0';
-  final fullmove = tokens.length >= 6 && int.tryParse(tokens[5]) != null
-      ? tokens[5]
-      : '1';
-  return '$board $side $castling $ep $halfmove $fullmove';
-}
-
-String _pgnForFen({required String fen, required String event}) {
-  return '[Event "${_escapePgnHeader(event)}"]\n'
-      '[Site "?"]\n'
-      '[Date "????.??.??"]\n'
-      '[Round "?"]\n'
-      '[White "Position"]\n'
-      '[Black "?"]\n'
-      '[Result "*"]\n'
-      '[SetUp "1"]\n'
-      '[FEN "${_escapePgnHeader(fen)}"]\n\n'
-      '*';
-}
-
-String _escapePgnHeader(String value) {
-  return value.replaceAll('\\', r'\\').replaceAll('"', r'\"');
-}
-
 String _extensionForPath(String path) {
-  final lower = path.toLowerCase();
-  return lower.endsWith('.pgn.gz') ? '.pgn.gz' : p.extension(path);
+  return p.extension(path).toLowerCase();
 }
 
 class _ParsedLocalChessGame {
@@ -1054,25 +838,16 @@ bool _samePath(String a, String b) {
   return p.normalize(a) == p.normalize(b);
 }
 
-String _unsupportedMessage(String extension) {
-  switch (extension.toLowerCase()) {
-    case '.cbv':
-    case '.cbf':
-      return 'This CBH/CBV/CBF format is recognized, but this build opens CBH '
-          'databases and $localChessReadableFormatsLabel. Export as PGN or '
-          'open the database .cbh file with its matching sidecar files.';
-    default:
-      return 'This chess file type is not parseable yet.';
-  }
-}
+String _unsupportedMessage(String extension) =>
+    localChessUnsupportedFormatMessage;
 
 String _tooLargeMessage(int sizeBytes) {
   final mb = (sizeBytes / (1024 * 1024)).toStringAsFixed(1);
   final limitMb = (_kMaxParseBytes / (1024 * 1024)).toStringAsFixed(0);
-  return 'This file is $mb MB, which is over the $limitMb MB scan limit. '
-      'Open it directly from the Board pane to load games on demand.';
+  return 'This PGN file is $mb MB, which is over the $limitMb MB scan limit. '
+      'Open a smaller PGN file or split the database before importing.';
 }
 
 const String _capReachedMessage =
-    'Skipped to keep the index within the per-folder cap. Open this file '
-    'directly to load its games on demand.';
+    'Skipped to keep the PGN index within the per-folder cap. Split the PGN '
+    'database before importing more games.';
