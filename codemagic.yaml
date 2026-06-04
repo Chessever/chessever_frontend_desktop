@@ -1,0 +1,212 @@
+workflows:
+  macos-desktop-release:
+    name: macOS Desktop Release
+    instance_type: mac_mini_m4
+    max_build_duration: 120
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      groups:
+        - chessever-desktop-release
+      vars:
+        CHESSEVER_DEV_ID_IDENTITY: "Developer ID Application: ChessEver LLC (N8J7TUZMYR)"
+    scripts:
+      - name: Verify release environment
+        script: |
+          set -euo pipefail
+          required=(
+            SUPABASE_URL
+            SUPABASE_ANON_KEY
+            GOOGLE_DESKTOP_CLIENT_ID
+            GOOGLE_DESKTOP_CLIENT_SECRET
+            SENTRY_FLUTTER
+            APP_STORE_CONNECT_KEY_IDENTIFIER
+            APP_STORE_CONNECT_ISSUER_ID
+            APP_STORE_CONNECT_PRIVATE_KEY
+            CODEMAGIC_PUBLISHER_KEY
+          )
+          missing=0
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "$name is required"
+              missing=1
+            fi
+          done
+          if [ -z "${CM_CERTIFICATE:-${CHESSEVER_DEV_ID_P12_B64:-}}" ]; then
+            echo "CM_CERTIFICATE or CHESSEVER_DEV_ID_P12_B64 is required"
+            missing=1
+          fi
+          if [ -z "${CM_CERTIFICATE_PASSWORD:-${CHESSEVER_DEV_ID_P12_PASS:-}}" ]; then
+            echo "CM_CERTIFICATE_PASSWORD or CHESSEVER_DEV_ID_P12_PASS is required"
+            missing=1
+          fi
+          exit "$missing"
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+      - name: Install CocoaPods dependencies
+        script: |
+          find . -name "Podfile" -execdir pod install \;
+      - name: Initialize keychain and install Developer ID certificate
+        script: |
+          set -euo pipefail
+          # Developer ID private keys cannot be issued via ASC API — we keep
+          # the P12 in Codemagic env vars (CM_CERTIFICATE / CHESSEVER_DEV_ID_P12_B64).
+          # Everything else (profile resolution, xcodeproj wiring) is auto.
+          CERT_B64="${CM_CERTIFICATE:-${CHESSEVER_DEV_ID_P12_B64:-}}"
+          CERT_PASSWORD="${CM_CERTIFICATE_PASSWORD:-${CHESSEVER_DEV_ID_P12_PASS:-}}"
+          CERT_PATH="/tmp/chessever_developer_id_application.p12"
+          printf '%s' "$CERT_B64" | base64 -D > "$CERT_PATH" 2>/dev/null || printf '%s' "$CERT_B64" | base64 -d > "$CERT_PATH"
+          keychain initialize
+          if [ -n "$CERT_PASSWORD" ]; then
+            keychain add-certificates --certificate "$CERT_PATH" --certificate-password "$CERT_PASSWORD"
+          else
+            keychain add-certificates --certificate "$CERT_PATH"
+          fi
+          security find-identity -v -p codesigning | grep -F "$CHESSEVER_DEV_ID_IDENTITY" >/dev/null
+      - name: Fetch macOS provisioning profile
+        script: |
+          set -euo pipefail
+          # MAC_APP_DIRECT profile required by the Associated Domains
+          # entitlement on Release.entitlements (universal-link delivery
+          # for chessever.com → desktop_deep_link_router). Pull the
+          # "Chessever Desktop Direct Distribution" profile by id with
+          # `profiles get --save`, which writes it into the standard
+          # ~/Library/MobileDevice/Provisioning Profiles/ directory.
+          # NB: `fetch-signing-files`'s `--certificate-key` won't accept
+          # `@file:` refs on the codemagic CLI version pinned here, so we
+          # stay with the simpler `profiles get` flow and let
+          # `xcode-project use-profiles` patch Runner.xcodeproj to match
+          # whatever profile name/team-id is returned.
+          PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILES_DIR"
+          app-store-connect profiles get SUW9J8GQ8V --save
+          ls -la "$PROFILES_DIR"
+          xcode-project use-profiles --warn-only
+      - name: Build macOS release
+        script: |
+          set -euo pipefail
+          DART_DEFINES=(
+            --dart-define=SUPABASE_URL="$SUPABASE_URL"
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+            --dart-define=GOOGLE_DESKTOP_CLIENT_ID="$GOOGLE_DESKTOP_CLIENT_ID"
+            --dart-define=GOOGLE_DESKTOP_CLIENT_SECRET="$GOOGLE_DESKTOP_CLIENT_SECRET"
+            --dart-define=SENTRY_FLUTTER="$SENTRY_FLUTTER"
+          )
+          if [ -n "${GOOGLE_WEB_CLIENT_ID:-}" ]; then
+            DART_DEFINES+=(--dart-define=GOOGLE_WEB_CLIENT_ID="$GOOGLE_WEB_CLIENT_ID")
+          fi
+          if [ -n "${BILLING_API_BASE:-}" ]; then
+            DART_DEFINES+=(--dart-define=BILLING_API_BASE="$BILLING_API_BASE")
+          fi
+          if [ -n "${GAMEBASE_PROXY_BASE:-}" ]; then
+            DART_DEFINES+=(--dart-define=GAMEBASE_PROXY_BASE="$GAMEBASE_PROXY_BASE")
+          fi
+          flutter config --enable-macos-desktop
+          export FLUTTER_ROOT="${FLUTTER_ROOT:-$(cd "$(dirname "$(command -v flutter)")/.." && pwd)}"
+          rm -rf dist
+          dart run desktop_updater:release macos --release "${DART_DEFINES[@]}"
+      - name: Publish macOS desktop archive
+        script: |
+          ./scripts/codemagic_publish_macos.sh
+    artifacts:
+      - dist/*.dmg
+      - dist/**/*.json
+      - dist/**/*-macos/**
+      - /tmp/xcodebuild_logs/*.log
+      - build/macos/Build/Products/Release/*.app
+
+  windows-desktop-release:
+    name: Windows Desktop Release
+    instance_type: windows_x2
+    max_build_duration: 120
+    environment:
+      flutter: stable
+      groups:
+        - chessever-desktop-release
+    scripts:
+      - name: Verify release environment
+        script: |
+          $required = @(
+            'SUPABASE_URL',
+            'SUPABASE_ANON_KEY',
+            'GOOGLE_DESKTOP_CLIENT_ID',
+            'GOOGLE_DESKTOP_CLIENT_SECRET',
+            'SENTRY_FLUTTER',
+            'CODEMAGIC_PUBLISHER_KEY'
+          )
+          $missing = @()
+          foreach ($name in $required) {
+            if (-not [Environment]::GetEnvironmentVariable($name)) {
+              $missing += $name
+            }
+          }
+          if ($missing.Count -gt 0) {
+            $missing | ForEach-Object { Write-Host "$_ is required" }
+            exit 1
+          }
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+      - name: Build Windows release
+        script: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_build_windows_release.ps1
+      - name: Install Inno Setup
+        script: |
+          $isccOnPath = Get-Command iscc.exe -ErrorAction SilentlyContinue
+          $isccProgramFiles = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not $isccOnPath -and -not (Test-Path $isccProgramFiles)) {
+            choco install innosetup --yes --no-progress
+          }
+      - name: Publish Windows desktop archive
+        script: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_publish_windows.ps1
+    artifacts:
+      - dist\**\*
+      - windows\installer\output\*.exe
+      - build\windows\x64\runner\Release\**\*
+
+  linux-desktop-release:
+    name: Linux Desktop Release
+    instance_type: linux_x2
+    max_build_duration: 120
+    environment:
+      flutter: stable
+      groups:
+        - chessever-desktop-release
+    scripts:
+      - name: Verify release environment
+        script: |
+          set -euo pipefail
+          required=(
+            SUPABASE_URL
+            SUPABASE_ANON_KEY
+            GOOGLE_DESKTOP_CLIENT_ID
+            GOOGLE_DESKTOP_CLIENT_SECRET
+            SENTRY_FLUTTER
+            CODEMAGIC_PUBLISHER_KEY
+            CODEMAGIC_PUBLISH_REMOTE
+          )
+          missing=0
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "$name is required"
+              missing=1
+            fi
+          done
+          exit "$missing"
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+      - name: Build Linux release
+        script: |
+          bash ./scripts/codemagic_build_linux_release.sh
+      - name: Publish Linux desktop archive
+        script: |
+          bash ./scripts/codemagic_publish_linux.sh
+    artifacts:
+      - dist/**/*.AppImage
+      - dist/**/*.json
+      - dist/**/*-linux/**
+      - build/linux/x64/release/bundle/**
