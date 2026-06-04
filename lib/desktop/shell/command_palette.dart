@@ -1162,7 +1162,7 @@ List<_PaletteEntry> _buildPaneEntries() {
     const _PaletteEntry.action(
       action: CommandAction.openLocalChessFiles,
       title: 'Open Local Chess Files…',
-      subtitle: 'Browse PGN, FEN, EPD, or CBH files',
+      subtitle: 'Browse PGN files',
       icon: Icons.snippet_folder_outlined,
     ),
     const _PaletteEntry.action(

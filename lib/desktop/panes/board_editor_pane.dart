@@ -486,9 +486,8 @@ class _BoardEditorPaneState extends ConsumerState<BoardEditorPane> {
         result,
         emptyMessage:
             result.legacyDatabaseShellCount > 0
-                ? 'No playable PGN, FEN, or EPD entries were found. '
-                    'CBV/CBF files are recognized but not decoded yet.'
-                : 'No playable PGN, FEN, or EPD entries were found.',
+                ? localChessUnsupportedFormatMessage
+                : 'No playable PGN entries were found.',
       );
     } catch (e) {
       _showToast('Could not open local chess files: $e', error: true);
