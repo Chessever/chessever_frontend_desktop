@@ -11,6 +11,7 @@ import 'package:dio/dio.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
+import 'package:chessever/screens/player_profile/utils/twic_event_identity.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/utils/chess_title_utils.dart';
 import 'package:chessever/utils/time_utils.dart';
@@ -1278,14 +1279,17 @@ Future<List<PlayerEventData>> _getTwicPlayerEvents(
     pageSize: 100,
   );
 
-  return response.events
-      .where((item) => item.event.trim().isNotEmpty)
-      .map(playerEventDataFromGamebaseEvent)
-      .toList(growable: false);
+  return mergeTwicPlayerEvents(
+    response.events
+        .where((item) => item.event.trim().isNotEmpty)
+        .map(playerEventDataFromGamebaseEvent),
+  );
 }
 
 PlayerEventData playerEventDataFromGamebaseEvent(GamebaseEventSearchItem item) {
-  final event = item.event.trim();
+  final rawEvent = item.event.trim();
+  final preferredTitle = preferredTwicEventTitle(event: rawEvent, site: item.site);
+  final event = preferredTitle.trim().isNotEmpty ? preferredTitle.trim() : 'Gamebase';
   return PlayerEventData(
     tourId: event,
     tourName: event,
@@ -1299,6 +1303,113 @@ PlayerEventData playerEventDataFromGamebaseEvent(GamebaseEventSearchItem item) {
     avgElo: item.avgElo,
     maxElo: item.maxElo,
   );
+}
+
+List<PlayerEventData> mergeTwicPlayerEvents(Iterable<PlayerEventData> events) {
+  final materialized = events.toList(growable: false);
+  final canonicalTitleByKey = <String, String>{};
+
+  for (final event in materialized) {
+    final title = event.tourName.trim();
+    if (title.isEmpty || isTwicRoundPairingEventTitle(title)) continue;
+    final key = twicCanonicalEventKey(title);
+    if (key.isNotEmpty) {
+      final existing = canonicalTitleByKey[key];
+      if (existing == null ||
+          _twicCanonicalTitleRank(title) >
+              _twicCanonicalTitleRank(existing)) {
+        canonicalTitleByKey[key] = title;
+      }
+    }
+  }
+
+  final merged = <String, PlayerEventData>{};
+  for (final event in materialized) {
+    final rawTitle = event.tourName.trim();
+    final key = twicCanonicalEventKey(rawTitle);
+    final canonicalTitle = canonicalTitleByKey[key] ?? rawTitle;
+    final mergeKey = key.isNotEmpty ? key : canonicalTitle;
+    final normalized = PlayerEventData(
+      tourId: canonicalTitle,
+      tourName: canonicalTitle,
+      tourSlug: canonicalTitle,
+      gamesPlayed: event.gamesPlayed,
+      score: event.score,
+      startDate: event.startDate,
+      endDate: event.endDate,
+      site: event.site,
+      dominantTimeControl: event.dominantTimeControl,
+      avgElo: event.avgElo,
+      maxElo: event.maxElo,
+    );
+
+    final existing = merged[mergeKey];
+    if (existing == null) {
+      merged[mergeKey] = normalized;
+    } else {
+      merged[mergeKey] = _mergeTwicPlayerEventData(existing, normalized);
+    }
+  }
+
+  return merged.values.toList(growable: false);
+}
+
+int _twicCanonicalTitleRank(String title) {
+  var rank = 0;
+  if (RegExp(r'\b(19|20)\d{2}\b').hasMatch(title)) rank += 2;
+  if (!RegExp(r'\bannual\b', caseSensitive: false).hasMatch(title)) rank += 1;
+  return rank;
+}
+
+PlayerEventData _mergeTwicPlayerEventData(
+  PlayerEventData a,
+  PlayerEventData b,
+) {
+  return PlayerEventData(
+    tourId: a.tourId,
+    tourName: a.tourName,
+    tourSlug: a.tourSlug,
+    gamesPlayed: a.gamesPlayed + b.gamesPlayed,
+    score: (a.score == null && b.score == null)
+        ? null
+        : (a.score ?? 0) + (b.score ?? 0),
+    startDate: _earliestDate(a.startDate, b.startDate),
+    endDate: _latestDate(a.endDate ?? a.startDate, b.endDate ?? b.startDate),
+    site: _preferredEventSite(a.site, b.site),
+    dominantTimeControl: a.dominantTimeControl ?? b.dominantTimeControl,
+    avgElo: a.avgElo ?? b.avgElo,
+    maxElo: _maxNullableInt(a.maxElo, b.maxElo),
+  );
+}
+
+DateTime? _earliestDate(DateTime? a, DateTime? b) {
+  if (a == null) return b;
+  if (b == null) return a;
+  return a.isBefore(b) ? a : b;
+}
+
+DateTime? _latestDate(DateTime? a, DateTime? b) {
+  if (a == null) return b;
+  if (b == null) return a;
+  return a.isAfter(b) ? a : b;
+}
+
+int? _maxNullableInt(int? a, int? b) {
+  if (a == null) return b;
+  if (b == null) return a;
+  return a > b ? a : b;
+}
+
+String? _preferredEventSite(String? a, String? b) {
+  final aValue = a?.trim();
+  final bValue = b?.trim();
+  final aIsUrl = aValue?.startsWith(RegExp(r'https?://')) ?? false;
+  final bIsUrl = bValue?.startsWith(RegExp(r'https?://')) ?? false;
+  if (aValue != null && aValue.isNotEmpty && !aIsUrl) return aValue;
+  if (bValue != null && bValue.isNotEmpty && !bIsUrl) return bValue;
+  if (aValue != null && aValue.isNotEmpty) return aValue;
+  if (bValue != null && bValue.isNotEmpty) return bValue;
+  return null;
 }
 
 String _formatEventTimeControl(String? raw) {
@@ -3001,6 +3112,8 @@ class PlayerProfileGamesNotifier
     final opening = row['opening']?.toString();
     final variation = row['variation']?.toString();
     final event = (row['event']?.toString() ?? 'Gamebase').trim();
+    final rowSite = row['site']?.toString();
+    final displayEvent = preferredTwicEventTitle(event: event, site: rowSite);
 
     final whiteName =
         (row['white']?.toString() ?? row['whiteName']?.toString() ?? 'White')
@@ -3024,7 +3137,6 @@ class PlayerProfileGamesNotifier
         row['finalFen']?.toString() ??
         row['positionFen']?.toString();
     final rowLastMove = row['lastMove']?.toString();
-    final rowSite = row['site']?.toString();
     final whiteEloRaw = (row['whiteElo'] as num?)?.toInt() ?? 0;
     final blackEloRaw = (row['blackElo'] as num?)?.toInt() ?? 0;
 
@@ -3032,7 +3144,7 @@ class PlayerProfileGamesNotifier
       whiteName: whiteName,
       blackName: blackName,
       result: result,
-      event: event.isNotEmpty ? event : 'Gamebase',
+      event: displayEvent.trim().isNotEmpty ? displayEvent.trim() : 'Gamebase',
       site: rowSite,
       date: date,
       eco: eco,
@@ -3096,8 +3208,8 @@ class PlayerProfileGamesNotifier
           (eco != null && eco.trim().isNotEmpty)
               ? eco.trim()
               : (timeControl ?? ''),
-      tourId: event.isNotEmpty ? event : 'Gamebase',
-      tourSlug: event.isNotEmpty ? event : 'Gamebase',
+      tourId: displayEvent.trim().isNotEmpty ? displayEvent.trim() : 'Gamebase',
+      tourSlug: displayEvent.trim().isNotEmpty ? displayEvent.trim() : 'Gamebase',
       lastMove: rowLastMove,
       fen: rowFen,
       pgn: pgn,
