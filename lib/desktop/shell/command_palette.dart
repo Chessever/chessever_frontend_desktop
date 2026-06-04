@@ -1081,7 +1081,6 @@ class _PaletteEntry {
 enum CommandAction {
   flipBoard,
   importPgn,
-  openLocalChessFolder,
   openLocalChessFiles,
   toggleSidebar,
   openPreferences,
@@ -1154,15 +1153,9 @@ List<_PaletteEntry> _buildPaneEntries() {
       shortcut: '⌘O',
     ),
     const _PaletteEntry.action(
-      action: CommandAction.openLocalChessFolder,
-      title: 'Browse Local Chess Folder…',
-      subtitle: 'Open a folder in Library without importing it',
-      icon: Icons.account_tree_outlined,
-    ),
-    const _PaletteEntry.action(
       action: CommandAction.openLocalChessFiles,
-      title: 'Open Local Chess Files…',
-      subtitle: 'Browse PGN, FEN, EPD, or CBH files',
+      title: 'Import PGN in Library…',
+      subtitle: 'Add local PGN files from disk',
       icon: Icons.snippet_folder_outlined,
     ),
     const _PaletteEntry.action(

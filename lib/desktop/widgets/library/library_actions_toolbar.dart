@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/state/library_import_buffer.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
@@ -22,22 +23,12 @@ class LibraryActionsToolbar extends ConsumerWidget {
     super.key,
     required this.onNewFolder,
     this.suggestedFolderId,
-    this.onOpenLocalFolder,
-    this.onOpenLocalFiles,
   });
 
   /// Opens the create-folder dialog. Routed through the pane so the call
   /// site can decide whether to lock the parent (when invoked from inside
   /// a folder context).
   final VoidCallback onNewFolder;
-
-  /// Opens a local folder as a read-only chess source. This is deliberately
-  /// separate from import: browsing local files must not save anything until
-  /// the user chooses a save action in the local preview.
-  final VoidCallback? onOpenLocalFolder;
-
-  /// Opens one or more local chess files as a read-only source.
-  final VoidCallback? onOpenLocalFiles;
 
   /// When set, parsed games are pre-routed to this folder in the
   /// save-to-folder dialog (used when toolbar actions are invoked while
@@ -47,7 +38,10 @@ class LibraryActionsToolbar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     Future<void> handlePickFile() async {
-      onOpenLocalFiles?.call();
+      await pickAndStageLibraryPgnImport(
+        ref,
+        suggestedFolderId: suggestedFolderId,
+      );
     }
 
     Future<void> handlePasteClipboard() async {

@@ -3,22 +3,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:chessever/desktop/shell/command_palette.dart';
 
 void main() {
-  test('command palette exposes local chess browsing actions', () {
+  test('command palette routes local intake through PGN import only', () {
     expect(
       debugCommandPaletteEntryTitles(),
-      containsAll(<String>[
-        'Open PGN on Board…',
-        'Browse Local Chess Folder…',
-        'Open Local Chess Files…',
-      ]),
+      containsAll(<String>['Open PGN on Board…', 'Import PGN in Library…']),
     );
 
     expect(
-      debugCommandPaletteActionForTitle('Browse Local Chess Folder…'),
-      CommandAction.openLocalChessFolder,
+      debugCommandPaletteEntryTitles(),
+      isNot(contains('Browse Local Chess Folder…')),
     );
     expect(
-      debugCommandPaletteActionForTitle('Open Local Chess Files…'),
+      debugCommandPaletteEntryTitles(),
+      isNot(contains('Open Local Chess Files…')),
+    );
+    expect(
+      debugCommandPaletteActionForTitle('Import PGN in Library…'),
       CommandAction.openLocalChessFiles,
     );
     expect(
