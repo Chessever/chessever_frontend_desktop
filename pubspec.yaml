@@ -229,6 +229,7 @@ flutter:
     # them (mobile uses package:stockfish on its own runtime branch).
     - assets/engine/macos/stockfish
     - assets/engine/windows/stockfish.exe
+    - assets/engine/linux/stockfish
     - assets/launch.webp
     - assets/app_icon.png
     # Keep local secrets out of desktop release bundles.

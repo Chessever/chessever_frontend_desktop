@@ -211,5 +211,6 @@ Future<String?> _ensureBundledBinary() async {
 String? _bundledAssetPathForPlatform() {
   if (Platform.isMacOS) return 'assets/engine/macos/stockfish';
   if (Platform.isWindows) return 'assets/engine/windows/stockfish.exe';
+  if (Platform.isLinux) return 'assets/engine/linux/stockfish';
   return null;
 }
