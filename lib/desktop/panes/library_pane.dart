@@ -2168,9 +2168,10 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
         selectedId: selectedId.value,
       );
       unawaited(
-        copyPgnTextsAsPgn(
+        copyDesktopGamesAsResolvedPgn(
           context: context,
-          pgns: copyGames.map((game) => game.pgn),
+          ref: ref,
+          games: copyGames,
         ),
       );
     }
@@ -7464,9 +7465,10 @@ class _TwicDatabaseWorkspace extends HookConsumerWidget {
         selectedId: selectedId.value,
       );
       unawaited(
-        copyPgnTextsAsPgn(
+        copyDesktopGamesAsResolvedPgn(
           context: context,
-          pgns: copyGames.map((game) => game.pgn),
+          ref: ref,
+          games: copyGames,
         ),
       );
     }

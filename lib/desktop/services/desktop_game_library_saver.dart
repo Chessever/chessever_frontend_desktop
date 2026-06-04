@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
@@ -6,11 +7,56 @@ import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
+    show exportGameToPgn;
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
 bool canSaveDesktopGameToLibrary(GamesTourModel game) {
   return game.gameStatus.isFinished;
+}
+
+Future<int> copyDesktopGamesAsResolvedPgn({
+  required BuildContext context,
+  required WidgetRef ref,
+  required List<GamesTourModel> games,
+}) async {
+  if (games.isEmpty) {
+    showDesktopToast(context, 'Nothing to copy.', error: true);
+    return 0;
+  }
+
+  final pgns = <String>[];
+  var skipped = 0;
+  for (final game in games) {
+    try {
+      final chessGame = await resolveDesktopChessGameForLibrary(ref, game);
+      final pgn = exportGameToPgn(chessGame).trim();
+      if (pgn.isNotEmpty && pgnHasMoves(pgn)) {
+        pgns.add(pgn);
+      } else {
+        skipped += 1;
+      }
+    } catch (_) {
+      skipped += 1;
+    }
+  }
+
+  if (!context.mounted) return 0;
+  if (pgns.isEmpty) {
+    showDesktopToast(context, 'No PGN with moves to copy.', error: true);
+    return 0;
+  }
+
+  await Clipboard.setData(ClipboardData(text: pgns.join('\n\n')));
+  if (!context.mounted) return pgns.length;
+  final count = pgns.length;
+  final suffix = skipped > 0 ? ' ($skipped skipped without moves)' : '';
+  showDesktopToast(
+    context,
+    'Copied $count ${count == 1 ? 'game' : 'games'} as PGN$suffix.',
+  );
+  return count;
 }
 
 Future<void> saveDesktopGameToLibrary({

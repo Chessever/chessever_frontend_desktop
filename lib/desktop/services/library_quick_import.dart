@@ -16,6 +16,8 @@ import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
 import 'package:chessever/screens/library/providers/library_folders_provider.dart'
     show kTwicBookId, libraryFoldersStreamProvider, subscribedBooksProvider;
+import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
+    show pgnHasMoves;
 import 'package:chessever/utils/pgn_multi_parser.dart';
 import 'package:chessever/utils/save_to_library_guard.dart';
 
@@ -123,29 +125,46 @@ Future<int> copySavedAnalysesAsPgn({
 }
 
 /// Copy already-serialized PGN strings as one clipboard blob. Used by
-/// read-only database sources (TWIC/system, local previews, broadcasts) where
-/// the row model already carries PGN text rather than SavedAnalysis rows.
+/// read-only database sources (local PGN previews, broadcasts) where the row
+/// model already carries full PGN text rather than SavedAnalysis rows.
+///
+/// Header-only/empty PGNs are deliberately skipped so Ctrl+C never places a
+/// blob on the clipboard that Ctrl+V will reject as invalid.
 Future<int> copyPgnTextsAsPgn({
   required BuildContext context,
   required Iterable<String?> pgns,
 }) async {
-  final parts = <String>[];
-  for (final raw in pgns) {
-    final pgn = raw?.trim();
-    if (pgn != null && pgn.isNotEmpty) parts.add(pgn);
-  }
+  final rawPgns = pgns.toList(growable: false);
+  final parts = copyablePgnTextParts(rawPgns);
   if (parts.isEmpty) {
     if (context.mounted) {
-      showDesktopToast(context, 'No PGN to copy.', error: true);
+      showDesktopToast(context, 'No PGN with moves to copy.', error: true);
     }
     return 0;
   }
   await Clipboard.setData(ClipboardData(text: parts.join('\n\n')));
   if (context.mounted) {
     final n = parts.length;
-    showDesktopToast(context, 'Copied $n ${n == 1 ? 'game' : 'games'} as PGN.');
+    final skipped = rawPgns.length - n;
+    final suffix = skipped > 0 ? ' ($skipped skipped without moves)' : '';
+    showDesktopToast(
+      context,
+      'Copied $n ${n == 1 ? 'game' : 'games'} as PGN$suffix.',
+    );
   }
   return parts.length;
+}
+
+@visibleForTesting
+List<String> copyablePgnTextParts(Iterable<String?> pgns) {
+  final parts = <String>[];
+  for (final raw in pgns) {
+    final pgn = raw?.trim();
+    if (pgn != null && pgn.isNotEmpty && pgnHasMoves(pgn)) {
+      parts.add(pgn);
+    }
+  }
+  return parts;
 }
 
 Future<int> _saveAndToast({
