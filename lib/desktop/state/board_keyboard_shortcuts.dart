@@ -788,13 +788,11 @@ Map<BoardActionKey, List<KeyChord>> defaultBoardShortcuts() {
     BoardActionKey.switchNotationView: [_key(LogicalKeyboardKey.tab)],
     BoardActionKey.rightRailPreviousTab: [
       _primary(LogicalKeyboardKey.comma, shift: true),
-      _primary(LogicalKeyboardKey.arrowLeft),
       _alt(LogicalKeyboardKey.arrowLeft),
       _alt(LogicalKeyboardKey.arrowUp),
     ],
     BoardActionKey.rightRailNextTab: [
       _primary(LogicalKeyboardKey.period, shift: true),
-      _primary(LogicalKeyboardKey.arrowRight),
       _alt(LogicalKeyboardKey.arrowRight),
       _alt(LogicalKeyboardKey.arrowDown),
     ],
