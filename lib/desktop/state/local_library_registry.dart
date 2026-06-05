@@ -111,7 +111,7 @@ class LocalLibraryRegistryNotifier
     return entries.isEmpty ? path : entries.first.path;
   }
 
-  /// Register every opened local file/folder as a removable My Databases item.
+  /// Register every opened local PGN/file/folder as a removable My Databases item.
   /// Duplicate paths preserve the original entry and insertion time.
   Future<List<LocalLibraryEntry>> registerAll(List<String> paths) async {
     if (paths.isEmpty) return const <LocalLibraryEntry>[];

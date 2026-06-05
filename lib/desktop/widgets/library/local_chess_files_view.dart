@@ -137,7 +137,7 @@ class LocalChessFilesView extends HookConsumerWidget {
                       child: DesktopSearchField(
                         controller: searchController,
                         hintText:
-                            'Search local entries — names, event, ECO, file',
+                            'Search this database — players, events, openings, ECO',
                         onChanged: (value) => query.value = value,
                         onClear: () => query.value = '',
                       ),
@@ -260,6 +260,28 @@ class _LocalHeader extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (isDatabaseView) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: kBlack2Color,
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: kDividerColor),
+                        ),
+                        child: const Text(
+                          'My database',
+                          style: TextStyle(
+                            color: kWhiteColor70,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
                 if (!isDatabaseView) ...[
@@ -283,24 +305,26 @@ class _LocalHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          _HeaderAction(
-            tooltip: 'Open another local folder',
-            icon: Icons.folder_open_outlined,
-            onPress: onOpenFolder,
-          ),
-          const SizedBox(width: 4),
-          _HeaderAction(
-            tooltip: 'Open local chess files',
-            icon: Icons.file_open_outlined,
-            onPress: onOpenFiles,
-          ),
-          const SizedBox(width: 4),
-          _HeaderAction(
-            tooltip: 'Rescan this local source',
-            icon: Icons.refresh_rounded,
-            onPress: onRefresh,
-          ),
-          const SizedBox(width: 8),
+          if (!isDatabaseView) ...[
+            _HeaderAction(
+              tooltip: 'Open another local folder',
+              icon: Icons.folder_open_outlined,
+              onPress: onOpenFolder,
+            ),
+            const SizedBox(width: 4),
+            _HeaderAction(
+              tooltip: 'Open local chess files',
+              icon: Icons.file_open_outlined,
+              onPress: onOpenFiles,
+            ),
+            const SizedBox(width: 4),
+            _HeaderAction(
+              tooltip: 'Rescan this local source',
+              icon: Icons.refresh_rounded,
+              onPress: onRefresh,
+            ),
+            const SizedBox(width: 8),
+          ],
           DesktopTooltip(
             message:
                 onSave == null
