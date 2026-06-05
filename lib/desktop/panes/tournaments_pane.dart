@@ -775,7 +775,7 @@ class _DesktopEventCardShellState extends State<_DesktopEventCardShell> {
                         border: Border.all(
                           color:
                               _hovered
-                                  ? kPrimaryColor.withValues(alpha: 0.45)
+                                  ? kWhiteColor.withValues(alpha: 0.12)
                                   : Colors.transparent,
                           width: 1.5,
                         ),
@@ -1011,7 +1011,7 @@ class _EventThumbnailVisual extends StatelessWidget {
               border: Border.all(
                 color:
                     selected
-                        ? statusColor.withValues(alpha: 0.72)
+                        ? statusColor.withValues(alpha: 0.34)
                         : kWhiteColor.withValues(alpha: 0.08),
               ),
             ),
@@ -1319,9 +1319,9 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
                   border: Border.all(
                     color:
                         widget.selected
-                            ? categoryColor.withValues(alpha: 0.68)
+                            ? categoryColor.withValues(alpha: 0.36)
                             : (_hovered
-                                ? kWhiteColor.withValues(alpha: 0.14)
+                                ? kWhiteColor.withValues(alpha: 0.12)
                                 : kDividerColor),
                   ),
                 ),
@@ -1461,9 +1461,9 @@ class _StatusBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.16),
+        color: color.withValues(alpha: 0.09),
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: color.withValues(alpha: 0.4)),
+        border: Border.all(color: color.withValues(alpha: 0.24)),
       ),
       alignment: Alignment.center,
       child: Text(
@@ -2209,7 +2209,6 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
   @override
   Widget build(BuildContext context) {
     final event = widget.event;
-    final color = _categoryColor(event.tourEventCategory);
     final highlighted = widget.selected || _hovered;
     return DesktopEventContextMenu(
       event: event,
@@ -2232,9 +2231,9 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
                   border: Border.all(
                     color:
                         widget.selected
-                            ? kPrimaryColor
+                            ? kPrimaryColor.withValues(alpha: 0.42)
                             : _hovered
-                            ? color.withValues(alpha: 0.48)
+                            ? kWhiteColor.withValues(alpha: 0.12)
                             : kDividerColor,
                   ),
                   // selection keeps a persistent shadow; hover/press shadow
@@ -2243,8 +2242,8 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
                       widget.selected
                           ? [
                             BoxShadow(
-                              color: kPrimaryColor.withValues(alpha: 0.2),
-                              blurRadius: 18,
+                              color: kPrimaryColor.withValues(alpha: 0.08),
+                              blurRadius: 12,
                               offset: const Offset(0, 6),
                             ),
                           ]
@@ -2357,7 +2356,7 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
                                 Icon(
                                   Icons.open_in_new_rounded,
                                   size: 15,
-                                  color: _hovered ? color : kWhiteColor70,
+                                  color: kWhiteColor70,
                                 ),
                               ],
                             ),

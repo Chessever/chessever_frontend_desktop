@@ -136,12 +136,12 @@ FWidgetStateMap<TextStyle> _segmentTextStyle({required bool selected}) {
 
 FWidgetStateMap<IconThemeData> _segmentIconStyle({required bool selected}) {
   return FWidgetStateMap({
-    WidgetState.hovered | WidgetState.pressed: IconThemeData(
-      color: selected ? kPrimaryColor : kWhiteColor,
+    WidgetState.hovered | WidgetState.pressed: const IconThemeData(
+      color: kWhiteColor,
       size: 14,
     ),
     WidgetState.any: IconThemeData(
-      color: selected ? kPrimaryColor : kLightGreyColor,
+      color: selected ? kWhiteColor70 : kLightGreyColor,
       size: 14,
     ),
   });
@@ -152,23 +152,23 @@ FWidgetStateMap<BoxDecoration> _segmentWrapDecoration({
 }) {
   return FWidgetStateMap({
     WidgetState.hovered | WidgetState.pressed: BoxDecoration(
-      color: selected ? kPrimaryColor.withValues(alpha: 0.18) : kBlack3Color,
+      color: selected ? kPrimaryColor.withValues(alpha: 0.09) : kBlack3Color,
       borderRadius: BorderRadius.circular(999),
       border: Border.all(
         color:
             selected
-                ? kPrimaryColor.withValues(alpha: 0.42)
+                ? kPrimaryColor.withValues(alpha: 0.22)
                 : kWhiteColor.withValues(alpha: 0.18),
       ),
     ),
     WidgetState.any: BoxDecoration(
       color:
-          selected ? kPrimaryColor.withValues(alpha: 0.13) : kBlack2Color,
+          selected ? kPrimaryColor.withValues(alpha: 0.06) : kBlack2Color,
       borderRadius: BorderRadius.circular(999),
       border: Border.all(
         color:
             selected
-                ? kPrimaryColor.withValues(alpha: 0.36)
+                ? kPrimaryColor.withValues(alpha: 0.18)
                 : kDividerColor,
       ),
     ),
@@ -178,23 +178,23 @@ FWidgetStateMap<BoxDecoration> _segmentWrapDecoration({
 FWidgetStateMap<BoxDecoration> _segmentDecoration({required bool selected}) {
   return FWidgetStateMap({
     WidgetState.hovered | WidgetState.pressed: BoxDecoration(
-      color: selected ? kPrimaryColor.withValues(alpha: 0.18) : kBlack3Color,
+      color: selected ? kPrimaryColor.withValues(alpha: 0.09) : kBlack3Color,
       borderRadius: BorderRadius.circular(7),
       border: Border.all(
         color:
             selected
-                ? kPrimaryColor.withValues(alpha: 0.42)
+                ? kPrimaryColor.withValues(alpha: 0.22)
                 : kWhiteColor.withValues(alpha: 0.14),
       ),
     ),
     WidgetState.any: BoxDecoration(
       color:
-          selected ? kPrimaryColor.withValues(alpha: 0.13) : Colors.transparent,
+          selected ? kPrimaryColor.withValues(alpha: 0.06) : Colors.transparent,
       borderRadius: BorderRadius.circular(7),
       border: Border.all(
         color:
             selected
-                ? kPrimaryColor.withValues(alpha: 0.36)
+                ? kPrimaryColor.withValues(alpha: 0.18)
                 : Colors.transparent,
       ),
     ),
