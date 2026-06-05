@@ -196,10 +196,19 @@ class DesktopTab {
 
 @immutable
 class DesktopTabsState {
-  const DesktopTabsState({required this.tabs, required this.activeId});
+  const DesktopTabsState({
+    required this.tabs,
+    required this.activeId,
+    this.activationHistory = const <String>[],
+  });
 
   final List<DesktopTab> tabs;
   final String? activeId;
+
+  /// Most-recently-active tab ids, newest first, excluding [activeId]. This
+  /// lets closing a tab return to the exact context the user came from rather
+  /// than picking a strip neighbor that may be visually adjacent but unrelated.
+  final List<String> activationHistory;
 
   DesktopTab? get active {
     if (activeId == null) return null;
@@ -231,6 +240,28 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
   static int _idCounter = 0;
   static String _nextId() => 'tab-${_idCounter++}';
 
+  DesktopTabsState _stateWithActive({
+    required List<DesktopTab> tabs,
+    required String? activeId,
+  }) {
+    final previousActiveId = state.activeId;
+    final validIds = tabs.map((tab) => tab.id).toSet();
+    final history = <String>[
+      if (previousActiveId != null &&
+          previousActiveId != activeId &&
+          validIds.contains(previousActiveId))
+        previousActiveId,
+      for (final id in state.activationHistory)
+        if (id != activeId && id != previousActiveId && validIds.contains(id))
+          id,
+    ];
+    return DesktopTabsState(
+      tabs: tabs,
+      activeId: activeId,
+      activationHistory: history,
+    );
+  }
+
   /// Opens a tab of [kind]. If [reuseExisting] is true (default) and a tab of
   /// the same kind is already open, it's just activated rather than spawning
   /// a duplicate — matching what users expect from category browsers.
@@ -251,7 +282,7 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
       for (final tab in state.tabs) {
         if (tab.kind == kind) {
           if (focus) {
-            state = DesktopTabsState(tabs: state.tabs, activeId: tab.id);
+            state = _stateWithActive(tabs: state.tabs, activeId: tab.id);
           }
           return tab.id;
         }
@@ -263,10 +294,14 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
       title: title ?? kind.defaultTitle,
       subtitle: subtitle,
     );
-    state = DesktopTabsState(
-      tabs: [...state.tabs, tab],
-      activeId: focus ? tab.id : state.activeId,
-    );
+    final newTabs = [...state.tabs, tab];
+    state = focus
+        ? _stateWithActive(tabs: newTabs, activeId: tab.id)
+        : DesktopTabsState(
+            tabs: newTabs,
+            activeId: state.activeId,
+            activationHistory: state.activationHistory,
+          );
     return tab.id;
   }
 
@@ -311,7 +346,11 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
       for (var i = 0; i < state.tabs.length; i++)
         if (i == idx) replaced else state.tabs[i],
     ];
-    state = DesktopTabsState(tabs: newTabs, activeId: activeId);
+    state = DesktopTabsState(
+      tabs: newTabs,
+      activeId: activeId,
+      activationHistory: state.activationHistory,
+    );
     return activeId;
   }
 
@@ -335,7 +374,11 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
       for (var i = 0; i < state.tabs.length; i++)
         if (i == idx) updated else state.tabs[i],
     ];
-    state = DesktopTabsState(tabs: newTabs, activeId: activeId);
+    state = DesktopTabsState(
+      tabs: newTabs,
+      activeId: activeId,
+      activationHistory: state.activationHistory,
+    );
   }
 
   /// Move the active tab one shell route forward, Chrome-style. No-op when the
@@ -361,7 +404,11 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
       for (var i = 0; i < state.tabs.length; i++)
         if (i == idx) updated else state.tabs[i],
     ];
-    state = DesktopTabsState(tabs: newTabs, activeId: activeId);
+    state = DesktopTabsState(
+      tabs: newTabs,
+      activeId: activeId,
+      activationHistory: state.activationHistory,
+    );
   }
 
   /// Brings the tab with [id] to the foreground. No-op if it doesn't exist.
@@ -369,7 +416,7 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
     if (state.activeId == id) return;
     for (final tab in state.tabs) {
       if (tab.id == id) {
-        state = DesktopTabsState(tabs: state.tabs, activeId: id);
+        state = _stateWithActive(tabs: state.tabs, activeId: id);
         return;
       }
     }
@@ -409,8 +456,9 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
   }
 
   /// Closes the tab with [id]. Pinned tabs (closable == false) are ignored.
-  /// Activates the right neighbour when the closed tab was active, falling
-  /// back to the previous tab when the closed tab was at the end.
+  /// When the active tab closes, returns to the most recently active remaining
+  /// tab. If there is no activation history, falls back to strip-neighbor
+  /// browser semantics.
   void close(String id) {
     final idx = state.tabs.indexWhere((t) => t.id == id);
     if (idx < 0) return;
@@ -424,16 +472,26 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
 
     String? newActive = state.activeId;
     if (state.activeId == id) {
-      if (remaining.isEmpty) {
-        newActive = null;
-      } else if (idx < remaining.length) {
-        newActive = remaining[idx].id;
-      } else {
-        newActive = remaining.last.id;
-      }
+      final validRemainingIds = remaining.map((tab) => tab.id).toSet();
+      newActive = state.activationHistory.firstWhere(
+        validRemainingIds.contains,
+        orElse: () {
+          if (remaining.isEmpty) return '';
+          if (idx < remaining.length) return remaining[idx].id;
+          return remaining.last.id;
+        },
+      );
+      if (newActive.isEmpty) newActive = null;
     }
 
-    state = DesktopTabsState(tabs: remaining, activeId: newActive);
+    state = DesktopTabsState(
+      tabs: remaining,
+      activeId: newActive,
+      activationHistory: [
+        for (final historyId in state.activationHistory)
+          if (historyId != id && historyId != newActive) historyId,
+      ],
+    );
   }
 
   /// Close every closable tab *except* [keepId]. Mirrors Chrome's
@@ -445,9 +503,15 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
     ];
     if (keep.length == state.tabs.length) return;
     final activeStillExists = keep.any((t) => t.id == state.activeId);
+    final keptIds = keep.map((tab) => tab.id).toSet();
+    final nextActiveId = activeStillExists ? state.activeId : keepId;
     state = DesktopTabsState(
       tabs: keep,
-      activeId: activeStillExists ? state.activeId : keepId,
+      activeId: nextActiveId,
+      activationHistory: [
+        for (final id in state.activationHistory)
+          if (id != nextActiveId && keptIds.contains(id)) id,
+      ],
     );
   }
 
@@ -462,9 +526,15 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
     ];
     if (keep.length == state.tabs.length) return;
     final activeStillExists = keep.any((t) => t.id == state.activeId);
+    final keptIds = keep.map((tab) => tab.id).toSet();
+    final nextActiveId = activeStillExists ? state.activeId : pivotId;
     state = DesktopTabsState(
       tabs: keep,
-      activeId: activeStillExists ? state.activeId : pivotId,
+      activeId: nextActiveId,
+      activationHistory: [
+        for (final id in state.activationHistory)
+          if (id != nextActiveId && keptIds.contains(id)) id,
+      ],
     );
   }
 
@@ -478,7 +548,11 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
     if (adjusted < 0 || adjusted > tabs.length - 1) return;
     final moved = tabs.removeAt(oldIndex);
     tabs.insert(adjusted, moved);
-    state = DesktopTabsState(tabs: tabs, activeId: state.activeId);
+    state = DesktopTabsState(
+      tabs: tabs,
+      activeId: state.activeId,
+      activationHistory: state.activationHistory,
+    );
   }
 
   /// Update the visible label of an existing tab (e.g. when a Board tab
@@ -491,7 +565,11 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
       for (var i = 0; i < state.tabs.length; i++)
         if (i == idx) updated else state.tabs[i],
     ];
-    state = DesktopTabsState(tabs: newTabs, activeId: state.activeId);
+    state = DesktopTabsState(
+      tabs: newTabs,
+      activeId: state.activeId,
+      activationHistory: state.activationHistory,
+    );
   }
 }
 

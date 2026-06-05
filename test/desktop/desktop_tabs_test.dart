@@ -59,7 +59,7 @@ void main() {
       expect(tabs.state.activeId, library);
     });
 
-    test('closing the active tab activates the right neighbor first', () {
+    test('closing the active tab returns to the previous active tab', () {
       final tabs = DesktopTabsNotifier();
       final board = tabs.open(TabKind.board, reuseExisting: false);
       final library = tabs.open(TabKind.library, reuseExisting: false);
@@ -67,11 +67,32 @@ void main() {
 
       tabs.activate(board);
       tabs.close(board);
-      expect(tabs.state.activeId, library);
+      expect(tabs.state.activeId, players);
 
       tabs.close(players);
       expect(tabs.state.activeId, library);
     });
+
+    test(
+      'closing a database tab opened from Library restores Library context',
+      () {
+        final tabs = DesktopTabsNotifier();
+        final library = tabs.open(TabKind.library, reuseExisting: false);
+        tabs.open(TabKind.players, reuseExisting: false);
+        tabs.activate(library);
+
+        final database = tabs.open(
+          TabKind.databaseWorkspace,
+          title: 'ChessEver post',
+          reuseExisting: false,
+        );
+
+        expect(tabs.state.activeId, database);
+        tabs.close(database);
+        expect(tabs.state.activeId, library);
+        expect(tabs.state.active?.kind, TabKind.library);
+      },
+    );
 
     test('keeps independent route history per tab', () {
       final tabs = DesktopTabsNotifier();
