@@ -45,6 +45,62 @@ void main() {
   );
 
   testWidgets(
+    'annotation toolbar supports sideline NAGs and removes add diagram',
+    (tester) async {
+      ChessMovePointer? toggledPointer;
+      int? toggledNag;
+      ChessMovePointer? clearedPointer;
+
+      await tester.pumpWidget(
+        _host(
+          game: _sampleGame(),
+          activePointer: const [0, 0, 0],
+          onJump: (_) {},
+          onToggleMoveNag: (pointer, nag) {
+            toggledPointer = List<int>.from(pointer);
+            toggledNag = nag;
+          },
+          onClearMoveNags: (pointer) {
+            clearedPointer = List<int>.from(pointer);
+          },
+          width: 760,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.add_comment_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.grid_view_rounded), findsNothing);
+
+      await tester.tap(find.text('!').last);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(toggledPointer, const [0, 0, 0]);
+      expect(toggledNag, 1);
+
+      await tester.pumpWidget(
+        _host(
+          game: _sampleGameWithSidelineNag(),
+          activePointer: const [0, 0, 0],
+          onJump: (_) {},
+          onToggleMoveNag: (_, _) {},
+          onClearMoveNags: (pointer) {
+            clearedPointer = List<int>.from(pointer);
+          },
+          width: 760,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.byIcon(Icons.clear_rounded));
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.clear_rounded));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(clearedPointer, const [0, 0, 0]);
+    },
+  );
+
+  testWidgets(
     'inline notation exposes collapse and reopen controls for variations',
     (tester) async {
       final layoutMode = ValueNotifier(NotationLayoutMode.inline);
@@ -710,6 +766,23 @@ ChessGame _inlineSiblingVariationOrderGame() {
   return game.copyWith(mainline: mainline);
 }
 
+ChessGame _sampleGameWithSidelineNag() {
+  final game = _sampleGame();
+  final mainline = List<ChessMove>.of(game.mainline);
+  final first = mainline.first;
+  final variations = List<ChessLine>.of(
+    first.variations ?? const <ChessLine>[],
+  );
+  final sideline = List<ChessMove>.of(variations.first);
+  sideline[0] = sideline[0].copyWith(nags: const <int>[1]);
+  variations[0] = sideline;
+  mainline[0] = first.copyWith(
+    variations: variations,
+    overrideVariations: true,
+  );
+  return game.copyWith(mainline: mainline);
+}
+
 Widget _host({
   required ChessGame game,
   required ValueChanged<ChessMovePointer> onJump,
@@ -723,6 +796,8 @@ Widget _host({
   void Function(int ply, int? nag)? onSetUserQualityNag,
   void Function(int ply, int nag)? onToggleUserNag,
   void Function(int ply)? onClearUserNags,
+  void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag,
+  void Function(ChessMovePointer pointer)? onClearMoveNags,
   ValueNotifier<NotationLayoutMode>? layoutModeController,
   NotationVariationCollapseController? variationCollapseController,
 }) {
@@ -735,6 +810,8 @@ Widget _host({
     onSetUserQualityNag: onSetUserQualityNag,
     onToggleUserNag: onToggleUserNag,
     onClearUserNags: onClearUserNags,
+    onToggleMoveNag: onToggleMoveNag,
+    onClearMoveNags: onClearMoveNags,
     layoutModeController: layoutModeController,
     variationCollapseController: variationCollapseController,
     useFigurine: useFigurine,
