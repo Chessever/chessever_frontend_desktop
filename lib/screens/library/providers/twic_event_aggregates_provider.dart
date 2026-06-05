@@ -4,6 +4,7 @@ import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/library/providers/gamebase_database_games_provider.dart';
 import 'package:chessever/screens/library/providers/gamebase_filter_provider.dart';
 import 'package:chessever/screens/library/widgets/library_gamebase_filter_dialog.dart';
+import 'package:chessever/screens/player_profile/utils/twic_event_identity.dart';
 import 'package:chessever/utils/time_utils.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -16,6 +17,7 @@ class TwicEventAggregate {
   const TwicEventAggregate({
     required this.id,
     required this.event,
+    String? displayEvent,
     required this.gameCount,
     this.site,
     this.startDate,
@@ -23,10 +25,15 @@ class TwicEventAggregate {
     this.dominantTimeControl,
     this.avgElo,
     this.maxElo,
-  });
+  }) : displayEvent = displayEvent ?? event;
 
   final String id;
+
+  /// Raw Gamebase event identifier used for API filtering.
   final String event;
+
+  /// Human-facing tournament title shown in TWIC UI surfaces.
+  final String displayEvent;
   final int gameCount;
   final String? site;
   final DateTime? startDate;
@@ -36,9 +43,12 @@ class TwicEventAggregate {
   final int? maxElo;
 
   factory TwicEventAggregate.fromApi(GamebaseEventSearchItem item) {
+    final displayEvent =
+        preferredTwicEventTitle(event: item.event, site: item.site).trim();
     return TwicEventAggregate(
       id: item.id,
       event: item.event,
+      displayEvent: displayEvent.isNotEmpty ? displayEvent : item.event,
       gameCount: item.gameCount,
       site: item.site,
       startDate: item.startDate,
@@ -228,13 +238,13 @@ final twicEventCardModelsProvider =
           .map((event) {
             return GroupEventCardModel(
               id: event.id,
-              title: event.event,
+              title: event.displayEvent,
               dates: TimeUtils.formatDateRange(event.startDate, event.endDate),
               maxAvgElo: event.avgElo ?? event.maxElo ?? 0,
               timeUntilStart: TimeUtils.timeUntilStart(event.startDate),
               tourEventCategory: GroupEventCardModel.getCategory(
                 groupId: event.id,
-                groupName: event.event,
+                groupName: event.displayEvent,
                 startDate: event.startDate,
                 endDate: event.endDate,
                 liveGroupIds: const [],
@@ -243,7 +253,7 @@ final twicEventCardModelsProvider =
               endDate: event.endDate,
               startDate: event.startDate,
               location: event.site,
-              searchTerms: [event.event],
+              searchTerms: [event.displayEvent, event.event],
               eventSource: EventSource.communityEvent,
             );
           })

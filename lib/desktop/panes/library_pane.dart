@@ -6317,7 +6317,7 @@ class _TwicEventChips extends StatelessWidget {
           }
           final aggregate = events[index - 1];
           return _TwicChip(
-            label: aggregate.event,
+            label: aggregate.displayEvent,
             count: aggregate.gameCount,
             isSelected: selectedEvent == aggregate.event,
             onTap: () => onSelect(aggregate.event),
@@ -6503,7 +6503,7 @@ class _TwicSelectedEventBar extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  aggregate.event,
+                  aggregate.displayEvent,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(

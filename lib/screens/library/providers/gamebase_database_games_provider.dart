@@ -6,6 +6,7 @@ import 'package:chessever/screens/library/providers/gamebase_filter_provider.dar
 import 'package:chessever/screens/library/providers/twic_event_aggregates_provider.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 import 'package:chessever/screens/library/widgets/library_gamebase_filter_dialog.dart';
+import 'package:chessever/screens/player_profile/utils/twic_event_identity.dart';
 import 'package:chessever/utils/chess_title_utils.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/utils/twic_player_enrichment.dart';
@@ -182,6 +183,37 @@ bool shouldUseExactLibraryGameQuery(String query, GamebaseFilter filter) {
 @visibleForTesting
 bool shouldUseClientSideYearFiltering(String query, GamebaseFilter filter) {
   return query.trim().isNotEmpty && _hasYearFilter(filter);
+}
+
+@visibleForTesting
+String twicDisplayEventTitleForDatabaseGameRow(Map<String, dynamic> row) {
+  final rawEvent = (row['event']?.toString() ?? '').trim();
+  final rawTour =
+      (row['tour_id']?.toString() ?? row['tournament_id']?.toString() ?? '')
+          .trim();
+  final site = row['site']?.toString();
+  final preferredFromEvent =
+      rawEvent.isEmpty
+          ? ''
+          : preferredTwicEventTitle(event: rawEvent, site: site).trim();
+
+  if (preferredFromEvent.isNotEmpty &&
+      !isTwicRoundPairingEventTitle(preferredFromEvent)) {
+    return preferredFromEvent;
+  }
+
+  final preferredFromTour =
+      rawTour.isEmpty
+          ? ''
+          : preferredTwicEventTitle(event: rawTour, site: site).trim();
+  if (preferredFromTour.isNotEmpty &&
+      !isTwicRoundPairingEventTitle(preferredFromTour)) {
+    return preferredFromTour;
+  }
+
+  if (preferredFromEvent.isNotEmpty) return preferredFromEvent;
+  if (preferredFromTour.isNotEmpty) return preferredFromTour;
+  return 'Gamebase';
 }
 
 List<Map<String, dynamic>> _rowsFromGlobalSearchResponse(
@@ -420,8 +452,8 @@ class DatabaseGamesPaginationNotifier
           final eco = preview['eco']?.toString() ?? '';
           final opening = preview['opening']?.toString() ?? '';
           final variation = preview['variation']?.toString() ?? '';
-          final event = preview['event']?.toString() ?? 'Gamebase';
           final site = preview['site']?.toString();
+          final event = twicDisplayEventTitleForDatabaseGameRow(preview);
 
           final pgn = buildHeaderOnlyPgn(
             whiteName: whiteName.isNotEmpty ? whiteName : 'White',
@@ -518,11 +550,7 @@ class DatabaseGamesPaginationNotifier
           final formatCode =
               (eco.trim().isNotEmpty) ? eco.trim() : (timeControl ?? '');
 
-          final tourId =
-              (preview['tour_id']?.toString() ??
-                      preview['tournament_id']?.toString() ??
-                      event.trim())
-                  .trim();
+          final tourId = event.trim();
 
           return GamesTourModel(
             gameId: safeId,
