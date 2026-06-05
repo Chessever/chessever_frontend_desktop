@@ -81,7 +81,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/number_format_utils.dart';
 import 'package:chessever/utils/time_utils.dart';
-import 'package:chessever/widgets/federation_flag.dart';
+import 'package:chessever/widgets/backfilled_federation_flag.dart';
 
 /// Desktop library: persistent two-pane layout (folder rail + content) with
 /// the forui actions toolbar at the top.
@@ -4435,10 +4435,17 @@ class _GamesTableRowState extends State<_GamesTableRow> {
         s('WhiteFederation').isNotEmpty ? s('WhiteFederation') : s('WhiteFed');
     final blackFed =
         s('BlackFederation').isNotEmpty ? s('BlackFederation') : s('BlackFed');
+    int? fideId(String key) {
+      final value = int.tryParse(s(key)) ?? 0;
+      return value > 0 ? value : null;
+    }
+
     final whiteTitle = s('WhiteTitle');
     final blackTitle = s('BlackTitle');
     final whiteRating = s('WhiteElo');
     final blackRating = s('BlackElo');
+    final whiteFideId = fideId('WhiteFideId');
+    final blackFideId = fideId('BlackFideId');
     final event = s('Event');
     final round = s('Round');
     final eco = s('ECO');
@@ -4473,6 +4480,7 @@ class _GamesTableRowState extends State<_GamesTableRow> {
           _GamesTableColumn.white => _PlayerCell(
             name: whiteName,
             federation: whiteFed,
+            fideId: whiteFideId,
             title: whiteTitle,
           ),
           _GamesTableColumn.whiteElo => _RatingCell(rating: whiteRating),
@@ -4480,6 +4488,7 @@ class _GamesTableRowState extends State<_GamesTableRow> {
           _GamesTableColumn.black => _PlayerCell(
             name: blackName,
             federation: blackFed,
+            fideId: blackFideId,
             title: blackTitle,
           ),
           _GamesTableColumn.blackElo => _RatingCell(rating: blackRating),
@@ -4599,12 +4608,14 @@ class _PlayerCell extends StatelessWidget {
   const _PlayerCell({
     required this.name,
     required this.federation,
+    this.fideId,
     required this.title,
     this.rating = '',
   });
 
   final String name;
   final String federation;
+  final int? fideId;
   final String title;
   final String rating;
 
@@ -4612,8 +4623,9 @@ class _PlayerCell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        FederationFlag(
+        BackfilledFederationFlag(
           federation: federation.isEmpty ? null : federation,
+          fideId: fideId,
           width: 18,
           height: 13,
           borderRadius: BorderRadius.circular(2),
@@ -8221,10 +8233,17 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
         s('WhiteFederation').isNotEmpty ? s('WhiteFederation') : s('WhiteFed');
     final blackFed =
         s('BlackFederation').isNotEmpty ? s('BlackFederation') : s('BlackFed');
+    int? fideId(String key) {
+      final value = int.tryParse(s(key)) ?? 0;
+      return value > 0 ? value : null;
+    }
+
     final whiteTitle = s('WhiteTitle');
     final blackTitle = s('BlackTitle');
     final whiteRating = s('WhiteElo');
     final blackRating = s('BlackElo');
+    final whiteFideId = fideId('WhiteFideId');
+    final blackFideId = fideId('BlackFideId');
     final event = s('Event');
     final round = s('Round');
     final eco = s('ECO');
@@ -8251,6 +8270,7 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
           _GamesTableColumn.white => _PlayerCell(
             name: whiteName,
             federation: whiteFed,
+            fideId: whiteFideId,
             title: whiteTitle,
           ),
           _GamesTableColumn.whiteElo => _RatingCell(rating: whiteRating),
@@ -8258,6 +8278,7 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
           _GamesTableColumn.black => _PlayerCell(
             name: blackName,
             federation: blackFed,
+            fideId: blackFideId,
             title: blackTitle,
           ),
           _GamesTableColumn.blackElo => _RatingCell(rating: blackRating),

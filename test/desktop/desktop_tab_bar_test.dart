@@ -9,6 +9,7 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:chessever/screens/chessboard/provider/current_eval_provider.dart';
 import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
+import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:chessever/widgets/federation_flag.dart';
 
 const _fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
@@ -65,6 +66,23 @@ void main() {
     expect(find.text('Carlsen'), findsOneWidget);
     expect(find.text('Nakamura'), findsOneWidget);
     expect(find.byType(FederationFlag), findsNWidgets(2));
+  });
+
+  testWidgets('wide game tabs reserve backfilled flags from FIDE ids', (
+    tester,
+  ) async {
+    await _pumpSeededGameTabBar(
+      tester,
+      width: 480,
+      whiteFederation: 'FIDE',
+      blackFederation: '',
+      whiteFideId: 13603415,
+      blackFideId: 30920019,
+    );
+
+    expect(find.text('Carlsen'), findsOneWidget);
+    expect(find.text('Nakamura'), findsOneWidget);
+    expect(find.byType(BackfilledFederationFlag), findsNWidgets(2));
   });
 
   testWidgets('narrow game tabs drop flags before player names', (
@@ -263,6 +281,10 @@ Future<void> _pumpSeededGameTabBar(
   String blackName = 'Nakamura, Hikaru',
   String whiteTitle = '',
   String blackTitle = '',
+  String whiteFederation = 'NOR',
+  String blackFederation = 'USA',
+  int? whiteFideId,
+  int? blackFideId,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -280,10 +302,12 @@ Future<void> _pumpSeededGameTabBar(
                           'game-feature',
                           whiteName: whiteName,
                           blackName: blackName,
-                          whiteFederation: 'NOR',
-                          blackFederation: 'USA',
+                          whiteFederation: whiteFederation,
+                          blackFederation: blackFederation,
                           whiteTitle: whiteTitle,
                           blackTitle: blackTitle,
+                          whiteFideId: whiteFideId,
+                          blackFideId: blackFideId,
                         ),
                         reuseExisting: false,
                       );
@@ -315,6 +339,8 @@ BoardTabGameArgs _args(
   String blackFederation = '',
   String whiteTitle = '',
   String blackTitle = '',
+  int? whiteFideId,
+  int? blackFideId,
   String? fenSeed,
 }) {
   return BoardTabGameArgs(
@@ -327,6 +353,8 @@ BoardTabGameArgs _args(
     blackFederation: blackFederation,
     whiteTitle: whiteTitle,
     blackTitle: blackTitle,
+    whiteFideId: whiteFideId,
+    blackFideId: blackFideId,
     fenSeed: fenSeed,
   );
 }

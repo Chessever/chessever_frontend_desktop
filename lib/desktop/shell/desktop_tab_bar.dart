@@ -738,8 +738,10 @@ class _GameTabChipContent extends StatelessWidget {
         result != GameStatus.unknown;
     final whiteHasTitle = args.whiteTitle.trim().isNotEmpty;
     final blackHasTitle = args.blackTitle.trim().isNotEmpty;
-    final whiteHasFlag = args.whiteFederation.isNotEmpty;
-    final blackHasFlag = args.blackFederation.isNotEmpty;
+    final whiteHasFlag =
+        args.whiteFederation.isNotEmpty || (args.whiteFideId ?? 0) > 0;
+    final blackHasFlag =
+        args.blackFederation.isNotEmpty || (args.blackFideId ?? 0) > 0;
 
     final nameStyle = TextStyle(
       color: fg,
