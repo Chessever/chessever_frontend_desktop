@@ -1,4 +1,6 @@
 import 'package:chessever/repository/gamebase/search/gamebase_search_models_extra.dart';
+import 'package:chessever/screens/library/providers/gamebase_database_games_provider.dart';
+import 'package:chessever/screens/library/providers/twic_event_aggregates_provider.dart';
 import 'package:chessever/screens/player_profile/provider/player_profile_provider.dart';
 import 'package:chessever/screens/player_profile/utils/twic_event_identity.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -47,6 +49,51 @@ void main() {
 
       expect(event.tourName, '35th Annual Chicago Open');
       expect(event.tourId, '35th Annual Chicago Open');
+    });
+
+    test('normalizes TWIC database game-list event titles from site', () {
+      final title = twicDisplayEventTitleForDatabaseGameRow({
+        'event': 'Round 8: Robson, Ray - Sargsyan, Shant',
+        'tour_id': 'Round 8: Robson, Ray - Sargsyan, Shant',
+        'site':
+            'https://lichess.org/broadcast/7th-stepan-avagyan-memorial-2026/round-8/abc',
+      });
+
+      expect(title, '7th Stepan Avagyan Memorial 2026');
+    });
+
+    test('keeps normal TWIC database game-list event titles unchanged', () {
+      final title = twicDisplayEventTitleForDatabaseGameRow({
+        'event': '2026 Dreamhack Atlanta Group B',
+        'tour_id': '2026 Dreamhack Atlanta Group B',
+        'site': 'Atlanta USA',
+      });
+
+      expect(title, '2026 Dreamhack Atlanta Group B');
+    });
+
+    test('falls back to raw round title when site cannot recover parent', () {
+      final title = twicDisplayEventTitleForDatabaseGameRow({
+        'event': 'Round 3: Yi, Ruiyu - Lei, Muqiangcheng',
+        'site': 'Unknown',
+      });
+
+      expect(title, 'Round 3: Yi, Ruiyu - Lei, Muqiangcheng');
+    });
+
+    test('normalizes TWIC event aggregates for display only', () {
+      final aggregate = TwicEventAggregate.fromApi(
+        const GamebaseEventSearchItem(
+          id: 'round-8',
+          event: 'Round 8: Robson, Ray - Sargsyan, Shant',
+          gameCount: 1,
+          site:
+              'https://lichess.org/broadcast/7th-stepan-avagyan-memorial-2026/round-8/abc',
+        ),
+      );
+
+      expect(aggregate.event, 'Round 8: Robson, Ray - Sargsyan, Shant');
+      expect(aggregate.displayEvent, '7th Stepan Avagyan Memorial 2026');
     });
 
     test('merges Chicago Open round cards into the canonical event card', () {
