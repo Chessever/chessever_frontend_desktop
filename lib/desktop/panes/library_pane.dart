@@ -25,6 +25,7 @@ import 'package:chessever/desktop/services/library_pgn_export.dart';
 import 'package:chessever/desktop/services/library_quick_import.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/cloud_library_refresh.dart';
@@ -191,6 +192,11 @@ class LibraryPane extends HookConsumerWidget {
       );
     }
 
+    Future<void> importLocalPgnFiles() async {
+      final path = await pickAndOpenLibraryPgnDatabase(ref);
+      if (path != null) openLocalFullView(path);
+    }
+
     Future<void> openLocalFiles() async {
       final opened =
           await ref.read(localChessLibraryProvider.notifier).pickFiles();
@@ -352,6 +358,7 @@ class LibraryPane extends HookConsumerWidget {
                             onSelectLocalPath: activateLocalPath,
                             onOpenLocalPath: openLocalFullView,
                             onOpenLocalFiles: openLocalFiles,
+                            onImportPgnFiles: importLocalPgnFiles,
                             onDropDatabase: addDatabaseDragShortcut,
                             onNewFolder:
                                 () => _onCreateFolder(
@@ -1127,6 +1134,7 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
     required this.onSelectLocalPath,
     required this.onOpenLocalPath,
     required this.onOpenLocalFiles,
+    required this.onImportPgnFiles,
     required this.onDropDatabase,
     required this.onNewFolder,
   });
@@ -1139,6 +1147,7 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
   final ValueChanged<String> onSelectLocalPath;
   final ValueChanged<String> onOpenLocalPath;
   final VoidCallback onOpenLocalFiles;
+  final VoidCallback onImportPgnFiles;
   final Future<void> Function(LibraryDatabaseDragPayload payload)
   onDropDatabase;
   final VoidCallback onNewFolder;
@@ -1162,6 +1171,7 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
         _MyDatabasesHeader(
           onNewFolder: onNewFolder,
           onOpenLocalFiles: onOpenLocalFiles,
+          onImportPgnFiles: onImportPgnFiles,
         ),
         const FDivider(),
         Expanded(
@@ -1218,10 +1228,12 @@ class _MyDatabasesHeader extends StatelessWidget {
   const _MyDatabasesHeader({
     required this.onNewFolder,
     required this.onOpenLocalFiles,
+    required this.onImportPgnFiles,
   });
 
   final VoidCallback onNewFolder;
   final VoidCallback onOpenLocalFiles;
+  final VoidCallback onImportPgnFiles;
 
   @override
   Widget build(BuildContext context) {
@@ -1263,7 +1275,10 @@ class _MyDatabasesHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          LibraryActionsToolbar(onNewFolder: onNewFolder),
+          LibraryActionsToolbar(
+            onNewFolder: onNewFolder,
+            onImportPgnFiles: onImportPgnFiles,
+          ),
         ],
       ),
     );
@@ -3202,6 +3217,7 @@ class _FolderHeader extends StatelessWidget {
                     ? null
                     : folder.id,
             onNewFolder: onNewFolder,
+            onImportPgnFiles: onOpenLocalFiles,
           ),
           if (showOverflow && onAction != null) ...[
             const SizedBox(width: 8),
