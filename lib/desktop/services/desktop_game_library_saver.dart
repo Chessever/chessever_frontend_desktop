@@ -133,11 +133,27 @@ Future<ChessGame> resolveDesktopChessGameForLibrary(
   }
 
   final chessGame = ChessGame.fromPgn(game.gameId, pgn);
-  final metadata = Map<String, dynamic>.from(chessGame.metadata);
-  _putNonEmpty(metadata, 'White', game.whitePlayer.name);
-  _putNonEmpty(metadata, 'Black', game.blackPlayer.name);
-  _putNonEmpty(metadata, 'WhiteTitle', game.whitePlayer.title);
-  _putNonEmpty(metadata, 'BlackTitle', game.blackPlayer.title);
+  final metadata = mergeDesktopGameMetadataForLibrary(
+    Map<String, dynamic>.from(chessGame.metadata),
+    game,
+  );
+
+  // Saved rows are static snapshots. Explicitly clear live-board flags so a
+  // finished game opened from the library cannot keep following broadcasts.
+  metadata[ChessGame.metadataIsLiveKey] = false;
+  metadata[ChessGame.metadataAllowMainlineExtensionKey] = false;
+
+  return chessGame.copyWith(metadata: metadata);
+}
+
+Map<String, dynamic> mergeDesktopGameMetadataForLibrary(
+  Map<String, dynamic> metadata,
+  GamesTourModel game,
+) {
+  _putMeaningful(metadata, 'White', game.whitePlayer.name);
+  _putMeaningful(metadata, 'Black', game.blackPlayer.name);
+  _putMeaningful(metadata, 'WhiteTitle', game.whitePlayer.title);
+  _putMeaningful(metadata, 'BlackTitle', game.blackPlayer.title);
   if (game.whitePlayer.rating > 0) {
     metadata['WhiteElo'] = game.whitePlayer.rating.toString();
   }
@@ -153,27 +169,50 @@ Future<ChessGame> resolveDesktopChessGameForLibrary(
       game.blackPlayer.countryCode.trim().isNotEmpty
           ? game.blackPlayer.countryCode
           : game.blackPlayer.federation;
-  _putNonEmpty(metadata, 'WhiteFed', whiteFed);
-  _putNonEmpty(metadata, 'BlackFed', blackFed);
-  _putNonEmpty(metadata, 'Event', _resolveEventName(game));
+  _putMeaningful(metadata, 'WhiteFed', whiteFed);
+  _putMeaningful(metadata, 'BlackFed', blackFed);
+  _putMeaningful(metadata, 'Event', _resolveEventName(game));
+  _putMeaningful(metadata, 'ECO', game.eco);
+  _putMeaningful(metadata, 'Opening', game.openingName);
+
+  final date = _pgnDateFor(game.gameDay ?? game.lastMoveTime ?? game.dateStart);
+  if (date != null && !_hasMeaningfulValue(metadata['Date'])) {
+    metadata['Date'] = date;
+  }
 
   final result = game.gameStatus.displayText;
-  if (result.trim().isNotEmpty) {
+  if (_isMeaningfulValue(result)) {
     metadata['Result'] = result;
   }
 
-  // Saved rows are static snapshots. Explicitly clear live-board flags so a
-  // finished game opened from the library cannot keep following broadcasts.
-  metadata[ChessGame.metadataIsLiveKey] = false;
-  metadata[ChessGame.metadataAllowMainlineExtensionKey] = false;
-
-  return chessGame.copyWith(metadata: metadata);
+  return metadata;
 }
 
-void _putNonEmpty(Map<String, dynamic> metadata, String key, String? value) {
+void _putMeaningful(Map<String, dynamic> metadata, String key, String? value) {
   final text = value?.trim();
-  if (text == null || text.isEmpty) return;
+  if (!_isMeaningfulValue(text)) return;
   metadata[key] = text;
+}
+
+bool _hasMeaningfulValue(Object? value) =>
+    _isMeaningfulValue(value?.toString());
+
+bool _isMeaningfulValue(String? value) {
+  final text = value?.trim();
+  if (text == null || text.isEmpty) return false;
+  final upper = text.toUpperCase();
+  return upper != '?' &&
+      upper != '??' &&
+      upper != '????' &&
+      upper != '????.??.??' &&
+      upper != '-' &&
+      upper != '—' &&
+      upper != 'UNKNOWN';
+}
+
+String? _pgnDateFor(DateTime? date) {
+  if (date == null) return null;
+  return '${date.year.toString().padLeft(4, '0')}.${date.month.toString().padLeft(2, '0')}.${date.day.toString().padLeft(2, '0')}';
 }
 
 String? _resolveEventName(GamesTourModel game) {
