@@ -3490,10 +3490,10 @@ class _RightRailAnalysisState extends ConsumerState<_RightRailAnalysis> {
       if (!mounted) return;
       if (widget.showEngine) {
         if (!restoreWhenEnabled) return;
-        _splitController.restore(1);
+        _splitController.restore(0);
         return;
       }
-      _splitController.collapse(1, persist: false);
+      _splitController.collapse(0, persist: false);
     });
   }
 
@@ -3508,22 +3508,22 @@ class _RightRailAnalysisState extends ConsumerState<_RightRailAnalysis> {
     return ResizableSplitView(
       axis: Axis.vertical,
       controller: _splitController,
-      storageKey: 'board_pane.right_rail',
+      storageKey: 'board_pane.right_rail.engine_top.v1',
       children: [
         SplitChild(
-          minSize: 200,
-          initialWeight: 0.60,
-          label: 'Notation',
-          collapsedIcon: Icons.format_list_numbered_rounded,
-          child: widget.notationPanel,
-        ),
-        SplitChild(
-          minSize: 180,
-          initialWeight: 0.40,
+          minSize: 120,
+          initialWeight: 0.34,
           label: 'Engine',
           collapsedIcon: Icons.memory_rounded,
           onRestore: _resumeEngineFromRail,
           child: widget.enginePanel,
+        ),
+        SplitChild(
+          minSize: 240,
+          initialWeight: 0.66,
+          label: 'Notation',
+          collapsedIcon: Icons.format_list_numbered_rounded,
+          child: widget.notationPanel,
         ),
       ],
     );
