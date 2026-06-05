@@ -39,6 +39,9 @@ import 'package:chessever/screens/group_event/group_event_screen.dart' as ge;
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/group_event/providers/group_event_screen_provider.dart';
 import 'package:chessever/screens/group_event/providers/supabase_combined_search_provider.dart';
+import 'package:chessever/screens/group_event/widget/filter_popup/filter_popup_provider.dart';
+import 'package:chessever/screens/group_event/widget/filter_popup/filter_popup_state.dart';
+import 'package:chessever/screens/group_event/widget/filter_popup/group_event_filter_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -80,6 +83,13 @@ class TournamentsPane extends HookConsumerWidget {
     final selectedTournamentId = useState<String?>(null);
     final loadingId = useState<String?>(null);
     final selectedCategory = ref.watch(ge.selectedGroupCategoryProvider);
+    final forYouFilterState = ref.watch(forYouAppliedFilterProvider);
+    final currentPastFilterState = ref.watch(currentPastAppliedFilterProvider);
+    final selectedFilterState =
+        selectedCategory == ge.GroupEventCategory.forYou
+            ? forYouFilterState
+            : currentPastFilterState;
+    final activeFilterCount = _activeEventFilterCount(selectedFilterState);
     final globalSearchQuery = ref.watch(desktopGlobalSearchQueryProvider);
     // Stable per-tournament-id GlobalKeys so we can `Scrollable.ensureVisible`
     // the highlighted row when the user navigates with the arrow keys.
@@ -124,6 +134,43 @@ class TournamentsPane extends HookConsumerWidget {
     final searchQuery = globalSearchQuery?.trim() ?? '';
     final hasQuery = searchQuery.length >= 2;
 
+    void openFilters() {
+      ref.read(filterPopupProvider.notifier).setState(selectedFilterState);
+      showFDialog<void>(
+        context: context,
+        builder:
+            (dialogContext, _, animation) => _DesktopEventFilterDialog(
+              animation: animation,
+              initialCategory: selectedCategory,
+              onApply: (filterState) {
+                if (selectedCategory == ge.GroupEventCategory.forYou) {
+                  ref.read(forYouAppliedFilterProvider.notifier).state =
+                      filterState;
+                  ref.invalidate(forYouEventsProvider);
+                } else {
+                  ref.read(currentPastAppliedFilterProvider.notifier).state =
+                      filterState;
+                }
+                Navigator.of(dialogContext).pop();
+              },
+              onReset: () {
+                if (selectedCategory == ge.GroupEventCategory.forYou) {
+                  ref.read(forYouAppliedFilterProvider.notifier).state =
+                      defaultFilterPopupState;
+                  ref.invalidate(forYouEventsProvider);
+                } else {
+                  ref.read(currentPastAppliedFilterProvider.notifier).state =
+                      defaultFilterPopupState;
+                }
+                ref
+                    .read(filterPopupProvider.notifier)
+                    .setState(defaultFilterPopupState);
+                Navigator.of(dialogContext).pop();
+              },
+            ),
+      );
+    }
+
     return Column(
       children: [
         Padding(
@@ -144,6 +191,11 @@ class TournamentsPane extends HookConsumerWidget {
                           .read(ge.selectedGroupCategoryProvider.notifier)
                           .state = category;
                     },
+                  ),
+                  const SizedBox(width: 10),
+                  _DesktopEventFilterButton(
+                    activeCount: activeFilterCount,
+                    onPressed: openFilters,
                   ),
                   const Spacer(),
                   if (selectedCategory == ge.GroupEventCategory.forYou)
@@ -1159,6 +1211,219 @@ const List<DesktopSegmentedTab<ge.GroupEventCategory>> _categoryTabs = [
     icon: Icons.history_outlined,
   ),
 ];
+
+int _activeEventFilterCount(FilterPopupState state) {
+  final rangeChanged =
+      state.eloRange.start > defaultFilterPopupState.eloRange.start ||
+      state.eloRange.end < defaultFilterPopupState.eloRange.end;
+  return state.formatsAndStates.length + (rangeChanged ? 1 : 0);
+}
+
+class _DesktopEventFilterButton extends StatelessWidget {
+  const _DesktopEventFilterButton({
+    required this.activeCount,
+    required this.onPressed,
+  });
+
+  final int activeCount;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final isActive = activeCount > 0;
+    return FButton(
+      style: isActive ? FButtonStyle.primary() : FButtonStyle.outline(),
+      prefix: const Icon(Icons.tune_rounded, size: 14),
+      onPress: onPressed,
+      child: Text(isActive ? 'Filters $activeCount' : 'Filters'),
+    );
+  }
+}
+
+class _DesktopEventFilterDialog extends ConsumerWidget {
+  const _DesktopEventFilterDialog({
+    required this.animation,
+    required this.initialCategory,
+    required this.onApply,
+    required this.onReset,
+  });
+
+  final Animation<double> animation;
+  final ge.GroupEventCategory initialCategory;
+  final ValueChanged<FilterPopupState> onApply;
+  final VoidCallback onReset;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(filterPopupProvider);
+    final filterController = ref.read(groupEventFilterProvider);
+    final formatLabels = filterController.getReadableFormats();
+    final formats = filterController.getFormats();
+    final statusLabels = filterController.getReadableGameState();
+    final statuses = filterController.getGameState();
+
+    return FDialog(
+      animation: animation,
+      direction: Axis.horizontal,
+      title: const Text('Event filters'),
+      body: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              initialCategory == ge.GroupEventCategory.forYou
+                  ? 'For You feed'
+                  : 'Current and Past events',
+              style: const TextStyle(color: kLightGreyColor, fontSize: 12),
+            ),
+            const SizedBox(height: 16),
+            const _DesktopFilterSectionLabel('Format'),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (var i = 0; i < formats.length; i++)
+                  _DesktopFilterChip(
+                    label: formatLabels[i],
+                    selected: state.formatsAndStates.contains(formats[i]),
+                    onPressed:
+                        () => ref
+                            .read(filterPopupProvider.notifier)
+                            .toggleFormatOrState(formats[i]),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const _DesktopFilterSectionLabel('Event status'),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (var i = 0; i < statuses.length; i++)
+                  _DesktopFilterChip(
+                    label: statusLabels[i],
+                    selected: state.formatsAndStates.contains(statuses[i]),
+                    onPressed:
+                        () => ref
+                            .read(filterPopupProvider.notifier)
+                            .toggleFormatOrState(statuses[i]),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const _DesktopFilterSectionLabel('Average rating'),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _DesktopRatingPresetChip(
+                  label: 'All ratings',
+                  range: defaultFilterPopupState.eloRange,
+                  state: state,
+                ),
+                _DesktopRatingPresetChip(
+                  label: '2600+',
+                  range: const RangeValues(2600, 3200),
+                  state: state,
+                ),
+                _DesktopRatingPresetChip(
+                  label: '2400–2599',
+                  range: const RangeValues(2400, 2599),
+                  state: state,
+                ),
+                _DesktopRatingPresetChip(
+                  label: 'Under 2400',
+                  range: const RangeValues(0, 2399),
+                  state: state,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        FButton(
+          style: FButtonStyle.outline(),
+          onPress: onReset,
+          child: const Text('Reset'),
+        ),
+        FButton(
+          style: FButtonStyle.primary(),
+          onPress: () => onApply(state),
+          child: const Text('Apply'),
+        ),
+      ],
+    );
+  }
+}
+
+class _DesktopFilterSectionLabel extends StatelessWidget {
+  const _DesktopFilterSectionLabel(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      label,
+      style: const TextStyle(
+        color: kWhiteColor,
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+  }
+}
+
+class _DesktopRatingPresetChip extends ConsumerWidget {
+  const _DesktopRatingPresetChip({
+    required this.label,
+    required this.range,
+    required this.state,
+  });
+
+  final String label;
+  final RangeValues range;
+  final FilterPopupState state;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final selected =
+        state.eloRange.start == range.start && state.eloRange.end == range.end;
+    return _DesktopFilterChip(
+      label: label,
+      selected: selected,
+      onPressed:
+          () => ref.read(filterPopupProvider.notifier).setEloRange(range),
+    );
+  }
+}
+
+class _DesktopFilterChip extends StatelessWidget {
+  const _DesktopFilterChip({
+    required this.label,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FButton(
+      style: selected ? FButtonStyle.primary() : FButtonStyle.outline(),
+      onPress: onPressed,
+      child: Text(label),
+    );
+  }
+}
 
 class _TournamentBrowser extends StatelessWidget {
   const _TournamentBrowser({

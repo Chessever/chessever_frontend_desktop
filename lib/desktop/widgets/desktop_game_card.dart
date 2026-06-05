@@ -590,10 +590,10 @@ class _CleanFaceOffBlock extends StatelessWidget {
 }
 
 /// Score panel anchored to the right edge of compact tiles. Renders the
-/// composite final score ("1 – 0", "½ – ½") for finished games, a
-/// pulsing "LIVE" plate for ongoing games, and a quiet en-dash plate for
-/// unstarted games. Always 60 px wide so the panel reads as a stable
-/// vertical column down the tile flow — perfect for sorting by eye.
+/// composite final score ("1 – 0", "½ – ½") for finished games and a quiet
+/// face-off placeholder before a game starts. Ongoing games leave this slot
+/// blank because the top-right pulse/eval strip already carries live state;
+/// showing a dash/minus there reads like a wrong result while play is active.
 class _CompactScorePanel extends StatelessWidget {
   const _CompactScorePanel({required this.data});
   final GameCardData data;
@@ -605,14 +605,11 @@ class _CompactScorePanel extends StatelessWidget {
           data.status == GameStatus.draw ? kLightGreyColor : kPrimaryColor;
       return _ScorePlate(label: _resultLabel(data.status), color: winning);
     }
-    // LIVE + unstarted both show a quiet "vs" placeholder in the
-    // center column so the score slot reads as a stable column down
-    // the flow. The live pulse + eval readout in the top-right
-    // corner is the actual LIVE indicator — putting another pulse
-    // here would double up the chrome.
-    final placeholder = data.hasStarted ? 'vs' : '—';
+    if (data.hasStarted) {
+      return const SizedBox(width: 60);
+    }
     return _ScorePlate(
-      label: placeholder,
+      label: 'vs',
       color: kLightGreyColor.withValues(alpha: 0.55),
     );
   }
