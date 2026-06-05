@@ -61,6 +61,14 @@ class MyDatabasesFocusNotifier extends StateNotifier<MyDatabasesFocusState> {
     await _persist(next);
   }
 
+  Future<void> showCloudFolder(String folderId) async {
+    final id = folderId.trim();
+    if (id.isEmpty || !state.hiddenCloudFolderIds.contains(id)) return;
+    final next = <String>{...state.hiddenCloudFolderIds}..remove(id);
+    state = state.copyWith(hiddenCloudFolderIds: next);
+    await _persist(next);
+  }
+
   Future<void> _persist(Set<String> ids) async {
     try {
       final sorted = ids.toList()..sort();

@@ -8,7 +8,6 @@ import 'package:fast_immutable_collections/fast_immutable_collections.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -1122,7 +1121,7 @@ class _SortConfig {
 
 enum _LibraryDatabaseKind { cloud, local }
 
-enum _DatabaseBoardAction { addToMyDatabase, preview, open, remove }
+enum _DatabaseBoardAction { preview, open, remove }
 
 class _MyDatabasesHomeView extends HookConsumerWidget {
   const _MyDatabasesHomeView({
@@ -1431,8 +1430,6 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       );
       if (picked == null || !context.mounted) return;
       switch (picked) {
-        case _DatabaseBoardAction.addToMyDatabase:
-          return;
         case _DatabaseBoardAction.preview:
           await previewLocalEntry(entry);
         case _DatabaseBoardAction.open:
@@ -1457,20 +1454,11 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       Offset position,
     ) async {
       if (folder.id == kTwicBookId) return;
-      final canImport = isWritableLibraryFolder(folder);
       final picked = await showDesktopContextMenu<_DatabaseBoardAction>(
         context: context,
         position: position,
         width: 230,
         entries: [
-          if (canImport) ...[
-            const DesktopContextMenuItem(
-              value: _DatabaseBoardAction.addToMyDatabase,
-              icon: Icons.add_circle_outline_rounded,
-              label: 'Add to My Database...',
-            ),
-            const DesktopContextMenuDivider(),
-          ],
           const DesktopContextMenuItem(
             value: _DatabaseBoardAction.preview,
             icon: Icons.table_rows_outlined,
@@ -1481,25 +1469,17 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             icon: Icons.open_in_new_rounded,
             label: 'Open full database',
           ),
-          if (canImport) ...[
-            const DesktopContextMenuDivider(),
-            const DesktopContextMenuItem(
-              value: _DatabaseBoardAction.remove,
-              icon: Icons.delete_outline_rounded,
-              label: 'Remove from My Databases',
-              destructive: true,
-            ),
-          ],
+          const DesktopContextMenuDivider(),
+          const DesktopContextMenuItem(
+            value: _DatabaseBoardAction.remove,
+            icon: Icons.delete_outline_rounded,
+            label: 'Remove from My Databases',
+            destructive: true,
+          ),
         ],
       );
       if (picked == null || !context.mounted) return;
       switch (picked) {
-        case _DatabaseBoardAction.addToMyDatabase:
-          await _pickAndImportFilesToFolder(
-            context: context,
-            ref: ref,
-            folder: folder,
-          );
         case _DatabaseBoardAction.preview:
           onSelectFolder(folder);
         case _DatabaseBoardAction.open:
@@ -5346,37 +5326,21 @@ Future<void> _onCreateFolder({
   }
 }
 
-Future<void> _pickAndImportFilesToFolder({
+Future<void> _showFolderOnMyDatabases({
   required BuildContext context,
   required WidgetRef ref,
   required LibraryFolder folder,
 }) async {
-  if (!isWritableLibraryFolder(folder)) {
-    _toast(context, '"${folder.name}" is read-only.', error: true);
+  if (folder.id == kTwicBookId) return;
+  final focus = ref.read(myDatabasesFocusProvider);
+  final isHidden = focus.hiddenCloudFolderIds.contains(folder.id);
+  if (!isHidden) {
+    _toast(context, '"${folder.name}" is already shown on My Databases.');
     return;
   }
-  final result = await FilePicker.platform.pickFiles(
-    dialogTitle: 'Add to My Database',
-    type: FileType.custom,
-    allowedExtensions: localChessPickerExtensions,
-    allowMultiple: true,
-    withData: false,
-    lockParentWindow: true,
-  );
-  if (result == null || result.files.isEmpty) return;
-  final paths = result.files
-      .map((file) => file.path)
-      .whereType<String>()
-      .where((path) => path.isNotEmpty)
-      .toList(growable: false);
-  if (paths.isEmpty) return;
+  await ref.read(myDatabasesFocusProvider.notifier).showCloudFolder(folder.id);
   if (!context.mounted) return;
-  await quickImportPathsToFolder(
-    context: context,
-    ref: ref,
-    folder: folder,
-    paths: paths,
-  );
+  _toast(context, 'Showing "${folder.name}" on My Databases.');
 }
 
 Future<void> _onFolderAction({
@@ -5387,8 +5351,8 @@ Future<void> _onFolderAction({
   required List<LibraryFolder> allFolders,
 }) async {
   switch (action) {
-    case LibraryFolderAction.addToMyDatabase:
-      await _pickAndImportFilesToFolder(
+    case LibraryFolderAction.showOnMyDatabases:
+      await _showFolderOnMyDatabases(
         context: context,
         ref: ref,
         folder: folder,
