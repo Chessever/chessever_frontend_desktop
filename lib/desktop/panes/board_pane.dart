@@ -33,6 +33,7 @@ import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
+import 'package:chessever/desktop/state/cloud_library_refresh.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/opening_explorer_seed.dart';
@@ -3657,6 +3658,7 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
           );
           ref.invalidate(libraryFoldersStreamProvider);
           ref.invalidate(subscribedBooksProvider);
+          notifyCloudLibraryChanged(ref);
         },
       );
     case BoardTabLibrarySaveOriginKind.localPgnFile:
