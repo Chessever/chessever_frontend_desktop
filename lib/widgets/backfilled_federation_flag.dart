@@ -42,7 +42,11 @@ class BackfilledFederationFlag extends ConsumerWidget {
     if (_needsBackfill(raw) && fideId != null && fideId! > 0) {
       final async = ref.watch(chessPlayerByFideIdProvider(fideId));
       final country = async.valueOrNull?.country?.trim() ?? '';
-      if (country.isNotEmpty) resolved = country;
+      if (country.isNotEmpty) {
+        resolved = country;
+      } else {
+        return SizedBox(width: width, height: height);
+      }
     }
 
     return FederationFlag(
