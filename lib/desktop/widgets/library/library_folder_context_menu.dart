@@ -9,7 +9,7 @@ import 'package:chessever/repository/library/models/library_folder.dart';
 /// Mirrors the icon set the mobile folder header surfaces in
 /// `folder_contents_screen.dart`.
 enum LibraryFolderAction {
-  addToMyDatabase,
+  showOnMyDatabases,
   rename,
   newSubfolder,
   exportPgn,
@@ -99,9 +99,9 @@ Future<void> _showFolderMenu({
     entries: [
       if (!isSubscribed) ...[
         const DesktopContextMenuItem(
-          value: LibraryFolderAction.addToMyDatabase,
+          value: LibraryFolderAction.showOnMyDatabases,
           icon: Icons.add_circle_outline_rounded,
-          label: 'Add to My Database...',
+          label: 'Show on My Databases',
         ),
         const DesktopContextMenuDivider(),
       ],
