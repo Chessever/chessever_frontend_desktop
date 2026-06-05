@@ -1521,6 +1521,12 @@ class _MyDatabasesBoard extends HookConsumerWidget {
                         unawaited(showCloudContextMenu(folder, position)))
                 : (position) =>
                     unawaited(showLocalContextMenu(entry!, position)),
+        onRemove:
+            folder != null
+                ? (folder.id == kTwicBookId
+                    ? null
+                    : () => unawaited(removeCloudFolderFromBoard(folder)))
+                : () => unawaited(removeLocalEntry(entry!)),
       );
       if (folder == null) return tile;
       return FolderDropTarget(
@@ -1603,6 +1609,7 @@ class _DatabaseBoardTile extends StatefulWidget {
     required this.onSelect,
     required this.onOpen,
     this.onContextMenu,
+    this.onRemove,
   });
 
   final String title;
@@ -1611,6 +1618,7 @@ class _DatabaseBoardTile extends StatefulWidget {
   final VoidCallback onSelect;
   final VoidCallback onOpen;
   final ValueChanged<Offset>? onContextMenu;
+  final VoidCallback? onRemove;
 
   @override
   State<_DatabaseBoardTile> createState() => _DatabaseBoardTileState();
@@ -1654,6 +1662,11 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile> {
           if (event.logicalKey == LogicalKeyboardKey.enter ||
               event.logicalKey == LogicalKeyboardKey.numpadEnter) {
             _openFromTile();
+            return KeyEventResult.handled;
+          }
+          if (event.logicalKey == LogicalKeyboardKey.delete &&
+              widget.onRemove != null) {
+            widget.onRemove!();
             return KeyEventResult.handled;
           }
           return KeyEventResult.ignored;
@@ -3887,6 +3900,7 @@ class _GamesTable extends HookWidget {
   @override
   Widget build(BuildContext context) {
     final scrollController = useScrollController();
+    final columnFlexes = useState(const _GamesTableColumnFlexes());
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
       child: Container(
@@ -3898,7 +3912,12 @@ class _GamesTable extends HookWidget {
         clipBehavior: Clip.antiAlias,
         child: Column(
           children: [
-            _GamesTableHeader(sort: sort, onSortChange: onSortChange),
+            _GamesTableHeader(
+              sort: sort,
+              onSortChange: onSortChange,
+              columnFlexes: columnFlexes.value,
+              onColumnFlexesChanged: (next) => columnFlexes.value = next,
+            ),
             const Divider(height: 1, color: kDividerColor),
             Expanded(
               child: ListKeyboardScrollFocus(
@@ -3918,6 +3937,7 @@ class _GamesTable extends HookWidget {
                         onOpen: () => onOpen(rows[i]),
                         canDelete: canDelete,
                         selectedIds: selectedIds,
+                        columnFlexes: columnFlexes.value,
                         onPrimeSelectionAnchor:
                             (_) => onPrimeSelectionAnchor(i),
                         onRangeSelect: (_) => onRangeSelect(i),
@@ -3933,137 +3953,242 @@ class _GamesTable extends HookWidget {
   }
 }
 
-// Shared column flex/widths so header and rows always align. When tweaking
-// columns, update both lists in lockstep — flex widgets calculated by Row
-// are sensitive to tiny mismatches.
-const _kColNumber = 42.0;
-const _kColW = 5; // White player flex
+// Shared column widths so header and rows always align. Every visible
+// games-table column is resizable from the header.
+const _kColNumber = 30.0;
+const _kColW = 5; // TWIC/player-summary table flex
 const _kColElo = 56.0;
 const _kColResult = 56.0;
-const _kColB = 5; // Black player flex
-const _kColEvent = 4; // Event flex
+const _kColB = 5; // TWIC/player-summary table flex
+const _kColEvent = 4; // TWIC/player-summary table flex
 const _kColEco = 62.0;
 const _kColDate = 88.0;
 const _kColSaved = 78.0;
+const _kColPlayerWidth = 150.0;
+const _kColEventWidth = 128.0;
+
+class _GamesTableColumnFlexes {
+  const _GamesTableColumnFlexes({
+    this.number = _kColNumber,
+    this.white = _kColPlayerWidth,
+    this.whiteElo = _kColElo,
+    this.result = _kColResult,
+    this.black = _kColPlayerWidth,
+    this.blackElo = _kColElo,
+    this.event = _kColEventWidth,
+    this.eco = _kColEco,
+    this.date = _kColDate,
+    this.saved = _kColSaved,
+  });
+
+  final double number;
+  final double white;
+  final double whiteElo;
+  final double result;
+  final double black;
+  final double blackElo;
+  final double event;
+  final double eco;
+  final double date;
+  final double saved;
+
+  _GamesTableColumnFlexes copyWith({
+    double? number,
+    double? white,
+    double? whiteElo,
+    double? result,
+    double? black,
+    double? blackElo,
+    double? event,
+    double? eco,
+    double? date,
+    double? saved,
+  }) {
+    double clampWidth(double value, double min, double max) =>
+        value.clamp(min, max).toDouble();
+    return _GamesTableColumnFlexes(
+      number: clampWidth(number ?? this.number, 22, 70),
+      white: clampWidth(white ?? this.white, 82, 280),
+      whiteElo: clampWidth(whiteElo ?? this.whiteElo, 44, 110),
+      result: clampWidth(result ?? this.result, 44, 110),
+      black: clampWidth(black ?? this.black, 82, 280),
+      blackElo: clampWidth(blackElo ?? this.blackElo, 44, 110),
+      event: clampWidth(event ?? this.event, 70, 260),
+      eco: clampWidth(eco ?? this.eco, 44, 110),
+      date: clampWidth(date ?? this.date, 64, 150),
+      saved: clampWidth(saved ?? this.saved, 64, 150),
+    );
+  }
+}
 
 class _GamesTableHeader extends StatelessWidget {
-  const _GamesTableHeader({required this.sort, required this.onSortChange});
+  const _GamesTableHeader({
+    required this.sort,
+    required this.onSortChange,
+    this.columnFlexes = const _GamesTableColumnFlexes(),
+    this.onColumnFlexesChanged,
+  });
 
   final _SortConfig sort;
   final ValueChanged<_SortConfig> onSortChange;
+  final _GamesTableColumnFlexes columnFlexes;
+  final ValueChanged<_GamesTableColumnFlexes>? onColumnFlexesChanged;
 
   @override
   Widget build(BuildContext context) {
+    Widget col({
+      required double width,
+      required String label,
+      required _SortKey key,
+      bool alignEnd = false,
+    }) {
+      return SizedBox(
+        width: width,
+        child: _HeaderCell(
+          label: label,
+          key_: key,
+          sort: sort,
+          onSortChange: onSortChange,
+          alignEnd: alignEnd,
+        ),
+      );
+    }
+
+    Widget gap(ValueChanged<double> onDrag) {
+      return _HeaderResizeGap(
+        enabled: onColumnFlexesChanged != null,
+        onDrag: onDrag,
+      );
+    }
+
+    void update(_GamesTableColumnFlexes next) {
+      onColumnFlexesChanged?.call(next);
+    }
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
       color: kBlack3Color.withValues(alpha: 0.4),
       child: Row(
         children: [
-          SizedBox(
-            width: _kColNumber,
-            child: _HeaderCell(
-              label: '#',
-              key_: _SortKey.number,
-              sort: sort,
-              onSortChange: onSortChange,
-              alignEnd: true,
+          col(
+            width: columnFlexes.number,
+            label: '#',
+            key: _SortKey.number,
+            alignEnd: true,
+          ),
+          gap(
+            (delta) => update(
+              columnFlexes.copyWith(number: columnFlexes.number + delta),
             ),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            flex: _kColW,
-            child: _HeaderCell(
-              label: 'White',
-              key_: _SortKey.white,
-              sort: sort,
-              onSortChange: onSortChange,
+          col(width: columnFlexes.white, label: 'White', key: _SortKey.white),
+          gap(
+            (delta) => update(
+              columnFlexes.copyWith(white: columnFlexes.white + delta),
             ),
           ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: _kColElo,
-            child: _HeaderCell(
-              label: 'Elo W',
-              key_: _SortKey.whiteElo,
-              sort: sort,
-              onSortChange: onSortChange,
-              alignEnd: true,
+          col(
+            width: columnFlexes.whiteElo,
+            label: 'Elo W',
+            key: _SortKey.whiteElo,
+            alignEnd: true,
+          ),
+          gap(
+            (delta) => update(
+              columnFlexes.copyWith(whiteElo: columnFlexes.whiteElo + delta),
             ),
           ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: _kColResult,
-            child: _HeaderCell(
-              label: 'Result',
-              key_: _SortKey.result,
-              sort: sort,
-              onSortChange: onSortChange,
-              alignEnd: true,
+          col(
+            width: columnFlexes.result,
+            label: 'Result',
+            key: _SortKey.result,
+            alignEnd: true,
+          ),
+          gap(
+            (delta) => update(
+              columnFlexes.copyWith(result: columnFlexes.result + delta),
             ),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            flex: _kColB,
-            child: _HeaderCell(
-              label: 'Black',
-              key_: _SortKey.black,
-              sort: sort,
-              onSortChange: onSortChange,
+          col(width: columnFlexes.black, label: 'Black', key: _SortKey.black),
+          gap(
+            (delta) => update(
+              columnFlexes.copyWith(black: columnFlexes.black + delta),
             ),
           ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: _kColElo,
-            child: _HeaderCell(
-              label: 'Elo B',
-              key_: _SortKey.blackElo,
-              sort: sort,
-              onSortChange: onSortChange,
-              alignEnd: true,
+          col(
+            width: columnFlexes.blackElo,
+            label: 'Elo B',
+            key: _SortKey.blackElo,
+            alignEnd: true,
+          ),
+          gap(
+            (delta) => update(
+              columnFlexes.copyWith(blackElo: columnFlexes.blackElo + delta),
             ),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            flex: _kColEvent,
-            child: _HeaderCell(
-              label: 'Event',
-              key_: _SortKey.event,
-              sort: sort,
-              onSortChange: onSortChange,
+          col(width: columnFlexes.event, label: 'Event', key: _SortKey.event),
+          gap(
+            (delta) => update(
+              columnFlexes.copyWith(event: columnFlexes.event + delta),
             ),
           ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: _kColEco,
-            child: _HeaderCell(
-              label: 'ECO',
-              key_: _SortKey.eco,
-              sort: sort,
-              onSortChange: onSortChange,
-            ),
+          col(width: columnFlexes.eco, label: 'ECO', key: _SortKey.eco),
+          gap(
+            (delta) =>
+                update(columnFlexes.copyWith(eco: columnFlexes.eco + delta)),
           ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: _kColDate,
-            child: _HeaderCell(
-              label: 'Date',
-              key_: _SortKey.date,
-              sort: sort,
-              onSortChange: onSortChange,
-            ),
+          col(width: columnFlexes.date, label: 'Date', key: _SortKey.date),
+          gap(
+            (delta) =>
+                update(columnFlexes.copyWith(date: columnFlexes.date + delta)),
           ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: _kColSaved,
-            child: _HeaderCell(
-              label: 'Saved',
-              key_: _SortKey.saved,
-              sort: sort,
-              onSortChange: onSortChange,
-              alignEnd: true,
+          col(
+            width: columnFlexes.saved,
+            label: 'Saved',
+            key: _SortKey.saved,
+            alignEnd: true,
+          ),
+          gap(
+            (delta) => update(
+              columnFlexes.copyWith(saved: columnFlexes.saved + delta),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _HeaderResizeGap extends StatelessWidget {
+  const _HeaderResizeGap({required this.enabled, required this.onDrag});
+
+  final bool enabled;
+  final ValueChanged<double> onDrag;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return const SizedBox(width: 10);
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragUpdate: (details) {
+          final delta = details.primaryDelta ?? 0;
+          if (delta.abs() < 2) return;
+          onDrag(delta);
+        },
+        child: const SizedBox(
+          width: 10,
+          child: Center(
+            child: SizedBox(
+              width: 1,
+              height: 18,
+              child: DecoratedBox(
+                decoration: BoxDecoration(color: kDividerColor),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -4144,6 +4269,7 @@ class _GamesTableRow extends StatefulWidget {
     required this.onOpen,
     required this.canDelete,
     required this.selectedIds,
+    this.columnFlexes = const _GamesTableColumnFlexes(),
     required this.onPrimeSelectionAnchor,
     required this.onRangeSelect,
     required this.onAction,
@@ -4154,6 +4280,7 @@ class _GamesTableRow extends StatefulWidget {
   final VoidCallback onOpen;
   final bool canDelete;
   final Set<String> selectedIds;
+  final _GamesTableColumnFlexes columnFlexes;
   final ValueChanged<int> onPrimeSelectionAnchor;
   final ValueChanged<int> onRangeSelect;
   final ValueChanged<LibraryGameAction> onAction;
@@ -4269,7 +4396,7 @@ class _GamesTableRowState extends State<_GamesTableRow> {
                   child: Row(
                     children: [
                       SizedBox(
-                        width: _kColNumber,
+                        width: widget.columnFlexes.number,
                         child: Text(
                           widget.index.toString(),
                           textAlign: TextAlign.right,
@@ -4281,8 +4408,8 @@ class _GamesTableRowState extends State<_GamesTableRow> {
                         ),
                       ),
                       const SizedBox(width: 10),
-                      Expanded(
-                        flex: _kColW,
+                      SizedBox(
+                        width: widget.columnFlexes.white,
                         child: _PlayerCell(
                           name: whiteName,
                           federation: whiteFed,
@@ -4291,17 +4418,17 @@ class _GamesTableRowState extends State<_GamesTableRow> {
                       ),
                       const SizedBox(width: 10),
                       SizedBox(
-                        width: _kColElo,
+                        width: widget.columnFlexes.whiteElo,
                         child: _RatingCell(rating: whiteRating),
                       ),
                       const SizedBox(width: 10),
                       SizedBox(
-                        width: _kColResult,
+                        width: widget.columnFlexes.result,
                         child: _ResultPill(result: result),
                       ),
                       const SizedBox(width: 10),
-                      Expanded(
-                        flex: _kColB,
+                      SizedBox(
+                        width: widget.columnFlexes.black,
                         child: _PlayerCell(
                           name: blackName,
                           federation: blackFed,
@@ -4310,12 +4437,12 @@ class _GamesTableRowState extends State<_GamesTableRow> {
                       ),
                       const SizedBox(width: 10),
                       SizedBox(
-                        width: _kColElo,
+                        width: widget.columnFlexes.blackElo,
                         child: _RatingCell(rating: blackRating),
                       ),
                       const SizedBox(width: 10),
-                      Expanded(
-                        flex: _kColEvent,
+                      SizedBox(
+                        width: widget.columnFlexes.event,
                         child: Text(
                           eventLine.isEmpty ? '—' : eventLine,
                           maxLines: 1,
@@ -4327,10 +4454,13 @@ class _GamesTableRowState extends State<_GamesTableRow> {
                         ),
                       ),
                       const SizedBox(width: 10),
-                      SizedBox(width: _kColEco, child: _EcoCell(eco: eco)),
+                      SizedBox(
+                        width: widget.columnFlexes.eco,
+                        child: _EcoCell(eco: eco),
+                      ),
                       const SizedBox(width: 10),
                       SizedBox(
-                        width: _kColDate,
+                        width: widget.columnFlexes.date,
                         child: Text(
                           _displayGameDate(s('Date')),
                           maxLines: 1,
@@ -4344,7 +4474,7 @@ class _GamesTableRowState extends State<_GamesTableRow> {
                       ),
                       const SizedBox(width: 10),
                       SizedBox(
-                        width: _kColSaved,
+                        width: widget.columnFlexes.saved,
                         child: Text(
                           _relativeTime(a.updatedAt),
                           textAlign: TextAlign.right,
@@ -4355,6 +4485,7 @@ class _GamesTableRowState extends State<_GamesTableRow> {
                           ),
                         ),
                       ),
+                      const SizedBox(width: 10),
                     ],
                   ),
                 ),
@@ -4404,7 +4535,7 @@ class _PlayerCell extends StatelessWidget {
         ],
         Expanded(
           child: Text(
-            name.isEmpty ? '—' : name,
+            _standardTablePlayerName(name),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
@@ -4428,6 +4559,32 @@ class _PlayerCell extends StatelessWidget {
       ],
     );
   }
+}
+
+String _standardTablePlayerName(String raw) {
+  final name = raw.trim();
+  if (name.isEmpty) return '—';
+
+  String initial(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return '';
+    return '${trimmed.characters.first.toUpperCase()}.';
+  }
+
+  if (name.contains(',')) {
+    final parts = name.split(',');
+    final last = parts.first.trim();
+    final first = parts.skip(1).join(',').trim();
+    final firstInitial = initial(first);
+    if (last.isEmpty) return firstInitial.isEmpty ? name : firstInitial;
+    return firstInitial.isEmpty ? last : '$last, $firstInitial';
+  }
+
+  final tokens = name.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+  if (tokens.length < 2) return name;
+  final last = tokens.last;
+  final firstInitial = initial(tokens.first);
+  return firstInitial.isEmpty ? last : '$last, $firstInitial';
 }
 
 class _RatingCell extends StatelessWidget {
@@ -6585,7 +6742,7 @@ class _TwicTableHeader extends StatelessWidget {
       textAlign: alignEnd ? TextAlign.right : TextAlign.left,
     );
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
       color: kBlack3Color.withValues(alpha: 0.4),
       child: Row(
         children: [
@@ -6687,7 +6844,7 @@ class _TwicTableRowState extends State<_TwicTableRow> {
                   bottom: BorderSide(color: kDividerColor, width: 1),
                 ),
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
               child: Row(
                 children: [
                   Expanded(
@@ -7866,6 +8023,7 @@ class _DatabaseSavedGamesTable extends HookWidget {
 
   @override
   Widget build(BuildContext context) {
+    final columnFlexes = useState(const _GamesTableColumnFlexes());
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 10, 20),
       child: Container(
@@ -7877,7 +8035,12 @@ class _DatabaseSavedGamesTable extends HookWidget {
         clipBehavior: Clip.antiAlias,
         child: Column(
           children: [
-            _GamesTableHeader(sort: sort, onSortChange: onSortChange),
+            _GamesTableHeader(
+              sort: sort,
+              onSortChange: onSortChange,
+              columnFlexes: columnFlexes.value,
+              onColumnFlexesChanged: (next) => columnFlexes.value = next,
+            ),
             const Divider(height: 1, color: kDividerColor),
             Expanded(
               child: ListView.builder(
@@ -7893,6 +8056,7 @@ class _DatabaseSavedGamesTable extends HookWidget {
                       selected:
                           selectedIds?.contains(rows[i].id) ??
                           rows[i].id == selectedId,
+                      columnFlexes: columnFlexes.value,
                       onRangeSelect:
                           onRangeSelect == null
                               ? null
@@ -7914,6 +8078,7 @@ class _DatabaseSavedGameRow extends StatefulWidget {
     required this.index,
     required this.analysis,
     required this.selected,
+    this.columnFlexes = const _GamesTableColumnFlexes(),
     this.onRangeSelect,
     required this.onSelect,
     required this.onOpen,
@@ -7922,6 +8087,7 @@ class _DatabaseSavedGameRow extends StatefulWidget {
   final int index;
   final SavedAnalysis analysis;
   final bool selected;
+  final _GamesTableColumnFlexes columnFlexes;
   final VoidCallback? onRangeSelect;
   final VoidCallback onSelect;
   final VoidCallback onOpen;
@@ -7997,11 +8163,11 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
                   bottom: BorderSide(color: kDividerColor, width: 1),
                 ),
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
               child: Row(
                 children: [
                   SizedBox(
-                    width: _kColNumber,
+                    width: widget.columnFlexes.number,
                     child: Text(
                       widget.index.toString(),
                       textAlign: TextAlign.right,
@@ -8013,8 +8179,8 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
                     ),
                   ),
                   const SizedBox(width: 10),
-                  Expanded(
-                    flex: _kColW,
+                  SizedBox(
+                    width: widget.columnFlexes.white,
                     child: _PlayerCell(
                       name: whiteName,
                       federation: whiteFed,
@@ -8023,17 +8189,17 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
                   ),
                   const SizedBox(width: 10),
                   SizedBox(
-                    width: _kColElo,
+                    width: widget.columnFlexes.whiteElo,
                     child: _RatingCell(rating: whiteRating),
                   ),
                   const SizedBox(width: 10),
                   SizedBox(
-                    width: _kColResult,
+                    width: widget.columnFlexes.result,
                     child: _ResultPill(result: result),
                   ),
                   const SizedBox(width: 10),
-                  Expanded(
-                    flex: _kColB,
+                  SizedBox(
+                    width: widget.columnFlexes.black,
                     child: _PlayerCell(
                       name: blackName,
                       federation: blackFed,
@@ -8042,12 +8208,12 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
                   ),
                   const SizedBox(width: 10),
                   SizedBox(
-                    width: _kColElo,
+                    width: widget.columnFlexes.blackElo,
                     child: _RatingCell(rating: blackRating),
                   ),
                   const SizedBox(width: 10),
-                  Expanded(
-                    flex: _kColEvent,
+                  SizedBox(
+                    width: widget.columnFlexes.event,
                     child: Text(
                       eventLine.isEmpty ? '—' : eventLine,
                       maxLines: 1,
@@ -8059,10 +8225,13 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
                     ),
                   ),
                   const SizedBox(width: 10),
-                  SizedBox(width: _kColEco, child: _EcoCell(eco: eco)),
+                  SizedBox(
+                    width: widget.columnFlexes.eco,
+                    child: _EcoCell(eco: eco),
+                  ),
                   const SizedBox(width: 10),
                   SizedBox(
-                    width: _kColDate,
+                    width: widget.columnFlexes.date,
                     child: Text(
                       _displayGameDate(s('Date')),
                       maxLines: 1,
@@ -8076,7 +8245,7 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
                   ),
                   const SizedBox(width: 10),
                   SizedBox(
-                    width: _kColSaved,
+                    width: widget.columnFlexes.saved,
                     child: Text(
                       saved,
                       textAlign: TextAlign.right,
@@ -8087,6 +8256,7 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
                       ),
                     ),
                   ),
+                  const SizedBox(width: 10),
                 ],
               ),
             ),
@@ -8382,8 +8552,6 @@ class _LibraryBoardPreviewPanel extends ConsumerStatefulWidget {
 
 class _LibraryBoardPreviewPanelState
     extends ConsumerState<_LibraryBoardPreviewPanel> {
-  bool _flipped = false;
-
   @override
   Widget build(BuildContext context) {
     final settings =
@@ -8434,8 +8602,6 @@ class _LibraryBoardPreviewPanelState
                     fen: widget.fen,
                     lastMoveUci: widget.lastMoveUci,
                     settings: settings,
-                    isFlipped: _flipped,
-                    onFlip: () => setState(() => _flipped = !_flipped),
                   );
                   if (!sideBySide) {
                     final notationHeight =
@@ -8594,73 +8760,35 @@ class _LibraryPreviewBoard extends StatelessWidget {
     required this.fen,
     required this.lastMoveUci,
     required this.settings,
-    required this.isFlipped,
-    required this.onFlip,
   });
 
   final String fen;
   final String? lastMoveUci;
   final BoardSettingsNew settings;
-  final bool isFlipped;
-  final VoidCallback onFlip;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final side = math.min(constraints.maxWidth, constraints.maxHeight);
-        final orientation = isFlipped ? Side.black : Side.white;
+        const orientation = Side.white;
         return Center(
           child: SizedBox.square(
             dimension: side,
-            child: Stack(
-              children: [
-                cg.Chessboard.fixed(
-                  key: ValueKey<String>(
-                    'library-preview-board:$fen:${lastMoveUci ?? ''}:$orientation',
-                  ),
-                  size: side,
-                  fen: fen,
-                  orientation: orientation,
-                  settings: cg.ChessboardSettings(
-                    enableCoordinates: false,
-                    colorScheme: settings.colorScheme,
-                    pieceAssets: settings.pieceAssets,
-                  ),
-                  shapes: const ISet<cg.Shape>.empty(),
-                  lastMove: _uciToLastMove(lastMoveUci ?? ''),
-                ),
-                Positioned(
-                  top: 6,
-                  right: 6,
-                  child: DesktopTooltip(
-                    message: isFlipped ? 'Show White side' : 'Show Black side',
-                    child: ClickCursor(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: onFlip,
-                        child: Container(
-                          width: 28,
-                          height: 28,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: kBlack2Color.withValues(alpha: 0.86),
-                            borderRadius: BorderRadius.circular(7),
-                            border: Border.all(
-                              color: kWhiteColor.withValues(alpha: 0.18),
-                            ),
-                          ),
-                          child: Icon(
-                            Icons.flip_camera_android_rounded,
-                            size: 15,
-                            color: isFlipped ? kPrimaryColor : kWhiteColor70,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+            child: cg.Chessboard.fixed(
+              key: ValueKey<String>(
+                'library-preview-board:$fen:${lastMoveUci ?? ''}:$orientation',
+              ),
+              size: side,
+              fen: fen,
+              orientation: orientation,
+              settings: cg.ChessboardSettings(
+                enableCoordinates: false,
+                colorScheme: settings.colorScheme,
+                pieceAssets: settings.pieceAssets,
+              ),
+              shapes: const ISet<cg.Shape>.empty(),
+              lastMove: _uciToLastMove(lastMoveUci ?? ''),
             ),
           ),
         );
