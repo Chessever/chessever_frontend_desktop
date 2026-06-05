@@ -81,7 +81,7 @@ class LibraryActionsToolbar extends ConsumerWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           _IconAction(
-            tooltip: 'New folder — create a database or sub-database',
+            tooltip: 'New folder — create a folder or database',
             icon: Icons.create_new_folder_rounded,
             accent: const Color(0xFF60A5FA),
             onPress: onNewFolder,
