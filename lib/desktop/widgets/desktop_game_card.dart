@@ -276,9 +276,9 @@ class _ListLayoutState extends State<_ListLayout> {
     final baseFill = _tileBaseFill(data: widget.data, highlight: highlight);
     final borderColor =
         widget.selected
-            ? kPrimaryColor
+            ? kPrimaryColor.withValues(alpha: 0.48)
             : (_hovered
-                ? kPrimaryColor.withValues(alpha: 0.32)
+                ? kPrimaryColor.withValues(alpha: 0.14)
                 : kDividerColor);
     final isLive = widget.data.hasStarted && !widget.data.status.isFinished;
 
@@ -299,8 +299,8 @@ class _ListLayoutState extends State<_ListLayout> {
                 widget.selected
                     ? [
                       BoxShadow(
-                        color: kPrimaryColor.withValues(alpha: 0.18),
-                        blurRadius: 18,
+                        color: kPrimaryColor.withValues(alpha: 0.08),
+                        blurRadius: 12,
                         offset: const Offset(0, 6),
                       ),
                     ]
@@ -386,13 +386,13 @@ Color _tileBaseFill({required GameCardData data, required bool highlight}) {
   final base = highlight ? kBlack3Color : kBlack2Color;
   if (data.hasStarted && !data.status.isFinished) {
     return Color.alphaBlend(
-      kPrimaryColor.withValues(alpha: highlight ? 0.08 : 0.05),
+      kPrimaryColor.withValues(alpha: highlight ? 0.045 : 0.025),
       base,
     );
   }
   if (data.status.isFinished) {
     return Color.alphaBlend(
-      kPrimaryColor.withValues(alpha: highlight ? 0.05 : 0.025),
+      kPrimaryColor.withValues(alpha: highlight ? 0.025 : 0.012),
       base,
     );
   }
@@ -445,12 +445,7 @@ class _CleanPlayerRow extends StatelessWidget {
     final fideId = isWhite ? data.whiteFideId : data.blackFideId;
     final title = isWhite ? data.whiteTitle : data.blackTitle;
     final result = _resultFor(data.status, isWhite: isWhite);
-    final isOnMove =
-        data.activePlayer != null &&
-        ((isWhite && data.activePlayer == Side.white) ||
-            (!isWhite && data.activePlayer == Side.black));
-    final isOngoing = !data.status.isFinished && data.hasStarted;
-    final nameColor = isOngoing && isOnMove ? kPrimaryColor : kWhiteColor;
+    const nameColor = kWhiteColor;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
@@ -522,12 +517,7 @@ class _CleanFaceOffBlock extends StatelessWidget {
     final fed = isWhite ? data.whiteFederation : data.blackFederation;
     final fideId = isWhite ? data.whiteFideId : data.blackFideId;
     final title = isWhite ? data.whiteTitle : data.blackTitle;
-    final isOnMove =
-        data.activePlayer != null &&
-        ((isWhite && data.activePlayer == Side.white) ||
-            (!isWhite && data.activePlayer == Side.black));
-    final isOngoing = !data.status.isFinished && data.hasStarted;
-    final nameColor = isOngoing && isOnMove ? kPrimaryColor : kWhiteColor;
+    const nameColor = kWhiteColor;
     final alignment =
         isWhite ? CrossAxisAlignment.start : CrossAxisAlignment.end;
     final textAlign = isWhite ? TextAlign.start : TextAlign.end;
@@ -850,9 +840,9 @@ class _CompactLayoutState extends State<_CompactLayout> {
     final baseFill = _tileBaseFill(data: widget.data, highlight: highlight);
     final borderColor =
         widget.selected
-            ? kPrimaryColor
+            ? kPrimaryColor.withValues(alpha: 0.48)
             : (_hovered
-                ? kPrimaryColor.withValues(alpha: 0.32)
+                ? kPrimaryColor.withValues(alpha: 0.14)
                 : kDividerColor);
     final isLive = widget.data.hasStarted && !widget.data.status.isFinished;
 
@@ -874,8 +864,8 @@ class _CompactLayoutState extends State<_CompactLayout> {
                 widget.selected
                     ? [
                       BoxShadow(
-                        color: kPrimaryColor.withValues(alpha: 0.16),
-                        blurRadius: 12,
+                        color: kPrimaryColor.withValues(alpha: 0.08),
+                        blurRadius: 10,
                         offset: const Offset(0, 4),
                       ),
                     ]
@@ -992,8 +982,8 @@ class _GridLayoutState extends State<_GridLayout> {
                 widget.selected
                     ? [
                       BoxShadow(
-                        color: kPrimaryColor.withValues(alpha: 0.2),
-                        blurRadius: 16,
+                        color: kPrimaryColor.withValues(alpha: 0.08),
+                        blurRadius: 12,
                         offset: const Offset(0, 6),
                       ),
                     ]
@@ -1001,9 +991,9 @@ class _GridLayoutState extends State<_GridLayout> {
             border: Border.all(
               color:
                   widget.selected
-                      ? kPrimaryColor
+                      ? kPrimaryColor.withValues(alpha: 0.48)
                       : (_hovered
-                          ? kPrimaryColor.withValues(alpha: 0.45)
+                          ? kPrimaryColor.withValues(alpha: 0.16)
                           : kDividerColor),
             ),
           ),
@@ -1401,7 +1391,7 @@ class _ClockPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fg = isActive ? kPrimaryColor : kWhiteColor70;
+    const fg = kWhiteColor70;
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 5 : 7,
@@ -1410,12 +1400,12 @@ class _ClockPill extends StatelessWidget {
       decoration: BoxDecoration(
         color:
             isActive
-                ? kPrimaryColor.withValues(alpha: 0.12)
+                ? kWhiteColor.withValues(alpha: 0.06)
                 : kBlack3Color.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(4),
         border: Border.all(
           color:
-              isActive ? kPrimaryColor.withValues(alpha: 0.5) : kDividerColor,
+              isActive ? kWhiteColor.withValues(alpha: 0.16) : kDividerColor,
           width: 0.7,
         ),
       ),
@@ -1448,9 +1438,9 @@ class _ResultBadge extends StatelessWidget {
       height: compact ? 18 : 22,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.16),
+          color: color.withValues(alpha: 0.09),
           borderRadius: BorderRadius.circular(4),
-          border: Border.all(color: color.withValues(alpha: 0.55), width: 0.8),
+          border: Border.all(color: color.withValues(alpha: 0.28), width: 0.8),
         ),
         child: Center(
           child: Text(
@@ -1513,8 +1503,8 @@ class _PulseState extends State<_Pulse> with SingleTickerProviderStateMixin {
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                color: widget.color.withValues(alpha: 0.4 + 0.5 * t),
-                blurRadius: 6 + 4 * t,
+                color: widget.color.withValues(alpha: 0.18 + 0.18 * t),
+                blurRadius: 4 + 2 * t,
               ),
             ],
           ),
