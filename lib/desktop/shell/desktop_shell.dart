@@ -245,8 +245,8 @@ class DesktopShell extends HookConsumerWidget {
                 case CommandAction.importPgn:
                   await PgnFilePicker(ref).pickAndLoad();
                 case CommandAction.openLocalChessFiles:
-                  final staged = await pickAndStageLibraryPgnImport(ref);
-                  if (staged) openPane(DesktopPane.library);
+                  final path = await pickAndOpenLibraryPgnDatabase(ref);
+                  if (path != null) openPane(DesktopPane.library);
                 case CommandAction.flipBoard:
                   // Owned by the Board pane via the F shortcut.
                   break;
