@@ -1,10 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_chess_pgn_append.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/services/pgn_file_intake_service.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -110,74 +112,143 @@ class LocalChessFilesView extends HookConsumerWidget {
       showDesktopToast(context, outcome.toToastMessage());
     }
 
-    return FTheme(
-      data: FThemes.zinc.dark,
-      child: Container(
-        color: kBackgroundColor,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _LocalHeader(
-              source: source,
-              node: node,
-              onOpenFolder: pickFolder,
-              onOpenFiles: pickFiles,
-              onRefresh:
-                  () => ref.read(localChessLibraryProvider.notifier).refresh(),
-              onSave: filtered.isEmpty ? null : saveVisible,
-              onSelectPath: selectLocalPath,
-            ),
-            const FDivider(),
-            if (!isBrowsingFolder)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 16, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: DesktopSearchField(
-                        controller: searchController,
-                        hintText:
-                            'Search this database — players, events, openings, ECO',
-                        onChanged: (value) => query.value = value,
-                        onClear: () => query.value = '',
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    _LocalCountPill(
-                      label:
-                          '${filtered.length} / ${allGames.length} '
-                          '${allGames.length == 1 ? 'entry' : 'entries'}',
-                    ),
-                  ],
+    Future<void> pasteIntoLocalDatabase() async {
+      final target = selectedDatabase;
+      if (target == null) {
+        showDesktopToast(
+          context,
+          'Open a single local PGN database before pasting.',
+          error: true,
+        );
+        return;
+      }
+      final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
+      final text = clipboard?.text?.trim();
+      if (text == null || text.isEmpty) {
+        if (context.mounted) {
+          showDesktopToast(
+            context,
+            'Clipboard is empty — copy a PGN first.',
+            error: true,
+          );
+        }
+        return;
+      }
+      try {
+        final count = await appendPgnTextToLocalChessFile(
+          filePath: target.path,
+          text: text,
+        );
+        if (!context.mounted) return;
+        if (count <= 0) {
+          showDesktopToast(
+            context,
+            'Clipboard does not contain a PGN with moves.',
+            error: true,
+          );
+          return;
+        }
+        await ref.read(localChessLibraryProvider.notifier).refresh();
+        if (!context.mounted) return;
+        ref.read(localChessLibraryProvider.notifier).selectPath(target.path);
+        onSelectPath(target.path);
+        showDesktopToast(
+          context,
+          'Pasted $count ${count == 1 ? 'game' : 'games'} into ${target.name}.',
+        );
+      } catch (e) {
+        if (!context.mounted) return;
+        showDesktopToast(
+          context,
+          'Could not paste into local PGN: $e',
+          error: true,
+        );
+      }
+    }
+
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.keyV, control: true):
+            pasteIntoLocalDatabase,
+        const SingleActivator(LogicalKeyboardKey.keyV, meta: true):
+            pasteIntoLocalDatabase,
+      },
+      child: Focus(
+        autofocus: true,
+        child: FTheme(
+          data: FThemes.zinc.dark,
+          child: Container(
+            color: kBackgroundColor,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _LocalHeader(
+                  source: source,
+                  node: node,
+                  onOpenFolder: pickFolder,
+                  onOpenFiles: pickFiles,
+                  onRefresh:
+                      () =>
+                          ref
+                              .read(localChessLibraryProvider.notifier)
+                              .refresh(),
+                  onSave: filtered.isEmpty ? null : saveVisible,
+                  onSelectPath: selectLocalPath,
                 ),
-              ),
-            if (isBrowsingFolder && node.children.isNotEmpty)
-              _LocalChildrenStrip(
-                folder: node,
-                selectedPath: selectedPath,
-                onSelect: selectLocalPath,
-              ),
-            Expanded(
-              child:
-                  isBrowsingFolder
-                      ? _LocalFolderBrowseState(folder: node)
-                      : allGames.isEmpty
-                      ? _LocalNodeEmpty(node: node)
-                      : filtered.isEmpty
-                      ? _LocalEmpty(
-                        icon: Icons.search_off_rounded,
-                        title: 'No local entries match "$query"',
-                        message: 'Try another player, event, opening, or file.',
-                        onOpenFolder: pickFolder,
-                        onOpenFiles: pickFiles,
-                      )
-                      : _LocalGamesTable(
-                        databaseTitle: databaseTitle,
-                        games: filtered,
-                        databaseGames: allGames,
-                      ),
+                const FDivider(),
+                if (!isBrowsingFolder)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 16, 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: DesktopSearchField(
+                            controller: searchController,
+                            hintText:
+                                'Search this database — players, events, openings, ECO',
+                            onChanged: (value) => query.value = value,
+                            onClear: () => query.value = '',
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        _LocalCountPill(
+                          label:
+                              '${filtered.length} / ${allGames.length} '
+                              '${allGames.length == 1 ? 'entry' : 'entries'}',
+                        ),
+                      ],
+                    ),
+                  ),
+                if (isBrowsingFolder && node.children.isNotEmpty)
+                  _LocalChildrenStrip(
+                    folder: node,
+                    selectedPath: selectedPath,
+                    onSelect: selectLocalPath,
+                  ),
+                Expanded(
+                  child:
+                      isBrowsingFolder
+                          ? _LocalFolderBrowseState(folder: node)
+                          : allGames.isEmpty
+                          ? _LocalNodeEmpty(node: node)
+                          : filtered.isEmpty
+                          ? _LocalEmpty(
+                            icon: Icons.search_off_rounded,
+                            title: 'No local entries match "$query"',
+                            message:
+                                'Try another player, event, opening, or file.',
+                            onOpenFolder: pickFolder,
+                            onOpenFiles: pickFiles,
+                          )
+                          : _LocalGamesTable(
+                            databaseTitle: databaseTitle,
+                            games: filtered,
+                            databaseGames: allGames,
+                          ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );

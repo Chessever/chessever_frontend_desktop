@@ -177,19 +177,29 @@ build_deb() {
   mkdir -p \
     "$pkgroot/DEBIAN" \
     "$pkgroot/opt/chessever" \
+    "$pkgroot/usr/bin" \
     "$pkgroot/usr/share/applications" \
     "$pkgroot/usr/share/icons/hicolor/256x256/apps"
 
   cp -a "$bundle_dir/." "$pkgroot/opt/chessever/"
 
-  cat > "$pkgroot/usr/share/applications/com.chessever.desktop.desktop" <<EOF
+  # Launch from the installed bundle directory so app/native-plugin startup
+  # code that touches relative paths behaves the same as a direct bundle run.
+  cat > "$pkgroot/usr/bin/chessever" <<EOF
+#!/usr/bin/env sh
+cd /opt/chessever || exit 1
+exec /opt/chessever/$PACKAGE_BINARY "\$@"
+EOF
+
+  cat > "$pkgroot/usr/share/applications/com.chessever.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Chessever
-Exec=/opt/chessever/$PACKAGE_BINARY
+Exec=/usr/bin/chessever %U
 Icon=chessever
 Categories=Game;BoardGame;
 Terminal=false
+StartupNotify=true
 EOF
 
   # Reuse an in-repo PNG icon if one exists; otherwise synthesize a 1x1 so the
@@ -232,8 +242,9 @@ EOF
   find "$pkgroot" -type d -exec chmod 755 {} +
   chmod 644 \
     "$pkgroot/DEBIAN/control" \
-    "$pkgroot/usr/share/applications/com.chessever.desktop.desktop" \
+    "$pkgroot/usr/share/applications/com.chessever.desktop" \
     "$icon_path"
+  chmod 755 "$pkgroot/usr/bin/chessever"
   chmod 755 "$pkgroot/opt/chessever/$PACKAGE_BINARY"
 
   dpkg-deb --build --root-owner-group "$pkgroot" "$out_path"

@@ -180,6 +180,29 @@ void main() {
       );
     });
 
+    test('Linux Debian launcher matches GTK application id', () {
+      final script =
+          File('scripts/codemagic_publish_linux.sh').readAsStringSync();
+      final cmake = File('linux/CMakeLists.txt').readAsStringSync();
+
+      expect(cmake, contains('set(BINARY_NAME "Chessever")'));
+      expect(cmake, contains('set(APPLICATION_ID "com.chessever.desktop")'));
+      expect(script, contains(r'PACKAGE_BINARY="Chessever"'));
+      expect(
+        script,
+        contains(
+          r'cat > "$pkgroot/usr/share/applications/com.chessever.desktop" <<EOF',
+        ),
+      );
+      expect(script, contains(r'cat > "$pkgroot/usr/bin/chessever" <<EOF'));
+      expect(script, contains('cd /opt/chessever || exit 1'));
+      expect(script, contains(r'exec /opt/chessever/$PACKAGE_BINARY "\$@"'));
+      expect(script, contains('Exec=/usr/bin/chessever %U'));
+      expect(script, contains('StartupNotify=true'));
+      expect(script, isNot(contains('com.chessever.desktop.desktop')));
+      expect(script, isNot(contains(r'Exec=/opt/chessever/$PACKAGE_BINARY')));
+    });
+
     test('server publish wrapper forwards archive commands', () {
       final wrapper =
           File('scripts/codemagic_publish_wrapper.sh').readAsStringSync();

@@ -27,6 +27,7 @@ import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
+import 'package:chessever/desktop/state/cloud_library_refresh.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/library_import_buffer.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
@@ -1785,6 +1786,7 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
     final shortcutsFocusNode = useFocusNode(
       debugLabel: 'library-mini-saved-${activeFolder.id}',
     );
+    final cloudRefreshNonce = ref.watch(cloudLibraryRefreshNonceProvider);
 
     final analysesAsync = useFuture(
       useMemoized(
@@ -1799,7 +1801,7 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
                 : ref
                     .read(libraryRepositoryProvider)
                     .getSavedAnalyses(folderId: activeFolder.id),
-        [activeFolder.id, activeFolder.isSubscribed],
+        [activeFolder.id, activeFolder.isSubscribed, cloudRefreshNonce],
       ),
     );
     final all = analysesAsync.data ?? const <SavedAnalysis>[];
@@ -2793,6 +2795,7 @@ class _FolderContentView extends HookConsumerWidget {
     // Bump to re-fetch the analyses list after a destructive action
     // (delete) without invalidating any folder-level provider.
     final refreshNonce = useState(0);
+    final cloudRefreshNonce = ref.watch(cloudLibraryRefreshNonceProvider);
     final analysesAsync = useFuture(
       useMemoized(
         () =>
@@ -2806,7 +2809,12 @@ class _FolderContentView extends HookConsumerWidget {
                 : ref
                     .read(libraryRepositoryProvider)
                     .getSavedAnalyses(folderId: activeFolder.id),
-        [activeFolder.id, activeFolder.isSubscribed, refreshNonce.value],
+        [
+          activeFolder.id,
+          activeFolder.isSubscribed,
+          refreshNonce.value,
+          cloudRefreshNonce,
+        ],
       ),
     );
 
@@ -7372,6 +7380,7 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
     final selectionAnchor = useState<int?>(null);
     final selectionExtent = useState<int?>(null);
     final refreshNonce = useState<int>(0);
+    final cloudRefreshNonce = ref.watch(cloudLibraryRefreshNonceProvider);
     final plyIndex = useState<int>(0);
     final listScrollController = useScrollController();
     final shortcutsFocusNode = useFocusNode(
@@ -7391,7 +7400,12 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
                 : ref
                     .read(libraryRepositoryProvider)
                     .getSavedAnalyses(folderId: args.folderId),
-        [args.folderId, args.isSubscribed, refreshNonce.value],
+        [
+          args.folderId,
+          args.isSubscribed,
+          refreshNonce.value,
+          cloudRefreshNonce,
+        ],
       ),
     );
 

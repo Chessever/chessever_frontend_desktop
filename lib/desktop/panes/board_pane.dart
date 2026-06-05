@@ -33,6 +33,7 @@ import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
+import 'package:chessever/desktop/state/cloud_library_refresh.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/opening_explorer_seed.dart';
@@ -1791,6 +1792,21 @@ class BoardPane extends HookConsumerWidget {
       dirtySinceLoad.value = true;
     }
 
+    void setMoveNags(ChessMovePointer target, List<int> nags) {
+      if (target.isEmpty) return;
+      final nextGame = _setMoveNagsAtPointer(chessGame.value, target, nags);
+      if (identical(nextGame, chessGame.value)) return;
+      pushUndoSnapshot();
+      chessGame.value = nextGame;
+      dirtySinceLoad.value = true;
+    }
+
+    void toggleMoveNag(ChessMovePointer target, int nag) {
+      final move = _moveAtPointer(chessGame.value, target);
+      if (move == null) return;
+      setMoveNags(target, _toggleNagList(move.nags ?? const <int>[], nag));
+    }
+
     Future<void> commentAfterMoveAction() async {
       final move = _moveAtPointer(chessGame.value, pointer.value);
       if (move == null) {
@@ -3077,6 +3093,8 @@ class BoardPane extends HookConsumerWidget {
           ref.read(userMoveNagsProvider.notifier).clearNags(id, ply);
           dirtySinceLoad.value = true;
         },
+        onToggleMoveNag: toggleMoveNag,
+        onClearMoveNags: (target) => setMoveNags(target, const <int>[]),
         onSetMoveComment: setMoveComment,
         onPromoteVariation: promoteVariation,
         onDeleteVariation: deleteVariation,
@@ -3657,6 +3675,7 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
           );
           ref.invalidate(libraryFoldersStreamProvider);
           ref.invalidate(subscribedBooksProvider);
+          notifyCloudLibraryChanged(ref);
         },
       );
     case BoardTabLibrarySaveOriginKind.localPgnFile:
@@ -3922,10 +3941,10 @@ ChessMove? _moveAtPointer(ChessGame game, ChessMovePointer pointer) {
   return currentMove;
 }
 
-ChessGame _setMoveCommentAtPointer(
+ChessGame _updateMoveAtPointer(
   ChessGame game,
   ChessMovePointer pointer,
-  String? comment,
+  ChessMove Function(ChessMove move) update,
 ) {
   if (pointer.isEmpty) return game;
 
@@ -3936,7 +3955,9 @@ ChessGame _setMoveCommentAtPointer(
     final nextLine = List<ChessMove>.of(line);
     final move = nextLine[moveIndex];
     if (pointerIndex == pointer.length - 1) {
-      nextLine[moveIndex] = _withEditableComment(move, comment);
+      final updated = update(move);
+      if (identical(updated, move)) return line;
+      nextLine[moveIndex] = updated;
       return nextLine;
     }
 
@@ -3950,10 +3971,14 @@ ChessGame _setMoveCommentAtPointer(
     }
 
     final nextVariations = List<ChessLine>.of(variations);
-    nextVariations[variationIndex] = rebuild(
+    final nextVariationLine = rebuild(
       nextVariations[variationIndex],
       pointerIndex + 2,
     );
+    if (identical(nextVariationLine, nextVariations[variationIndex])) {
+      return line;
+    }
+    nextVariations[variationIndex] = nextVariationLine;
     nextLine[moveIndex] = move.copyWith(
       variations: nextVariations,
       overrideVariations: true,
@@ -3961,7 +3986,50 @@ ChessGame _setMoveCommentAtPointer(
     return nextLine;
   }
 
-  return game.copyWith(mainline: rebuild(game.mainline, 0));
+  final nextMainline = rebuild(game.mainline, 0);
+  if (identical(nextMainline, game.mainline)) return game;
+  return game.copyWith(mainline: nextMainline);
+}
+
+ChessGame _setMoveCommentAtPointer(
+  ChessGame game,
+  ChessMovePointer pointer,
+  String? comment,
+) {
+  return _updateMoveAtPointer(
+    game,
+    pointer,
+    (move) => _withEditableComment(move, comment),
+  );
+}
+
+ChessGame _setMoveNagsAtPointer(
+  ChessGame game,
+  ChessMovePointer pointer,
+  List<int> nags,
+) {
+  return _updateMoveAtPointer(
+    game,
+    pointer,
+    (move) => move.copyWith(nags: List<int>.unmodifiable(nags)),
+  );
+}
+
+List<int> _toggleNagList(List<int> current, int nag) {
+  final tapped = getNagDisplay(nag);
+  if (tapped == null) return current;
+
+  final next = List<int>.from(current);
+  if (next.contains(nag)) {
+    next.remove(nag);
+  } else {
+    next.removeWhere((other) {
+      final display = getNagDisplay(other);
+      return display != null && display.category == tapped.category;
+    });
+    next.add(nag);
+  }
+  return List<int>.unmodifiable(next);
 }
 
 ChessMove _withEditableComment(ChessMove move, String? comment) {

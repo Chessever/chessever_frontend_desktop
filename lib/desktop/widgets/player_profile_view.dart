@@ -3899,32 +3899,10 @@ Future<ChessGame> _resolveChessGameForLibrary(
   }
 
   final chessGame = ChessGame.fromPgn(game.gameId, pgn);
-  final meta = Map<String, dynamic>.from(chessGame.metadata);
-  meta['White'] = game.whitePlayer.name;
-  meta['Black'] = game.blackPlayer.name;
-
-  final whiteFed =
-      game.whitePlayer.countryCode.isNotEmpty
-          ? game.whitePlayer.countryCode
-          : game.whitePlayer.federation;
-  final blackFed =
-      game.blackPlayer.countryCode.isNotEmpty
-          ? game.blackPlayer.countryCode
-          : game.blackPlayer.federation;
-  if (whiteFed.isNotEmpty) meta['WhiteFed'] = whiteFed;
-  if (blackFed.isNotEmpty) meta['BlackFed'] = blackFed;
-  if (game.whitePlayer.title.isNotEmpty) {
-    meta['WhiteTitle'] = game.whitePlayer.title;
-  }
-  if (game.blackPlayer.title.isNotEmpty) {
-    meta['BlackTitle'] = game.blackPlayer.title;
-  }
-  if (game.whitePlayer.rating > 0) {
-    meta['WhiteElo'] = game.whitePlayer.rating.toString();
-  }
-  if (game.blackPlayer.rating > 0) {
-    meta['BlackElo'] = game.blackPlayer.rating.toString();
-  }
+  final meta = mergeDesktopGameMetadataForLibrary(
+    Map<String, dynamic>.from(chessGame.metadata),
+    game,
+  );
 
   final resolvedEvent = _resolveLibraryEventName(
     metadataEvent: meta['Event']?.toString(),

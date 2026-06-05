@@ -100,6 +100,8 @@ class NotationLadderView extends StatefulWidget {
     this.onSetUserQualityNag,
     this.onToggleUserNag,
     this.onClearUserNags,
+    this.onToggleMoveNag,
+    this.onClearMoveNags,
     this.onSetMoveComment,
     this.onPromoteVariation,
     this.onDeleteVariation,
@@ -151,6 +153,7 @@ class NotationLadderView extends StatefulWidget {
 
   /// User-applied NAGs (`!`/`?`/...) keyed by the same zero-based mainline
   /// half-move index. Same scope as [lichessAnnotations] — mainline only.
+  /// Sideline NAGs are stored directly on the selected [ChessMove].
   final Map<int, List<int>> userNags;
 
   /// Set or clear the user's quality NAG for a mainline half-move index.
@@ -165,6 +168,12 @@ class NotationLadderView extends StatefulWidget {
 
   /// Clear every user-applied NAG for a mainline half-move.
   final void Function(int ply)? onClearUserNags;
+
+  /// Toggle/clear a NAG on any selected move pointer. Used for sidelines,
+  /// where the symbol should live on that variation move, not on the
+  /// zero-based mainline NAG overlay.
+  final void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag;
+  final void Function(ChessMovePointer pointer)? onClearMoveNags;
 
   /// Set or clear a comment attached to a move pointer. Passing null or an
   /// empty string clears the rendered comment block.
@@ -513,6 +522,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                                 userNags: widget.userNags,
                                 onSetUserQualityNag: widget.onSetUserQualityNag,
                                 onToggleUserNag: widget.onToggleUserNag,
+                                onToggleMoveNag: widget.onToggleMoveNag,
                                 onSetMoveComment: widget.onSetMoveComment,
                                 onPromoteVariation: widget.onPromoteVariation,
                                 onDeleteVariation: widget.onDeleteVariation,
@@ -553,6 +563,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                           userNags: widget.userNags,
                           onSetUserQualityNag: widget.onSetUserQualityNag,
                           onToggleUserNag: widget.onToggleUserNag,
+                          onToggleMoveNag: widget.onToggleMoveNag,
                           onSetMoveComment: widget.onSetMoveComment,
                           onPromoteVariation: widget.onPromoteVariation,
                           onDeleteVariation: widget.onDeleteVariation,
@@ -571,6 +582,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                       ),
             ),
             if (widget.onToggleUserNag != null ||
+                widget.onToggleMoveNag != null ||
                 widget.onSetMoveComment != null)
               _NotationAnnotationToolbar(
                 activePointer: widget.activePointer,
@@ -580,6 +592,8 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                 userNags: widget.userNags,
                 onToggleUserNag: widget.onToggleUserNag,
                 onClearUserNags: widget.onClearUserNags,
+                onToggleMoveNag: widget.onToggleMoveNag,
+                onClearMoveNags: widget.onClearMoveNags,
                 onSetMoveComment: widget.onSetMoveComment,
                 onPromoteVariation: widget.onPromoteVariation,
                 onDeleteVariation: widget.onDeleteVariation,
@@ -600,6 +614,8 @@ class _NotationAnnotationToolbar extends StatelessWidget {
     required this.userNags,
     required this.onToggleUserNag,
     required this.onClearUserNags,
+    required this.onToggleMoveNag,
+    required this.onClearMoveNags,
     required this.onSetMoveComment,
     required this.onPromoteVariation,
     required this.onDeleteVariation,
@@ -627,6 +643,8 @@ class _NotationAnnotationToolbar extends StatelessWidget {
   final Map<int, List<int>> userNags;
   final void Function(int ply, int nag)? onToggleUserNag;
   final void Function(int ply)? onClearUserNags;
+  final void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag;
+  final void Function(ChessMovePointer pointer)? onClearMoveNags;
   final void Function(ChessMovePointer pointer, String? comment)?
   onSetMoveComment;
   final void Function(ChessMovePointer variationHeadPointer)?
@@ -645,8 +663,21 @@ class _NotationAnnotationToolbar extends StatelessWidget {
     return null;
   }
 
-  bool get _canAnnotateMainline =>
-      _targetMainlinePly != null && onToggleUserNag != null;
+  bool get _isMainlineTarget => _targetMainlinePly != null;
+
+  bool get _canAnnotateMove {
+    if (_isMainlineTarget) return onToggleUserNag != null;
+    return activePointer.isNotEmpty &&
+        activeMove != null &&
+        onToggleMoveNag != null;
+  }
+
+  bool get _canClearMoveNags {
+    if (_isMainlineTarget) return onClearUserNags != null;
+    return activePointer.isNotEmpty &&
+        activeMove != null &&
+        onClearMoveNags != null;
+  }
 
   bool get _canComment =>
       activePointer.isNotEmpty &&
@@ -658,10 +689,28 @@ class _NotationAnnotationToolbar extends StatelessWidget {
       activeMove != null &&
       onTrimContinuation != null;
 
-  Set<int> get _activeUserNagSet {
+  Set<int> get _activeNagSet {
     final ply = _targetMainlinePly;
-    if (ply == null) return const <int>{};
-    return (userNags[ply] ?? const <int>[]).toSet();
+    if (ply != null) return (userNags[ply] ?? const <int>[]).toSet();
+    return (activeMove?.nags ?? const <int>[]).toSet();
+  }
+
+  void _toggleNag(int nag) {
+    final ply = _targetMainlinePly;
+    if (ply != null) {
+      onToggleUserNag?.call(ply, nag);
+      return;
+    }
+    if (activePointer.isNotEmpty) onToggleMoveNag?.call(activePointer, nag);
+  }
+
+  void _clearNags() {
+    final ply = _targetMainlinePly;
+    if (ply != null) {
+      onClearUserNags?.call(ply);
+      return;
+    }
+    if (activePointer.isNotEmpty) onClearMoveNags?.call(activePointer);
   }
 
   Future<void> _editComment(BuildContext context) async {
@@ -677,8 +726,7 @@ class _NotationAnnotationToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final activeSet = _activeUserNagSet;
-    final targetMainlinePly = _targetMainlinePly;
+    final activeSet = _activeNagSet;
     final hasUserNags = activeSet.isNotEmpty;
     final commentActive =
         (_firstPgnComment(activeMove?.comments) ?? '').trim().isNotEmpty;
@@ -748,26 +796,14 @@ class _NotationAnnotationToolbar extends StatelessWidget {
                 active: commentActive,
                 onPress: _canComment ? () => _editComment(context) : null,
               ),
-              const SizedBox(width: 6),
-              _ToolbarIconButton(
-                icon: Icons.grid_view_rounded,
-                tooltip:
-                    commentActive
-                        ? 'Edit diagram/comment'
-                        : 'Add diagram/comment',
-                active: false,
-                onPress: _canComment ? () => _editComment(context) : null,
-              ),
+
               const _ToolbarDivider(),
               for (final nag in _qualityNags) ...[
                 _NagToolbarButton(
                   nag: nag,
                   active: activeSet.contains(nag),
-                  enabled: _canAnnotateMainline,
-                  onPress:
-                      targetMainlinePly == null
-                          ? () {}
-                          : () => onToggleUserNag!(targetMainlinePly, nag),
+                  enabled: _canAnnotateMove,
+                  onPress: () => _toggleNag(nag),
                 ),
                 const SizedBox(width: 3),
               ],
@@ -776,11 +812,8 @@ class _NotationAnnotationToolbar extends StatelessWidget {
                 _NagToolbarButton(
                   nag: nag,
                   active: activeSet.contains(nag),
-                  enabled: _canAnnotateMainline,
-                  onPress:
-                      targetMainlinePly == null
-                          ? () {}
-                          : () => onToggleUserNag!(targetMainlinePly, nag),
+                  enabled: _canAnnotateMove,
+                  onPress: () => _toggleNag(nag),
                 ),
                 const SizedBox(width: 3),
               ],
@@ -790,12 +823,7 @@ class _NotationAnnotationToolbar extends StatelessWidget {
                 tooltip:
                     hasUserNags ? 'Clear move NAGs' : 'No user NAGs to clear',
                 active: false,
-                onPress:
-                    _canAnnotateMainline &&
-                            hasUserNags &&
-                            targetMainlinePly != null
-                        ? () => onClearUserNags?.call(targetMainlinePly)
-                        : null,
+                onPress: _canClearMoveNags && hasUserNags ? _clearNags : null,
               ),
             ],
           ),
@@ -931,9 +959,7 @@ class _NagToolbarButton extends StatelessWidget {
     );
     return DesktopTooltip(
       message:
-          enabled
-              ? _nagTooltip(nag, display)
-              : 'Select a main-line move to annotate',
+          enabled ? _nagTooltip(nag, display) : 'Select a move to annotate',
       child: button,
     );
   }
@@ -1005,6 +1031,7 @@ class _LineBlock extends StatelessWidget {
     required this.userNags,
     required this.onSetUserQualityNag,
     required this.onToggleUserNag,
+    required this.onToggleMoveNag,
     required this.onSetMoveComment,
     required this.onPromoteVariation,
     required this.onDeleteVariation,
@@ -1036,6 +1063,7 @@ class _LineBlock extends StatelessWidget {
   final Map<int, List<int>> userNags;
   final void Function(int ply, int? nag)? onSetUserQualityNag;
   final void Function(int ply, int nag)? onToggleUserNag;
+  final void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag;
   final void Function(ChessMovePointer pointer, String? comment)?
   onSetMoveComment;
   final void Function(ChessMovePointer)? onPromoteVariation;
@@ -1238,6 +1266,7 @@ class _LineBlock extends StatelessWidget {
                 userNags: userNags,
                 onSetUserQualityNag: onSetUserQualityNag,
                 onToggleUserNag: onToggleUserNag,
+                onToggleMoveNag: onToggleMoveNag,
                 onSetMoveComment: onSetMoveComment,
                 onPromoteVariation: onPromoteVariation,
                 onDeleteVariation: onDeleteVariation,
@@ -1662,6 +1691,7 @@ class _InlineNotationBlock extends StatelessWidget {
     required this.userNags,
     required this.onSetUserQualityNag,
     required this.onToggleUserNag,
+    required this.onToggleMoveNag,
     required this.onSetMoveComment,
     required this.onPromoteVariation,
     required this.onDeleteVariation,
@@ -1691,6 +1721,7 @@ class _InlineNotationBlock extends StatelessWidget {
   final Map<int, List<int>> userNags;
   final void Function(int ply, int? nag)? onSetUserQualityNag;
   final void Function(int ply, int nag)? onToggleUserNag;
+  final void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag;
   final void Function(ChessMovePointer pointer, String? comment)?
   onSetMoveComment;
   final void Function(ChessMovePointer)? onPromoteVariation;
@@ -1885,6 +1916,7 @@ class _InlineNotationBlock extends StatelessWidget {
                 userNags: userNags,
                 onSetUserQualityNag: onSetUserQualityNag,
                 onToggleUserNag: onToggleUserNag,
+                onToggleMoveNag: onToggleMoveNag,
                 onSetMoveComment: onSetMoveComment,
                 onPromoteVariation: onPromoteVariation,
                 onDeleteVariation: onDeleteVariation,
@@ -1946,6 +1978,7 @@ class _InlineVariationBlock extends StatelessWidget {
     required this.userNags,
     required this.onSetUserQualityNag,
     required this.onToggleUserNag,
+    required this.onToggleMoveNag,
     required this.onSetMoveComment,
     required this.onPromoteVariation,
     required this.onDeleteVariation,
@@ -1977,6 +2010,7 @@ class _InlineVariationBlock extends StatelessWidget {
   final Map<int, List<int>> userNags;
   final void Function(int ply, int? nag)? onSetUserQualityNag;
   final void Function(int ply, int nag)? onToggleUserNag;
+  final void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag;
   final void Function(ChessMovePointer pointer, String? comment)?
   onSetMoveComment;
   final void Function(ChessMovePointer)? onPromoteVariation;
@@ -2113,6 +2147,7 @@ class _InlineVariationBlock extends StatelessWidget {
               userNags: userNags,
               onSetUserQualityNag: onSetUserQualityNag,
               onToggleUserNag: onToggleUserNag,
+              onToggleMoveNag: onToggleMoveNag,
               onSetMoveComment: onSetMoveComment,
               onPromoteVariation: onPromoteVariation,
               onDeleteVariation: onDeleteVariation,
@@ -2249,6 +2284,7 @@ class _InlineVariationBlock extends StatelessWidget {
               userNags: userNags,
               onSetUserQualityNag: onSetUserQualityNag,
               onToggleUserNag: onToggleUserNag,
+              onToggleMoveNag: onToggleMoveNag,
               onSetMoveComment: onSetMoveComment,
               onPromoteVariation: onPromoteVariation,
               onDeleteVariation: onDeleteVariation,
@@ -3025,7 +3061,8 @@ class _LadderChipState extends State<_LadderChip> {
     final canPromote = widget.onPromoteVariation != null;
     final canDelete = widget.onDeleteVariation != null;
     final canTrim = widget.onTrimFromHere != null;
-    final notationState = context.findAncestorStateOfType<_NotationLadderViewState>();
+    final notationState =
+        context.findAncestorStateOfType<_NotationLadderViewState>();
     final selected = await showMenu<_LadderAction>(
       context: context,
       position: RelativeRect.fromLTRB(
