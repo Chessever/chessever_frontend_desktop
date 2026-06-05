@@ -196,11 +196,26 @@ void main() {
       );
       expect(script, contains(r'cat > "$pkgroot/usr/bin/chessever" <<EOF'));
       expect(script, contains('cd /opt/chessever || exit 1'));
+      expect(
+        script,
+        contains(
+          r'export LD_LIBRARY_PATH="/opt/chessever/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"',
+        ),
+      );
       expect(script, contains(r'exec /opt/chessever/$PACKAGE_BINARY "\$@"'));
       expect(script, contains('Exec=/usr/bin/chessever %U'));
       expect(script, contains('StartupNotify=true'));
       expect(script, isNot(contains('com.chessever.desktop.desktop')));
       expect(script, isNot(contains(r'Exec=/opt/chessever/$PACKAGE_BINARY')));
+    });
+
+    test('Linux bundle includes ONNX Runtime SONAME libraries', () {
+      final cmake = File('linux/CMakeLists.txt').readAsStringSync();
+
+      expect(cmake, contains('flutter_onnxruntime'));
+      expect(cmake, contains('libonnxruntime*.so*'));
+      expect(cmake, contains('FOLLOW_SYMLINK_CHAIN'));
+      expect(cmake, contains(r'${INSTALL_BUNDLE_LIB_DIR}'));
     });
 
     test('server publish wrapper forwards archive commands', () {
