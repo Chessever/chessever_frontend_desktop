@@ -1522,6 +1522,12 @@ class _MyDatabasesBoard extends HookConsumerWidget {
                         unawaited(showCloudContextMenu(folder, position)))
                 : (position) =>
                     unawaited(showLocalContextMenu(entry!, position)),
+        onRemove:
+            folder != null
+                ? (folder.id == kTwicBookId
+                    ? null
+                    : () => unawaited(removeCloudFolderFromBoard(folder)))
+                : () => unawaited(removeLocalEntry(entry!)),
       );
       if (folder == null) return tile;
       return FolderDropTarget(
@@ -1604,6 +1610,7 @@ class _DatabaseBoardTile extends StatefulWidget {
     required this.onSelect,
     required this.onOpen,
     this.onContextMenu,
+    this.onRemove,
   });
 
   final String title;
@@ -1612,6 +1619,7 @@ class _DatabaseBoardTile extends StatefulWidget {
   final VoidCallback onSelect;
   final VoidCallback onOpen;
   final ValueChanged<Offset>? onContextMenu;
+  final VoidCallback? onRemove;
 
   @override
   State<_DatabaseBoardTile> createState() => _DatabaseBoardTileState();
@@ -1655,6 +1663,11 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile> {
           if (event.logicalKey == LogicalKeyboardKey.enter ||
               event.logicalKey == LogicalKeyboardKey.numpadEnter) {
             _openFromTile();
+            return KeyEventResult.handled;
+          }
+          if (event.logicalKey == LogicalKeyboardKey.delete &&
+              widget.onRemove != null) {
+            widget.onRemove!();
             return KeyEventResult.handled;
           }
           return KeyEventResult.ignored;
@@ -3895,6 +3908,8 @@ class _GamesTable extends HookWidget {
   @override
   Widget build(BuildContext context) {
     final scrollController = useScrollController();
+    final columnFlexes = useState(const _GamesTableColumnFlexes());
+    final columnOrder = useState(_defaultGamesTableColumns);
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
       child: Container(
@@ -3906,7 +3921,14 @@ class _GamesTable extends HookWidget {
         clipBehavior: Clip.antiAlias,
         child: Column(
           children: [
-            _GamesTableHeader(sort: sort, onSortChange: onSortChange),
+            _GamesTableHeader(
+              sort: sort,
+              onSortChange: onSortChange,
+              columnFlexes: columnFlexes.value,
+              columnOrder: columnOrder.value,
+              onColumnFlexesChanged: (next) => columnFlexes.value = next,
+              onColumnOrderChanged: (next) => columnOrder.value = next,
+            ),
             const Divider(height: 1, color: kDividerColor),
             Expanded(
               child: ListKeyboardScrollFocus(
@@ -3926,6 +3948,8 @@ class _GamesTable extends HookWidget {
                         onOpen: () => onOpen(rows[i]),
                         canDelete: canDelete,
                         selectedIds: selectedIds,
+                        columnFlexes: columnFlexes.value,
+                        columnOrder: columnOrder.value,
                         onPrimeSelectionAnchor:
                             (_) => onPrimeSelectionAnchor(i),
                         onRangeSelect: (_) => onRangeSelect(i),
@@ -3941,137 +3965,356 @@ class _GamesTable extends HookWidget {
   }
 }
 
-// Shared column flex/widths so header and rows always align. When tweaking
-// columns, update both lists in lockstep — flex widgets calculated by Row
-// are sensitive to tiny mismatches.
-const _kColNumber = 42.0;
-const _kColW = 5; // White player flex
+// Shared column widths so header and rows always align. Every visible
+// games-table column is resizable, reorderable, hideable, and addable.
+const _kColNumber = 30.0;
+const _kColW = 5; // TWIC/player-summary table flex
 const _kColElo = 56.0;
 const _kColResult = 56.0;
-const _kColB = 5; // Black player flex
-const _kColEvent = 4; // Event flex
+const _kColB = 5; // TWIC/player-summary table flex
+const _kColEvent = 4; // TWIC/player-summary table flex
 const _kColEco = 62.0;
 const _kColDate = 88.0;
 const _kColSaved = 78.0;
+const _kColPlayerWidth = 150.0;
+const _kColEventWidth = 128.0;
+
+const _defaultGamesTableColumns = <_GamesTableColumn>[
+  _GamesTableColumn.number,
+  _GamesTableColumn.white,
+  _GamesTableColumn.whiteElo,
+  _GamesTableColumn.result,
+  _GamesTableColumn.black,
+  _GamesTableColumn.blackElo,
+  _GamesTableColumn.event,
+  _GamesTableColumn.eco,
+  _GamesTableColumn.date,
+  _GamesTableColumn.saved,
+];
+
+enum _GamesTableColumn {
+  number,
+  white,
+  whiteElo,
+  result,
+  black,
+  blackElo,
+  event,
+  eco,
+  date,
+  saved,
+}
+
+extension _GamesTableColumnMeta on _GamesTableColumn {
+  String get label => switch (this) {
+    _GamesTableColumn.number => '#',
+    _GamesTableColumn.white => 'White',
+    _GamesTableColumn.whiteElo => 'Elo W',
+    _GamesTableColumn.result => 'Result',
+    _GamesTableColumn.black => 'Black',
+    _GamesTableColumn.blackElo => 'Elo B',
+    _GamesTableColumn.event => 'Event',
+    _GamesTableColumn.eco => 'ECO',
+    _GamesTableColumn.date => 'Date',
+    _GamesTableColumn.saved => 'Saved',
+  };
+
+  _SortKey get sortKey => switch (this) {
+    _GamesTableColumn.number => _SortKey.number,
+    _GamesTableColumn.white => _SortKey.white,
+    _GamesTableColumn.whiteElo => _SortKey.whiteElo,
+    _GamesTableColumn.result => _SortKey.result,
+    _GamesTableColumn.black => _SortKey.black,
+    _GamesTableColumn.blackElo => _SortKey.blackElo,
+    _GamesTableColumn.event => _SortKey.event,
+    _GamesTableColumn.eco => _SortKey.eco,
+    _GamesTableColumn.date => _SortKey.date,
+    _GamesTableColumn.saved => _SortKey.saved,
+  };
+
+  bool get alignEnd => switch (this) {
+    _GamesTableColumn.number ||
+    _GamesTableColumn.whiteElo ||
+    _GamesTableColumn.result ||
+    _GamesTableColumn.blackElo ||
+    _GamesTableColumn.saved => true,
+    _ => false,
+  };
+}
+
+class _GamesTableColumnFlexes {
+  const _GamesTableColumnFlexes({
+    this.number = _kColNumber,
+    this.white = _kColPlayerWidth,
+    this.whiteElo = _kColElo,
+    this.result = _kColResult,
+    this.black = _kColPlayerWidth,
+    this.blackElo = _kColElo,
+    this.event = _kColEventWidth,
+    this.eco = _kColEco,
+    this.date = _kColDate,
+    this.saved = _kColSaved,
+  });
+
+  final double number;
+  final double white;
+  final double whiteElo;
+  final double result;
+  final double black;
+  final double blackElo;
+  final double event;
+  final double eco;
+  final double date;
+  final double saved;
+
+  double widthFor(_GamesTableColumn column) => switch (column) {
+    _GamesTableColumn.number => number,
+    _GamesTableColumn.white => white,
+    _GamesTableColumn.whiteElo => whiteElo,
+    _GamesTableColumn.result => result,
+    _GamesTableColumn.black => black,
+    _GamesTableColumn.blackElo => blackElo,
+    _GamesTableColumn.event => event,
+    _GamesTableColumn.eco => eco,
+    _GamesTableColumn.date => date,
+    _GamesTableColumn.saved => saved,
+  };
+
+  _GamesTableColumnFlexes resized(_GamesTableColumn column, double delta) {
+    return switch (column) {
+      _GamesTableColumn.number => copyWith(number: number + delta),
+      _GamesTableColumn.white => copyWith(white: white + delta),
+      _GamesTableColumn.whiteElo => copyWith(whiteElo: whiteElo + delta),
+      _GamesTableColumn.result => copyWith(result: result + delta),
+      _GamesTableColumn.black => copyWith(black: black + delta),
+      _GamesTableColumn.blackElo => copyWith(blackElo: blackElo + delta),
+      _GamesTableColumn.event => copyWith(event: event + delta),
+      _GamesTableColumn.eco => copyWith(eco: eco + delta),
+      _GamesTableColumn.date => copyWith(date: date + delta),
+      _GamesTableColumn.saved => copyWith(saved: saved + delta),
+    };
+  }
+
+  _GamesTableColumnFlexes copyWith({
+    double? number,
+    double? white,
+    double? whiteElo,
+    double? result,
+    double? black,
+    double? blackElo,
+    double? event,
+    double? eco,
+    double? date,
+    double? saved,
+  }) {
+    double clampWidth(double value, double min, double max) =>
+        value.clamp(min, max).toDouble();
+    return _GamesTableColumnFlexes(
+      number: clampWidth(number ?? this.number, 22, 70),
+      white: clampWidth(white ?? this.white, 82, 280),
+      whiteElo: clampWidth(whiteElo ?? this.whiteElo, 44, 110),
+      result: clampWidth(result ?? this.result, 44, 110),
+      black: clampWidth(black ?? this.black, 82, 280),
+      blackElo: clampWidth(blackElo ?? this.blackElo, 44, 110),
+      event: clampWidth(event ?? this.event, 70, 260),
+      eco: clampWidth(eco ?? this.eco, 44, 110),
+      date: clampWidth(date ?? this.date, 64, 150),
+      saved: clampWidth(saved ?? this.saved, 64, 150),
+    );
+  }
+}
 
 class _GamesTableHeader extends StatelessWidget {
-  const _GamesTableHeader({required this.sort, required this.onSortChange});
+  const _GamesTableHeader({
+    required this.sort,
+    required this.onSortChange,
+    this.columnFlexes = const _GamesTableColumnFlexes(),
+    this.columnOrder = _defaultGamesTableColumns,
+    this.onColumnFlexesChanged,
+    this.onColumnOrderChanged,
+  });
 
   final _SortConfig sort;
   final ValueChanged<_SortConfig> onSortChange;
+  final _GamesTableColumnFlexes columnFlexes;
+  final List<_GamesTableColumn> columnOrder;
+  final ValueChanged<_GamesTableColumnFlexes>? onColumnFlexesChanged;
+  final ValueChanged<List<_GamesTableColumn>>? onColumnOrderChanged;
 
   @override
   Widget build(BuildContext context) {
+    void updateWidths(_GamesTableColumnFlexes next) {
+      onColumnFlexesChanged?.call(next);
+    }
+
+    void reorder(_GamesTableColumn dragged, _GamesTableColumn target) {
+      if (dragged == target || onColumnOrderChanged == null) return;
+      final next = List<_GamesTableColumn>.of(columnOrder)..remove(dragged);
+      final targetIndex = next.indexOf(target);
+      next.insert(targetIndex < 0 ? next.length : targetIndex, dragged);
+      onColumnOrderChanged!(next);
+    }
+
+    Future<void> showColumnMenu(
+      _GamesTableColumn column,
+      Offset position,
+    ) async {
+      if (onColumnOrderChanged == null) return;
+      final hidden = _defaultGamesTableColumns
+          .where((candidate) => !columnOrder.contains(candidate))
+          .toList(growable: false);
+      final picked = await showDesktopContextMenu<String>(
+        context: context,
+        position: position,
+        width: 220,
+        entries: [
+          DesktopContextMenuItem(
+            value: 'hide:${column.name}',
+            icon: Icons.visibility_off_outlined,
+            label: 'Hide ${column.label}',
+            enabled: columnOrder.length > 1,
+          ),
+          if (hidden.isNotEmpty) const DesktopContextMenuDivider(),
+          for (final hiddenColumn in hidden)
+            DesktopContextMenuItem(
+              value: 'add:${hiddenColumn.name}',
+              icon: Icons.add_rounded,
+              label: 'Add ${hiddenColumn.label}',
+            ),
+        ],
+      );
+      if (picked == null) return;
+      final parts = picked.split(':');
+      if (parts.length != 2) return;
+      final pickedColumn = _defaultGamesTableColumns.firstWhere(
+        (candidate) => candidate.name == parts[1],
+        orElse: () => column,
+      );
+      if (parts[0] == 'hide') {
+        if (columnOrder.length <= 1) return;
+        onColumnOrderChanged!(
+          columnOrder.where((candidate) => candidate != pickedColumn).toList(),
+        );
+      } else if (parts[0] == 'add' && !columnOrder.contains(pickedColumn)) {
+        onColumnOrderChanged!([...columnOrder, pickedColumn]);
+      }
+    }
+
+    Widget columnHeader(_GamesTableColumn column) {
+      final header = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onSecondaryTapDown:
+            (details) =>
+                unawaited(showColumnMenu(column, details.globalPosition)),
+        child: SizedBox(
+          width: columnFlexes.widthFor(column),
+          child: _HeaderCell(
+            label: column.label,
+            key_: column.sortKey,
+            sort: sort,
+            onSortChange: onSortChange,
+            alignEnd: column.alignEnd,
+          ),
+        ),
+      );
+
+      return DragTarget<_GamesTableColumn>(
+        onWillAcceptWithDetails: (details) => details.data != column,
+        onAcceptWithDetails: (details) => reorder(details.data, column),
+        builder: (context, candidateData, rejectedData) {
+          final active = candidateData.isNotEmpty;
+          return LongPressDraggable<_GamesTableColumn>(
+            data: column,
+            delay: const Duration(milliseconds: 150),
+            feedback: Material(
+              color: Colors.transparent,
+              child: Container(
+                width: columnFlexes.widthFor(column),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: BoxDecoration(
+                  color: kBlack3Color.withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: kPrimaryColor),
+                ),
+                child: Text(
+                  column.label,
+                  style: const TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+            childWhenDragging: Opacity(opacity: 0.35, child: header),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border:
+                    active
+                        ? Border(
+                          left: BorderSide(color: kPrimaryColor, width: 2),
+                        )
+                        : null,
+              ),
+              child: header,
+            ),
+          );
+        },
+      );
+    }
+
+    final visibleColumns =
+        columnOrder.isEmpty ? _defaultGamesTableColumns : columnOrder;
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
       color: kBlack3Color.withValues(alpha: 0.4),
       child: Row(
         children: [
-          SizedBox(
-            width: _kColNumber,
-            child: _HeaderCell(
-              label: '#',
-              key_: _SortKey.number,
-              sort: sort,
-              onSortChange: onSortChange,
-              alignEnd: true,
+          for (final column in visibleColumns) ...[
+            columnHeader(column),
+            _HeaderResizeGap(
+              enabled: onColumnFlexesChanged != null,
+              onDrag:
+                  (delta) => updateWidths(columnFlexes.resized(column, delta)),
             ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            flex: _kColW,
-            child: _HeaderCell(
-              label: 'White',
-              key_: _SortKey.white,
-              sort: sort,
-              onSortChange: onSortChange,
-            ),
-          ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: _kColElo,
-            child: _HeaderCell(
-              label: 'Elo W',
-              key_: _SortKey.whiteElo,
-              sort: sort,
-              onSortChange: onSortChange,
-              alignEnd: true,
-            ),
-          ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: _kColResult,
-            child: _HeaderCell(
-              label: 'Result',
-              key_: _SortKey.result,
-              sort: sort,
-              onSortChange: onSortChange,
-              alignEnd: true,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            flex: _kColB,
-            child: _HeaderCell(
-              label: 'Black',
-              key_: _SortKey.black,
-              sort: sort,
-              onSortChange: onSortChange,
-            ),
-          ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: _kColElo,
-            child: _HeaderCell(
-              label: 'Elo B',
-              key_: _SortKey.blackElo,
-              sort: sort,
-              onSortChange: onSortChange,
-              alignEnd: true,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            flex: _kColEvent,
-            child: _HeaderCell(
-              label: 'Event',
-              key_: _SortKey.event,
-              sort: sort,
-              onSortChange: onSortChange,
-            ),
-          ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: _kColEco,
-            child: _HeaderCell(
-              label: 'ECO',
-              key_: _SortKey.eco,
-              sort: sort,
-              onSortChange: onSortChange,
-            ),
-          ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: _kColDate,
-            child: _HeaderCell(
-              label: 'Date',
-              key_: _SortKey.date,
-              sort: sort,
-              onSortChange: onSortChange,
-            ),
-          ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: _kColSaved,
-            child: _HeaderCell(
-              label: 'Saved',
-              key_: _SortKey.saved,
-              sort: sort,
-              onSortChange: onSortChange,
-              alignEnd: true,
-            ),
-          ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+class _HeaderResizeGap extends StatelessWidget {
+  const _HeaderResizeGap({required this.enabled, required this.onDrag});
+
+  final bool enabled;
+  final ValueChanged<double> onDrag;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return const SizedBox(width: 10);
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragUpdate: (details) {
+          final delta = details.primaryDelta ?? 0;
+          if (delta.abs() < 2) return;
+          onDrag(delta);
+        },
+        child: const SizedBox(
+          width: 10,
+          child: Center(
+            child: SizedBox(
+              width: 1,
+              height: 18,
+              child: DecoratedBox(
+                decoration: BoxDecoration(color: kDividerColor),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -4152,6 +4395,8 @@ class _GamesTableRow extends StatefulWidget {
     required this.onOpen,
     required this.canDelete,
     required this.selectedIds,
+    this.columnFlexes = const _GamesTableColumnFlexes(),
+    this.columnOrder = _defaultGamesTableColumns,
     required this.onPrimeSelectionAnchor,
     required this.onRangeSelect,
     required this.onAction,
@@ -4162,6 +4407,8 @@ class _GamesTableRow extends StatefulWidget {
   final VoidCallback onOpen;
   final bool canDelete;
   final Set<String> selectedIds;
+  final _GamesTableColumnFlexes columnFlexes;
+  final List<_GamesTableColumn> columnOrder;
   final ValueChanged<int> onPrimeSelectionAnchor;
   final ValueChanged<int> onRangeSelect;
   final ValueChanged<LibraryGameAction> onAction;
@@ -4209,6 +4456,62 @@ class _GamesTableRowState extends State<_GamesTableRow> {
         _openAnalysis(r, a, focus: focus);
       },
     );
+
+    Widget cell(_GamesTableColumn column) {
+      return SizedBox(
+        width: widget.columnFlexes.widthFor(column),
+        child: switch (column) {
+          _GamesTableColumn.number => Text(
+            widget.index.toString(),
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              color: kLightGreyColor,
+              fontSize: 11,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+          _GamesTableColumn.white => _PlayerCell(
+            name: whiteName,
+            federation: whiteFed,
+            title: whiteTitle,
+          ),
+          _GamesTableColumn.whiteElo => _RatingCell(rating: whiteRating),
+          _GamesTableColumn.result => _ResultPill(result: result),
+          _GamesTableColumn.black => _PlayerCell(
+            name: blackName,
+            federation: blackFed,
+            title: blackTitle,
+          ),
+          _GamesTableColumn.blackElo => _RatingCell(rating: blackRating),
+          _GamesTableColumn.event => Text(
+            eventLine.isEmpty ? '—' : eventLine,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+          ),
+          _GamesTableColumn.eco => _EcoCell(eco: eco),
+          _GamesTableColumn.date => Text(
+            _displayGameDate(s('Date')),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: kWhiteColor70,
+              fontSize: 11,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+          _GamesTableColumn.saved => Text(
+            _relativeTime(a.updatedAt),
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              color: kLightGreyColor,
+              fontSize: 11,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+        },
+      );
+    }
 
     return LibraryGameContextMenu(
       analysis: a,
@@ -4276,93 +4579,10 @@ class _GamesTableRowState extends State<_GamesTableRow> {
                   ),
                   child: Row(
                     children: [
-                      SizedBox(
-                        width: _kColNumber,
-                        child: Text(
-                          widget.index.toString(),
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(
-                            color: kLightGreyColor,
-                            fontSize: 11,
-                            fontFeatures: [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        flex: _kColW,
-                        child: _PlayerCell(
-                          name: whiteName,
-                          federation: whiteFed,
-                          title: whiteTitle,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      SizedBox(
-                        width: _kColElo,
-                        child: _RatingCell(rating: whiteRating),
-                      ),
-                      const SizedBox(width: 10),
-                      SizedBox(
-                        width: _kColResult,
-                        child: _ResultPill(result: result),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        flex: _kColB,
-                        child: _PlayerCell(
-                          name: blackName,
-                          federation: blackFed,
-                          title: blackTitle,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      SizedBox(
-                        width: _kColElo,
-                        child: _RatingCell(rating: blackRating),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        flex: _kColEvent,
-                        child: Text(
-                          eventLine.isEmpty ? '—' : eventLine,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: kWhiteColor70,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      SizedBox(width: _kColEco, child: _EcoCell(eco: eco)),
-                      const SizedBox(width: 10),
-                      SizedBox(
-                        width: _kColDate,
-                        child: Text(
-                          _displayGameDate(s('Date')),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: kWhiteColor70,
-                            fontSize: 11,
-                            fontFeatures: [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      SizedBox(
-                        width: _kColSaved,
-                        child: Text(
-                          _relativeTime(a.updatedAt),
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(
-                            color: kLightGreyColor,
-                            fontSize: 11,
-                            fontFeatures: [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                      ),
+                      for (final column in widget.columnOrder) ...[
+                        cell(column),
+                        const SizedBox(width: 10),
+                      ],
                     ],
                   ),
                 ),
@@ -4412,7 +4632,7 @@ class _PlayerCell extends StatelessWidget {
         ],
         Expanded(
           child: Text(
-            name.isEmpty ? '—' : name,
+            _standardTablePlayerName(name),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
@@ -4436,6 +4656,32 @@ class _PlayerCell extends StatelessWidget {
       ],
     );
   }
+}
+
+String _standardTablePlayerName(String raw) {
+  final name = raw.trim();
+  if (name.isEmpty) return '—';
+
+  String initial(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return '';
+    return '${trimmed.characters.first.toUpperCase()}.';
+  }
+
+  if (name.contains(',')) {
+    final parts = name.split(',');
+    final last = parts.first.trim();
+    final first = parts.skip(1).join(',').trim();
+    final firstInitial = initial(first);
+    if (last.isEmpty) return firstInitial.isEmpty ? name : firstInitial;
+    return firstInitial.isEmpty ? last : '$last, $firstInitial';
+  }
+
+  final tokens = name.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+  if (tokens.length < 2) return name;
+  final last = tokens.last;
+  final firstInitial = initial(tokens.first);
+  return firstInitial.isEmpty ? last : '$last, $firstInitial';
 }
 
 class _RatingCell extends StatelessWidget {
@@ -6593,7 +6839,7 @@ class _TwicTableHeader extends StatelessWidget {
       textAlign: alignEnd ? TextAlign.right : TextAlign.left,
     );
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
       color: kBlack3Color.withValues(alpha: 0.4),
       child: Row(
         children: [
@@ -6695,7 +6941,7 @@ class _TwicTableRowState extends State<_TwicTableRow> {
                   bottom: BorderSide(color: kDividerColor, width: 1),
                 ),
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
               child: Row(
                 children: [
                   Expanded(
@@ -7880,6 +8126,8 @@ class _DatabaseSavedGamesTable extends HookWidget {
 
   @override
   Widget build(BuildContext context) {
+    final columnFlexes = useState(const _GamesTableColumnFlexes());
+    final columnOrder = useState(_defaultGamesTableColumns);
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 10, 20),
       child: Container(
@@ -7891,7 +8139,14 @@ class _DatabaseSavedGamesTable extends HookWidget {
         clipBehavior: Clip.antiAlias,
         child: Column(
           children: [
-            _GamesTableHeader(sort: sort, onSortChange: onSortChange),
+            _GamesTableHeader(
+              sort: sort,
+              onSortChange: onSortChange,
+              columnFlexes: columnFlexes.value,
+              columnOrder: columnOrder.value,
+              onColumnFlexesChanged: (next) => columnFlexes.value = next,
+              onColumnOrderChanged: (next) => columnOrder.value = next,
+            ),
             const Divider(height: 1, color: kDividerColor),
             Expanded(
               child: ListView.builder(
@@ -7907,6 +8162,8 @@ class _DatabaseSavedGamesTable extends HookWidget {
                       selected:
                           selectedIds?.contains(rows[i].id) ??
                           rows[i].id == selectedId,
+                      columnFlexes: columnFlexes.value,
+                      columnOrder: columnOrder.value,
                       onRangeSelect:
                           onRangeSelect == null
                               ? null
@@ -7928,6 +8185,8 @@ class _DatabaseSavedGameRow extends StatefulWidget {
     required this.index,
     required this.analysis,
     required this.selected,
+    this.columnFlexes = const _GamesTableColumnFlexes(),
+    this.columnOrder = _defaultGamesTableColumns,
     this.onRangeSelect,
     required this.onSelect,
     required this.onOpen,
@@ -7936,6 +8195,8 @@ class _DatabaseSavedGameRow extends StatefulWidget {
   final int index;
   final SavedAnalysis analysis;
   final bool selected;
+  final _GamesTableColumnFlexes columnFlexes;
+  final List<_GamesTableColumn> columnOrder;
   final VoidCallback? onRangeSelect;
   final VoidCallback onSelect;
   final VoidCallback onOpen;
@@ -7974,6 +8235,62 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
             ? (event.isEmpty ? 'Round $round' : '$event · R$round')
             : event;
 
+    Widget cell(_GamesTableColumn column) {
+      return SizedBox(
+        width: widget.columnFlexes.widthFor(column),
+        child: switch (column) {
+          _GamesTableColumn.number => Text(
+            widget.index.toString(),
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              color: kLightGreyColor,
+              fontSize: 11,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+          _GamesTableColumn.white => _PlayerCell(
+            name: whiteName,
+            federation: whiteFed,
+            title: whiteTitle,
+          ),
+          _GamesTableColumn.whiteElo => _RatingCell(rating: whiteRating),
+          _GamesTableColumn.result => _ResultPill(result: result),
+          _GamesTableColumn.black => _PlayerCell(
+            name: blackName,
+            federation: blackFed,
+            title: blackTitle,
+          ),
+          _GamesTableColumn.blackElo => _RatingCell(rating: blackRating),
+          _GamesTableColumn.event => Text(
+            eventLine.isEmpty ? '—' : eventLine,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+          ),
+          _GamesTableColumn.eco => _EcoCell(eco: eco),
+          _GamesTableColumn.date => Text(
+            _displayGameDate(s('Date')),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: kWhiteColor70,
+              fontSize: 11,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+          _GamesTableColumn.saved => Text(
+            saved,
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              color: kLightGreyColor,
+              fontSize: 11,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+        },
+      );
+    }
+
     return ClickCursor(
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
@@ -8011,96 +8328,13 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
                   bottom: BorderSide(color: kDividerColor, width: 1),
                 ),
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
               child: Row(
                 children: [
-                  SizedBox(
-                    width: _kColNumber,
-                    child: Text(
-                      widget.index.toString(),
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        color: kLightGreyColor,
-                        fontSize: 11,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    flex: _kColW,
-                    child: _PlayerCell(
-                      name: whiteName,
-                      federation: whiteFed,
-                      title: whiteTitle,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    width: _kColElo,
-                    child: _RatingCell(rating: whiteRating),
-                  ),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    width: _kColResult,
-                    child: _ResultPill(result: result),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    flex: _kColB,
-                    child: _PlayerCell(
-                      name: blackName,
-                      federation: blackFed,
-                      title: blackTitle,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    width: _kColElo,
-                    child: _RatingCell(rating: blackRating),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    flex: _kColEvent,
-                    child: Text(
-                      eventLine.isEmpty ? '—' : eventLine,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: kWhiteColor70,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  SizedBox(width: _kColEco, child: _EcoCell(eco: eco)),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    width: _kColDate,
-                    child: Text(
-                      _displayGameDate(s('Date')),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: kWhiteColor70,
-                        fontSize: 11,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    width: _kColSaved,
-                    child: Text(
-                      saved,
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        color: kLightGreyColor,
-                        fontSize: 11,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ),
+                  for (final column in widget.columnOrder) ...[
+                    cell(column),
+                    const SizedBox(width: 10),
+                  ],
                 ],
               ),
             ),
@@ -8396,8 +8630,6 @@ class _LibraryBoardPreviewPanel extends ConsumerStatefulWidget {
 
 class _LibraryBoardPreviewPanelState
     extends ConsumerState<_LibraryBoardPreviewPanel> {
-  bool _flipped = false;
-
   @override
   Widget build(BuildContext context) {
     final settings =
@@ -8448,8 +8680,6 @@ class _LibraryBoardPreviewPanelState
                     fen: widget.fen,
                     lastMoveUci: widget.lastMoveUci,
                     settings: settings,
-                    isFlipped: _flipped,
-                    onFlip: () => setState(() => _flipped = !_flipped),
                   );
                   if (!sideBySide) {
                     final notationHeight =
@@ -8608,73 +8838,35 @@ class _LibraryPreviewBoard extends StatelessWidget {
     required this.fen,
     required this.lastMoveUci,
     required this.settings,
-    required this.isFlipped,
-    required this.onFlip,
   });
 
   final String fen;
   final String? lastMoveUci;
   final BoardSettingsNew settings;
-  final bool isFlipped;
-  final VoidCallback onFlip;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final side = math.min(constraints.maxWidth, constraints.maxHeight);
-        final orientation = isFlipped ? Side.black : Side.white;
+        const orientation = Side.white;
         return Center(
           child: SizedBox.square(
             dimension: side,
-            child: Stack(
-              children: [
-                cg.Chessboard.fixed(
-                  key: ValueKey<String>(
-                    'library-preview-board:$fen:${lastMoveUci ?? ''}:$orientation',
-                  ),
-                  size: side,
-                  fen: fen,
-                  orientation: orientation,
-                  settings: cg.ChessboardSettings(
-                    enableCoordinates: false,
-                    colorScheme: settings.colorScheme,
-                    pieceAssets: settings.pieceAssets,
-                  ),
-                  shapes: const ISet<cg.Shape>.empty(),
-                  lastMove: _uciToLastMove(lastMoveUci ?? ''),
-                ),
-                Positioned(
-                  top: 6,
-                  right: 6,
-                  child: DesktopTooltip(
-                    message: isFlipped ? 'Show White side' : 'Show Black side',
-                    child: ClickCursor(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: onFlip,
-                        child: Container(
-                          width: 28,
-                          height: 28,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: kBlack2Color.withValues(alpha: 0.86),
-                            borderRadius: BorderRadius.circular(7),
-                            border: Border.all(
-                              color: kWhiteColor.withValues(alpha: 0.18),
-                            ),
-                          ),
-                          child: Icon(
-                            Icons.flip_camera_android_rounded,
-                            size: 15,
-                            color: isFlipped ? kPrimaryColor : kWhiteColor70,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+            child: cg.Chessboard.fixed(
+              key: ValueKey<String>(
+                'library-preview-board:$fen:${lastMoveUci ?? ''}:$orientation',
+              ),
+              size: side,
+              fen: fen,
+              orientation: orientation,
+              settings: cg.ChessboardSettings(
+                enableCoordinates: false,
+                colorScheme: settings.colorScheme,
+                pieceAssets: settings.pieceAssets,
+              ),
+              shapes: const ISet<cg.Shape>.empty(),
+              lastMove: _uciToLastMove(lastMoveUci ?? ''),
             ),
           ),
         );

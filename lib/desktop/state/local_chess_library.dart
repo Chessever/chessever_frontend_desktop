@@ -28,7 +28,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   LocalChessLibraryNotifier({this.registry})
     : super(const LocalChessLibraryState());
 
-  /// Optional registry that records picked folders as persistent
+  /// Optional registry that records picked/opened local PGNs as persistent
   /// "local databases" the user can save into later. Tests can leave
   /// this null to avoid touching the DB.
   final LocalLibraryRegistryNotifier? registry;
