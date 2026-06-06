@@ -2616,6 +2616,15 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
     });
   }
 
+  void _replaceGameSelection(Set<String> gameIds) {
+    if (!ref.read(playerGamesSelectionModeProvider(widget.activeKey))) return;
+    setState(() {
+      _selectedGameIds
+        ..clear()
+        ..addAll(gameIds);
+    });
+  }
+
   Future<void> _selectAllFilteredGames(PlayerProfileGamesState state) async {
     if (_isLoadingAllPagesForSelection) return;
     if (!mounted) return;
@@ -2875,6 +2884,7 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
         selectionMode: selectionMode,
         selectedIds: _selectedGameIds,
         onToggleSelection: _toggleGameSelection,
+        onReplaceSelection: _replaceGameSelection,
         onContext: _showRowContextMenu,
       );
     }
@@ -4040,6 +4050,7 @@ class _PlayerGamesDatabaseTable extends ConsumerStatefulWidget {
     required this.selectionMode,
     required this.selectedIds,
     required this.onToggleSelection,
+    required this.onReplaceSelection,
     required this.onContext,
     this.footer,
   });
@@ -4052,6 +4063,7 @@ class _PlayerGamesDatabaseTable extends ConsumerStatefulWidget {
   final bool selectionMode;
   final Set<String> selectedIds;
   final ValueChanged<String> onToggleSelection;
+  final ValueChanged<Set<String>> onReplaceSelection;
   final Future<void> Function({
     required Offset globalPos,
     required GamesTourModel game,
@@ -4078,6 +4090,7 @@ class _PlayerGamesDatabaseTableState
       selectionMode: widget.selectionMode,
       selectedIds: widget.selectedIds,
       onToggleSelection: widget.onToggleSelection,
+      onReplaceSelection: widget.onReplaceSelection,
       onContext: widget.onContext,
       footer: widget.footer,
       rowKeyPrefix: 'player-game-table',

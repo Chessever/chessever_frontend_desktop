@@ -53,11 +53,49 @@ void main() {
 
     expect(opened, ['game-8']);
   });
+  testWidgets('shift arrow selects a contiguous table range', (tester) async {
+    final selected = <String>{};
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _wrap(
+        controller: controller,
+        onOpen: (_) {},
+        selectionMode: true,
+        selectedIds: selected,
+        onToggleSelection: (id) {
+          if (!selected.add(id)) selected.remove(id);
+        },
+        onReplaceSelection: (ids) {
+          selected
+            ..clear()
+            ..addAll(ids);
+        },
+      ),
+    );
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+
+    expect(selected, {'game-0', 'game-1', 'game-2', 'game-3'});
+  });
 }
 
 Widget _wrap({
   required ScrollController controller,
   required ValueChanged<GamesTourModel> onOpen,
+  bool selectionMode = false,
+  Set<String> selectedIds = const <String>{},
+  ValueChanged<String>? onToggleSelection,
+  ValueChanged<Set<String>>? onReplaceSelection,
 }) {
   return ProviderScope(
     child: MaterialApp(
@@ -70,6 +108,10 @@ Widget _wrap({
             active: true,
             games: List.generate(24, _game),
             controller: controller,
+            selectionMode: selectionMode,
+            selectedIds: selectedIds,
+            onToggleSelection: onToggleSelection,
+            onReplaceSelection: onReplaceSelection,
             onOpenGame: (game, {required bool inNewTab}) => onOpen(game),
           ),
         ),
