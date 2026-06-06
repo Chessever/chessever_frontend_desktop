@@ -8,6 +8,35 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 const _initialFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 void main() {
+  test('engine preview origin is stable and clamped inside overlay', () {
+    final origin = clampedHoverPreviewOrigin(
+      anchorRect: const Rect.fromLTWH(560, 14, 200, 24),
+      overlaySize: const Size(800, 600),
+      popupSize: const Size(232, 232),
+      preferredVerticalGap: 12,
+    );
+
+    expect(origin.dx, lessThanOrEqualTo(800 - 232 - 8));
+    expect(origin.dx, greaterThanOrEqualTo(8));
+    expect(origin.dy, greaterThan(14));
+    expect(origin.dy, greaterThanOrEqualTo(8));
+  });
+
+  test('engine preview origin stays fixed for tokens in the same PV line', () {
+    final first = clampedHoverPreviewOrigin(
+      anchorRect: const Rect.fromLTWH(500, 44, 220, 24),
+      overlaySize: const Size(900, 600),
+      popupSize: const Size(232, 232),
+    );
+    final second = clampedHoverPreviewOrigin(
+      anchorRect: const Rect.fromLTWH(500, 44, 220, 24),
+      overlaySize: const Size(900, 600),
+      popupSize: const Size(232, 232),
+    );
+
+    expect(second, first);
+  });
+
   testWidgets(
     'hover popup refreshes after parent rebuild without build errors',
     (tester) async {
