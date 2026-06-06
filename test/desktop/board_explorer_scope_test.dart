@@ -4,6 +4,7 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
+import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -89,5 +90,32 @@ void main() {
     expect(cleared, const GamebaseFilters());
     expect(cleared?.playerIds, isEmpty);
     expect(cleared?.selectedPlayers, isEmpty);
+  });
+
+  test('normal board explorer clears scope applied by another tab', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    const scope = BoardExplorerScope(player: _player);
+    container.read(appliedBoardExplorerScopeKeyProvider.notifier).state =
+        scope.identityKey;
+    container
+        .read(gamebaseExplorerProvider.notifier)
+        .updateFilters(scope.initialScopedFilters);
+
+    final cleared = boardExplorerFiltersForScope(
+      scope: null,
+      currentFilters: container.read(gamebaseExplorerProvider).filters,
+      appliedScopeKey: container.read(appliedBoardExplorerScopeKeyProvider),
+    );
+    expect(cleared, const GamebaseFilters());
+
+    container.read(gamebaseExplorerProvider.notifier).updateFilters(cleared!);
+    container.read(appliedBoardExplorerScopeKeyProvider.notifier).state = null;
+
+    final filters = container.read(gamebaseExplorerProvider).filters;
+    expect(filters.playerIds, isEmpty);
+    expect(filters.selectedPlayers, isEmpty);
+    expect(container.read(appliedBoardExplorerScopeKeyProvider), isNull);
   });
 }

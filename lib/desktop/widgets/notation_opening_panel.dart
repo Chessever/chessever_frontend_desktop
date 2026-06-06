@@ -717,7 +717,6 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
   bool _focusedGameAutoplaying = false;
   bool _pendingGamesFocus = false;
   bool _gamesControllerReconcileScheduled = false;
-  String? _appliedInitialScopeKey;
 
   @override
   bool get wantKeepAlive => true;
@@ -740,15 +739,17 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       if (!mounted || !widget.active) return;
       final notifier = ref.read(gamebaseExplorerProvider.notifier);
       final scope = widget.explorerScope;
+      final appliedScopeKey = ref.read(appliedBoardExplorerScopeKeyProvider);
       final scopedFilters = boardExplorerFiltersForScope(
         scope: scope,
         currentFilters: ref.read(gamebaseExplorerProvider).filters,
-        appliedScopeKey: _appliedInitialScopeKey,
+        appliedScopeKey: appliedScopeKey,
       );
       if (scopedFilters != null) {
         notifier.updateFilters(scopedFilters);
       }
-      _appliedInitialScopeKey = scope?.identityKey;
+      ref.read(appliedBoardExplorerScopeKeyProvider.notifier).state =
+          scope?.identityKey;
       notifier.setPositionWithMoves(
         widget.currentFen,
         sanitised,

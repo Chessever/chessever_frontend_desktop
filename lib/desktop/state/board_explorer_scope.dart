@@ -42,8 +42,9 @@ class BoardExplorerScope {
 /// leaves a player-scoped Build Tree tab.
 ///
 /// `null` means the normal, unscoped Explorer should keep its current user
-/// filters. A concrete [GamebaseFilters] value should be pushed into
-/// `gamebaseExplorerProvider` before syncing the position.
+/// filters unless a player-scoped Build Tree tab previously applied a global
+/// board Explorer scope. A concrete [GamebaseFilters] value should be pushed
+/// into `gamebaseExplorerProvider` before syncing the position.
 GamebaseFilters? boardExplorerFiltersForScope({
   required BoardExplorerScope? scope,
   required GamebaseFilters currentFilters,
@@ -56,6 +57,17 @@ GamebaseFilters? boardExplorerFiltersForScope({
       ? scope.enforce(currentFilters)
       : scope.initialScopedFilters;
 }
+
+/// Tracks the player-scoped Build Tree filter currently applied to the shared
+/// gamebase Explorer provider.
+///
+/// The Explorer provider itself is global, while Board tabs are independent. A
+/// normal Board tab therefore cannot rely on its local widget state to know
+/// whether another tab left a player scope behind; this key lets the next
+/// unscoped Board Explorer clear that global filter back to the default view.
+final appliedBoardExplorerScopeKeyProvider = StateProvider<String?>(
+  (_) => null,
+);
 
 final boardExplorerScopeByTabIdProvider =
     StateProvider<Map<String, BoardExplorerScope>>(
