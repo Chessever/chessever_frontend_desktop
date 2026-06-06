@@ -171,7 +171,7 @@ class EngineSettings {
     this.showEngineGauge = true,
     this.showDepthOverlay = true,
     this.showPvArrows = true,
-    this.showEngineAnalysis = true,
+    this.showEngineAnalysis = false,
     this.searchTimeIndex = 0,
     int principalVariationIndex = 4, // Default to 5 lines (index 4)
     int maxArrowsOnBoard = 2, // Default to 3 arrows (index 2)
@@ -661,7 +661,7 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
         showEngineGauge: map['showEngineGauge'] as bool? ?? true,
         showDepthOverlay: map['showDepthOverlay'] as bool? ?? true,
         showPvArrows: map['showPvArrows'] as bool? ?? true,
-        showEngineAnalysis: map['showEngineAnalysis'] as bool? ?? true,
+        showEngineAnalysis: map['showEngineAnalysis'] as bool? ?? false,
         searchTimeIndex: map['searchTimeIndex'] as int? ?? 0,
         principalVariationIndex: map['principalVariationIndex'] as int? ?? 4,
         maxArrowsOnBoard: map['maxArrowsOnBoard'] as int? ?? 2,

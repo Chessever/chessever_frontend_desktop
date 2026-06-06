@@ -665,13 +665,6 @@ class _NotationAnnotationToolbar extends StatelessWidget {
 
   bool get _isMainlineTarget => _targetMainlinePly != null;
 
-  bool get _canAnnotateMove {
-    if (_isMainlineTarget) return onToggleUserNag != null;
-    return activePointer.isNotEmpty &&
-        activeMove != null &&
-        onToggleMoveNag != null;
-  }
-
   bool get _canClearMoveNags {
     if (_isMainlineTarget) return onClearUserNags != null;
     return activePointer.isNotEmpty &&
@@ -693,15 +686,6 @@ class _NotationAnnotationToolbar extends StatelessWidget {
     final ply = _targetMainlinePly;
     if (ply != null) return (userNags[ply] ?? const <int>[]).toSet();
     return (activeMove?.nags ?? const <int>[]).toSet();
-  }
-
-  void _toggleNag(int nag) {
-    final ply = _targetMainlinePly;
-    if (ply != null) {
-      onToggleUserNag?.call(ply, nag);
-      return;
-    }
-    if (activePointer.isNotEmpty) onToggleMoveNag?.call(activePointer, nag);
   }
 
   void _clearNags() {
@@ -797,34 +781,15 @@ class _NotationAnnotationToolbar extends StatelessWidget {
                 onPress: _canComment ? () => _editComment(context) : null,
               ),
 
-              const _ToolbarDivider(),
-              for (final nag in _qualityNags) ...[
-                _NagToolbarButton(
-                  nag: nag,
-                  active: activeSet.contains(nag),
-                  enabled: _canAnnotateMove,
-                  onPress: () => _toggleNag(nag),
+              if (hasUserNags) ...[
+                const SizedBox(width: 6),
+                _ToolbarIconButton(
+                  icon: Icons.clear_rounded,
+                  tooltip: 'Clear move annotation',
+                  active: false,
+                  onPress: _canClearMoveNags ? _clearNags : null,
                 ),
-                const SizedBox(width: 3),
               ],
-              const _ToolbarDivider(),
-              for (final nag in _evaluationNags) ...[
-                _NagToolbarButton(
-                  nag: nag,
-                  active: activeSet.contains(nag),
-                  enabled: _canAnnotateMove,
-                  onPress: () => _toggleNag(nag),
-                ),
-                const SizedBox(width: 3),
-              ],
-              const SizedBox(width: 3),
-              _ToolbarIconButton(
-                icon: Icons.clear_rounded,
-                tooltip:
-                    hasUserNags ? 'Clear move NAGs' : 'No user NAGs to clear',
-                active: false,
-                onPress: _canClearMoveNags && hasUserNags ? _clearNags : null,
-              ),
             ],
           ),
         ),
@@ -910,78 +875,6 @@ class _ToolbarGlyphButton extends StatelessWidget {
       ),
     );
   }
-}
-
-class _NagToolbarButton extends StatelessWidget {
-  const _NagToolbarButton({
-    required this.nag,
-    required this.active,
-    required this.enabled,
-    required this.onPress,
-  });
-
-  final int nag;
-  final bool active;
-  final bool enabled;
-  final VoidCallback onPress;
-
-  @override
-  Widget build(BuildContext context) {
-    final display = getNagDisplay(nag);
-    if (display == null) return const SizedBox.shrink();
-    final symbol = display.symbol;
-    final foreground =
-        enabled
-            ? (active ? kWhiteColor : display.color.withValues(alpha: 0.96))
-            : kWhiteColor.withValues(alpha: 0.28);
-    final button = FButton(
-      style: desktopDialogButtonStyle(
-        tone:
-            active
-                ? DesktopDialogButtonTone.primary
-                : DesktopDialogButtonTone.ghost,
-        padding: EdgeInsets.symmetric(
-          horizontal: symbol.length > 1 ? 8 : 10,
-          vertical: 7,
-        ),
-        radius: 6,
-      ),
-      onPress: enabled ? onPress : null,
-      child: Text(
-        symbol,
-        style: TextStyle(
-          color: foreground,
-          fontSize: symbol.length > 1 ? 12 : 14,
-          fontWeight: FontWeight.w800,
-          height: 1,
-        ),
-      ),
-    );
-    return DesktopTooltip(
-      message:
-          enabled ? _nagTooltip(nag, display) : 'Select a move to annotate',
-      child: button,
-    );
-  }
-}
-
-class _ToolbarDivider extends StatelessWidget {
-  const _ToolbarDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 1,
-      height: 18,
-      margin: const EdgeInsets.symmetric(horizontal: 5),
-      color: kDividerColor,
-    );
-  }
-}
-
-String _nagTooltip(int nag, NagDisplay display) {
-  final name = _nagMenuLabel(nag, display);
-  return '$name (${display.symbol})';
 }
 
 String _nagMenuLabel(int nag, NagDisplay display) {
