@@ -36,18 +36,15 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   Object? _scanToken;
 
   Future<bool> pickFolder() async {
-    _localLibraryLog('pickFolder dialog start');
     final directory = await FilePicker.platform.getDirectoryPath(
       dialogTitle: 'Browse local chess folder',
       lockParentWindow: true,
     );
-    _localLibraryLog('pickFolder dialog returned directory=$directory');
     if (directory == null || directory.isEmpty) return false;
     return openPaths(<String>[directory]);
   }
 
   Future<bool> pickFiles() async {
-    _localLibraryLog('pickFiles dialog start');
     final result = await FilePicker.platform.pickFiles(
       dialogTitle: 'Open chess files',
       type: FileType.custom,
@@ -56,7 +53,6 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       withData: false,
       lockParentWindow: true,
     );
-    _localLibraryLog('pickFiles dialog returned count=${result?.files.length}');
     if (result == null || result.files.isEmpty) return false;
     final paths = result.files
         .map((file) => file.path)
@@ -68,38 +64,25 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   }
 
   Future<bool> openPaths(List<String> paths, {String? sourceLabel}) async {
-    _localLibraryLog(
-      'openPaths start count=${paths.length} sourceLabel=${sourceLabel ?? 'null'} paths=$paths',
-    );
     final token = Object();
     _scanToken = token;
-    _localLibraryLog('openPaths set isScanning=true');
     state = LocalChessLibraryState(
       source: state.source,
       selectedPath: state.selectedPath,
       isScanning: true,
     );
     try {
-      _localLibraryLog('openPaths scan dispatch');
       final source = await scanLocalChessPaths(paths, sourceLabel: sourceLabel);
-      _localLibraryLog(
-        'openPaths scan returned label=${source.label} games=${source.root.gameCount} files=${source.root.fileCount}',
-      );
       if (_scanToken != token) {
-        _localLibraryLog('openPaths stale token after scan');
         return false;
       }
-      _localLibraryLog('openPaths assigning state');
       state = LocalChessLibraryState(
         source: source,
         selectedPath: source.root.path,
       );
-      _localLibraryLog('openPaths state assigned selected=${source.root.path}');
       await registry?.registerAll(paths);
-      _localLibraryLog('openPaths registry complete');
       return true;
     } catch (e) {
-      _localLibraryLog('openPaths failed error=$e');
       if (_scanToken != token) return false;
       state = LocalChessLibraryState(
         source: state.source,
@@ -126,12 +109,6 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     _scanToken = null;
     state = const LocalChessLibraryState();
   }
-}
-
-void _localLibraryLog(String message) {
-  stdout.writeln(
-    '[LOCAL_PGN_LIBRARY ${DateTime.now().toIso8601String()}] $message',
-  );
 }
 
 final localChessLibraryProvider =

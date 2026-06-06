@@ -337,45 +337,23 @@ Future<LocalChessSource> scanLocalChessPaths(
   if (paths.isEmpty) {
     throw ArgumentError('No files or folders were provided.');
   }
-  _localPgnScanLog(
-    'scan start count=${paths.length} sourceLabel=${sourceLabel ?? 'null'} paths=$paths',
-  );
   // Heavy filesystem walk + PGN parsing runs on its own isolate so the UI
   // thread stays responsive on huge databases.
-  final stopwatch = Stopwatch()..start();
-  final source = await Isolate.run(
-    () => _runScan(paths, sourceLabel: sourceLabel),
-  );
-  stopwatch.stop();
-  _localPgnScanLog(
-    'scan isolate returned games=${source.root.gameCount} files=${source.root.fileCount} elapsedMs=${stopwatch.elapsedMilliseconds}',
-  );
-  return source;
+  return Isolate.run(() => _runScan(paths, sourceLabel: sourceLabel));
 }
 
 Future<LocalChessSource> _runScan(
   List<String> paths, {
   String? sourceLabel,
 }) async {
-  _localPgnScanLog(
-    'worker runScan start count=${paths.length} sourceLabel=${sourceLabel ?? 'null'}',
-  );
   final worker = _ScanWorker();
 
   if (paths.length == 1) {
-    final source = await worker.scanSingle(
-      paths.single,
-      sourceLabel: sourceLabel,
-    );
-    _localPgnScanLog(
-      'worker runScan single complete games=${source.root.gameCount} files=${source.root.fileCount}',
-    );
-    return source;
+    return worker.scanSingle(paths.single, sourceLabel: sourceLabel);
   }
 
   final children = <LocalChessNode>[];
   for (final path in paths) {
-    _localPgnScanLog('worker runScan scanning path=$path');
     final node = await worker.scanPath(
       path,
       rootPath: p.dirname(path),
@@ -396,7 +374,7 @@ Future<LocalChessSource> _runScan(
     relativePath: '',
     children: children,
   );
-  final source = LocalChessSource(
+  return LocalChessSource(
     id: _stableId(paths.join('|')),
     label: sourceLabel ?? 'Dropped chess files',
     paths: paths,
@@ -404,10 +382,6 @@ Future<LocalChessSource> _runScan(
     scannedAt: DateTime.now(),
     root: root,
   );
-  _localPgnScanLog(
-    'worker runScan batch complete games=${source.root.gameCount} files=${source.root.fileCount}',
-  );
-  return source;
 }
 
 class _ScanWorker {
@@ -429,9 +403,7 @@ class _ScanWorker {
     String path, {
     String? sourceLabel,
   }) async {
-    _localPgnScanLog('worker scanSingle start path=$path');
     final type = await FileSystemEntity.type(path, followLinks: false);
-    _localPgnScanLog('worker scanSingle type=$type path=$path');
     if (type == FileSystemEntityType.notFound) {
       throw FileSystemException('File or folder does not exist', path);
     }
@@ -545,16 +517,11 @@ class _ScanWorker {
     required String rootPath,
   }) async {
     if (!looksLikeLocalChessFile(path)) return null;
-    _localPgnScanLog('worker scanFile start path=$path');
 
     final extension = _extensionForPath(path);
     final stat = await File(path).stat();
-    _localPgnScanLog(
-      'worker scanFile stat path=$path extension=$extension bytes=${stat.size} modified=${stat.modified.toIso8601String()}',
-    );
 
     if (!isSupportedLocalChessFile(path)) {
-      _localPgnScanLog('worker scanFile unsupported path=$path');
       return LocalChessFileNode(
         name: _basename(path),
         path: path,
@@ -569,9 +536,6 @@ class _ScanWorker {
     }
 
     if (stat.size > _kMaxParseBytes) {
-      _localPgnScanLog(
-        'worker scanFile too large path=$path bytes=${stat.size}',
-      );
       return LocalChessFileNode(
         name: _basename(path),
         path: path,
@@ -586,7 +550,6 @@ class _ScanWorker {
     }
 
     if (_atCap) {
-      _localPgnScanLog('worker scanFile cap reached before path=$path');
       return LocalChessFileNode(
         name: _basename(path),
         path: path,
@@ -601,18 +564,11 @@ class _ScanWorker {
     }
 
     try {
-      final stopwatch = Stopwatch()..start();
       final raw = await _readTextFile(path);
-      _localPgnScanLog(
-        'worker scanFile read/decode path=$path chars=${raw.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
-      );
       final entries = _parseSupportedFile(
         raw,
         path: path,
         extension: extension,
-      );
-      _localPgnScanLog(
-        'worker scanFile parsed headers path=$path entries=${entries.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
       );
       if (entries.isEmpty) {
         return LocalChessFileNode(
@@ -630,17 +586,9 @@ class _ScanWorker {
 
       final granted = _claim(entries.length);
       final accepted = entries.take(granted).toList(growable: false);
-      _localPgnScanLog(
-        'worker scanFile claim path=$path entries=${entries.length} granted=$granted totalClaimed=$_totalGames',
-      );
       final relativePath = _relative(rootPath, path);
       final games = <LocalChessGame>[];
       for (var i = 0; i < accepted.length; i++) {
-        if (accepted.length >= 1000 && i > 0 && i % 1000 == 0) {
-          _localPgnScanLog(
-            'worker scanFile building games path=$path index=$i/${accepted.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
-          );
-        }
         final entry = accepted[i];
         final id = 'local_${_stableId('$path#$i')}';
         games.add(
@@ -657,9 +605,6 @@ class _ScanWorker {
           ),
         );
       }
-      _localPgnScanLog(
-        'worker scanFile built games path=$path games=${games.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
-      );
 
       if (games.isEmpty) {
         return LocalChessFileNode(
@@ -675,7 +620,7 @@ class _ScanWorker {
         );
       }
 
-      final node = LocalChessFileNode(
+      return LocalChessFileNode(
         name: _basename(path),
         path: path,
         relativePath: relativePath,
@@ -690,12 +635,7 @@ class _ScanWorker {
                     'entries; the rest were skipped to stay within the index cap.'
                 : null,
       );
-      _localPgnScanLog(
-        'worker scanFile complete path=$path games=${games.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
-      );
-      return node;
     } catch (e) {
-      _localPgnScanLog('worker scanFile failed path=$path error=$e');
       return LocalChessFileNode(
         name: _basename(path),
         path: path,
@@ -739,8 +679,6 @@ List<_ParsedLocalChessGame> _parseSupportedFile(
 // headers + a movetext-present hint. Movetext is left unparsed: the Board
 // pane re-parses it on demand when the user opens a specific game.
 List<_ParsedLocalChessGame> _parsePgnHeadersOnly(String text) {
-  final stopwatch = Stopwatch()..start();
-  _localPgnScanLog('worker parse headers start chars=${text.length}');
   final normalized = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
   final trimmed = normalized.trim();
   if (trimmed.isEmpty) return const <_ParsedLocalChessGame>[];
@@ -749,9 +687,6 @@ List<_ParsedLocalChessGame> _parsePgnHeadersOnly(String text) {
     r'^\[Event\s',
     multiLine: true,
   ).allMatches(trimmed).map((match) => match.start).toList(growable: false);
-  _localPgnScanLog(
-    'worker parse headers eventStarts=${eventStarts.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
-  );
 
   final chunkRanges = <List<int>>[];
   if (eventStarts.isEmpty) {
@@ -766,21 +701,12 @@ List<_ParsedLocalChessGame> _parsePgnHeadersOnly(String text) {
   }
 
   final entries = <_ParsedLocalChessGame>[];
-  for (var i = 0; i < chunkRanges.length; i++) {
-    if (chunkRanges.length >= 1000 && i > 0 && i % 1000 == 0) {
-      _localPgnScanLog(
-        'worker parse headers progress index=$i/${chunkRanges.length} accepted=${entries.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
-      );
-    }
-    final range = chunkRanges[i];
+  for (final range in chunkRanges) {
     final rawPgn = trimmed.substring(range[0], range[1]).trim();
     if (rawPgn.isEmpty) continue;
     final entry = _entryFromPgnChunk(rawPgn);
     if (entry != null) entries.add(entry);
   }
-  _localPgnScanLog(
-    'worker parse headers complete chunks=${chunkRanges.length} accepted=${entries.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
-  );
   return entries;
 }
 
@@ -911,12 +837,6 @@ bool _samePath(String a, String b) {
     return localChessInputPathKey(a) == localChessInputPathKey(b);
   }
   return p.normalize(a) == p.normalize(b);
-}
-
-void _localPgnScanLog(String message) {
-  stdout.writeln(
-    '[LOCAL_PGN_SCAN ${DateTime.now().toIso8601String()}] $message',
-  );
 }
 
 String _unsupportedMessage(String extension) =>

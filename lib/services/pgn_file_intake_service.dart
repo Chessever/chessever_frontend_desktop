@@ -179,11 +179,7 @@ class PgnFileIntakeService {
     String? sourceLabel,
     String? initialFolderId,
   }) async {
-    _pgnImportLog(
-      'ingest text start source=${sourceLabel ?? 'unknown'} chars=${text.length}',
-    );
     final parsed = await _parseWithLoadingDialog(context, text);
-    _pgnImportLog('ingest text parsed count=${parsed.length}');
     if (parsed.isEmpty) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -207,9 +203,6 @@ class PgnFileIntakeService {
       sourceLabel: sourceLabel,
       initialFolderId: initialFolderId,
     );
-    _pgnImportLog(
-      'ingest text preview closed source=${sourceLabel ?? 'unknown'}',
-    );
     return true;
   }
 
@@ -221,11 +214,7 @@ class PgnFileIntakeService {
     String? sourceLabel,
     String? initialFolderId,
   }) async {
-    _pgnImportLog(
-      'ingest file start source=${sourceLabel ?? 'unknown'} path=$path',
-    );
     final parsed = await _parseFileWithLoadingDialog(context, path);
-    _pgnImportLog('ingest file parse returned count=${parsed?.length}');
     if (parsed == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -264,7 +253,6 @@ class PgnFileIntakeService {
       sourceLabel: sourceLabel ?? 'file',
       initialFolderId: initialFolderId,
     );
-    _pgnImportLog('ingest file preview closed path=$path');
     return true;
   }
 
@@ -298,42 +286,33 @@ class PgnFileIntakeService {
     required bool waitAppReady,
   }) async {
     if (path.isEmpty) return;
-    _pgnImportLog('handle path start waitAppReady=$waitAppReady path=$path');
 
     if (waitAppReady) {
-      _pgnImportLog('handle path waiting for app ready');
       try {
         await DeepLinkService.awaitAppReady().timeout(
           const Duration(seconds: 30),
         );
-        _pgnImportLog('handle path app ready');
       } catch (_) {
         // Proceed anyway — worst case the push is deferred by the navigator.
-        _pgnImportLog('handle path app ready timed out; continuing');
       }
     }
 
     final navigator = navigatorKey.currentState;
     if (navigator == null || !navigator.mounted) {
-      _pgnImportLog('handle path abort: navigator unavailable');
       return;
     }
     // ignore: use_build_context_synchronously
     final context = navigator.context;
     // ignore: use_build_context_synchronously
     final parsed = await _parseFileWithLoadingDialog(context, path);
-    _pgnImportLog('handle path parse returned count=${parsed?.length}');
     if (!navigator.mounted) {
-      _pgnImportLog('handle path abort: navigator unmounted after parse');
       return;
     }
     if (parsed == null || parsed.isEmpty) {
-      _pgnImportLog('handle path abort: no parsed games');
       return;
     }
 
     final games = parsed.map((e) => e.chessGame).toList();
-    _pgnImportLog('handle path routing games=${games.length}');
 
     if (games.length == 1) {
       // Single-game file open → straight to the board, per spec.
@@ -352,7 +331,6 @@ class PgnFileIntakeService {
   }
 
   void _openSingleGameOnBoard(NavigatorState navigator, ChessGame game) {
-    _pgnImportLog('open single game board gameId=${game.gameId}');
     final tourModel = chessGameToImportedGamesTourModel(game);
     final context = navigator.context;
     final container = ProviderScope.containerOf(context, listen: false);
@@ -383,20 +361,16 @@ class PgnFileIntakeService {
     BuildContext context,
     String text,
   ) async {
-    _pgnImportLog('parse text with loading start chars=${text.length}');
-    return _runWithLoadingDialog(context, () async {
-      _pgnImportLog('parse text worker dispatch chars=${text.length}');
-      final parsed = await parsePgnsToChessGamesAsync(text);
-      _pgnImportLog('parse text worker complete count=${parsed.length}');
-      return parsed;
-    });
+    return _runWithLoadingDialog(
+      context,
+      () => parsePgnsToChessGamesAsync(text),
+    );
   }
 
   Future<List<ParsedPgnEntry>?> _parseFileWithLoadingDialog(
     BuildContext context,
     String path,
   ) async {
-    _pgnImportLog('parse file with loading start path=$path');
     return _runWithLoadingDialog(context, () => _readAndParsePgnFile(path));
   }
 
@@ -405,24 +379,17 @@ class PgnFileIntakeService {
     Future<T> Function() loader,
   ) async {
     if (!context.mounted) {
-      _pgnImportLog('loader context unmounted before dialog; running anyway');
       return loader();
     }
-    _pgnImportLog('loader dialog show');
     showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (_) => const _PgnImportLoadingDialog(),
     );
     try {
-      _pgnImportLog('loader waiting for first frame');
       await WidgetsBinding.instance.endOfFrame;
-      _pgnImportLog('loader first frame complete; starting worker');
       return await loader();
     } finally {
-      _pgnImportLog(
-        'loader worker finished; closing dialog mounted=${context.mounted}',
-      );
       if (context.mounted) {
         Navigator.of(context, rootNavigator: true).pop();
       }
@@ -435,9 +402,6 @@ class PgnFileIntakeService {
     String? sourceLabel,
     String? initialFolderId,
   }) {
-    _pgnImportLog(
-      'push preview start count=${parsed.length} source=${sourceLabel ?? 'unknown'}',
-    );
     return Navigator.of(context).push(
       MaterialPageRoute(
         builder:
@@ -454,18 +418,9 @@ class PgnFileIntakeService {
 Future<List<ParsedPgnEntry>?> _readAndParsePgnFile(String path) {
   return Isolate.run(() async {
     try {
-      _pgnImportLog('worker file start path=$path');
       final file = File(path);
-      if (!await file.exists()) {
-        _pgnImportLog('worker file missing path=$path');
-        return null;
-      }
-      final stat = await file.stat();
-      _pgnImportLog(
-        'worker file stat bytes=${stat.size} modified=${stat.modified.toIso8601String()}',
-      );
+      if (!await file.exists()) return null;
       final bytes = await file.readAsBytes();
-      _pgnImportLog('worker file read bytes=${bytes.length}');
       // Most PGNs are ASCII/UTF-8; a few TWIC files are latin1. Try UTF-8
       // first (allowMalformed so a stray byte doesn't kill the whole file),
       // fall back to latin1 if the result is empty after trim.
@@ -474,23 +429,11 @@ Future<List<ParsedPgnEntry>?> _readAndParsePgnFile(String path) {
           utf.trim().isNotEmpty
               ? utf
               : latin1.decode(bytes, allowInvalid: true);
-      _pgnImportLog('worker file decoded chars=${text.length}');
-      final stopwatch = Stopwatch()..start();
-      final parsed = parsePgnsToChessGames(text);
-      stopwatch.stop();
-      _pgnImportLog(
-        'worker file parsed count=${parsed.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
-      );
-      return parsed;
-    } catch (e) {
-      _pgnImportLog('worker file failed path=$path error=$e');
+      return parsePgnsToChessGames(text);
+    } catch (_) {
       return null;
     }
   });
-}
-
-void _pgnImportLog(String message) {
-  stdout.writeln('[PGN_IMPORT ${DateTime.now().toIso8601String()}] $message');
 }
 
 class _PgnImportLoadingDialog extends StatelessWidget {

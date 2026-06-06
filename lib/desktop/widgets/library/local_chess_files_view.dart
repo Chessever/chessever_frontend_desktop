@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -731,22 +729,6 @@ class _LocalGamesTable extends HookConsumerWidget {
     final controller = useScrollController();
     final selectedId = useState<String?>(null);
 
-    useEffect(() {
-      final stopwatch = Stopwatch()..start();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _localFilesViewLog(
-          'table first frame games=${games.length} '
-          'database="${_logSafe(databaseTitle)}" '
-          'elapsedMs=${stopwatch.elapsedMilliseconds}',
-        );
-      });
-      _localFilesViewLog(
-        'table build start games=${games.length} '
-        'database="${_logSafe(databaseTitle)}"',
-      );
-      return null;
-    }, [games, databaseTitle]);
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
       child: Column(
@@ -771,10 +753,6 @@ class _LocalGamesTable extends HookConsumerWidget {
                     onTap: () => selectedId.value = game.id,
                     onDoubleTap: () {
                       selectedId.value = game.id;
-                      _localFilesViewLog(
-                        'open local game index=$index/${games.length} '
-                        'id=${game.id}',
-                      );
                       _openLocalGame(
                         ref,
                         game,
@@ -996,15 +974,6 @@ String _date(Map<String, dynamic> md) {
   if (date.isEmpty || date == '?') return '';
   return date;
 }
-
-void _localFilesViewLog(String message) {
-  stdout.writeln(
-    '[LOCAL_PGN_VIEW ${DateTime.now().toIso8601String()}] $message',
-  );
-}
-
-String _logSafe(String value) =>
-    value.replaceAll('\n', ' ').replaceAll('"', "'");
 
 class _LocalNodeEmpty extends StatelessWidget {
   const _LocalNodeEmpty({required this.node});

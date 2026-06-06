@@ -188,9 +188,6 @@ class StockfishSingleton {
     String? ownerId, // Owner ID for per-provider job isolation
   }) async {
     if (_isLocalEngineUnavailable) {
-      debugPrint(
-        '🛑 STOCKFISH: Local engine unavailable; skipping eval for $fen',
-      );
       return _cancelledEval(fen, requestedMultiPv: multiPV);
     }
 
@@ -457,7 +454,6 @@ class StockfishSingleton {
   void _markLocalEngineUnavailable(Object error) {
     if (_localEngineUnavailable) return;
     _localEngineUnavailable = true;
-    debugPrint('🛑 STOCKFISH: Disabling local engine for this session: $error');
     _completeQueuedJobsAsCancelled();
   }
 
@@ -612,9 +608,6 @@ class StockfishSingleton {
   Future<void> _processQueue() async {
     if (_isProcessing || _jobQueue.isEmpty) return;
     if (_isLocalEngineUnavailable) {
-      debugPrint(
-        '🛑 QUEUE PROCESSOR: Local Stockfish unavailable; cancelling ${_jobQueue.length} queued jobs',
-      );
       _completeQueuedJobsAsCancelled();
       return;
     }

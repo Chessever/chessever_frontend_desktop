@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:file_picker/file_picker.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -13,7 +11,6 @@ import 'package:chessever/desktop/state/local_chess_library.dart';
 /// PGN remains registered in My Databases through [LocalChessLibraryNotifier]
 /// until the user explicitly removes it.
 Future<String?> pickAndOpenLibraryPgnDatabase(WidgetRef ref) async {
-  _libraryPgnPickerLog('picker start');
   final result = await FilePicker.platform.pickFiles(
     dialogTitle: 'Import PGN',
     type: FileType.custom,
@@ -22,7 +19,6 @@ Future<String?> pickAndOpenLibraryPgnDatabase(WidgetRef ref) async {
     withData: false,
     lockParentWindow: true,
   );
-  _libraryPgnPickerLog('picker returned count=${result?.files.length}');
   if (result == null || result.files.isEmpty) return null;
 
   final paths = result.files
@@ -30,18 +26,13 @@ Future<String?> pickAndOpenLibraryPgnDatabase(WidgetRef ref) async {
       .whereType<String>()
       .where((path) => path.isNotEmpty)
       .toList(growable: false);
-  _libraryPgnPickerLog('picker paths=$paths');
   if (paths.isEmpty) return null;
 
-  _libraryPgnPickerLog('open local database dispatch');
   final opened = await ref
       .read(localChessLibraryProvider.notifier)
       .openPaths(paths, sourceLabel: _sourceLabel(paths));
-  _libraryPgnPickerLog('open local database returned opened=$opened');
   if (!opened) return null;
-  final selected = ref.read(localChessLibraryProvider).selectedPath;
-  _libraryPgnPickerLog('selectedPath=$selected');
-  return selected;
+  return ref.read(localChessLibraryProvider).selectedPath;
 }
 
 String _sourceLabel(List<String> paths) {
@@ -53,10 +44,4 @@ String _sourceLabel(List<String> paths) {
 String _fileName(String path) {
   final parts = path.split(RegExp(r'[/\\]'));
   return parts.isEmpty ? path : parts.last;
-}
-
-void _libraryPgnPickerLog(String message) {
-  stdout.writeln(
-    '[LOCAL_PGN_PICKER ${DateTime.now().toIso8601String()}] $message',
-  );
 }

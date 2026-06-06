@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
@@ -52,19 +50,9 @@ class ParsedPgnEntry {
 /// can surface a single "invalid PGN" error instead of routing to a preview
 /// screen with ghost entries.
 List<ParsedPgnEntry> parsePgnsToChessGames(String text) {
-  final stopwatch = Stopwatch()..start();
-  _pgnParseLog('start chars=${text.length}');
   final raw = splitPgnGames(text);
-  _pgnParseLog(
-    'split games=${raw.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
-  );
   final entries = <ParsedPgnEntry>[];
   for (var i = 0; i < raw.length; i++) {
-    if (raw.length >= 100 && i > 0 && i % 500 == 0) {
-      _pgnParseLog(
-        'progress index=$i/${raw.length} accepted=${entries.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
-      );
-    }
     final pgn = raw[i];
     try {
       final game = ChessGame.fromPgn('imported_$i', pgn);
@@ -74,10 +62,6 @@ List<ParsedPgnEntry> parsePgnsToChessGames(String text) {
       // Skip unparseable entries so a single bad game doesn't kill the batch.
     }
   }
-  stopwatch.stop();
-  _pgnParseLog(
-    'complete accepted=${entries.length} raw=${raw.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
-  );
   return entries;
 }
 
@@ -89,8 +73,4 @@ List<ParsedPgnEntry> parsePgnsToChessGames(String text) {
 /// through this helper.
 Future<List<ParsedPgnEntry>> parsePgnsToChessGamesAsync(String text) {
   return compute(parsePgnsToChessGames, text);
-}
-
-void _pgnParseLog(String message) {
-  stdout.writeln('[PGN_PARSE ${DateTime.now().toIso8601String()}] $message');
 }
