@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -149,6 +151,39 @@ void main() {
         expect(subscription.read().isEvaluating, isFalse);
       },
     );
+
+    test('defaults engine analysis off until explicitly enabled', () {
+      expect(const EngineSettings().showEngineAnalysis, isFalse);
+    });
+
+    test(
+      'does not start board evaluation while engine settings are still loading',
+      () async {
+        final container = ProviderContainer(
+          overrides: [
+            engineSettingsProviderNew.overrideWith(
+              _LoadingEngineSettingsNotifier.new,
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        final subscription = container.listen<BoardEvalState>(
+          boardEvalProvider(
+            'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+          ),
+          (_, _) {},
+          fireImmediately: true,
+        );
+        addTearDown(subscription.close);
+
+        await Future<void>.delayed(Duration.zero);
+
+        expect(subscription.read().isEvaluating, isFalse);
+        expect(subscription.read().pvs, isEmpty);
+        expect(container.read(engineDepthTrackerProvider), isEmpty);
+      },
+    );
   });
 }
 
@@ -156,6 +191,15 @@ class _TestEngineSettingsNotifier extends AsyncNotifier<EngineSettings>
     implements EngineSettingsNotifierNew {
   @override
   Future<EngineSettings> build() async => const EngineSettings();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
+}
+
+class _LoadingEngineSettingsNotifier extends AsyncNotifier<EngineSettings>
+    implements EngineSettingsNotifierNew {
+  @override
+  Future<EngineSettings> build() => Completer<EngineSettings>().future;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => null;
