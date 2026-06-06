@@ -332,7 +332,7 @@ class LocalChessGame {
 Future<LocalChessSource> scanLocalChessPaths(
   List<String> rawPaths, {
   String? sourceLabel,
-}) {
+}) async {
   final paths = dedupeLocalChessInputPaths(rawPaths);
   if (paths.isEmpty) {
     throw ArgumentError('No files or folders were provided.');
@@ -629,10 +629,11 @@ class _ScanWorker {
         games: games,
         sizeBytes: stat.size,
         modifiedAt: stat.modified,
-        message: granted < entries.length
-            ? 'Showing first $granted of ${entries.length} '
-                  'entries; the rest were skipped to stay within the index cap.'
-            : null,
+        message:
+            granted < entries.length
+                ? 'Showing first $granted of ${entries.length} '
+                    'entries; the rest were skipped to stay within the index cap.'
+                : null,
       );
     } catch (e) {
       return LocalChessFileNode(
@@ -693,9 +694,8 @@ List<_ParsedLocalChessGame> _parsePgnHeadersOnly(String text) {
   } else {
     for (var i = 0; i < eventStarts.length; i++) {
       final start = eventStarts[i];
-      final end = i + 1 < eventStarts.length
-          ? eventStarts[i + 1]
-          : trimmed.length;
+      final end =
+          i + 1 < eventStarts.length ? eventStarts[i + 1] : trimmed.length;
       chunkRanges.add(<int>[start, end]);
     }
   }
@@ -724,9 +724,10 @@ _ParsedLocalChessGame? _entryFromPgnChunk(String rawPgn) {
   // A chunk that carries neither headers nor moves isn't a playable PGN.
   if (headers.isEmpty && !hasMoves) return null;
 
-  final startingFen = (headers['FEN']?.toString().trim().isNotEmpty == true)
-      ? headers['FEN'] as String
-      : _kStandardStartingFen;
+  final startingFen =
+      (headers['FEN']?.toString().trim().isNotEmpty == true)
+          ? headers['FEN'] as String
+          : _kStandardStartingFen;
 
   return _ParsedLocalChessGame(
     game: ChessGame(

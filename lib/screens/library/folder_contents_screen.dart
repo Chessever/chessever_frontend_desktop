@@ -4,7 +4,6 @@ import 'package:chessever/e2e/e2e_ids.dart';
 import 'package:chessever/repository/library/library_repository.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/repository/library/models/saved_analysis.dart';
-import 'package:chessever/screens/library/pgn_import_preview_screen.dart';
 import 'package:chessever/screens/library/providers/book_games_paginated_provider.dart';
 import 'package:chessever/screens/library/providers/library_folders_provider.dart';
 import 'package:chessever/screens/library/utils/folder_pgn_exporter.dart';
@@ -18,7 +17,6 @@ import 'package:chessever/services/pgn_file_intake_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/app_typography.dart';
 import 'package:chessever/utils/haptic_feedback_service.dart';
-import 'package:chessever/utils/pgn_multi_parser.dart';
 import 'package:chessever/utils/responsive_helper.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:chessever/widgets/paywall/premium_paywall_sheet.dart';
@@ -255,32 +253,12 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen> {
       return;
     }
 
-    final parsed = parsePgnsToChessGames(text);
-    if (parsed.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Clipboard does not contain a valid PGN',
-            style: AppTypography.textSmMedium.copyWith(color: kWhiteColor),
-          ),
-          backgroundColor: kRedColor.withValues(alpha: 0.9),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      return;
-    }
-
     if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder:
-            (_) => PgnImportPreviewScreen(
-              games: parsed.map((e) => e.chessGame).toList(),
-              initialFolderId: widget.folder.id,
-              sourceLabel: 'clipboard',
-            ),
-      ),
+    await PgnFileIntakeService.instance.ingestPgnTextFromContext(
+      context: context,
+      text: text,
+      sourceLabel: 'clipboard',
+      initialFolderId: widget.folder.id,
     );
     if (!mounted) return;
     // Refresh in case games were saved into this folder from the sheet.
@@ -436,9 +414,7 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen> {
       for (final entry in files) {
         final file = File('${tempDir.path}/${entry.filename}');
         await file.writeAsString(entry.pgn);
-        xFiles.add(
-          XFile(file.path, mimeType: 'application/x-chess-pgn'),
-        );
+        xFiles.add(XFile(file.path, mimeType: 'application/x-chess-pgn'));
       }
 
       if (!mounted) return;
@@ -1022,8 +998,7 @@ class _ExportProgressDialogState extends State<_ExportProgressDialog> {
               child: LinearProgressIndicator(
                 value: progress.total > 0 ? progress.fraction : null,
                 backgroundColor: kWhiteColor.withValues(alpha: 0.08),
-                valueColor:
-                    const AlwaysStoppedAnimation<Color>(kPrimaryColor),
+                valueColor: const AlwaysStoppedAnimation<Color>(kPrimaryColor),
                 minHeight: 6.h,
               ),
             ),

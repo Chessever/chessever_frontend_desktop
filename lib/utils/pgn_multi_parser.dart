@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
 /// Splits a text blob that may contain one or more PGN games into individual
@@ -25,7 +27,8 @@ List<String> splitPgnGames(String text) {
   final games = <String>[];
   for (var i = 0; i < matches.length; i++) {
     final start = matches[i].start;
-    final end = (i + 1 < matches.length) ? matches[i + 1].start : trimmed.length;
+    final end =
+        (i + 1 < matches.length) ? matches[i + 1].start : trimmed.length;
     final game = trimmed.substring(start, end).trim();
     if (game.isNotEmpty) games.add(game);
   }
@@ -60,4 +63,14 @@ List<ParsedPgnEntry> parsePgnsToChessGames(String text) {
     }
   }
   return entries;
+}
+
+/// Parses PGN text away from the UI isolate.
+///
+/// Large PGN databases can take long enough to parse that doing the work in
+/// button/drop handlers freezes Flutter's frame loop. Keep the synchronous
+/// parser for tests and tiny internal callers, but route user-facing imports
+/// through this helper.
+Future<List<ParsedPgnEntry>> parsePgnsToChessGamesAsync(String text) {
+  return compute(parsePgnsToChessGames, text);
 }

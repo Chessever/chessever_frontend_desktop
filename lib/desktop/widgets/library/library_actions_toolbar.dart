@@ -41,7 +41,6 @@ class LibraryActionsToolbar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-
     Future<void> handlePasteClipboard() async {
       final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
       final text = clipboard?.text?.trim();
@@ -54,7 +53,7 @@ class LibraryActionsToolbar extends ConsumerWidget {
         );
         return;
       }
-      final parsed = parsePgnsToChessGames(text);
+      final parsed = await parsePgnsToChessGamesAsync(text);
       if (parsed.isEmpty) {
         if (!context.mounted) return;
         showDesktopToast(

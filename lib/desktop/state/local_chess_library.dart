@@ -73,7 +73,9 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     );
     try {
       final source = await scanLocalChessPaths(paths, sourceLabel: sourceLabel);
-      if (_scanToken != token) return false;
+      if (_scanToken != token) {
+        return false;
+      }
       state = LocalChessLibraryState(
         source: source,
         selectedPath: source.root.path,

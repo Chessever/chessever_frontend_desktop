@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -37,12 +37,17 @@ Future<int> quickImportPathsToFolder({
   required LibraryFolder folder,
   required List<String> paths,
 }) async {
+  _quickImportLog(
+    'paths import start folder=${folder.id} count=${paths.length} paths=$paths',
+  );
   if (!isWritableLibraryFolder(folder)) {
+    _quickImportLog('paths import abort read-only folder=${folder.id}');
     showDesktopToast(context, '"${folder.name}" is read-only.', error: true);
     return 0;
   }
   if (paths.isEmpty) return 0;
   final games = await _parseChessGamesFromPaths(paths);
+  _quickImportLog('paths import parsed games=${games.length}');
   if (games.isEmpty) {
     if (context.mounted) {
       showDesktopToast(
@@ -54,13 +59,15 @@ Future<int> quickImportPathsToFolder({
     return 0;
   }
   if (!context.mounted) return 0;
-  return _saveAndToast(
+  final saved = await _saveAndToast(
     context: context,
     ref: ref,
     folder: folder,
     games: games,
     verb: 'Imported',
   );
+  _quickImportLog('paths import saved=$saved folder=${folder.id}');
+  return saved;
 }
 
 /// Ctrl+V handler: take the clipboard text, parse it as one or many PGNs,
@@ -70,13 +77,16 @@ Future<int> quickImportClipboardToFolder({
   required WidgetRef ref,
   required LibraryFolder folder,
 }) async {
+  _quickImportLog('clipboard import start folder=${folder.id}');
   if (!isWritableLibraryFolder(folder)) {
+    _quickImportLog('clipboard import abort read-only folder=${folder.id}');
     showDesktopToast(context, '"${folder.name}" is read-only.', error: true);
     return 0;
   }
   final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
   final text = clipboard?.text?.trim();
   if (text == null || text.isEmpty) {
+    _quickImportLog('clipboard import abort empty');
     if (context.mounted) {
       showDesktopToast(
         context,
@@ -86,7 +96,10 @@ Future<int> quickImportClipboardToFolder({
     }
     return 0;
   }
-  final games = parsePgnsToChessGames(text).map((e) => e.chessGame).toList();
+  _quickImportLog('clipboard import parse dispatch chars=${text.length}');
+  final games =
+      (await parsePgnsToChessGamesAsync(text)).map((e) => e.chessGame).toList();
+  _quickImportLog('clipboard import parsed games=${games.length}');
   if (games.isEmpty) {
     if (context.mounted) {
       showDesktopToast(
@@ -98,13 +111,15 @@ Future<int> quickImportClipboardToFolder({
     return 0;
   }
   if (!context.mounted) return 0;
-  return _saveAndToast(
+  final saved = await _saveAndToast(
     context: context,
     ref: ref,
     folder: folder,
     games: games,
     verb: 'Pasted',
   );
+  _quickImportLog('clipboard import saved=$saved folder=${folder.id}');
+  return saved;
 }
 
 /// Ctrl+C handler for the games listview: serialize [analyses] as a single
@@ -245,41 +260,73 @@ Future<int> _bulkSave({
 }
 
 Future<List<ChessGame>> _parseChessGamesFromPaths(List<String> paths) async {
+  _quickImportLog('scan paths start count=${paths.length}');
   final games = <ChessGame>[];
   for (final path in paths) {
+    _quickImportLog('scan path type check path=$path');
     final type = FileSystemEntity.typeSync(path, followLinks: false);
     if (type == FileSystemEntityType.directory) {
+      _quickImportLog('scan directory start path=$path');
       try {
         await for (final entity in Directory(
           path,
         ).list(recursive: true, followLinks: false)) {
           if (entity is File && _isPgnPath(entity.path)) {
+            _quickImportLog('scan directory pgn path=${entity.path}');
             games.addAll(await _gamesFromFile(entity.path));
           }
         }
       } catch (e) {
-        if (kDebugMode) debugPrint('quickImport: scan $path failed: $e');
+        _quickImportLog('scan directory failed path=$path error=$e');
       }
     } else if (type == FileSystemEntityType.file && _isPgnPath(path)) {
+      _quickImportLog('scan file pgn path=$path');
       games.addAll(await _gamesFromFile(path));
+    } else {
+      _quickImportLog('scan path ignored type=$type path=$path');
     }
   }
+  _quickImportLog('scan paths complete games=${games.length}');
   return games;
 }
 
 bool _isPgnPath(String path) => path.toLowerCase().endsWith('.pgn');
 
 Future<List<ChessGame>> _gamesFromFile(String path) async {
-  try {
-    final bytes = await File(path).readAsBytes();
-    final utf = utf8.decode(bytes, allowMalformed: true);
-    final text =
-        utf.trim().isNotEmpty ? utf : latin1.decode(bytes, allowInvalid: true);
-    return parsePgnsToChessGames(text).map((e) => e.chessGame).toList();
-  } catch (e) {
-    if (kDebugMode) debugPrint('quickImport: read $path failed: $e');
-    return const [];
-  }
+  return Isolate.run(() async {
+    try {
+      _quickImportLog('worker file start path=$path');
+      final stat = await File(path).stat();
+      _quickImportLog(
+        'worker file stat bytes=${stat.size} modified=${stat.modified.toIso8601String()}',
+      );
+      final bytes = await File(path).readAsBytes();
+      _quickImportLog('worker file read bytes=${bytes.length}');
+      final utf = utf8.decode(bytes, allowMalformed: true);
+      final text =
+          utf.trim().isNotEmpty
+              ? utf
+              : latin1.decode(bytes, allowInvalid: true);
+      _quickImportLog('worker file decoded chars=${text.length}');
+      final stopwatch = Stopwatch()..start();
+      final games =
+          parsePgnsToChessGames(text).map((e) => e.chessGame).toList();
+      stopwatch.stop();
+      _quickImportLog(
+        'worker file parsed games=${games.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
+      return games;
+    } catch (e) {
+      _quickImportLog('worker file failed path=$path error=$e');
+      return const <ChessGame>[];
+    }
+  });
+}
+
+void _quickImportLog(String message) {
+  stdout.writeln(
+    '[PGN_QUICK_IMPORT ${DateTime.now().toIso8601String()}] $message',
+  );
 }
 
 String _titleFor(ChessGame game) {

@@ -239,7 +239,7 @@ class _BoardEditorScreenState extends ConsumerState<BoardEditorScreen> {
     // screen so the user can review the full list and save them in bulk.
     final split = splitPgnGames(pgn);
     if (split.length > 1) {
-      final parsed = parsePgnsToChessGames(pgn);
+      final parsed = await parsePgnsToChessGamesAsync(pgn);
       if (parsed.isEmpty) {
         _showSnack(
           'Failed to parse PGN',
