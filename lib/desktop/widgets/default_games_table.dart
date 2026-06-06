@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/utils/library_multi_select.dart';
 import 'package:chessever/desktop/widgets/adaptive_games_table.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
     show openTournamentGameTab;
@@ -33,6 +34,7 @@ class DefaultGamesTable extends ConsumerStatefulWidget {
     this.selectedIds = const <String>{},
     this.selectionMode = false,
     this.onToggleSelection,
+    this.onReplaceSelection,
     this.onOpenGame,
     this.onContext,
     this.footer,
@@ -48,6 +50,7 @@ class DefaultGamesTable extends ConsumerStatefulWidget {
   final bool selectionMode;
   final Set<String> selectedIds;
   final ValueChanged<String>? onToggleSelection;
+  final ValueChanged<Set<String>>? onReplaceSelection;
   final void Function(GamesTourModel game, {required bool inNewTab})?
   onOpenGame;
   final Future<void> Function({
@@ -66,8 +69,22 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
   static const double _rowHeight = 34;
   static const double _headerHeight = 26;
 
+  late final FocusNode _focusNode;
   AdaptiveSortState? _sortState;
   String? _highlightedGameId;
+  int? _selectionAnchorIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode = FocusNode(debugLabel: 'default-games-table');
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   List<GamesTourModel> get _rows {
     final rows = List<GamesTourModel>.of(widget.games, growable: false);
@@ -148,8 +165,29 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
   }
 
   void _highlight(GamesTourModel game) {
+    if (widget.active && !_focusNode.hasFocus) {
+      _focusNode.requestFocus();
+    }
     if (_highlightedGameId == game.gameId) return;
     setState(() => _highlightedGameId = game.gameId);
+  }
+
+  void _replaceSelectionRange(
+    List<GamesTourModel> rows, {
+    required int from,
+    required int to,
+  }) {
+    final replaceSelection = widget.onReplaceSelection;
+    if (!widget.selectionMode || replaceSelection == null || rows.isEmpty) {
+      return;
+    }
+    replaceSelection(
+      LibraryMultiSelect.range(
+        rowIds: [for (final row in rows) row.gameId],
+        from: from,
+        to: to,
+      ),
+    );
   }
 
   KeyEventResult _handleKey(
@@ -157,7 +195,10 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
     KeyEvent event,
     List<GamesTourModel> rows,
   ) {
-    if (event is! KeyDownEvent || rows.isEmpty) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (rows.isEmpty) return KeyEventResult.ignored;
     final key = event.logicalKey;
     final currentIndex = _currentHighlightedIndex(rows);
     int? nextIndex;
@@ -192,6 +233,16 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
     }
 
     final index = nextIndex.toInt();
+    if (HardwareKeyboard.instance.isShiftPressed && widget.selectionMode) {
+      final anchor = (_selectionAnchorIndex ?? currentIndex).clamp(
+        0,
+        rows.length - 1,
+      );
+      _selectionAnchorIndex = anchor.toInt();
+      _replaceSelectionRange(rows, from: _selectionAnchorIndex!, to: index);
+    } else {
+      _selectionAnchorIndex = index;
+    }
     _highlight(rows[index]);
     _scrollIndexIntoView(index);
     return KeyEventResult.handled;
@@ -230,6 +281,28 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
     );
   }
 
+  void _selectRowInSelectionMode(
+    GamesTourModel game,
+    List<GamesTourModel> rows,
+  ) {
+    final index = rows.indexWhere((row) => row.gameId == game.gameId);
+    if (index < 0) return;
+    _highlight(game);
+    if (HardwareKeyboard.instance.isShiftPressed &&
+        widget.onReplaceSelection != null) {
+      final anchor = (_selectionAnchorIndex ?? _currentHighlightedIndex(rows));
+      final safeAnchor = (anchor < 0 ? index : anchor).clamp(
+        0,
+        rows.length - 1,
+      );
+      _selectionAnchorIndex = safeAnchor.toInt();
+      _replaceSelectionRange(rows, from: _selectionAnchorIndex!, to: index);
+      return;
+    }
+    _selectionAnchorIndex = index;
+    widget.onToggleSelection?.call(game.gameId);
+  }
+
   void _openGame(GamesTourModel game, {required bool inNewTab}) {
     final customOpen = widget.onOpenGame;
     if (customOpen != null) {
@@ -256,6 +329,7 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
   Widget build(BuildContext context) {
     final rows = _rows;
     return Focus(
+      focusNode: _focusNode,
       autofocus: widget.active,
       canRequestFocus: widget.active,
       onKeyEvent: (node, event) => _handleKey(node, event, rows),
@@ -270,51 +344,52 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         sortState: _sortState,
         onSortChanged: (next) => setState(() => _sortState = next),
         rowDecorationBuilder: (game, hovered) {
-        if (widget.selectedIds.contains(game.gameId) ||
-            _highlightedGameId == game.gameId) {
-          return BoxDecoration(
-            color: kPrimaryColor.withValues(alpha: 0.16),
-            border: const Border(
-              left: BorderSide(color: kPrimaryColor, width: 2),
-              bottom: BorderSide(color: kDividerColor, width: 0.5),
-            ),
-          );
-        }
-        if (hovered) {
-          return const BoxDecoration(
-            color: kBlack3Color,
-            border: Border(
-              bottom: BorderSide(color: kDividerColor, width: 0.5),
-            ),
-          );
-        }
-        return null;
-      },
+          if (widget.selectedIds.contains(game.gameId) ||
+              _highlightedGameId == game.gameId) {
+            return BoxDecoration(
+              color: kPrimaryColor.withValues(alpha: 0.16),
+              border: const Border(
+                left: BorderSide(color: kPrimaryColor, width: 2),
+                bottom: BorderSide(color: kDividerColor, width: 0.5),
+              ),
+            );
+          }
+          if (hovered) {
+            return const BoxDecoration(
+              color: kBlack3Color,
+              border: Border(
+                bottom: BorderSide(color: kDividerColor, width: 0.5),
+              ),
+            );
+          }
+          return null;
+        },
         rowKeyBuilder:
-          (game) => ValueKey('${widget.rowKeyPrefix}-${game.gameId}'),
+            (game) => ValueKey('${widget.rowKeyPrefix}-${game.gameId}'),
         onRowTap: (game, {required bool inNewTab}) {
-        if (widget.selectionMode) {
-          widget.onToggleSelection?.call(game.gameId);
-          return;
-        }
-        // Table view: a single click only selects/highlights the row.
-        // Opening a game belongs to double-click (Cmd/Ctrl held opens a new
-        // tab) so accidental single clicks no longer swap the active board.
-        _highlight(game);
-      },
+          if (widget.selectionMode) {
+            _selectRowInSelectionMode(game, rows);
+            return;
+          }
+          // Table view: a single click only selects/highlights the row.
+          // Opening a game belongs to double-click (Cmd/Ctrl held opens a new
+          // tab) so accidental single clicks no longer swap the active board.
+          _highlight(game);
+        },
         onRowDoubleTap: (game, {required bool inNewTab}) {
-        if (widget.selectionMode) {
-          widget.onToggleSelection?.call(game.gameId);
-          return;
-        }
-        _highlight(game);
-        _openGame(game, inNewTab: inNewTab);
-      },
+          if (widget.selectionMode) {
+            _selectRowInSelectionMode(game, rows);
+            return;
+          }
+          _highlight(game);
+          _openGame(game, inNewTab: inNewTab);
+        },
         onRowSecondaryTap:
-          widget.onContext == null
-              ? null
-              : (game, position) =>
-                  unawaited(widget.onContext!(globalPos: position, game: game)),
+            widget.onContext == null
+                ? null
+                : (game, position) => unawaited(
+                  widget.onContext!(globalPos: position, game: game),
+                ),
         footer: widget.footer,
       ),
     );

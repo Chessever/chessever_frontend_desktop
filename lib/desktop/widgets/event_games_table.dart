@@ -121,10 +121,11 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
   bool _moveHighlightedGame(
     List<TournamentGameSummary> orderedGames, {
     required int delta,
+    String? fallbackSelectedGameId,
   }) {
     if (orderedGames.isEmpty || delta == 0) return false;
 
-    final activeId = _highlightedGameId;
+    final activeId = _highlightedGameId ?? fallbackSelectedGameId;
     final currentIdx =
         activeId == null
             ? -1
@@ -140,9 +141,16 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
 
   KeyEventResult _handleRailKeyEvent(
     KeyEvent event,
-    List<TournamentGameSummary> orderedGames,
-  ) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    List<TournamentGameSummary> orderedGames, {
+    required _GameListKind kind,
+    required List<TournamentGameSummary> eventGames,
+    required String tournamentTitle,
+    required String? selectedGameId,
+    required BoardTabGameArgs? activeArgs,
+  }) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
     if (HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed ||
         HardwareKeyboard.instance.isAltPressed) {
@@ -150,14 +158,47 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
     }
 
     if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-      return _moveHighlightedGame(orderedGames, delta: 1)
+      return _moveHighlightedGame(
+            orderedGames,
+            delta: 1,
+            fallbackSelectedGameId: selectedGameId,
+          )
           ? KeyEventResult.handled
           : KeyEventResult.ignored;
     }
     if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-      return _moveHighlightedGame(orderedGames, delta: -1)
+      return _moveHighlightedGame(
+            orderedGames,
+            delta: -1,
+            fallbackSelectedGameId: selectedGameId,
+          )
           ? KeyEventResult.handled
           : KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.enter ||
+        event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+      if (orderedGames.isEmpty) return KeyEventResult.ignored;
+      final activeId = _highlightedGameId ?? selectedGameId;
+      final index =
+          activeId == null
+              ? 0
+              : orderedGames.indexWhere((game) => game.id == activeId);
+      final game = orderedGames[index < 0 ? 0 : index];
+      if (_highlightedGameId != game.id) {
+        setState(() => _highlightedGameId = game.id);
+      }
+      unawaited(
+        _openEventGame(
+          ref: ref,
+          container: ProviderScope.containerOf(context, listen: false),
+          kind: kind,
+          game: game,
+          eventGames: eventGames,
+          tournamentTitle: tournamentTitle,
+          activeArgs: activeArgs,
+        ),
+      );
+      return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
   }
@@ -634,9 +675,21 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
       isLoadingMore: isLoadingMoreDatabase || isLoadingMoreContinuation,
     );
 
+    final railActivationGames =
+        resolved.kind == _GameListKind.event ? allOrderedGames : orderedGames;
+
     return Focus(
       focusNode: _railFocusNode,
-      onKeyEvent: (_, event) => _handleRailKeyEvent(event, orderedGames),
+      onKeyEvent:
+          (_, event) => _handleRailKeyEvent(
+            event,
+            orderedGames,
+            kind: resolved.kind,
+            eventGames: railActivationGames,
+            tournamentTitle: resolved.title,
+            selectedGameId: selectedGameId,
+            activeArgs: effectiveArgs,
+          ),
       child: Listener(
         behavior: HitTestBehavior.translucent,
         onPointerDown: (_) => _railFocusNode.requestFocus(),
@@ -1667,6 +1720,7 @@ String _resultForSummary(GameStatus status) => switch (status) {
 
 Future<void> _openEventGame({
   required WidgetRef ref,
+  ProviderContainer? container,
   required _GameListKind kind,
   required TournamentGameSummary game,
   required List<TournamentGameSummary> eventGames,
@@ -1715,10 +1769,6 @@ Future<void> _openEventGame({
   }
 
   if (kind == _GameListKind.source) {
-    final container = ProviderScope.containerOf(
-      ref as BuildContext,
-      listen: false,
-    );
     final pgn = game.pgn?.trim() ?? '';
     final eventSeed = _eventSeedForSourceGame(game, activeArgs);
     final shouldHydrateEventGames =
@@ -1760,7 +1810,7 @@ Future<void> _openEventGame({
       reuseExisting: false,
       replaceActive: !inNewTab,
     );
-    if (shouldHydrateEventGames) {
+    if (shouldHydrateEventGames && container != null) {
       unawaited(
         _hydrateSourceGameEventContext(
           container: container,
@@ -2282,6 +2332,7 @@ class _EventRoundSection extends ConsumerWidget {
               onOpenGame: (game, {required bool inNewTab}) async {
                 await _openEventGame(
                   ref: ref,
+                  container: ProviderScope.containerOf(context, listen: false),
                   kind: kind,
                   game: game,
                   eventGames: eventGames,
