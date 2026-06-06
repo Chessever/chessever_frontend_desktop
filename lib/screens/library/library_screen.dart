@@ -3,7 +3,6 @@ import 'package:chessever/repository/library/library_repository.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/screens/library/folder_contents_screen.dart';
 import 'package:chessever/screens/gamebase/gamebase_explorer_screen.dart';
-import 'package:chessever/screens/library/pgn_import_preview_screen.dart';
 import 'package:chessever/screens/library/providers/library_folders_provider.dart';
 import 'package:chessever/screens/board_editor/board_editor_screen.dart';
 import 'package:chessever/screens/library/twic_contents_screen.dart';
@@ -17,7 +16,6 @@ import 'package:chessever/utils/app_typography.dart';
 import 'package:chessever/utils/haptic_feedback_service.dart';
 import 'package:chessever/services/pgn_file_intake_service.dart';
 import 'package:chessever/utils/library_utils.dart';
-import 'package:chessever/utils/pgn_multi_parser.dart';
 import 'package:chessever/utils/responsive_helper.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:chessever/utils/svg_asset.dart';
@@ -160,31 +158,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       return;
     }
 
-    final parsed = parsePgnsToChessGames(text);
-    if (parsed.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Clipboard does not contain a valid PGN',
-            style: TextStyle(color: kWhiteColor),
-          ),
-          backgroundColor: kRedColor.withValues(alpha: 0.9),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      return;
-    }
-
     if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder:
-            (_) => PgnImportPreviewScreen(
-              games: parsed.map((e) => e.chessGame).toList(),
-              sourceLabel: 'clipboard',
-            ),
-      ),
+    await PgnFileIntakeService.instance.ingestPgnTextFromContext(
+      context: context,
+      text: text,
+      sourceLabel: 'clipboard',
     );
   }
 
@@ -348,9 +326,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                                 // CSS: 36x36, bg #262626, radius 10px
                                 KeyedSubtree(
                                   key: e2eKey(E2eIds.libraryCreateFolderButton),
-                                  child: _PlusButton(
-                                    onTap: _handlePlusButton,
-                                  ),
+                                  child: _PlusButton(onTap: _handlePlusButton),
                                 ),
                               ],
                             )
@@ -918,4 +894,3 @@ class _LibraryFolderLoadingCard extends StatelessWidget {
     );
   }
 }
-

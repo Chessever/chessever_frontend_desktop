@@ -29,6 +29,13 @@ class Stockfish {
   }
 
   static Stockfish? _instance;
+  static bool _desktopEngineUnavailable = false;
+
+  static bool get desktopEngineUnavailable => _desktopEngineUnavailable;
+
+  static void resetDesktopEngineAvailabilityForRetry() {
+    _desktopEngineUnavailable = false;
+  }
 
   // --- desktop backend ---
   final _state = ValueNotifier<upstream.StockfishState>(
@@ -72,6 +79,7 @@ class Stockfish {
     try {
       final binaryPath = await findStockfishBinary();
       if (binaryPath == null) {
+        _desktopEngineUnavailable = true;
         if (kDebugMode) {
           debugPrint(
             '⚠️ Stockfish facade: no engine binary found. '
@@ -106,9 +114,8 @@ class Stockfish {
         return;
       }
 
-      _state.value = ok
-          ? upstream.StockfishState.ready
-          : upstream.StockfishState.error;
+      _state.value =
+          ok ? upstream.StockfishState.ready : upstream.StockfishState.error;
     } catch (e, st) {
       if (kDebugMode) {
         debugPrint('⚠️ Stockfish facade init failed: $e');
@@ -128,8 +135,10 @@ class Stockfish {
       }
     });
     engine.send('uci');
-    final ok = await ready.future
-        .timeout(const Duration(seconds: 5), onTimeout: () => false);
+    final ok = await ready.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => false,
+    );
     await sub.cancel();
     return ok;
   }

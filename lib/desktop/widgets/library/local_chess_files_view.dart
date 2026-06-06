@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,11 +10,9 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_append.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
-import 'package:chessever/services/pgn_file_intake_service.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
-import 'package:chessever/desktop/widgets/default_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
@@ -729,58 +729,282 @@ class _LocalGamesTable extends HookConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = useScrollController();
-    final localByDefaultId = {
-      for (final game in games) _defaultGameIdForLocalGame(game): game,
-    };
-    final defaultRows = games
-        .map((game) {
-          final row = chessGameToImportedGamesTourModel(game.game);
-          return row.copyWith(
-            gameId: _defaultGameIdForLocalGame(game),
-            source: GameSource.localAnalysis,
-            tourId: _cleanLocalTableMeta(
-              game.game.metadata['Event']?.toString() ?? databaseTitle,
-            ),
-            tourSlug: _cleanLocalTableMeta(
-              game.game.metadata['Event']?.toString() ?? databaseTitle,
-            ),
-            roundId: _cleanLocalTableMeta(
-              game.game.metadata['Round']?.toString() ?? '',
-            ),
-          );
-        })
-        .toList(growable: false);
+    final selectedId = useState<String?>(null);
+
+    useEffect(() {
+      final stopwatch = Stopwatch()..start();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _localFilesViewLog(
+          'table first frame games=${games.length} '
+          'database="${_logSafe(databaseTitle)}" '
+          'elapsedMs=${stopwatch.elapsedMilliseconds}',
+        );
+      });
+      _localFilesViewLog(
+        'table build start games=${games.length} '
+        'database="${_logSafe(databaseTitle)}"',
+      );
+      return null;
+    }, [games, databaseTitle]);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-      child: DefaultGamesTable(
-        games: defaultRows,
-        controller: controller,
-        routeTitle: databaseTitle,
-        routeGames: defaultRows,
-        rowKeyPrefix: 'local-game-table',
-        onOpenGame: (row, {required bool inNewTab}) {
-          final local = localByDefaultId[row.gameId];
-          if (local == null) return;
-          _openLocalGame(
-            ref,
-            local,
-            sourceLabel: databaseTitle,
-            databaseGames: databaseGames,
-            focus: !inNewTab,
-          );
-        },
+      child: Column(
+        children: [
+          const _LocalGamesHeaderRow(),
+          Expanded(
+            child: Scrollbar(
+              controller: controller,
+              thumbVisibility: false,
+              child: ListView.builder(
+                controller: controller,
+                physics: const DesktopScrollPhysics(),
+                itemExtent: _kLocalGameRowHeight,
+                itemCount: games.length,
+                itemBuilder: (context, index) {
+                  final game = games[index];
+                  return _LocalGamesDataRow(
+                    key: ValueKey('local-game-table-${game.id}'),
+                    index: index,
+                    game: game,
+                    selected: selectedId.value == game.id,
+                    onTap: () => selectedId.value = game.id,
+                    onDoubleTap: () {
+                      selectedId.value = game.id;
+                      _localFilesViewLog(
+                        'open local game index=$index/${games.length} '
+                        'id=${game.id}',
+                      );
+                      _openLocalGame(
+                        ref,
+                        game,
+                        sourceLabel: databaseTitle,
+                        databaseGames: databaseGames,
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-String _defaultGameIdForLocalGame(LocalChessGame game) => 'local:${game.id}';
+const double _kLocalGameRowHeight = 34;
 
-String _cleanLocalTableMeta(String value) {
-  final t = value.trim();
-  return t == '?' ? '' : t;
+class _LocalGamesHeaderRow extends StatelessWidget {
+  const _LocalGamesHeaderRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 27,
+      decoration: const BoxDecoration(
+        color: kBackgroundColor,
+        border: Border(bottom: BorderSide(color: kDividerColor, width: 1)),
+      ),
+      child: const Row(
+        children: [
+          SizedBox(width: 54, child: _LocalHeaderCell('#', alignEnd: true)),
+          Expanded(flex: 22, child: _LocalHeaderCell('WHITE')),
+          SizedBox(width: 64, child: _LocalHeaderCell('ELO W', alignEnd: true)),
+          Expanded(flex: 22, child: _LocalHeaderCell('BLACK')),
+          SizedBox(width: 64, child: _LocalHeaderCell('ELO B', alignEnd: true)),
+          SizedBox(width: 70, child: _LocalHeaderCell('RESULT')),
+          SizedBox(width: 62, child: _LocalHeaderCell('ECO')),
+          Expanded(flex: 18, child: _LocalHeaderCell('OPENING')),
+          Expanded(flex: 16, child: _LocalHeaderCell('EVENT')),
+          SizedBox(width: 92, child: _LocalHeaderCell('DATE')),
+        ],
+      ),
+    );
+  }
 }
+
+class _LocalHeaderCell extends StatelessWidget {
+  const _LocalHeaderCell(this.label, {this.alignEnd = false});
+
+  final String label;
+  final bool alignEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Align(
+        alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
+        child: Text(
+          label,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: kWhiteColor70,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LocalGamesDataRow extends StatelessWidget {
+  const _LocalGamesDataRow({
+    super.key,
+    required this.index,
+    required this.game,
+    required this.selected,
+    required this.onTap,
+    required this.onDoubleTap,
+  });
+
+  final int index;
+  final LocalChessGame game;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback onDoubleTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final md = game.game.metadata;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      onDoubleTap: onDoubleTap,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color:
+              selected
+                  ? kPrimaryColor.withValues(alpha: 0.16)
+                  : kBackgroundColor,
+          border: const Border(
+            bottom: BorderSide(color: kDividerColor, width: 0.5),
+          ),
+        ),
+        child: Row(
+          children: [
+            SizedBox(width: 54, child: _LocalNumberCell(value: index + 1)),
+            Expanded(flex: 22, child: _LocalTextCell(_playerName(md, 'White'))),
+            SizedBox(
+              width: 64,
+              child: _LocalNumberCell(value: _rating(md, 'WhiteElo')),
+            ),
+            Expanded(flex: 22, child: _LocalTextCell(_playerName(md, 'Black'))),
+            SizedBox(
+              width: 64,
+              child: _LocalNumberCell(value: _rating(md, 'BlackElo')),
+            ),
+            SizedBox(width: 70, child: _LocalTextCell(_result(md))),
+            SizedBox(width: 62, child: _LocalTextCell(_meta(md, 'ECO'))),
+            Expanded(flex: 18, child: _LocalTextCell(_opening(md))),
+            Expanded(flex: 16, child: _LocalTextCell(_event(md))),
+            SizedBox(width: 92, child: _LocalTextCell(_date(md))),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LocalTextCell extends StatelessWidget {
+  const _LocalTextCell(this.value);
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final display = value.trim();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Text(
+        display.isEmpty || display == '?' ? '-' : display,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: kWhiteColor,
+          fontSize: 12,
+          height: 1.1,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
+class _LocalNumberCell extends StatelessWidget {
+  const _LocalNumberCell({required this.value});
+
+  final int? value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Text(
+          value == null || value! <= 0 ? '-' : value.toString(),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: kWhiteColor,
+            fontSize: 12,
+            height: 1.1,
+            letterSpacing: 0,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _meta(Map<String, dynamic> md, String key) =>
+    (md[key]?.toString().trim() ?? '');
+
+String _playerName(Map<String, dynamic> md, String key) {
+  final name = _meta(md, key);
+  if (name.isEmpty || name == '?') return key;
+  return name;
+}
+
+int? _rating(Map<String, dynamic> md, String key) {
+  final value = int.tryParse(_meta(md, key));
+  return value == null || value <= 0 ? null : value;
+}
+
+String _result(Map<String, dynamic> md) {
+  final result = _meta(md, 'Result').replaceAll('½', '1/2');
+  return result.isEmpty ? '*' : result;
+}
+
+String _opening(Map<String, dynamic> md) {
+  final opening = _meta(md, 'Opening');
+  if (opening.isNotEmpty && opening != '?') return opening;
+  return _meta(md, 'Variation');
+}
+
+String _event(Map<String, dynamic> md) {
+  final event = _meta(md, 'Event');
+  return event.isEmpty || event == '?' ? _meta(md, 'Site') : event;
+}
+
+String _date(Map<String, dynamic> md) {
+  final date = _meta(md, 'Date');
+  if (date.isEmpty || date == '?') return '';
+  return date;
+}
+
+void _localFilesViewLog(String message) {
+  stdout.writeln(
+    '[LOCAL_PGN_VIEW ${DateTime.now().toIso8601String()}] $message',
+  );
+}
+
+String _logSafe(String value) =>
+    value.replaceAll('\n', ' ').replaceAll('"', "'");
 
 class _LocalNodeEmpty extends StatelessWidget {
   const _LocalNodeEmpty({required this.node});

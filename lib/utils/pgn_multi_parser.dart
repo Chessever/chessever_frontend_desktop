@@ -1,3 +1,7 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
 /// Splits a text blob that may contain one or more PGN games into individual
@@ -25,7 +29,8 @@ List<String> splitPgnGames(String text) {
   final games = <String>[];
   for (var i = 0; i < matches.length; i++) {
     final start = matches[i].start;
-    final end = (i + 1 < matches.length) ? matches[i + 1].start : trimmed.length;
+    final end =
+        (i + 1 < matches.length) ? matches[i + 1].start : trimmed.length;
     final game = trimmed.substring(start, end).trim();
     if (game.isNotEmpty) games.add(game);
   }
@@ -47,9 +52,19 @@ class ParsedPgnEntry {
 /// can surface a single "invalid PGN" error instead of routing to a preview
 /// screen with ghost entries.
 List<ParsedPgnEntry> parsePgnsToChessGames(String text) {
+  final stopwatch = Stopwatch()..start();
+  _pgnParseLog('start chars=${text.length}');
   final raw = splitPgnGames(text);
+  _pgnParseLog(
+    'split games=${raw.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
+  );
   final entries = <ParsedPgnEntry>[];
   for (var i = 0; i < raw.length; i++) {
+    if (raw.length >= 100 && i > 0 && i % 500 == 0) {
+      _pgnParseLog(
+        'progress index=$i/${raw.length} accepted=${entries.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
+    }
     final pgn = raw[i];
     try {
       final game = ChessGame.fromPgn('imported_$i', pgn);
@@ -59,5 +74,23 @@ List<ParsedPgnEntry> parsePgnsToChessGames(String text) {
       // Skip unparseable entries so a single bad game doesn't kill the batch.
     }
   }
+  stopwatch.stop();
+  _pgnParseLog(
+    'complete accepted=${entries.length} raw=${raw.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
+  );
   return entries;
+}
+
+/// Parses PGN text away from the UI isolate.
+///
+/// Large PGN databases can take long enough to parse that doing the work in
+/// button/drop handlers freezes Flutter's frame loop. Keep the synchronous
+/// parser for tests and tiny internal callers, but route user-facing imports
+/// through this helper.
+Future<List<ParsedPgnEntry>> parsePgnsToChessGamesAsync(String text) {
+  return compute(parsePgnsToChessGames, text);
+}
+
+void _pgnParseLog(String message) {
+  stdout.writeln('[PGN_PARSE ${DateTime.now().toIso8601String()}] $message');
 }

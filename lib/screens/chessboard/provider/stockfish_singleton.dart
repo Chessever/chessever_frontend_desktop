@@ -97,6 +97,15 @@ class EnhancedCloudEval {
   });
 }
 
+class StockfishUnavailableException implements Exception {
+  StockfishUnavailableException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 @visibleForTesting
 bool shouldUseStockfishEvaluationCache({
   required bool allowCache,
@@ -137,6 +146,7 @@ class StockfishSingleton {
   static const int _maxQueueSize = 60; // Soft cap to avoid backlog
   static const int _maxBackgroundBacklog =
       24; // Cap low-priority backlog to protect visible-board responsiveness
+  bool _localEngineUnavailable = false;
 
   // Global instance lock to prevent "Multiple instances not supported" on Android
   // Android's native Stockfish library requires strict single-instance management
@@ -177,6 +187,13 @@ class StockfishSingleton {
     bool allowCache = true,
     String? ownerId, // Owner ID for per-provider job isolation
   }) async {
+    if (_isLocalEngineUnavailable) {
+      debugPrint(
+        '🛑 STOCKFISH: Local engine unavailable; skipping eval for $fen',
+      );
+      return _cancelledEval(fen, requestedMultiPv: multiPV);
+    }
+
     // Validate depth range (only if using depth-based search)
     if (searchDuration == null && (depth < 1 || depth > 99)) {
       throw ArgumentError('Depth must be between 1 and 99, got: $depth');
@@ -419,6 +436,43 @@ class StockfishSingleton {
     return result;
   }
 
+  bool get _isLocalEngineUnavailable {
+    return _localEngineUnavailable || Stockfish.desktopEngineUnavailable;
+  }
+
+  EnhancedCloudEval _cancelledEval(
+    String fen, {
+    required int requestedMultiPv,
+  }) {
+    return EnhancedCloudEval(
+      fen: fen,
+      knodes: 0,
+      depth: 0,
+      pvs: [Pv(moves: '', cp: 0, mate: 0)],
+      isCancelled: true,
+      requestedMultiPv: requestedMultiPv,
+    );
+  }
+
+  void _markLocalEngineUnavailable(Object error) {
+    if (_localEngineUnavailable) return;
+    _localEngineUnavailable = true;
+    debugPrint('🛑 STOCKFISH: Disabling local engine for this session: $error');
+    _completeQueuedJobsAsCancelled();
+  }
+
+  void _completeQueuedJobsAsCancelled() {
+    for (final job in List<_EvalJob>.from(_jobQueue)) {
+      _pendingJobs.remove(job.key);
+      if (!job.completer.isCompleted) {
+        job.completer.complete(
+          _cancelledEval(job.fen, requestedMultiPv: job.multiPV),
+        );
+      }
+    }
+    _jobQueue.clear();
+  }
+
   /// Pre-warms the Stockfish engine in the background so it's ready
   /// before the user first enables analysis. Call this on screen load.
   /// Safe to call multiple times — no-ops if already initializing or ready.
@@ -557,6 +611,13 @@ class StockfishSingleton {
 
   Future<void> _processQueue() async {
     if (_isProcessing || _jobQueue.isEmpty) return;
+    if (_isLocalEngineUnavailable) {
+      debugPrint(
+        '🛑 QUEUE PROCESSOR: Local Stockfish unavailable; cancelling ${_jobQueue.length} queued jobs',
+      );
+      _completeQueuedJobsAsCancelled();
+      return;
+    }
 
     _isProcessing = true;
     final myGeneration = _queueGeneration;
@@ -581,7 +642,11 @@ class StockfishSingleton {
         } catch (e, st) {
           debugPrint('❌ QUEUE PROCESSOR: Job failed for ${job.fen}: $e');
           debugPrint('$st');
-          await _resetEngineAfterFailure();
+          if (_isLocalEngineUnavailable) {
+            _completeQueuedJobsAsCancelled();
+          } else {
+            await _resetEngineAfterFailure();
+          }
         } finally {
           _pendingJobs.remove(job.key);
           _currentJob = null;
@@ -1006,6 +1071,11 @@ class StockfishSingleton {
     // Check for error or disposed state immediately
     final currentState = _engine!.state.value;
     if (currentState == StockfishState.error) {
+      if (Stockfish.desktopEngineUnavailable) {
+        throw StockfishUnavailableException(
+          'No Stockfish binary found on this machine',
+        );
+      }
       throw StateError('Stockfish engine is in error state');
     }
     if (currentState == StockfishState.disposed) {
@@ -1028,6 +1098,14 @@ class StockfishSingleton {
       if (state == StockfishState.ready) {
         completer.complete();
       } else if (state == StockfishState.error) {
+        if (Stockfish.desktopEngineUnavailable) {
+          completer.completeError(
+            StockfishUnavailableException(
+              'No Stockfish binary found on this machine',
+            ),
+          );
+          return;
+        }
         completer.completeError(StateError('Stockfish entered error state'));
       } else if (state == StockfishState.disposed) {
         completer.completeError(StateError('Stockfish was disposed'));
@@ -1218,6 +1296,12 @@ class StockfishSingleton {
   }
 
   Future<void> _ensureEngineReady() async {
+    if (_isLocalEngineUnavailable) {
+      throw StockfishUnavailableException(
+        'Local Stockfish engine is unavailable',
+      );
+    }
+
     // If another call is already initializing, wait for it
     if (_isInitializing && _initCompleter != null) {
       debugPrint('🔒 STOCKFISH: Waiting for ongoing initialization...');
@@ -1249,6 +1333,11 @@ class StockfishSingleton {
 
     try {
       while (true) {
+        if (_isLocalEngineUnavailable) {
+          throw StockfishUnavailableException(
+            'Local Stockfish engine is unavailable',
+          );
+        }
         attempt++;
         try {
           // Force reset if engine is in error state or disposed
@@ -1266,6 +1355,11 @@ class StockfishSingleton {
 
             // Create new engine instance with proper timing
             _engine = await _createEngineInstance();
+            if (Stockfish.desktopEngineUnavailable) {
+              throw StockfishUnavailableException(
+                'No Stockfish binary found on this machine',
+              );
+            }
           }
 
           await _waitUntilReady();
@@ -1276,6 +1370,13 @@ class StockfishSingleton {
             '⚠️ STOCKFISH INIT: Engine not ready (attempt $attempt/$maxAttempts) – $e',
           );
           debugPrint('$st');
+
+          if (e is StockfishUnavailableException ||
+              Stockfish.desktopEngineUnavailable) {
+            _markLocalEngineUnavailable(e);
+            _initCompleter?.completeError(e, st);
+            rethrow;
+          }
 
           final isMultipleInstanceError = e.toString().contains(
             'Multiple instances',
@@ -1581,6 +1682,8 @@ class StockfishSingleton {
   /// Use this when the engine is not responding and needs a hard reset.
   Future<void> forceRecovery() async {
     debugPrint('🔧 STOCKFISH: Force recovery initiated...');
+    _localEngineUnavailable = false;
+    Stockfish.resetDesktopEngineAvailabilityForRetry();
 
     // Cancel everything first
     await cancelAllEvaluations();
