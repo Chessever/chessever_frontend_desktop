@@ -341,6 +341,10 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
       if (event is KeyDownEvent) widget.onPlayEngineMove!.call();
       return KeyEventResult.handled;
     }
+    if (key == LogicalKeyboardKey.enter && !_hasAnyModifierPressed()) {
+      if (event is KeyDownEvent) _go(_page == 1 ? 0 : 1);
+      return KeyEventResult.handled;
+    }
     final hasModifier = _hasAnyModifierPressed();
     // Bare ←/→ must step notation on every right-rail page, never switch the
     // top-level tab. Inner Explorer/Games Focus normally handles these first
@@ -398,7 +402,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
       child: _NotationKeyboardArea(
         active: !explorerOpen,
         focusNode: _notationFocusNode,
-        onActivate: () => _ensurePageActive(0),
+        onActivate: () => _notationFocusNode.requestFocus(),
         onVertical: widget.onNotationVertical,
         onStep: widget.onNotationStep,
         onJumpToHead: widget.onNotationJumpToHead,

@@ -81,8 +81,9 @@ class DesktopOpeningExplorer extends ConsumerWidget {
   /// (sort order is owned here, but Enter handling lives in the host).
   final void Function(List<MoveAggregate> aggs)? sortedAggregatesCallback;
 
-  /// Use a reference-style compact schema: Move, Games, Score, Last.
-  /// The default keeps the wider standalone explorer's W/D/L result bar.
+  /// Use the right-rail schema: Move, result bar, Games, Last played.
+  /// Percentages stay inside the W/D/L bar so the panel does not spend
+  /// separate columns on result text.
   final bool compactColumns;
 
   /// Whether to render the title/count strip above the column headers.
@@ -467,12 +468,12 @@ class _ColumnDims {
           gamesValue: 58,
           gamesIcon: 0,
           last: 54,
-          score: 48,
+          score: null,
           gap: 8,
           horizontalPad: 8,
           useFullDate: true,
           useFullCount: true,
-          showResultBar: false,
+          showResultBar: true,
           headerHeight: 24,
           rowMinHeight: 30,
         );
@@ -482,12 +483,12 @@ class _ColumnDims {
         gamesValue: 48,
         gamesIcon: 0,
         last: 42,
-        score: 42,
+        score: null,
         gap: 6,
         horizontalPad: 8,
-        useFullDate: false,
+        useFullDate: true,
         useFullCount: false,
-        showResultBar: false,
+        showResultBar: true,
         headerHeight: 24,
         rowMinHeight: 30,
       );
