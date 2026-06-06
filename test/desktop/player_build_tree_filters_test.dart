@@ -26,7 +26,7 @@ void main() {
     isOnline: false,
   );
 
-  test('preparing as White scopes the target player to Black games', () {
+  test('prepare against White scopes the current player to White games', () {
     final filters = buildPlayerProfileTreeFilters(
       baseFilters: baseFilters,
       playerId: playerId,
@@ -36,7 +36,7 @@ void main() {
 
     expect(filters.playerIds, [playerId]);
     expect(filters.selectedPlayers, [player]);
-    expect(filters.playerColor, GamebasePlayerColor.black);
+    expect(filters.playerColor, GamebasePlayerColor.white);
     expect(filters.timeControls, baseFilters.timeControls);
     expect(filters.minRating, 2400);
     expect(filters.maxRating, 2800);
@@ -46,7 +46,7 @@ void main() {
     expect(filters.isOnline, isFalse);
   });
 
-  test('preparing as Black scopes the target player to White games', () {
+  test('prepare against Black scopes the current player to Black games', () {
     final filters = buildPlayerProfileTreeFilters(
       baseFilters: baseFilters,
       playerId: playerId,
@@ -56,7 +56,7 @@ void main() {
 
     expect(filters.playerIds, [playerId]);
     expect(filters.selectedPlayers, [player]);
-    expect(filters.playerColor, GamebasePlayerColor.white);
+    expect(filters.playerColor, GamebasePlayerColor.black);
   });
 
   test('preparing for both colors clears only the color scope', () {

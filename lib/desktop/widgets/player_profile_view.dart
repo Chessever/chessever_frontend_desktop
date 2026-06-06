@@ -714,8 +714,8 @@ class _PlayerBuildTreePreparationDialogState
               const SizedBox(height: 14),
               Text(
                 player.isEmpty
-                    ? 'Prepare against this player as:'
-                    : 'Prepare against $player as:',
+                    ? 'Choose which of this player’s games to use:'
+                    : 'Choose which $player games to use:',
                 style: const TextStyle(
                   color: kWhiteColor70,
                   fontSize: 13,
@@ -946,7 +946,7 @@ class _Header extends StatelessWidget {
               label: 'Build tree',
               icon: Icons.account_tree_outlined,
               onPress: onBuildTree,
-              tooltip: 'Choose color scope and build player tree',
+              tooltip: 'Choose player color scope and build player tree',
               accented: hasActiveFilter,
             ),
           ],

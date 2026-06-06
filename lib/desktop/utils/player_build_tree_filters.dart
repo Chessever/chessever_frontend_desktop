@@ -1,42 +1,43 @@
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
 
-/// Color perspective the user is preparing from when building a player tree.
+/// Color scope to use for the current player when building a player tree.
 enum PlayerBuildTreePreparationSide { white, black, both }
 
 extension PlayerBuildTreePreparationSideX on PlayerBuildTreePreparationSide {
   String get label {
     switch (this) {
       case PlayerBuildTreePreparationSide.white:
-        return 'White';
+        return 'Prepare against White';
       case PlayerBuildTreePreparationSide.black:
-        return 'Black';
+        return 'Prepare against Black';
       case PlayerBuildTreePreparationSide.both:
-        return 'Both colors';
+        return 'Prepare against both';
     }
   }
 
   String get description {
     switch (this) {
       case PlayerBuildTreePreparationSide.white:
-        return 'Prepare with White against this player';
+        return 'Use games where this player played White';
       case PlayerBuildTreePreparationSide.black:
-        return 'Prepare with Black against this player';
+        return 'Use games where this player played Black';
       case PlayerBuildTreePreparationSide.both:
-        return 'Use all games for both colors';
+        return 'Use this player’s games from both colors';
     }
   }
 
-  /// Explorer color filter for the target player, not the preparing user.
+  /// Explorer color filter for the current player.
   ///
-  /// Preparing as White means the opponent is Black; preparing as Black means
-  /// the opponent is White. Both colors intentionally clears the color scope.
+  /// The prompt text is direct: preparing against White uses current-player-as-
+  /// White games, preparing against Black uses current-player-as-Black games,
+  /// and both colors intentionally clears the color scope.
   GamebasePlayerColor? get targetPlayerColor {
     switch (this) {
       case PlayerBuildTreePreparationSide.white:
-        return GamebasePlayerColor.black;
-      case PlayerBuildTreePreparationSide.black:
         return GamebasePlayerColor.white;
+      case PlayerBuildTreePreparationSide.black:
+        return GamebasePlayerColor.black;
       case PlayerBuildTreePreparationSide.both:
         return null;
     }
