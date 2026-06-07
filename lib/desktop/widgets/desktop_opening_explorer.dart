@@ -5,6 +5,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
@@ -99,6 +100,36 @@ class DesktopOpeningExplorer extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(gamebaseExplorerProvider);
+    final localPlayerId =
+        state.filters.playerIds.length == 1
+            ? state.filters.playerIds.first.trim()
+            : null;
+    if (localPlayerId != null && localPlayerId.isNotEmpty) {
+      ref.listen<PlayerOpeningTreeState>(
+        playerOpeningTreeProvider(localPlayerId),
+        (previous, next) {
+          if (previous?.index == next.index &&
+              previous?.progress.status == next.progress.status) {
+            return;
+          }
+          Future.microtask(() {
+            ref
+                .read(gamebaseExplorerProvider.notifier)
+                .syncLocalPlayerTree(localPlayerId);
+          });
+        },
+      );
+      Future.microtask(() {
+        ref
+            .read(gamebaseExplorerProvider.notifier)
+            .enableLocalPlayerTree(localPlayerId);
+        ref.read(playerOpeningTreeProvider(localPlayerId).notifier).start();
+      });
+    } else {
+      Future.microtask(() {
+        ref.read(gamebaseExplorerProvider.notifier).disableLocalPlayerTree();
+      });
+    }
     return FTheme(
       data: FThemes.zinc.dark,
       child: ColoredBox(
@@ -323,13 +354,14 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
           constraints.maxWidth,
           compact: widget.compactColumns,
         );
-        final header = widget.showHeader
-            ? _ExplorerHeader(
-                totalGames: state.totalGames,
-                moveCount: aggs.length,
-                isLoading: state.isLoading,
-              )
-            : null;
+        final header =
+            widget.showHeader
+                ? _ExplorerHeader(
+                  totalGames: state.totalGames,
+                  moveCount: aggs.length,
+                  isLoading: state.isLoading,
+                )
+                : null;
         final columnHeader = _ColumnHeader(
           dims: dims,
           sort: _sort,
@@ -364,9 +396,10 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
                     widget.onFocusMoveIndex?.call(i);
                     onMove(aggs[i].uci);
                   },
-                  onShowGames: onShowGames == null
-                      ? null
-                      : () => onShowGames(aggs[i].uci),
+                  onShowGames:
+                      onShowGames == null
+                          ? null
+                          : () => onShowGames(aggs[i].uci),
                 ),
                 if (i < aggs.length - 1)
                   const Divider(color: kDividerColor, height: 1, indent: 14),
@@ -380,8 +413,12 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
               physics: const DesktopScrollPhysics(),
               padding: const EdgeInsets.symmetric(vertical: 2),
               itemCount: aggs.length,
-              separatorBuilder: (_, __) =>
-                  const Divider(color: kDividerColor, height: 1, indent: 14),
+              separatorBuilder:
+                  (_, __) => const Divider(
+                    color: kDividerColor,
+                    height: 1,
+                    indent: 14,
+                  ),
               itemBuilder: (_, i) {
                 final agg = aggs[i];
                 return _MoveRow(
@@ -396,9 +433,8 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
                     widget.onFocusMoveIndex?.call(i);
                     onMove(agg.uci);
                   },
-                  onShowGames: onShowGames == null
-                      ? null
-                      : () => onShowGames(agg.uci),
+                  onShowGames:
+                      onShowGames == null ? null : () => onShowGames(agg.uci),
                 );
               },
             ),
@@ -823,9 +859,8 @@ class _SortHeaderState extends State<_SortHeader> {
           behavior: HitTestBehavior.opaque,
           onTap: () => widget.onSort(widget.field),
           child: Row(
-            mainAxisAlignment: rightAligned
-                ? MainAxisAlignment.end
-                : MainAxisAlignment.start,
+            mainAxisAlignment:
+                rightAligned ? MainAxisAlignment.end : MainAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: rightAligned ? children.reversed.toList() : children,
           ),
@@ -975,11 +1010,12 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
     );
 
     final selected = widget.selected;
-    final backgroundColor = selected
-        ? kPrimaryColor.withValues(alpha: 0.16)
-        : (widget.enableHoverFeedback && _hovered
-              ? kBlack3Color
-              : Colors.transparent);
+    final backgroundColor =
+        selected
+            ? kPrimaryColor.withValues(alpha: 0.16)
+            : (widget.enableHoverFeedback && _hovered
+                ? kBlack3Color
+                : Colors.transparent);
     return ClickCursor(
       child: MouseRegion(
         onEnter: (_) {
@@ -987,9 +1023,10 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
           setState(() => _hovered = true);
           widget.onFocus?.call();
         },
-        onExit: widget.enableHoverFeedback
-            ? (_) => setState(() => _hovered = false)
-            : null,
+        onExit:
+            widget.enableHoverFeedback
+                ? (_) => setState(() => _hovered = false)
+                : null,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
@@ -998,11 +1035,12 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
             constraints: BoxConstraints(minHeight: dims.rowMinHeight),
             decoration: BoxDecoration(
               color: backgroundColor,
-              border: selected
-                  ? const Border(
-                      left: BorderSide(color: kPrimaryColor, width: 2),
-                    )
-                  : null,
+              border:
+                  selected
+                      ? const Border(
+                        left: BorderSide(color: kPrimaryColor, width: 2),
+                      )
+                      : null,
             ),
             padding: EdgeInsets.symmetric(
               horizontal: dims.horizontalPad,
@@ -1066,15 +1104,16 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
                   // header columns aligned with row content.
                   SizedBox(
                     width: dims.gamesIcon,
-                    child: widget.onShowGames == null
-                        ? const SizedBox.shrink()
-                        : Align(
-                            alignment: Alignment.centerRight,
-                            child: _OpenGamesIcon(
-                              onTap: widget.onShowGames!,
-                              highlighted: _hovered,
+                    child:
+                        widget.onShowGames == null
+                            ? const SizedBox.shrink()
+                            : Align(
+                              alignment: Alignment.centerRight,
+                              child: _OpenGamesIcon(
+                                onTap: widget.onShowGames!,
+                                highlighted: _hovered,
+                              ),
                             ),
-                          ),
                   ),
                   SizedBox(width: dims.gap),
                   SizedBox(
@@ -1177,25 +1216,26 @@ class _MoveLabel extends StatelessWidget {
           const SizedBox(width: 4),
         ],
         Flexible(
-          child: useFigurine
-              ? RichText(
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  text: TextSpan(
-                    children: buildFigurineSpans(
-                      text: san,
-                      pieceAssets: pieceAssets,
-                      style: sanStyle,
-                      pieceSize: 14,
+          child:
+              useFigurine
+                  ? RichText(
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    text: TextSpan(
+                      children: buildFigurineSpans(
+                        text: san,
+                        pieceAssets: pieceAssets,
+                        style: sanStyle,
+                        pieceSize: 14,
+                      ),
                     ),
+                  )
+                  : Text(
+                    san,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: sanStyle,
                   ),
-                )
-              : Text(
-                  san,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: sanStyle,
-                ),
         ),
       ],
     );
@@ -1268,17 +1308,18 @@ class _BarSegment extends StatelessWidget {
     return Container(
       color: bg,
       alignment: Alignment.center,
-      child: rate >= 0.12
-          ? Text(
-              '$pct%',
-              style: TextStyle(
-                color: fg,
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            )
-          : null,
+      child:
+          rate >= 0.12
+              ? Text(
+                '$pct%',
+                style: TextStyle(
+                  color: fg,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              )
+              : null,
     );
   }
 }
@@ -1310,11 +1351,12 @@ class _ScoreCell extends StatelessWidget {
     // Tint the number toward white when ≥ 55%, black when ≤ 45%, neutral
     // in between. Quick visual triage when scrolling a long candidate
     // list — strong picks pop without the user having to read the bar.
-    final color = score >= 0.55
-        ? kMoveStatWhiteColor
-        : score <= 0.45
-        ? kChessBlackMoveColor
-        : kWhiteColor70;
+    final color =
+        score >= 0.55
+            ? kMoveStatWhiteColor
+            : score <= 0.45
+            ? kChessBlackMoveColor
+            : kWhiteColor70;
     return Align(
       alignment: Alignment.centerRight,
       child: Text(
@@ -1366,17 +1408,19 @@ class _OpenGamesIconState extends State<_OpenGamesIcon> {
               height: 22,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: _hovered
-                    ? kPrimaryColor.withValues(alpha: 0.18)
-                    : Colors.transparent,
+                color:
+                    _hovered
+                        ? kPrimaryColor.withValues(alpha: 0.18)
+                        : Colors.transparent,
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Icon(
                 Icons.list_alt_rounded,
                 size: 14,
-                color: _hovered
-                    ? kPrimaryColor
-                    : (active ? kWhiteColor70 : kLightGreyColor),
+                color:
+                    _hovered
+                        ? kPrimaryColor
+                        : (active ? kWhiteColor70 : kLightGreyColor),
               ),
             ),
           ),

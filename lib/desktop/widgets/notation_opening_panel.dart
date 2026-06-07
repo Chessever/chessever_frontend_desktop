@@ -552,7 +552,7 @@ bool debugIsRightRailPreviousTabChord({
       character == '<';
 }
 
-class _SegmentBar extends StatelessWidget {
+class _SegmentBar extends ConsumerWidget {
   const _SegmentBar({
     required this.explorerOpen,
     required this.onToggleExplorer,
@@ -566,7 +566,12 @@ class _SegmentBar extends StatelessWidget {
   final Widget? trailingActions;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scopedPlayer = explorerScope?.player;
+    final treeState =
+        scopedPlayer == null
+            ? null
+            : ref.watch(playerOpeningTreeProvider(scopedPlayer.id));
     return Container(
       height: 42,
       padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -586,7 +591,23 @@ class _SegmentBar extends StatelessWidget {
             const SizedBox(width: 8),
             ExplorerFiltersPopoverButton(
               compact: true,
-              scopedPlayer: explorerScope?.player,
+              scopedPlayer: scopedPlayer,
+            ),
+          ],
+          if (treeState != null) ...[
+            const SizedBox(width: 8),
+            PlayerOpeningTreeProgressChip(
+              state: treeState,
+              maxWidth: 230,
+              onRetry:
+                  () =>
+                      ref
+                          .read(
+                            playerOpeningTreeProvider(
+                              scopedPlayer!.id,
+                            ).notifier,
+                          )
+                          .retry(),
             ),
           ],
           const Spacer(),
