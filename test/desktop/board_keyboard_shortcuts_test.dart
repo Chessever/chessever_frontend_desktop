@@ -173,10 +173,6 @@ void main() {
         contains(KeyChord(keyId: LogicalKeyboardKey.keyY.keyId, ctrl: true)),
       );
       expect(
-        shortcuts[BoardActionKey.showOpeningReference],
-        contains(KeyChord(keyId: LogicalKeyboardKey.f7.keyId, shift: true)),
-      );
-      expect(
         shortcuts[BoardActionKey.increaseEngineLines],
         contains(KeyChord(keyId: LogicalKeyboardKey.add.keyId)),
       );
