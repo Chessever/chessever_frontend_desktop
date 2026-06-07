@@ -102,15 +102,43 @@ void main() {
         contains(KeyChord(keyId: LogicalKeyboardKey.arrowDown.keyId)),
       );
       expect(
+        shortcuts[BoardActionKey.openExplorer],
+        contains(KeyChord(keyId: LogicalKeyboardKey.enter.keyId)),
+      );
+      expect(
+        shortcuts[BoardActionKey.openExplorer],
+        contains(KeyChord(keyId: LogicalKeyboardKey.numpadEnter.keyId)),
+      );
+      expect(
         shortcuts[BoardActionKey.firstMove],
         contains(
           KeyChord(keyId: LogicalKeyboardKey.arrowLeft.keyId, ctrl: true),
         ),
       );
       expect(
+        shortcuts[BoardActionKey.firstMove],
+        contains(
+          KeyChord(
+            keyId: LogicalKeyboardKey.arrowLeft.keyId,
+            meta: true,
+            crossPlatform: true,
+          ),
+        ),
+      );
+      expect(
         shortcuts[BoardActionKey.lastMove],
         contains(
           KeyChord(keyId: LogicalKeyboardKey.arrowRight.keyId, ctrl: true),
+        ),
+      );
+      expect(
+        shortcuts[BoardActionKey.lastMove],
+        contains(
+          KeyChord(
+            keyId: LogicalKeyboardKey.arrowRight.keyId,
+            meta: true,
+            crossPlatform: true,
+          ),
         ),
       );
       expect(
@@ -274,10 +302,7 @@ void main() {
           KeyChord(keyId: LogicalKeyboardKey.arrowRight.keyId, alt: true),
         ),
       );
-      expect(
-        shortcuts[BoardActionKey.rightRailActivateSelection],
-        contains(KeyChord(keyId: LogicalKeyboardKey.enter.keyId)),
-      );
+      expect(shortcuts[BoardActionKey.rightRailActivateSelection], isEmpty);
     });
     test('reserves Ctrl/Cmd+F for search instead of board flip', () {
       final ctrlF = KeyChord(keyId: LogicalKeyboardKey.keyF.keyId, ctrl: true);

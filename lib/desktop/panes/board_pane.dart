@@ -1955,7 +1955,15 @@ class BoardPane extends HookConsumerWidget {
       focusNode.requestFocus();
     }
 
-    void openExplorerTab() {
+    void openExplorerTab({bool toggle = false}) {
+      final tabsState = ref.read(desktopTabsProvider);
+      final activeTab = tabsState.active;
+      if (toggle && activeTab?.kind == TabKind.openingExplorer && activeTab != null) {
+        ref.read(desktopTabsProvider.notifier).close(activeTab.id);
+        focusNode.requestFocus();
+        return;
+      }
+
       final exactFenSearch =
           _fenPositionKey(chessGame.value.startingFen) !=
           _fenPositionKey(Chess.initial.fen);
@@ -2686,7 +2694,7 @@ class BoardPane extends HookConsumerWidget {
           unawaited(toggleEngineAction());
           return true;
         case BoardActionKey.openExplorer:
-          openExplorerTab();
+          openExplorerTab(toggle: true);
           return true;
         case BoardActionKey.openPositionSetup:
           unawaited(openPositionSetup());
