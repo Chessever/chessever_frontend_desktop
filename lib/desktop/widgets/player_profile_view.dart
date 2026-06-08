@@ -18,6 +18,7 @@ import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/utils/event_game_card_keyboard_navigation.dart';
+import 'package:chessever/desktop/utils/player_build_tree_filters.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/default_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
@@ -224,7 +225,7 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
     );
   }
 
-  void _openBuildTreeGame() {
+  Future<void> _openBuildTreeGame() async {
     if (!mounted) return;
     final playerKey = _keyFor(_dataSource);
     final playerId = _resolveGamebasePlayerId();
@@ -233,6 +234,12 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
       return;
     }
 
+    final preparationSide = await showPlayerBuildTreePreparationDialog(
+      context: context,
+      playerName: widget.args.playerName,
+    );
+    if (preparationSide == null || !mounted) return;
+
     final player = _buildExplorerFallbackPlayer(playerId);
     final gameFilter =
         ref.read(playerProfileGamesKeyProvider(playerKey)).filter;
@@ -240,6 +247,12 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
         gameFilter.hasExplorerMappableFilters
             ? gameFilter.toGamebaseFilters()
             : const GamebaseFilters();
+    final treeFilters = buildPlayerProfileTreeFilters(
+      baseFilters: baseFilters,
+      playerId: playerId,
+      player: player,
+      preparationSide: preparationSide,
+    );
 
     final title = _playerProfileTreeTitle(player.name);
     final tabsNotifier = ref.read(desktopTabsProvider.notifier);
@@ -273,7 +286,7 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
             ...m,
             tabId: BoardExplorerScope(
               player: player,
-              initialFilters: baseFilters,
+              initialFilters: treeFilters,
             ),
           },
         );
@@ -596,6 +609,251 @@ class _ProfileRatings {
   final int? blitz;
 }
 
+Future<PlayerBuildTreePreparationSide?> showPlayerBuildTreePreparationDialog({
+  required BuildContext context,
+  required String playerName,
+}) {
+  return showGeneralDialog<PlayerBuildTreePreparationSide>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'Build player tree',
+    barrierColor: Colors.black.withValues(alpha: 0.58),
+    transitionDuration: const Duration(milliseconds: 160),
+    pageBuilder:
+        (ctx, _, _) =>
+            _PlayerBuildTreePreparationDialog(playerName: playerName),
+    transitionBuilder: (ctx, anim, _, child) {
+      final eased = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+      return FadeTransition(
+        opacity: eased,
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.985, end: 1).animate(eased),
+          child: child,
+        ),
+      );
+    },
+  );
+}
+
+class _PlayerBuildTreePreparationDialog extends StatefulWidget {
+  const _PlayerBuildTreePreparationDialog({required this.playerName});
+
+  final String playerName;
+
+  @override
+  State<_PlayerBuildTreePreparationDialog> createState() =>
+      _PlayerBuildTreePreparationDialogState();
+}
+
+class _PlayerBuildTreePreparationDialogState
+    extends State<_PlayerBuildTreePreparationDialog> {
+  PlayerBuildTreePreparationSide? _selected;
+
+  void _submit() {
+    final selected = _selected;
+    if (selected == null) return;
+    Navigator.of(context).pop(selected);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final player = widget.playerName.trim();
+    return Center(
+      child: Material(
+        type: MaterialType.transparency,
+        child: Container(
+          width: 410,
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: kBlack2Color,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: kDividerColor),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.36),
+                blurRadius: 30,
+                offset: const Offset(0, 18),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: kPrimaryColor.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(9),
+                      border: Border.all(
+                        color: kPrimaryColor.withValues(alpha: 0.34),
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.account_tree_outlined,
+                      color: kPrimaryColor,
+                      size: 18,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'Build player tree',
+                      style: TextStyle(
+                        color: kWhiteColor,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Text(
+                player.isEmpty
+                    ? 'Choose which of this player’s games to use:'
+                    : 'Choose which $player games to use:',
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  fontSize: 13,
+                  height: 1.35,
+                ),
+              ),
+              const SizedBox(height: 12),
+              for (final side in PlayerBuildTreePreparationSide.values) ...[
+                _BuildTreePreparationOption(
+                  side: side,
+                  selected: _selected == side,
+                  onTap: () => setState(() => _selected = side),
+                ),
+                if (side != PlayerBuildTreePreparationSide.values.last)
+                  const SizedBox(height: 8),
+              ],
+              const SizedBox(height: 18),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  DesktopDialogButton(
+                    label: 'Cancel',
+                    onPress: () => Navigator.of(context).pop(),
+                    tone: DesktopDialogButtonTone.ghost,
+                  ),
+                  const SizedBox(width: 8),
+                  DesktopDialogButton(
+                    label: 'Build tree',
+                    icon: Icons.account_tree_outlined,
+                    onPress: _selected == null ? null : _submit,
+                    tone: DesktopDialogButtonTone.primary,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BuildTreePreparationOption extends StatefulWidget {
+  const _BuildTreePreparationOption({
+    required this.side,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final PlayerBuildTreePreparationSide side;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  State<_BuildTreePreparationOption> createState() =>
+      _BuildTreePreparationOptionState();
+}
+
+class _BuildTreePreparationOptionState
+    extends State<_BuildTreePreparationOption> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = widget.selected;
+    final borderColor =
+        selected
+            ? kPrimaryColor
+            : (_hovered
+                ? kWhiteColor70.withValues(alpha: 0.45)
+                : kDividerColor);
+    final fill =
+        selected
+            ? kPrimaryColor.withValues(alpha: 0.16)
+            : (_hovered ? kBlack3Color : Colors.transparent);
+    final icon = switch (widget.side) {
+      PlayerBuildTreePreparationSide.white => Icons.radio_button_checked,
+      PlayerBuildTreePreparationSide.black => Icons.radio_button_unchecked,
+      PlayerBuildTreePreparationSide.both => Icons.all_inclusive,
+    };
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: fill,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: borderColor),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                color: selected ? kPrimaryColor : kWhiteColor70,
+                size: 18,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.side.label,
+                      style: TextStyle(
+                        color: selected ? kWhiteColor : kWhiteColor70,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      widget.side.description,
+                      style: const TextStyle(
+                        color: kLightGreyColor,
+                        fontSize: 11.5,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (selected)
+                const Icon(Icons.check, color: kPrimaryColor, size: 17),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ---------------------------------------------------------------------
 // Header
 // ---------------------------------------------------------------------
@@ -688,7 +946,7 @@ class _Header extends StatelessWidget {
               label: 'Build tree',
               icon: Icons.account_tree_outlined,
               onPress: onBuildTree,
-              tooltip: 'Open the top listed player game on the board',
+              tooltip: 'Choose player color scope and build player tree',
               accented: hasActiveFilter,
             ),
           ],

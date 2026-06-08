@@ -22,8 +22,7 @@ class EngineSettingsPopover extends ConsumerStatefulWidget {
 
 class _EngineSettingsPopoverState extends ConsumerState<EngineSettingsPopover>
     with SingleTickerProviderStateMixin {
-  late final FPopoverController _controller =
-      FPopoverController(vsync: this);
+  late final FPopoverController _controller = FPopoverController(vsync: this);
 
   @override
   void dispose() {
@@ -41,7 +40,7 @@ class _EngineSettingsPopoverState extends ConsumerState<EngineSettingsPopover>
         child: FButton.icon(
           onPress: _controller.toggle,
           child: const Icon(
-            Icons.tune_rounded,
+            Icons.settings_outlined,
             color: kWhiteColor70,
             size: 18,
           ),
@@ -56,8 +55,7 @@ class _PopoverBody extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final asyncSettings = ref.watch(engineSettingsProviderNew);
     final notifier = ref.read(engineSettingsProviderNew.notifier);
-    final settings =
-        asyncSettings.valueOrNull ?? const EngineSettings();
+    final settings = asyncSettings.valueOrNull ?? const EngineSettings();
 
     return Container(
       width: 320,
@@ -102,7 +100,7 @@ class _PopoverBody extends ConsumerWidget {
           ),
           const Divider(height: 24, color: kDividerColor),
           _SegmentedRow(
-            label: 'PV count',
+            label: 'Engine lines',
             options: EngineSettings.principalVariationLabels,
             selectedIndex: settings.principalVariationIndex,
             onSelect: notifier.setPrincipalVariationIndex,
@@ -116,7 +114,7 @@ class _PopoverBody extends ConsumerWidget {
           ),
           const SizedBox(height: 12),
           _SegmentedRow(
-            label: 'Max arrows',
+            label: 'Board arrows',
             options: EngineSettings.maxArrowsLabels,
             selectedIndex: settings.maxArrowsOnBoard,
             onSelect: notifier.setMaxArrowsOnBoard,

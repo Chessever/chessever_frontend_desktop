@@ -491,8 +491,10 @@ class _CleanPlayerRow extends StatelessWidget {
               ),
             ),
           ],
-          const SizedBox(width: 10),
-          _ResultBadge(label: result, compact: false),
+          if (result.isNotEmpty) ...[
+            const SizedBox(width: 10),
+            _ResultBadge(label: result, compact: false),
+          ],
         ],
       ),
     );
@@ -929,9 +931,7 @@ class _CompactLayoutState extends State<_CompactLayout> {
                     bottom: 4,
                     left: 12,
                     right: 12,
-                    child: _LiveLastMoveStrip(
-                      lastMove: widget.data.lastMove,
-                    ),
+                    child: _LiveLastMoveStrip(lastMove: widget.data.lastMove),
                   ),
                 ],
               ],
@@ -1231,7 +1231,7 @@ class _PlayerRow extends StatelessWidget {
 
   final GameCardData data;
   final bool isWhite;
-  final String result; // '1', '0', '½', or '–' while ongoing/unknown.
+  final String result; // '1', '0', '½', or empty while ongoing/unknown.
   final bool compact;
 
   @override
@@ -1307,8 +1307,10 @@ class _PlayerRow extends StatelessWidget {
             compact: compact,
           ),
         ],
-        const SizedBox(width: 10),
-        _ResultBadge(label: result, compact: compact),
+        if (result.isNotEmpty) ...[
+          const SizedBox(width: 10),
+          _ResultBadge(label: result, compact: compact),
+        ],
       ],
     );
   }
@@ -1401,8 +1403,7 @@ class _ClockPill extends StatelessWidget {
                 : kBlack3Color.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(4),
         border: Border.all(
-          color:
-              isActive ? kWhiteColor.withValues(alpha: 0.16) : kDividerColor,
+          color: isActive ? kWhiteColor.withValues(alpha: 0.16) : kDividerColor,
           width: 0.7,
         ),
       ),
@@ -1535,7 +1536,7 @@ String _resultFor(GameStatus s, {required bool isWhite}) {
       return '½';
     case GameStatus.unknown:
     case GameStatus.ongoing:
-      return '–';
+      return '';
   }
 }
 

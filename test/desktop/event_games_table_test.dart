@@ -32,7 +32,8 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('DATABASE GAMES'), findsOneWidget);
+    expect(find.text('My Database'), findsOneWidget);
+    expect(find.text('DATABASE GAMES'), findsNothing);
     expect(find.text('BD'), findsNothing);
     expect(find.text('R9'), findsNothing);
     expect(find.text('White Player'), findsOneWidget);
@@ -219,9 +220,10 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('EVENT GAMES'), findsOneWidget);
-    expect(find.text('BD'), findsOneWidget);
-    expect(find.text('R5'), findsOneWidget);
+    expect(find.text('Event'), findsOneWidget);
+    expect(find.text('EVENT GAMES'), findsNothing);
+    expect(find.text('BD'), findsNothing);
+    expect(find.text('R5'), findsNothing);
   });
 
   testWidgets('event round header preserves Armageddon round name', (
@@ -524,7 +526,7 @@ void main() {
     await tester.pump();
 
     final table = tester.widget<Table>(find.byType(Table));
-    final selectedDecoration = table.children[1].decoration as BoxDecoration;
+    final selectedDecoration = table.children[0].decoration as BoxDecoration;
     expect(selectedDecoration.color, isNotNull);
     expect(selectedDecoration.border, isNotNull);
     expect(selectedDecoration.boxShadow, isNotEmpty);
@@ -563,8 +565,8 @@ void main() {
     await tester.pump();
 
     var table = tester.widget<Table>(find.byType(Table));
-    var firstDecoration = table.children[1].decoration as BoxDecoration;
-    var secondDecoration = table.children[2].decoration as BoxDecoration;
+    var firstDecoration = table.children[0].decoration as BoxDecoration;
+    var secondDecoration = table.children[1].decoration as BoxDecoration;
     expect(firstDecoration.color, isNot(Colors.transparent));
     expect(secondDecoration.color, Colors.transparent);
 
@@ -572,8 +574,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
 
     table = tester.widget<Table>(find.byType(Table));
-    firstDecoration = table.children[1].decoration as BoxDecoration;
-    secondDecoration = table.children[2].decoration as BoxDecoration;
+    firstDecoration = table.children[0].decoration as BoxDecoration;
+    secondDecoration = table.children[1].decoration as BoxDecoration;
     expect(firstDecoration.color, Colors.transparent);
     expect(secondDecoration.color, isNot(Colors.transparent));
 
@@ -704,7 +706,8 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('SOURCE GAMES'), findsOneWidget);
+      expect(find.text('Player games'), findsOneWidget);
+      expect(find.text('SOURCE GAMES'), findsNothing);
       expect(find.text('Player games'), findsOneWidget);
       expect(find.text('Source'), findsOneWidget);
       expect(find.text('Event'), findsOneWidget);
@@ -714,7 +717,7 @@ void main() {
       await tester.tap(find.text('Event'));
       await tester.pump(const Duration(milliseconds: 220));
 
-      expect(find.text('EVENT GAMES'), findsOneWidget);
+      expect(find.text('EVENT GAMES'), findsNothing);
       expect(find.text('Tournament context'), findsOneWidget);
       expect(find.text('Event White'), findsOneWidget);
       expect(find.text('Route Two'), findsNothing);

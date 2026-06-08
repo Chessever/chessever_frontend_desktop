@@ -13,7 +13,6 @@ import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/widgets/adaptive_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
-import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
@@ -1726,12 +1725,6 @@ class _NotationCell extends StatelessWidget {
         ),
       );
     }
-    final cumulative = <List<String>>[];
-    final running = <String>[];
-    for (final uci in cappedContinuation.take(sanTokens.length)) {
-      running.add(uci);
-      cumulative.add(List<String>.unmodifiable(running));
-    }
     final activeIndex = activePlyIndex?.clamp(0, sanTokens.length - 1).toInt();
     return SizedBox(
       height: 22,
@@ -1763,8 +1756,6 @@ class _NotationCell extends StatelessWidget {
                       tokenKey: ValueKey<String>(
                         'position-game-notation-token-$indicatorNamespace-$rowId-$i',
                       ),
-                      startingFen: fen,
-                      movesUpToHover: cumulative[i],
                       token: sanTokens[i],
                       useFigurine: useFigurine,
                       pieceAssets: pieceAssets,
@@ -1799,8 +1790,6 @@ class _NotationCell extends StatelessWidget {
 class _NotationHoverToken extends StatefulWidget {
   const _NotationHoverToken({
     required this.tokenKey,
-    required this.startingFen,
-    required this.movesUpToHover,
     required this.token,
     required this.useFigurine,
     required this.pieceAssets,
@@ -1812,8 +1801,6 @@ class _NotationHoverToken extends StatefulWidget {
   });
 
   final Key tokenKey;
-  final String startingFen;
-  final List<String> movesUpToHover;
   final String token;
   final bool useFigurine;
   final PieceAssets pieceAssets;
@@ -1919,19 +1906,14 @@ class _NotationHoverTokenState extends State<_NotationHoverToken> {
     );
     return KeyedSubtree(
       key: widget.tokenKey,
-      child: MoveHoverPreview(
-        startingFen: widget.startingFen,
-        movesUpToHover: widget.movesUpToHover,
-        size: 210,
-        child: MouseRegion(
-          cursor: SystemMouseCursors.click,
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit: (_) => setState(() => _hovered = false),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.onTap,
-            child: child,
-          ),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: child,
         ),
       ),
     );

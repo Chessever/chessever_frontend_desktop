@@ -469,6 +469,7 @@ class _ColumnDims {
     required this.gamesIcon,
     required this.last,
     required this.score,
+    required this.resultBar,
     required this.gap,
     required this.horizontalPad,
     required this.useFullDate,
@@ -485,6 +486,10 @@ class _ColumnDims {
 
   /// `null` when SCORE column is hidden (narrow mode).
   final double? score;
+
+  /// Fixed result-bar width so W/D/L percentages do not crowd the games and
+  /// date columns in the board-side reference panel.
+  final double resultBar;
 
   final double gap;
   final double horizontalPad;
@@ -505,6 +510,7 @@ class _ColumnDims {
           gamesIcon: 0,
           last: 54,
           score: null,
+          resultBar: 72,
           gap: 8,
           horizontalPad: 8,
           useFullDate: true,
@@ -520,6 +526,7 @@ class _ColumnDims {
         gamesIcon: 0,
         last: 42,
         score: null,
+        resultBar: 64,
         gap: 6,
         horizontalPad: 8,
         useFullDate: true,
@@ -536,6 +543,7 @@ class _ColumnDims {
         gamesIcon: 22,
         last: 68,
         score: 50,
+        resultBar: 100,
         gap: 10,
         horizontalPad: 12,
         useFullDate: true,
@@ -552,6 +560,7 @@ class _ColumnDims {
         gamesIcon: 20,
         last: 56,
         score: null,
+        resultBar: 86,
         gap: 8,
         horizontalPad: 10,
         useFullDate: true,
@@ -567,6 +576,7 @@ class _ColumnDims {
       gamesIcon: 18,
       last: 46,
       score: null,
+      resultBar: 64,
       gap: 6,
       horizontalPad: 8,
       useFullDate: false,
@@ -699,8 +709,9 @@ class _ColumnHeader extends StatelessWidget {
               ),
               SizedBox(width: dims.gap),
               if (dims.showResultBar) ...[
-                const Expanded(
-                  child: Align(
+                SizedBox(
+                  width: dims.resultBar,
+                  child: const Align(
                     alignment: Alignment.centerLeft,
                     child: Text('RESULT', style: _kHeaderStyle),
                   ),
@@ -1059,7 +1070,7 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
                 ),
                 SizedBox(width: dims.gap),
                 if (dims.showResultBar) ...[
-                  Expanded(child: _ResultBar(aggregate: agg)),
+                  SizedBox(width: dims.resultBar, child: _ResultBar(aggregate: agg)),
                   if (dims.hasScore) ...[
                     SizedBox(width: dims.gap),
                     SizedBox(
@@ -1480,22 +1491,13 @@ String _formatGamesCount(int n) {
   return n.toString();
 }
 
-/// Per-row total — full thousands-separated number when the column is
-/// wide enough for it (the desktop case), abbreviated only when really
-/// tight. Fixes the prior "1.2K"-everywhere truncation that left a
-/// huge games column looking permanently empty.
-final NumberFormat _thousandsFormat = NumberFormat.decimalPattern();
+/// Per-row total — compact whole-unit counts keep the opening table from
+/// crowding the result bars and date column (`63,000` → `63k`, `29,560` →
+/// `30k`).
 String _formatTotalCount(int n, {required bool full}) {
-  if (!full) {
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
-    return n.toString();
-  }
-  if (n >= 100000) {
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    return '${(n / 1000).toStringAsFixed(0)}K';
-  }
-  return _thousandsFormat.format(n);
+  if (n >= 1000000) return '${(n / 1000000).round()}m';
+  if (n >= 1000) return '${(n / 1000).round()}k';
+  return n.toString();
 }
 
 final DateFormat _yearFormat = DateFormat.y();
