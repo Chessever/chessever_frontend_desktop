@@ -354,12 +354,13 @@ Future<void> _openLocalChessPaths(
       print('[desktop] opened ${paths.length} local chess path(s) in Library');
       return;
     }
+    final workspacePath = localDatabaseWorkspacePath(state.source, path);
 
     openDatabaseWorkspaceTabForContainer(
       container,
       DatabaseWorkspaceArgs.local(
-        localPath: path,
-        title: localDatabaseWorkspaceTitle(state.source, path),
+        localPath: workspacePath,
+        title: localDatabaseWorkspaceTitle(state.source, workspacePath),
       ),
     );
     print(

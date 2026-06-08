@@ -167,11 +167,12 @@ class LibraryPane extends HookConsumerWidget {
         ref.read(libraryImportBufferProvider.notifier).clear();
       }
       final source = ref.read(localChessLibraryProvider).source;
+      final workspacePath = localDatabaseWorkspacePath(source, path);
       openDatabaseWorkspaceTab(
         ref,
         DatabaseWorkspaceArgs.local(
-          localPath: path,
-          title: localDatabaseWorkspaceTitle(source, path),
+          localPath: workspacePath,
+          title: localDatabaseWorkspaceTitle(source, workspacePath),
         ),
       );
     }
@@ -7383,6 +7384,15 @@ String localDatabaseWorkspaceTitle(LocalChessSource? source, String path) {
   if (sourceLabel.isNotEmpty) return sourceLabel;
   final basename = p.basename(path).trim();
   return basename.isNotEmpty ? basename : 'Local database';
+}
+
+String localDatabaseWorkspacePath(LocalChessSource? source, String path) {
+  final node = source?.nodeForPath(path);
+  if (node != null) {
+    final database = selectedLocalChessDatabaseFile(node);
+    if (database != null) return database.path;
+  }
+  return path;
 }
 
 class _FolderDatabaseWorkspace extends HookConsumerWidget {

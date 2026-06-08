@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/panes/library_pane.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 
@@ -44,4 +45,33 @@ void main() {
       expect(importPreviewCleared, isFalse);
     },
   );
+
+  test('local database workspace resolves synthetic single-file root', () {
+    const filePath = '/db/local.pgn';
+    final source = LocalChessSource(
+      id: 'local',
+      label: 'local.pgn',
+      paths: const <String>[filePath],
+      rootPath: '/db',
+      scannedAt: DateTime(2026),
+      root: LocalChessFolderNode.fromChildren(
+        name: 'local.pgn',
+        path: 'local-file:abc123',
+        relativePath: '',
+        children: const <LocalChessNode>[
+          LocalChessFileNode(
+            name: 'local.pgn',
+            path: filePath,
+            relativePath: 'local.pgn',
+            extension: 'pgn',
+            sizeBytes: 0,
+            status: LocalChessFileStatus.parsed,
+            games: <LocalChessGame>[],
+          ),
+        ],
+      ),
+    );
+
+    expect(localDatabaseWorkspacePath(source, source.root.path), filePath);
+  });
 }

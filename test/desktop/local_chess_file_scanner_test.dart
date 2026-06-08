@@ -138,6 +138,20 @@ void main() {
       expect(scanned.games.last.game.metadata['White'], 'Polgar, Judit');
     });
 
+    test('splits games even when later PGNs do not start with Event', () async {
+      final file = File('${temp.path}/missing-event-boundary.pgn');
+      await file.writeAsString('$_samplePgn\n\n$_whiteFirstPgn');
+
+      final source = await scanLocalChessPaths(<String>[file.path]);
+      final games = source.root.files.single.games;
+
+      expect(games, hasLength(2));
+      expect(games.last.game.metadata['White'], 'Gukesh, D');
+      expect(games.last.game.metadata['Black'], 'Keymer, Vincent');
+      expect(games.last.game.metadata['Date'], '2026.06.02');
+      expect(games.last.game.metadata['Event'], '14th Norway Chess 2026');
+    });
+
     test(
       'folder selection auto-resolves only when one playable database exists',
       () async {
@@ -265,4 +279,17 @@ const _secondSamplePgn = '''
 [ECO "B90"]
 
 1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 0-1
+''';
+
+const _whiteFirstPgn = '''
+[White "Gukesh, D"]
+[Black "Keymer, Vincent"]
+[Date "2026.06.02"]
+[Event "14th Norway Chess 2026"]
+[Result "1/2-1/2"]
+[WhiteElo "2732"]
+[BlackElo "2759"]
+[Opening "Two knights defence (Modern bishop's opening)"]
+
+1. e4 e5 2. Bc4 Nf6 1/2-1/2
 ''';
