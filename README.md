@@ -50,6 +50,32 @@ Refresh them with `bash scripts/fetch_stockfish.sh` when bumping Stockfish.
 The current binary SHA-256 values are recorded in
 `lib/desktop/services/engine/desktop_engine_assets.md`.
 
+## Contributing
+
+ChessEver is open source and contributions are welcome. You do **not** need our
+production secrets to work on the desktop app.
+
+**1. Get set up.** `cp .env.example .env`. The template ships the public keys
+that already live inside every released build, so the app compiles and reads
+live data immediately.
+
+**2. Historical data works out of the box.** The desktop reaches the large
+historical game database through a hosted Supabase Edge Function proxy
+(`gamebase-proxy`) that keeps the upstream API key server-side. No Gamebase key
+is required to run the app.
+
+**3. Developer access.** To manage your developer access or get a personal,
+rate-limited key for the wider ChessEver API, sign in at:
+
+> **https://chessever.com/developers**
+
+Keys there are read-only, rate-limited, scoped to safe endpoints, and revocable.
+They cannot write to or strain our database.
+
+**4. Open a PR.** Run `flutter analyze` first, and the scanners in
+[Security Before Public Release](#security-before-public-release) before any
+visibility change. Never commit your `.env` or any real secret.
+
 ## Security Before Public Release
 
 Run both scanners before making release or visibility changes:
