@@ -487,8 +487,8 @@ class _ColumnDims {
   /// `null` when SCORE column is hidden (narrow mode).
   final double? score;
 
-  /// Fixed result-bar width so W/D/L percentages do not crowd the games and
-  /// date columns in the board-side reference panel.
+  /// Result-bar width is proportional to the moves view so W/D/L percentages
+  /// have enough room to breathe in both the right rail and full explorer.
   final double resultBar;
 
   final double gap;
@@ -502,50 +502,58 @@ class _ColumnDims {
   bool get hasScore => score != null;
 
   factory _ColumnDims.forWidth(double width, {required bool compact}) {
+    double resultBarFor(double horizontalPad) {
+      final contentWidth = (width - horizontalPad * 2).clamp(0, width);
+      return contentWidth * 0.5;
+    }
+
     if (compact) {
       if (width >= 300) {
-        return const _ColumnDims(
-          move: 64,
-          gamesValue: 58,
+        const horizontalPad = 8.0;
+        return _ColumnDims(
+          move: 46,
+          gamesValue: 40,
           gamesIcon: 0,
-          last: 54,
+          last: 34,
           score: null,
-          resultBar: 72,
-          gap: 8,
-          horizontalPad: 8,
-          useFullDate: true,
+          resultBar: resultBarFor(horizontalPad),
+          gap: 6,
+          horizontalPad: horizontalPad,
+          useFullDate: false,
           useFullCount: true,
           showResultBar: true,
           headerHeight: 24,
           rowMinHeight: 30,
         );
       }
-      return const _ColumnDims(
-        move: 54,
-        gamesValue: 48,
+      const horizontalPad = 8.0;
+      return _ColumnDims(
+        move: 38,
+        gamesValue: 34,
         gamesIcon: 0,
-        last: 42,
+        last: 26,
         score: null,
-        resultBar: 64,
-        gap: 6,
-        horizontalPad: 8,
-        useFullDate: true,
+        resultBar: resultBarFor(horizontalPad),
+        gap: 4,
+        horizontalPad: horizontalPad,
+        useFullDate: false,
         useFullCount: false,
         showResultBar: true,
         headerHeight: 24,
         rowMinHeight: 30,
       );
     }
-    if (width >= 460) {
-      return const _ColumnDims(
-        move: 72,
-        gamesValue: 64,
-        gamesIcon: 22,
-        last: 68,
-        score: 50,
-        resultBar: 100,
-        gap: 10,
-        horizontalPad: 12,
+    if (width >= 660) {
+      const horizontalPad = 12.0;
+      return _ColumnDims(
+        move: 64,
+        gamesValue: 54,
+        gamesIcon: 18,
+        last: 52,
+        score: 44,
+        resultBar: resultBarFor(horizontalPad),
+        gap: 6,
+        horizontalPad: horizontalPad,
         useFullDate: true,
         useFullCount: true,
         showResultBar: true,
@@ -553,32 +561,52 @@ class _ColumnDims {
         rowMinHeight: 36,
       );
     }
-    if (width >= 340) {
-      return const _ColumnDims(
-        move: 64,
-        gamesValue: 58,
-        gamesIcon: 20,
-        last: 56,
+    if (width >= 460) {
+      const horizontalPad = 10.0;
+      return _ColumnDims(
+        move: 60,
+        gamesValue: 50,
+        gamesIcon: 18,
+        last: 48,
         score: null,
-        resultBar: 86,
-        gap: 8,
-        horizontalPad: 10,
-        useFullDate: true,
+        resultBar: resultBarFor(horizontalPad),
+        gap: 6,
+        horizontalPad: horizontalPad,
+        useFullDate: false,
+        useFullCount: true,
+        showResultBar: true,
+        headerHeight: 28,
+        rowMinHeight: 36,
+      );
+    }
+    if (width >= 340) {
+      const horizontalPad = 10.0;
+      return _ColumnDims(
+        move: 48,
+        gamesValue: 42,
+        gamesIcon: 16,
+        last: 36,
+        score: null,
+        resultBar: resultBarFor(horizontalPad),
+        gap: 6,
+        horizontalPad: horizontalPad,
+        useFullDate: false,
         useFullCount: true,
         showResultBar: true,
         headerHeight: 28,
         rowMinHeight: 34,
       );
     }
-    return const _ColumnDims(
-      move: 54,
-      gamesValue: 48,
-      gamesIcon: 18,
-      last: 46,
+    const horizontalPad = 8.0;
+    return _ColumnDims(
+      move: 46,
+      gamesValue: 38,
+      gamesIcon: 14,
+      last: 34,
       score: null,
-      resultBar: 64,
-      gap: 6,
-      horizontalPad: 8,
+      resultBar: resultBarFor(horizontalPad),
+      gap: 5,
+      horizontalPad: horizontalPad,
       useFullDate: false,
       useFullCount: false,
       showResultBar: true,
@@ -1070,7 +1098,10 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
                 ),
                 SizedBox(width: dims.gap),
                 if (dims.showResultBar) ...[
-                  SizedBox(width: dims.resultBar, child: _ResultBar(aggregate: agg)),
+                  SizedBox(
+                    width: dims.resultBar,
+                    child: _ResultBar(aggregate: agg),
+                  ),
                   if (dims.hasScore) ...[
                     SizedBox(width: dims.gap),
                     SizedBox(
@@ -1152,16 +1183,19 @@ class _GamesCountCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      _formatTotalCount(aggregate.total, full: full),
-      textAlign: TextAlign.right,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: const TextStyle(
-        color: kWhiteColor,
-        fontSize: 13,
-        fontWeight: FontWeight.w600,
-        fontFeatures: [FontFeature.tabularFigures()],
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Text(
+        _formatTotalCount(aggregate.total, full: full),
+        textAlign: TextAlign.right,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: kWhiteColor,
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          fontFeatures: [FontFeature.tabularFigures()],
+        ),
       ),
     );
   }
@@ -1495,7 +1529,7 @@ String _formatGamesCount(int n) {
 /// crowding the result bars and date column (`63,000` → `63k`, `29,560` →
 /// `30k`).
 String _formatTotalCount(int n, {required bool full}) {
-  if (n >= 1000000) return '${(n / 1000000).round()}m';
+  if (n >= 1000000) return '${(n / 1000000).round()}M';
   if (n >= 1000) return '${(n / 1000).round()}k';
   return n.toString();
 }
