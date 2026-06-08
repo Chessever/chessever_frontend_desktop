@@ -5,6 +5,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
@@ -99,6 +100,36 @@ class DesktopOpeningExplorer extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(gamebaseExplorerProvider);
+    final localPlayerId =
+        state.filters.playerIds.length == 1
+            ? state.filters.playerIds.first.trim()
+            : null;
+    if (localPlayerId != null && localPlayerId.isNotEmpty) {
+      ref.listen<PlayerOpeningTreeState>(
+        playerOpeningTreeProvider(localPlayerId),
+        (previous, next) {
+          if (previous?.index == next.index &&
+              previous?.progress.status == next.progress.status) {
+            return;
+          }
+          Future.microtask(() {
+            ref
+                .read(gamebaseExplorerProvider.notifier)
+                .syncLocalPlayerTree(localPlayerId);
+          });
+        },
+      );
+      Future.microtask(() {
+        ref
+            .read(gamebaseExplorerProvider.notifier)
+            .enableLocalPlayerTree(localPlayerId);
+        ref.read(playerOpeningTreeProvider(localPlayerId).notifier).start();
+      });
+    } else {
+      Future.microtask(() {
+        ref.read(gamebaseExplorerProvider.notifier).disableLocalPlayerTree();
+      });
+    }
     return FTheme(
       data: FThemes.zinc.dark,
       child: ColoredBox(
@@ -323,13 +354,14 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
           constraints.maxWidth,
           compact: widget.compactColumns,
         );
-        final header = widget.showHeader
-            ? _ExplorerHeader(
-                totalGames: state.totalGames,
-                moveCount: aggs.length,
-                isLoading: state.isLoading,
-              )
-            : null;
+        final header =
+            widget.showHeader
+                ? _ExplorerHeader(
+                  totalGames: state.totalGames,
+                  moveCount: aggs.length,
+                  isLoading: state.isLoading,
+                )
+                : null;
         final columnHeader = _ColumnHeader(
           dims: dims,
           sort: _sort,
@@ -364,9 +396,10 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
                     widget.onFocusMoveIndex?.call(i);
                     onMove(aggs[i].uci);
                   },
-                  onShowGames: onShowGames == null
-                      ? null
-                      : () => onShowGames(aggs[i].uci),
+                  onShowGames:
+                      onShowGames == null
+                          ? null
+                          : () => onShowGames(aggs[i].uci),
                 ),
                 if (i < aggs.length - 1)
                   const Divider(color: kDividerColor, height: 1, indent: 14),
@@ -380,8 +413,12 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
               physics: const DesktopScrollPhysics(),
               padding: const EdgeInsets.symmetric(vertical: 2),
               itemCount: aggs.length,
-              separatorBuilder: (_, __) =>
-                  const Divider(color: kDividerColor, height: 1, indent: 14),
+              separatorBuilder:
+                  (_, __) => const Divider(
+                    color: kDividerColor,
+                    height: 1,
+                    indent: 14,
+                  ),
               itemBuilder: (_, i) {
                 final agg = aggs[i];
                 return _MoveRow(
@@ -396,9 +433,8 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
                     widget.onFocusMoveIndex?.call(i);
                     onMove(agg.uci);
                   },
-                  onShowGames: onShowGames == null
-                      ? null
-                      : () => onShowGames(agg.uci),
+                  onShowGames:
+                      onShowGames == null ? null : () => onShowGames(agg.uci),
                 );
               },
             ),
@@ -433,6 +469,7 @@ class _ColumnDims {
     required this.gamesIcon,
     required this.last,
     required this.score,
+    required this.resultBar,
     required this.gap,
     required this.horizontalPad,
     required this.useFullDate,
@@ -450,6 +487,10 @@ class _ColumnDims {
   /// `null` when SCORE column is hidden (narrow mode).
   final double? score;
 
+  /// Result-bar width is proportional to the moves view so W/D/L percentages
+  /// have enough room to breathe in both the right rail and full explorer.
+  final double resultBar;
+
   final double gap;
   final double horizontalPad;
   final bool useFullDate;
@@ -461,47 +502,115 @@ class _ColumnDims {
   bool get hasScore => score != null;
 
   factory _ColumnDims.forWidth(double width, {required bool compact}) {
+    double resultBarFor({
+      required double horizontalPad,
+      required double move,
+      required double gamesValue,
+      required double gamesIcon,
+      required double last,
+      required double? score,
+      required double gap,
+    }) {
+      final contentWidth = (width - horizontalPad * 2).clamp(0, width);
+      final fixedWidth =
+          move +
+          gamesValue +
+          gamesIcon +
+          last +
+          (score ?? 0) +
+          gap * (score == null ? 3 : 5);
+      return (contentWidth - fixedWidth).clamp(48.0, contentWidth * 0.5);
+    }
+
     if (compact) {
       if (width >= 300) {
-        return const _ColumnDims(
-          move: 64,
-          gamesValue: 58,
-          gamesIcon: 0,
-          last: 54,
-          score: null,
-          gap: 8,
-          horizontalPad: 8,
-          useFullDate: true,
+        const horizontalPad = 8.0;
+        const move = 72.0;
+        const gamesValue = 36.0;
+        const gamesIcon = 0.0;
+        const last = 30.0;
+        const double? score = null;
+        const gap = 5.0;
+        return _ColumnDims(
+          move: move,
+          gamesValue: gamesValue,
+          gamesIcon: gamesIcon,
+          last: last,
+          score: score,
+          resultBar: resultBarFor(
+            horizontalPad: horizontalPad,
+            move: move,
+            gamesValue: gamesValue,
+            gamesIcon: gamesIcon,
+            last: last,
+            score: score,
+            gap: gap,
+          ),
+          gap: gap,
+          horizontalPad: horizontalPad,
+          useFullDate: false,
           useFullCount: true,
           showResultBar: true,
           headerHeight: 24,
           rowMinHeight: 30,
         );
       }
-      return const _ColumnDims(
-        move: 54,
-        gamesValue: 48,
-        gamesIcon: 0,
-        last: 42,
-        score: null,
-        gap: 6,
-        horizontalPad: 8,
-        useFullDate: true,
+      const horizontalPad = 8.0;
+      const move = 58.0;
+      const gamesValue = 30.0;
+      const gamesIcon = 0.0;
+      const last = 24.0;
+      const double? score = null;
+      const gap = 4.0;
+      return _ColumnDims(
+        move: move,
+        gamesValue: gamesValue,
+        gamesIcon: gamesIcon,
+        last: last,
+        score: score,
+        resultBar: resultBarFor(
+          horizontalPad: horizontalPad,
+          move: move,
+          gamesValue: gamesValue,
+          gamesIcon: gamesIcon,
+          last: last,
+          score: score,
+          gap: gap,
+        ),
+        gap: gap,
+        horizontalPad: horizontalPad,
+        useFullDate: false,
         useFullCount: false,
         showResultBar: true,
         headerHeight: 24,
         rowMinHeight: 30,
       );
     }
-    if (width >= 460) {
-      return const _ColumnDims(
-        move: 72,
-        gamesValue: 64,
-        gamesIcon: 22,
-        last: 68,
-        score: 50,
-        gap: 10,
-        horizontalPad: 12,
+    if (width >= 660) {
+      const horizontalPad = 12.0;
+      const move = 112.0;
+      const gamesValue = 54.0;
+      const gamesIcon = 18.0;
+      const last = 52.0;
+      const score = 44.0;
+      const gap = 6.0;
+      return _ColumnDims(
+        move: move,
+        gamesValue: gamesValue,
+        gamesIcon: gamesIcon,
+        last: last,
+        score: score,
+        resultBar: resultBarFor(
+          horizontalPad: horizontalPad,
+          move: move,
+          gamesValue: gamesValue,
+          gamesIcon: gamesIcon,
+          last: last,
+          score: score,
+          gap: gap,
+        ),
+        gap: gap,
+        horizontalPad: horizontalPad,
         useFullDate: true,
         useFullCount: true,
         showResultBar: true,
@@ -509,30 +618,94 @@ class _ColumnDims {
         rowMinHeight: 36,
       );
     }
+    if (width >= 460) {
+      const horizontalPad = 10.0;
+      const move = 88.0;
+      const gamesValue = 48.0;
+      const gamesIcon = 18.0;
+      const last = 44.0;
+      const double? score = null;
+      const gap = 6.0;
+      return _ColumnDims(
+        move: move,
+        gamesValue: gamesValue,
+        gamesIcon: gamesIcon,
+        last: last,
+        score: score,
+        resultBar: resultBarFor(
+          horizontalPad: horizontalPad,
+          move: move,
+          gamesValue: gamesValue,
+          gamesIcon: gamesIcon,
+          last: last,
+          score: score,
+          gap: gap,
+        ),
+        gap: gap,
+        horizontalPad: horizontalPad,
+        useFullDate: false,
+        useFullCount: true,
+        showResultBar: true,
+        headerHeight: 28,
+        rowMinHeight: 36,
+      );
+    }
     if (width >= 340) {
-      return const _ColumnDims(
-        move: 64,
-        gamesValue: 58,
-        gamesIcon: 20,
-        last: 56,
-        score: null,
-        gap: 8,
-        horizontalPad: 10,
-        useFullDate: true,
+      const horizontalPad = 10.0;
+      const move = 72.0;
+      const gamesValue = 38.0;
+      const gamesIcon = 14.0;
+      const last = 30.0;
+      const double? score = null;
+      const gap = 5.0;
+      return _ColumnDims(
+        move: move,
+        gamesValue: gamesValue,
+        gamesIcon: gamesIcon,
+        last: last,
+        score: score,
+        resultBar: resultBarFor(
+          horizontalPad: horizontalPad,
+          move: move,
+          gamesValue: gamesValue,
+          gamesIcon: gamesIcon,
+          last: last,
+          score: score,
+          gap: gap,
+        ),
+        gap: gap,
+        horizontalPad: horizontalPad,
+        useFullDate: false,
         useFullCount: true,
         showResultBar: true,
         headerHeight: 28,
         rowMinHeight: 34,
       );
     }
-    return const _ColumnDims(
-      move: 54,
-      gamesValue: 48,
-      gamesIcon: 18,
-      last: 46,
-      score: null,
-      gap: 6,
-      horizontalPad: 8,
+    const horizontalPad = 8.0;
+    const move = 62.0;
+    const gamesValue = 32.0;
+    const gamesIcon = 12.0;
+    const last = 26.0;
+    const double? score = null;
+    const gap = 4.0;
+    return _ColumnDims(
+      move: move,
+      gamesValue: gamesValue,
+      gamesIcon: gamesIcon,
+      last: last,
+      score: score,
+      resultBar: resultBarFor(
+        horizontalPad: horizontalPad,
+        move: move,
+        gamesValue: gamesValue,
+        gamesIcon: gamesIcon,
+        last: last,
+        score: score,
+        gap: gap,
+      ),
+      gap: gap,
+      horizontalPad: horizontalPad,
       useFullDate: false,
       useFullCount: false,
       showResultBar: true,
@@ -663,8 +836,9 @@ class _ColumnHeader extends StatelessWidget {
               ),
               SizedBox(width: dims.gap),
               if (dims.showResultBar) ...[
-                const Expanded(
-                  child: Align(
+                SizedBox(
+                  width: dims.resultBar,
+                  child: const Align(
                     alignment: Alignment.centerLeft,
                     child: Text('RESULT', style: _kHeaderStyle),
                   ),
@@ -823,9 +997,8 @@ class _SortHeaderState extends State<_SortHeader> {
           behavior: HitTestBehavior.opaque,
           onTap: () => widget.onSort(widget.field),
           child: Row(
-            mainAxisAlignment: rightAligned
-                ? MainAxisAlignment.end
-                : MainAxisAlignment.start,
+            mainAxisAlignment:
+                rightAligned ? MainAxisAlignment.end : MainAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: rightAligned ? children.reversed.toList() : children,
           ),
@@ -975,11 +1148,12 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
     );
 
     final selected = widget.selected;
-    final backgroundColor = selected
-        ? kPrimaryColor.withValues(alpha: 0.16)
-        : (widget.enableHoverFeedback && _hovered
-              ? kBlack3Color
-              : Colors.transparent);
+    final backgroundColor =
+        selected
+            ? kPrimaryColor.withValues(alpha: 0.16)
+            : (widget.enableHoverFeedback && _hovered
+                ? kBlack3Color
+                : Colors.transparent);
     return ClickCursor(
       child: MouseRegion(
         onEnter: (_) {
@@ -987,9 +1161,10 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
           setState(() => _hovered = true);
           widget.onFocus?.call();
         },
-        onExit: widget.enableHoverFeedback
-            ? (_) => setState(() => _hovered = false)
-            : null,
+        onExit:
+            widget.enableHoverFeedback
+                ? (_) => setState(() => _hovered = false)
+                : null,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
@@ -998,11 +1173,12 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
             constraints: BoxConstraints(minHeight: dims.rowMinHeight),
             decoration: BoxDecoration(
               color: backgroundColor,
-              border: selected
-                  ? const Border(
-                      left: BorderSide(color: kPrimaryColor, width: 2),
-                    )
-                  : null,
+              border:
+                  selected
+                      ? const Border(
+                        left: BorderSide(color: kPrimaryColor, width: 2),
+                      )
+                      : null,
             ),
             padding: EdgeInsets.symmetric(
               horizontal: dims.horizontalPad,
@@ -1021,7 +1197,10 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
                 ),
                 SizedBox(width: dims.gap),
                 if (dims.showResultBar) ...[
-                  Expanded(child: _ResultBar(aggregate: agg)),
+                  SizedBox(
+                    width: dims.resultBar,
+                    child: _ResultBar(aggregate: agg),
+                  ),
                   if (dims.hasScore) ...[
                     SizedBox(width: dims.gap),
                     SizedBox(
@@ -1066,15 +1245,16 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
                   // header columns aligned with row content.
                   SizedBox(
                     width: dims.gamesIcon,
-                    child: widget.onShowGames == null
-                        ? const SizedBox.shrink()
-                        : Align(
-                            alignment: Alignment.centerRight,
-                            child: _OpenGamesIcon(
-                              onTap: widget.onShowGames!,
-                              highlighted: _hovered,
+                    child:
+                        widget.onShowGames == null
+                            ? const SizedBox.shrink()
+                            : Align(
+                              alignment: Alignment.centerRight,
+                              child: _OpenGamesIcon(
+                                onTap: widget.onShowGames!,
+                                highlighted: _hovered,
+                              ),
                             ),
-                          ),
                   ),
                   SizedBox(width: dims.gap),
                   SizedBox(
@@ -1102,16 +1282,19 @@ class _GamesCountCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      _formatTotalCount(aggregate.total, full: full),
-      textAlign: TextAlign.right,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: const TextStyle(
-        color: kWhiteColor,
-        fontSize: 13,
-        fontWeight: FontWeight.w600,
-        fontFeatures: [FontFeature.tabularFigures()],
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Text(
+        _formatTotalCount(aggregate.total, full: full),
+        textAlign: TextAlign.right,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: kWhiteColor,
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          fontFeatures: [FontFeature.tabularFigures()],
+        ),
       ),
     );
   }
@@ -1177,25 +1360,26 @@ class _MoveLabel extends StatelessWidget {
           const SizedBox(width: 4),
         ],
         Flexible(
-          child: useFigurine
-              ? RichText(
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  text: TextSpan(
-                    children: buildFigurineSpans(
-                      text: san,
-                      pieceAssets: pieceAssets,
-                      style: sanStyle,
-                      pieceSize: 14,
+          child:
+              useFigurine
+                  ? RichText(
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    text: TextSpan(
+                      children: buildFigurineSpans(
+                        text: san,
+                        pieceAssets: pieceAssets,
+                        style: sanStyle,
+                        pieceSize: 14,
+                      ),
                     ),
+                  )
+                  : Text(
+                    san,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: sanStyle,
                   ),
-                )
-              : Text(
-                  san,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: sanStyle,
-                ),
         ),
       ],
     );
@@ -1268,17 +1452,18 @@ class _BarSegment extends StatelessWidget {
     return Container(
       color: bg,
       alignment: Alignment.center,
-      child: rate >= 0.12
-          ? Text(
-              '$pct%',
-              style: TextStyle(
-                color: fg,
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            )
-          : null,
+      child:
+          rate >= 0.12
+              ? Text(
+                '$pct%',
+                style: TextStyle(
+                  color: fg,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              )
+              : null,
     );
   }
 }
@@ -1310,11 +1495,12 @@ class _ScoreCell extends StatelessWidget {
     // Tint the number toward white when ≥ 55%, black when ≤ 45%, neutral
     // in between. Quick visual triage when scrolling a long candidate
     // list — strong picks pop without the user having to read the bar.
-    final color = score >= 0.55
-        ? kMoveStatWhiteColor
-        : score <= 0.45
-        ? kChessBlackMoveColor
-        : kWhiteColor70;
+    final color =
+        score >= 0.55
+            ? kMoveStatWhiteColor
+            : score <= 0.45
+            ? kChessBlackMoveColor
+            : kWhiteColor70;
     return Align(
       alignment: Alignment.centerRight,
       child: Text(
@@ -1366,17 +1552,19 @@ class _OpenGamesIconState extends State<_OpenGamesIcon> {
               height: 22,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: _hovered
-                    ? kPrimaryColor.withValues(alpha: 0.18)
-                    : Colors.transparent,
+                color:
+                    _hovered
+                        ? kPrimaryColor.withValues(alpha: 0.18)
+                        : Colors.transparent,
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Icon(
                 Icons.list_alt_rounded,
                 size: 14,
-                color: _hovered
-                    ? kPrimaryColor
-                    : (active ? kWhiteColor70 : kLightGreyColor),
+                color:
+                    _hovered
+                        ? kPrimaryColor
+                        : (active ? kWhiteColor70 : kLightGreyColor),
               ),
             ),
           ),
@@ -1436,22 +1624,13 @@ String _formatGamesCount(int n) {
   return n.toString();
 }
 
-/// Per-row total — full thousands-separated number when the column is
-/// wide enough for it (the desktop case), abbreviated only when really
-/// tight. Fixes the prior "1.2K"-everywhere truncation that left a
-/// huge games column looking permanently empty.
-final NumberFormat _thousandsFormat = NumberFormat.decimalPattern();
+/// Per-row total — compact whole-unit counts keep the opening table from
+/// crowding the result bars and date column (`63,000` → `63k`, `29,560` →
+/// `30k`).
 String _formatTotalCount(int n, {required bool full}) {
-  if (!full) {
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
-    return n.toString();
-  }
-  if (n >= 100000) {
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    return '${(n / 1000).toStringAsFixed(0)}K';
-  }
-  return _thousandsFormat.format(n);
+  if (n >= 1000000) return '${(n / 1000000).round()}M';
+  if (n >= 1000) return '${(n / 1000).round()}k';
+  return n.toString();
 }
 
 final DateFormat _yearFormat = DateFormat.y();

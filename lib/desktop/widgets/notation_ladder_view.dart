@@ -458,7 +458,6 @@ class _NotationLadderViewState extends State<NotationLadderView> {
     // are always force-expanded so the user's cursor cannot hide inside
     // a collapsed branch. Computed each build from the current tree.
     final forcedOpenIds = _ancestorVariationIds(widget.activePointer);
-    final activeMove = _moveAtPointer(mainline, widget.activePointer);
     final visibleMoveOrder = visibleNotationMoveOrder(
       game: widget.game,
       activePointer: widget.activePointer,
@@ -581,24 +580,6 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                         ),
                       ),
             ),
-            if (widget.onToggleUserNag != null ||
-                widget.onToggleMoveNag != null ||
-                widget.onSetMoveComment != null)
-              _NotationAnnotationToolbar(
-                activePointer: widget.activePointer,
-                activeMove: activeMove,
-                fallbackMainlinePly:
-                    mainline.isEmpty ? null : mainline.length - 1,
-                userNags: widget.userNags,
-                onToggleUserNag: widget.onToggleUserNag,
-                onClearUserNags: widget.onClearUserNags,
-                onToggleMoveNag: widget.onToggleMoveNag,
-                onClearMoveNags: widget.onClearMoveNags,
-                onSetMoveComment: widget.onSetMoveComment,
-                onPromoteVariation: widget.onPromoteVariation,
-                onDeleteVariation: widget.onDeleteVariation,
-                onTrimContinuation: widget.onTrimContinuation,
-              ),
           ],
         ),
       ),
@@ -1066,6 +1047,8 @@ class _LineBlock extends StatelessWidget {
               (depth == 0 && isMainlineRoot) ? onSetUserQualityNag : null,
           onToggleUserNag:
               (depth == 0 && isMainlineRoot) ? onToggleUserNag : null,
+          onToggleMoveNag:
+              (depth > 0 || !isMainlineRoot) ? onToggleMoveNag : null,
           onSetWhiteComment:
               (whitePointer != null && onSetMoveComment != null)
                   ? (comment) => onSetMoveComment!(whitePointer!, comment)
@@ -1705,6 +1688,7 @@ class _InlineNotationBlock extends StatelessWidget {
             ),
         onSetUserQualityNag: isMainlineMove ? onSetUserQualityNag : null,
         onToggleUserNag: isMainlineMove ? onToggleUserNag : null,
+        onToggleMoveNag: isMainlineMove ? null : onToggleMoveNag,
         onSetComment:
             onSetMoveComment == null
                 ? null
@@ -1948,16 +1932,18 @@ class _InlineVariationBlock extends StatelessWidget {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: onToggle,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
-          child: Text(
-            collapsed ? '[+]' : '[−]',
-            style: TextStyle(
-              color: toggleColor,
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              height: 1.0,
-              fontFeatures: const [FontFeature.tabularFigures()],
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 24, minHeight: 20),
+          child: Center(
+            child: Text(
+              collapsed ? '[+]' : '[−]',
+              style: TextStyle(
+                color: toggleColor,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                height: 1.0,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
             ),
           ),
         ),
@@ -1984,6 +1970,7 @@ class _InlineVariationBlock extends StatelessWidget {
             userHasQualityNag: false,
             onSetUserQualityNag: null,
             onToggleUserNag: null,
+            onToggleMoveNag: onToggleMoveNag,
             onSetComment:
                 onSetMoveComment == null
                     ? null
@@ -2095,9 +2082,11 @@ class _InlineVariationBlock extends StatelessWidget {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: onToggle,
-        child: Padding(
-          padding: const EdgeInsets.only(right: 4),
-          child: Text('$openGlyph$toggleGlyph', style: bracketStyle),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 24, minHeight: 20),
+          child: Center(
+            child: Text('$openGlyph$toggleGlyph', style: bracketStyle),
+          ),
         ),
       ),
     );
@@ -2123,6 +2112,7 @@ class _InlineVariationBlock extends StatelessWidget {
             userHasQualityNag: false,
             onSetUserQualityNag: null,
             onToggleUserNag: null,
+            onToggleMoveNag: onToggleMoveNag,
             onSetComment:
                 onSetMoveComment == null
                     ? null
@@ -2230,6 +2220,7 @@ class _InlineMove extends StatelessWidget {
     required this.userHasQualityNag,
     required this.onSetUserQualityNag,
     required this.onToggleUserNag,
+    required this.onToggleMoveNag,
     required this.onSetComment,
     required this.onPromoteVariation,
     required this.onDeleteVariation,
@@ -2251,6 +2242,7 @@ class _InlineMove extends StatelessWidget {
   final bool userHasQualityNag;
   final void Function(int ply, int? nag)? onSetUserQualityNag;
   final void Function(int ply, int nag)? onToggleUserNag;
+  final void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag;
   final void Function(String? comment)? onSetComment;
   final void Function(ChessMovePointer)? onPromoteVariation;
   final void Function(ChessMovePointer)? onDeleteVariation;
@@ -2305,9 +2297,11 @@ class _InlineMove extends StatelessWidget {
                   ? null
                   : (nag) => onSetUserQualityNag!(pointer.last, nag),
           onToggleUserNag:
-              onToggleUserNag == null
-                  ? null
-                  : (nag) => onToggleUserNag!(pointer.last, nag),
+              onToggleUserNag != null
+                  ? (nag) => onToggleUserNag!(pointer.last, nag)
+                  : depth > 0 && onToggleMoveNag != null
+                  ? (nag) => onToggleMoveNag!(pointer, nag)
+                  : null,
           onSetComment: onSetComment,
           onPromoteVariation:
               onPromoteVariation == null || variationHeadPointer == null
@@ -2673,6 +2667,7 @@ class _PairRow extends StatelessWidget {
     required this.blackUserHasQuality,
     required this.onSetUserQualityNag,
     required this.onToggleUserNag,
+    required this.onToggleMoveNag,
     required this.onSetWhiteComment,
     required this.onSetBlackComment,
     required this.onPromoteVariation,
@@ -2704,6 +2699,7 @@ class _PairRow extends StatelessWidget {
 
   final void Function(int ply, int? nag)? onSetUserQualityNag;
   final void Function(int ply, int nag)? onToggleUserNag;
+  final void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag;
   final void Function(String? comment)? onSetWhiteComment;
   final void Function(String? comment)? onSetBlackComment;
   final void Function(ChessMovePointer)? onPromoteVariation;
@@ -2778,6 +2774,7 @@ class _PairRow extends StatelessWidget {
                         onTap: () => onJump(whitePointer!),
                         nags: whiteNags,
                         annotationComment: whiteAnnotation?.comment,
+                        commentText: _firstPgnComment(whiteMove!.comments),
                         userHasQualityNag: whiteUserHasQuality,
                         clockText: _formatClockChip(whiteMove!.clockTime),
                         clockSeconds: _clockSeconds(whiteMove!.clockTime),
@@ -2789,11 +2786,12 @@ class _PairRow extends StatelessWidget {
                                   nag,
                                 ),
                         onToggleUserNag:
-                            onToggleUserNag == null
+                            onToggleUserNag != null
+                                ? (nag) =>
+                                    onToggleUserNag!(whitePointer!.last, nag)
+                                : onToggleMoveNag == null
                                 ? null
-                                : (nag) =>
-                                    onToggleUserNag!(whitePointer!.last, nag),
-                        commentText: _firstPgnComment(whiteMove!.comments),
+                                : (nag) => onToggleMoveNag!(whitePointer!, nag),
                         onSetComment: onSetWhiteComment,
                         onPromoteVariation:
                             onPromoteVariation == null ||
@@ -2829,6 +2827,7 @@ class _PairRow extends StatelessWidget {
                         onTap: () => onJump(blackPointer!),
                         nags: blackNags,
                         annotationComment: blackAnnotation?.comment,
+                        commentText: _firstPgnComment(blackMove!.comments),
                         userHasQualityNag: blackUserHasQuality,
                         clockText: _formatClockChip(blackMove!.clockTime),
                         clockSeconds: _clockSeconds(blackMove!.clockTime),
@@ -2840,11 +2839,12 @@ class _PairRow extends StatelessWidget {
                                   nag,
                                 ),
                         onToggleUserNag:
-                            onToggleUserNag == null
+                            onToggleUserNag != null
+                                ? (nag) =>
+                                    onToggleUserNag!(blackPointer!.last, nag)
+                                : onToggleMoveNag == null
                                 ? null
-                                : (nag) =>
-                                    onToggleUserNag!(blackPointer!.last, nag),
-                        commentText: _firstPgnComment(blackMove!.comments),
+                                : (nag) => onToggleMoveNag!(blackPointer!, nag),
                         onSetComment: onSetBlackComment,
                         onPromoteVariation:
                             onPromoteVariation == null ||
@@ -2949,7 +2949,8 @@ class _LadderChipState extends State<_LadderChip> {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     final canSetQuality = widget.onSetUserQualityNag != null;
     final canToggleNag = widget.onToggleUserNag != null;
-    final canAnnotate = canSetQuality || canToggleNag;
+    final canQualityAnnotate = canSetQuality || canToggleNag;
+    final canAnnotate = canQualityAnnotate || canToggleNag;
     final canComment = widget.onSetComment != null;
     final canPromote = widget.onPromoteVariation != null;
     final canDelete = widget.onDeleteVariation != null;
@@ -3022,7 +3023,7 @@ class _LadderChipState extends State<_LadderChip> {
         ],
         if (canAnnotate) ...[
           const PopupMenuDivider(height: 1),
-          if (canSetQuality)
+          if (canQualityAnnotate)
             const PopupMenuItem<_LadderAction>(
               value: _LadderAction.openQualityAnnotations,
               child: _MenuLabel(
@@ -3095,7 +3096,13 @@ class _LadderChipState extends State<_LadderChip> {
           _NotationAnnotationToolbar._qualityNags,
         );
         if (!mounted) return;
-        if (nag != null) widget.onSetUserQualityNag?.call(nag);
+        if (nag != null) {
+          if (widget.onSetUserQualityNag != null) {
+            widget.onSetUserQualityNag?.call(nag);
+          } else {
+            widget.onToggleUserNag?.call(nag);
+          }
+        }
       case _LadderAction.openEvaluationAnnotations:
         final nag = await _showNagSubmenu(
           this.context,
@@ -3260,14 +3267,17 @@ class _LadderChipState extends State<_LadderChip> {
       if (widget.compact) sanText else Flexible(child: sanText),
       for (final d in nags) ...[
         const SizedBox(width: 3),
-        Text(
-          d.symbol,
-          style: TextStyle(
-            color: widget.selected ? kBackgroundColor : d.color,
-            fontSize: d.isQuality ? 13 : 12,
-            fontWeight: d.isQuality ? FontWeight.w800 : FontWeight.w600,
-            height: 1.0,
-            letterSpacing: -0.2,
+        MouseRegion(
+          onEnter: (_) => widget.onTap(),
+          child: Text(
+            d.symbol,
+            style: TextStyle(
+              color: widget.selected ? kBackgroundColor : d.color,
+              fontSize: d.isQuality ? 13 : 12,
+              fontWeight: d.isQuality ? FontWeight.w800 : FontWeight.w600,
+              height: 1.0,
+              letterSpacing: -0.2,
+            ),
           ),
         ),
       ],
@@ -3661,29 +3671,6 @@ class _EmptyLadderHint extends StatelessWidget {
       ),
     );
   }
-}
-
-ChessMove? _moveAtPointer(ChessLine mainline, ChessMovePointer pointer) {
-  if (pointer.isEmpty) return null;
-  ChessLine line = mainline;
-  ChessMove? move;
-  for (var i = 0; i < pointer.length; i++) {
-    final index = pointer[i];
-    if (index < 0 || index >= line.length) return null;
-    move = line[index];
-    if (i == pointer.length - 1) return move;
-    i += 1;
-    if (i >= pointer.length) return null;
-    final variationIndex = pointer[i];
-    final variations = move.variations;
-    if (variations == null ||
-        variationIndex < 0 ||
-        variationIndex >= variations.length) {
-      return null;
-    }
-    line = variations[variationIndex];
-  }
-  return move;
 }
 
 ChessMovePointer? _activeVariationHead(ChessMovePointer pointer) {

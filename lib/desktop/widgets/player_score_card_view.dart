@@ -1931,6 +1931,11 @@ class _GameRowState extends State<_GameRow> {
                       ),
                     ),
                   ),
+                  _ResultBadge(
+                    result: widget.result,
+                    playerIsWhite: widget.playerIsWhite,
+                  ),
+                  const SizedBox(width: 10),
                   if (opponent.federation.trim().isNotEmpty) ...[
                     FederationFlag(
                       federation: opponent.federation,
@@ -2017,11 +2022,6 @@ class _GameRowState extends State<_GameRow> {
                             ),
                           ),
                         ],
-                        const SizedBox(width: 10),
-                        _ResultBadge(
-                          result: widget.result,
-                          playerIsWhite: widget.playerIsWhite,
-                        ),
                       ],
                     ),
                   ),

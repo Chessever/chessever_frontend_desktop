@@ -132,6 +132,7 @@ class AdaptiveGamesTable<T> extends StatelessWidget {
     required this.scrollController,
     this.horizontalScrollController,
     this.headerHeight = 28,
+    this.showHeader = true,
     this.rowMinHeight = 38,
     this.padding = const EdgeInsets.symmetric(horizontal: 10),
     this.rowSeparator = true,
@@ -173,6 +174,7 @@ class AdaptiveGamesTable<T> extends StatelessWidget {
   final ScrollController? horizontalScrollController;
 
   final double headerHeight;
+  final bool showHeader;
   final double rowMinHeight;
   final EdgeInsetsGeometry padding;
   final bool rowSeparator;
@@ -266,6 +268,7 @@ class AdaptiveGamesTable<T> extends StatelessWidget {
                 rows: rows,
                 colWidths: colWidths,
                 headerHeight: headerHeight,
+                showHeader: showHeader,
                 rowMinHeight: rowMinHeight,
                 padding: padding,
                 rowSeparator: rowSeparator,
@@ -317,6 +320,7 @@ class _SingleTableBody<T> extends StatefulWidget {
     required this.rows,
     required this.colWidths,
     required this.headerHeight,
+    required this.showHeader,
     required this.rowMinHeight,
     required this.padding,
     required this.rowSeparator,
@@ -341,6 +345,7 @@ class _SingleTableBody<T> extends StatefulWidget {
   final List<T> rows;
   final Map<int, TableColumnWidth> colWidths;
   final double headerHeight;
+  final bool showHeader;
   final double rowMinHeight;
   final EdgeInsetsGeometry padding;
   final bool rowSeparator;
@@ -405,7 +410,7 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
       columnWidths: widget.colWidths,
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       children: [
-        _headerRow(),
+        if (widget.showHeader) _headerRow(),
         for (var i = 0; i < widget.rows.length; i++) ...[
           _bodyRow(i, hasSubline: sublines.containsKey(i)),
           if (sublines.containsKey(i)) _sublineRow(i, sublines[i]!),

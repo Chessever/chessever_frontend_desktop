@@ -9,10 +9,10 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
+import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/widgets/adaptive_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
-import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
@@ -508,12 +508,10 @@ class _DesktopPositionGamesTableState
 
   GamebasePositionGamesQuery _buildQuery({required int pageNumber}) {
     final filters = ref.read(gamebaseExplorerProvider).filters;
-    final timeControl = filters.timeControls.isNotEmpty
-        ? filters.timeControls.first
-        : null;
-    final playerId = filters.playerIds.isNotEmpty
-        ? filters.playerIds.first
-        : null;
+    final timeControl =
+        filters.timeControls.isNotEmpty ? filters.timeControls.first : null;
+    final playerId =
+        filters.playerIds.isNotEmpty ? filters.playerIds.first : null;
     final color = switch (filters.playerColor) {
       GamebasePlayerColor.white => 'white',
       GamebasePlayerColor.black => 'black',
@@ -751,8 +749,8 @@ class _DesktopPositionGamesTableState
       row['black']?.toString() ?? row['blackName']?.toString() ?? '',
       _readInt(row['blackElo']),
     );
-    final site = (row['site']?.toString() ?? row['event']?.toString() ?? '')
-        .trim();
+    final site =
+        (row['site']?.toString() ?? row['event']?.toString() ?? '').trim();
     final year = _yearFromRow(row);
     return [
       if (result.isNotEmpty) result,
@@ -771,10 +769,8 @@ class _DesktopPositionGamesTableState
   String _compactPlayerCitation(String rawName, int rating) {
     final clean = rawName.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (clean.isEmpty) return '';
-    final parts = clean
-        .split(RegExp(r'[ ,]+'))
-        .where((p) => p.isNotEmpty)
-        .toList();
+    final parts =
+        clean.split(RegExp(r'[ ,]+')).where((p) => p.isNotEmpty).toList();
     final last = parts.isEmpty ? clean : parts.first;
     final initial = parts.length >= 2 ? ',${parts[1].substring(0, 1)}' : '';
     final ratingText = rating > 0 ? ' ($rating)' : '';
@@ -827,9 +823,10 @@ class _DesktopPositionGamesTableState
       if (!pgnHasMoves(pgn) && gameWithPgn?.data != null) {
         pgn = buildPgnFromGamebaseData(gameWithPgn!.data);
       }
-      final full = pgnHasMoves(pgn)
-          ? _continuationFromPgnAfterFen(id, pgn!, widget.fen)
-          : const <String>[];
+      final full =
+          pgnHasMoves(pgn)
+              ? _continuationFromPgnAfterFen(id, pgn!, widget.fen)
+              : const <String>[];
       if (!mounted) return;
       final best = full.length > fallback.length ? full : fallback;
       setState(() {
@@ -864,24 +861,20 @@ class _DesktopPositionGamesTableState
       if (context == null) return;
       final renderObject = context.findRenderObject();
       if (renderObject == null || !_activeScrollController.hasClients) return;
-      final scrollObject = _activeScrollController
-          .position
-          .context
-          .storageContext
-          .findRenderObject();
+      final scrollObject =
+          _activeScrollController.position.context.storageContext
+              .findRenderObject();
       if (renderObject is! RenderBox || scrollObject is! RenderBox) return;
-      final targetTop = renderObject
-          .localToGlobal(Offset.zero, ancestor: scrollObject)
-          .dy;
+      final targetTop =
+          renderObject.localToGlobal(Offset.zero, ancestor: scrollObject).dy;
       final viewport = _activeScrollController.position.viewportDimension;
-      final target =
-          (_activeScrollController.offset +
-                  targetTop -
-                  (viewport - renderObject.size.height) * 0.16)
-              .clamp(
-                _activeScrollController.position.minScrollExtent,
-                _activeScrollController.position.maxScrollExtent,
-              );
+      final target = (_activeScrollController.offset +
+              targetTop -
+              (viewport - renderObject.size.height) * 0.16)
+          .clamp(
+            _activeScrollController.position.minScrollExtent,
+            _activeScrollController.position.maxScrollExtent,
+          );
       _activeScrollController.animateTo(
         target,
         duration: const Duration(milliseconds: 160),
@@ -928,9 +921,15 @@ class _DesktopPositionGamesTableState
       fenSeed: initialFen,
       initialFen: initialFen,
       databaseTitle: databaseTitle,
-      databaseGames: databaseGames.isEmpty
-          ? [gamebasePositionGameSummaryFromRow(row, fallbackFen: initialFen)]
-          : databaseGames,
+      databaseGames:
+          databaseGames.isEmpty
+              ? [
+                gamebasePositionGameSummaryFromRow(
+                  row,
+                  fallbackFen: initialFen,
+                ),
+              ]
+              : databaseGames,
       databaseGamesPagination: BoardTabDatabaseGamesPagination(
         query: gamebasePositionGamesQueryWithPage(query, 0),
         nextPageNumber: _nextPageNumber,
@@ -1038,6 +1037,23 @@ class _DesktopPositionGamesTableState
         _fetchPage(reset: true);
       },
     );
+    final filters = ref.watch(
+      gamebaseExplorerProvider.select((s) => s.filters),
+    );
+    final playerId =
+        filters.playerIds.length == 1 ? filters.playerIds.first.trim() : null;
+    if (playerId != null && playerId.isNotEmpty) {
+      ref.listen<PlayerOpeningTreeState>(playerOpeningTreeProvider(playerId), (
+        previous,
+        next,
+      ) {
+        if (previous?.index == next.index &&
+            previous?.progress.status == next.progress.status) {
+          return;
+        }
+        _fetchPage(reset: true);
+      });
+    }
     final boardSettings = ref.watch(
       boardSettingsProviderNew.select(
         (s) => s.valueOrNull ?? const BoardSettingsNew(),
@@ -1048,18 +1064,16 @@ class _DesktopPositionGamesTableState
     // outer scroll view; the table must size to its content so the outer
     // sliver knows how tall to render it. Otherwise the table fills the
     // available vertical space via Expanded.
-    final bodyWrapper = widget.useFixedRowAlignment
-        ? body
-        : Expanded(child: body);
+    final bodyWrapper =
+        widget.useFixedRowAlignment ? body : Expanded(child: body);
     return FTheme(
       data: FThemes.zinc.dark,
       child: ColoredBox(
         color: kBlack2Color,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: widget.useFixedRowAlignment
-              ? MainAxisSize.min
-              : MainAxisSize.max,
+          mainAxisSize:
+              widget.useFixedRowAlignment ? MainAxisSize.min : MainAxisSize.max,
           children: [bodyWrapper],
         ),
       ),
@@ -1111,76 +1125,77 @@ class _DesktopPositionGamesTableState
       useFixedRowAlignment: widget.useFixedRowAlignment,
       rowMinHeight: widget.referenceLayout ? 30 : 32,
       headerHeight: 24,
-      padding: widget.referenceLayout
-          ? const EdgeInsets.symmetric(horizontal: 7)
-          : const EdgeInsets.symmetric(horizontal: 5),
+      padding:
+          widget.referenceLayout
+              ? const EdgeInsets.symmetric(horizontal: 7)
+              : const EdgeInsets.symmetric(horizontal: 5),
       // Without the inline notation column the meta-only columns fit the
       // rail without forced horizontal scroll — the subline absorbs the
       // wide notation oneliner.
-      minTableWidth: useNotationSubline
-          ? null
-          : (widget.referenceLayout ? 1280 : 1680),
-      rowSublineBuilder: useNotationSubline
-          ? (context, row) {
-              final rowId = (row['id']?.toString().trim() ?? '');
-              final rowIndex = _rows.indexOf(row);
-              final isSelected =
-                  selectedRowId != null &&
-                  selectedRowId.isNotEmpty &&
-                  rowId == selectedRowId;
-              final continuation = _bestContinuationForRow(
-                row,
-                _readContinuation(row['continuation']),
-              );
-              if (continuation.isEmpty) return null;
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(8, 1, 8, 5),
-                child: _NotationCell(
-                  fen: widget.fen,
-                  rowId: rowId,
-                  indicatorNamespace: 'games',
-                  continuation: continuation,
-                  activePlyIndex: isSelected
-                      ? widget.activeContinuationStep
-                      : null,
-                  activeAutoplay:
-                      isSelected && widget.activeContinuationAutoplay,
-                  useFigurine: boardSettings.useFigurine,
-                  pieceAssets: boardSettings.pieceAssets,
-                  onTapStep: (step) =>
-                      _handleNotationStepTap(row, rowIndex, step),
-                ),
-              );
-            }
-          : null,
+      minTableWidth:
+          useNotationSubline ? null : (widget.referenceLayout ? 1280 : 1680),
+      rowSublineBuilder:
+          useNotationSubline
+              ? (context, row) {
+                final rowId = (row['id']?.toString().trim() ?? '');
+                final rowIndex = _rows.indexOf(row);
+                final isSelected =
+                    selectedRowId != null &&
+                    selectedRowId.isNotEmpty &&
+                    rowId == selectedRowId;
+                final continuation = _bestContinuationForRow(
+                  row,
+                  _readContinuation(row['continuation']),
+                );
+                if (continuation.isEmpty) return null;
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 1, 8, 5),
+                  child: _NotationCell(
+                    fen: widget.fen,
+                    rowId: rowId,
+                    indicatorNamespace: 'games',
+                    continuation: continuation,
+                    activePlyIndex:
+                        isSelected ? widget.activeContinuationStep : null,
+                    activeAutoplay:
+                        isSelected && widget.activeContinuationAutoplay,
+                    useFigurine: boardSettings.useFigurine,
+                    pieceAssets: boardSettings.pieceAssets,
+                    onTapStep:
+                        (step) => _handleNotationStepTap(row, rowIndex, step),
+                  ),
+                );
+              }
+              : null,
       sortState: sortState,
       onSortChanged: (next) {
         setState(() => _sortOverride = next);
         _fetchPage(reset: true);
       },
-      rowDecorationBuilder: selectedRowId == null
-          ? null
-          : (row, hovered) {
-              final rowId = (row['id']?.toString().trim() ?? '');
-              if (rowId == selectedRowId) {
-                return BoxDecoration(
-                  color: kPrimaryColor.withValues(alpha: 0.18),
-                  border: const Border(
-                    left: BorderSide(color: kPrimaryColor, width: 2),
-                    bottom: BorderSide(color: kDividerColor, width: 0.5),
-                  ),
-                );
-              }
-              if (hovered) {
-                return const BoxDecoration(
-                  color: kBlack3Color,
-                  border: Border(
-                    bottom: BorderSide(color: kDividerColor, width: 0.5),
-                  ),
-                );
-              }
-              return null;
-            },
+      rowDecorationBuilder:
+          selectedRowId == null
+              ? null
+              : (row, hovered) {
+                final rowId = (row['id']?.toString().trim() ?? '');
+                if (rowId == selectedRowId) {
+                  return BoxDecoration(
+                    color: kPrimaryColor.withValues(alpha: 0.18),
+                    border: const Border(
+                      left: BorderSide(color: kPrimaryColor, width: 2),
+                      bottom: BorderSide(color: kDividerColor, width: 0.5),
+                    ),
+                  );
+                }
+                if (hovered) {
+                  return const BoxDecoration(
+                    color: kBlack3Color,
+                    border: Border(
+                      bottom: BorderSide(color: kDividerColor, width: 0.5),
+                    ),
+                  );
+                }
+                return null;
+              },
       rowKeyBuilder: (row) {
         final rowId = (row['id']?.toString().trim() ?? '');
         if (rowId.isEmpty) return null;
@@ -1188,25 +1203,27 @@ class _DesktopPositionGamesTableState
       },
       enableRowHover: false,
       onRowHover: _handleRowHover,
-      onRowTap: (row, {required bool inNewTab}) =>
-          _handleRowTap(row, inNewTab: inNewTab),
-      onRowSecondaryTap: (row, position) =>
-          unawaited(_showRowContextMenu(row, position)),
-      footer: _hasMore
-          ? const Padding(
-              padding: EdgeInsets.symmetric(vertical: 14),
-              child: Center(
-                child: SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.6,
-                    valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+      onRowTap:
+          (row, {required bool inNewTab}) =>
+              _handleRowTap(row, inNewTab: inNewTab),
+      onRowSecondaryTap:
+          (row, position) => unawaited(_showRowContextMenu(row, position)),
+      footer:
+          _hasMore
+              ? const Padding(
+                padding: EdgeInsets.symmetric(vertical: 14),
+                child: Center(
+                  child: SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.6,
+                      valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                    ),
                   ),
                 ),
-              ),
-            )
-          : null,
+              )
+              : null,
     );
     if (!_isInitialLoading) return table;
     return Stack(
@@ -1248,27 +1265,29 @@ class _DesktopPositionGamesTableState
         id: 'white',
         label: 'WHITE',
         sortField: GamebaseSortField.whiteName,
-        cellBuilder: (_, row) => _CompactPlayerName(
-          name: _rowText(row, const ['white', 'whiteName']),
-          federation: _rowText(row, const ['whiteFed']),
-          title: _rowText(row, const ['whiteTitle']),
-          showFlag: showPlayerChrome,
-          showTitle: showPlayerChrome,
-          maxWidth: playerMaxWidth,
-        ),
+        cellBuilder:
+            (_, row) => _CompactPlayerName(
+              name: _rowText(row, const ['white', 'whiteName']),
+              federation: _rowText(row, const ['whiteFed']),
+              title: _rowText(row, const ['whiteTitle']),
+              showFlag: showPlayerChrome,
+              showTitle: showPlayerChrome,
+              maxWidth: playerMaxWidth,
+            ),
       ),
       AdaptiveColumn<Map<String, dynamic>>(
         id: 'black',
         label: 'BLACK',
         sortField: GamebaseSortField.blackName,
-        cellBuilder: (_, row) => _CompactPlayerName(
-          name: _rowText(row, const ['black', 'blackName']),
-          federation: _rowText(row, const ['blackFed']),
-          title: _rowText(row, const ['blackTitle']),
-          showFlag: showPlayerChrome,
-          showTitle: showPlayerChrome,
-          maxWidth: playerMaxWidth,
-        ),
+        cellBuilder:
+            (_, row) => _CompactPlayerName(
+              name: _rowText(row, const ['black', 'blackName']),
+              federation: _rowText(row, const ['blackFed']),
+              title: _rowText(row, const ['blackTitle']),
+              showFlag: showPlayerChrome,
+              showTitle: showPlayerChrome,
+              maxWidth: playerMaxWidth,
+            ),
       ),
       if (!useNotationSubline)
         AdaptiveColumn<Map<String, dynamic>>(
@@ -1321,8 +1340,9 @@ class _DesktopPositionGamesTableState
         sortField: GamebaseSortField.result,
         headerAlignment: Alignment.center,
         cellAlignment: Alignment.center,
-        cellBuilder: (_, row) =>
-            _ResultCell(result: (row['result']?.toString() ?? '').trim()),
+        cellBuilder:
+            (_, row) =>
+                _ResultCell(result: (row['result']?.toString() ?? '').trim()),
       ),
       AdaptiveColumn<Map<String, dynamic>>(
         id: 'year',
@@ -1349,51 +1369,56 @@ class _DesktopPositionGamesTableState
         id: 'eco',
         label: 'ECO',
         sortField: GamebaseSortField.eco,
-        cellBuilder: (_, row) => _TextCell(
-          value: _rowText(row, const ['eco']),
-          maxWidth: 38,
-          color: kWhiteColor70,
-        ),
+        cellBuilder:
+            (_, row) => _TextCell(
+              value: _rowText(row, const ['eco']),
+              maxWidth: 38,
+              color: kWhiteColor70,
+            ),
       ),
       AdaptiveColumn<Map<String, dynamic>>(
         id: 'opening',
         label: 'OPENING',
         sortField: GamebaseSortField.opening,
-        cellBuilder: (_, row) => _TextCell(
-          value: _rowText(row, const ['opening']),
-          maxWidth: widget.referenceLayout ? 160 : 220,
-          color: kWhiteColor,
-        ),
+        cellBuilder:
+            (_, row) => _TextCell(
+              value: _rowText(row, const ['opening']),
+              maxWidth: widget.referenceLayout ? 160 : 220,
+              color: kWhiteColor,
+            ),
       ),
       AdaptiveColumn<Map<String, dynamic>>(
         id: 'variation',
         label: 'VAR',
         sortField: GamebaseSortField.variation,
-        cellBuilder: (_, row) => _TextCell(
-          value: _rowText(row, const ['variation']),
-          maxWidth: widget.referenceLayout ? 120 : 170,
-          color: kWhiteColor70,
-        ),
+        cellBuilder:
+            (_, row) => _TextCell(
+              value: _rowText(row, const ['variation']),
+              maxWidth: widget.referenceLayout ? 120 : 170,
+              color: kWhiteColor70,
+            ),
       ),
       AdaptiveColumn<Map<String, dynamic>>(
         id: 'event',
         label: 'EVENT',
         sortField: GamebaseSortField.event,
-        cellBuilder: (_, row) => _TextCell(
-          value: _rowText(row, const ['event']),
-          maxWidth: widget.referenceLayout ? 150 : 210,
-          color: kWhiteColor70,
-        ),
+        cellBuilder:
+            (_, row) => _TextCell(
+              value: _rowText(row, const ['event']),
+              maxWidth: widget.referenceLayout ? 150 : 210,
+              color: kWhiteColor70,
+            ),
       ),
       AdaptiveColumn<Map<String, dynamic>>(
         id: 'site',
         label: 'SITE',
         sortField: GamebaseSortField.site,
-        cellBuilder: (_, row) => _TextCell(
-          value: _rowText(row, const ['site']),
-          maxWidth: widget.referenceLayout ? 130 : 180,
-          color: kWhiteColor70,
-        ),
+        cellBuilder:
+            (_, row) => _TextCell(
+              value: _rowText(row, const ['site']),
+              maxWidth: widget.referenceLayout ? 130 : 180,
+              color: kWhiteColor70,
+            ),
       ),
       AdaptiveColumn<Map<String, dynamic>>(
         id: 'timeControl',
@@ -1402,8 +1427,9 @@ class _DesktopPositionGamesTableState
         headerAlignment: Alignment.center,
         cellAlignment: Alignment.center,
         tooltip: 'Time control',
-        cellBuilder: (_, row) =>
-            _TimeControlCell(value: _rowText(row, const ['timeControl'])),
+        cellBuilder:
+            (_, row) =>
+                _TimeControlCell(value: _rowText(row, const ['timeControl'])),
       ),
       AdaptiveColumn<Map<String, dynamic>>(
         id: 'mode',
@@ -1675,9 +1701,10 @@ class _NotationCell extends StatelessWidget {
     // whole game. Anything beyond that just gets clipped/faded anyway, so
     // skip the work of rendering it.
     const maxPlies = 40;
-    final cappedContinuation = continuation.length > maxPlies
-        ? continuation.sublist(0, maxPlies)
-        : continuation;
+    final cappedContinuation =
+        continuation.length > maxPlies
+            ? continuation.sublist(0, maxPlies)
+            : continuation;
     final sanTokens = _toSanTokens(fen, cappedContinuation);
     const style = TextStyle(
       color: kWhiteColor,
@@ -1698,24 +1725,19 @@ class _NotationCell extends StatelessWidget {
         ),
       );
     }
-    final cumulative = <List<String>>[];
-    final running = <String>[];
-    for (final uci in cappedContinuation.take(sanTokens.length)) {
-      running.add(uci);
-      cumulative.add(List<String>.unmodifiable(running));
-    }
     final activeIndex = activePlyIndex?.clamp(0, sanTokens.length - 1).toInt();
     return SizedBox(
       height: 22,
       child: ShaderMask(
         // Soft right-edge fade telegraphs that the row continues past the
         // visible width without the visual jolt of a hard mid-letter clip.
-        shaderCallback: (rect) => const LinearGradient(
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-          stops: [0.0, 0.92, 1.0],
-          colors: [Colors.black, Colors.black, Colors.transparent],
-        ).createShader(rect),
+        shaderCallback:
+            (rect) => const LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              stops: [0.0, 0.92, 1.0],
+              colors: [Colors.black, Colors.black, Colors.transparent],
+            ).createShader(rect),
         blendMode: BlendMode.dstIn,
         child: ClipRect(
           child: OverflowBox(
@@ -1734,19 +1756,18 @@ class _NotationCell extends StatelessWidget {
                       tokenKey: ValueKey<String>(
                         'position-game-notation-token-$indicatorNamespace-$rowId-$i',
                       ),
-                      startingFen: fen,
-                      movesUpToHover: cumulative[i],
                       token: sanTokens[i],
                       useFigurine: useFigurine,
                       pieceAssets: pieceAssets,
                       style: style,
                       active: activeIndex == i,
                       autoplaying: activeIndex == i && activeAutoplay,
-                      activeKey: activeIndex == i
-                          ? ValueKey<String>(
-                              'position-game-notation-active-$indicatorNamespace-$rowId-$i',
-                            )
-                          : null,
+                      activeKey:
+                          activeIndex == i
+                              ? ValueKey<String>(
+                                'position-game-notation-active-$indicatorNamespace-$rowId-$i',
+                              )
+                              : null,
                       onTap: () => onTapStep(i),
                     ),
                     // Larger whitespace between full moves (after a black
@@ -1769,8 +1790,6 @@ class _NotationCell extends StatelessWidget {
 class _NotationHoverToken extends StatefulWidget {
   const _NotationHoverToken({
     required this.tokenKey,
-    required this.startingFen,
-    required this.movesUpToHover,
     required this.token,
     required this.useFigurine,
     required this.pieceAssets,
@@ -1782,8 +1801,6 @@ class _NotationHoverToken extends StatefulWidget {
   });
 
   final Key tokenKey;
-  final String startingFen;
-  final List<String> movesUpToHover;
   final String token;
   final bool useFigurine;
   final PieceAssets pieceAssets;
@@ -1802,59 +1819,67 @@ class _NotationHoverTokenState extends State<_NotationHoverToken> {
 
   @override
   Widget build(BuildContext context) {
-    final tokenStyle = widget.active
-        ? widget.style.copyWith(color: kWhiteColor, fontWeight: FontWeight.w800)
-        : widget.style.copyWith(
-            color: _hovered ? kWhiteColor : widget.style.color ?? kWhiteColor,
-          );
-    final tokenChild = widget.useFigurine
-        ? RichText(
-            maxLines: 1,
-            overflow: TextOverflow.clip,
-            text: TextSpan(
-              children: buildFigurineSpans(
-                text: widget.token,
-                pieceAssets: widget.pieceAssets,
-                style: tokenStyle,
-                pieceSize: 12,
+    final tokenStyle =
+        widget.active
+            ? widget.style.copyWith(
+              color: kWhiteColor,
+              fontWeight: FontWeight.w800,
+            )
+            : widget.style.copyWith(
+              color: _hovered ? kWhiteColor : widget.style.color ?? kWhiteColor,
+            );
+    final tokenChild =
+        widget.useFigurine
+            ? RichText(
+              maxLines: 1,
+              overflow: TextOverflow.clip,
+              text: TextSpan(
+                children: buildFigurineSpans(
+                  text: widget.token,
+                  pieceAssets: widget.pieceAssets,
+                  style: tokenStyle,
+                  pieceSize: 12,
+                ),
               ),
-            ),
-          )
-        : Text(
-            widget.token,
-            maxLines: 1,
-            overflow: TextOverflow.clip,
-            style: tokenStyle,
-          );
+            )
+            : Text(
+              widget.token,
+              maxLines: 1,
+              overflow: TextOverflow.clip,
+              style: tokenStyle,
+            );
     final child = AnimatedContainer(
       key: widget.activeKey,
       duration: const Duration(milliseconds: 120),
       curve: Curves.easeOutCubic,
       padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
       decoration: BoxDecoration(
-        color: widget.active
-            ? kPrimaryColor.withValues(alpha: 0.24)
-            : (_hovered
-                  ? kWhiteColor.withValues(alpha: 0.06)
-                  : Colors.transparent),
+        color:
+            widget.active
+                ? kPrimaryColor.withValues(alpha: 0.24)
+                : (_hovered
+                    ? kWhiteColor.withValues(alpha: 0.06)
+                    : Colors.transparent),
         borderRadius: BorderRadius.circular(4),
         border: Border.all(
-          color: widget.active
-              ? kPrimaryColor.withValues(alpha: 0.84)
-              : (_hovered
-                    ? kWhiteColor.withValues(alpha: 0.20)
-                    : Colors.transparent),
+          color:
+              widget.active
+                  ? kPrimaryColor.withValues(alpha: 0.84)
+                  : (_hovered
+                      ? kWhiteColor.withValues(alpha: 0.20)
+                      : Colors.transparent),
           width: 0.8,
         ),
-        boxShadow: widget.active
-            ? [
-                BoxShadow(
-                  color: kPrimaryColor.withValues(alpha: 0.20),
-                  blurRadius: 10,
-                  offset: const Offset(0, 2),
-                ),
-              ]
-            : null,
+        boxShadow:
+            widget.active
+                ? [
+                  BoxShadow(
+                    color: kPrimaryColor.withValues(alpha: 0.20),
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
+                  ),
+                ]
+                : null,
       ),
       child: Stack(
         clipBehavior: Clip.none,
@@ -1867,9 +1892,10 @@ class _NotationHoverTokenState extends State<_NotationHoverToken> {
               bottom: -3,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: widget.autoplaying
-                      ? kWhiteColor.withValues(alpha: 0.90)
-                      : kPrimaryColor,
+                  color:
+                      widget.autoplaying
+                          ? kWhiteColor.withValues(alpha: 0.90)
+                          : kPrimaryColor,
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: const SizedBox(height: 2),
@@ -1880,19 +1906,14 @@ class _NotationHoverTokenState extends State<_NotationHoverToken> {
     );
     return KeyedSubtree(
       key: widget.tokenKey,
-      child: MoveHoverPreview(
-        startingFen: widget.startingFen,
-        movesUpToHover: widget.movesUpToHover,
-        size: 210,
-        child: MouseRegion(
-          cursor: SystemMouseCursors.click,
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit: (_) => setState(() => _hovered = false),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.onTap,
-            child: child,
-          ),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: child,
         ),
       ),
     );

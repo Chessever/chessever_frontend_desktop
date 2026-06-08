@@ -1955,7 +1955,15 @@ class BoardPane extends HookConsumerWidget {
       focusNode.requestFocus();
     }
 
-    void openExplorerTab() {
+    void openExplorerTab({bool toggle = false}) {
+      final tabsState = ref.read(desktopTabsProvider);
+      final activeTab = tabsState.active;
+      if (toggle && activeTab?.kind == TabKind.openingExplorer && activeTab != null) {
+        ref.read(desktopTabsProvider.notifier).close(activeTab.id);
+        focusNode.requestFocus();
+        return;
+      }
+
       final exactFenSearch =
           _fenPositionKey(chessGame.value.startingFen) !=
           _fenPositionKey(Chess.initial.fen);
@@ -2686,7 +2694,7 @@ class BoardPane extends HookConsumerWidget {
           unawaited(toggleEngineAction());
           return true;
         case BoardActionKey.openExplorer:
-          openExplorerTab();
+          openExplorerTab(toggle: true);
           return true;
         case BoardActionKey.openPositionSetup:
           unawaited(openPositionSetup());
@@ -2714,18 +2722,6 @@ class BoardPane extends HookConsumerWidget {
           return true;
         case BoardActionKey.deleteVariation:
           deleteActiveVariationAction();
-          return true;
-        case BoardActionKey.classifyByOpening:
-          openExplorerTab();
-          return true;
-        case BoardActionKey.classifyByThemes:
-          showUnsupportedReferenceShortcut('Theme classification');
-          return true;
-        case BoardActionKey.findNovelty:
-          openExplorerTab();
-          return true;
-        case BoardActionKey.showOpeningReference:
-          openExplorerTab();
           return true;
         case BoardActionKey.switchNotationView:
           final nextInline =
@@ -4550,10 +4546,6 @@ Intent? _intentFor(BoardActionKey action) {
     case BoardActionKey.makeNextMoveVariation:
     case BoardActionKey.enterNullMove:
     case BoardActionKey.deleteVariation:
-    case BoardActionKey.classifyByOpening:
-    case BoardActionKey.classifyByThemes:
-    case BoardActionKey.findNovelty:
-    case BoardActionKey.showOpeningReference:
     case BoardActionKey.switchNotationView:
     case BoardActionKey.rightRailPreviousTab:
     case BoardActionKey.rightRailNextTab:

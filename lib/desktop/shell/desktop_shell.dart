@@ -51,6 +51,7 @@ import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
+import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -166,6 +167,25 @@ class DesktopShell extends HookConsumerWidget {
             final next = <String, dynamic>{...m}..remove(t.id);
             return Map<String, DatabaseWorkspaceArgs>.from(next);
           });
+          final treePlayerByTab = ref.read(
+            playerOpeningTreePlayerByTabIdProvider,
+          );
+          final treePlayerId = treePlayerByTab[t.id];
+          if (treePlayerId != null && treePlayerId.isNotEmpty) {
+            final remainingTreeOwners = <String>[
+              for (final entry in treePlayerByTab.entries)
+                if (entry.key != t.id && entry.value == treePlayerId) entry.key,
+            ];
+            ref
+                .read(playerOpeningTreePlayerByTabIdProvider.notifier)
+                .update((m) => <String, String>{...m}..remove(t.id));
+            if (remainingTreeOwners.isEmpty) {
+              ref
+                  .read(playerOpeningTreeProvider(treePlayerId).notifier)
+                  .clear();
+              ref.invalidate(playerOpeningTreeProvider(treePlayerId));
+            }
+          }
           // Closing a Play tab tears down its session — first drop the
           // args entry so any lingering watcher rebuilds without the
           // session, then invalidate the per-tab provider so its
@@ -766,7 +786,7 @@ Widget _resolveTab(DesktopTab? tab) {
       // move-stats table in the middle, persistent filter panel on the
       // right. Replaces embedding the mobile screen (which spawned
       // bottom sheets for filters / sort / position-games).
-      return const OpeningExplorerPane();
+      return OpeningExplorerPane(tabId: tab.id);
     case TabKind.boardEditor:
       return const BoardEditorPane();
     case TabKind.watch:

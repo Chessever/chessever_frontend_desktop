@@ -99,6 +99,58 @@ void main() {
     expect(find.text('vs'), findsNothing);
   });
 
+  testWidgets('started live list card does not reserve dash result badges', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 420,
+              height: 160,
+              child: DesktopGameCard(
+                data: _startedLiveDataWithClocks,
+                layout: DesktopCardLayout.list,
+                onTap: _noop,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('–'), findsNothing);
+    expect(find.text('-'), findsNothing);
+  });
+
+  testWidgets('started live grid card does not reserve dash result badges', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 320,
+              height: 360,
+              child: DesktopGameCard(
+                data: _startedLiveDataWithClocks,
+                layout: DesktopCardLayout.grid,
+                onTap: _noop,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('–'), findsNothing);
+    expect(find.text('-'), findsNothing);
+    expect(find.text('12:34'), findsOneWidget);
+    expect(find.text('23:45'), findsOneWidget);
+  });
+
   testWidgets('finished compact card keeps normal game-view result text', (
     tester,
   ) async {
@@ -152,6 +204,24 @@ const _startedLiveData = GameCardData(
   fen: null,
   status: GameStatus.ongoing,
   hasStarted: true,
+);
+
+const _startedLiveDataWithClocks = GameCardData(
+  id: 'game-live-clocks',
+  title: 'White vs Black',
+  whiteName: 'White',
+  blackName: 'Black',
+  whiteFederation: '',
+  blackFederation: '',
+  whiteTitle: '',
+  blackTitle: '',
+  whiteRating: 2221,
+  blackRating: 2380,
+  fen: null,
+  status: GameStatus.ongoing,
+  hasStarted: true,
+  whiteClockSeconds: 754,
+  blackClockSeconds: 1425,
 );
 
 const _finishedData = GameCardData(

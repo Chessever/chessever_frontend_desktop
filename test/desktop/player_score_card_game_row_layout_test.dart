@@ -16,7 +16,7 @@ import 'package:chessever/utils/responsive_helper.dart';
 
 void main() {
   testWidgets(
-    'player game rows keep rating, rating change, and circular result grouped',
+    'player game rows place circular result beside row number',
     (tester) async {
       final originalOnError = FlutterError.onError;
       FlutterError.onError = (details) {
@@ -99,22 +99,26 @@ void main() {
       final nameFinder = find.text('Schueler, Tobias');
       final ratingFinder = find.text('2038');
       final changeFinder = find.text('+4').last;
+      final roundFinder = find.text('1').first;
       final resultFinder = find.text('1').last;
 
       expect(nameFinder, findsOneWidget);
       expect(ratingFinder, findsOneWidget);
       expect(changeFinder, findsOneWidget);
 
+      final roundRight = tester.getTopRight(roundFinder).dx;
+      final resultLeft = tester.getTopLeft(resultFinder).dx;
+      final resultRight = tester.getTopRight(resultFinder).dx;
+      final nameLeft = tester.getTopLeft(nameFinder).dx;
       final nameRight = tester.getTopRight(nameFinder).dx;
       final ratingLeft = tester.getTopLeft(ratingFinder).dx;
       final ratingRight = tester.getTopRight(ratingFinder).dx;
       final changeLeft = tester.getTopLeft(changeFinder).dx;
-      final changeRight = tester.getTopRight(changeFinder).dx;
-      final resultLeft = tester.getTopLeft(resultFinder).dx;
 
+      expect(resultLeft - roundRight, lessThan(40));
+      expect(resultRight, lessThan(nameLeft));
       expect(ratingLeft - nameRight, lessThan(18));
       expect(changeLeft - ratingRight, lessThan(16));
-      expect(resultLeft - changeRight, lessThan(24));
 
       final badgeFinder = find.ancestor(
         of: resultFinder,
