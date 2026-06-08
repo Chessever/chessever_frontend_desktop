@@ -106,6 +106,8 @@ void main() {
       expect(source.root.path, startsWith('local-file:'));
       expect(source.root.files.single.games.single.title, contains('Carlsen'));
       expect(source.root.gameCount, 1);
+      expect(source.nodeForPath(file.path), same(source.root.files.single));
+      expect(source.nodeForPath('${temp.path}/other.pgn'), isNull);
     });
 
     test(

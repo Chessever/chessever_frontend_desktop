@@ -88,7 +88,7 @@ class LocalChessSource {
 
   LocalChessNode? nodeForPath(String? path) {
     if (path == null) return root;
-    return root.find(path) ?? root;
+    return root.find(path);
   }
 
   List<LocalChessNode> breadcrumbNodesForPath(String? path) {

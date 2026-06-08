@@ -118,7 +118,6 @@ final localChessLibraryProvider =
       ),
     );
 
-@visibleForTesting
 String localChessOpenErrorMessage(Object error) {
   if (error is ArgumentError) {
     final message = error.message;
