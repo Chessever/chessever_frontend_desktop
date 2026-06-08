@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -24,14 +26,19 @@ class LocalChessFilesView extends HookConsumerWidget {
     super.key,
     required this.selectedPath,
     required this.onSelectPath,
+    this.stateOverride,
+    this.onRefreshOverride,
   });
 
   final String selectedPath;
   final ValueChanged<String> onSelectPath;
+  final LocalChessLibraryState? stateOverride;
+  final Future<void> Function()? onRefreshOverride;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(localChessLibraryProvider);
+    final watchedState = ref.watch(localChessLibraryProvider);
+    final state = stateOverride ?? watchedState;
     final source = state.source;
     final node = source?.nodeForPath(selectedPath);
     final searchController = useTextEditingController();
@@ -146,7 +153,11 @@ class LocalChessFilesView extends HookConsumerWidget {
           );
           return;
         }
-        await ref.read(localChessLibraryProvider.notifier).refresh();
+        if (onRefreshOverride != null) {
+          await onRefreshOverride!();
+        } else {
+          await ref.read(localChessLibraryProvider.notifier).refresh();
+        }
         if (!context.mounted) return;
         ref.read(localChessLibraryProvider.notifier).selectPath(target.path);
         onSelectPath(target.path);
@@ -185,11 +196,17 @@ class LocalChessFilesView extends HookConsumerWidget {
                   node: node,
                   onOpenFolder: pickFolder,
                   onOpenFiles: pickFiles,
-                  onRefresh:
-                      () =>
-                          ref
-                              .read(localChessLibraryProvider.notifier)
-                              .refresh(),
+                  onRefresh: () {
+                    if (onRefreshOverride != null) {
+                      unawaited(onRefreshOverride!());
+                      return;
+                    }
+                    unawaited(
+                      ref
+                          .read(localChessLibraryProvider.notifier)
+                          .refresh(),
+                    );
+                  },
                   onSave: filtered.isEmpty ? null : saveVisible,
                   onSelectPath: selectLocalPath,
                 ),

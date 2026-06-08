@@ -167,11 +167,12 @@ class LibraryPane extends HookConsumerWidget {
         ref.read(libraryImportBufferProvider.notifier).clear();
       }
       final source = ref.read(localChessLibraryProvider).source;
+      final workspacePath = localDatabaseWorkspacePath(source, path);
       openDatabaseWorkspaceTab(
         ref,
         DatabaseWorkspaceArgs.local(
-          localPath: path,
-          title: localDatabaseWorkspaceTitle(source, path),
+          localPath: workspacePath,
+          title: localDatabaseWorkspaceTitle(source, workspacePath),
         ),
       );
     }
@@ -7306,6 +7307,11 @@ void _scrollDatabaseWorkspaceListToIndex(
   );
 }
 
+final _localDatabaseWorkspaceSourceProvider = FutureProvider.autoDispose
+    .family<LocalChessSource, String>((ref, path) {
+      return scanLocalChessPaths(<String>[path]);
+    });
+
 class _LocalDatabaseWorkspace extends ConsumerWidget {
   const _LocalDatabaseWorkspace({required this.tabId, required this.args});
 
@@ -7323,10 +7329,18 @@ class _LocalDatabaseWorkspace extends ConsumerWidget {
       );
     }
 
+    final sourceAsync = ref.watch(
+      _localDatabaseWorkspaceSourceProvider(localPath),
+    );
+
+    Future<void> refreshLocalSource() async {
+      ref.invalidate(_localDatabaseWorkspaceSourceProvider(localPath));
+      await ref.read(_localDatabaseWorkspaceSourceProvider(localPath).future);
+    }
+
     void selectPath(String path) {
-      ref.read(localChessLibraryProvider.notifier).selectPath(path);
-      final state = ref.read(localChessLibraryProvider);
-      final title = localDatabaseWorkspaceTitle(state.source, path);
+      final source = sourceAsync.valueOrNull;
+      final title = localDatabaseWorkspaceTitle(source, path);
       ref.read(databaseWorkspaceArgsByTabIdProvider.notifier).update((
         existing,
       ) {
@@ -7340,9 +7354,24 @@ class _LocalDatabaseWorkspace extends ConsumerWidget {
           .rename(tabId, title: title, subtitle: 'Local database');
     }
 
-    return LocalChessFilesView(
-      selectedPath: localPath,
-      onSelectPath: selectPath,
+    return sourceAsync.when(
+      loading: () => const _RailLoading(),
+      error:
+          (error, _) => _LibraryEmpty(
+            icon: Icons.error_outline_rounded,
+            title: 'Could not open local database',
+            message: localChessOpenErrorMessage(error),
+          ),
+      data:
+          (source) => LocalChessFilesView(
+            selectedPath: localPath,
+            onSelectPath: selectPath,
+            stateOverride: LocalChessLibraryState(
+              source: source,
+              selectedPath: localPath,
+            ),
+            onRefreshOverride: refreshLocalSource,
+          ),
     );
   }
 }
@@ -7355,6 +7384,15 @@ String localDatabaseWorkspaceTitle(LocalChessSource? source, String path) {
   if (sourceLabel.isNotEmpty) return sourceLabel;
   final basename = p.basename(path).trim();
   return basename.isNotEmpty ? basename : 'Local database';
+}
+
+String localDatabaseWorkspacePath(LocalChessSource? source, String path) {
+  final node = source?.nodeForPath(path);
+  if (node != null) {
+    final database = selectedLocalChessDatabaseFile(node);
+    if (database != null) return database.path;
+  }
+  return path;
 }
 
 class _FolderDatabaseWorkspace extends HookConsumerWidget {
