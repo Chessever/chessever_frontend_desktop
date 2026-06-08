@@ -13,11 +13,20 @@ import 'package:chessever/theme/app_theme.dart';
 /// every [BoardActionKey]. State lives in [keyboardShortcutsProvider]
 /// (sqflite-backed via [AppDatabase]) — this widget is purely presentation
 /// and dispatch.
-class KeyboardShortcutsSection extends ConsumerWidget {
+class KeyboardShortcutsSection extends ConsumerStatefulWidget {
   const KeyboardShortcutsSection({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<KeyboardShortcutsSection> createState() =>
+      _KeyboardShortcutsSectionState();
+}
+
+class _KeyboardShortcutsSectionState
+    extends ConsumerState<KeyboardShortcutsSection> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
     final asyncMap = ref.watch(keyboardShortcutsProvider);
 
     return Container(
@@ -29,88 +38,120 @@ class KeyboardShortcutsSection extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 12, 10),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.keyboard_alt_outlined,
-                  size: 16,
-                  color: kPrimaryColor,
-                ),
-                const SizedBox(width: 10),
-                const Text(
-                  'Keyboard shortcuts',
-                  style: TextStyle(
-                    color: kWhiteColor,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const Spacer(),
-                _ResetAllButton(
-                  onTap:
-                      asyncMap.valueOrNull == null
-                          ? null
-                          : () =>
-                              ref
-                                  .read(keyboardShortcutsProvider.notifier)
-                                  .resetAll(),
-                ),
-              ],
-            ),
-          ),
-          const Divider(color: kDividerColor, height: 1),
-          asyncMap.when(
-            data:
-                (map) => Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+          ClickCursor(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+                child: Row(
                   children: [
-                    for (var i = 0; i < BoardActionKey.values.length; i++) ...[
-                      if (i > 0) const Divider(color: kDividerColor, height: 1),
-                      _ShortcutRow(
-                        action: BoardActionKey.values[i],
-                        chords: map.chordsFor(BoardActionKey.values[i]),
-                        bindings: map,
-                      ),
-                    ],
-                  ],
-                ),
-            loading:
-                () => const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 32),
-                  child: Center(
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                    const Icon(
+                      Icons.keyboard_alt_outlined,
+                      size: 16,
+                      color: kPrimaryColor,
+                    ),
+                    const SizedBox(width: 10),
+                    const Text(
+                      'Keyboard shortcuts',
+                      style: TextStyle(
+                        color: kWhiteColor,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Customize board and notation shortcuts',
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: Colors.white54, fontSize: 12),
+                      ),
+                    ),
+                    if (_expanded) ...[
+                      _ResetAllButton(
+                        onTap:
+                            asyncMap.valueOrNull == null
+                                ? null
+                                : () =>
+                                    ref
+                                        .read(
+                                          keyboardShortcutsProvider.notifier,
+                                        )
+                                        .resetAll(),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    Icon(
+                      _expanded
+                          ? Icons.keyboard_arrow_up
+                          : Icons.keyboard_arrow_down,
+                      size: 18,
+                      color: kLightGreyColor,
+                    ),
+                  ],
                 ),
-            error:
-                (e, _) => Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    'Failed to load shortcuts: $e',
-                    style: const TextStyle(color: kRedColor, fontSize: 12),
-                  ),
-                ),
-          ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 12, 16, 14),
-            child: Text(
-              'Click + to record a new keystroke. Click an existing chord '
-              'to remove it. Settings persist locally.',
-              style: TextStyle(
-                color: kLightGreyColor,
-                fontSize: 11,
-                height: 1.4,
               ),
             ),
           ),
+          if (_expanded) ...[
+            const Divider(color: kDividerColor, height: 1),
+            asyncMap.when(
+              data:
+                  (map) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (
+                        var i = 0;
+                        i < BoardActionKey.values.length;
+                        i++
+                      ) ...[
+                        if (i > 0)
+                          const Divider(color: kDividerColor, height: 1),
+                        _ShortcutRow(
+                          action: BoardActionKey.values[i],
+                          chords: map.chordsFor(BoardActionKey.values[i]),
+                          bindings: map,
+                        ),
+                      ],
+                    ],
+                  ),
+              loading:
+                  () => const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 32),
+                    child: Center(
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                        ),
+                      ),
+                    ),
+                  ),
+              error:
+                  (e, _) => Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      'Failed to load shortcuts: $e',
+                      style: const TextStyle(color: kRedColor, fontSize: 12),
+                    ),
+                  ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 14),
+              child: Text(
+                'Click + to record a new keystroke. Click an existing chord '
+                'to remove it. Settings persist locally.',
+                style: TextStyle(
+                  color: kLightGreyColor,
+                  fontSize: 11,
+                  height: 1.4,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

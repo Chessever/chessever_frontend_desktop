@@ -2723,18 +2723,6 @@ class BoardPane extends HookConsumerWidget {
         case BoardActionKey.deleteVariation:
           deleteActiveVariationAction();
           return true;
-        case BoardActionKey.classifyByOpening:
-          openExplorerTab();
-          return true;
-        case BoardActionKey.classifyByThemes:
-          showUnsupportedReferenceShortcut('Theme classification');
-          return true;
-        case BoardActionKey.findNovelty:
-          openExplorerTab();
-          return true;
-        case BoardActionKey.showOpeningReference:
-          openExplorerTab();
-          return true;
         case BoardActionKey.switchNotationView:
           final nextInline =
               notationLayoutController.value != NotationLayoutMode.inline;
@@ -4558,10 +4546,6 @@ Intent? _intentFor(BoardActionKey action) {
     case BoardActionKey.makeNextMoveVariation:
     case BoardActionKey.enterNullMove:
     case BoardActionKey.deleteVariation:
-    case BoardActionKey.classifyByOpening:
-    case BoardActionKey.classifyByThemes:
-    case BoardActionKey.findNovelty:
-    case BoardActionKey.showOpeningReference:
     case BoardActionKey.switchNotationView:
     case BoardActionKey.rightRailPreviousTab:
     case BoardActionKey.rightRailNextTab:

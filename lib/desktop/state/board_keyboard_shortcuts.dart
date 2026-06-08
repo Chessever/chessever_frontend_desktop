@@ -42,10 +42,6 @@ enum BoardActionKey {
   makeNextMoveVariation,
   enterNullMove,
   deleteVariation,
-  classifyByOpening,
-  classifyByThemes,
-  findNovelty,
-  showOpeningReference,
   switchNotationView,
   rightRailPreviousTab,
   rightRailNextTab,
@@ -146,14 +142,6 @@ extension BoardActionKeyMeta on BoardActionKey {
         return 'Enter null move';
       case BoardActionKey.deleteVariation:
         return 'Delete variation';
-      case BoardActionKey.classifyByOpening:
-        return 'Classify by opening';
-      case BoardActionKey.classifyByThemes:
-        return 'Classify by themes';
-      case BoardActionKey.findNovelty:
-        return 'Find novelty';
-      case BoardActionKey.showOpeningReference:
-        return 'Show opening reference';
       case BoardActionKey.switchNotationView:
         return 'Switch notation view';
       case BoardActionKey.rightRailPreviousTab:
@@ -298,14 +286,6 @@ extension BoardActionKeyMeta on BoardActionKey {
         return 'Insert a null move in the notation when supported.';
       case BoardActionKey.deleteVariation:
         return 'Delete the active variation and return to its parent line.';
-      case BoardActionKey.classifyByOpening:
-        return 'Classify the game by opening in the reference database.';
-      case BoardActionKey.classifyByThemes:
-        return 'Classify the game by tactical and strategic themes.';
-      case BoardActionKey.findNovelty:
-        return 'Compare against the reference database and find a novelty.';
-      case BoardActionKey.showOpeningReference:
-        return 'Show the opening reference for the current board position.';
       case BoardActionKey.switchNotationView:
         return 'Cycle the right rail between notation/reference views.';
       case BoardActionKey.rightRailPreviousTab:
@@ -445,14 +425,6 @@ extension BoardActionKeyMeta on BoardActionKey {
         return 'enter_null_move';
       case BoardActionKey.deleteVariation:
         return 'delete_variation';
-      case BoardActionKey.classifyByOpening:
-        return 'classify_by_opening';
-      case BoardActionKey.classifyByThemes:
-        return 'classify_by_themes';
-      case BoardActionKey.findNovelty:
-        return 'find_novelty';
-      case BoardActionKey.showOpeningReference:
-        return 'show_opening_reference';
       case BoardActionKey.switchNotationView:
         return 'switch_notation_view';
       case BoardActionKey.rightRailPreviousTab:
@@ -712,9 +684,6 @@ KeyChord _ctrlAlt(LogicalKeyboardKey key) =>
 KeyChord _ctrlShift(LogicalKeyboardKey key) =>
     KeyChord(keyId: key.keyId, ctrl: true, shift: true);
 
-KeyChord _ctrlAltShift(LogicalKeyboardKey key) =>
-    KeyChord(keyId: key.keyId, ctrl: true, alt: true, shift: true);
-
 KeyChord _primary(LogicalKeyboardKey key, {bool shift = false}) =>
     KeyChord(keyId: key.keyId, meta: true, shift: shift, crossPlatform: true);
 
@@ -785,10 +754,6 @@ Map<BoardActionKey, List<KeyChord>> defaultBoardShortcuts() {
     BoardActionKey.makeNextMoveVariation: [_key(LogicalKeyboardKey.keyT)],
     BoardActionKey.enterNullMove: [_ctrlAlt(LogicalKeyboardKey.digit0)],
     BoardActionKey.deleteVariation: [_ctrl(LogicalKeyboardKey.keyY)],
-    BoardActionKey.classifyByOpening: [_ctrlAlt(LogicalKeyboardKey.keyC)],
-    BoardActionKey.classifyByThemes: [_ctrlAltShift(LogicalKeyboardKey.keyC)],
-    BoardActionKey.findNovelty: [_shift(LogicalKeyboardKey.f6)],
-    BoardActionKey.showOpeningReference: [_shift(LogicalKeyboardKey.f7)],
     BoardActionKey.switchNotationView: [_key(LogicalKeyboardKey.tab)],
     BoardActionKey.rightRailPreviousTab: [
       _primary(LogicalKeyboardKey.comma, shift: true),

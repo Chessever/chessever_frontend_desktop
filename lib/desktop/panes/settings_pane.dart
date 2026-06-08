@@ -200,6 +200,8 @@ class SettingsPane extends HookConsumerWidget {
             const SizedBox(height: 16),
             const _NotificationsSection(),
             const SizedBox(height: 16),
+            const KeyboardShortcutsSection(),
+            const SizedBox(height: 16),
             _AccountSection(
               session: session.value,
               signingIn: signingIn.value,
@@ -214,8 +216,6 @@ class SettingsPane extends HookConsumerWidget {
               const SizedBox(height: 16),
             ],
             const _EngineSection(),
-            const SizedBox(height: 16),
-            const KeyboardShortcutsSection(),
             const SizedBox(height: 16),
             const _UpdatesSection(),
             const SizedBox(height: 16),
