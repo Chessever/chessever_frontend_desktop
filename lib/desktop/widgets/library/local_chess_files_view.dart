@@ -13,6 +13,7 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
+import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
@@ -202,9 +203,7 @@ class LocalChessFilesView extends HookConsumerWidget {
                       return;
                     }
                     unawaited(
-                      ref
-                          .read(localChessLibraryProvider.notifier)
-                          .refresh(),
+                      ref.read(localChessLibraryProvider.notifier).refresh(),
                     );
                   },
                   onSave: filtered.isEmpty ? null : saveVisible,
@@ -257,8 +256,11 @@ class LocalChessFilesView extends HookConsumerWidget {
                           )
                           : _LocalGamesTable(
                             databaseTitle: databaseTitle,
+                            database: selectedDatabase,
                             games: filtered,
                             databaseGames: allGames,
+                            onRefresh: onRefreshOverride,
+                            onSelectPath: onSelectPath,
                           ),
                 ),
               ],
@@ -733,53 +735,372 @@ FBaseButtonStyle Function(FButtonStyle style) _localChildCardButtonStyle({
 class _LocalGamesTable extends HookConsumerWidget {
   const _LocalGamesTable({
     required this.databaseTitle,
+    required this.database,
     required this.games,
     required this.databaseGames,
+    required this.onRefresh,
+    required this.onSelectPath,
   });
 
   final String databaseTitle;
+  final LocalChessFileNode? database;
   final List<LocalChessGame> games;
   final List<LocalChessGame> databaseGames;
+  final Future<void> Function()? onRefresh;
+  final ValueChanged<String> onSelectPath;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = useScrollController();
+    final focusNode = useFocusNode(debugLabel: 'local-pgn-games-table');
     final selectedId = useState<String?>(null);
+    final selectedIds = useState<Set<String>>(<String>{});
+    final selectionAnchor = useState<int?>(null);
+    final selectionExtent = useState<int?>(null);
+    final visibleIds = games.map((game) => game.id).toList(growable: false);
+    final clampedSelectedIds = _clampLocalSelection(
+      selectedIds.value,
+      visibleIds,
+    );
+    final effectiveSelectedIds =
+        clampedSelectedIds.isNotEmpty
+            ? clampedSelectedIds
+            : selectedId.value == null
+            ? const <String>{}
+            : <String>{selectedId.value!};
+    final selectedGames = games
+        .where((game) => effectiveSelectedIds.contains(game.id))
+        .toList(growable: false);
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-      child: Column(
-        children: [
-          const _LocalGamesHeaderRow(),
-          Expanded(
-            child: Scrollbar(
-              controller: controller,
-              thumbVisibility: false,
-              child: ListView.builder(
-                controller: controller,
-                physics: const DesktopScrollPhysics(),
-                itemExtent: _kLocalGameRowHeight,
-                itemCount: games.length,
-                itemBuilder: (context, index) {
-                  final game = games[index];
-                  return _LocalGamesDataRow(
-                    key: ValueKey('local-game-table-${game.id}'),
-                    index: index,
-                    game: game,
-                    selected: selectedId.value == game.id,
-                    onTap: () => selectedId.value = game.id,
-                    onDoubleTap: () {
-                      selectedId.value = game.id;
-                      _openLocalGame(
-                        ref,
-                        game,
-                        sourceLabel: databaseTitle,
-                        databaseGames: databaseGames,
+    useEffect(() {
+      if (games.isEmpty) {
+        selectedId.value = null;
+        selectedIds.value = <String>{};
+        selectionAnchor.value = null;
+        selectionExtent.value = null;
+      } else if (selectedId.value != null &&
+          !visibleIds.contains(selectedId.value)) {
+        selectedId.value = null;
+        selectedIds.value = clampedSelectedIds;
+        selectionAnchor.value = null;
+        selectionExtent.value = null;
+      } else if (clampedSelectedIds.length != selectedIds.value.length) {
+        selectedIds.value = clampedSelectedIds;
+      }
+      return null;
+    }, [games]);
+
+    void selectIndex(int index, {bool toggle = false, bool range = false}) {
+      if (games.isEmpty) return;
+      final next = index.clamp(0, games.length - 1).toInt();
+      final id = games[next].id;
+      if (range) {
+        final anchor = selectionAnchor.value ?? next;
+        final start = anchor < next ? anchor : next;
+        final end = anchor < next ? next : anchor;
+        selectedIds.value = {for (var i = start; i <= end; i++) games[i].id};
+        selectedId.value = id;
+        selectionExtent.value = next;
+      } else if (toggle) {
+        final updated = Set<String>.of(clampedSelectedIds);
+        if (!updated.add(id)) updated.remove(id);
+        selectedIds.value = updated;
+        selectedId.value = id;
+        selectionAnchor.value = next;
+        selectionExtent.value = next;
+      } else {
+        selectedId.value = id;
+        selectedIds.value = <String>{};
+        selectionAnchor.value = next;
+        selectionExtent.value = next;
+      }
+      focusNode.requestFocus();
+    }
+
+    Future<void> copySelectedGames() async {
+      final parts = selectedGames
+          .map((game) => game.rawPgn.trim())
+          .where(
+            (pgn) => pgn.isNotEmpty && appendableLocalPgnParts(pgn).isNotEmpty,
+          )
+          .toList(growable: false);
+      if (parts.isEmpty) {
+        showDesktopToast(
+          context,
+          'No selected PGN with moves available to copy.',
+          error: true,
+        );
+        return;
+      }
+      await Clipboard.setData(ClipboardData(text: '${parts.join('\n\n')}\n'));
+      if (!context.mounted) return;
+      final skipped = selectedGames.length - parts.length;
+      showDesktopToast(
+        context,
+        skipped == 0
+            ? 'Copied ${parts.length} ${parts.length == 1 ? 'game' : 'games'} as PGN.'
+            : 'Copied ${parts.length} ${parts.length == 1 ? 'game' : 'games'}; $skipped had no PGN moves available.',
+      );
+    }
+
+    Future<void> saveSelectedGames() async {
+      if (selectedGames.isEmpty) return;
+      final hydrated = await compute(_hydrateLocalGamesForSave, selectedGames);
+      if (!context.mounted) return;
+      final outcome = await showLibrarySaveToFolderDialog(
+        context: context,
+        ref: ref,
+        games: hydrated,
+        sourceLabel: databaseTitle,
+      );
+      if (outcome == null || !outcome.didSave || !context.mounted) return;
+      showDesktopToast(context, outcome.toToastMessage());
+    }
+
+    Future<void> deleteSelectedGames() async {
+      final target = database;
+      if (target == null || selectedGames.isEmpty) return;
+      final confirmed = await showLocalPgnDeleteGamesConfirmation(
+        context,
+        count: selectedGames.length,
+        databaseName: target.name,
+      );
+      if (!confirmed) return;
+      try {
+        final removed = await removeLocalPgnGamesFromFile(
+          filePath: target.path,
+          indexesInFile: selectedGames.map((game) => game.indexInFile).toSet(),
+        );
+        if (!context.mounted) return;
+        if (onRefresh != null) {
+          await onRefresh!();
+        } else {
+          await ref.read(localChessLibraryProvider.notifier).refresh();
+        }
+        if (!context.mounted) return;
+        ref.read(localChessLibraryProvider.notifier).selectPath(target.path);
+        onSelectPath(target.path);
+        selectedIds.value = <String>{};
+        selectedId.value = null;
+        showDesktopToast(
+          context,
+          'Deleted $removed ${removed == 1 ? 'game' : 'games'} from ${target.name}.',
+        );
+      } catch (e) {
+        if (!context.mounted) return;
+        showDesktopToast(
+          context,
+          'Could not delete from local PGN: $e',
+          error: true,
+        );
+      }
+    }
+
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.keyC, control: true):
+            () => unawaited(copySelectedGames()),
+        const SingleActivator(LogicalKeyboardKey.keyC, meta: true):
+            () => unawaited(copySelectedGames()),
+        const SingleActivator(LogicalKeyboardKey.keyA, control: true): () {
+          selectedIds.value = visibleIds.toSet();
+          if (games.isNotEmpty) selectedId.value = games.last.id;
+        },
+        const SingleActivator(LogicalKeyboardKey.keyA, meta: true): () {
+          selectedIds.value = visibleIds.toSet();
+          if (games.isNotEmpty) selectedId.value = games.last.id;
+        },
+        const SingleActivator(LogicalKeyboardKey.delete):
+            () => unawaited(deleteSelectedGames()),
+        const SingleActivator(LogicalKeyboardKey.backspace):
+            () => unawaited(deleteSelectedGames()),
+      },
+      child: Focus(
+        focusNode: focusNode,
+        canRequestFocus: true,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+          child: Column(
+            children: [
+              if (selectedGames.isNotEmpty)
+                _LocalSelectionToolbar(
+                  selectedCount: selectedGames.length,
+                  totalCount: games.length,
+                  onCopy: () => unawaited(copySelectedGames()),
+                  onSave: () => unawaited(saveSelectedGames()),
+                  onDelete:
+                      database == null
+                          ? null
+                          : () => unawaited(deleteSelectedGames()),
+                  onClear: () {
+                    selectedId.value = null;
+                    selectedIds.value = <String>{};
+                  },
+                ),
+              const _LocalGamesHeaderRow(),
+              Expanded(
+                child: Scrollbar(
+                  controller: controller,
+                  thumbVisibility: false,
+                  child: ListView.builder(
+                    controller: controller,
+                    physics: const DesktopScrollPhysics(),
+                    itemExtent: _kLocalGameRowHeight,
+                    itemCount: games.length,
+                    itemBuilder: (context, index) {
+                      final game = games[index];
+                      return _LocalGamesDataRow(
+                        key: ValueKey('local-game-table-${game.id}'),
+                        index: index,
+                        game: game,
+                        selected: effectiveSelectedIds.contains(game.id),
+                        onTapDown: (details) {
+                          final keys =
+                              HardwareKeyboard.instance.logicalKeysPressed;
+                          selectIndex(
+                            index,
+                            toggle:
+                                keys.contains(LogicalKeyboardKey.controlLeft) ||
+                                keys.contains(
+                                  LogicalKeyboardKey.controlRight,
+                                ) ||
+                                keys.contains(LogicalKeyboardKey.metaLeft) ||
+                                keys.contains(LogicalKeyboardKey.metaRight),
+                            range:
+                                keys.contains(LogicalKeyboardKey.shiftLeft) ||
+                                keys.contains(LogicalKeyboardKey.shiftRight),
+                          );
+                        },
+                        onDoubleTap: () {
+                          selectIndex(index);
+                          _openLocalGame(
+                            ref,
+                            game,
+                            sourceLabel: databaseTitle,
+                            databaseGames: databaseGames,
+                          );
+                        },
                       );
                     },
-                  );
-                },
+                  ),
+                ),
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+const double _kLocalGameRowHeight = 34;
+
+class _LocalSelectionToolbar extends StatelessWidget {
+  const _LocalSelectionToolbar({
+    required this.selectedCount,
+    required this.totalCount,
+    required this.onCopy,
+    required this.onSave,
+    required this.onDelete,
+    required this.onClear,
+  });
+
+  final int selectedCount;
+  final int totalCount;
+  final VoidCallback onCopy;
+  final VoidCallback onSave;
+  final VoidCallback? onDelete;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 42,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: kPrimaryColor.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        children: [
+          Text(
+            '$selectedCount of $totalCount selected',
+            style: const TextStyle(
+              color: kWhiteColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+          const SizedBox(width: 12),
+          _SelectionAction(
+            label: 'Copy PGN',
+            icon: Icons.copy_rounded,
+            onTap: onCopy,
+          ),
+          const SizedBox(width: 6),
+          _SelectionAction(
+            label: 'Save To Cloud',
+            icon: Icons.library_add_outlined,
+            onTap: onSave,
+          ),
+          const SizedBox(width: 6),
+          _SelectionAction(
+            label: 'Delete',
+            icon: Icons.delete_outline_rounded,
+            onTap: onDelete,
+            danger: true,
+          ),
+          const Spacer(),
+          _SelectionAction(
+            label: 'Clear',
+            icon: Icons.close_rounded,
+            onTap: onClear,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SelectionAction extends StatelessWidget {
+  const _SelectionAction({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    this.danger = false,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback? onTap;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = danger ? const Color(0xFFEB5757) : kWhiteColor;
+    return FButton(
+      style: FButtonStyle.ghost(),
+      mainAxisSize: MainAxisSize.min,
+      onPress: onTap,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: 14,
+            color: onTap == null ? kWhiteColor.withValues(alpha: 0.35) : color,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color:
+                  onTap == null ? kWhiteColor.withValues(alpha: 0.35) : color,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
@@ -788,7 +1109,11 @@ class _LocalGamesTable extends HookConsumerWidget {
   }
 }
 
-const double _kLocalGameRowHeight = 34;
+Set<String> _clampLocalSelection(Set<String> selectedIds, List<String> rowIds) {
+  if (selectedIds.isEmpty) return const <String>{};
+  final visible = rowIds.toSet();
+  return selectedIds.where(visible.contains).toSet();
+}
 
 class _LocalGamesHeaderRow extends StatelessWidget {
   const _LocalGamesHeaderRow();
@@ -852,14 +1177,14 @@ class _LocalGamesDataRow extends StatelessWidget {
     required this.index,
     required this.game,
     required this.selected,
-    required this.onTap,
+    required this.onTapDown,
     required this.onDoubleTap,
   });
 
   final int index;
   final LocalChessGame game;
   final bool selected;
-  final VoidCallback onTap;
+  final GestureTapDownCallback onTapDown;
   final VoidCallback onDoubleTap;
 
   @override
@@ -867,7 +1192,7 @@ class _LocalGamesDataRow extends StatelessWidget {
     final md = game.game.metadata;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: onTap,
+      onTapDown: onTapDown,
       onDoubleTap: onDoubleTap,
       child: DecoratedBox(
         decoration: BoxDecoration(
@@ -1165,6 +1490,95 @@ bool _matches(LocalChessGame game, String query) {
     if (value is String && value.toLowerCase().contains(query)) return true;
   }
   return false;
+}
+
+Future<bool> showLocalPgnDeleteGamesConfirmation(
+  BuildContext context, {
+  required int count,
+  required String databaseName,
+}) async {
+  final confirmed = await showGeneralDialog<bool>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'Delete local PGN games',
+    barrierColor: Colors.black.withValues(alpha: 0.55),
+    transitionDuration: const Duration(milliseconds: 140),
+    pageBuilder:
+        (ctx, _, _) => FTheme(
+          data: FThemes.zinc.dark,
+          child: Center(
+            child: Container(
+              width: 440,
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+              decoration: BoxDecoration(
+                color: kBlack2Color,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: kDividerColor),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.delete_forever_outlined,
+                        color: Color(0xFFEB5757),
+                        size: 18,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Delete $count ${count == 1 ? 'game' : 'games'}?',
+                          style: const TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'This rewrites "$databaseName" on this computer and removes the selected PGN ${count == 1 ? 'entry' : 'entries'}. This cannot be undone.',
+                    style: const TextStyle(
+                      color: kWhiteColor70,
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      DesktopDialogButton(
+                        label: 'Cancel',
+                        onPress: () => Navigator.of(ctx).pop(false),
+                      ),
+                      const SizedBox(width: 8),
+                      DesktopDialogButton(
+                        label: 'Delete',
+                        tone: DesktopDialogButtonTone.danger,
+                        onPress: () => Navigator.of(ctx).pop(true),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+  );
+  return confirmed == true;
 }
 
 void _openLocalGame(
