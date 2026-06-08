@@ -1459,11 +1459,19 @@ class PlayerOpeningTreeBuildController
         final rows = _rowsFromPlayerGamesResponse(response);
         final metadata = response['metadata'];
         if (metadata is Map) {
-          total = (metadata['totalCount'] as num?)?.toInt() ?? total;
-          hasMore = metadata['hasMore'] == true;
+          total =
+              _readPlayerOpeningTreeTotalCount(metadata) ??
+              _readPlayerOpeningTreeTotalCount(response) ??
+              total;
+          hasMore =
+              _readPlayerOpeningTreeHasMore(metadata) ??
+              rows.length >= _pageSize;
         } else {
+          total = _readPlayerOpeningTreeTotalCount(response) ?? total;
           hasMore = rows.length >= _pageSize;
         }
+        total ??= await _fetchTotalGames(generation);
+        if (!mounted || generation != _generation) return;
         fetched += rows.length;
 
         final hydrated = await _hydrateRows(rows, generation);
@@ -1537,6 +1545,26 @@ class PlayerOpeningTreeBuildController
     return output;
   }
 
+  Future<int?> _fetchTotalGames(int generation) async {
+    if (generation != _generation) return null;
+    try {
+      final response = await _ref
+          .read(gamebaseRepositoryProvider)
+          .getPlayerStats(playerId: _playerId);
+      if (!mounted || generation != _generation) return null;
+      final data = response['data'];
+      if (data is Map) {
+        final totals = data['totals'];
+        if (totals is Map) {
+          return _readPlayerOpeningTreeTotalCount(totals);
+        }
+      }
+      return _readPlayerOpeningTreeTotalCount(response);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<Map<String, dynamic>?> _hydrateRow(Map<String, dynamic> row) async {
     final directPgn = row['pgn']?.toString();
     final data = row['data'];
@@ -1590,6 +1618,43 @@ List<Map<String, dynamic>> _rowsFromPlayerGamesResponse(
       .map((row) => Map<String, dynamic>.from(row))
       .where((row) => (row['id']?.toString().trim() ?? '').isNotEmpty)
       .toList(growable: false);
+}
+
+int? _readPlayerOpeningTreeTotalCount(Map<dynamic, dynamic> values) {
+  for (final key in const <String>[
+    'totalCount',
+    'total_count',
+    'total',
+    'count',
+    'games',
+  ]) {
+    final parsed = _readNullableInt(values[key]);
+    if (parsed != null) return parsed;
+  }
+  return null;
+}
+
+bool? _readPlayerOpeningTreeHasMore(Map<dynamic, dynamic> values) {
+  for (final key in const <String>['hasMore', 'has_more', 'hasNextPage']) {
+    final parsed = _readNullableBool(values[key]);
+    if (parsed != null) return parsed;
+  }
+  return null;
+}
+
+int? _readNullableInt(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString().trim() ?? '');
+}
+
+bool? _readNullableBool(Object? value) {
+  if (value is bool) return value;
+  final raw = value?.toString().trim().toLowerCase();
+  if (raw == null || raw.isEmpty) return null;
+  if (raw == 'true' || raw == '1' || raw == 'yes') return true;
+  if (raw == 'false' || raw == '0' || raw == 'no') return false;
+  return null;
 }
 
 /// Provider for managing the current page index of the opening explorer panels (0: Moves, 1: Notation).
