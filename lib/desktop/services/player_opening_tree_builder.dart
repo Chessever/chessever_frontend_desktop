@@ -88,14 +88,17 @@ class PlayerOpeningTreeIndex {
   const PlayerOpeningTreeIndex({
     required this.movesByFen,
     required this.gamesByFen,
+    required this.gameRowsById,
   });
 
   const PlayerOpeningTreeIndex.empty()
     : movesByFen = const <String, List<MoveAggregate>>{},
-      gamesByFen = const <String, List<Map<String, dynamic>>>{};
+      gamesByFen = const <String, List<PlayerOpeningTreeGameRef>>{},
+      gameRowsById = const <String, Map<String, dynamic>>{};
 
   final Map<String, List<MoveAggregate>> movesByFen;
-  final Map<String, List<Map<String, dynamic>>> gamesByFen;
+  final Map<String, List<PlayerOpeningTreeGameRef>> gamesByFen;
+  final Map<String, Map<String, dynamic>> gameRowsById;
 
   int get positionCount => movesByFen.length;
 
@@ -108,17 +111,18 @@ class PlayerOpeningTreeIndex {
       return movesByFen[_positionKey(fen)] ?? const <MoveAggregate>[];
     }
     final key = _positionKey(fen);
-    final rows = _filteredRowsForKey(key, filters);
+    final refs = _filteredRefsForKey(key, filters);
     final builders = <String, _MutableMoveAggregate>{};
-    for (final row in rows) {
-      final continuation = _continuationForRow(row);
-      if (continuation.isEmpty) continue;
-      final uci = continuation.first;
+    for (final ref in refs) {
+      final row = gameRowsById[ref.gameId];
+      if (row == null) continue;
+      final uci = _nextUciForRef(row, ref);
+      if (uci == null) continue;
       builders
           .putIfAbsent(uci, () => _MutableMoveAggregate(uci))
           .addGame(
             result: row['result']?.toString() ?? '*',
-            gameId: row['id'],
+            gameId: ref.gameId,
             date: _dateForRowValue(row['date']),
           );
     }
@@ -139,15 +143,18 @@ class PlayerOpeningTreeIndex {
     required int pageSize,
   }) {
     final key = _positionKey(fen);
-    var rows = _filteredRowsForKey(key, filters);
+    var refs = _filteredRefsForKey(key, filters);
     final pinned = uci?.trim().toLowerCase();
     if (pinned != null && pinned.isNotEmpty) {
-      rows = rows
-          .where((row) => _continuationStartsWith(row, pinned))
+      refs = refs
+          .where((ref) => _refContinuationStartsWith(ref, pinned))
           .toList(growable: false);
     }
 
-    final sorted = List<Map<String, dynamic>>.from(rows);
+    final sorted = refs
+        .map(_rowForRef)
+        .whereType<Map<String, dynamic>>()
+        .toList(growable: false);
     sorted.sort((a, b) {
       final cmp = _compareRows(a, b, sortBy);
       return sortDirection == GamebaseSortDirection.asc ? cmp : -cmp;
@@ -166,24 +173,40 @@ class PlayerOpeningTreeIndex {
         const PlayerOpeningTreeFilterCriteria(),
   }) {
     final key = _positionKey(fen);
-    final rows = _filteredRowsForKey(key, filters);
+    final refs = _filteredRefsForKey(key, filters);
     final pinned = uci?.trim().toLowerCase();
-    if (pinned == null || pinned.isEmpty) return rows.length;
-    return rows.where((row) => _continuationStartsWith(row, pinned)).length;
+    if (pinned == null || pinned.isEmpty) return refs.length;
+    return refs.where((ref) => _refContinuationStartsWith(ref, pinned)).length;
   }
 
-  List<Map<String, dynamic>> _filteredRowsForKey(
+  List<PlayerOpeningTreeGameRef> _filteredRefsForKey(
     String key,
     PlayerOpeningTreeFilterCriteria filters,
   ) {
-    final rows = gamesByFen[key] ?? const <Map<String, dynamic>>[];
-    if (!filters.hasFilters) return rows;
-    return rows.where(filters.matches).toList(growable: false);
+    final refs = gamesByFen[key] ?? const <PlayerOpeningTreeGameRef>[];
+    if (!filters.hasFilters) return refs;
+    return refs
+        .where((ref) {
+          final row = gameRowsById[ref.gameId];
+          return row != null && filters.matches(row);
+        })
+        .toList(growable: false);
   }
 
-  static bool _continuationStartsWith(Map<String, dynamic> row, String uci) {
-    final continuation = _continuationForRow(row);
-    return continuation.isNotEmpty && continuation.first == uci;
+  Map<String, dynamic>? _rowForRef(PlayerOpeningTreeGameRef ref) {
+    final row = gameRowsById[ref.gameId];
+    if (row == null) return null;
+    return Map<String, dynamic>.unmodifiable(<String, dynamic>{
+      ...row,
+      'fen': ref.fen,
+      'continuation': _continuationForRef(row, ref),
+    });
+  }
+
+  bool _refContinuationStartsWith(PlayerOpeningTreeGameRef ref, String uci) {
+    final row = gameRowsById[ref.gameId];
+    if (row == null) return false;
+    return _nextUciForRef(row, ref) == uci;
   }
 
   static int _compareRows(
@@ -230,6 +253,19 @@ class PlayerOpeningTreeIndex {
     if (av is DateTime && bv is DateTime) return av.compareTo(bv);
     return av.toString().compareTo(bv.toString());
   }
+}
+
+@immutable
+class PlayerOpeningTreeGameRef {
+  const PlayerOpeningTreeGameRef({
+    required this.gameId,
+    required this.fen,
+    required this.ply,
+  });
+
+  final String gameId;
+  final String fen;
+  final int ply;
 }
 
 @immutable
@@ -319,46 +355,63 @@ PlayerOpeningTreeIndex mergePlayerOpeningTreeIndexes(
   PlayerOpeningTreeIndex left,
   PlayerOpeningTreeIndex right,
 ) {
-  final moveBuilders = <String, Map<String, _MutableMoveAggregate>>{};
-  final gameBuilders = <String, Map<String, Map<String, dynamic>>>{};
+  if (left.positionCount == 0 && left.gameRowsById.isEmpty) return right;
+  if (right.positionCount == 0 && right.gameRowsById.isEmpty) return left;
 
-  void absorb(PlayerOpeningTreeIndex index) {
-    for (final entry in index.movesByFen.entries) {
-      final moves = moveBuilders.putIfAbsent(
-        entry.key,
-        () => <String, _MutableMoveAggregate>{},
-      );
-      for (final move in entry.value) {
-        moves
-            .putIfAbsent(move.uci, () => _MutableMoveAggregate(move.uci))
-            .addAggregate(move);
-      }
+  final mergedMoves = Map<String, List<MoveAggregate>>.from(left.movesByFen);
+  for (final entry in right.movesByFen.entries) {
+    final builders = <String, _MutableMoveAggregate>{};
+    for (final move in left.movesByFen[entry.key] ?? const <MoveAggregate>[]) {
+      builders
+          .putIfAbsent(move.uci, () => _MutableMoveAggregate(move.uci))
+          .addAggregate(move);
     }
-
-    for (final entry in index.gamesByFen.entries) {
-      final games = gameBuilders.putIfAbsent(
-        entry.key,
-        () => <String, Map<String, dynamic>>{},
-      );
-      for (final row in entry.value) {
-        final id = row['id']?.toString().trim();
-        if (id == null || id.isEmpty) continue;
-        games[id] = row;
-      }
+    for (final move in entry.value) {
+      builders
+          .putIfAbsent(move.uci, () => _MutableMoveAggregate(move.uci))
+          .addAggregate(move);
     }
+    final moves = builders.values
+      .map((m) => m.toAggregate())
+      .toList(growable: false)..sort((a, b) => b.total.compareTo(a.total));
+    mergedMoves[entry.key] = List<MoveAggregate>.unmodifiable(moves);
   }
 
-  absorb(left);
-  absorb(right);
+  final mergedRefs = Map<String, List<PlayerOpeningTreeGameRef>>.from(
+    left.gamesByFen,
+  );
+  for (final entry in right.gamesByFen.entries) {
+    final refs = <String, PlayerOpeningTreeGameRef>{
+      for (final ref
+          in left.gamesByFen[entry.key] ?? const <PlayerOpeningTreeGameRef>[])
+        ref.gameId: ref,
+      for (final ref in entry.value) ref.gameId: ref,
+    };
+    mergedRefs[entry.key] = List<PlayerOpeningTreeGameRef>.unmodifiable(
+      refs.values,
+    );
+  }
 
-  return _freezeIndex(moveBuilders, gameBuilders);
+  return PlayerOpeningTreeIndex(
+    movesByFen: Map<String, List<MoveAggregate>>.unmodifiable(mergedMoves),
+    gamesByFen: Map<String, List<PlayerOpeningTreeGameRef>>.unmodifiable(
+      mergedRefs,
+    ),
+    gameRowsById: Map<String, Map<String, dynamic>>.unmodifiable(
+      <String, Map<String, dynamic>>{
+        ...left.gameRowsById,
+        ...right.gameRowsById,
+      },
+    ),
+  );
 }
 
 PlayerOpeningTreeIndex _buildPlayerOpeningTreeBatch(
   List<Map<String, dynamic>> rows,
 ) {
   final movesByFen = <String, Map<String, _MutableMoveAggregate>>{};
-  final gamesByFen = <String, Map<String, Map<String, dynamic>>>{};
+  final gamesByFen = <String, Map<String, PlayerOpeningTreeGameRef>>{};
+  final gameRowsById = <String, Map<String, dynamic>>{};
 
   for (final row in rows) {
     final pgn = _pgnForRow(row);
@@ -375,6 +428,12 @@ PlayerOpeningTreeIndex _buildPlayerOpeningTreeBatch(
     final result = _resultForRow(row, game);
     final date = _dateForRow(row, game);
     final normalizedRow = _normalizedRow(row, game, date, result);
+    final gameId = normalizedRow['id']?.toString().trim();
+    if (gameId == null || gameId.isEmpty) continue;
+    final line = <String>[
+      for (final move in game.mainline) move.uci.trim().toLowerCase(),
+    ].where((m) => m.isNotEmpty).toList(growable: false);
+    gameRowsById[gameId] = _compactGameRow(normalizedRow, line);
 
     var previousFen =
         game.startingFen.trim().isEmpty ? Chess.initial.fen : game.startingFen;
@@ -390,19 +449,16 @@ PlayerOpeningTreeIndex _buildPlayerOpeningTreeBatch(
       movesByFen
           .putIfAbsent(key, () => <String, _MutableMoveAggregate>{})
           .putIfAbsent(uci, () => _MutableMoveAggregate(uci))
-          .addGame(result: result, gameId: normalizedRow['id'], date: date);
+          .addGame(result: result, gameId: gameId, date: date);
 
-      final continuation = <String>[
-        for (final next in game.mainline.skip(i)) next.uci.trim().toLowerCase(),
-      ].where((m) => m.isNotEmpty).toList(growable: false);
       gamesByFen.putIfAbsent(
         key,
-        () => <String, Map<String, dynamic>>{},
-      )[normalizedRow['id']] = <String, dynamic>{
-        ...normalizedRow,
-        'fen': previousFen,
-        'continuation': continuation,
-      };
+        () => <String, PlayerOpeningTreeGameRef>{},
+      )[gameId] = PlayerOpeningTreeGameRef(
+        gameId: gameId,
+        fen: previousFen,
+        ply: i,
+      );
 
       previousFen = move.fen;
     }
@@ -410,20 +466,21 @@ PlayerOpeningTreeIndex _buildPlayerOpeningTreeBatch(
     final finalKey = _positionKey(previousFen);
     gamesByFen.putIfAbsent(
       finalKey,
-      () => <String, Map<String, dynamic>>{},
-    )[normalizedRow['id']] = <String, dynamic>{
-      ...normalizedRow,
-      'fen': previousFen,
-      'continuation': const <String>[],
-    };
+      () => <String, PlayerOpeningTreeGameRef>{},
+    )[gameId] = PlayerOpeningTreeGameRef(
+      gameId: gameId,
+      fen: previousFen,
+      ply: line.length,
+    );
   }
 
-  return _freezeIndex(movesByFen, gamesByFen);
+  return _freezeIndex(movesByFen, gamesByFen, gameRowsById);
 }
 
 PlayerOpeningTreeIndex _freezeIndex(
   Map<String, Map<String, _MutableMoveAggregate>> movesByFen,
-  Map<String, Map<String, Map<String, dynamic>>> gamesByFen,
+  Map<String, Map<String, PlayerOpeningTreeGameRef>> gamesByFen,
+  Map<String, Map<String, dynamic>> gameRowsById,
 ) {
   final frozenMoves = <String, List<MoveAggregate>>{};
   for (final entry in movesByFen.entries) {
@@ -433,17 +490,25 @@ PlayerOpeningTreeIndex _freezeIndex(
     frozenMoves[entry.key] = List<MoveAggregate>.unmodifiable(moves);
   }
 
-  final frozenGames = <String, List<Map<String, dynamic>>>{};
+  final frozenGames = <String, List<PlayerOpeningTreeGameRef>>{};
   for (final entry in gamesByFen.entries) {
-    frozenGames[entry.key] = List<Map<String, dynamic>>.unmodifiable(
-      entry.value.values.map(Map<String, dynamic>.unmodifiable),
+    frozenGames[entry.key] = List<PlayerOpeningTreeGameRef>.unmodifiable(
+      entry.value.values,
     );
+  }
+
+  final frozenGameRows = <String, Map<String, dynamic>>{};
+  for (final entry in gameRowsById.entries) {
+    frozenGameRows[entry.key] = Map<String, dynamic>.unmodifiable(entry.value);
   }
 
   return PlayerOpeningTreeIndex(
     movesByFen: Map<String, List<MoveAggregate>>.unmodifiable(frozenMoves),
-    gamesByFen: Map<String, List<Map<String, dynamic>>>.unmodifiable(
+    gamesByFen: Map<String, List<PlayerOpeningTreeGameRef>>.unmodifiable(
       frozenGames,
+    ),
+    gameRowsById: Map<String, Map<String, dynamic>>.unmodifiable(
+      frozenGameRows,
     ),
   );
 }
@@ -515,6 +580,39 @@ Map<String, dynamic> _normalizedRow(
   };
 }
 
+Map<String, dynamic> _compactGameRow(
+  Map<String, dynamic> row,
+  List<String> line,
+) {
+  final compact = <String, dynamic>{
+    'id': row['id'],
+    'whitePlayerId': row['whitePlayerId'],
+    'blackPlayerId': row['blackPlayerId'],
+    'white': row['white'],
+    'black': row['black'],
+    'whiteTitle': row['whiteTitle'],
+    'blackTitle': row['blackTitle'],
+    'whiteFed': row['whiteFed'],
+    'blackFed': row['blackFed'],
+    'whiteElo': row['whiteElo'],
+    'blackElo': row['blackElo'],
+    'whiteFideId': row['whiteFideId'],
+    'blackFideId': row['blackFideId'],
+    'result': row['result'],
+    'date': row['date'],
+    'timeControl': row['timeControl'],
+    'isOnline': row['isOnline'],
+    'eco': row['eco'],
+    'opening': row['opening'],
+    'variation': row['variation'],
+    'event': row['event'],
+    'site': row['site'],
+    'line': List<String>.unmodifiable(line),
+  };
+  compact.removeWhere((_, value) => value == null);
+  return compact;
+}
+
 String _resultForRow(Map<String, dynamic> row, ChessGame game) {
   final raw = row['result']?.toString().trim();
   if (raw != null && raw.isNotEmpty) return _normalizeResult(raw);
@@ -573,13 +671,28 @@ bool? _readBool(dynamic value) {
   return null;
 }
 
-List<String> _continuationForRow(Map<String, dynamic> row) {
-  final raw = row['continuation'];
+List<String> _lineForRow(Map<String, dynamic> row) {
+  final raw = row['line'];
   if (raw is! List) return const <String>[];
   return raw
       .map((m) => m.toString().trim().toLowerCase())
       .where((m) => m.isNotEmpty)
       .toList(growable: false);
+}
+
+List<String> _continuationForRef(
+  Map<String, dynamic> row,
+  PlayerOpeningTreeGameRef ref,
+) {
+  final line = _lineForRow(row);
+  if (ref.ply >= line.length) return const <String>[];
+  return List<String>.unmodifiable(line.sublist(ref.ply));
+}
+
+String? _nextUciForRef(Map<String, dynamic> row, PlayerOpeningTreeGameRef ref) {
+  final line = _lineForRow(row);
+  if (ref.ply < 0 || ref.ply >= line.length) return null;
+  return line[ref.ply];
 }
 
 String? _playerColorForRow(Map<String, dynamic> row, String playerId) {

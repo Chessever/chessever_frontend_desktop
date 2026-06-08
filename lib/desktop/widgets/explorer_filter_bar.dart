@@ -196,13 +196,20 @@ class PlayerOpeningTreeProgressChip extends StatelessWidget {
     final status = progress.status;
     final isError = status == PlayerOpeningTreeStatus.error;
     final isComplete = status == PlayerOpeningTreeStatus.complete;
+    final fetchedLabel =
+        progress.totalGames == null
+            ? _fmt(progress.fetchedGames)
+            : '${_fmt(progress.fetchedGames)}/${_fmt(progress.totalGames!)}';
+    final processedLabel =
+        progress.totalGames == null
+            ? _fmt(progress.processedGames)
+            : '${_fmt(progress.processedGames)}/${_fmt(progress.totalGames!)}';
     final label =
         isError
             ? 'Tree failed'
             : isComplete
-            ? 'Tree complete · ${_fmt(progress.processedGames)} games'
-            : 'Fetched ${_fmt(progress.fetchedGames)}'
-                '${progress.totalGames == null ? '' : ' / ${_fmt(progress.totalGames!)}'}'
+            ? 'Tree complete · $processedLabel games'
+            : 'Fetched $fetchedLabel'
                 ' · building ${_fmt(progress.processedGames)}'
                 ' · ${_fmt(progress.indexedPositions)} positions';
     final color =
