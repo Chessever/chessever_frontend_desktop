@@ -202,7 +202,7 @@ void main() {
       );
       expect(
         shortcuts[BoardActionKey.increaseEngineLines],
-        contains(KeyChord(keyId: LogicalKeyboardKey.add.keyId)),
+        contains(KeyChord(keyId: LogicalKeyboardKey.equal.keyId, shift: true)),
       );
       expect(
         shortcuts[BoardActionKey.decreaseEngineLines],

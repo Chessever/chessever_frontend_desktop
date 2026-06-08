@@ -773,7 +773,7 @@ Map<BoardActionKey, List<KeyChord>> defaultBoardShortcuts() {
     BoardActionKey.rightRailActivateSelection: const [],
     BoardActionKey.closeVariation: [_key(LogicalKeyboardKey.keyM)],
     BoardActionKey.increaseEngineLines: [
-      _key(LogicalKeyboardKey.add),
+      _shift(LogicalKeyboardKey.equal),
       _key(LogicalKeyboardKey.numpadAdd),
     ],
     BoardActionKey.decreaseEngineLines: [
@@ -899,10 +899,9 @@ class KeyboardShortcutsNotifier extends AsyncNotifier<BoardShortcutMap> {
       // unbinding survives a relaunch); missing keys fall back to defaults.
       final merged = <BoardActionKey, List<KeyChord>>{};
       for (final action in BoardActionKey.values) {
-        final chords =
-            overrides.containsKey(action)
-                ? overrides[action]!
-                : defaults[action] ?? const <KeyChord>[];
+        final chords = overrides.containsKey(action)
+            ? overrides[action]!
+            : defaults[action] ?? const <KeyChord>[];
         merged[action] = _chordsFor(chords);
       }
       return BoardShortcutMap(merged);
