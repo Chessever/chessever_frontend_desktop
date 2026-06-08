@@ -21,6 +21,8 @@ import 'package:chessever/theme/app_theme.dart';
 /// supplied starting FEN. Animation uses motor's [DesktopMotion.hover]
 /// for the fade/scale entry so the popup feels like everything else in
 /// the desktop chrome (sidebar nudge, segment-tab arrival, etc.).
+enum MoveHoverPreviewPlacement { tokenAnchored, engineLine }
+
 class MoveHoverPreview extends StatefulWidget {
   const MoveHoverPreview({
     super.key,
@@ -31,6 +33,8 @@ class MoveHoverPreview extends StatefulWidget {
     this.orientation = Side.white,
     this.enabled = true,
     this.lastMoveUci,
+    this.placement = MoveHoverPreviewPlacement.tokenAnchored,
+    this.placementAnchorKey,
   });
 
   /// FEN to start replay from. The popup renders the position reached by
@@ -60,6 +64,16 @@ class MoveHoverPreview extends StatefulWidget {
   /// When false, the popup is disabled (the child is rendered as-is).
   final bool enabled;
 
+  /// How the popup is placed. Engine PVs use [engineLine] so nearby moves
+  /// share a stable, clamped board location instead of anchoring directly
+  /// above the move text.
+  final MoveHoverPreviewPlacement placement;
+
+  /// Optional render anchor used by [MoveHoverPreviewPlacement.engineLine].
+  /// Pass a key for the whole PV line so moving between moves updates only
+  /// the board content while the preview location stays fixed.
+  final GlobalKey? placementAnchorKey;
+
   @override
   State<MoveHoverPreview> createState() => _MoveHoverPreviewState();
 }
@@ -87,6 +101,8 @@ class _MoveHoverPreviewState extends State<MoveHoverPreview> {
         final replay = _computeReplay();
         return _MoveHoverPopup(
           link: _link,
+          placement: widget.placement,
+          placementAnchorKey: widget.placementAnchorKey,
           size: widget.size,
           fen: replay.fen,
           preFen: replay.preFen,
@@ -215,6 +231,8 @@ class _MoveHoverPreviewState extends State<MoveHoverPreview> {
 class _MoveHoverPopup extends ConsumerWidget {
   const _MoveHoverPopup({
     required this.link,
+    required this.placement,
+    required this.placementAnchorKey,
     required this.size,
     required this.fen,
     required this.preFen,
@@ -223,6 +241,8 @@ class _MoveHoverPopup extends ConsumerWidget {
   });
 
   final LayerLink link;
+  final MoveHoverPreviewPlacement placement;
+  final GlobalKey? placementAnchorKey;
   final double size;
   final String fen;
   final String? preFen;
@@ -231,6 +251,43 @@ class _MoveHoverPopup extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final cardSize = Size(size + 12, size + 12);
+    final card = _AnimatedHoverCard(
+      size: size,
+      fen: fen,
+      preFen: preFen,
+      lastMove: lastMove,
+      orientation: orientation,
+    );
+
+    if (placement == MoveHoverPreviewPlacement.engineLine) {
+      return Positioned.fill(
+        child: IgnorePointer(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final anchorRect = _anchorRect(context) ?? Rect.zero;
+              final origin = clampedHoverPreviewOrigin(
+                anchorRect: anchorRect,
+                overlaySize: constraints.biggest,
+                popupSize: cardSize,
+              );
+              return Stack(
+                children: [
+                  Positioned(
+                    left: origin.dx,
+                    top: origin.dy,
+                    width: cardSize.width,
+                    height: cardSize.height,
+                    child: card,
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+    }
+
     return Positioned(
       // CompositedTransformFollower handles the X/Y; this Positioned just
       // claims a zero-sized slot so the overlay can render anywhere.
@@ -245,17 +302,40 @@ class _MoveHoverPopup extends ConsumerWidget {
           targetAnchor: Alignment.topCenter,
           followerAnchor: Alignment.bottomCenter,
           offset: const Offset(0, -8),
-          child: _AnimatedHoverCard(
-            size: size,
-            fen: fen,
-            preFen: preFen,
-            lastMove: lastMove,
-            orientation: orientation,
-          ),
+          child: card,
         ),
       ),
     );
   }
+
+  Rect? _anchorRect(BuildContext overlayContext) {
+    final anchorContext = placementAnchorKey?.currentContext;
+    final anchor = anchorContext?.findRenderObject() as RenderBox?;
+    final overlay = overlayContext.findRenderObject() as RenderBox?;
+    if (anchor == null || overlay == null || !anchor.hasSize) return null;
+    final topLeft = anchor.localToGlobal(Offset.zero, ancestor: overlay);
+    return topLeft & anchor.size;
+  }
+}
+
+Offset clampedHoverPreviewOrigin({
+  required Rect anchorRect,
+  required Size overlaySize,
+  required Size popupSize,
+  double margin = 8,
+  double preferredVerticalGap = 10,
+}) {
+  final preferredLeft = anchorRect.center.dx - popupSize.width / 2 - 28;
+  final maxLeft = overlaySize.width - popupSize.width - margin;
+  final left = preferredLeft.clamp(margin, maxLeft < margin ? margin : maxLeft);
+
+  final belowTop = anchorRect.bottom + preferredVerticalGap;
+  final maxTop = overlaySize.height - popupSize.height - margin;
+  final fallbackTop = anchorRect.top - popupSize.height - preferredVerticalGap;
+  final preferredTop = belowTop <= maxTop ? belowTop : fallbackTop;
+  final top = preferredTop.clamp(margin, maxTop < margin ? margin : maxTop);
+
+  return Offset(left.toDouble(), top.toDouble());
 }
 
 class _AnimatedHoverCard extends ConsumerStatefulWidget {

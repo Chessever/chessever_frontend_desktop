@@ -673,12 +673,11 @@ class _PvToken {
   final List<String> ucisUpTo;
 }
 
-/// Renders the PV move list as a Wrap of hoverable SAN chips. Each token
-/// triggers [MoveHoverPreview] showing the position after the cumulative
-/// UCI line through that token. Keeps the row compact: chips are tight
-/// and wrap to a second line when needed (the row's container clips
-/// vertically via maxLines via the parent's height clamp).
-class _PvTokensLine extends StatelessWidget {
+/// Renders the PV move list as a Wrap of SAN chips. The line owns one
+/// stable [MoveHoverPreview] so moving between engine moves updates only
+/// the popup board content/animation while the preview stays in its
+/// clamped engine-line placement.
+class _PvTokensLine extends StatefulWidget {
   const _PvTokensLine({
     required this.fen,
     required this.tokens,
@@ -690,8 +689,26 @@ class _PvTokensLine extends StatelessWidget {
   final bool expanded;
 
   @override
+  State<_PvTokensLine> createState() => _PvTokensLineState();
+}
+
+class _PvTokensLineState extends State<_PvTokensLine> {
+  final GlobalKey _lineAnchorKey = GlobalKey();
+  int? _hoveredIndex;
+
+  @override
+  void didUpdateWidget(covariant _PvTokensLine oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.expanded ||
+        (_hoveredIndex != null && _hoveredIndex! >= widget.tokens.length)) {
+      _hoveredIndex = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (!expanded) {
+    final tokens = widget.tokens;
+    if (!widget.expanded) {
       return Text(
         tokens.map((t) => t.san).join(' '),
         maxLines: 1,
@@ -704,27 +721,41 @@ class _PvTokensLine extends StatelessWidget {
         ),
       );
     }
-    return Wrap(
-      spacing: 5,
-      runSpacing: 2,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        for (var i = 0; i < tokens.length; i++)
-          MoveHoverPreview(
-            key: ValueKey<int>(i),
-            startingFen: fen,
-            movesUpToHover: tokens[i].ucisUpTo,
-            child: Text(
-              tokens[i].san,
-              style: const TextStyle(
-                color: kWhiteColor70,
-                fontSize: 12,
-                height: 1.35,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
+    final hoveredIndex = _hoveredIndex;
+    return MoveHoverPreview(
+      startingFen: widget.fen,
+      movesUpToHover: hoveredIndex == null
+          ? const <String>[]
+          : tokens[hoveredIndex].ucisUpTo,
+      enabled: hoveredIndex != null,
+      placement: MoveHoverPreviewPlacement.engineLine,
+      placementAnchorKey: _lineAnchorKey,
+      child: MouseRegion(
+        onExit: (_) => setState(() => _hoveredIndex = null),
+        child: KeyedSubtree(
+          key: _lineAnchorKey,
+          child: Wrap(
+            spacing: 5,
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              for (var i = 0; i < tokens.length; i++)
+                MouseRegion(
+                  onEnter: (_) => setState(() => _hoveredIndex = i),
+                  child: Text(
+                    tokens[i].san,
+                    style: const TextStyle(
+                      color: kWhiteColor70,
+                      fontSize: 12,
+                      height: 1.35,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+            ],
           ),
-      ],
+        ),
+      ),
     );
   }
 }
