@@ -502,22 +502,51 @@ class _ColumnDims {
   bool get hasScore => score != null;
 
   factory _ColumnDims.forWidth(double width, {required bool compact}) {
-    double resultBarFor(double horizontalPad) {
+    double resultBarFor({
+      required double horizontalPad,
+      required double move,
+      required double gamesValue,
+      required double gamesIcon,
+      required double last,
+      required double? score,
+      required double gap,
+    }) {
       final contentWidth = (width - horizontalPad * 2).clamp(0, width);
-      return contentWidth * 0.5;
+      final fixedWidth =
+          move +
+          gamesValue +
+          gamesIcon +
+          last +
+          (score ?? 0) +
+          gap * (score == null ? 3 : 5);
+      return (contentWidth - fixedWidth).clamp(48.0, contentWidth * 0.5);
     }
 
     if (compact) {
       if (width >= 300) {
         const horizontalPad = 8.0;
+        const move = 72.0;
+        const gamesValue = 36.0;
+        const gamesIcon = 0.0;
+        const last = 30.0;
+        const double? score = null;
+        const gap = 5.0;
         return _ColumnDims(
-          move: 46,
-          gamesValue: 40,
-          gamesIcon: 0,
-          last: 34,
-          score: null,
-          resultBar: resultBarFor(horizontalPad),
-          gap: 6,
+          move: move,
+          gamesValue: gamesValue,
+          gamesIcon: gamesIcon,
+          last: last,
+          score: score,
+          resultBar: resultBarFor(
+            horizontalPad: horizontalPad,
+            move: move,
+            gamesValue: gamesValue,
+            gamesIcon: gamesIcon,
+            last: last,
+            score: score,
+            gap: gap,
+          ),
+          gap: gap,
           horizontalPad: horizontalPad,
           useFullDate: false,
           useFullCount: true,
@@ -527,14 +556,28 @@ class _ColumnDims {
         );
       }
       const horizontalPad = 8.0;
+      const move = 58.0;
+      const gamesValue = 30.0;
+      const gamesIcon = 0.0;
+      const last = 24.0;
+      const double? score = null;
+      const gap = 4.0;
       return _ColumnDims(
-        move: 38,
-        gamesValue: 34,
-        gamesIcon: 0,
-        last: 26,
-        score: null,
-        resultBar: resultBarFor(horizontalPad),
-        gap: 4,
+        move: move,
+        gamesValue: gamesValue,
+        gamesIcon: gamesIcon,
+        last: last,
+        score: score,
+        resultBar: resultBarFor(
+          horizontalPad: horizontalPad,
+          move: move,
+          gamesValue: gamesValue,
+          gamesIcon: gamesIcon,
+          last: last,
+          score: score,
+          gap: gap,
+        ),
+        gap: gap,
         horizontalPad: horizontalPad,
         useFullDate: false,
         useFullCount: false,
@@ -545,14 +588,28 @@ class _ColumnDims {
     }
     if (width >= 660) {
       const horizontalPad = 12.0;
+      const move = 112.0;
+      const gamesValue = 54.0;
+      const gamesIcon = 18.0;
+      const last = 52.0;
+      const score = 44.0;
+      const gap = 6.0;
       return _ColumnDims(
-        move: 64,
-        gamesValue: 54,
-        gamesIcon: 18,
-        last: 52,
-        score: 44,
-        resultBar: resultBarFor(horizontalPad),
-        gap: 6,
+        move: move,
+        gamesValue: gamesValue,
+        gamesIcon: gamesIcon,
+        last: last,
+        score: score,
+        resultBar: resultBarFor(
+          horizontalPad: horizontalPad,
+          move: move,
+          gamesValue: gamesValue,
+          gamesIcon: gamesIcon,
+          last: last,
+          score: score,
+          gap: gap,
+        ),
+        gap: gap,
         horizontalPad: horizontalPad,
         useFullDate: true,
         useFullCount: true,
@@ -563,14 +620,28 @@ class _ColumnDims {
     }
     if (width >= 460) {
       const horizontalPad = 10.0;
+      const move = 88.0;
+      const gamesValue = 48.0;
+      const gamesIcon = 18.0;
+      const last = 44.0;
+      const double? score = null;
+      const gap = 6.0;
       return _ColumnDims(
-        move: 60,
-        gamesValue: 50,
-        gamesIcon: 18,
-        last: 48,
-        score: null,
-        resultBar: resultBarFor(horizontalPad),
-        gap: 6,
+        move: move,
+        gamesValue: gamesValue,
+        gamesIcon: gamesIcon,
+        last: last,
+        score: score,
+        resultBar: resultBarFor(
+          horizontalPad: horizontalPad,
+          move: move,
+          gamesValue: gamesValue,
+          gamesIcon: gamesIcon,
+          last: last,
+          score: score,
+          gap: gap,
+        ),
+        gap: gap,
         horizontalPad: horizontalPad,
         useFullDate: false,
         useFullCount: true,
@@ -581,14 +652,28 @@ class _ColumnDims {
     }
     if (width >= 340) {
       const horizontalPad = 10.0;
+      const move = 72.0;
+      const gamesValue = 38.0;
+      const gamesIcon = 14.0;
+      const last = 30.0;
+      const double? score = null;
+      const gap = 5.0;
       return _ColumnDims(
-        move: 48,
-        gamesValue: 42,
-        gamesIcon: 16,
-        last: 36,
-        score: null,
-        resultBar: resultBarFor(horizontalPad),
-        gap: 6,
+        move: move,
+        gamesValue: gamesValue,
+        gamesIcon: gamesIcon,
+        last: last,
+        score: score,
+        resultBar: resultBarFor(
+          horizontalPad: horizontalPad,
+          move: move,
+          gamesValue: gamesValue,
+          gamesIcon: gamesIcon,
+          last: last,
+          score: score,
+          gap: gap,
+        ),
+        gap: gap,
         horizontalPad: horizontalPad,
         useFullDate: false,
         useFullCount: true,
@@ -598,14 +683,28 @@ class _ColumnDims {
       );
     }
     const horizontalPad = 8.0;
+    const move = 62.0;
+    const gamesValue = 32.0;
+    const gamesIcon = 12.0;
+    const last = 26.0;
+    const double? score = null;
+    const gap = 4.0;
     return _ColumnDims(
-      move: 46,
-      gamesValue: 38,
-      gamesIcon: 14,
-      last: 34,
-      score: null,
-      resultBar: resultBarFor(horizontalPad),
-      gap: 5,
+      move: move,
+      gamesValue: gamesValue,
+      gamesIcon: gamesIcon,
+      last: last,
+      score: score,
+      resultBar: resultBarFor(
+        horizontalPad: horizontalPad,
+        move: move,
+        gamesValue: gamesValue,
+        gamesIcon: gamesIcon,
+        last: last,
+        score: score,
+        gap: gap,
+      ),
+      gap: gap,
       horizontalPad: horizontalPad,
       useFullDate: false,
       useFullCount: false,
