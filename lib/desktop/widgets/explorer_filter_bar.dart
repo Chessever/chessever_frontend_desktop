@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/screens/gamebase/models/gamebase_game.dart'
     show TimeControl;
 import 'package:chessever/screens/gamebase/models/gamebase_player.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/explorer_filter_availability.dart';
 import 'package:chessever/desktop/widgets/explorer_filters_popover.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -56,6 +58,10 @@ class ExplorerFilterBar extends ConsumerWidget {
     final notifier = ref.read(gamebaseExplorerProvider.notifier);
     final selectedTitle = gamebasePlayerTitleForMinRating(filters.minRating);
     final filtersAvailable = explorerFiltersAvailableForScope(scopedPlayer);
+    final treeState =
+        scopedPlayer == null
+            ? null
+            : ref.watch(playerOpeningTreeProvider(scopedPlayer!.id));
     void guardOrRun(VoidCallback action) {
       if (!filtersAvailable) {
         showWholeDatabaseFiltersComingSoon(context);
@@ -149,12 +155,125 @@ class ExplorerFilterBar extends ConsumerWidget {
               compact: true,
               scopedPlayer: scopedPlayer,
             ),
+            if (treeState != null) ...[
+              const _RailDivider(),
+              PlayerOpeningTreeProgressChip(
+                state: treeState,
+                onRetry:
+                    () =>
+                        ref
+                            .read(
+                              playerOpeningTreeProvider(
+                                scopedPlayer!.id,
+                              ).notifier,
+                            )
+                            .retry(),
+              ),
+            ],
             const SizedBox(width: 6),
           ],
         ),
       ),
     );
   }
+}
+
+class PlayerOpeningTreeProgressChip extends StatelessWidget {
+  const PlayerOpeningTreeProgressChip({
+    super.key,
+    required this.state,
+    required this.onRetry,
+    this.maxWidth = 300,
+  });
+
+  final PlayerOpeningTreeState state;
+  final VoidCallback onRetry;
+  final double maxWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = state.progress;
+    final status = progress.status;
+    final isError = status == PlayerOpeningTreeStatus.error;
+    final isComplete = status == PlayerOpeningTreeStatus.complete;
+    final fetchedLabel =
+        progress.totalGames == null
+            ? _fmt(progress.fetchedGames)
+            : '${_fmt(progress.fetchedGames)}/${_fmt(progress.totalGames!)}';
+    final processedLabel =
+        progress.totalGames == null
+            ? _fmt(progress.processedGames)
+            : '${_fmt(progress.processedGames)}/${_fmt(progress.totalGames!)}';
+    final label =
+        isError
+            ? 'Tree failed'
+            : isComplete
+            ? 'Tree complete · $processedLabel games'
+            : 'Fetched $fetchedLabel'
+                ' · building ${_fmt(progress.processedGames)}'
+                ' · ${_fmt(progress.indexedPositions)} positions';
+    final color =
+        isError
+            ? kRedColor
+            : isComplete
+            ? kGreenColor
+            : kPrimaryColor;
+
+    return DesktopTooltip(
+      message: label,
+      child: InkWell(
+        onTap: isError ? onRetry : null,
+        borderRadius: BorderRadius.circular(5),
+        child: Container(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.12),
+            border: Border.all(color: color.withValues(alpha: 0.36)),
+            borderRadius: BorderRadius.circular(5),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (status == PlayerOpeningTreeStatus.building)
+                SizedBox(
+                  width: 10,
+                  height: 10,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5,
+                    color: color,
+                  ),
+                )
+              else
+                Icon(
+                  isError ? Icons.refresh_rounded : Icons.account_tree_outlined,
+                  size: 13,
+                  color: color,
+                ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _fmt(int value) {
+  if (value >= 1000000) return '${(value / 1000000).toStringAsFixed(1)}M';
+  if (value >= 1000) return '${(value / 1000).toStringAsFixed(1)}K';
+  return value.toString();
 }
 
 String _shortTimeControlLabel(TimeControl value) {
