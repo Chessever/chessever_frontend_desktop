@@ -727,10 +727,12 @@ Map<BoardActionKey, List<KeyChord>> defaultBoardShortcuts() {
     BoardActionKey.firstMove: [
       _key(LogicalKeyboardKey.home),
       _ctrl(LogicalKeyboardKey.arrowLeft),
+      _primary(LogicalKeyboardKey.arrowLeft),
     ],
     BoardActionKey.lastMove: [
       _key(LogicalKeyboardKey.end),
       _ctrl(LogicalKeyboardKey.arrowRight),
+      _primary(LogicalKeyboardKey.arrowRight),
     ],
     BoardActionKey.prevVariation: [_key(LogicalKeyboardKey.arrowUp)],
     BoardActionKey.nextVariation: [_key(LogicalKeyboardKey.arrowDown)],
@@ -763,6 +765,8 @@ Map<BoardActionKey, List<KeyChord>> defaultBoardShortcuts() {
       _alt(LogicalKeyboardKey.f2),
     ],
     BoardActionKey.openExplorer: [
+      _key(LogicalKeyboardKey.enter),
+      _key(LogicalKeyboardKey.numpadEnter),
       _primary(LogicalKeyboardKey.keyO, shift: true),
     ],
     BoardActionKey.openPositionSetup: [_key(LogicalKeyboardKey.keyS)],
@@ -798,10 +802,10 @@ Map<BoardActionKey, List<KeyChord>> defaultBoardShortcuts() {
     ],
     BoardActionKey.rightRailPreviousTable: const [],
     BoardActionKey.rightRailNextTable: const [],
-    BoardActionKey.rightRailActivateSelection: [
-      _key(LogicalKeyboardKey.enter),
-      _key(LogicalKeyboardKey.numpadEnter),
-    ],
+    // Right-rail widgets handle Enter locally when focused. Keeping this
+    // unbound at the global board shortcut layer lets Enter toggle Explorer
+    // from board focus instead of being overwritten by this no-op action.
+    BoardActionKey.rightRailActivateSelection: const [],
     BoardActionKey.closeVariation: [_key(LogicalKeyboardKey.keyM)],
     BoardActionKey.increaseEngineLines: [
       _key(LogicalKeyboardKey.add),
