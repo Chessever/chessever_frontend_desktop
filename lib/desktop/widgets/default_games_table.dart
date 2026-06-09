@@ -339,8 +339,8 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         scrollController: widget.controller,
         rowMinHeight: _rowHeight,
         headerHeight: _headerHeight,
-        minTableWidth: 1320,
-        padding: const EdgeInsets.only(right: 8),
+        minTableWidth: 1280,
+        padding: const EdgeInsets.only(right: 6),
         sortState: _sortState,
         onSortChanged: (next) => setState(() => _sortState = next),
         rowDecorationBuilder: (game, hovered) {
@@ -364,8 +364,8 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
           }
           return null;
         },
-        rowKeyBuilder:
-            (game) => ValueKey('${widget.rowKeyPrefix}-${game.gameId}'),
+        rowKeyBuilder: (game) =>
+            ValueKey('${widget.rowKeyPrefix}-${game.gameId}'),
         onRowTap: (game, {required bool inNewTab}) {
           if (widget.selectionMode) {
             _selectRowInSelectionMode(game, rows);
@@ -384,12 +384,10 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
           _highlight(game);
           _openGame(game, inNewTab: inNewTab);
         },
-        onRowSecondaryTap:
-            widget.onContext == null
-                ? null
-                : (game, position) => unawaited(
-                  widget.onContext!(globalPos: position, game: game),
-                ),
+        onRowSecondaryTap: widget.onContext == null
+            ? null
+            : (game, position) =>
+                  unawaited(widget.onContext!(globalPos: position, game: game)),
         footer: widget.footer,
       ),
     );
@@ -402,19 +400,19 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
       AdaptiveColumn<GamesTourModel>(
         id: 'number',
         label: '#',
+        minWidth: 20,
         headerAlignment: Alignment.centerRight,
         cellAlignment: Alignment.centerRight,
-        cellBuilder:
-            (_, game) => _DefaultGamesNumberCell(
-              value: rows.indexWhere((row) => row.gameId == game.gameId) + 1,
-            ),
+        cellBuilder: (_, game) => _DefaultGamesNumberCell(
+          value: rows.indexWhere((row) => row.gameId == game.gameId) + 1,
+        ),
       ),
       AdaptiveColumn<GamesTourModel>(
         id: 'white',
         label: 'WHITE',
         sortField: GamebaseSortField.whiteName,
-        cellBuilder:
-            (_, game) => _DefaultGamesPlayerCell(player: game.whitePlayer),
+        cellBuilder: (_, game) =>
+            _DefaultGamesPlayerCell(player: game.whitePlayer),
       ),
       AdaptiveColumn<GamesTourModel>(
         id: 'whiteElo',
@@ -422,18 +420,16 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         sortField: GamebaseSortField.whiteElo,
         headerAlignment: Alignment.centerRight,
         cellAlignment: Alignment.centerRight,
-        cellBuilder:
-            (_, game) => _DefaultGamesNumberCell(
-              value:
-                  game.whitePlayer.rating > 0 ? game.whitePlayer.rating : null,
-            ),
+        cellBuilder: (_, game) => _DefaultGamesNumberCell(
+          value: game.whitePlayer.rating > 0 ? game.whitePlayer.rating : null,
+        ),
       ),
       AdaptiveColumn<GamesTourModel>(
         id: 'black',
         label: 'BLACK',
         sortField: GamebaseSortField.blackName,
-        cellBuilder:
-            (_, game) => _DefaultGamesPlayerCell(player: game.blackPlayer),
+        cellBuilder: (_, game) =>
+            _DefaultGamesPlayerCell(player: game.blackPlayer),
       ),
       AdaptiveColumn<GamesTourModel>(
         id: 'blackElo',
@@ -441,11 +437,9 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         sortField: GamebaseSortField.blackElo,
         headerAlignment: Alignment.centerRight,
         cellAlignment: Alignment.centerRight,
-        cellBuilder:
-            (_, game) => _DefaultGamesNumberCell(
-              value:
-                  game.blackPlayer.rating > 0 ? game.blackPlayer.rating : null,
-            ),
+        cellBuilder: (_, game) => _DefaultGamesNumberCell(
+          value: game.blackPlayer.rating > 0 ? game.blackPlayer.rating : null,
+        ),
       ),
       AdaptiveColumn<GamesTourModel>(
         id: 'result',
@@ -453,10 +447,9 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         sortField: GamebaseSortField.result,
         headerAlignment: Alignment.center,
         cellAlignment: Alignment.center,
-        cellBuilder:
-            (_, game) => _DefaultGamesResultCell(
-              result: defaultGameResultText(game.gameStatus),
-            ),
+        cellBuilder: (_, game) => _DefaultGamesResultCell(
+          result: defaultGameResultText(game.gameStatus),
+        ),
       ),
       AdaptiveColumn<GamesTourModel>(
         id: 'date',
@@ -464,77 +457,61 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         sortField: GamebaseSortField.date,
         headerAlignment: Alignment.centerRight,
         cellAlignment: Alignment.centerRight,
-        cellBuilder:
-            (_, game) => _DefaultGamesTextCell(
-              value: defaultGameDateLabel(game),
-              color: kWhiteColor70,
-              maxWidth: 88,
-              align: TextAlign.right,
-            ),
+        cellBuilder: (_, game) => _DefaultGamesTextCell(
+          value: defaultGameDateLabel(game),
+          color: kWhiteColor70,
+          maxWidth: 88,
+          align: TextAlign.right,
+        ),
       ),
       AdaptiveColumn<GamesTourModel>(
         id: 'event',
         label: 'EVENT',
         sortField: GamebaseSortField.event,
-        cellBuilder:
-            (_, game) => _DefaultGamesTextCell(
-              value: defaultGameEventLabel(game),
-              color: kWhiteColor,
-              maxWidth: 240,
-            ),
+        cellBuilder: (_, game) => _DefaultGamesTextCell(
+          value: defaultGameEventLabel(game),
+          color: kWhiteColor,
+          maxWidth: 240,
+        ),
       ),
       AdaptiveColumn<GamesTourModel>(
         id: 'round',
         label: 'ROUND',
-        cellBuilder:
-            (_, game) => _DefaultGamesTextCell(
-              value:
-                  game.roundSlug?.trim().isNotEmpty == true
-                      ? game.roundSlug!.trim()
-                      : game.roundId,
-              color: kWhiteColor70,
-              maxWidth: 96,
-            ),
-      ),
-      AdaptiveColumn<GamesTourModel>(
-        id: 'board',
-        label: 'BOARD',
-        headerAlignment: Alignment.centerRight,
-        cellAlignment: Alignment.centerRight,
-        cellBuilder: (_, game) => _DefaultGamesNumberCell(value: game.boardNr),
+        cellBuilder: (_, game) => _DefaultGamesTextCell(
+          value: defaultGameRoundLabel(game),
+          color: kWhiteColor70,
+          maxWidth: 96,
+        ),
       ),
       AdaptiveColumn<GamesTourModel>(
         id: 'eco',
         label: 'ECO',
         sortField: GamebaseSortField.eco,
-        cellBuilder:
-            (_, game) => _DefaultGamesTextCell(
-              value: game.eco ?? '—',
-              color: kWhiteColor70,
-              maxWidth: 44,
-            ),
+        cellBuilder: (_, game) => _DefaultGamesTextCell(
+          value: game.eco ?? '—',
+          color: kWhiteColor70,
+          maxWidth: 44,
+        ),
       ),
       AdaptiveColumn<GamesTourModel>(
         id: 'opening',
         label: 'OPENING',
         sortField: GamebaseSortField.opening,
-        cellBuilder:
-            (_, game) => _DefaultGamesTextCell(
-              value: game.openingName ?? '—',
-              color: kWhiteColor70,
-              maxWidth: 260,
-            ),
+        cellBuilder: (_, game) => _DefaultGamesTextCell(
+          value: game.openingName ?? '—',
+          color: kWhiteColor70,
+          maxWidth: 260,
+        ),
       ),
       AdaptiveColumn<GamesTourModel>(
         id: 'site',
         label: 'SITE',
         sortField: GamebaseSortField.site,
-        cellBuilder:
-            (_, game) => _DefaultGamesTextCell(
-              value: defaultGameSite(game),
-              color: kWhiteColor70,
-              maxWidth: 160,
-            ),
+        cellBuilder: (_, game) => _DefaultGamesTextCell(
+          value: defaultGameSite(game),
+          color: kWhiteColor70,
+          maxWidth: 160,
+        ),
       ),
     ];
   }
@@ -663,7 +640,7 @@ class _DefaultGamesPlayerCell extends StatelessWidget {
           ],
           Flexible(
             child: Text(
-              player.name,
+              defaultGamePlayerName(player.name),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -696,6 +673,52 @@ String defaultGameSite(GamesTourModel game) {
   final slug = game.tourSlug?.trim() ?? '';
   if (slug.isEmpty) return '—';
   return _humanizeDefaultGameSlug(slug);
+}
+
+String defaultGamePlayerName(String rawName) {
+  var name = rawName.trim();
+  if (name.isEmpty) return name;
+  name = name.replaceFirst(
+    RegExp(r'^(GM|IM|FM|CM|WGM|WIM|WFM|WCM)\s+', caseSensitive: false),
+    '',
+  );
+
+  final commaIndex = name.indexOf(',');
+  if (commaIndex >= 0) {
+    final last = name.substring(0, commaIndex).trim();
+    final first = name.substring(commaIndex + 1).trim();
+    if (last.isEmpty || first.isEmpty) return name;
+    final initial = _firstNameInitial(first);
+    return initial == null ? last : '$last, $initial.';
+  }
+
+  final parts = name.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+  if (parts.length < 2) return name;
+  final initial = _firstNameInitial(parts.first);
+  if (initial == null) return name;
+  return '${parts.sublist(1).join(' ')}, $initial.';
+}
+
+String defaultGameRoundLabel(GamesTourModel game) {
+  final candidates = <String?>[game.roundSlug, game.roundId];
+  for (final candidate in candidates) {
+    final value = candidate?.trim() ?? '';
+    if (value.isEmpty || _looksLikeEcoCode(value)) continue;
+    return value;
+  }
+  return '—';
+}
+
+String? _firstNameInitial(String firstName) {
+  final match = RegExp(r'[A-Za-zÀ-ÖØ-öø-ÿ]').firstMatch(firstName.trim());
+  return match?.group(0)?.toUpperCase();
+}
+
+bool _looksLikeEcoCode(String value) {
+  return RegExp(
+    r'^[A-E][0-9]{2}$',
+    caseSensitive: false,
+  ).hasMatch(value.trim());
 }
 
 String? _resolveDefaultGameEventName({
@@ -744,8 +767,10 @@ bool _looksLikeOpaqueDefaultGameEventId(String? value) {
 
 String _humanizeDefaultGameSlug(String value) {
   if (!value.contains('-') && !value.contains('_')) return value;
-  final words =
-      value.split(RegExp(r'[-_]+')).where((s) => s.isNotEmpty).toList();
+  final words = value
+      .split(RegExp(r'[-_]+'))
+      .where((s) => s.isNotEmpty)
+      .toList();
   if (words.isEmpty) return value;
   return words
       .map((word) {

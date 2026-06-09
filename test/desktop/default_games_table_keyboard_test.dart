@@ -8,6 +8,34 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 import 'package:chessever/theme/app_theme.dart';
 
 void main() {
+  test(
+    'formats compact table player names as last name plus first initial',
+    () {
+      expect(defaultGamePlayerName('Sam Shankland'), 'Shankland, S.');
+      expect(
+        defaultGamePlayerName('Martinez Ramirez, Leandro'),
+        'Martinez Ramirez, L.',
+      );
+      expect(defaultGamePlayerName('IM Fernando Peralta'), 'Peralta, F.');
+      expect(defaultGamePlayerName('White0'), 'White0');
+    },
+  );
+
+  test('round label does not echo ECO codes', () {
+    expect(
+      defaultGameRoundLabel(
+        _game(0).copyWith(roundSlug: 'B48', roundId: 'Round 2'),
+      ),
+      'Round 2',
+    );
+    expect(
+      defaultGameRoundLabel(
+        _game(0).copyWith(roundSlug: 'B48', roundId: 'E90'),
+      ),
+      '—',
+    );
+  });
+
   testWidgets('single click highlights and arrows move highlighted game', (
     tester,
   ) async {
