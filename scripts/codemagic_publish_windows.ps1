@@ -333,5 +333,10 @@ if ($LASTEXITCODE -ne 0) {
     throw "windows installer upload (latest) failed with exit code $LASTEXITCODE"
 }
 
+& ssh -i $keyPath -o StrictHostKeyChecking=accept-new $remote "delete-previous windows $($release.ArchiveName)"
+if ($LASTEXITCODE -ne 0) {
+    throw "previous Windows archive cleanup failed with exit code $LASTEXITCODE"
+}
+
 Write-Host "Published Windows desktop_updater archive $($release.ReleaseVersion)"
 Write-Host "Published Windows installer: https://chessever.com/updates/desktop/downloads/Chessever-Setup.exe"
