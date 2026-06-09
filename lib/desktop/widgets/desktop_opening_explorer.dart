@@ -528,7 +528,10 @@ class _ColumnDims {
         const move = 72.0;
         const gamesValue = 36.0;
         const gamesIcon = 0.0;
-        const last = 30.0;
+        // Keep the last-played year visually separated from the games count.
+        // The final date is right-aligned at the rail edge, so a wider LAST
+        // slot shifts the games count left instead of crowding both values.
+        const last = 42.0;
         const double? score = null;
         const gap = 5.0;
         return _ColumnDims(
@@ -559,7 +562,7 @@ class _ColumnDims {
       const move = 58.0;
       const gamesValue = 30.0;
       const gamesIcon = 0.0;
-      const last = 24.0;
+      const last = 34.0;
       const double? score = null;
       const gap = 4.0;
       return _ColumnDims(
@@ -591,7 +594,7 @@ class _ColumnDims {
       const move = 112.0;
       const gamesValue = 54.0;
       const gamesIcon = 18.0;
-      const last = 52.0;
+      const last = 64.0;
       const score = 44.0;
       const gap = 6.0;
       return _ColumnDims(
@@ -623,7 +626,7 @@ class _ColumnDims {
       const move = 88.0;
       const gamesValue = 48.0;
       const gamesIcon = 18.0;
-      const last = 44.0;
+      const last = 56.0;
       const double? score = null;
       const gap = 6.0;
       return _ColumnDims(
@@ -655,7 +658,7 @@ class _ColumnDims {
       const move = 72.0;
       const gamesValue = 38.0;
       const gamesIcon = 14.0;
-      const last = 30.0;
+      const last = 42.0;
       const double? score = null;
       const gap = 5.0;
       return _ColumnDims(
@@ -686,7 +689,7 @@ class _ColumnDims {
     const move = 62.0;
     const gamesValue = 32.0;
     const gamesIcon = 12.0;
-    const last = 26.0;
+    const last = 34.0;
     const double? score = null;
     const gap = 4.0;
     return _ColumnDims(
