@@ -586,6 +586,16 @@ Map<String, dynamic> _normalizedRow(
     'eco': pick('eco', pick('ECO', '')),
     'opening': pick('opening', pick('Opening', '')),
     'variation': pick('variation', pick('Variation', '')),
+    'broadcastName':
+        row['broadcastName'] ??
+        row['broadcast_name'] ??
+        row['groupBroadcastName'] ??
+        row['group_broadcast_name'],
+    'broadcast_name':
+        row['broadcast_name'] ??
+        row['broadcastName'] ??
+        row['group_broadcast_name'] ??
+        row['groupBroadcastName'],
     'event': pick('event', pick('Event', 'Gamebase')),
     'site': pick('site', pick('Site', '')),
     'pgn': row['pgn'] ?? _pgnForRow(row),
@@ -617,6 +627,10 @@ Map<String, dynamic> _compactGameRow(
     'eco': row['eco'],
     'opening': row['opening'],
     'variation': row['variation'],
+    'broadcastName': row['broadcastName'],
+    'broadcast_name': row['broadcast_name'],
+    'groupBroadcastName': row['groupBroadcastName'],
+    'group_broadcast_name': row['group_broadcast_name'],
     'event': row['event'],
     'site': row['site'],
     'line': List<String>.unmodifiable(line),

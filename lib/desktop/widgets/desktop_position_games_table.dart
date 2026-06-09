@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:chessground/chessground.dart' show PieceAssets;
 import 'package:dartchess/dartchess.dart';
@@ -20,6 +21,7 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
+import 'package:chessever/screens/player_profile/utils/twic_event_identity.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/figurine_notation.dart';
 import 'package:chessever/widgets/federation_flag.dart';
@@ -749,13 +751,12 @@ class _DesktopPositionGamesTableState
       row['black']?.toString() ?? row['blackName']?.toString() ?? '',
       _readInt(row['blackElo']),
     );
-    final site =
-        (row['site']?.toString() ?? row['event']?.toString() ?? '').trim();
+    final event = _displayEventForRow(row);
     final year = _yearFromRow(row);
     return [
       if (result.isNotEmpty) result,
       if (white.isNotEmpty || black.isNotEmpty) '$white-$black',
-      if (site.isNotEmpty) site,
+      if (event.isNotEmpty) event,
       if (year.isNotEmpty) year,
     ].join(' ');
   }
@@ -1404,7 +1405,7 @@ class _DesktopPositionGamesTableState
         sortField: GamebaseSortField.event,
         cellBuilder:
             (_, row) => _TextCell(
-              value: _rowText(row, const ['event']),
+              value: _displayEventForRow(row),
               maxWidth: widget.referenceLayout ? 150 : 210,
               color: kWhiteColor70,
             ),
@@ -2144,11 +2145,15 @@ int? _readNullableInt(dynamic value) {
 }
 
 String _rowText(Map<String, dynamic> row, List<String> keys) {
+  return _rowTextOrNull(row, keys) ?? '';
+}
+
+String? _rowTextOrNull(Map<String, dynamic> row, List<String> keys) {
   for (final key in keys) {
     final value = (row[key]?.toString() ?? '').trim();
     if (value.isNotEmpty) return value;
   }
-  return '';
+  return null;
 }
 
 bool? _readBool(dynamic value) {
@@ -2188,13 +2193,117 @@ String? _sourceLabelForRow(Map<String, dynamic> row) {
   put('blackElo', _intString(row['blackElo']));
   put('blackTitle', _trimmedString(row['blackTitle']));
   put('blackFed', _trimmedString(row['blackFed']));
-  put('event', _trimmedString(row['event']));
+  put('event', _displayEventForRow(row));
   put('site', _trimmedString(row['site']));
   put('round', _trimmedString(row['round']));
   put('year', _dateLabelForRow(row));
 
   if (fields.isEmpty) return null;
   return fields.entries.map((e) => '${e.key}=${e.value}').join('|');
+}
+
+String _displayEventForRow(Map<String, dynamic> row) {
+  const broadcastKeys = <String>[
+    'BroadcastName',
+    'Broadcast Name',
+    'broadcastName',
+    'broadcast_name',
+    'GroupBroadcastName',
+    'Group Broadcast Name',
+    'groupBroadcastName',
+    'group_broadcast_name',
+  ];
+  const eventKeys = <String>['Event', 'event'];
+  return _rowTextOrNull(row, broadcastKeys) ??
+      _nestedHeaderText(row, broadcastKeys) ??
+      _pgnHeaderText(row, broadcastKeys) ??
+      _derivedBroadcastTitleForRoundEvent(row, eventKeys) ??
+      _rowTextOrNull(row, eventKeys) ??
+      _nestedHeaderText(row, eventKeys) ??
+      _pgnHeaderText(row, eventKeys) ??
+      '';
+}
+
+String? _derivedBroadcastTitleForRoundEvent(
+  Map<String, dynamic> row,
+  List<String> eventKeys,
+) {
+  final event =
+      _rowTextOrNull(row, eventKeys) ??
+      _nestedHeaderText(row, eventKeys) ??
+      _pgnHeaderText(row, eventKeys);
+  if (event == null || !isTwicRoundPairingEventTitle(event)) return null;
+
+  for (final key in const <String>[
+    'BroadcastURL',
+    'broadcastUrl',
+    'broadcast_url',
+    'GameURL',
+    'gameUrl',
+    'game_url',
+    'Site',
+    'site',
+  ]) {
+    final url =
+        _rowTextOrNull(row, [key]) ??
+        _nestedHeaderText(row, [key]) ??
+        _pgnHeaderText(row, [key]);
+    if (url == null || url.trim().isEmpty) continue;
+    final title = preferredTwicEventTitle(event: event, site: url);
+    if (title.trim().isNotEmpty && title.trim() != event.trim()) {
+      return title.trim();
+    }
+  }
+
+  return null;
+}
+
+String? _nestedHeaderText(Map<String, dynamic> row, List<String> keys) {
+  for (final containerKey in const <String>[
+    'md',
+    'metadata',
+    'headers',
+    'data',
+  ]) {
+    final nested = _mapFromHeaderContainer(row[containerKey]);
+    if (nested == null) continue;
+    final direct = _rowTextOrNull(nested, keys);
+    if (direct != null) return direct;
+    if (containerKey == 'data') {
+      final fromData = _nestedHeaderText(nested, keys);
+      if (fromData != null) return fromData;
+    }
+  }
+  return null;
+}
+
+Map<String, dynamic>? _mapFromHeaderContainer(Object? raw) {
+  if (raw is Map) return Map<String, dynamic>.from(raw);
+  if (raw is String) {
+    final trimmed = raw.trim();
+    if (!trimmed.startsWith('{')) return null;
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {
+      return null;
+    }
+  }
+  return null;
+}
+
+String? _pgnHeaderText(Map<String, dynamic> row, List<String> keys) {
+  final pgn = row['pgn']?.toString();
+  if (pgn == null || pgn.trim().isEmpty) return null;
+  for (final key in keys) {
+    final match = RegExp(
+      '^\\[${RegExp.escape(key)}\\s+"([^"]*)"\\]',
+      multiLine: true,
+    ).firstMatch(pgn);
+    final value = match?.group(1)?.trim();
+    if (value != null && value.isNotEmpty && value != '?') return value;
+  }
+  return null;
 }
 
 String? _dateLabelForRow(Map<String, dynamic> row) {

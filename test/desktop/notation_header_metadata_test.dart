@@ -24,6 +24,17 @@ void main() {
       expect(metadata.eco, 'C42');
     });
 
+    test('prefers broadcast name over round-level event title', () {
+      final metadata = notationHeaderMetadataFromPgn({
+        'BroadcastName': 'Chicago Open 2026',
+        'Event': 'Round 9: Board 1',
+        'Date': '2026.06.09',
+      });
+
+      expect(metadata.event, 'Chicago Open 2026');
+      expect(metadata.date, '2026.06.09');
+    });
+
     test('treats empty and unknown PGN values as absent', () {
       final metadata = notationHeaderMetadataFromPgn({
         'Event': '?',

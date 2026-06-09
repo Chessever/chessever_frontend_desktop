@@ -71,8 +71,14 @@ NotationHeaderMetadata notationHeaderMetadataFromPgn(
     return raw;
   }
 
+  final broadcastName =
+      header('BroadcastName') ??
+      header('Broadcast Name') ??
+      header('GroupBroadcastName') ??
+      header('Group Broadcast Name');
+
   return NotationHeaderMetadata(
-    event: header('Event'),
+    event: broadcastName ?? header('Event'),
     round: header('Round'),
     date: header('Date'),
     eco: header('ECO'),
