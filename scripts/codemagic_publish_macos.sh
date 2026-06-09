@@ -259,7 +259,6 @@ rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
   "$DMG_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever-${RELEASE_VERSION}.dmg"
 rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
   "$DMG_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever.dmg"
-ssh "${SSH_OPTS[@]}" "$REMOTE" "delete-previous macos $ARCHIVE_NAME"
 
 echo "Published macOS desktop_updater archive $RELEASE_VERSION"
 echo "Published macOS DMG: https://chessever.com/updates/desktop/downloads/Chessever.dmg"
