@@ -1574,6 +1574,22 @@ int _compareEventGamesInRound(
   TournamentGameSummary a,
   TournamentGameSummary b,
 ) {
+  final aBoard = a.boardNumber;
+  final bBoard = b.boardNumber;
+  if (aBoard != null && bBoard != null && aBoard != bBoard) {
+    return aBoard.compareTo(bBoard);
+  }
+  if (aBoard != null && bBoard == null) return -1;
+  if (aBoard == null && bBoard != null) return 1;
+
+  final aGame = _parseGameNumber(a.roundSlug) ?? _parseGameNumber(a.id);
+  final bGame = _parseGameNumber(b.roundSlug) ?? _parseGameNumber(b.id);
+  if (aGame != null && bGame != null && aGame != bGame) {
+    return aGame.compareTo(bGame);
+  }
+  if (aGame != null && bGame == null) return -1;
+  if (aGame == null && bGame != null) return 1;
+
   final aStart = _eventGameDateTime(a);
   final bStart = _eventGameDateTime(b);
   if (aStart != null && bStart != null) {
@@ -1584,22 +1600,6 @@ int _compareEventGamesInRound(
   } else if (bStart != null) {
     return 1;
   }
-
-  final aGame = _parseGameNumber(a.roundSlug);
-  final bGame = _parseGameNumber(b.roundSlug);
-  if (aGame != null && bGame != null && aGame != bGame) {
-    return bGame.compareTo(aGame);
-  }
-  if (aGame != null && bGame == null) return -1;
-  if (aGame == null && bGame != null) return 1;
-
-  final aBoard = a.boardNumber;
-  final bBoard = b.boardNumber;
-  if (aBoard != null && bBoard != null && aBoard != bBoard) {
-    return aBoard.compareTo(bBoard);
-  }
-  if (aBoard != null && bBoard == null) return -1;
-  if (aBoard == null && bBoard != null) return 1;
 
   final whiteCompare = a.whitePlayer.compareTo(b.whitePlayer);
   if (whiteCompare != 0) return whiteCompare;
@@ -1617,7 +1617,7 @@ bool _isUpcomingGameForRail(TournamentGameSummary game) {
 int? _parseGameNumber(String value) {
   if (value.trim().isEmpty) return null;
   final match = RegExp(
-    r'(?:game|board|match)[\s_\-:]*?(\d+)',
+    r'(?:game|board|match)[\s_\-:.]*?(\d+)',
     caseSensitive: false,
   ).firstMatch(value);
   return match == null ? null : int.tryParse(match.group(1)!);

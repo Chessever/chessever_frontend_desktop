@@ -96,8 +96,10 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
   if (!isKnockoutTournament) {
     final tourDetail = ref.read(tourDetailScreenProvider).valueOrNull;
     final allTours = tourDetail?.tours ?? [];
-    final currentTour =
-        allTours.where((t) => t.tour.id == tourId).firstOrNull?.tour;
+    final currentTour = allTours
+        .where((t) => t.tour.id == tourId)
+        .firstOrNull
+        ?.tour;
     final formatString = currentTour?.info.format;
 
     if (KnockoutMatchDetector.isMatchFormat(
@@ -153,18 +155,18 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
 
   if (isMultiStageKnockout && !isRoundSlugDerivedStages) {
     if (!isSearchMode) {
-      final stageTourIds =
-          rounds
-              .where((r) => r.id.startsWith('knockout-stage-'))
-              .map((r) => r.id.replaceFirst('knockout-stage-', ''))
-              .toList();
+      final stageTourIds = rounds
+          .where((r) => r.id.startsWith('knockout-stage-'))
+          .map((r) => r.id.replaceFirst('knockout-stage-', ''))
+          .toList();
 
       final stageTourGames = <String, List<GamesTourModel>>{};
       for (final stageTourId in stageTourIds) {
         final stageAsync = ref.read(gamesTourProvider(stageTourId));
         final rawStageGames = stageAsync.valueOrNull ?? [];
-        stageTourGames[stageTourId] =
-            rawStageGames.map((g) => GamesTourModel.fromGame(g)).toList();
+        stageTourGames[stageTourId] = rawStageGames
+            .map((g) => GamesTourModel.fromGame(g))
+            .toList();
       }
 
       for (final round in rounds) {
@@ -211,6 +213,10 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
     }
   }
 
+  for (final roundGames in gamesByRound.values) {
+    roundGames.sort(_compareTournamentRoundGames);
+  }
+
   if (!isSearchMode) {
     final pinnedGameIds = screenModelAsync.valueOrNull?.pinnedGamedIs ?? [];
     if (pinnedGameIds.isNotEmpty) {
@@ -221,7 +227,7 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
           final bPinned = pinnedGameIds.contains(b.gameId);
           if (aPinned && !bPinned) return -1;
           if (!aPinned && bPinned) return 1;
-          return 0;
+          return _compareTournamentRoundGames(a, b);
         });
       }
     }
@@ -246,6 +252,44 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
     providerGameCount: providerGameCount,
   );
 });
+
+int _compareTournamentRoundGames(GamesTourModel a, GamesTourModel b) {
+  final aBoard = a.boardNr;
+  final bBoard = b.boardNr;
+  if (aBoard != null && bBoard != null && aBoard != bBoard) {
+    return aBoard.compareTo(bBoard);
+  }
+  if (aBoard != null && bBoard == null) return -1;
+  if (aBoard == null && bBoard != null) return 1;
+
+  final aGameNumber =
+      _parseBoardLikeNumber(a.roundSlug) ?? _parseBoardLikeNumber(a.gameId);
+  final bGameNumber =
+      _parseBoardLikeNumber(b.roundSlug) ?? _parseBoardLikeNumber(b.gameId);
+  if (aGameNumber != null &&
+      bGameNumber != null &&
+      aGameNumber != bGameNumber) {
+    return aGameNumber.compareTo(bGameNumber);
+  }
+  if (aGameNumber != null && bGameNumber == null) return -1;
+  if (aGameNumber == null && bGameNumber != null) return 1;
+
+  final whiteCompare = a.whitePlayer.name.compareTo(b.whitePlayer.name);
+  if (whiteCompare != 0) return whiteCompare;
+  final blackCompare = a.blackPlayer.name.compareTo(b.blackPlayer.name);
+  if (blackCompare != 0) return blackCompare;
+  return a.gameId.compareTo(b.gameId);
+}
+
+int? _parseBoardLikeNumber(String? value) {
+  final normalized = value?.trim();
+  if (normalized == null || normalized.isEmpty) return null;
+  final match = RegExp(
+    r'(?:game|board|match)[\s_\-:.]*?(\d+)',
+    caseSensitive: false,
+  ).firstMatch(normalized);
+  return match == null ? null : int.tryParse(match.group(1)!);
+}
 
 bool _shouldIncludeGame(GameDisplayMode mode, GamesTourModel game) {
   switch (mode) {

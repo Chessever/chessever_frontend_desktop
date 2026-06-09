@@ -372,13 +372,13 @@ void main() {
     expect(find.text('Round One White'), findsOneWidget);
   });
 
-  testWidgets('event games within a round sort by descending start datetime', (
+  testWidgets('event games within a round sort by board number ascending', (
     tester,
   ) async {
     await tester.pumpWidget(
       _wrap(
         BoardTabGameArgs(
-          gameId: 'later-game',
+          gameId: 'board-1-game',
           pgn: '1. e4 e5 *',
           label: 'Event game',
           whiteName: 'White',
@@ -386,30 +386,42 @@ void main() {
           tournamentTitle: 'Event',
           eventGames: [
             _summary(
-              id: 'earlier-game',
+              id: 'board-10-game',
               roundLabel: 'R1',
-              whitePlayer: 'Earlier White',
-              blackPlayer: 'Earlier Black',
+              whitePlayer: 'Board Ten White',
+              blackPlayer: 'Board Ten Black',
+              boardNumber: 10,
+              startsAt: DateTime(2026, 1, 1, 11),
+            ),
+            _summary(
+              id: 'board-1-game',
+              roundLabel: 'R1',
+              whitePlayer: 'Board One White',
+              blackPlayer: 'Board One Black',
+              boardNumber: 1,
               startsAt: DateTime(2026, 1, 1, 9),
             ),
             _summary(
-              id: 'later-game',
+              id: 'board-2-game',
               roundLabel: 'R1',
-              whitePlayer: 'Later White',
-              blackPlayer: 'Later Black',
-              startsAt: DateTime(2026, 1, 1, 11),
+              whitePlayer: 'Board Two White',
+              blackPlayer: 'Board Two Black',
+              boardNumber: 2,
+              startsAt: DateTime(2026, 1, 1, 10),
             ),
           ],
-          gameListSelectedId: 'later-game',
+          gameListSelectedId: 'board-1-game',
         ),
       ),
     );
     await tester.pump();
 
-    expect(
-      tester.getTopLeft(find.text('Later White')).dy,
-      lessThan(tester.getTopLeft(find.text('Earlier White')).dy),
-    );
+    final board1Top = tester.getTopLeft(find.text('Board One White')).dy;
+    final board2Top = tester.getTopLeft(find.text('Board Two White')).dy;
+    final board10Top = tester.getTopLeft(find.text('Board Ten White')).dy;
+
+    expect(board1Top, lessThan(board2Top));
+    expect(board2Top, lessThan(board10Top));
   });
 
   testWidgets('upcoming event rounds stay hidden until see more is toggled', (
@@ -911,6 +923,7 @@ TournamentGameSummary _summary({
   DateTime? roundStartsAt,
   DateTime? lastMoveTime,
   String roundName = '',
+  int? boardNumber,
 }) {
   return TournamentGameSummary(
     id: id,
@@ -921,6 +934,7 @@ TournamentGameSummary _summary({
     pgn: pgn,
     roundLabel: roundLabel,
     roundName: roundName,
+    boardNumber: boardNumber,
     status: status,
     lastMoveTime: lastMoveTime,
     startsAt: startsAt,
