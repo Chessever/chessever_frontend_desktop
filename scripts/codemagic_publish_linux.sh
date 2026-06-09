@@ -328,6 +328,7 @@ rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
   "$DEB_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever-${RELEASE_VERSION}-amd64.deb"
 rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
   "$DEB_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever.deb"
+ssh "${SSH_OPTS[@]}" "$REMOTE" "delete-previous linux $ARCHIVE_NAME"
 
 echo "Published Linux desktop_updater archive $RELEASE_VERSION"
 echo "Published Linux Debian package: https://chessever.com/updates/desktop/downloads/Chessever.deb"

@@ -31,6 +31,7 @@ void main() {
       expect(script, contains(r'entry.get("path") or entry.get("filePath")'));
       expect(script, contains(r'desktop/archive/$ARCHIVE_NAME/'));
       expect(script, contains(r'ingest macos $ARCHIVE_NAME $RELEASE_VERSION'));
+      expect(script, contains(r'delete-previous macos $ARCHIVE_NAME'));
       expect(script, isNot(contains('SUPARKLE')));
       expect(script, isNot(contains('sign_update')));
       expect(codemagic, contains('macos-desktop-release:'));
@@ -119,6 +120,10 @@ void main() {
           r'ingest windows $($release.ArchiveName) $($release.ReleaseVersion)',
         ),
       );
+      expect(
+        script,
+        contains(r'delete-previous windows $($release.ArchiveName)'),
+      );
       expect(script, contains('Get-InnoSetupCompiler'));
       expect(script, contains('New-WindowsInstaller'));
       expect(script, contains(r'$isccOutput'));
@@ -205,6 +210,7 @@ void main() {
       expect(script, contains(r'exec /opt/chessever/$PACKAGE_BINARY "\$@"'));
       expect(script, contains('Exec=/usr/bin/chessever %U'));
       expect(script, contains('StartupNotify=true'));
+      expect(script, contains(r'delete-previous linux $ARCHIVE_NAME'));
       expect(script, isNot(contains('com.chessever.desktop.desktop')));
       expect(script, isNot(contains(r'Exec=/opt/chessever/$PACKAGE_BINARY')));
     });
@@ -229,7 +235,11 @@ void main() {
         contains('/usr/local/bin/codemagic-finalize clear-legacy'),
       );
       expect(wrapper, contains('/usr/local/bin/codemagic-finalize ingest'));
-      expect(wrapper, contains('macos | windows'));
+      expect(
+        wrapper,
+        contains('/usr/local/bin/codemagic-finalize delete-previous'),
+      );
+      expect(wrapper, contains('linux | macos | windows'));
       expect(wrapper, contains('bad archive'));
     });
   });
