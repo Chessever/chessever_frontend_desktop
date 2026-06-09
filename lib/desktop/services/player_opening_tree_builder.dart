@@ -19,6 +19,9 @@ class PlayerOpeningTreeProgress {
     this.skippedGames = 0,
     this.indexedPositions = 0,
     this.totalGames,
+    this.priorityColor,
+    this.priorityFetchedGames,
+    this.priorityTotalGames,
     this.error,
   });
 
@@ -29,6 +32,9 @@ class PlayerOpeningTreeProgress {
   final int skippedGames;
   final int indexedPositions;
   final int? totalGames;
+  final String? priorityColor;
+  final int? priorityFetchedGames;
+  final int? priorityTotalGames;
   final String? error;
 
   bool get isRunning => status == PlayerOpeningTreeStatus.building;
@@ -41,6 +47,9 @@ class PlayerOpeningTreeProgress {
     int? skippedGames,
     int? indexedPositions,
     int? totalGames,
+    String? priorityColor,
+    int? priorityFetchedGames,
+    int? priorityTotalGames,
     String? error,
   }) {
     return PlayerOpeningTreeProgress(
@@ -51,6 +60,9 @@ class PlayerOpeningTreeProgress {
       skippedGames: skippedGames ?? this.skippedGames,
       indexedPositions: indexedPositions ?? this.indexedPositions,
       totalGames: totalGames ?? this.totalGames,
+      priorityColor: priorityColor ?? this.priorityColor,
+      priorityFetchedGames: priorityFetchedGames ?? this.priorityFetchedGames,
+      priorityTotalGames: priorityTotalGames ?? this.priorityTotalGames,
       error: error,
     );
   }
