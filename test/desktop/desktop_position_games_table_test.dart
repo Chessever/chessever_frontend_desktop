@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:chessever/desktop/widgets/desktop_position_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_opening_explorer.dart';
@@ -87,6 +88,187 @@ void main() {
     expect(find.text('Reykjavik'), findsOneWidget);
     expect(find.text('RPD'), findsOneWidget);
     expect(find.text('ONL'), findsOneWidget);
+  });
+
+  testWidgets('prefers broadcast name in Event column', (tester) async {
+    final repository = _FakeGamebaseRepository(
+      broadcastName: 'Chicago Open 2026',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          gamebaseRepositoryProvider.overrideWithValue(repository),
+          boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            backgroundColor: kBackgroundColor,
+            body: SizedBox(
+              width: 900,
+              height: 520,
+              child: DesktopPositionGamesTable(fen: _initialFen),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Chicago Open 2026'), findsOneWidget);
+    expect(find.text('Freestyle Chess'), findsNothing);
+  });
+
+  testWidgets('prefers PGN BroadcastName in Event column', (tester) async {
+    final repository = _FakeGamebaseRepository(
+      rowPgn:
+          '[Event "Freestyle Chess"]\n'
+          '[BroadcastName "Chicago Open 2026"]\n\n'
+          '1. e4 *',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          gamebaseRepositoryProvider.overrideWithValue(repository),
+          boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            backgroundColor: kBackgroundColor,
+            body: SizedBox(
+              width: 900,
+              height: 520,
+              child: DesktopPositionGamesTable(fen: _initialFen),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Chicago Open 2026'), findsOneWidget);
+    expect(find.text('Freestyle Chess'), findsNothing);
+  });
+
+  testWidgets('prefers nested BroadcastName in Event column', (tester) async {
+    final repository = _FakeGamebaseRepository(
+      rowData: const {
+        'md': {'BroadcastName': 'Chicago Open 2026'},
+      },
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          gamebaseRepositoryProvider.overrideWithValue(repository),
+          boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            backgroundColor: kBackgroundColor,
+            body: SizedBox(
+              width: 900,
+              height: 520,
+              child: DesktopPositionGamesTable(fen: _initialFen),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Chicago Open 2026'), findsOneWidget);
+    expect(find.text('Freestyle Chess'), findsNothing);
+  });
+
+  testWidgets('prefers JSON data BroadcastName in Event column', (
+    tester,
+  ) async {
+    final repository = _FakeGamebaseRepository(
+      rowDataJson: jsonEncode({
+        'md': {
+          'Event': 'AMP-M',
+          'BroadcastName':
+              'Akademickie Mistrzostwa Polski w szachach - Mezczyzni',
+        },
+      }),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          gamebaseRepositoryProvider.overrideWithValue(repository),
+          boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            backgroundColor: kBackgroundColor,
+            body: SizedBox(
+              width: 1100,
+              height: 520,
+              child: DesktopPositionGamesTable(fen: _initialFen),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Akademickie Mistrzostwa Polski w szachach - Mezczyzni'),
+      findsOneWidget,
+    );
+    expect(find.text('Freestyle Chess'), findsNothing);
+  });
+
+  testWidgets('derives broadcast title from Lichess URL for round event', (
+    tester,
+  ) async {
+    final repository = _FakeGamebaseRepository(
+      eventName: 'Round 9: Torres Rosas, Luis Carlos - Opponent',
+      site:
+          'https://lichess.org/broadcast/titled-tuesday-june-09-2026-boards-1-100/round-9/abc/game',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          gamebaseRepositoryProvider.overrideWithValue(repository),
+          boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            backgroundColor: kBackgroundColor,
+            body: SizedBox(
+              width: 1100,
+              height: 520,
+              child: DesktopPositionGamesTable(fen: _initialFen),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Titled Tuesday June 09 2026 Boards 1 100'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Round 9: Torres Rosas, Luis Carlos - Opponent'),
+      findsNothing,
+    );
   });
 
   testWidgets('reference layout uses reference-style games column order', (
@@ -708,10 +890,23 @@ const _legalFirstMoves = <String>[
 ];
 
 class _FakeGamebaseRepository extends GamebaseRepository {
-  _FakeGamebaseRepository({this.rowCount = 1})
-    : super(Dio(), baseUrl: 'http://localhost');
+  _FakeGamebaseRepository({
+    this.rowCount = 1,
+    this.broadcastName,
+    this.rowPgn,
+    this.rowData,
+    this.rowDataJson,
+    this.eventName = 'Freestyle Chess',
+    this.site = 'Reykjavik',
+  }) : super(Dio(), baseUrl: 'http://localhost');
 
   final int rowCount;
+  final String? broadcastName;
+  final String? rowPgn;
+  final Map<String, dynamic>? rowData;
+  final String? rowDataJson;
+  final String eventName;
+  final String site;
   final List<_CapturedPositionGamesQuery> positionGameCalls = [];
 
   @override
@@ -799,8 +994,12 @@ class _FakeGamebaseRepository extends GamebaseRepository {
             'blackElo': 2780 + i,
             'result': i.isEven ? '1-0' : '0-1',
             'date': '2025-02-${(14 + i % 10).toString().padLeft(2, '0')}',
-            'event': 'Freestyle Chess',
-            'site': 'Reykjavik',
+            if (broadcastName != null) 'broadcast_name': broadcastName,
+            if (rowPgn != null) 'pgn': rowPgn,
+            if (rowData != null) 'data': rowData,
+            if (rowDataJson != null) 'data': rowDataJson,
+            'event': eventName,
+            'site': site,
             'timeControl': 'RAPID',
             'isOnline': true,
             'opening': 'English Opening',

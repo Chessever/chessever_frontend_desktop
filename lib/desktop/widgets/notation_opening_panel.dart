@@ -437,6 +437,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
               )
               : const ColoredBox(color: kBlack2Color),
     );
+    final buildTreeScoped = widget.explorerScope != null;
     return Focus(
       onKeyEvent: _handleRailKey,
       child: Container(
@@ -450,12 +451,15 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                       ? ResizableSplitView(
                         axis: Axis.vertical,
                         storageKey:
-                            'desktop.board.right-rail.notation-explorer-stack.v1',
+                            buildTreeScoped
+                                ? 'desktop.board.right-rail.notation-explorer-stack.build-tree.v1'
+                                : 'desktop.board.right-rail.notation-explorer-stack.v1',
                         gutterThickness: 6,
                         children: [
                           SplitChild(
                             minSize: 150,
                             initialWeight: 0.42,
+                            initialCollapsed: buildTreeScoped,
                             label: 'Notation',
                             collapsedIcon: Icons.format_list_numbered_rounded,
                             child: notationPane,

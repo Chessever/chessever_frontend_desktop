@@ -484,7 +484,7 @@ class OpeningExplorerPane extends HookConsumerWidget {
                 collapsedIcon: Icons.analytics_outlined,
                 child: ResizableSplitView(
                   axis: Axis.vertical,
-                  storageKey: 'opening_explorer.right_rail.v2',
+                  storageKey: 'opening_explorer.right_rail.v3',
                   children: [
                     SplitChild(
                       minSize: 200,
@@ -504,6 +504,7 @@ class OpeningExplorerPane extends HookConsumerWidget {
                       initialWeight: 0.40,
                       label: 'Notation',
                       collapsedIcon: Icons.format_list_numbered_rounded,
+                      initialCollapsed: true,
                       child: NotationLadderView(
                         game: notationGame,
                         activePointer: activeNotationPointer,

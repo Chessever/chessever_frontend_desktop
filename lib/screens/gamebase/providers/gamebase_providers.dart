@@ -1437,42 +1437,81 @@ class PlayerOpeningTreeBuildController
   }
 
   Future<void> _run(int generation) async {
-    var page = 0;
-    var hasMore = true;
+    final phases = <String, _PlayerOpeningTreeFetchPhaseState>{
+      'all': _PlayerOpeningTreeFetchPhaseState('all'),
+      'white': _PlayerOpeningTreeFetchPhaseState('white'),
+      'black': _PlayerOpeningTreeFetchPhaseState('black'),
+    };
     var fetched = 0;
     var processed = 0;
     var skipped = 0;
-    int? total;
+    var currentPage = 0;
+    var total = await _fetchTotalGames(generation);
+    if (!mounted || generation != _generation) return;
     var index = const PlayerOpeningTreeIndex.empty();
+    final seenGameIds = <String>{};
 
     try {
-      while (hasMore && generation == _generation) {
+      while (generation == _generation) {
+        final preferredColor = _preferredFetchColor();
+        final preferredPhase =
+            preferredColor == null ? null : phases[preferredColor.name];
+        if (preferredPhase != null && preferredPhase.totalCount == null) {
+          preferredPhase.totalCount = await _fetchTotalGames(
+            generation,
+            color: preferredPhase.apiColor,
+          );
+          if (!mounted || generation != _generation) return;
+        }
+        final phase = _nextPlayerOpeningTreeFetchPhase(
+          preferredColor: preferredColor,
+          phases: phases,
+        );
+        if (phase == null) break;
+
         final response = await _ref
             .read(gamebaseRepositoryProvider)
             .getPlayerGames(
               playerId: _playerId,
-              pageNumber: page,
+              color: phase.apiColor,
+              pageNumber: phase.nextPage,
               pageSize: _pageSize,
             );
         if (!mounted || generation != _generation) return;
 
-        final rows = _rowsFromPlayerGamesResponse(response);
+        final pageRows = _rowsFromPlayerGamesResponse(response);
+        final rows = <Map<String, dynamic>>[];
+        for (final row in pageRows) {
+          final id = row['id']?.toString().trim();
+          if (id == null || id.isEmpty || !seenGameIds.add(id)) continue;
+          rows.add(row);
+        }
         final metadata = response['metadata'];
         if (metadata is Map) {
-          total =
+          if (phase.usesAllColors) {
+            total =
+                _readPlayerOpeningTreeTotalCount(metadata) ??
+                _readPlayerOpeningTreeTotalCount(response) ??
+                total;
+          }
+          phase.totalCount =
               _readPlayerOpeningTreeTotalCount(metadata) ??
               _readPlayerOpeningTreeTotalCount(response) ??
-              total;
-          hasMore =
-              _readPlayerOpeningTreeHasMore(metadata) ??
-              rows.length >= _pageSize;
+              phase.totalCount;
+          phase.isComplete =
+              !(_readPlayerOpeningTreeHasMore(metadata) ??
+                  pageRows.length >= _pageSize);
         } else {
-          total = _readPlayerOpeningTreeTotalCount(response) ?? total;
-          hasMore = rows.length >= _pageSize;
+          if (phase.usesAllColors) {
+            total = _readPlayerOpeningTreeTotalCount(response) ?? total;
+          }
+          phase.totalCount =
+              _readPlayerOpeningTreeTotalCount(response) ?? phase.totalCount;
+          phase.isComplete = pageRows.length < _pageSize;
         }
-        total ??= await _fetchTotalGames(generation);
-        if (!mounted || generation != _generation) return;
+        phase.nextPage += 1;
         fetched += rows.length;
+        phase.fetchedGames += rows.length;
 
         final hydrated = await _hydrateRows(rows, generation);
         if (!mounted || generation != _generation) return;
@@ -1484,33 +1523,47 @@ class PlayerOpeningTreeBuildController
         processed += hydrated.length;
         skipped += rows.length - hydrated.length;
 
+        final priorityProgress = _priorityProgressFields(
+          preferredColor: _preferredFetchColor(),
+          phases: phases,
+        );
         state = PlayerOpeningTreeState(
           playerId: _playerId,
           index: index,
           progress: PlayerOpeningTreeProgress(
             status: PlayerOpeningTreeStatus.building,
-            currentPage: page,
+            currentPage: currentPage,
             fetchedGames: fetched,
             processedGames: processed,
             skippedGames: skipped,
             indexedPositions: index.positionCount,
             totalGames: total,
+            priorityColor: priorityProgress.color,
+            priorityFetchedGames: priorityProgress.fetchedGames,
+            priorityTotalGames: priorityProgress.totalGames,
           ),
         );
-        page += 1;
+        currentPage += 1;
       }
 
       if (!mounted || generation != _generation) return;
+      final priorityProgress = _priorityProgressFields(
+        preferredColor: _preferredFetchColor(),
+        phases: phases,
+      );
       state = state.copyWith(
         index: index,
-        progress: state.progress.copyWith(
+        progress: PlayerOpeningTreeProgress(
           status: PlayerOpeningTreeStatus.complete,
-          currentPage: page,
+          currentPage: currentPage,
           fetchedGames: fetched,
           processedGames: processed,
           skippedGames: skipped,
           indexedPositions: index.positionCount,
           totalGames: total,
+          priorityColor: priorityProgress.color,
+          priorityFetchedGames: priorityProgress.fetchedGames,
+          priorityTotalGames: priorityProgress.totalGames,
           error: null,
         ),
       );
@@ -1545,12 +1598,12 @@ class PlayerOpeningTreeBuildController
     return output;
   }
 
-  Future<int?> _fetchTotalGames(int generation) async {
+  Future<int?> _fetchTotalGames(int generation, {String color = 'all'}) async {
     if (generation != _generation) return null;
     try {
       final response = await _ref
           .read(gamebaseRepositoryProvider)
-          .getPlayerStats(playerId: _playerId);
+          .getPlayerStats(playerId: _playerId, color: color);
       if (!mounted || generation != _generation) return null;
       final data = response['data'];
       if (data is Map) {
@@ -1563,6 +1616,12 @@ class PlayerOpeningTreeBuildController
     } catch (_) {
       return null;
     }
+  }
+
+  GamebasePlayerColor? _preferredFetchColor() {
+    final filters = _ref.read(gamebaseExplorerProvider).filters;
+    if (_localTreePlayerId(filters) != _playerId) return null;
+    return filters.playerColor;
   }
 
   Future<Map<String, dynamic>?> _hydrateRow(Map<String, dynamic> row) async {
@@ -1655,6 +1714,62 @@ bool? _readNullableBool(Object? value) {
   if (raw == 'true' || raw == '1' || raw == 'yes') return true;
   if (raw == 'false' || raw == '0' || raw == 'no') return false;
   return null;
+}
+
+_PlayerOpeningTreeFetchPhaseState? _nextPlayerOpeningTreeFetchPhase({
+  required GamebasePlayerColor? preferredColor,
+  required Map<String, _PlayerOpeningTreeFetchPhaseState> phases,
+}) {
+  final all = phases['all']!;
+  final white = phases['white']!;
+  final black = phases['black']!;
+  if (all.isComplete || (white.isComplete && black.isComplete)) return null;
+
+  switch (preferredColor) {
+    case GamebasePlayerColor.white:
+      if (!white.isComplete) return white;
+      if (!black.isComplete) return black;
+      return all.isComplete ? null : all;
+    case GamebasePlayerColor.black:
+      if (!black.isComplete) return black;
+      if (!white.isComplete) return white;
+      return all.isComplete ? null : all;
+    case null:
+      if (!all.isComplete && white.nextPage == 0 && black.nextPage == 0) {
+        return all;
+      }
+      if (!white.isComplete) return white;
+      if (!black.isComplete) return black;
+      return all.isComplete ? null : all;
+  }
+}
+
+({String? color, int? fetchedGames, int? totalGames}) _priorityProgressFields({
+  required GamebasePlayerColor? preferredColor,
+  required Map<String, _PlayerOpeningTreeFetchPhaseState> phases,
+}) {
+  final key = preferredColor?.name ?? 'all';
+  final phase = phases[key];
+  if (phase == null) {
+    return (color: null, fetchedGames: null, totalGames: null);
+  }
+  return (
+    color: phase.usesAllColors ? null : phase.apiColor,
+    fetchedGames: phase.fetchedGames,
+    totalGames: phase.totalCount,
+  );
+}
+
+class _PlayerOpeningTreeFetchPhaseState {
+  _PlayerOpeningTreeFetchPhaseState(this.apiColor);
+
+  final String apiColor;
+  int nextPage = 0;
+  int fetchedGames = 0;
+  int? totalCount;
+  bool isComplete = false;
+
+  bool get usesAllColors => apiColor == 'all';
 }
 
 /// Provider for managing the current page index of the opening explorer panels (0: Moves, 1: Notation).
