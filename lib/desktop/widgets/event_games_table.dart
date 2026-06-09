@@ -2773,7 +2773,7 @@ class _PlayerCell extends StatelessWidget {
             overflow: TextOverflow.fade,
             softWrap: false,
             style: const TextStyle(
-              color: kGreenColor,
+              color: kPrimaryColor,
               fontSize: 9.5,
               fontWeight: FontWeight.w800,
               letterSpacing: 0.2,
