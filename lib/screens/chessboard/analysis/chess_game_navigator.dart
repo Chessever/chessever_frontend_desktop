@@ -817,6 +817,54 @@ class ChessGameNavigator extends StateNotifier<ChessGameNavigatorState> {
       // will now become a sub-variation.
       final oldMainlineContinuation = line.sublist(moveIndex + 1);
 
+      final otherVariations = <ChessLine>[];
+      for (int i = 0; i < variations.length; i++) {
+        if (i != variationIndex) {
+          otherVariations.add(variations[i]);
+        }
+      }
+
+      if (promotedVariationLine.isNotEmpty) {
+        final promotedFirstMove = promotedVariationLine.first;
+        final promotesSamePly =
+            promotedFirstMove.num == move.num &&
+            promotedFirstMove.turn == move.turn;
+
+        if (promotesSamePly) {
+          final demotedMove = move.copyWith(
+            variations: null,
+            overrideVariations: true,
+          );
+          final demotedLine = <ChessMove>[
+            demotedMove,
+            ...oldMainlineContinuation,
+          ];
+          final promotedVariations = <ChessLine>[
+            demotedLine,
+            ...otherVariations,
+            ...?promotedFirstMove.variations,
+          ];
+          final updatedPromotedFirstMove = promotedFirstMove.copyWith(
+            variations: promotedVariations,
+            overrideVariations: true,
+          );
+          final newLine = <ChessMove>[
+            ...line.take(moveIndex),
+            updatedPromotedFirstMove,
+            ...promotedVariationLine.skip(1),
+          ];
+
+          final pointer = List<Number>.of(parentPointer);
+          if (pointer.isEmpty) {
+            pointer.add(moveIndex);
+          } else {
+            pointer[pointer.length - 1] = moveIndex;
+          }
+          promotedPointer = pointer;
+          return newLine;
+        }
+      }
+
       // 2. Build the new variations list for the junction move.
       // It will contain the old mainline continuation (if not empty),
       // followed by all other existing variations.
@@ -824,12 +872,7 @@ class ChessGameNavigator extends StateNotifier<ChessGameNavigatorState> {
       if (oldMainlineContinuation.isNotEmpty) {
         newVariations.add(oldMainlineContinuation);
       }
-
-      for (int i = 0; i < variations.length; i++) {
-        if (i != variationIndex) {
-          newVariations.add(variations[i]);
-        }
-      }
+      newVariations.addAll(otherVariations);
 
       // 3. Update the junction move with the new variations list.
       final updatedMove = move.copyWith(
