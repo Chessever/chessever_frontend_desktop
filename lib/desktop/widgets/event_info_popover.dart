@@ -124,7 +124,14 @@ class _Body extends StatelessWidget {
       );
     }
 
-    addIfPresent('Event', 'Event');
+    final event = eventInfoDisplayEvent(headers);
+    if (event != null) {
+      rows.add(_HeaderRow(label: 'Event', value: event));
+    }
+    final broadcastName = eventInfoDisplayBroadcastName(headers);
+    if (broadcastName != null) {
+      rows.add(_HeaderRow(label: 'Broadcast', value: broadcastName));
+    }
     addIfPresent('Site', 'Site');
     addIfPresent('Date', 'Date');
     addIfPresent('Round', 'Round');
@@ -184,6 +191,27 @@ class _Body extends StatelessWidget {
     if (elo.isNotEmpty) buf.write(' ($elo)');
     return buf.toString();
   }
+}
+
+@visibleForTesting
+String? eventInfoDisplayEvent(Map<String, String> headers) {
+  final value = headers['Event']?.trim();
+  if (value != null && value.isNotEmpty && value != '?') return value;
+  return null;
+}
+
+@visibleForTesting
+String? eventInfoDisplayBroadcastName(Map<String, String> headers) {
+  for (final key in const <String>[
+    'BroadcastName',
+    'Broadcast Name',
+    'GroupBroadcastName',
+    'Group Broadcast Name',
+  ]) {
+    final value = headers[key]?.trim();
+    if (value != null && value.isNotEmpty && value != '?') return value;
+  }
+  return null;
 }
 
 @visibleForTesting

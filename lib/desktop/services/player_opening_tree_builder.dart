@@ -19,6 +19,9 @@ class PlayerOpeningTreeProgress {
     this.skippedGames = 0,
     this.indexedPositions = 0,
     this.totalGames,
+    this.priorityColor,
+    this.priorityFetchedGames,
+    this.priorityTotalGames,
     this.error,
   });
 
@@ -29,6 +32,9 @@ class PlayerOpeningTreeProgress {
   final int skippedGames;
   final int indexedPositions;
   final int? totalGames;
+  final String? priorityColor;
+  final int? priorityFetchedGames;
+  final int? priorityTotalGames;
   final String? error;
 
   bool get isRunning => status == PlayerOpeningTreeStatus.building;
@@ -41,6 +47,9 @@ class PlayerOpeningTreeProgress {
     int? skippedGames,
     int? indexedPositions,
     int? totalGames,
+    String? priorityColor,
+    int? priorityFetchedGames,
+    int? priorityTotalGames,
     String? error,
   }) {
     return PlayerOpeningTreeProgress(
@@ -51,6 +60,9 @@ class PlayerOpeningTreeProgress {
       skippedGames: skippedGames ?? this.skippedGames,
       indexedPositions: indexedPositions ?? this.indexedPositions,
       totalGames: totalGames ?? this.totalGames,
+      priorityColor: priorityColor ?? this.priorityColor,
+      priorityFetchedGames: priorityFetchedGames ?? this.priorityFetchedGames,
+      priorityTotalGames: priorityTotalGames ?? this.priorityTotalGames,
       error: error,
     );
   }
@@ -574,6 +586,16 @@ Map<String, dynamic> _normalizedRow(
     'eco': pick('eco', pick('ECO', '')),
     'opening': pick('opening', pick('Opening', '')),
     'variation': pick('variation', pick('Variation', '')),
+    'broadcastName':
+        row['broadcastName'] ??
+        row['broadcast_name'] ??
+        row['groupBroadcastName'] ??
+        row['group_broadcast_name'],
+    'broadcast_name':
+        row['broadcast_name'] ??
+        row['broadcastName'] ??
+        row['group_broadcast_name'] ??
+        row['groupBroadcastName'],
     'event': pick('event', pick('Event', 'Gamebase')),
     'site': pick('site', pick('Site', '')),
     'pgn': row['pgn'] ?? _pgnForRow(row),
@@ -605,6 +627,10 @@ Map<String, dynamic> _compactGameRow(
     'eco': row['eco'],
     'opening': row['opening'],
     'variation': row['variation'],
+    'broadcastName': row['broadcastName'],
+    'broadcast_name': row['broadcast_name'],
+    'groupBroadcastName': row['groupBroadcastName'],
+    'group_broadcast_name': row['group_broadcast_name'],
     'event': row['event'],
     'site': row['site'],
     'line': List<String>.unmodifiable(line),
