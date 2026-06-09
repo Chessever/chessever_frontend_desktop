@@ -13,6 +13,7 @@ import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.d
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/theme/app_theme.dart';
 import 'package:dio/dio.dart';
 
 void main() {
@@ -224,6 +225,36 @@ void main() {
     expect(find.text('EVENT GAMES'), findsNothing);
     expect(find.text('BD'), findsNothing);
     expect(find.text('R5'), findsNothing);
+  });
+
+  testWidgets('event game title labels use the primary table color', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'event-game-1',
+          pgn: '1. e4 e5 *',
+          label: 'Event game',
+          whiteName: 'White',
+          blackName: 'Black',
+          tournamentTitle: 'Event',
+          eventGames: [
+            _summary(
+              id: 'event-game-1',
+              roundLabel: 'R5',
+              whiteTitle: 'GM',
+              blackTitle: 'FM',
+            ),
+          ],
+          gameListSelectedId: 'event-game-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.widget<Text>(find.text('GM')).style?.color, kPrimaryColor);
+    expect(tester.widget<Text>(find.text('FM')).style?.color, kPrimaryColor);
   });
 
   testWidgets('event round header preserves Armageddon round name', (
@@ -911,12 +942,16 @@ TournamentGameSummary _summary({
   DateTime? roundStartsAt,
   DateTime? lastMoveTime,
   String roundName = '',
+  String whiteTitle = '',
+  String blackTitle = '',
 }) {
   return TournamentGameSummary(
     id: id,
     name: '$whitePlayer vs $blackPlayer',
     whitePlayer: whitePlayer,
     blackPlayer: blackPlayer,
+    whiteTitle: whiteTitle,
+    blackTitle: blackTitle,
     hasPgn: true,
     pgn: pgn,
     roundLabel: roundLabel,
