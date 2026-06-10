@@ -975,7 +975,7 @@ class DatabaseWorkspaceArgs {
   const DatabaseWorkspaceArgs.twic()
     : source = DatabaseWorkspaceSource.twic,
       folderId = kTwicBookId,
-      title = 'TWIC',
+      title = 'ChessEver',
       isSubscribed = true,
       localPath = null;
 
@@ -2215,7 +2215,7 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
               },
             ),
         child: _MiniDatabasePreviewFrame(
-          title: 'TWIC',
+          title: 'ChessEver',
           subtitle:
               totalAsync.valueOrNull == null
                   ? 'System database · mini preview'
@@ -5809,7 +5809,7 @@ class _TwicContentView extends HookConsumerWidget {
         totalCount == null
             ? (isInitialLoading
                 ? 'Loading games…'
-                : 'Searchable master archive')
+                : 'Searchable ChessEver archive')
             : '${isEstimate ? '~' : ''}${formatCompactCount(totalCount)} games';
 
     return Container(
@@ -5950,7 +5950,7 @@ BoardTabGameArgs _buildTwicBoardArgs(
     fenSeed: game.fen,
     initialFen: initialFen,
     sourceGame: game,
-    databaseTitle: 'TWIC',
+    databaseTitle: 'ChessEver',
     databaseGames: summaries,
     databaseGamesContinuation: const BoardTabGamesContinuation.twicDatabase(),
     gameListSelectedId: game.gameId,
@@ -6068,7 +6068,7 @@ Future<void> _showTwicGameContextMenu({
         context: context,
         ref: ref,
         game: game,
-        sourceLabel: 'TWIC',
+        sourceLabel: 'ChessEver',
       );
     case _TwicGameContextAction.share:
       await showDesktopGameShareDialog(context: context, ref: ref, game: game);
@@ -7933,7 +7933,7 @@ class _TwicDatabaseWorkspace extends HookConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _DatabaseWorkspaceHeader(
-              title: 'TWIC',
+              title: 'ChessEver',
               subtitle: subtitle,
               badge: 'System database',
             ),
