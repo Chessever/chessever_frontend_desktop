@@ -1,4 +1,5 @@
 import 'package:chessground/chessground.dart' show PieceAssets;
+import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
@@ -92,6 +93,22 @@ void main() {
       expect(toggledNag, 1);
     },
   );
+
+  testWidgets('main notation moves do not install hover preview boards', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(game: _sampleGame(), onJump: (_) {}, activePointer: const [0]),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MoveHoverPreview), findsNothing);
+
+    await tester.tap(find.text('e5', findRichText: true));
+    await tester.pump();
+
+    expect(find.byType(MoveHoverPreview), findsNothing);
+  });
 
   testWidgets(
     'inline notation exposes collapse and reopen controls for variations',

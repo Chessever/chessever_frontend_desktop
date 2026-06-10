@@ -9,7 +9,6 @@ import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
-import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
@@ -3320,26 +3319,14 @@ class _LadderChipState extends State<_LadderChip> {
       ),
     );
 
-    // Mini-board hover preview: replays nothing (the move's resulting
-    // FEN is already stored on the ChessMove) so the popup just has to
-    // render that position. Wraps every chip with a fen so even deep
-    // sub-variations get the preview that database users expect.
-    final preview =
-        widget.fen.isEmpty
-            ? chip
-            : MoveHoverPreview(
-              startingFen: widget.fen,
-              movesUpToHover: const <String>[],
-              lastMoveUci: widget.uci.isEmpty ? null : widget.uci,
-              size: 200,
-              child: chip,
-            );
-
+    // Main notation hover must stay passive: do not preview or jump the
+    // board until the user explicitly clicks a move. Engine PVs own their
+    // fixed preview board separately in the analysis panel.
     final comment = widget.annotationComment;
     if (comment != null && comment.trim().isNotEmpty) {
-      return DesktopTooltip(message: comment, child: preview);
+      return DesktopTooltip(message: comment, child: chip);
     }
-    return preview;
+    return chip;
   }
 }
 
