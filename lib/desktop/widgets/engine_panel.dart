@@ -158,8 +158,10 @@ class _PvLine extends StatefulWidget {
 }
 
 class _PvLineState extends State<_PvLine> {
+  final GlobalKey _lineAnchorKey = GlobalKey();
   bool _hovered = false;
   bool _expanded = false;
+  int? _hoveredTokenIndex;
   String? _cachedFen;
   String? _cachedMoves;
   String? _cachedFirstUci;
@@ -179,6 +181,10 @@ class _PvLineState extends State<_PvLine> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.fen != widget.fen || oldWidget.pv.moves != widget.pv.moves) {
       _refreshCachedLine();
+      _hoveredTokenIndex = null;
+    } else if (_hoveredTokenIndex != null &&
+        _hoveredTokenIndex! >= _cachedTokens.length) {
+      _hoveredTokenIndex = null;
     }
   }
 
@@ -394,9 +400,10 @@ class _PvLineState extends State<_PvLine> {
                       ),
                     )
                     : _PvTokensLine(
-                      fen: widget.fen,
                       tokens: _cachedTokens,
                       expanded: _expanded,
+                      onHoverToken:
+                          (index) => setState(() => _hoveredTokenIndex = index),
                     ),
           ),
           const SizedBox(width: 4),
@@ -425,11 +432,28 @@ class _PvLineState extends State<_PvLine> {
     // toward it. We don't track press here — these rows update many
     // times a second, and a press-down spring would conflict with the
     // ongoing redraws.
+    final row = _PvLineHoverPreview(
+      fen: widget.fen,
+      tokens: _cachedTokens,
+      hovered: _hovered,
+      hoveredIndex: _hoveredTokenIndex,
+      anchorKey: _lineAnchorKey,
+      child: body,
+    );
+
     return ClickCursor(
       enabled: clickable,
       child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
+        onEnter:
+            (_) => setState(() {
+              _hovered = true;
+              _hoveredTokenIndex ??= 0;
+            }),
+        onExit:
+            (_) => setState(() {
+              _hovered = false;
+              _hoveredTokenIndex = null;
+            }),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: clickable ? () => widget.onPlayUci!(_firstUci!) : null,
@@ -441,7 +465,7 @@ class _PvLineState extends State<_PvLine> {
             builder:
                 (context, scale, child) =>
                     Transform.scale(scale: scale, child: child),
-            child: body,
+            child: row,
           ),
         ),
       ),
@@ -673,89 +697,96 @@ class _PvToken {
   final List<String> ucisUpTo;
 }
 
-/// Renders the PV move list as a Wrap of SAN chips. The line owns one
-/// stable [MoveHoverPreview] so moving between engine moves updates only
-/// the popup board content/animation while the preview stays in its
-/// clamped engine-line placement.
-class _PvTokensLine extends StatefulWidget {
+/// Renders the PV move list and reports which SAN token is under the pointer.
+/// The parent row owns the stable [MoveHoverPreview], so moving between engine
+/// moves updates only the popup board content.
+class _PvTokensLine extends StatelessWidget {
   const _PvTokensLine({
-    required this.fen,
     required this.tokens,
     required this.expanded,
+    required this.onHoverToken,
+  });
+
+  final List<_PvToken> tokens;
+  final bool expanded;
+  final ValueChanged<int> onHoverToken;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!expanded) {
+      return RichText(
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        text: TextSpan(
+          children: [
+            for (var i = 0; i < tokens.length; i++) ...[
+              if (i > 0) const TextSpan(text: ' '),
+              TextSpan(text: tokens[i].san, onEnter: (_) => onHoverToken(i)),
+            ],
+          ],
+          style: const TextStyle(
+            color: kWhiteColor70,
+            fontSize: 12,
+            height: 1.35,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
+      );
+    }
+    return Wrap(
+      spacing: 5,
+      runSpacing: 2,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (var i = 0; i < tokens.length; i++)
+          MouseRegion(
+            onEnter: (_) => onHoverToken(i),
+            child: Text(
+              tokens[i].san,
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 12,
+                height: 1.35,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _PvLineHoverPreview extends StatelessWidget {
+  const _PvLineHoverPreview({
+    required this.fen,
+    required this.tokens,
+    required this.hovered,
+    required this.hoveredIndex,
+    required this.anchorKey,
+    required this.child,
   });
 
   final String fen;
   final List<_PvToken> tokens;
-  final bool expanded;
-
-  @override
-  State<_PvTokensLine> createState() => _PvTokensLineState();
-}
-
-class _PvTokensLineState extends State<_PvTokensLine> {
-  final GlobalKey _lineAnchorKey = GlobalKey();
-  int? _hoveredIndex;
-
-  @override
-  void didUpdateWidget(covariant _PvTokensLine oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!widget.expanded ||
-        (_hoveredIndex != null && _hoveredIndex! >= widget.tokens.length)) {
-      _hoveredIndex = null;
-    }
-  }
+  final bool hovered;
+  final int? hoveredIndex;
+  final GlobalKey anchorKey;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final tokens = widget.tokens;
-    if (!widget.expanded) {
-      return Text(
-        tokens.map((t) => t.san).join(' '),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
-          color: kWhiteColor70,
-          fontSize: 12,
-          height: 1.35,
-          fontFeatures: [FontFeature.tabularFigures()],
-        ),
-      );
-    }
-    final hoveredIndex = _hoveredIndex;
+    final safeIndex =
+        hoveredIndex == null
+            ? 0
+            : hoveredIndex!.clamp(0, tokens.length - 1).toInt();
     return MoveHoverPreview(
-      startingFen: widget.fen,
-      movesUpToHover: hoveredIndex == null
-          ? const <String>[]
-          : tokens[hoveredIndex].ucisUpTo,
-      enabled: hoveredIndex != null,
+      startingFen: fen,
+      movesUpToHover:
+          tokens.isEmpty ? const <String>[] : tokens[safeIndex].ucisUpTo,
+      enabled: hovered && tokens.isNotEmpty,
       placement: MoveHoverPreviewPlacement.engineLine,
-      placementAnchorKey: _lineAnchorKey,
-      child: MouseRegion(
-        onExit: (_) => setState(() => _hoveredIndex = null),
-        child: KeyedSubtree(
-          key: _lineAnchorKey,
-          child: Wrap(
-            spacing: 5,
-            runSpacing: 2,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              for (var i = 0; i < tokens.length; i++)
-                MouseRegion(
-                  onEnter: (_) => setState(() => _hoveredIndex = i),
-                  child: Text(
-                    tokens[i].san,
-                    style: const TextStyle(
-                      color: kWhiteColor70,
-                      fontSize: 12,
-                      height: 1.35,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
+      placementAnchorKey: anchorKey,
+      child: KeyedSubtree(key: anchorKey, child: child),
     );
   }
 }
