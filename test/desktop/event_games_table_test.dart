@@ -17,6 +17,40 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:dio/dio.dart';
 
 void main() {
+  test('event rail range selection follows visible row order', () {
+    final games = [
+      _summary(id: 'game-1', roundLabel: 'R1'),
+      _summary(id: 'game-2', roundLabel: 'R1'),
+      _summary(id: 'game-3', roundLabel: 'R1'),
+      _summary(id: 'game-4', roundLabel: 'R1'),
+    ];
+
+    expect(
+      eventRailRangeSelectionIds(
+        orderedGames: games,
+        anchorGameId: 'game-2',
+        targetGameId: 'game-4',
+      ),
+      ['game-2', 'game-3', 'game-4'],
+    );
+    expect(
+      eventRailRangeSelectionIds(
+        orderedGames: games,
+        anchorGameId: 'game-3',
+        targetGameId: 'game-1',
+      ),
+      ['game-1', 'game-2', 'game-3'],
+    );
+    expect(
+      eventRailRangeSelectionIds(
+        orderedGames: [games[0], games[3]],
+        anchorGameId: 'game-1',
+        targetGameId: 'game-4',
+      ),
+      ['game-1', 'game-4'],
+    );
+  });
+
   testWidgets('database games hide the board and round column', (tester) async {
     await tester.pumpWidget(
       _wrap(
@@ -955,6 +989,8 @@ TournamentGameSummary _summary({
   DateTime? lastMoveTime,
   String roundName = '',
   int? boardNumber,
+  String whiteTitle = '',
+  String blackTitle = '',
 }) {
   return TournamentGameSummary(
     id: id,
