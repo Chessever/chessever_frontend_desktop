@@ -3263,17 +3263,14 @@ class _LadderChipState extends State<_LadderChip> {
       if (widget.compact) sanText else Flexible(child: sanText),
       for (final d in nags) ...[
         const SizedBox(width: 3),
-        MouseRegion(
-          onEnter: (_) => widget.onTap(),
-          child: Text(
-            d.symbol,
-            style: TextStyle(
-              color: widget.selected ? kBackgroundColor : d.color,
-              fontSize: d.isQuality ? 13 : 12,
-              fontWeight: d.isQuality ? FontWeight.w800 : FontWeight.w600,
-              height: 1.0,
-              letterSpacing: -0.2,
-            ),
+        Text(
+          d.symbol,
+          style: TextStyle(
+            color: widget.selected ? kBackgroundColor : d.color,
+            fontSize: d.isQuality ? 13 : 12,
+            fontWeight: d.isQuality ? FontWeight.w800 : FontWeight.w600,
+            height: 1.0,
+            letterSpacing: -0.2,
           ),
         ),
       ],

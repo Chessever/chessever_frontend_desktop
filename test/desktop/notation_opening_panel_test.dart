@@ -575,11 +575,13 @@ void main() {
     expect(find.text('MOVE'), findsOneWidget);
   });
 
-  testWidgets('Notation plain horizontal arrows never switch right rail tabs', (
+  testWidgets('Notation plain horizontal arrows jump to game boundaries', (
     tester,
   ) async {
     final repository = _FakeExplorerRepository();
     final steps = <int>[];
+    var headJumps = 0;
+    var tipJumps = 0;
 
     await tester.pumpWidget(
       _harness(
@@ -588,6 +590,8 @@ void main() {
           steps.add(delta);
           return false;
         },
+        onNotationJumpToHead: () => headJumps += 1,
+        onNotationJumpToTip: () => tipJumps += 1,
       ),
     );
     await tester.pump();
@@ -599,14 +603,18 @@ void main() {
     final container = ProviderScope.containerOf(
       tester.element(find.byType(NotationOpeningPanel)),
     );
-    expect(steps, [1]);
+    expect(steps, isEmpty);
+    expect(tipJumps, 1);
+    expect(headJumps, 0);
     expect(container.read(rightRailActivePageProvider('__none__')), 0);
     expect(find.text('MOVE'), findsNothing);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
     await tester.pumpAndSettle();
 
-    expect(steps, [1, -1]);
+    expect(steps, isEmpty);
+    expect(tipJumps, 1);
+    expect(headJumps, 1);
     expect(container.read(rightRailActivePageProvider('__none__')), 0);
     expect(find.text('MOVE'), findsNothing);
   });
@@ -673,20 +681,26 @@ void main() {
   testWidgets(
     'Plain Notation arrow stays in Notation after visiting Explorer',
     (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1000, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
       final repository = _FakeExplorerRepository();
       final steps = <int>[];
+      var tipJumps = 0;
       final notationLines = <NotationVerticalDirection>[];
       final previewedMoves = <String>[];
 
       await tester.pumpWidget(
         _harness(
           repository: repository,
+          height: 1200,
           onPreviewUciMove: previewedMoves.add,
           onNotationVertical: notationLines.add,
           onNotationStep: (delta) {
             steps.add(delta);
             return false;
           },
+          onNotationJumpToTip: () => tipJumps += 1,
         ),
       );
       await _openExplorerTab(tester);
@@ -694,7 +708,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('MOVE'), findsOneWidget);
 
-      await tester.tap(find.text('Notation'));
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
 
       previewedMoves.clear();
@@ -704,7 +718,8 @@ void main() {
       final container = ProviderScope.containerOf(
         tester.element(find.byType(NotationOpeningPanel)),
       );
-      expect(steps, [1]);
+      expect(steps, isEmpty);
+      expect(tipJumps, 1);
       expect(container.read(rightRailActivePageProvider('__none__')), 0);
       expect(find.text('MOVE'), findsNothing);
 
@@ -1684,9 +1699,12 @@ Widget _harness({
   onPreviewUciLine,
   ValueChanged<NotationVerticalDirection>? onNotationVertical,
   bool Function(int delta)? onNotationStep,
+  VoidCallback? onNotationJumpToHead,
+  VoidCallback? onNotationJumpToTip,
   int previewLineStep = 0,
   bool previewLineAutoplay = false,
   double width = 760,
+  double height = 360,
 }) {
   return ProviderScope(
     overrides: [
@@ -1701,7 +1719,7 @@ Widget _harness({
         backgroundColor: kBackgroundColor,
         body: SizedBox(
           width: width,
-          height: 360,
+          height: height,
           child: NotationOpeningPanel(
             notationChild: const Center(child: Text('Notation')),
             currentFen: _initialFen,
@@ -1716,6 +1734,8 @@ Widget _harness({
             previewLineAutoplay: previewLineAutoplay,
             onNotationVertical: onNotationVertical,
             onNotationStep: onNotationStep,
+            onNotationJumpToHead: onNotationJumpToHead,
+            onNotationJumpToTip: onNotationJumpToTip,
           ),
         ),
       ),
@@ -2170,15 +2190,28 @@ Future<void> _openExplorerTab(WidgetTester tester) async {
   await tester.pump();
   final explorerTab = find.text('Explorer');
   final compactExplorerTab = find.text('Book');
-  await tester.tap(
-    explorerTab.evaluate().isNotEmpty ? explorerTab : compactExplorerTab,
-  );
+  final explorerIcon = find.byIcon(Icons.menu_book_outlined);
+  final target =
+      explorerTab.evaluate().isNotEmpty
+          ? explorerTab
+          : compactExplorerTab.evaluate().isNotEmpty
+          ? compactExplorerTab
+          : explorerIcon;
+  await tester.tap(target.first);
   await tester.pumpAndSettle();
 }
 
 Future<void> _openGamesTab(WidgetTester tester) async {
   await tester.pump();
-  await tester.tap(find.text('Games'));
+  final gamesTab = find.text('Games');
+  if (gamesTab.evaluate().isNotEmpty) {
+    await tester.tap(gamesTab.first);
+  } else {
+    await _openExplorerTab(tester);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+  }
   await tester.pumpAndSettle();
 }
 

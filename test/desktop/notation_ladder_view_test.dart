@@ -127,6 +127,38 @@ void main() {
     expect(find.byType(MoveHoverPreview), findsNothing);
   });
 
+  testWidgets('hovering move NAG stays passive until explicit click', (
+    tester,
+  ) async {
+    final jumps = <ChessMovePointer>[];
+    await tester.pumpWidget(
+      _host(
+        game: _sampleGame(),
+        activePointer: const [1],
+        onJump: jumps.add,
+        userNags: const <int, List<int>>{
+          0: <int>[1],
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final pointer = TestPointer(1, PointerDeviceKind.mouse);
+    await tester.sendEventToBinding(
+      pointer.hover(tester.getCenter(find.text('!'))),
+    );
+    await tester.pump();
+
+    expect(jumps, isEmpty);
+
+    await tester.tap(find.text('e4', findRichText: true));
+    await tester.pump();
+
+    expect(jumps, [
+      const [0],
+    ]);
+  });
+
   testWidgets(
     'inline notation exposes collapse and reopen controls for variations',
     (tester) async {
@@ -457,7 +489,7 @@ void main() {
     },
   );
 
-  testWidgets('hovering an annotation glyph jumps to that move', (
+  testWidgets('hovering an annotation glyph stays passive until click', (
     tester,
   ) async {
     final jumps = <ChessMovePointer>[];
@@ -476,6 +508,11 @@ void main() {
     final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await gesture.addPointer();
     await gesture.moveTo(tester.getCenter(glyph));
+    await tester.pump();
+
+    expect(jumps, isEmpty);
+
+    await tester.tap(glyph);
     await tester.pump();
 
     expect(jumps, [

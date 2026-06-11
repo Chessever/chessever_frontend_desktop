@@ -271,6 +271,33 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
 
   void _activateNotation() => _ensurePageActive(0);
 
+  void _closeExplorer() {
+    setState(() {
+      _buildExplorerPage = false;
+      _setCurrentPage(0);
+    });
+    _writeStoredPage(0);
+    _focusActivePage();
+  }
+
+  void _activateExplorerMoves() {
+    setState(() {
+      _buildExplorerPage = true;
+      _setCurrentPage(1);
+    });
+    _writeStoredPage(1);
+    _focusActivePage();
+  }
+
+  void _activateExplorerGames() {
+    setState(() {
+      _buildExplorerPage = true;
+      _setCurrentPage(2);
+    });
+    _writeStoredPage(2);
+    _focusActivePage();
+  }
+
   void _keepExplorerActive() => _ensurePageActive(1);
 
   void _keepGamesActive() => _ensurePageActive(2);
@@ -347,10 +374,10 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
     }
     if (key == LogicalKeyboardKey.enter && !_hasAnyModifierPressed()) {
       if (event is KeyDownEvent) {
-        if ((_buildExplorerPage || _page > 0) && _page > 0) {
-          _go(0);
+        if (_buildExplorerPage || _page > 0) {
+          _closeExplorer();
         } else {
-          _go(1);
+          _activateExplorerMoves();
         }
       }
       return KeyEventResult.handled;
@@ -364,11 +391,11 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
     // chord-matching activator could flip the rail tab back to Notation.
     if (!hasModifier) {
       if (key == LogicalKeyboardKey.arrowRight) {
-        widget.onNotationStep?.call(1);
+        widget.onNotationJumpToTip?.call();
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.arrowLeft) {
-        widget.onNotationStep?.call(-1);
+        widget.onNotationJumpToHead?.call();
         return KeyEventResult.handled;
       }
     }
@@ -417,6 +444,13 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
         onStep: widget.onNotationStep,
         onJumpToHead: widget.onNotationJumpToHead,
         onJumpToTip: widget.onNotationJumpToTip,
+        onCycleFocus: (delta) {
+          if (delta > 0) {
+            _activateExplorerMoves();
+          } else {
+            _activateExplorerGames();
+          }
+        },
         child: widget.notationChild,
       ),
     );
@@ -442,6 +476,10 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                 onClearPreviewUciMove: widget.onClearPreviewUciMove,
                 onShowGames: _showGamesForMove,
                 onNotationStep: widget.onNotationStep,
+                onNotationJumpToHead: widget.onNotationJumpToHead,
+                onNotationJumpToTip: widget.onNotationJumpToTip,
+                onActivateNotation: _activateNotation,
+                onCloseExplorer: _closeExplorer,
                 onKeepExplorerActive: _keepExplorerActive,
                 onKeepGamesActive: _keepGamesActive,
                 explorerScope: widget.explorerScope,
@@ -733,6 +771,10 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
     required this.onClearPreviewUciMove,
     required this.onShowGames,
     required this.onNotationStep,
+    required this.onNotationJumpToHead,
+    required this.onNotationJumpToTip,
+    required this.onActivateNotation,
+    required this.onCloseExplorer,
     required this.onKeepExplorerActive,
     required this.onKeepGamesActive,
     required this.explorerScope,
@@ -753,6 +795,10 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
   final VoidCallback? onClearPreviewUciMove;
   final void Function(String uci) onShowGames;
   final bool Function(int delta)? onNotationStep;
+  final VoidCallback? onNotationJumpToHead;
+  final VoidCallback? onNotationJumpToTip;
+  final VoidCallback onActivateNotation;
+  final VoidCallback onCloseExplorer;
   final VoidCallback onKeepExplorerActive;
   final VoidCallback onKeepGamesActive;
   final BoardExplorerScope? explorerScope;
@@ -1260,6 +1306,22 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
     }
   }
 
+  void _cycleFocusZone(int delta) {
+    if (delta > 0) {
+      if (_activeTable == _ExplorerTableFocus.moves) {
+        _focusGamesPane();
+      } else {
+        widget.onActivateNotation();
+      }
+      return;
+    }
+    if (_activeTable == _ExplorerTableFocus.games) {
+      _focusMovesPane();
+    } else {
+      widget.onActivateNotation();
+    }
+  }
+
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
     if (!widget.active) return KeyEventResult.ignored;
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
@@ -1285,13 +1347,17 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
           _focusedMoveIndex >= 0 ? _focusedMoveIndex : (aggs.isEmpty ? -1 : 0);
       if (index >= 0 && index < aggs.length) {
         _activateExplorerMove(aggs[index].uci);
+      } else {
+        widget.onNotationStep?.call(1);
+        _keepExplorerFocus();
       }
       return KeyEventResult.handled;
     }
     if (!hasModifier &&
         _activeTable == _ExplorerTableFocus.moves &&
         key == LogicalKeyboardKey.arrowLeft) {
-      _stepNotationBack();
+      widget.onNotationJumpToHead?.call();
+      _keepExplorerFocus();
       return KeyEventResult.handled;
     }
     if (!hasModifier &&
@@ -1303,6 +1369,21 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
         _activeTable == _ExplorerTableFocus.games &&
         key == LogicalKeyboardKey.arrowLeft) {
       return _leaveOrStepBackFocusedGameMove();
+    }
+
+    if (_isFocusZoneCycleChord(event, forward: true)) {
+      _cycleFocusZone(1);
+      return KeyEventResult.handled;
+    }
+    if (_isFocusZoneCycleChord(event, forward: false)) {
+      _cycleFocusZone(-1);
+      return KeyEventResult.handled;
+    }
+
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      widget.onCloseExplorer();
+      return KeyEventResult.handled;
     }
 
     // Shift+←/→ belongs specifically to the two-table Explorer surface
@@ -1534,6 +1615,20 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
 }
 
 enum _ExplorerTableFocus { moves, games }
+
+/// True for a bare `Shift+↓` (forward) or `Shift+↑` (backward) chord — cycles
+/// focus through Notation ⇄ Explorer moves ⇄ Explorer games without using
+/// plain ←/→, which are reserved for notation boundary/position navigation.
+bool _isFocusZoneCycleChord(KeyEvent event, {required bool forward}) {
+  if (event.logicalKey !=
+      (forward ? LogicalKeyboardKey.arrowDown : LogicalKeyboardKey.arrowUp)) {
+    return false;
+  }
+  return HardwareKeyboard.instance.isShiftPressed &&
+      !_isControlPressed() &&
+      !_isAltPressed() &&
+      !_isMetaPressed();
+}
 
 /// True for a bare `Shift+→` (forward) or `Shift+←` (backward) chord — the
 /// Explorer's local Moves ⇄ Games focus switch. Excludes Ctrl/Alt/Meta so it
@@ -2174,6 +2269,7 @@ class _NotationKeyboardArea extends StatefulWidget {
     required this.onStep,
     required this.onJumpToHead,
     required this.onJumpToTip,
+    required this.onCycleFocus,
   });
 
   final Widget child;
@@ -2184,6 +2280,7 @@ class _NotationKeyboardArea extends StatefulWidget {
   final bool Function(int delta)? onStep;
   final VoidCallback? onJumpToHead;
   final VoidCallback? onJumpToTip;
+  final ValueChanged<int> onCycleFocus;
 
   @override
   State<_NotationKeyboardArea> createState() => _NotationKeyboardAreaState();
@@ -2214,16 +2311,24 @@ class _NotationKeyboardAreaState extends State<_NotationKeyboardArea> {
       return KeyEventResult.ignored;
     }
     final key = event.logicalKey;
+    if (_isFocusZoneCycleChord(event, forward: true)) {
+      widget.onCycleFocus(1);
+      return KeyEventResult.handled;
+    }
+    if (_isFocusZoneCycleChord(event, forward: false)) {
+      widget.onCycleFocus(-1);
+      return KeyEventResult.handled;
+    }
     if (key == LogicalKeyboardKey.arrowRight) {
       if (_isRightRailNextTabChord(event)) return KeyEventResult.ignored;
       if (_hasAnyModifierPressed()) return KeyEventResult.handled;
-      widget.onStep?.call(1);
+      widget.onJumpToTip?.call();
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowLeft) {
       if (_isRightRailPreviousTabChord(event)) return KeyEventResult.ignored;
       if (_hasAnyModifierPressed()) return KeyEventResult.handled;
-      widget.onStep?.call(-1);
+      widget.onJumpToHead?.call();
       return KeyEventResult.handled;
     }
     if (_hasAnyModifierPressed()) {
