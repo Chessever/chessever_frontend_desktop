@@ -51,26 +51,6 @@ class EnginePanel extends ConsumerStatefulWidget {
 }
 
 class _EnginePanelState extends ConsumerState<EnginePanel> {
-  _PvPreview? _preview;
-
-  void _setPreview(_PvPreview preview) {
-    if (_preview == preview) return;
-    setState(() => _preview = preview);
-  }
-
-  void _clearPreview(int lineId) {
-    if (_preview?.lineId != lineId) return;
-    setState(() => _preview = null);
-  }
-
-  @override
-  void didUpdateWidget(covariant EnginePanel oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.fen != widget.fen) {
-      _preview = null;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final settings =
@@ -143,7 +123,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                 style: const TextStyle(color: kWhiteColor70, fontSize: 12),
               ),
             )
-          else
+          else ...[
             Flexible(
               child: ListView.separated(
                 physics: const DesktopScrollPhysics(),
@@ -156,18 +136,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                       pv: pvs[i],
                       fen: widget.fen,
                       onPlayUci: widget.onPlayUci,
-                      onPreview: _setPreview,
-                      onClearPreview: _clearPreview,
                     ),
-              ),
-            ),
-          if (_preview case final preview?) ...[
-            const SizedBox(height: 8),
-            Center(
-              child: MovePreviewBoard(
-                startingFen: preview.startingFen,
-                movesUpToHover: preview.movesUpToHover,
-                size: 168,
               ),
             ),
           ],
@@ -183,24 +152,22 @@ class _PvLine extends StatefulWidget {
     required this.pv,
     required this.fen,
     required this.onPlayUci,
-    required this.onPreview,
-    required this.onClearPreview,
   });
 
   final int rank;
   final BoardPv pv;
   final String fen;
   final void Function(String uci)? onPlayUci;
-  final ValueChanged<_PvPreview> onPreview;
-  final ValueChanged<int> onClearPreview;
 
   @override
   State<_PvLine> createState() => _PvLineState();
 }
 
 class _PvLineState extends State<_PvLine> {
+  final GlobalKey _lineAnchorKey = GlobalKey();
   bool _hovered = false;
   bool _expanded = false;
+  int? _hoveredTokenIndex;
   String? _cachedFen;
   String? _cachedMoves;
   String? _cachedFirstUci;
@@ -220,6 +187,10 @@ class _PvLineState extends State<_PvLine> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.fen != widget.fen || oldWidget.pv.moves != widget.pv.moves) {
       _refreshCachedLine();
+      _hoveredTokenIndex = null;
+    } else if (_hoveredTokenIndex != null &&
+        _hoveredTokenIndex! >= _cachedTokens.length) {
+      _hoveredTokenIndex = null;
     }
   }
 
@@ -369,6 +340,12 @@ class _PvLineState extends State<_PvLine> {
     }
   }
 
+  void _previewToken(int index) {
+    if (index < 0 || index >= _cachedTokens.length) return;
+    if (_hoveredTokenIndex == index) return;
+    setState(() => _hoveredTokenIndex = index);
+  }
+
   @override
   Widget build(BuildContext context) {
     final score = _formatScore(widget.pv.evaluation, widget.pv.mate);
@@ -388,79 +365,94 @@ class _PvLineState extends State<_PvLine> {
 
     final clickable = widget.onPlayUci != null && _firstUci != null;
 
-    final body = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color:
-            widget.rank == 1
-                ? (_hovered
-                    ? kBlack2Color.withValues(alpha: 0.6)
-                    : kBlack3Color)
-                : (_hovered ? kBlack3Color : Colors.transparent),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(
+    final movesUpToHover =
+        (_hoveredTokenIndex == null ||
+                _hoveredTokenIndex! >= _cachedTokens.length)
+            ? const <String>[]
+            : _cachedTokens[_hoveredTokenIndex!].ucisUpTo;
+
+    final body = KeyedSubtree(
+      key: _lineAnchorKey,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
           color:
-              _hovered
-                  ? kPrimaryColor.withValues(alpha: 0.4)
-                  : Colors.transparent,
+              widget.rank == 1
+                  ? (_hovered
+                      ? kBlack2Color.withValues(alpha: 0.6)
+                      : kBlack3Color)
+                  : (_hovered ? kBlack3Color : Colors.transparent),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+            color:
+                _hovered
+                    ? kPrimaryColor.withValues(alpha: 0.4)
+                    : Colors.transparent,
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 56,
+              child: Text(
+                score,
+                style: TextStyle(
+                  color: scoreColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child:
+                  _cachedTokens.isEmpty
+                      ? Text(
+                        displayLine,
+                        maxLines: _expanded ? 4 : 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: kWhiteColor70,
+                          fontSize: 12,
+                          height: 1.4,
+                        ),
+                      )
+                      : _PvTokensLine(
+                        tokens: _cachedTokens,
+                        expanded: _expanded,
+                        onPreviewToken: _previewToken,
+                      ),
+            ),
+            const SizedBox(width: 4),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: DesktopTooltip(
+                message:
+                    _expanded ? 'Collapse engine line' : 'Expand engine line',
+                child: Icon(
+                  _expanded
+                      ? Icons.keyboard_arrow_down_rounded
+                      : Icons.chevron_right_rounded,
+                  size: 16,
+                  color: kWhiteColor70,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          SizedBox(
-            width: 56,
-            child: Text(
-              score,
-              style: TextStyle(
-                color: scoreColor,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child:
-                _cachedTokens.isEmpty
-                    ? Text(
-                      displayLine,
-                      maxLines: _expanded ? 4 : 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: kWhiteColor70,
-                        fontSize: 12,
-                        height: 1.4,
-                      ),
-                    )
-                    : _PvTokensLine(
-                      lineId: widget.rank,
-                      fen: widget.fen,
-                      tokens: _cachedTokens,
-                      expanded: _expanded,
-                      onPreview: widget.onPreview,
-                      onClearPreview: widget.onClearPreview,
-                    ),
-          ),
-          const SizedBox(width: 4),
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => setState(() => _expanded = !_expanded),
-            child: DesktopTooltip(
-              message:
-                  _expanded ? 'Collapse engine line' : 'Expand engine line',
-              child: Icon(
-                _expanded
-                    ? Icons.keyboard_arrow_down_rounded
-                    : Icons.chevron_right_rounded,
-                size: 16,
-                color: kWhiteColor70,
-              ),
-            ),
-          ),
-        ],
-      ),
+    );
+
+    final preview = MoveHoverPreview(
+      startingFen: widget.fen,
+      movesUpToHover: movesUpToHover,
+      enabled: _hovered && _cachedTokens.isNotEmpty,
+      placement: MoveHoverPreviewPlacement.engineLine,
+      placementAnchorKey: _lineAnchorKey,
+      child: body,
     );
 
     // Subtle hover scale on PV rows (1.005) — too tiny to be a
@@ -472,8 +464,21 @@ class _PvLineState extends State<_PvLine> {
     return ClickCursor(
       enabled: clickable,
       child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
+        onEnter:
+            (_) => setState(() {
+              _hovered = true;
+              _hoveredTokenIndex ??= _cachedTokens.isEmpty ? null : 0;
+            }),
+        onHover: (_) {
+          if (_hoveredTokenIndex == null && _cachedTokens.isNotEmpty) {
+            setState(() => _hoveredTokenIndex = 0);
+          }
+        },
+        onExit:
+            (_) => setState(() {
+              _hovered = false;
+              _hoveredTokenIndex = null;
+            }),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: clickable ? () => widget.onPlayUci!(_firstUci!) : null,
@@ -485,7 +490,7 @@ class _PvLineState extends State<_PvLine> {
             builder:
                 (context, scale, child) =>
                     Transform.scale(scale: scale, child: child),
-            child: body,
+            child: preview,
           ),
         ),
       ),
@@ -717,88 +722,40 @@ class _PvToken {
   final List<String> ucisUpTo;
 }
 
-class _PvPreview {
-  const _PvPreview({
-    required this.lineId,
-    required this.startingFen,
-    required this.movesUpToHover,
-  });
-
-  final int lineId;
-  final String startingFen;
-  final List<String> movesUpToHover;
-
-  @override
-  bool operator ==(Object other) =>
-      other is _PvPreview &&
-      other.lineId == lineId &&
-      other.startingFen == startingFen &&
-      _sameMoves(other.movesUpToHover, movesUpToHover);
-
-  @override
-  int get hashCode =>
-      Object.hash(lineId, startingFen, Object.hashAll(movesUpToHover));
-}
-
-bool _sameMoves(List<String> a, List<String> b) {
-  if (a.length != b.length) return false;
-  for (var i = 0; i < a.length; i++) {
-    if (a[i] != b[i]) return false;
-  }
-  return true;
-}
-
-/// Renders the PV move list as a Wrap of SAN chips. Hovering a token reports
-/// the cumulative UCI path to [EnginePanel], which owns a single fixed preview
-/// board below the engine lines. Hover never dispatches [onPlayUci].
+/// Renders the PV move list as a Wrap of SAN chips. Hovering a token updates
+/// the row-owned preview without dispatching [onPlayUci].
 class _PvTokensLine extends StatelessWidget {
   const _PvTokensLine({
-    required this.lineId,
-    required this.fen,
     required this.tokens,
     required this.expanded,
-    required this.onPreview,
-    required this.onClearPreview,
+    required this.onPreviewToken,
   });
 
-  final int lineId;
-  final String fen;
   final List<_PvToken> tokens;
   final bool expanded;
-  final ValueChanged<_PvPreview> onPreview;
-  final ValueChanged<int> onClearPreview;
+  final ValueChanged<int> onPreviewToken;
 
   @override
   Widget build(BuildContext context) {
-    final line = MouseRegion(
-      onExit: (_) => onClearPreview(lineId),
-      child: Wrap(
-        spacing: 5,
-        runSpacing: 2,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          for (var i = 0; i < tokens.length; i++)
-            MouseRegion(
-              onEnter:
-                  (_) => onPreview(
-                    _PvPreview(
-                      lineId: lineId,
-                      startingFen: fen,
-                      movesUpToHover: tokens[i].ucisUpTo,
-                    ),
-                  ),
-              child: Text(
-                tokens[i].san,
-                style: const TextStyle(
-                  color: kWhiteColor70,
-                  fontSize: 12,
-                  height: 1.35,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                ),
+    final line = Wrap(
+      spacing: 5,
+      runSpacing: 2,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (var i = 0; i < tokens.length; i++)
+          MouseRegion(
+            onEnter: (_) => onPreviewToken(i),
+            child: Text(
+              tokens[i].san,
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 12,
+                height: 1.35,
+                fontFeatures: [FontFeature.tabularFigures()],
               ),
             ),
-        ],
-      ),
+          ),
+      ],
     );
 
     if (expanded) return line;
