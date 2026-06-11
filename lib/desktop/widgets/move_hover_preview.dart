@@ -214,7 +214,6 @@ class _MoveHoverPreviewState extends State<MoveHoverPreview> {
       link: _link,
       child: MouseRegion(
         onEnter: (_) {
-          if (!widget.enabled) return;
           _hovered = true;
           _schedulePopupVisibilitySync();
         },
