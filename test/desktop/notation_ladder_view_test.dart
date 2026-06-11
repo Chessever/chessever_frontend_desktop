@@ -82,12 +82,20 @@ void main() {
       expect(find.text('!, ?, ...'), findsOneWidget);
       expect(find.text('Add comment'), findsOneWidget);
       expect(find.text('Promote to mainline'), findsOneWidget);
-      expect(find.text('Delete variation'), findsOneWidget);
+      expect(find.text('Delete'), findsOneWidget);
+
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete Variation'), findsOneWidget);
+      expect(find.text('Delete Remaining Moves'), findsOneWidget);
+      expect(find.text('Delete Previous Moves'), findsOneWidget);
+      expect(find.text('Delete All Commentary'), findsOneWidget);
+      expect(find.text('Delete Text Commentary'), findsOneWidget);
 
       await tester.tap(find.text('!, ?, ...'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Good move'));
-      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
 
       expect(toggledPointer, const [0, 0, 0]);
       expect(toggledNag, 1);
