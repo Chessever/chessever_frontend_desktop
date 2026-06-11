@@ -26,7 +26,7 @@ import 'package:chessever/theme/app_theme.dart';
 /// Each PV row is interactive:
 ///  - Click → plays the line's first move on the active board
 ///  - Right-click → context menu (play / copy SAN / copy first / copy UCI)
-class EnginePanel extends ConsumerWidget {
+class EnginePanel extends ConsumerStatefulWidget {
   const EnginePanel({
     super.key,
     required this.fen,
@@ -47,7 +47,32 @@ class EnginePanel extends ConsumerWidget {
   final void Function(String uci)? onPlayUci;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<EnginePanel> createState() => _EnginePanelState();
+}
+
+class _EnginePanelState extends ConsumerState<EnginePanel> {
+  _PvPreview? _preview;
+
+  void _setPreview(_PvPreview preview) {
+    if (_preview == preview) return;
+    setState(() => _preview = preview);
+  }
+
+  void _clearPreview(int lineId) {
+    if (_preview?.lineId != lineId) return;
+    setState(() => _preview = null);
+  }
+
+  @override
+  void didUpdateWidget(covariant EnginePanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.fen != widget.fen) {
+      _preview = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final settings =
         ref.watch(engineSettingsProviderNew).valueOrNull ??
         const EngineSettings();
@@ -56,11 +81,11 @@ class EnginePanel extends ConsumerWidget {
     }
 
     final ready = StockfishSingleton().isEngineHealthy;
-    if (!ready && fen.isEmpty) {
+    if (!ready && widget.fen.isEmpty) {
       return const _EngineNotReady();
     }
 
-    final state = ref.watch(boardEvalProvider(fen));
+    final state = ref.watch(boardEvalProvider(widget.fen));
     final pvs = state.pvs;
     final topScore = _formatScore(state.evaluation, state.mate);
 
@@ -129,11 +154,23 @@ class EnginePanel extends ConsumerWidget {
                     (context, i) => _PvLine(
                       rank: i + 1,
                       pv: pvs[i],
-                      fen: fen,
-                      onPlayUci: onPlayUci,
+                      fen: widget.fen,
+                      onPlayUci: widget.onPlayUci,
+                      onPreview: _setPreview,
+                      onClearPreview: _clearPreview,
                     ),
               ),
             ),
+          if (_preview case final preview?) ...[
+            const SizedBox(height: 8),
+            Center(
+              child: MovePreviewBoard(
+                startingFen: preview.startingFen,
+                movesUpToHover: preview.movesUpToHover,
+                size: 168,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -146,22 +183,24 @@ class _PvLine extends StatefulWidget {
     required this.pv,
     required this.fen,
     required this.onPlayUci,
+    required this.onPreview,
+    required this.onClearPreview,
   });
 
   final int rank;
   final BoardPv pv;
   final String fen;
   final void Function(String uci)? onPlayUci;
+  final ValueChanged<_PvPreview> onPreview;
+  final ValueChanged<int> onClearPreview;
 
   @override
   State<_PvLine> createState() => _PvLineState();
 }
 
 class _PvLineState extends State<_PvLine> {
-  final GlobalKey _lineAnchorKey = GlobalKey();
   bool _hovered = false;
   bool _expanded = false;
-  int? _hoveredTokenIndex;
   String? _cachedFen;
   String? _cachedMoves;
   String? _cachedFirstUci;
@@ -181,10 +220,6 @@ class _PvLineState extends State<_PvLine> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.fen != widget.fen || oldWidget.pv.moves != widget.pv.moves) {
       _refreshCachedLine();
-      _hoveredTokenIndex = null;
-    } else if (_hoveredTokenIndex != null &&
-        _hoveredTokenIndex! >= _cachedTokens.length) {
-      _hoveredTokenIndex = null;
     }
   }
 
@@ -400,10 +435,12 @@ class _PvLineState extends State<_PvLine> {
                       ),
                     )
                     : _PvTokensLine(
+                      lineId: widget.rank,
+                      fen: widget.fen,
                       tokens: _cachedTokens,
                       expanded: _expanded,
-                      onHoverToken:
-                          (index) => setState(() => _hoveredTokenIndex = index),
+                      onPreview: widget.onPreview,
+                      onClearPreview: widget.onClearPreview,
                     ),
           ),
           const SizedBox(width: 4),
@@ -432,28 +469,11 @@ class _PvLineState extends State<_PvLine> {
     // toward it. We don't track press here — these rows update many
     // times a second, and a press-down spring would conflict with the
     // ongoing redraws.
-    final row = _PvLineHoverPreview(
-      fen: widget.fen,
-      tokens: _cachedTokens,
-      hovered: _hovered,
-      hoveredIndex: _hoveredTokenIndex,
-      anchorKey: _lineAnchorKey,
-      child: body,
-    );
-
     return ClickCursor(
       enabled: clickable,
       child: MouseRegion(
-        onEnter:
-            (_) => setState(() {
-              _hovered = true;
-              _hoveredTokenIndex ??= 0;
-            }),
-        onExit:
-            (_) => setState(() {
-              _hovered = false;
-              _hoveredTokenIndex = null;
-            }),
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: clickable ? () => widget.onPlayUci!(_firstUci!) : null,
@@ -465,7 +485,7 @@ class _PvLineState extends State<_PvLine> {
             builder:
                 (context, scale, child) =>
                     Transform.scale(scale: scale, child: child),
-            child: row,
+            child: body,
           ),
         ),
       ),
@@ -697,97 +717,92 @@ class _PvToken {
   final List<String> ucisUpTo;
 }
 
-/// Renders the PV move list and reports which SAN token is under the pointer.
-/// The parent row owns the stable [MoveHoverPreview], so moving between engine
-/// moves updates only the popup board content.
-class _PvTokensLine extends StatelessWidget {
-  const _PvTokensLine({
-    required this.tokens,
-    required this.expanded,
-    required this.onHoverToken,
+class _PvPreview {
+  const _PvPreview({
+    required this.lineId,
+    required this.startingFen,
+    required this.movesUpToHover,
   });
 
-  final List<_PvToken> tokens;
-  final bool expanded;
-  final ValueChanged<int> onHoverToken;
+  final int lineId;
+  final String startingFen;
+  final List<String> movesUpToHover;
 
   @override
-  Widget build(BuildContext context) {
-    if (!expanded) {
-      return RichText(
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        text: TextSpan(
-          children: [
-            for (var i = 0; i < tokens.length; i++) ...[
-              if (i > 0) const TextSpan(text: ' '),
-              TextSpan(text: tokens[i].san, onEnter: (_) => onHoverToken(i)),
-            ],
-          ],
-          style: const TextStyle(
-            color: kWhiteColor70,
-            fontSize: 12,
-            height: 1.35,
-            fontFeatures: [FontFeature.tabularFigures()],
-          ),
-        ),
-      );
-    }
-    return Wrap(
-      spacing: 5,
-      runSpacing: 2,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        for (var i = 0; i < tokens.length; i++)
-          MouseRegion(
-            onEnter: (_) => onHoverToken(i),
-            child: Text(
-              tokens[i].san,
-              style: const TextStyle(
-                color: kWhiteColor70,
-                fontSize: 12,
-                height: 1.35,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
-      ],
-    );
-  }
+  bool operator ==(Object other) =>
+      other is _PvPreview &&
+      other.lineId == lineId &&
+      other.startingFen == startingFen &&
+      _sameMoves(other.movesUpToHover, movesUpToHover);
+
+  @override
+  int get hashCode =>
+      Object.hash(lineId, startingFen, Object.hashAll(movesUpToHover));
 }
 
-class _PvLineHoverPreview extends StatelessWidget {
-  const _PvLineHoverPreview({
+bool _sameMoves(List<String> a, List<String> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+/// Renders the PV move list as a Wrap of SAN chips. Hovering a token reports
+/// the cumulative UCI path to [EnginePanel], which owns a single fixed preview
+/// board below the engine lines. Hover never dispatches [onPlayUci].
+class _PvTokensLine extends StatelessWidget {
+  const _PvTokensLine({
+    required this.lineId,
     required this.fen,
     required this.tokens,
-    required this.hovered,
-    required this.hoveredIndex,
-    required this.anchorKey,
-    required this.child,
+    required this.expanded,
+    required this.onPreview,
+    required this.onClearPreview,
   });
 
+  final int lineId;
   final String fen;
   final List<_PvToken> tokens;
-  final bool hovered;
-  final int? hoveredIndex;
-  final GlobalKey anchorKey;
-  final Widget child;
+  final bool expanded;
+  final ValueChanged<_PvPreview> onPreview;
+  final ValueChanged<int> onClearPreview;
 
   @override
   Widget build(BuildContext context) {
-    final safeIndex =
-        hoveredIndex == null
-            ? 0
-            : hoveredIndex!.clamp(0, tokens.length - 1).toInt();
-    return MoveHoverPreview(
-      startingFen: fen,
-      movesUpToHover:
-          tokens.isEmpty ? const <String>[] : tokens[safeIndex].ucisUpTo,
-      enabled: hovered && tokens.isNotEmpty,
-      placement: MoveHoverPreviewPlacement.engineLine,
-      placementAnchorKey: anchorKey,
-      child: KeyedSubtree(key: anchorKey, child: child),
+    final line = MouseRegion(
+      onExit: (_) => onClearPreview(lineId),
+      child: Wrap(
+        spacing: 5,
+        runSpacing: 2,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          for (var i = 0; i < tokens.length; i++)
+            MouseRegion(
+              onEnter:
+                  (_) => onPreview(
+                    _PvPreview(
+                      lineId: lineId,
+                      startingFen: fen,
+                      movesUpToHover: tokens[i].ucisUpTo,
+                    ),
+                  ),
+              child: Text(
+                tokens[i].san,
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  fontSize: 12,
+                  height: 1.35,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+        ],
+      ),
     );
+
+    if (expanded) return line;
+    return SizedBox(height: 18, child: ClipRect(child: line));
   }
 }
 

@@ -1333,7 +1333,7 @@ class _DataSourceCard extends StatelessWidget {
     final twicTotal =
         showEventCounts ? summary?.totalEvents : summary?.totalGames;
     final twicLabel =
-        twicTotal != null ? 'TWIC - ${formatCompactCount(twicTotal)}' : 'TWIC';
+        twicTotal != null ? 'ChessEver - ${formatCompactCount(twicTotal)}' : 'ChessEver';
 
     return Container(
       padding: const EdgeInsets.all(4),

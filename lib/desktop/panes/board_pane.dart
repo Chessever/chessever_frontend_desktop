@@ -3101,7 +3101,6 @@ class BoardPane extends HookConsumerWidget {
         pieceAssets: notationPieceAssets,
         layoutModeController: layoutModeController,
         variationCollapseController: notationVariationCollapseController,
-        enableMoveHoverPreview: false,
       );
     }
 

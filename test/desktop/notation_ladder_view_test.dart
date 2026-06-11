@@ -16,9 +16,7 @@ void main() {
   testWidgets('can render notation moves without mini-board hover previews', (
     tester,
   ) async {
-    await tester.pumpWidget(
-      _host(game: _sampleGame(), onJump: (_) {}, enableMoveHoverPreview: false),
-    );
+    await tester.pumpWidget(_host(game: _sampleGame(), onJump: (_) {}));
 
     expect(find.text('e4', findRichText: true), findsOneWidget);
     expect(find.byType(MoveHoverPreview), findsNothing);
@@ -93,17 +91,41 @@ void main() {
       expect(find.text('!, ?, ...'), findsOneWidget);
       expect(find.text('Add comment'), findsOneWidget);
       expect(find.text('Promote to mainline'), findsOneWidget);
-      expect(find.text('Delete variation'), findsOneWidget);
+      expect(find.text('Delete'), findsOneWidget);
+
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete Variation'), findsOneWidget);
+      expect(find.text('Delete Remaining Moves'), findsOneWidget);
+      expect(find.text('Delete Previous Moves'), findsOneWidget);
+      expect(find.text('Delete All Commentary'), findsOneWidget);
+      expect(find.text('Delete Text Commentary'), findsOneWidget);
 
       await tester.tap(find.text('!, ?, ...'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Good move'));
-      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
 
       expect(toggledPointer, const [0, 0, 0]);
       expect(toggledNag, 1);
     },
   );
+
+  testWidgets('main notation moves do not install hover preview boards', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(game: _sampleGame(), onJump: (_) {}, activePointer: const [0]),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MoveHoverPreview), findsNothing);
+
+    await tester.tap(find.text('e5', findRichText: true));
+    await tester.pump();
+
+    expect(find.byType(MoveHoverPreview), findsNothing);
+  });
 
   testWidgets(
     'inline notation exposes collapse and reopen controls for variations',
@@ -759,7 +781,6 @@ Widget _host({
   void Function(ChessMovePointer pointer)? onDeleteVariation,
   ValueNotifier<NotationLayoutMode>? layoutModeController,
   NotationVariationCollapseController? variationCollapseController,
-  bool enableMoveHoverPreview = true,
 }) {
   final notation = NotationLadderView(
     game: game,
@@ -777,7 +798,6 @@ Widget _host({
     onDeleteVariation: onDeleteVariation,
     layoutModeController: layoutModeController,
     variationCollapseController: variationCollapseController,
-    enableMoveHoverPreview: enableMoveHoverPreview,
     useFigurine: useFigurine,
     pieceAssets: pieceAssets,
   );

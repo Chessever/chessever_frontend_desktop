@@ -78,6 +78,84 @@ class MoveHoverPreview extends StatefulWidget {
   State<MoveHoverPreview> createState() => _MoveHoverPreviewState();
 }
 
+class MovePreviewBoard extends StatelessWidget {
+  const MovePreviewBoard({
+    super.key,
+    required this.startingFen,
+    required this.movesUpToHover,
+    this.lastMoveUci,
+    this.size = 180,
+    this.orientation = Side.white,
+  });
+
+  final String startingFen;
+  final List<String> movesUpToHover;
+  final String? lastMoveUci;
+  final double size;
+  final Side orientation;
+
+  @override
+  Widget build(BuildContext context) {
+    final replay = computeMovePreviewReplay(
+      startingFen: startingFen,
+      movesUpToHover: movesUpToHover,
+      lastMoveUci: lastMoveUci,
+    );
+    return _AnimatedHoverCard(
+      size: size,
+      fen: replay.fen,
+      preFen: replay.preFen,
+      lastMove: replay.lastMove,
+      orientation: orientation,
+    );
+  }
+}
+
+({String fen, String? preFen, Move? lastMove}) computeMovePreviewReplay({
+  required String startingFen,
+  required List<String> movesUpToHover,
+  String? lastMoveUci,
+}) {
+  Position position;
+  try {
+    position = Chess.fromSetup(
+      Setup.parseFen(startingFen),
+      ignoreImpossibleCheck: true,
+    );
+  } catch (_) {
+    final fallbackLast = movesUpToHover.isEmpty
+        ? Move.parse(lastMoveUci ?? '')
+        : null;
+    return (
+      fen: startingFen,
+      preFen: fallbackLast == null
+          ? null
+          : _reverseToPreMoveFen(startingFen, fallbackLast),
+      lastMove: fallbackLast,
+    );
+  }
+  Move? last;
+  Position? prePosition;
+  for (final uci in movesUpToHover) {
+    final move = Move.parse(uci);
+    if (move == null) break;
+    if (!position.isLegal(move)) break;
+    prePosition = position;
+    position = position.playUnchecked(move);
+    last = move;
+  }
+  String? preFen;
+  if (last != null && prePosition != null) {
+    preFen = prePosition.fen;
+  } else if (last == null && lastMoveUci != null) {
+    last = Move.parse(lastMoveUci);
+    if (last != null) {
+      preFen = _reverseToPreMoveFen(position.fen, last);
+    }
+  }
+  return (fen: position.fen, preFen: preFen, lastMove: last);
+}
+
 class _MoveHoverPreviewState extends State<MoveHoverPreview> {
   final LayerLink _link = LayerLink();
   OverlayEntry? _entry;
@@ -98,7 +176,11 @@ class _MoveHoverPreviewState extends State<MoveHoverPreview> {
     if (overlay == null) return;
     _entry = OverlayEntry(
       builder: (context) {
-        final replay = _computeReplay();
+        final replay = computeMovePreviewReplay(
+          startingFen: widget.startingFen,
+          movesUpToHover: widget.movesUpToHover,
+          lastMoveUci: widget.lastMoveUci,
+        );
         return _MoveHoverPopup(
           link: _link,
           placement: widget.placement,
@@ -147,49 +229,6 @@ class _MoveHoverPreviewState extends State<MoveHoverPreview> {
       entry.markNeedsBuild();
     });
     WidgetsBinding.instance.scheduleFrame();
-  }
-
-  ({String fen, String? preFen, Move? lastMove}) _computeReplay() {
-    Position position;
-    try {
-      position = Chess.fromSetup(
-        Setup.parseFen(widget.startingFen),
-        ignoreImpossibleCheck: true,
-      );
-    } catch (_) {
-      final fallbackLast =
-          widget.movesUpToHover.isEmpty
-              ? Move.parse(widget.lastMoveUci ?? '')
-              : null;
-      return (
-        fen: widget.startingFen,
-        preFen:
-            fallbackLast == null
-                ? null
-                : _reverseToPreMoveFen(widget.startingFen, fallbackLast),
-        lastMove: fallbackLast,
-      );
-    }
-    Move? last;
-    Position? prePosition;
-    for (final uci in widget.movesUpToHover) {
-      final move = Move.parse(uci);
-      if (move == null) break;
-      if (!position.isLegal(move)) break;
-      prePosition = position;
-      position = position.playUnchecked(move);
-      last = move;
-    }
-    String? preFen;
-    if (last != null && prePosition != null) {
-      preFen = prePosition.fen;
-    } else if (last == null && widget.lastMoveUci != null) {
-      last = Move.parse(widget.lastMoveUci!);
-      if (last != null) {
-        preFen = _reverseToPreMoveFen(position.fen, last);
-      }
-    }
-    return (fen: position.fen, preFen: preFen, lastMove: last);
   }
 
   @override
@@ -499,8 +538,9 @@ class _PopupCard extends StatelessWidget {
               // Non-zero only when we have a pre-move FEN to slide from —
               // otherwise we'd animate phantom diffs when the popup first
               // mounts on a token we cannot rewind.
-              animationDuration:
-                  animate ? const Duration(milliseconds: 280) : Duration.zero,
+              animationDuration: animate
+                  ? const Duration(milliseconds: 280)
+                  : Duration.zero,
             ),
           ),
         ),
@@ -523,17 +563,15 @@ String? _reverseToPreMoveFen(String postFen, Move move) {
     final setup = Setup.parseFen(postFen);
     final pieceAtTo = setup.board.pieceAt(move.to);
     if (pieceAtTo == null) return null;
-    final originalPiece =
-        move.promotion != null
-            ? Piece(color: pieceAtTo.color, role: Role.pawn)
-            : pieceAtTo;
+    final originalPiece = move.promotion != null
+        ? Piece(color: pieceAtTo.color, role: Role.pawn)
+        : pieceAtTo;
     final newBoard = setup.board
         .removePieceAt(move.to)
         .setPieceAt(move.from, originalPiece);
-    final fullmoves =
-        (setup.turn == Side.white && setup.fullmoves > 1)
-            ? setup.fullmoves - 1
-            : setup.fullmoves;
+    final fullmoves = (setup.turn == Side.white && setup.fullmoves > 1)
+        ? setup.fullmoves - 1
+        : setup.fullmoves;
     return Setup(
       board: newBoard,
       turn: setup.turn.opposite,
@@ -551,8 +589,9 @@ IMap<Square, SquareHighlight> _lastMoveHighlights(Move? lastMove) {
   final out = <Square, SquareHighlight>{};
   for (final square in lastMove.squares) {
     final isLight = (square.file + square.rank) % 2 == 1;
-    final color =
-        isLight ? kLastMoveHighlightLightSquare : kLastMoveHighlightDarkSquare;
+    final color = isLight
+        ? kLastMoveHighlightLightSquare
+        : kLastMoveHighlightDarkSquare;
     out[square] = SquareHighlight(details: HighlightDetails(solidColor: color));
   }
   return out.lock;

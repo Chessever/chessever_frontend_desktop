@@ -5,11 +5,11 @@ import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/commentary_symbol_shortcuts.dart';
+import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
-import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
@@ -121,7 +121,6 @@ class NotationLadderView extends StatefulWidget {
     this.visibleMoveOrderController,
     this.variationCollapseController,
     this.showHeader = true,
-    this.enableMoveHoverPreview = true,
   });
 
   /// Optional external controller for the ladder/inline toggle. When
@@ -135,9 +134,6 @@ class NotationLadderView extends StatefulWidget {
   /// Whether to show the notation header chrome (title, collapse/expand, help).
   /// Compact previews can hide it while keeping the same move rendering.
   final bool showHeader;
-
-  /// Whether move chips should show the floating mini-board preview on hover.
-  final bool enableMoveHoverPreview;
 
   /// Optional sink for the exact visible move-token traversal order rendered
   /// by this widget after expand/collapse state is applied. Board-level
@@ -483,138 +479,118 @@ class _NotationLadderViewState extends State<NotationLadderView> {
       _publishVisibleMoveOrder(visibleMoveOrder);
     }
 
-    return _MoveHoverPreviewScope(
-      enabled: widget.enableMoveHoverPreview,
-      child: CallbackShortcuts(
-        bindings: {
-          const SingleActivator(LogicalKeyboardKey.bracketLeft, control: true):
-              _collapseAllVariations,
-          const SingleActivator(LogicalKeyboardKey.bracketLeft, meta: true):
-              _collapseAllVariations,
-          const SingleActivator(LogicalKeyboardKey.bracketRight, control: true):
-              _expandAllVariations,
-          const SingleActivator(LogicalKeyboardKey.bracketRight, meta: true):
-              _expandAllVariations,
-        },
-        child: Container(
-          color: kBlack2Color,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (widget.showHeader)
-                _Header(
-                  metadata: notationHeaderMetadataFromPgn(widget.game.metadata),
-                ),
-              Expanded(
-                child:
-                    mainline.isEmpty
-                        ? const _EmptyLadderHint()
-                        : _layoutMode == NotationLayoutMode.inline
-                        ? SingleChildScrollView(
-                          controller: _scroll,
-                          physics: const DesktopScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 18),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              KeyedSubtree(
-                                key: _inlineNotationKey,
-                                child: _InlineNotationBlock(
-                                  line: mainline,
-                                  pointerPrefix: const <int>[],
-                                  depth: 0,
-                                  isMainlineRoot: true,
-                                  startPly: startingPly,
-                                  activePointer: widget.activePointer,
-                                  activeKey: _activeKey,
-                                  onJump: widget.onJump,
-                                  lichessAnnotations: widget.lichessAnnotations,
-                                  userNags: widget.userNags,
-                                  onSetUserQualityNag:
-                                      widget.onSetUserQualityNag,
-                                  onToggleUserNag: widget.onToggleUserNag,
-                                  onToggleMoveNag: widget.onToggleMoveNag,
-                                  onSetMoveComment: widget.onSetMoveComment,
-                                  onPromoteVariation: widget.onPromoteVariation,
-                                  onDeleteVariation: widget.onDeleteVariation,
-                                  onTrimContinuation: widget.onTrimContinuation,
-                                  forcedOpenIds: forcedOpenIds,
-                                  collapsedIds: _collapsed,
-                                  expandedIds: _expanded,
-                                  onToggleCollapsed: _toggleCollapsed,
-                                  autoCollapseDepth: widget.autoCollapseDepth,
-                                  autoCollapseMoveThreshold:
-                                      widget.autoCollapseMoveThreshold,
-                                  useFigurine: widget.useFigurine,
-                                  pieceAssets: widget.pieceAssets,
-                                ),
-                              ),
-                              if (gameResult != null)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 14),
-                                  child: _GameResultRow(result: gameResult),
-                                ),
-                            ],
-                          ),
-                        )
-                        : SingleChildScrollView(
-                          controller: _scroll,
-                          physics: const DesktopScrollPhysics(),
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          child: _LineBlock(
-                            line: mainline,
-                            pointerPrefix: const <int>[],
-                            depth: 0,
-                            isMainlineRoot: true,
-                            startPly: startingPly,
-                            activePointer: widget.activePointer,
-                            activeKey: _activeKey,
-                            onJump: widget.onJump,
-                            lichessAnnotations: widget.lichessAnnotations,
-                            userNags: widget.userNags,
-                            onSetUserQualityNag: widget.onSetUserQualityNag,
-                            onToggleUserNag: widget.onToggleUserNag,
-                            onToggleMoveNag: widget.onToggleMoveNag,
-                            onSetMoveComment: widget.onSetMoveComment,
-                            onPromoteVariation: widget.onPromoteVariation,
-                            onDeleteVariation: widget.onDeleteVariation,
-                            onTrimContinuation: widget.onTrimContinuation,
-                            forcedOpenIds: forcedOpenIds,
-                            collapsedIds: _collapsed,
-                            expandedIds: _expanded,
-                            onToggleCollapsed: _toggleCollapsed,
-                            autoCollapseDepth: widget.autoCollapseDepth,
-                            autoCollapseMoveThreshold:
-                                widget.autoCollapseMoveThreshold,
-                            useFigurine: widget.useFigurine,
-                            pieceAssets: widget.pieceAssets,
-                            gameResult: gameResult,
-                          ),
-                        ),
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.bracketLeft, control: true):
+            _collapseAllVariations,
+        const SingleActivator(LogicalKeyboardKey.bracketLeft, meta: true):
+            _collapseAllVariations,
+        const SingleActivator(LogicalKeyboardKey.bracketRight, control: true):
+            _expandAllVariations,
+        const SingleActivator(LogicalKeyboardKey.bracketRight, meta: true):
+            _expandAllVariations,
+      },
+      child: Container(
+        color: kBlack2Color,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (widget.showHeader)
+              _Header(
+                metadata: notationHeaderMetadataFromPgn(widget.game.metadata),
               ),
-            ],
-          ),
+            Expanded(
+              child:
+                  mainline.isEmpty
+                      ? const _EmptyLadderHint()
+                      : _layoutMode == NotationLayoutMode.inline
+                      ? SingleChildScrollView(
+                        controller: _scroll,
+                        physics: const DesktopScrollPhysics(),
+                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 18),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            KeyedSubtree(
+                              key: _inlineNotationKey,
+                              child: _InlineNotationBlock(
+                                line: mainline,
+                                pointerPrefix: const <int>[],
+                                depth: 0,
+                                isMainlineRoot: true,
+                                startPly: startingPly,
+                                activePointer: widget.activePointer,
+                                activeKey: _activeKey,
+                                onJump: widget.onJump,
+                                lichessAnnotations: widget.lichessAnnotations,
+                                userNags: widget.userNags,
+                                onSetUserQualityNag: widget.onSetUserQualityNag,
+                                onToggleUserNag: widget.onToggleUserNag,
+                                onToggleMoveNag: widget.onToggleMoveNag,
+                                onSetMoveComment: widget.onSetMoveComment,
+                                onPromoteVariation: widget.onPromoteVariation,
+                                onDeleteVariation: widget.onDeleteVariation,
+                                onTrimContinuation: widget.onTrimContinuation,
+                                forcedOpenIds: forcedOpenIds,
+                                collapsedIds: _collapsed,
+                                expandedIds: _expanded,
+                                onToggleCollapsed: _toggleCollapsed,
+                                autoCollapseDepth: widget.autoCollapseDepth,
+                                autoCollapseMoveThreshold:
+                                    widget.autoCollapseMoveThreshold,
+                                useFigurine: widget.useFigurine,
+                                pieceAssets: widget.pieceAssets,
+                              ),
+                            ),
+                            if (gameResult != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 14),
+                                child: _GameResultRow(result: gameResult),
+                              ),
+                          ],
+                        ),
+                      )
+                      : SingleChildScrollView(
+                        controller: _scroll,
+                        physics: const DesktopScrollPhysics(),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: _LineBlock(
+                          line: mainline,
+                          pointerPrefix: const <int>[],
+                          depth: 0,
+                          isMainlineRoot: true,
+                          startPly: startingPly,
+                          activePointer: widget.activePointer,
+                          activeKey: _activeKey,
+                          onJump: widget.onJump,
+                          lichessAnnotations: widget.lichessAnnotations,
+                          userNags: widget.userNags,
+                          onSetUserQualityNag: widget.onSetUserQualityNag,
+                          onToggleUserNag: widget.onToggleUserNag,
+                          onToggleMoveNag: widget.onToggleMoveNag,
+                          onSetMoveComment: widget.onSetMoveComment,
+                          onPromoteVariation: widget.onPromoteVariation,
+                          onDeleteVariation: widget.onDeleteVariation,
+                          onTrimContinuation: widget.onTrimContinuation,
+                          forcedOpenIds: forcedOpenIds,
+                          collapsedIds: _collapsed,
+                          expandedIds: _expanded,
+                          onToggleCollapsed: _toggleCollapsed,
+                          autoCollapseDepth: widget.autoCollapseDepth,
+                          autoCollapseMoveThreshold:
+                              widget.autoCollapseMoveThreshold,
+                          useFigurine: widget.useFigurine,
+                          pieceAssets: widget.pieceAssets,
+                          gameResult: gameResult,
+                        ),
+                      ),
+            ),
+          ],
         ),
       ),
     );
   }
-}
-
-class _MoveHoverPreviewScope extends InheritedWidget {
-  const _MoveHoverPreviewScope({required this.enabled, required super.child});
-
-  final bool enabled;
-
-  static bool enabledOf(BuildContext context) =>
-      context
-          .dependOnInheritedWidgetOfExactType<_MoveHoverPreviewScope>()
-          ?.enabled ??
-      true;
-
-  @override
-  bool updateShouldNotify(_MoveHoverPreviewScope oldWidget) =>
-      enabled != oldWidget.enabled;
 }
 
 class _NotationAnnotationToolbar extends StatelessWidget {
@@ -2976,127 +2952,162 @@ class _LadderChipState extends State<_LadderChip> {
   bool _hovered = false;
 
   Future<void> _showContextMenu(BuildContext context, Offset globalPos) async {
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     final canSetQuality = widget.onSetUserQualityNag != null;
     final canToggleNag = widget.onToggleUserNag != null;
     final canQualityAnnotate = canSetQuality || canToggleNag;
     final canAnnotate = canQualityAnnotate || canToggleNag;
     final canComment = widget.onSetComment != null;
     final canPromote = widget.onPromoteVariation != null;
-    final canDelete = widget.onDeleteVariation != null;
+    final canDeleteVariation = widget.onDeleteVariation != null;
     final canTrim = widget.onTrimFromHere != null;
     final notationState =
         context.findAncestorStateOfType<_NotationLadderViewState>();
-    final selected = await showMenu<_LadderAction>(
+
+    List<DesktopContextMenuEntry<Object>> nagEntries(
+      _LadderNagKind kind,
+      List<int> nags,
+    ) {
+      return [
+        for (final nag in nags)
+          if (getNagDisplay(nag) case final display?)
+            DesktopContextMenuItem<Object>(
+              value: _LadderNagAction(kind, nag),
+              icon: Icons.label_important_outline_rounded,
+              label: _nagMenuLabel(nag, display),
+            ),
+      ];
+    }
+
+    final selected = await showDesktopContextMenu<Object>(
       context: context,
-      position: RelativeRect.fromLTRB(
-        globalPos.dx,
-        globalPos.dy,
-        overlay.size.width - globalPos.dx,
-        overlay.size.height - globalPos.dy,
-      ),
-      color: kBlack2Color,
-      items: [
+      position: globalPos,
+      width: 252,
+      entries: [
         if (notationState?._hasCollapsibleVariations ?? false)
-          PopupMenuItem<_LadderAction>(
+          DesktopContextMenuItem<Object>(
             value: _LadderAction.toggleAllVariations,
-            child: _MenuLabel(
-              icon:
-                  (notationState?._allVariationsManuallyCollapsed ?? false)
-                      ? Icons.unfold_more_rounded
-                      : Icons.unfold_less_rounded,
-              label:
-                  (notationState?._allVariationsManuallyCollapsed ?? false)
-                      ? 'Unfold all'
-                      : 'Fold all',
-            ),
+            icon:
+                (notationState?._allVariationsManuallyCollapsed ?? false)
+                    ? Icons.unfold_more_rounded
+                    : Icons.unfold_less_rounded,
+            label:
+                (notationState?._allVariationsManuallyCollapsed ?? false)
+                    ? 'Unfold all'
+                    : 'Fold all',
           ),
-        const PopupMenuItem<_LadderAction>(
+        const DesktopContextMenuItem<Object>(
           value: _LadderAction.copyPgn,
-          child: _MenuLabel(icon: Icons.copy_all_rounded, label: 'Copy PGN'),
+          icon: Icons.copy_all_rounded,
+          label: 'Copy PGN',
         ),
-        const PopupMenuItem<_LadderAction>(
+        const DesktopContextMenuItem<Object>(
           value: _LadderAction.copyFen,
-          child: _MenuLabel(
-            icon: Icons.format_quote_rounded,
-            label: 'Copy FEN',
-          ),
+          icon: Icons.format_quote_rounded,
+          label: 'Copy FEN',
         ),
-        if (canTrim) ...[
-          const PopupMenuDivider(height: 1),
-          const PopupMenuItem<_LadderAction>(
-            value: _LadderAction.trim,
-            child: _MenuLabel(
-              icon: Icons.content_cut_rounded,
-              label: 'Trim line from here',
-            ),
+        if (canTrim || canDeleteVariation || canComment || canAnnotate) ...[
+          const DesktopContextMenuDivider<Object>(),
+          DesktopContextSubmenu<Object>(
+            icon: Icons.delete_outline_rounded,
+            label: 'Delete',
+            destructive: true,
+            entries: [
+              DesktopContextMenuItem<Object>(
+                value: _LadderAction.deleteVariation,
+                icon: Icons.account_tree_outlined,
+                label: 'Delete Variation',
+                shortcut: 'Ctrl+Y',
+                enabled: canDeleteVariation,
+                destructive: true,
+              ),
+              DesktopContextMenuItem<Object>(
+                value: _LadderAction.deleteRemainingMoves,
+                icon: Icons.content_cut_rounded,
+                label: 'Delete Remaining Moves',
+                shortcut: ']',
+                enabled: canTrim,
+                destructive: true,
+              ),
+              const DesktopContextMenuItem<Object>(
+                value: _LadderAction.deletePreviousMoves,
+                icon: Icons.keyboard_tab_rounded,
+                label: 'Delete Previous Moves',
+                shortcut: '[',
+                enabled: false,
+                destructive: true,
+              ),
+              const DesktopContextMenuDivider<Object>(),
+              DesktopContextMenuItem<Object>(
+                value: _LadderAction.deleteAllCommentary,
+                icon: Icons.comments_disabled_outlined,
+                label: 'Delete All Commentary',
+                shortcut: 'Shift+Ctrl+Y',
+                enabled: canComment || canAnnotate,
+                destructive: true,
+              ),
+              DesktopContextMenuItem<Object>(
+                value: _LadderAction.deleteTextCommentary,
+                icon: Icons.subject_rounded,
+                label: 'Delete Text Commentary',
+                enabled: canComment,
+                destructive: true,
+              ),
+            ],
           ),
         ],
-        if (canPromote || canDelete) ...[
-          const PopupMenuDivider(height: 1),
-          if (canPromote)
-            const PopupMenuItem<_LadderAction>(
-              value: _LadderAction.promote,
-              child: _MenuLabel(
-                icon: Icons.arrow_upward_rounded,
-                label: 'Promote to mainline',
-              ),
-            ),
-          if (canDelete)
-            const PopupMenuItem<_LadderAction>(
-              value: _LadderAction.delete,
-              child: _MenuLabel(
-                icon: Icons.delete_outline_rounded,
-                label: 'Delete variation',
-              ),
-            ),
+        if (canPromote) ...[
+          const DesktopContextMenuDivider<Object>(),
+          const DesktopContextMenuItem<Object>(
+            value: _LadderAction.promote,
+            icon: Icons.arrow_upward_rounded,
+            label: 'Promote to mainline',
+          ),
         ],
         if (canAnnotate) ...[
-          const PopupMenuDivider(height: 1),
+          const DesktopContextMenuDivider<Object>(),
           if (canQualityAnnotate)
-            const PopupMenuItem<_LadderAction>(
-              value: _LadderAction.openQualityAnnotations,
-              child: _MenuLabel(
-                icon: Icons.chevron_right_rounded,
-                label: '!, ?, ...',
+            DesktopContextSubmenu<Object>(
+              icon: Icons.chevron_right_rounded,
+              label: '!, ?, ...',
+              entries: nagEntries(
+                _LadderNagKind.quality,
+                _NotationAnnotationToolbar._qualityNags,
               ),
             ),
           if (canToggleNag)
-            const PopupMenuItem<_LadderAction>(
-              value: _LadderAction.openEvaluationAnnotations,
-              child: _MenuLabel(
-                icon: Icons.chevron_right_rounded,
-                label: '+-, =, ...',
+            DesktopContextSubmenu<Object>(
+              icon: Icons.chevron_right_rounded,
+              label: '+-, =, ...',
+              entries: nagEntries(
+                _LadderNagKind.evaluation,
+                _NotationAnnotationToolbar._evaluationNags,
               ),
             ),
           if (canToggleNag)
-            const PopupMenuItem<_LadderAction>(
-              value: _LadderAction.openIdeaAnnotations,
-              child: _MenuLabel(
-                icon: Icons.chevron_right_rounded,
-                label: 'Special annotations',
+            DesktopContextSubmenu<Object>(
+              icon: Icons.chevron_right_rounded,
+              label: 'Special annotations',
+              entries: nagEntries(
+                _LadderNagKind.idea,
+                _NotationAnnotationToolbar._observationNags,
               ),
             ),
           if (canSetQuality && widget.userHasQualityNag)
-            const PopupMenuItem<_LadderAction>(
+            const DesktopContextMenuItem<Object>(
               value: _LadderAction.clearAnnotation,
-              child: _MenuLabel(
-                icon: Icons.clear_rounded,
-                label: 'Clear move symbol',
-              ),
+              icon: Icons.clear_rounded,
+              label: 'Clear move symbol',
             ),
         ],
         if (canComment) ...[
-          const PopupMenuDivider(height: 1),
-          PopupMenuItem<_LadderAction>(
+          const DesktopContextMenuDivider<Object>(),
+          DesktopContextMenuItem<Object>(
             value: _LadderAction.editComment,
-            child: _MenuLabel(
-              icon: Icons.add_comment_outlined,
-              label:
-                  (widget.commentText ?? '').trim().isEmpty
-                      ? 'Add comment'
-                      : 'Edit comment',
-            ),
+            icon: Icons.add_comment_outlined,
+            label:
+                (widget.commentText ?? '').trim().isEmpty
+                    ? 'Add comment'
+                    : 'Edit comment',
           ),
         ],
       ],
@@ -3104,6 +3115,17 @@ class _LadderChipState extends State<_LadderChip> {
 
     if (selected == null) return;
     if (!mounted) return;
+    if (selected is _LadderNagAction) {
+      if (selected.kind == _LadderNagKind.quality &&
+          widget.onSetUserQualityNag != null) {
+        widget.onSetUserQualityNag?.call(selected.nag);
+      } else {
+        widget.onToggleUserNag?.call(selected.nag);
+      }
+      return;
+    }
+    if (selected is! _LadderAction) return;
+
     switch (selected) {
       case _LadderAction.toggleAllVariations:
         notationState?._toggleAllVariationsFromMenu();
@@ -3113,42 +3135,17 @@ class _LadderChipState extends State<_LadderChip> {
         if (widget.fen.isNotEmpty) {
           await Clipboard.setData(ClipboardData(text: widget.fen));
         }
-      case _LadderAction.trim:
+      case _LadderAction.deleteRemainingMoves:
         widget.onTrimFromHere?.call();
       case _LadderAction.promote:
         widget.onPromoteVariation?.call();
-      case _LadderAction.delete:
+      case _LadderAction.deleteVariation:
         widget.onDeleteVariation?.call();
-      case _LadderAction.openQualityAnnotations:
-        final nag = await _showNagSubmenu(
-          this.context,
-          globalPos,
-          _NotationAnnotationToolbar._qualityNags,
-        );
-        if (!mounted) return;
-        if (nag != null) {
-          if (widget.onSetUserQualityNag != null) {
-            widget.onSetUserQualityNag?.call(nag);
-          } else {
-            widget.onToggleUserNag?.call(nag);
-          }
-        }
-      case _LadderAction.openEvaluationAnnotations:
-        final nag = await _showNagSubmenu(
-          this.context,
-          globalPos,
-          _NotationAnnotationToolbar._evaluationNags,
-        );
-        if (!mounted) return;
-        if (nag != null) widget.onToggleUserNag?.call(nag);
-      case _LadderAction.openIdeaAnnotations:
-        final nag = await _showNagSubmenu(
-          this.context,
-          globalPos,
-          _NotationAnnotationToolbar._observationNags,
-        );
-        if (!mounted) return;
-        if (nag != null) widget.onToggleUserNag?.call(nag);
+      case _LadderAction.deleteAllCommentary:
+        widget.onSetComment?.call(null);
+        widget.onSetUserQualityNag?.call(null);
+      case _LadderAction.deleteTextCommentary:
+        widget.onSetComment?.call(null);
       case _LadderAction.clearAnnotation:
         widget.onSetUserQualityNag?.call(null);
       case _LadderAction.editComment:
@@ -3160,43 +3157,12 @@ class _LadderChipState extends State<_LadderChip> {
         if (next != null) {
           widget.onSetComment?.call(next.trim().isEmpty ? null : next.trim());
         }
+      case _LadderAction.deletePreviousMoves:
+        // Present for parity with reference database menus. The current desktop
+        // notation model can safely delete variations and continuations; keeping
+        // this disabled avoids rewriting the game's starting position/FENs.
+        return;
     }
-  }
-
-  Future<int?> _showNagSubmenu(
-    BuildContext context,
-    Offset globalPos,
-    List<int> nags,
-  ) async {
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
-    const submenuWidth = 240.0;
-    final maxLeft = overlay.size.width - submenuWidth;
-    final left =
-        (globalPos.dx + 180) > maxLeft
-            ? (maxLeft < 0 ? 0.0 : maxLeft)
-            : (globalPos.dx + 180);
-    return showMenu<int>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        left,
-        globalPos.dy,
-        overlay.size.width - left - submenuWidth,
-        overlay.size.height - globalPos.dy,
-      ),
-      color: kBlack2Color,
-      items: [
-        for (final nag in nags)
-          if (getNagDisplay(nag) case final display?)
-            PopupMenuItem<int>(
-              value: nag,
-              child: _NagLabel(
-                glyph: display.symbol,
-                label: _nagMenuLabel(nag, display),
-                color: display.color,
-              ),
-            ),
-      ],
-    );
   }
 
   List<NagDisplay> _resolvedNags() {
@@ -3344,26 +3310,14 @@ class _LadderChipState extends State<_LadderChip> {
       ),
     );
 
-    // Mini-board hover preview: replays nothing (the move's resulting
-    // FEN is already stored on the ChessMove) so the popup just has to
-    // render that position. Wraps every chip with a fen so even deep
-    // sub-variations get the preview that database users expect.
-    final preview =
-        widget.fen.isEmpty || !_MoveHoverPreviewScope.enabledOf(context)
-            ? chip
-            : MoveHoverPreview(
-              startingFen: widget.fen,
-              movesUpToHover: const <String>[],
-              lastMoveUci: widget.uci.isEmpty ? null : widget.uci,
-              size: 200,
-              child: chip,
-            );
-
+    // Main notation hover must stay passive: do not preview or jump the
+    // board until the user explicitly clicks a move. Engine PVs own their
+    // fixed preview board separately in the analysis panel.
     final comment = widget.annotationComment;
     if (comment != null && comment.trim().isNotEmpty) {
-      return DesktopTooltip(message: comment, child: preview);
+      return DesktopTooltip(message: comment, child: chip);
     }
-    return preview;
+    return chip;
   }
 }
 
@@ -3371,14 +3325,23 @@ enum _LadderAction {
   toggleAllVariations,
   copyPgn,
   copyFen,
-  trim,
   promote,
-  delete,
-  openQualityAnnotations,
-  openEvaluationAnnotations,
-  openIdeaAnnotations,
+  deleteVariation,
+  deleteRemainingMoves,
+  deletePreviousMoves,
+  deleteAllCommentary,
+  deleteTextCommentary,
   clearAnnotation,
   editComment,
+}
+
+enum _LadderNagKind { quality, evaluation, idea }
+
+class _LadderNagAction {
+  const _LadderNagAction(this.kind, this.nag);
+
+  final _LadderNagKind kind;
+  final int nag;
 }
 
 Future<String?> showMoveCommentEditor(
@@ -3501,75 +3464,6 @@ class _MoveCommentEditorState extends State<_MoveCommentEditor> {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _MenuLabel extends StatelessWidget {
-  const _MenuLabel({required this.icon, required this.label});
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 220,
-      child: Row(
-        children: [
-          Icon(icon, size: 14, color: kWhiteColor70),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              label,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: kWhiteColor, fontSize: 13),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _NagLabel extends StatelessWidget {
-  const _NagLabel({
-    required this.glyph,
-    required this.label,
-    required this.color,
-  });
-  final String glyph;
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 220,
-      child: Row(
-        children: [
-          SizedBox(
-            width: 28,
-            child: Text(
-              glyph,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: color,
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                height: 1,
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              label,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: kWhiteColor, fontSize: 13),
-            ),
-          ),
-        ],
       ),
     );
   }
