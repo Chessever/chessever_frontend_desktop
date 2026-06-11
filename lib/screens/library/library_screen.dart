@@ -869,7 +869,7 @@ class _LibraryFolderLoadingCard extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  isFeatured ? 'TWIC Database' : 'Opening Preparation',
+                  isFeatured ? 'ChessEver' : 'Opening Preparation',
                   style: AppTypography.textSmMedium.copyWith(
                     color: const Color(0xFFFAFAFA),
                   ),
@@ -878,7 +878,7 @@ class _LibraryFolderLoadingCard extends StatelessWidget {
                 ),
                 SizedBox(height: 4.h),
                 Text(
-                  isFeatured ? '4.5 million master games' : '124 saved games',
+                  isFeatured ? '4.5 million games' : '124 saved games',
                   style: AppTypography.textXsRegular.copyWith(
                     color: const Color(0xFFA1A1A1),
                     height: 16 / 12,

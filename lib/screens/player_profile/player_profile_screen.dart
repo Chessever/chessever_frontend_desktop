@@ -1167,7 +1167,7 @@ class _DataSourceBanner extends StatelessWidget {
           // TWIC tab
           Expanded(
             child: _SourceTab(
-              label: isLoading ? 'TWIC' : 'TWIC · $twicGameCount',
+              label: isLoading ? 'ChessEver' : 'ChessEver · $twicGameCount',
               isActive: isTwic,
               isLoading: isLoading && !isTwic,
               onTap: !isTwic && canSwitchToTwic ? onSelectTwic : null,
