@@ -1958,7 +1958,9 @@ class BoardPane extends HookConsumerWidget {
     void openExplorerTab({bool toggle = false}) {
       final tabsState = ref.read(desktopTabsProvider);
       final activeTab = tabsState.active;
-      if (toggle && activeTab?.kind == TabKind.openingExplorer && activeTab != null) {
+      if (toggle &&
+          activeTab?.kind == TabKind.openingExplorer &&
+          activeTab != null) {
         ref.read(desktopTabsProvider.notifier).close(activeTab.id);
         focusNode.requestFocus();
         return;

@@ -13,6 +13,15 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('can render notation moves without mini-board hover previews', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_host(game: _sampleGame(), onJump: (_) {}));
+
+    expect(find.text('e4', findRichText: true), findsOneWidget);
+    expect(find.byType(MoveHoverPreview), findsNothing);
+  });
+
   testWidgets(
     'switches to inline notation and keeps variation moves clickable',
     (tester) async {

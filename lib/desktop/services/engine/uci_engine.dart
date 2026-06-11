@@ -141,7 +141,14 @@ Future<String?> findStockfishBinary() async {
   final bundled = await _ensureBundledBinary();
   if (bundled != null) return bundled;
 
-  // 2. Homebrew on macOS.
+  // 2. Source-tree asset for local desktop debug/dev runs. Linux release
+  // packaging injects its asset entry during CI, but local debug builds keep
+  // the large binary out of pubspec.yaml so macOS/Windows bundles do not
+  // accidentally carry it too.
+  final sourceTree = await _findSourceTreeBinary();
+  if (sourceTree != null) return sourceTree;
+
+  // 3. Homebrew on macOS.
   if (Platform.isMacOS) {
     for (final candidate in const <String>[
       '/opt/homebrew/bin/stockfish',
@@ -150,7 +157,7 @@ Future<String?> findStockfishBinary() async {
       if (await File(candidate).exists()) return candidate;
     }
   }
-  // 3. PATH fallback.
+  // 4. PATH fallback.
   try {
     final lookupTool = Platform.isWindows ? 'where' : 'which';
     final result = await Process.run(lookupTool, const ['stockfish']);
@@ -160,6 +167,28 @@ Future<String?> findStockfishBinary() async {
     }
   } catch (_) {
     // Silently fall through — caller treats null as "no engine available".
+  }
+  return null;
+}
+
+Future<String?> _findSourceTreeBinary() async {
+  final assetPath = _bundledAssetPathForPlatform();
+  if (assetPath == null) return null;
+
+  final candidates = <String>[
+    p.join(Directory.current.path, assetPath),
+    p.normalize(p.join(p.dirname(Platform.resolvedExecutable), assetPath)),
+  ];
+
+  for (final candidate in candidates) {
+    final file = File(candidate);
+    if (!await file.exists()) continue;
+    if (!Platform.isWindows) {
+      try {
+        await Process.run('chmod', ['+x', file.path]);
+      } catch (_) {}
+    }
+    return file.path;
   }
   return null;
 }
