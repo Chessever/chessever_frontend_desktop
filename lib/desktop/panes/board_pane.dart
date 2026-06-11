@@ -1976,7 +1976,11 @@ class BoardPane extends HookConsumerWidget {
         moves: exactFenSearch ? const <String>[] : lineUcis,
         exactFenSearch: exactFenSearch,
       );
-      ref.read(desktopTabsProvider.notifier).open(TabKind.openingExplorer);
+      ref.read(desktopTabsProvider.notifier).open(
+        TabKind.openingExplorer,
+        title: _explorerTabTitle(chessGame.value),
+        reuseExisting: false,
+      );
     }
 
     void switchRightRailPage(int delta) {
@@ -3716,6 +3720,17 @@ String _libraryGameTitle(ChessGame game) {
     return event.isEmpty || event == '?' ? 'Saved analysis' : event;
   }
   return '${white.isEmpty ? 'White' : white} vs ${black.isEmpty ? 'Black' : black}';
+}
+
+String _explorerTabTitle(ChessGame game) {
+  final white = (game.metadata['White']?.toString().trim() ?? '');
+  final black = (game.metadata['Black']?.toString().trim() ?? '');
+  if (white.isNotEmpty || black.isNotEmpty) {
+    return '${white.isEmpty ? 'White' : white} Explorer';
+  }
+  final event = (game.metadata['Event']?.toString().trim() ?? '');
+  if (event.isNotEmpty && event != '?') return '$event Explorer';
+  return 'Board Explorer';
 }
 
 Map<String, String> _headersFromBoardArgs(BoardTabGameArgs args) {

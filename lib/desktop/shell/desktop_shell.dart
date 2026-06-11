@@ -786,7 +786,15 @@ Widget _resolveTab(DesktopTab? tab) {
       // move-stats table in the middle, persistent filter panel on the
       // right. Replaces embedding the mobile screen (which spawned
       // bottom sheets for filters / sort / position-games).
-      return OpeningExplorerPane(tabId: tab.id);
+      return ProviderScope(
+        key: ValueKey('opening-explorer-scope-${tab.id}'),
+        overrides: [
+          gamebaseExplorerProvider.overrideWith(
+            (ref) => GamebaseExplorerNotifier(ref),
+          ),
+        ],
+        child: OpeningExplorerPane(tabId: tab.id),
+      );
     case TabKind.boardEditor:
       return const BoardEditorPane();
     case TabKind.watch:
