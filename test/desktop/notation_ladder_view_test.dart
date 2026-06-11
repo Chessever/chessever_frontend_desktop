@@ -1,16 +1,27 @@
 import 'package:chessground/chessground.dart' show PieceAssets;
+import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:dartchess/dartchess.dart';
-import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
+import 'package:flutter/gestures.dart'
+    show PointerDeviceKind, kSecondaryMouseButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('can render notation moves without mini-board hover previews', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_host(game: _sampleGame(), onJump: (_) {}));
+
+    expect(find.text('e4', findRichText: true), findsOneWidget);
+    expect(find.byType(MoveHoverPreview), findsNothing);
+  });
+
   testWidgets(
     'switches to inline notation and keeps variation moves clickable',
     (tester) async {
@@ -45,11 +56,10 @@ void main() {
   );
 
   testWidgets(
-    'annotation toolbar supports sideline NAGs and removes add diagram',
+    'right-click menu supports sideline quality NAGs without visible toolbar',
     (tester) async {
       ChessMovePointer? toggledPointer;
       int? toggledNag;
-      ChessMovePointer? clearedPointer;
 
       await tester.pumpWidget(
         _host(
@@ -60,45 +70,62 @@ void main() {
             toggledPointer = List<int>.from(pointer);
             toggledNag = nag;
           },
-          onClearMoveNags: (pointer) {
-            clearedPointer = List<int>.from(pointer);
-          },
+          onSetMoveComment: (_, _) {},
+          onPromoteVariation: (_) {},
+          onDeleteVariation: (_) {},
           width: 760,
         ),
       );
       await tester.pumpAndSettle();
 
-      expect(find.byIcon(Icons.add_comment_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.add_comment_outlined), findsNothing);
       expect(find.byIcon(Icons.grid_view_rounded), findsNothing);
 
-      await tester.tap(find.text('!').last);
-      await tester.pump(const Duration(milliseconds: 250));
+      final sidelineMove = find.text('c5', findRichText: true);
+      await tester.tapAt(
+        tester.getCenter(sidelineMove),
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('!, ?, ...'), findsOneWidget);
+      expect(find.text('Add comment'), findsOneWidget);
+      expect(find.text('Promote to mainline'), findsOneWidget);
+      expect(find.text('Delete'), findsOneWidget);
+
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete Variation'), findsOneWidget);
+      expect(find.text('Delete Remaining Moves'), findsOneWidget);
+      expect(find.text('Delete Previous Moves'), findsOneWidget);
+      expect(find.text('Delete All Commentary'), findsOneWidget);
+      expect(find.text('Delete Text Commentary'), findsOneWidget);
+
+      await tester.tap(find.text('!, ?, ...'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Good move'));
+      await tester.pumpAndSettle();
 
       expect(toggledPointer, const [0, 0, 0]);
       expect(toggledNag, 1);
-
-      await tester.pumpWidget(
-        _host(
-          game: _sampleGameWithSidelineNag(),
-          activePointer: const [0, 0, 0],
-          onJump: (_) {},
-          onToggleMoveNag: (_, _) {},
-          onClearMoveNags: (pointer) {
-            clearedPointer = List<int>.from(pointer);
-          },
-          width: 760,
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      await tester.ensureVisible(find.byIcon(Icons.clear_rounded));
-      await tester.pump();
-      await tester.tap(find.byIcon(Icons.clear_rounded));
-      await tester.pump(const Duration(milliseconds: 250));
-
-      expect(clearedPointer, const [0, 0, 0]);
     },
   );
+
+  testWidgets('main notation moves do not install hover preview boards', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(game: _sampleGame(), onJump: (_) {}, activePointer: const [0]),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MoveHoverPreview), findsNothing);
+
+    await tester.tap(find.text('e5', findRichText: true));
+    await tester.pump();
+
+    expect(find.byType(MoveHoverPreview), findsNothing);
+  });
 
   testWidgets(
     'inline notation exposes collapse and reopen controls for variations',
@@ -409,68 +436,51 @@ void main() {
     },
   );
 
-  testWidgets('annotation toolbar toggles NAGs for the active mainline move', (
-    tester,
-  ) async {
-    final calls = <String>[];
-
-    await tester.pumpWidget(
-      _host(
-        game: _sampleGame(),
-        onJump: (_) {},
-        width: 900,
-        onToggleUserNag: (ply, nag) => calls.add('$ply:$nag'),
-      ),
-    );
-
-    await tester.tap(find.text('!!'));
-    await tester.pump(const Duration(milliseconds: 250));
-    await tester.tap(find.text('±'));
-    await tester.pump(const Duration(milliseconds: 250));
-
-    expect(calls, ['2:3', '2:16']);
-  });
-
   testWidgets(
-    'annotation toolbar toggles latest move when cursor is at start',
+    'annotation controls are only exposed through right-click menus',
     (tester) async {
-      final calls = <String>[];
-
       await tester.pumpWidget(
         _host(
           game: _sampleGame(),
-          activePointer: const [],
           onJump: (_) {},
-          width: 900,
-          onToggleUserNag: (ply, nag) => calls.add('$ply:$nag'),
+          width: 1100,
+          onToggleUserNag: (_, _) {},
         ),
       );
 
-      await tester.tap(find.text('!!'));
-      await tester.pump(const Duration(milliseconds: 250));
-
-      expect(calls, ['3:3']);
+      expect(find.text('MOVE'), findsNothing);
+      expect(find.text('EVAL'), findsNothing);
+      expect(find.text('IDEA'), findsNothing);
+      expect(find.text('!!'), findsNothing);
+      expect(find.text('±'), findsNothing);
+      expect(find.byIcon(Icons.add_comment_outlined), findsNothing);
     },
   );
 
-  testWidgets('toolbar is icon-only and hides idea-only annotations', (
+  testWidgets('hovering an annotation glyph jumps to that move', (
     tester,
   ) async {
+    final jumps = <ChessMovePointer>[];
+
     await tester.pumpWidget(
       _host(
-        game: _sampleGame(),
-        onJump: (_) {},
-        width: 1100,
-        onToggleUserNag: (_, _) {},
+        game: _sampleGameWithSidelineNag(),
+        activePointer: const [],
+        onJump: (pointer) => jumps.add(List<int>.from(pointer)),
+        width: 760,
       ),
     );
+    await tester.pumpAndSettle();
 
-    expect(find.text('MOVE'), findsNothing);
-    expect(find.text('EVAL'), findsNothing);
-    expect(find.text('IDEA'), findsNothing);
-    expect(find.text('!!'), findsOneWidget);
-    expect(find.text('±'), findsOneWidget);
-    expect(find.text('N'), findsNothing);
+    final glyph = find.text('!', findRichText: false).last;
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer();
+    await gesture.moveTo(tester.getCenter(glyph));
+    await tester.pump();
+
+    expect(jumps, [
+      const [0, 0, 0],
+    ]);
   });
 
   testWidgets('right-click move menu folds/unfolds and copies PGN', (
@@ -569,38 +579,6 @@ void main() {
     await tester.tap(find.text('Novelty'));
     await tester.pumpAndSettle();
     expect(toggleCalls, ['2:18', '2:140']);
-  });
-
-  testWidgets('annotation toolbar clears active user NAGs', (tester) async {
-    final cleared = <int>[];
-
-    await tester.pumpWidget(
-      _host(
-        game: _sampleGame(),
-        onJump: (_) {},
-        width: 900,
-        userNags: const {
-          2: [3, 16],
-        },
-        onToggleUserNag: (_, _) {},
-        onClearUserNags: cleared.add,
-      ),
-    );
-
-    final toolbarScroller =
-        find
-            .byWidgetPredicate(
-              (widget) =>
-                  widget is SingleChildScrollView &&
-                  widget.scrollDirection == Axis.horizontal,
-            )
-            .last;
-    await tester.drag(toolbarScroller, const Offset(-900, 0));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(Icons.clear_rounded));
-    await tester.pump(const Duration(milliseconds: 250));
-
-    expect(cleared, [2]);
   });
 }
 
@@ -798,6 +776,9 @@ Widget _host({
   void Function(int ply)? onClearUserNags,
   void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag,
   void Function(ChessMovePointer pointer)? onClearMoveNags,
+  void Function(ChessMovePointer pointer, String? comment)? onSetMoveComment,
+  void Function(ChessMovePointer pointer)? onPromoteVariation,
+  void Function(ChessMovePointer pointer)? onDeleteVariation,
   ValueNotifier<NotationLayoutMode>? layoutModeController,
   NotationVariationCollapseController? variationCollapseController,
 }) {
@@ -812,6 +793,9 @@ Widget _host({
     onClearUserNags: onClearUserNags,
     onToggleMoveNag: onToggleMoveNag,
     onClearMoveNags: onClearMoveNags,
+    onSetMoveComment: onSetMoveComment,
+    onPromoteVariation: onPromoteVariation,
+    onDeleteVariation: onDeleteVariation,
     layoutModeController: layoutModeController,
     variationCollapseController: variationCollapseController,
     useFigurine: useFigurine,

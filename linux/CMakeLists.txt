@@ -106,6 +106,20 @@ foreach(bundled_library ${PLUGIN_BUNDLED_LIBRARIES})
     COMPONENT Runtime)
 endforeach(bundled_library)
 
+# flutter_onnxruntime links against the ONNX Runtime SONAME
+# (libonnxruntime.so.1), but its bundled library list currently exposes only
+# the unversioned linker path. Copy the whole runtime .so chain so installed
+# Linux bundles can satisfy the plugin's dynamic loader dependency.
+install(CODE "
+  file(GLOB onnxruntime_runtime_libraries
+    \"${PROJECT_BINARY_DIR}/plugins/flutter_onnxruntime/onnxruntime/*/lib/libonnxruntime*.so*\")
+  foreach(onnxruntime_library \${onnxruntime_runtime_libraries})
+    file(COPY \"\${onnxruntime_library}\"
+      DESTINATION \"${INSTALL_BUNDLE_LIB_DIR}\"
+      FOLLOW_SYMLINK_CHAIN)
+  endforeach()
+  " COMPONENT Runtime)
+
 # Copy the native assets provided by the build.dart from all packages.
 set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/linux/")
 install(DIRECTORY "${NATIVE_ASSETS_DIR}"

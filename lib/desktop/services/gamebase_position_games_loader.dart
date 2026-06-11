@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
@@ -50,6 +51,39 @@ Future<DesktopPositionGamesPageResult> fetchDesktopPositionGamesPage(
   required bool exactFenSearch,
   BoardTabPositionGamesApi? resolvedApi,
 }) async {
+  final playerId = query.playerId?.trim();
+  if (playerId != null &&
+      playerId.isNotEmpty &&
+      ref
+          .read(gamebaseExplorerProvider.notifier)
+          .isLocalPlayerTreeEnabledFor(playerId)) {
+    final localState = ref.read(playerOpeningTreeProvider(playerId));
+    ref.read(playerOpeningTreeProvider(playerId).notifier).start();
+    return DesktopPositionGamesPageResult(
+      response: localPlayerTreeGamesResponse(
+        index: localState.index,
+        fen: query.fen,
+        uci: query.uci,
+        filters: PlayerOpeningTreeFilterCriteria(
+          playerId: playerId,
+          timeControl: query.timeControl,
+          minRating: query.minRating,
+          maxRating: query.maxRating,
+          color: query.color,
+          result: query.result,
+          isOnline: query.isOnline,
+          yearFrom: query.yearFrom,
+          yearTo: query.yearTo,
+        ),
+        sortBy: query.sortBy,
+        sortDirection: query.sortDirection,
+        pageNumber: query.pageNumber,
+        pageSize: query.pageSize,
+      ),
+      resolvedApi: resolvedApi,
+    );
+  }
+
   if (!exactFenSearch) {
     final stopwatch = Stopwatch()..start();
     final response = await ref.read(positionGamesProvider(query).future);

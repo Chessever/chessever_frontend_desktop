@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
-import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/state/library_import_buffer.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
@@ -22,6 +21,7 @@ class LibraryActionsToolbar extends ConsumerWidget {
   const LibraryActionsToolbar({
     super.key,
     required this.onNewFolder,
+    required this.onImportPgnFiles,
     this.suggestedFolderId,
   });
 
@@ -30,20 +30,17 @@ class LibraryActionsToolbar extends ConsumerWidget {
   /// a folder context).
   final VoidCallback onNewFolder;
 
-  /// When set, parsed games are pre-routed to this folder in the
+  /// Opens picked PGN files as a persistent local database. This action must
+  /// not stage games in the temporary Library import preview.
+  final VoidCallback onImportPgnFiles;
+
+  /// When set, pasted games are pre-routed to this folder in the
   /// save-to-folder dialog (used when toolbar actions are invoked while
   /// a folder is selected in the sidebar).
   final String? suggestedFolderId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    Future<void> handlePickFile() async {
-      await pickAndStageLibraryPgnImport(
-        ref,
-        suggestedFolderId: suggestedFolderId,
-      );
-    }
-
     Future<void> handlePasteClipboard() async {
       final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
       final text = clipboard?.text?.trim();
@@ -56,7 +53,7 @@ class LibraryActionsToolbar extends ConsumerWidget {
         );
         return;
       }
-      final parsed = parsePgnsToChessGames(text);
+      final parsed = await parsePgnsToChessGamesAsync(text);
       if (parsed.isEmpty) {
         if (!context.mounted) return;
         showDesktopToast(
@@ -81,7 +78,7 @@ class LibraryActionsToolbar extends ConsumerWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           _IconAction(
-            tooltip: 'New folder — create a database or sub-database',
+            tooltip: 'New folder — create a folder or database',
             icon: Icons.create_new_folder_rounded,
             accent: const Color(0xFF60A5FA),
             onPress: onNewFolder,
@@ -91,7 +88,7 @@ class LibraryActionsToolbar extends ConsumerWidget {
             tooltip: 'Import PGN file — pick .pgn files from disk',
             icon: Icons.file_upload_rounded,
             accent: const Color(0xFFFBBF24),
-            onPress: handlePickFile,
+            onPress: onImportPgnFiles,
           ),
           const SizedBox(width: 6),
           _IconAction(

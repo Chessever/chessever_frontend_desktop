@@ -16,6 +16,7 @@ import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
 import 'package:chessever/desktop/widgets/desktop_opening_explorer.dart';
 import 'package:chessever/desktop/widgets/desktop_position_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/explorer_filter_bar.dart';
 import 'package:chessever/desktop/widgets/explorer_filters_popover.dart';
 import 'package:chessever/desktop/widgets/move_navigation_bar.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
@@ -48,7 +49,9 @@ import 'package:chessever/theme/app_theme.dart';
 /// the same FEN driven by local `Position` history — clicking a row in
 /// either table updates the board, which in turn refreshes the other.
 class OpeningExplorerPane extends HookConsumerWidget {
-  const OpeningExplorerPane({super.key});
+  const OpeningExplorerPane({super.key, required this.tabId});
+
+  final String tabId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -97,6 +100,23 @@ class OpeningExplorerPane extends HookConsumerWidget {
     final notationComments = useState<Map<int, String>>(const <int, String>{});
 
     useEffect(() {
+      final playerId = scopedPlayer.value?.id.trim();
+      Future.microtask(() {
+        if (!context.mounted) return;
+        ref.read(playerOpeningTreePlayerByTabIdProvider.notifier).update((m) {
+          final next = <String, String>{...m};
+          if (playerId == null || playerId.isEmpty) {
+            next.remove(tabId);
+          } else {
+            next[tabId] = playerId;
+          }
+          return Map<String, String>.unmodifiable(next);
+        });
+      });
+      return null;
+    }, [tabId, scopedPlayer.value?.id]);
+
+    useEffect(() {
       if (seed == null) return null;
       Future.microtask(() {
         if (!context.mounted) return;
@@ -142,6 +162,14 @@ class OpeningExplorerPane extends HookConsumerWidget {
     final currentPly = history.value[cursor.value];
     final position = currentPly.position;
     final lastMove = currentPly.move;
+    final explorerFilters = ref.watch(
+      gamebaseExplorerProvider.select((s) => s.filters),
+    );
+    final effectiveScopedPlayer =
+        scopedPlayer.value ??
+        (explorerFilters.selectedPlayers.length == 1
+            ? explorerFilters.selectedPlayers.first
+            : null);
     final canBack = cursor.value > 0;
     final canForward = cursor.value < history.value.length - 1;
 
@@ -394,7 +422,7 @@ class OpeningExplorerPane extends HookConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _GamesRailHeader(scopedPlayer: scopedPlayer.value),
+                    _GamesRailHeader(scopedPlayer: effectiveScopedPlayer),
                     Container(height: 1, color: kDividerColor),
                     if (pinnedGamesUci.value != null) ...[
                       _PinnedUciChip(
@@ -411,6 +439,10 @@ class OpeningExplorerPane extends HookConsumerWidget {
                         uci: pinnedGamesUci.value,
                         exactFenSearch: exactFenSearch.value,
                       ),
+                    ),
+                    ExplorerFilterBar(
+                      compact: true,
+                      scopedPlayer: effectiveScopedPlayer,
                     ),
                   ],
                 ),
@@ -452,7 +484,7 @@ class OpeningExplorerPane extends HookConsumerWidget {
                 collapsedIcon: Icons.analytics_outlined,
                 child: ResizableSplitView(
                   axis: Axis.vertical,
-                  storageKey: 'opening_explorer.right_rail.v2',
+                  storageKey: 'opening_explorer.right_rail.v3',
                   children: [
                     SplitChild(
                       minSize: 200,
@@ -472,6 +504,7 @@ class OpeningExplorerPane extends HookConsumerWidget {
                       initialWeight: 0.40,
                       label: 'Notation',
                       collapsedIcon: Icons.format_list_numbered_rounded,
+                      initialCollapsed: true,
                       child: NotationLadderView(
                         game: notationGame,
                         activePointer: activeNotationPointer,

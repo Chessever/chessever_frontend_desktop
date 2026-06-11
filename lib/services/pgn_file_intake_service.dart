@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/chess_board_screen_new.dart';
@@ -142,15 +143,10 @@ class PgnFileIntakeService {
 
     // Cold start: app launched by tapping a .pgn file.
     try {
-      final initial =
-          await ReceiveSharingIntent.instance.getInitialMedia();
+      final initial = await ReceiveSharingIntent.instance.getInitialMedia();
       if (initial.isNotEmpty) {
         unawaited(
-          _handleSharedMedia(
-            initial,
-            navigatorKey,
-            waitAppReady: true,
-          ),
+          _handleSharedMedia(initial, navigatorKey, waitAppReady: true),
         );
       }
       ReceiveSharingIntent.instance.reset();
@@ -161,11 +157,7 @@ class PgnFileIntakeService {
     // Warm start: file-open arrives while app is running.
     _intentStreamSub = ReceiveSharingIntent.instance.getMediaStream().listen(
       (files) => unawaited(
-        _handleSharedMedia(
-          files,
-          navigatorKey,
-          waitAppReady: false,
-        ),
+        _handleSharedMedia(files, navigatorKey, waitAppReady: false),
       ),
       onError: (Object error) {
         debugPrint('PgnFileIntakeService: media stream error: $error');
@@ -187,7 +179,7 @@ class PgnFileIntakeService {
     String? sourceLabel,
     String? initialFolderId,
   }) async {
-    final parsed = parsePgnsToChessGames(text);
+    final parsed = await _parseWithLoadingDialog(context, text);
     if (parsed.isEmpty) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -205,28 +197,25 @@ class PgnFileIntakeService {
     }
 
     if (!context.mounted) return false;
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => PgnImportPreviewScreen(
-          games: parsed.map((e) => e.chessGame).toList(),
-          initialFolderId: initialFolderId,
-          sourceLabel: sourceLabel,
-        ),
-      ),
+    await _pushPreview(
+      context: context,
+      parsed: parsed,
+      sourceLabel: sourceLabel,
+      initialFolderId: initialFolderId,
     );
     return true;
   }
 
-  /// Read a PGN file by path, decode as UTF-8 (lenient), and route through
-  /// [ingestPgnTextFromContext]. Returns false on I/O or decode failure.
+  /// Read, decode, and parse a PGN file off the UI isolate, then route it to
+  /// the import preview. Returns false on I/O or decode failure.
   Future<bool> ingestPgnFileFromContext({
     required BuildContext context,
     required String path,
     String? sourceLabel,
     String? initialFolderId,
   }) async {
-    final text = await _readPgnFile(path);
-    if (text == null) {
+    final parsed = await _parseFileWithLoadingDialog(context, path);
+    if (parsed == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -241,30 +230,30 @@ class PgnFileIntakeService {
       }
       return false;
     }
+    if (parsed.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'That file does not contain a valid PGN',
+              style: TextStyle(color: kWhiteColor),
+            ),
+            backgroundColor: kRedColor.withValues(alpha: 0.9),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return false;
+    }
+
     if (!context.mounted) return false;
-    return ingestPgnTextFromContext(
+    await _pushPreview(
       context: context,
-      text: text,
+      parsed: parsed,
       sourceLabel: sourceLabel ?? 'file',
       initialFolderId: initialFolderId,
     );
-  }
-
-  Future<String?> _readPgnFile(String path) async {
-    try {
-      final file = File(path);
-      if (!await file.exists()) return null;
-      final bytes = await file.readAsBytes();
-      // Most PGNs are ASCII/UTF-8; a few TWIC files are latin1. Try UTF-8
-      // first (allowMalformed so a stray byte doesn't kill the whole file),
-      // fall back to latin1 if the result is empty after trim.
-      final utf = utf8.decode(bytes, allowMalformed: true);
-      if (utf.trim().isNotEmpty) return utf;
-      return latin1.decode(bytes, allowInvalid: true);
-    } catch (e) {
-      debugPrint('PgnFileIntakeService: failed reading $path: $e');
-      return null;
-    }
+    return true;
   }
 
   Future<void> _handleSharedMedia(
@@ -298,12 +287,6 @@ class PgnFileIntakeService {
   }) async {
     if (path.isEmpty) return;
 
-    final text = await _readPgnFile(path);
-    if (text == null) return;
-
-    final parsed = parsePgnsToChessGames(text);
-    if (parsed.isEmpty) return;
-
     if (waitAppReady) {
       try {
         await DeepLinkService.awaitAppReady().timeout(
@@ -315,7 +298,19 @@ class PgnFileIntakeService {
     }
 
     final navigator = navigatorKey.currentState;
-    if (navigator == null) return;
+    if (navigator == null || !navigator.mounted) {
+      return;
+    }
+    // ignore: use_build_context_synchronously
+    final context = navigator.context;
+    // ignore: use_build_context_synchronously
+    final parsed = await _parseFileWithLoadingDialog(context, path);
+    if (!navigator.mounted) {
+      return;
+    }
+    if (parsed == null || parsed.isEmpty) {
+      return;
+    }
 
     final games = parsed.map((e) => e.chessGame).toList();
 
@@ -325,10 +320,11 @@ class PgnFileIntakeService {
     } else {
       navigator.push(
         MaterialPageRoute(
-          builder: (_) => PgnImportPreviewScreen(
-            games: games,
-            sourceLabel: 'shared file',
-          ),
+          builder:
+              (_) => PgnImportPreviewScreen(
+                games: games,
+                sourceLabel: 'shared file',
+              ),
         ),
       );
     }
@@ -343,12 +339,13 @@ class PgnFileIntakeService {
 
     navigator.push(
       MaterialPageRoute(
-        builder: (_) => ChessBoardScreenNew(
-          currentIndex: 0,
-          games: [tourModel],
-          showGamebaseButton: false,
-          disableGamebaseOverlayByDefault: true,
-        ),
+        builder:
+            (_) => ChessBoardScreenNew(
+              currentIndex: 0,
+              games: [tourModel],
+              showGamebaseButton: false,
+              disableGamebaseOverlayByDefault: true,
+            ),
       ),
     );
   }
@@ -358,5 +355,123 @@ class PgnFileIntakeService {
     if (lower.endsWith('.pgn')) return true;
     final mime = (f.mimeType ?? '').toLowerCase();
     return mime.contains('pgn');
+  }
+
+  Future<List<ParsedPgnEntry>> _parseWithLoadingDialog(
+    BuildContext context,
+    String text,
+  ) async {
+    return _runWithLoadingDialog(
+      context,
+      () => parsePgnsToChessGamesAsync(text),
+    );
+  }
+
+  Future<List<ParsedPgnEntry>?> _parseFileWithLoadingDialog(
+    BuildContext context,
+    String path,
+  ) async {
+    return _runWithLoadingDialog(context, () => _readAndParsePgnFile(path));
+  }
+
+  Future<T> _runWithLoadingDialog<T>(
+    BuildContext context,
+    Future<T> Function() loader,
+  ) async {
+    if (!context.mounted) {
+      return loader();
+    }
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _PgnImportLoadingDialog(),
+    );
+    try {
+      await WidgetsBinding.instance.endOfFrame;
+      return await loader();
+    } finally {
+      if (context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+    }
+  }
+
+  Future<void> _pushPreview({
+    required BuildContext context,
+    required List<ParsedPgnEntry> parsed,
+    String? sourceLabel,
+    String? initialFolderId,
+  }) {
+    return Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (_) => PgnImportPreviewScreen(
+              games: parsed.map((e) => e.chessGame).toList(),
+              initialFolderId: initialFolderId,
+              sourceLabel: sourceLabel,
+            ),
+      ),
+    );
+  }
+}
+
+Future<List<ParsedPgnEntry>?> _readAndParsePgnFile(String path) {
+  return Isolate.run(() async {
+    try {
+      final file = File(path);
+      if (!await file.exists()) return null;
+      final bytes = await file.readAsBytes();
+      // Most PGNs are ASCII/UTF-8; a few TWIC files are latin1. Try UTF-8
+      // first (allowMalformed so a stray byte doesn't kill the whole file),
+      // fall back to latin1 if the result is empty after trim.
+      final utf = utf8.decode(bytes, allowMalformed: true);
+      final text =
+          utf.trim().isNotEmpty
+              ? utf
+              : latin1.decode(bytes, allowInvalid: true);
+      return parsePgnsToChessGames(text);
+    } catch (_) {
+      return null;
+    }
+  });
+}
+
+class _PgnImportLoadingDialog extends StatelessWidget {
+  const _PgnImportLoadingDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      child: Dialog(
+        backgroundColor: kBackgroundColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.4,
+                  valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                ),
+              ),
+              SizedBox(width: 16),
+              Text(
+                'Loading PGN...',
+                style: TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

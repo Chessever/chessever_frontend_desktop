@@ -8,6 +8,34 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 import 'package:chessever/theme/app_theme.dart';
 
 void main() {
+  test(
+    'formats compact table player names as last name plus first initial',
+    () {
+      expect(defaultGamePlayerName('Sam Shankland'), 'Shankland, S.');
+      expect(
+        defaultGamePlayerName('Martinez Ramirez, Leandro'),
+        'Martinez Ramirez, L.',
+      );
+      expect(defaultGamePlayerName('IM Fernando Peralta'), 'Peralta, F.');
+      expect(defaultGamePlayerName('White0'), 'White0');
+    },
+  );
+
+  test('round label does not echo ECO codes', () {
+    expect(
+      defaultGameRoundLabel(
+        _game(0).copyWith(roundSlug: 'B48', roundId: 'Round 2'),
+      ),
+      'Round 2',
+    );
+    expect(
+      defaultGameRoundLabel(
+        _game(0).copyWith(roundSlug: 'B48', roundId: 'E90'),
+      ),
+      '—',
+    );
+  });
+
   testWidgets('single click highlights and arrows move highlighted game', (
     tester,
   ) async {
@@ -53,11 +81,49 @@ void main() {
 
     expect(opened, ['game-8']);
   });
+  testWidgets('shift arrow selects a contiguous table range', (tester) async {
+    final selected = <String>{};
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _wrap(
+        controller: controller,
+        onOpen: (_) {},
+        selectionMode: true,
+        selectedIds: selected,
+        onToggleSelection: (id) {
+          if (!selected.add(id)) selected.remove(id);
+        },
+        onReplaceSelection: (ids) {
+          selected
+            ..clear()
+            ..addAll(ids);
+        },
+      ),
+    );
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+
+    expect(selected, {'game-0', 'game-1', 'game-2', 'game-3'});
+  });
 }
 
 Widget _wrap({
   required ScrollController controller,
   required ValueChanged<GamesTourModel> onOpen,
+  bool selectionMode = false,
+  Set<String> selectedIds = const <String>{},
+  ValueChanged<String>? onToggleSelection,
+  ValueChanged<Set<String>>? onReplaceSelection,
 }) {
   return ProviderScope(
     child: MaterialApp(
@@ -70,6 +136,10 @@ Widget _wrap({
             active: true,
             games: List.generate(24, _game),
             controller: controller,
+            selectionMode: selectionMode,
+            selectedIds: selectedIds,
+            onToggleSelection: onToggleSelection,
+            onReplaceSelection: onReplaceSelection,
             onOpenGame: (game, {required bool inNewTab}) => onOpen(game),
           ),
         ),

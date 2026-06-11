@@ -51,6 +51,7 @@ import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
+import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -76,6 +77,9 @@ class DesktopShell extends HookConsumerWidget {
     final tabsState = ref.watch(desktopTabsProvider);
     final tabsNotifier = ref.read(desktopTabsProvider.notifier);
     final activePane = ref.watch(desktopPaneProvider);
+    final isLocalPgnLoading = ref.watch(
+      localChessLibraryProvider.select((state) => state.isScanning),
+    );
     final boardShortcutsActive = tabsState.active?.kind == TabKind.board;
     final boardFocusMode = ref.watch(boardFocusModeProvider);
     final boardFocusActive = boardShortcutsActive && boardFocusMode;
@@ -163,6 +167,25 @@ class DesktopShell extends HookConsumerWidget {
             final next = <String, dynamic>{...m}..remove(t.id);
             return Map<String, DatabaseWorkspaceArgs>.from(next);
           });
+          final treePlayerByTab = ref.read(
+            playerOpeningTreePlayerByTabIdProvider,
+          );
+          final treePlayerId = treePlayerByTab[t.id];
+          if (treePlayerId != null && treePlayerId.isNotEmpty) {
+            final remainingTreeOwners = <String>[
+              for (final entry in treePlayerByTab.entries)
+                if (entry.key != t.id && entry.value == treePlayerId) entry.key,
+            ];
+            ref
+                .read(playerOpeningTreePlayerByTabIdProvider.notifier)
+                .update((m) => <String, String>{...m}..remove(t.id));
+            if (remainingTreeOwners.isEmpty) {
+              ref
+                  .read(playerOpeningTreeProvider(treePlayerId).notifier)
+                  .clear();
+              ref.invalidate(playerOpeningTreeProvider(treePlayerId));
+            }
+          }
           // Closing a Play tab tears down its session — first drop the
           // args entry so any lingering watcher rebuilds without the
           // session, then invalidate the per-tab provider so its
@@ -245,8 +268,8 @@ class DesktopShell extends HookConsumerWidget {
                 case CommandAction.importPgn:
                   await PgnFilePicker(ref).pickAndLoad();
                 case CommandAction.openLocalChessFiles:
-                  final staged = await pickAndStageLibraryPgnImport(ref);
-                  if (staged) openPane(DesktopPane.library);
+                  final path = await pickAndOpenLibraryPgnDatabase(ref);
+                  if (path != null) openPane(DesktopPane.library);
                 case CommandAction.flipBoard:
                   // Owned by the Board pane via the F shortcut.
                   break;
@@ -559,77 +582,139 @@ class DesktopShell extends HookConsumerWidget {
             },
             child: Scaffold(
               backgroundColor: kBackgroundColor,
-              body: RepaintBoundary(
-                key: feedbackScreenshotKey,
-                child: LocalChessDropZone(
-                  onChessPathsDropped: (paths) async {
-                    // The Library and Board Editor panes wrap their own drop
-                    // zones with pane-specific local-file handling.
-                    // desktop_drop's nested targets *both* fire, so when
-                    // either is foreground we leave handling to the pane.
-                    final activePane = ref.read(desktopPaneProvider);
-                    if (activePane == DesktopPane.library ||
-                        activePane == DesktopPane.boardEditor) {
-                      return;
-                    }
-                    final opened = await ref
-                        .read(localChessLibraryProvider.notifier)
-                        .openPaths(paths, sourceLabel: 'Dropped local files');
-                    if (!opened) return;
-                    ref
-                        .read(desktopTabsProvider.notifier)
-                        .open(TabKind.library);
-                  },
-                  // The "Update" chip used to float here as a Positioned overlay
-                  // at top:8, left:8 — that landed on top of the sidebar's brand
-                  // header and looked misaligned. It now lives inside DesktopTopBar
-                  // (right after the sidebar-toggle button) so it aligns to the
-                  // top bar's baseline like a real toolbar chip.
-                  child: Row(
-                    children: [
-                      if (!boardFocusActive)
-                        DesktopSidebar(
-                          current: activePane,
-                          expanded: sidebarExpanded,
-                          autoCollapsed: autoCollapsed,
-                          onToggleExpanded: toggleSidebar,
-                          onSearch: () => unawaited(openCommandPalette()),
-                          onSelect: handleSidebarSelect,
-                          feedbackScreenshotKey: feedbackScreenshotKey,
-                        ),
-                      Expanded(
-                        child: Column(
-                          children: [
-                            if (!boardFocusActive)
-                              DesktopTabBar(
-                                onOpenUserProfile:
-                                    () => openCurrentUserProfileTab(ref),
-                              ),
-                            Expanded(
-                              // One cursor-proximity field over all pane content:
-                              // every MotionCard inside magnifies by the cursor's
-                              // nearness instead of binary hover.
-                              child: CursorProximityScope(
-                                child: PageStorage(
-                                  bucket: tabPageStorageBucket,
-                                  child: _DesktopTabStack(
-                                    tabs: tabsState.tabs,
-                                    activeId: tabsState.activeId,
+              body: Stack(
+                children: [
+                  RepaintBoundary(
+                    key: feedbackScreenshotKey,
+                    child: LocalChessDropZone(
+                      onChessPathsDropped: (paths) async {
+                        // The Library and Board Editor panes wrap their own drop
+                        // zones with pane-specific local-file handling.
+                        // desktop_drop's nested targets *both* fire, so when
+                        // either is foreground we leave handling to the pane.
+                        final activePane = ref.read(desktopPaneProvider);
+                        if (activePane == DesktopPane.library ||
+                            activePane == DesktopPane.boardEditor) {
+                          return;
+                        }
+                        final opened = await ref
+                            .read(localChessLibraryProvider.notifier)
+                            .openPaths(
+                              paths,
+                              sourceLabel: 'Dropped local files',
+                            );
+                        if (!opened) return;
+                        ref
+                            .read(desktopTabsProvider.notifier)
+                            .open(TabKind.library);
+                      },
+                      // The "Update" chip used to float here as a Positioned overlay
+                      // at top:8, left:8 — that landed on top of the sidebar's brand
+                      // header and looked misaligned. It now lives inside DesktopTopBar
+                      // (right after the sidebar-toggle button) so it aligns to the
+                      // top bar's baseline like a real toolbar chip.
+                      child: Row(
+                        children: [
+                          if (!boardFocusActive)
+                            DesktopSidebar(
+                              current: activePane,
+                              expanded: sidebarExpanded,
+                              autoCollapsed: autoCollapsed,
+                              onToggleExpanded: toggleSidebar,
+                              onSearch: () => unawaited(openCommandPalette()),
+                              onSelect: handleSidebarSelect,
+                              feedbackScreenshotKey: feedbackScreenshotKey,
+                            ),
+                          Expanded(
+                            child: Column(
+                              children: [
+                                if (!boardFocusActive)
+                                  DesktopTabBar(
+                                    onOpenUserProfile:
+                                        () => openCurrentUserProfileTab(ref),
+                                  ),
+                                Expanded(
+                                  // One cursor-proximity field over all pane content:
+                                  // every MotionCard inside magnifies by the cursor's
+                                  // nearness instead of binary hover.
+                                  child: CursorProximityScope(
+                                    child: PageStorage(
+                                      bucket: tabPageStorageBucket,
+                                      child: _DesktopTabStack(
+                                        tabs: tabsState.tabs,
+                                        activeId: tabsState.activeId,
+                                      ),
+                                    ),
                                   ),
                                 ),
-                              ),
+                              ],
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
+                  if (isLocalPgnLoading) const _DesktopPgnLoadingOverlay(),
+                ],
               ),
             ),
           ),
         );
       },
+    );
+  }
+}
+
+class _DesktopPgnLoadingOverlay extends StatelessWidget {
+  const _DesktopPgnLoadingOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: ColoredBox(
+        color: kBackgroundColor.withValues(alpha: 0.72),
+        child: Center(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: kBlack2Color.withValues(alpha: 0.96),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: kPrimaryColor.withValues(alpha: 0.28)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.28),
+                  blurRadius: 28,
+                  offset: const Offset(0, 14),
+                ),
+              ],
+            ),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                    ),
+                  ),
+                  SizedBox(width: 16),
+                  Text(
+                    'Loading PGN...',
+                    style: TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -701,7 +786,7 @@ Widget _resolveTab(DesktopTab? tab) {
       // move-stats table in the middle, persistent filter panel on the
       // right. Replaces embedding the mobile screen (which spawned
       // bottom sheets for filters / sort / position-games).
-      return const OpeningExplorerPane();
+      return OpeningExplorerPane(tabId: tab.id);
     case TabKind.boardEditor:
       return const BoardEditorPane();
     case TabKind.watch:

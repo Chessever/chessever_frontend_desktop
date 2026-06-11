@@ -1,3 +1,4 @@
+import 'package:chessground/chessground.dart' show Chessboard;
 import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:flutter/gestures.dart';
@@ -8,6 +9,35 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 const _initialFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 void main() {
+  test('engine preview origin is stable and clamped inside overlay', () {
+    final origin = clampedHoverPreviewOrigin(
+      anchorRect: const Rect.fromLTWH(560, 14, 200, 24),
+      overlaySize: const Size(800, 600),
+      popupSize: const Size(232, 232),
+      preferredVerticalGap: 12,
+    );
+
+    expect(origin.dx, lessThanOrEqualTo(800 - 232 - 8));
+    expect(origin.dx, greaterThanOrEqualTo(8));
+    expect(origin.dy, greaterThan(14));
+    expect(origin.dy, greaterThanOrEqualTo(8));
+  });
+
+  test('engine preview origin stays fixed for tokens in the same PV line', () {
+    final first = clampedHoverPreviewOrigin(
+      anchorRect: const Rect.fromLTWH(500, 44, 220, 24),
+      overlaySize: const Size(900, 600),
+      popupSize: const Size(232, 232),
+    );
+    final second = clampedHoverPreviewOrigin(
+      anchorRect: const Rect.fromLTWH(500, 44, 220, 24),
+      overlaySize: const Size(900, 600),
+      popupSize: const Size(232, 232),
+    );
+
+    expect(second, first);
+  });
+
   testWidgets(
     'hover popup refreshes after parent rebuild without build errors',
     (tester) async {
@@ -82,6 +112,63 @@ void main() {
 
       await tester.pump();
       expect(tester.takeException(), isNull);
+      await gesture.removePointer();
+    },
+  );
+
+  testWidgets(
+    'hover popup appears when enabled after pointer is already inside',
+    (tester) async {
+      final enabled = ValueNotifier<bool>(false);
+      addTearDown(enabled.dispose);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            boardSettingsProviderNew.overrideWith(
+              _TestBoardSettingsNotifier.new,
+            ),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: Align(
+                alignment: Alignment.topLeft,
+                child: ValueListenableBuilder<bool>(
+                  valueListenable: enabled,
+                  builder:
+                      (context, value, _) => MoveHoverPreview(
+                        startingFen: _initialFen,
+                        movesUpToHover: const ['e2e4'],
+                        enabled: value,
+                        child: const SizedBox(
+                          key: ValueKey<String>('late-enabled-hover-token'),
+                          width: 96,
+                          height: 28,
+                          child: Text('hover'),
+                        ),
+                      ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer();
+      await tester.pump();
+      await gesture.moveTo(
+        tester.getCenter(
+          find.byKey(const ValueKey<String>('late-enabled-hover-token')),
+        ),
+      );
+      await tester.pump();
+
+      enabled.value = true;
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(Chessboard), findsOneWidget);
       await gesture.removePointer();
     },
   );

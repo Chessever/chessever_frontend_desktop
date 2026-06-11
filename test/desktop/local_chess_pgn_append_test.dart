@@ -82,4 +82,51 @@ void main() {
       },
     );
   });
+  group('removeLocalPgnGamesFromFile', () {
+    test('rewrites a PGN database without the selected game indexes', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'chessever-local-delete-',
+      );
+      addTearDown(() => dir.delete(recursive: true));
+      final file = File('${dir.path}/local.pgn');
+      const first = '''
+[Event "Keep one"]
+[White "A"]
+[Black "B"]
+[Result "1-0"]
+
+1. e4 e5 1-0
+''';
+      const second = '''
+[Event "Delete me"]
+[White "C"]
+[Black "D"]
+[Result "0-1"]
+
+1. d4 Nf6 0-1
+''';
+      const third = '''
+[Event "Keep two"]
+[White "E"]
+[Black "F"]
+[Result "1/2-1/2"]
+
+1. c4 c5 1/2-1/2
+''';
+      await file.writeAsString(
+        '${first.trim()}\n\n${second.trim()}\n\n${third.trim()}\n',
+      );
+
+      final removed = await removeLocalPgnGamesFromFile(
+        filePath: file.path,
+        indexesInFile: {1},
+      );
+
+      expect(removed, 1);
+      final contents = await file.readAsString();
+      expect(contents, contains('[Event "Keep one"]'));
+      expect(contents, isNot(contains('[Event "Delete me"]')));
+      expect(contents, contains('[Event "Keep two"]'));
+    });
+  });
 }

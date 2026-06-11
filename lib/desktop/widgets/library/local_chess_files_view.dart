@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,11 +10,11 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_append.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
-import 'package:chessever/services/pgn_file_intake_service.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
-import 'package:chessever/desktop/widgets/default_games_table.dart';
+import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
+import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
@@ -26,14 +28,19 @@ class LocalChessFilesView extends HookConsumerWidget {
     super.key,
     required this.selectedPath,
     required this.onSelectPath,
+    this.stateOverride,
+    this.onRefreshOverride,
   });
 
   final String selectedPath;
   final ValueChanged<String> onSelectPath;
+  final LocalChessLibraryState? stateOverride;
+  final Future<void> Function()? onRefreshOverride;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(localChessLibraryProvider);
+    final watchedState = ref.watch(localChessLibraryProvider);
+    final state = stateOverride ?? watchedState;
     final source = state.source;
     final node = source?.nodeForPath(selectedPath);
     final searchController = useTextEditingController();
@@ -148,7 +155,11 @@ class LocalChessFilesView extends HookConsumerWidget {
           );
           return;
         }
-        await ref.read(localChessLibraryProvider.notifier).refresh();
+        if (onRefreshOverride != null) {
+          await onRefreshOverride!();
+        } else {
+          await ref.read(localChessLibraryProvider.notifier).refresh();
+        }
         if (!context.mounted) return;
         ref.read(localChessLibraryProvider.notifier).selectPath(target.path);
         onSelectPath(target.path);
@@ -187,11 +198,15 @@ class LocalChessFilesView extends HookConsumerWidget {
                   node: node,
                   onOpenFolder: pickFolder,
                   onOpenFiles: pickFiles,
-                  onRefresh:
-                      () =>
-                          ref
-                              .read(localChessLibraryProvider.notifier)
-                              .refresh(),
+                  onRefresh: () {
+                    if (onRefreshOverride != null) {
+                      unawaited(onRefreshOverride!());
+                      return;
+                    }
+                    unawaited(
+                      ref.read(localChessLibraryProvider.notifier).refresh(),
+                    );
+                  },
                   onSave: filtered.isEmpty ? null : saveVisible,
                   onSelectPath: selectLocalPath,
                 ),
@@ -242,8 +257,11 @@ class LocalChessFilesView extends HookConsumerWidget {
                           )
                           : _LocalGamesTable(
                             databaseTitle: databaseTitle,
+                            database: selectedDatabase,
                             games: filtered,
                             databaseGames: allGames,
+                            onRefresh: onRefreshOverride,
+                            onSelectPath: onSelectPath,
                           ),
                 ),
               ],
@@ -715,71 +733,517 @@ FBaseButtonStyle Function(FButtonStyle style) _localChildCardButtonStyle({
   );
 }
 
+enum _LocalGameRowAction { copyPgn, saveToCloud, delete }
+
 class _LocalGamesTable extends HookConsumerWidget {
   const _LocalGamesTable({
     required this.databaseTitle,
+    required this.database,
     required this.games,
     required this.databaseGames,
+    required this.onRefresh,
+    required this.onSelectPath,
   });
 
   final String databaseTitle;
+  final LocalChessFileNode? database;
   final List<LocalChessGame> games;
   final List<LocalChessGame> databaseGames;
+  final Future<void> Function()? onRefresh;
+  final ValueChanged<String> onSelectPath;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = useScrollController();
-    final localByDefaultId = {
-      for (final game in games) _defaultGameIdForLocalGame(game): game,
-    };
-    final defaultRows = games
-        .map((game) {
-          final row = chessGameToImportedGamesTourModel(game.game);
-          return row.copyWith(
-            gameId: _defaultGameIdForLocalGame(game),
-            source: GameSource.localAnalysis,
-            tourId: _cleanLocalTableMeta(
-              game.game.metadata['Event']?.toString() ?? databaseTitle,
-            ),
-            tourSlug: _cleanLocalTableMeta(
-              game.game.metadata['Event']?.toString() ?? databaseTitle,
-            ),
-            roundId: _cleanLocalTableMeta(
-              game.game.metadata['Round']?.toString() ?? '',
-            ),
-          );
-        })
+    final focusNode = useFocusNode(debugLabel: 'local-pgn-games-table');
+    final selectedId = useState<String?>(null);
+    final selectedIds = useState<Set<String>>(<String>{});
+    final selectionAnchor = useState<int?>(null);
+    final selectionExtent = useState<int?>(null);
+    final visibleIds = games.map((game) => game.id).toList(growable: false);
+    final clampedSelectedIds = _clampLocalSelection(
+      selectedIds.value,
+      visibleIds,
+    );
+    final effectiveSelectedIds =
+        clampedSelectedIds.isNotEmpty
+            ? clampedSelectedIds
+            : selectedId.value == null
+            ? const <String>{}
+            : <String>{selectedId.value!};
+    final selectedGames = games
+        .where((game) => effectiveSelectedIds.contains(game.id))
         .toList(growable: false);
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-      child: DefaultGamesTable(
-        games: defaultRows,
-        controller: controller,
-        routeTitle: databaseTitle,
-        routeGames: defaultRows,
-        rowKeyPrefix: 'local-game-table',
-        onOpenGame: (row, {required bool inNewTab}) {
-          final local = localByDefaultId[row.gameId];
-          if (local == null) return;
-          _openLocalGame(
-            ref,
-            local,
-            sourceLabel: databaseTitle,
-            databaseGames: databaseGames,
-            focus: !inNewTab,
-          );
+    useEffect(() {
+      if (games.isEmpty) {
+        selectedId.value = null;
+        selectedIds.value = <String>{};
+        selectionAnchor.value = null;
+        selectionExtent.value = null;
+      } else if (selectedId.value != null &&
+          !visibleIds.contains(selectedId.value)) {
+        selectedId.value = null;
+        selectedIds.value = clampedSelectedIds;
+        selectionAnchor.value = null;
+        selectionExtent.value = null;
+      } else if (clampedSelectedIds.length != selectedIds.value.length) {
+        selectedIds.value = clampedSelectedIds;
+      }
+      return null;
+    }, [games]);
+
+    void selectIndex(int index, {bool toggle = false, bool range = false}) {
+      if (games.isEmpty) return;
+      final next = index.clamp(0, games.length - 1).toInt();
+      final id = games[next].id;
+      if (range) {
+        final anchor = selectionAnchor.value ?? next;
+        final start = anchor < next ? anchor : next;
+        final end = anchor < next ? next : anchor;
+        selectedIds.value = {for (var i = start; i <= end; i++) games[i].id};
+        selectedId.value = id;
+        selectionExtent.value = next;
+      } else if (toggle) {
+        final updated = Set<String>.of(clampedSelectedIds);
+        if (!updated.add(id)) updated.remove(id);
+        selectedIds.value = updated;
+        selectedId.value = id;
+        selectionAnchor.value = next;
+        selectionExtent.value = next;
+      } else {
+        selectedId.value = id;
+        selectedIds.value = <String>{};
+        selectionAnchor.value = next;
+        selectionExtent.value = next;
+      }
+      focusNode.requestFocus();
+    }
+
+    Future<void> copySelectedGames({List<LocalChessGame>? scope}) async {
+      final gamesToCopy = scope ?? selectedGames;
+      final parts = gamesToCopy
+          .map((game) => game.rawPgn.trim())
+          .where(
+            (pgn) => pgn.isNotEmpty && appendableLocalPgnParts(pgn).isNotEmpty,
+          )
+          .toList(growable: false);
+      if (parts.isEmpty) {
+        showDesktopToast(
+          context,
+          'No selected PGN with moves available to copy.',
+          error: true,
+        );
+        return;
+      }
+      await Clipboard.setData(ClipboardData(text: '${parts.join('\n\n')}\n'));
+      if (!context.mounted) return;
+      final skipped = gamesToCopy.length - parts.length;
+      showDesktopToast(
+        context,
+        skipped == 0
+            ? 'Copied ${parts.length} ${parts.length == 1 ? 'game' : 'games'} as PGN.'
+            : 'Copied ${parts.length} ${parts.length == 1 ? 'game' : 'games'}; $skipped had no PGN moves available.',
+      );
+    }
+
+    Future<void> saveSelectedGames({List<LocalChessGame>? scope}) async {
+      final gamesToSave = scope ?? selectedGames;
+      if (gamesToSave.isEmpty) return;
+      final hydrated = await compute(_hydrateLocalGamesForSave, gamesToSave);
+      if (!context.mounted) return;
+      final outcome = await showLibrarySaveToFolderDialog(
+        context: context,
+        ref: ref,
+        games: hydrated,
+        sourceLabel: databaseTitle,
+      );
+      if (outcome == null || !outcome.didSave || !context.mounted) return;
+      showDesktopToast(context, outcome.toToastMessage());
+    }
+
+    Future<void> deleteSelectedGames({List<LocalChessGame>? scope}) async {
+      final target = database;
+      final gamesToDelete = scope ?? selectedGames;
+      if (target == null || gamesToDelete.isEmpty) return;
+      final confirmed = await showLocalPgnDeleteGamesConfirmation(
+        context,
+        count: gamesToDelete.length,
+        databaseName: target.name,
+      );
+      if (!confirmed) return;
+      try {
+        final removed = await removeLocalPgnGamesFromFile(
+          filePath: target.path,
+          indexesInFile: gamesToDelete.map((game) => game.indexInFile).toSet(),
+        );
+        if (!context.mounted) return;
+        if (onRefresh != null) {
+          await onRefresh!();
+        } else {
+          await ref.read(localChessLibraryProvider.notifier).refresh();
+        }
+        if (!context.mounted) return;
+        ref.read(localChessLibraryProvider.notifier).selectPath(target.path);
+        onSelectPath(target.path);
+        selectedIds.value = <String>{};
+        selectedId.value = null;
+        showDesktopToast(
+          context,
+          'Deleted $removed ${removed == 1 ? 'game' : 'games'} from ${target.name}.',
+        );
+      } catch (e) {
+        if (!context.mounted) return;
+        showDesktopToast(
+          context,
+          'Could not delete from local PGN: $e',
+          error: true,
+        );
+      }
+    }
+
+    Future<void> openRowMenu(LocalChessGame game, Offset position) async {
+      final rowIndex = games.indexWhere((row) => row.id == game.id);
+      if (rowIndex < 0) return;
+      final rowScope = effectiveSelectedIds.contains(game.id)
+          ? selectedGames
+          : <LocalChessGame>[game];
+      if (!effectiveSelectedIds.contains(game.id)) {
+        selectIndex(rowIndex);
+      }
+      final action = await showDesktopContextMenu<_LocalGameRowAction>(
+        context: context,
+        position: position,
+        width: 220,
+        entries: [
+          const DesktopContextMenuItem(
+            value: _LocalGameRowAction.copyPgn,
+            icon: Icons.content_copy_rounded,
+            label: 'Copy PGN',
+          ),
+          const DesktopContextMenuItem(
+            value: _LocalGameRowAction.saveToCloud,
+            icon: Icons.library_add_outlined,
+            label: 'Save To Cloud',
+          ),
+          const DesktopContextMenuDivider(),
+          DesktopContextMenuItem(
+            value: _LocalGameRowAction.delete,
+            icon: Icons.delete_outline_rounded,
+            label: 'Delete game',
+            destructive: true,
+            enabled: database != null,
+          ),
+        ],
+      );
+      if (action == null || !context.mounted) return;
+      switch (action) {
+        case _LocalGameRowAction.copyPgn:
+          unawaited(copySelectedGames(scope: rowScope));
+        case _LocalGameRowAction.saveToCloud:
+          unawaited(saveSelectedGames(scope: rowScope));
+        case _LocalGameRowAction.delete:
+          unawaited(deleteSelectedGames(scope: rowScope));
+      }
+    }
+
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.keyC, control: true):
+            () => unawaited(copySelectedGames()),
+        const SingleActivator(LogicalKeyboardKey.keyC, meta: true):
+            () => unawaited(copySelectedGames()),
+        const SingleActivator(LogicalKeyboardKey.keyA, control: true): () {
+          selectedIds.value = visibleIds.toSet();
+          if (games.isNotEmpty) selectedId.value = games.last.id;
         },
+        const SingleActivator(LogicalKeyboardKey.keyA, meta: true): () {
+          selectedIds.value = visibleIds.toSet();
+          if (games.isNotEmpty) selectedId.value = games.last.id;
+        },
+        const SingleActivator(LogicalKeyboardKey.delete):
+            () => unawaited(deleteSelectedGames()),
+        const SingleActivator(LogicalKeyboardKey.backspace):
+            () => unawaited(deleteSelectedGames()),
+      },
+      child: Focus(
+        focusNode: focusNode,
+        canRequestFocus: true,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+          child: Column(
+            children: [
+              const _LocalGamesHeaderRow(),
+              Expanded(
+                child: Scrollbar(
+                  controller: controller,
+                  thumbVisibility: false,
+                  child: ListView.builder(
+                    controller: controller,
+                    physics: const DesktopScrollPhysics(),
+                    itemExtent: _kLocalGameRowHeight,
+                    itemCount: games.length,
+                    itemBuilder: (context, index) {
+                      final game = games[index];
+                      return _LocalGamesDataRow(
+                        key: ValueKey('local-game-table-${game.id}'),
+                        index: index,
+                        game: game,
+                        selected: effectiveSelectedIds.contains(game.id),
+                        onTapDown: (details) {
+                          final keys =
+                              HardwareKeyboard.instance.logicalKeysPressed;
+                          selectIndex(
+                            index,
+                            toggle:
+                                keys.contains(LogicalKeyboardKey.controlLeft) ||
+                                keys.contains(
+                                  LogicalKeyboardKey.controlRight,
+                                ) ||
+                                keys.contains(LogicalKeyboardKey.metaLeft) ||
+                                keys.contains(LogicalKeyboardKey.metaRight),
+                            range:
+                                keys.contains(LogicalKeyboardKey.shiftLeft) ||
+                                keys.contains(LogicalKeyboardKey.shiftRight),
+                          );
+                        },
+                        onDoubleTap: () {
+                          selectIndex(index);
+                          _openLocalGame(
+                            ref,
+                            game,
+                            sourceLabel: databaseTitle,
+                            databaseGames: databaseGames,
+                          );
+                        },
+                        onSecondaryTapUp:
+                            (details) => unawaited(
+                              openRowMenu(game, details.globalPosition),
+                            ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
-String _defaultGameIdForLocalGame(LocalChessGame game) => 'local:${game.id}';
+const double _kLocalGameRowHeight = 34;
 
-String _cleanLocalTableMeta(String value) {
-  final t = value.trim();
-  return t == '?' ? '' : t;
+Set<String> _clampLocalSelection(Set<String> selectedIds, List<String> rowIds) {
+  if (selectedIds.isEmpty) return const <String>{};
+  final visible = rowIds.toSet();
+  return selectedIds.where(visible.contains).toSet();
+}
+
+class _LocalGamesHeaderRow extends StatelessWidget {
+  const _LocalGamesHeaderRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 27,
+      decoration: const BoxDecoration(
+        color: kBackgroundColor,
+        border: Border(bottom: BorderSide(color: kDividerColor, width: 1)),
+      ),
+      child: const Row(
+        children: [
+          SizedBox(width: 54, child: _LocalHeaderCell('#', alignEnd: true)),
+          Expanded(flex: 22, child: _LocalHeaderCell('WHITE')),
+          SizedBox(width: 64, child: _LocalHeaderCell('ELO W', alignEnd: true)),
+          Expanded(flex: 22, child: _LocalHeaderCell('BLACK')),
+          SizedBox(width: 64, child: _LocalHeaderCell('ELO B', alignEnd: true)),
+          SizedBox(width: 70, child: _LocalHeaderCell('RESULT')),
+          SizedBox(width: 62, child: _LocalHeaderCell('ECO')),
+          Expanded(flex: 18, child: _LocalHeaderCell('OPENING')),
+          Expanded(flex: 16, child: _LocalHeaderCell('EVENT')),
+          SizedBox(width: 92, child: _LocalHeaderCell('DATE')),
+        ],
+      ),
+    );
+  }
+}
+
+class _LocalHeaderCell extends StatelessWidget {
+  const _LocalHeaderCell(this.label, {this.alignEnd = false});
+
+  final String label;
+  final bool alignEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Align(
+        alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
+        child: Text(
+          label,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: kWhiteColor70,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LocalGamesDataRow extends StatelessWidget {
+  const _LocalGamesDataRow({
+    super.key,
+    required this.index,
+    required this.game,
+    required this.selected,
+    required this.onTapDown,
+    required this.onDoubleTap,
+    required this.onSecondaryTapUp,
+  });
+
+  final int index;
+  final LocalChessGame game;
+  final bool selected;
+  final GestureTapDownCallback onTapDown;
+  final VoidCallback onDoubleTap;
+  final GestureTapUpCallback onSecondaryTapUp;
+
+  @override
+  Widget build(BuildContext context) {
+    final md = game.game.metadata;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: onTapDown,
+      onSecondaryTapUp: onSecondaryTapUp,
+      onDoubleTap: onDoubleTap,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color:
+              selected
+                  ? kPrimaryColor.withValues(alpha: 0.16)
+                  : kBackgroundColor,
+          border: const Border(
+            bottom: BorderSide(color: kDividerColor, width: 0.5),
+          ),
+        ),
+        child: Row(
+          children: [
+            SizedBox(width: 54, child: _LocalNumberCell(value: index + 1)),
+            Expanded(flex: 22, child: _LocalTextCell(_playerName(md, 'White'))),
+            SizedBox(
+              width: 64,
+              child: _LocalNumberCell(value: _rating(md, 'WhiteElo')),
+            ),
+            Expanded(flex: 22, child: _LocalTextCell(_playerName(md, 'Black'))),
+            SizedBox(
+              width: 64,
+              child: _LocalNumberCell(value: _rating(md, 'BlackElo')),
+            ),
+            SizedBox(width: 70, child: _LocalTextCell(_result(md))),
+            SizedBox(width: 62, child: _LocalTextCell(_meta(md, 'ECO'))),
+            Expanded(flex: 18, child: _LocalTextCell(_opening(md))),
+            Expanded(flex: 16, child: _LocalTextCell(_event(md))),
+            SizedBox(width: 92, child: _LocalTextCell(_date(md))),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LocalTextCell extends StatelessWidget {
+  const _LocalTextCell(this.value);
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final display = value.trim();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Text(
+        display.isEmpty || display == '?' ? '-' : display,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: kWhiteColor,
+          fontSize: 12,
+          height: 1.1,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
+class _LocalNumberCell extends StatelessWidget {
+  const _LocalNumberCell({required this.value});
+
+  final int? value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Text(
+          value == null || value! <= 0 ? '-' : value.toString(),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: kWhiteColor,
+            fontSize: 12,
+            height: 1.1,
+            letterSpacing: 0,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _meta(Map<String, dynamic> md, String key) =>
+    (md[key]?.toString().trim() ?? '');
+
+String _playerName(Map<String, dynamic> md, String key) {
+  final name = _meta(md, key);
+  if (name.isEmpty || name == '?') return key;
+  return name;
+}
+
+int? _rating(Map<String, dynamic> md, String key) {
+  final value = int.tryParse(_meta(md, key));
+  return value == null || value <= 0 ? null : value;
+}
+
+String _result(Map<String, dynamic> md) {
+  final result = _meta(md, 'Result').replaceAll('½', '1/2');
+  return result.isEmpty ? '*' : result;
+}
+
+String _opening(Map<String, dynamic> md) {
+  final opening = _meta(md, 'Opening');
+  if (opening.isNotEmpty && opening != '?') return opening;
+  return _meta(md, 'Variation');
+}
+
+String _event(Map<String, dynamic> md) {
+  final event = _meta(md, 'Event');
+  return event.isEmpty || event == '?' ? _meta(md, 'Site') : event;
+}
+
+String _date(Map<String, dynamic> md) {
+  final date = _meta(md, 'Date');
+  if (date.isEmpty || date == '?') return '';
+  return date;
 }
 
 class _LocalNodeEmpty extends StatelessWidget {
@@ -955,6 +1419,95 @@ bool _matches(LocalChessGame game, String query) {
     if (value is String && value.toLowerCase().contains(query)) return true;
   }
   return false;
+}
+
+Future<bool> showLocalPgnDeleteGamesConfirmation(
+  BuildContext context, {
+  required int count,
+  required String databaseName,
+}) async {
+  final confirmed = await showGeneralDialog<bool>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'Delete local PGN games',
+    barrierColor: Colors.black.withValues(alpha: 0.55),
+    transitionDuration: const Duration(milliseconds: 140),
+    pageBuilder:
+        (ctx, _, _) => FTheme(
+          data: FThemes.zinc.dark,
+          child: Center(
+            child: Container(
+              width: 440,
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+              decoration: BoxDecoration(
+                color: kBlack2Color,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: kDividerColor),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.delete_forever_outlined,
+                        color: Color(0xFFEB5757),
+                        size: 18,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Delete $count ${count == 1 ? 'game' : 'games'}?',
+                          style: const TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'This rewrites "$databaseName" on this computer and removes the selected PGN ${count == 1 ? 'entry' : 'entries'}. This cannot be undone.',
+                    style: const TextStyle(
+                      color: kWhiteColor70,
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      DesktopDialogButton(
+                        label: 'Cancel',
+                        onPress: () => Navigator.of(ctx).pop(false),
+                      ),
+                      const SizedBox(width: 8),
+                      DesktopDialogButton(
+                        label: 'Delete',
+                        tone: DesktopDialogButtonTone.danger,
+                        onPress: () => Navigator.of(ctx).pop(true),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+  );
+  return confirmed == true;
 }
 
 void _openLocalGame(

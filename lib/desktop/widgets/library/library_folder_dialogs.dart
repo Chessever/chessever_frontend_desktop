@@ -13,14 +13,14 @@ class LibraryFolderDraft {
   final String? parentId;
 }
 
-/// Forui-styled dialog to create a new database (root) or sub-database
-/// (child of an existing root). Mirrors the mobile `showCreateFolderDialog`
+/// Forui-styled dialog to create a new folder (root) or database
+/// (child of an existing root folder). Mirrors the mobile `showCreateFolderDialog`
 /// but adapts the chrome to desktop: floating dialog, FButton actions, no
 /// haptic feedback, Esc to cancel, Enter to confirm.
 ///
 /// [availableParents] lists writable root-level folders the user could nest
 /// into. When [lockedParent] is supplied the dialog renders without the
-/// type/parent selector and creates a sub-database under it.
+/// type/parent selector and creates a database under it.
 Future<LibraryFolderDraft?> showLibraryCreateFolderDialog(
   BuildContext context, {
   required List<LibraryFolder> availableParents,
@@ -38,8 +38,8 @@ Future<LibraryFolderDraft?> showLibraryCreateFolderDialog(
           lockedParent: lockedParent,
           title:
               lockedParent != null
-                  ? 'New sub-database in "${lockedParent.name}"'
-                  : 'New database',
+                  ? 'New database in "${lockedParent.name}"'
+                  : 'New folder',
           confirmLabel: 'Create',
         ),
     transitionBuilder: (ctx, anim, _, child) {
@@ -344,8 +344,8 @@ class _LibraryFolderDialogState extends State<_LibraryFolderDialog> {
                 if (canShowParentSelector) ...[
                   if (widget.availableParents.isEmpty)
                     const Text(
-                      'No root databases yet. Create one first to nest a '
-                      'sub-database under it.',
+                      'No folders yet. Create a folder first to nest a '
+                      'database under it.',
                       style: TextStyle(color: Color(0xFFEB5757), fontSize: 12),
                     )
                   else
@@ -404,11 +404,11 @@ class _TypeSelector extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: _segment('Database', !isSubdatabase, () => onChanged(false)),
+            child: _segment('Folder', !isSubdatabase, () => onChanged(false)),
           ),
           Expanded(
             child: _segment(
-              'Sub-database',
+              'Database',
               isSubdatabase,
               () => onChanged(true),
             ),

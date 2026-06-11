@@ -8,7 +8,6 @@ import 'package:fast_immutable_collections/fast_immutable_collections.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -25,6 +24,7 @@ import 'package:chessever/desktop/services/library_pgn_export.dart';
 import 'package:chessever/desktop/services/library_quick_import.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/cloud_library_refresh.dart';
@@ -81,7 +81,7 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/number_format_utils.dart';
 import 'package:chessever/utils/time_utils.dart';
-import 'package:chessever/widgets/federation_flag.dart';
+import 'package:chessever/widgets/backfilled_federation_flag.dart';
 
 /// Desktop library: persistent two-pane layout (folder rail + content) with
 /// the forui actions toolbar at the top.
@@ -167,11 +167,12 @@ class LibraryPane extends HookConsumerWidget {
         ref.read(libraryImportBufferProvider.notifier).clear();
       }
       final source = ref.read(localChessLibraryProvider).source;
+      final workspacePath = localDatabaseWorkspacePath(source, path);
       openDatabaseWorkspaceTab(
         ref,
         DatabaseWorkspaceArgs.local(
-          localPath: path,
-          title: localDatabaseWorkspaceTitle(source, path),
+          localPath: workspacePath,
+          title: localDatabaseWorkspaceTitle(source, workspacePath),
         ),
       );
     }
@@ -189,6 +190,11 @@ class LibraryPane extends HookConsumerWidget {
           isSubscribed: folder.isSubscribed,
         ),
       );
+    }
+
+    Future<void> importLocalPgnFiles() async {
+      final path = await pickAndOpenLibraryPgnDatabase(ref);
+      if (path != null) openLocalFullView(path);
     }
 
     Future<void> openLocalFiles() async {
@@ -352,6 +358,7 @@ class LibraryPane extends HookConsumerWidget {
                             onSelectLocalPath: activateLocalPath,
                             onOpenLocalPath: openLocalFullView,
                             onOpenLocalFiles: openLocalFiles,
+                            onImportPgnFiles: importLocalPgnFiles,
                             onDropDatabase: addDatabaseDragShortcut,
                             onNewFolder:
                                 () => _onCreateFolder(
@@ -968,7 +975,7 @@ class DatabaseWorkspaceArgs {
   const DatabaseWorkspaceArgs.twic()
     : source = DatabaseWorkspaceSource.twic,
       folderId = kTwicBookId,
-      title = 'TWIC',
+      title = 'ChessEver',
       isSubscribed = true,
       localPath = null;
 
@@ -1115,7 +1122,7 @@ class _SortConfig {
 
 enum _LibraryDatabaseKind { cloud, local }
 
-enum _DatabaseBoardAction { addToMyDatabase, preview, open, remove }
+enum _DatabaseBoardAction { preview, open, remove }
 
 class _MyDatabasesHomeView extends HookConsumerWidget {
   const _MyDatabasesHomeView({
@@ -1127,6 +1134,7 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
     required this.onSelectLocalPath,
     required this.onOpenLocalPath,
     required this.onOpenLocalFiles,
+    required this.onImportPgnFiles,
     required this.onDropDatabase,
     required this.onNewFolder,
   });
@@ -1139,6 +1147,7 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
   final ValueChanged<String> onSelectLocalPath;
   final ValueChanged<String> onOpenLocalPath;
   final VoidCallback onOpenLocalFiles;
+  final VoidCallback onImportPgnFiles;
   final Future<void> Function(LibraryDatabaseDragPayload payload)
   onDropDatabase;
   final VoidCallback onNewFolder;
@@ -1162,6 +1171,7 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
         _MyDatabasesHeader(
           onNewFolder: onNewFolder,
           onOpenLocalFiles: onOpenLocalFiles,
+          onImportPgnFiles: onImportPgnFiles,
         ),
         const FDivider(),
         Expanded(
@@ -1218,10 +1228,12 @@ class _MyDatabasesHeader extends StatelessWidget {
   const _MyDatabasesHeader({
     required this.onNewFolder,
     required this.onOpenLocalFiles,
+    required this.onImportPgnFiles,
   });
 
   final VoidCallback onNewFolder;
   final VoidCallback onOpenLocalFiles;
+  final VoidCallback onImportPgnFiles;
 
   @override
   Widget build(BuildContext context) {
@@ -1263,7 +1275,10 @@ class _MyDatabasesHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          LibraryActionsToolbar(onNewFolder: onNewFolder),
+          LibraryActionsToolbar(
+            onNewFolder: onNewFolder,
+            onImportPgnFiles: onImportPgnFiles,
+          ),
         ],
       ),
     );
@@ -1416,8 +1431,6 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       );
       if (picked == null || !context.mounted) return;
       switch (picked) {
-        case _DatabaseBoardAction.addToMyDatabase:
-          return;
         case _DatabaseBoardAction.preview:
           await previewLocalEntry(entry);
         case _DatabaseBoardAction.open:
@@ -1442,20 +1455,11 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       Offset position,
     ) async {
       if (folder.id == kTwicBookId) return;
-      final canImport = isWritableLibraryFolder(folder);
       final picked = await showDesktopContextMenu<_DatabaseBoardAction>(
         context: context,
         position: position,
         width: 230,
         entries: [
-          if (canImport) ...[
-            const DesktopContextMenuItem(
-              value: _DatabaseBoardAction.addToMyDatabase,
-              icon: Icons.add_circle_outline_rounded,
-              label: 'Add to My Database...',
-            ),
-            const DesktopContextMenuDivider(),
-          ],
           const DesktopContextMenuItem(
             value: _DatabaseBoardAction.preview,
             icon: Icons.table_rows_outlined,
@@ -1466,25 +1470,17 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             icon: Icons.open_in_new_rounded,
             label: 'Open full database',
           ),
-          if (canImport) ...[
-            const DesktopContextMenuDivider(),
-            const DesktopContextMenuItem(
-              value: _DatabaseBoardAction.remove,
-              icon: Icons.delete_outline_rounded,
-              label: 'Remove from My Databases',
-              destructive: true,
-            ),
-          ],
+          const DesktopContextMenuDivider(),
+          const DesktopContextMenuItem(
+            value: _DatabaseBoardAction.remove,
+            icon: Icons.delete_outline_rounded,
+            label: 'Remove from My Databases',
+            destructive: true,
+          ),
         ],
       );
       if (picked == null || !context.mounted) return;
       switch (picked) {
-        case _DatabaseBoardAction.addToMyDatabase:
-          await _pickAndImportFilesToFolder(
-            context: context,
-            ref: ref,
-            folder: folder,
-          );
         case _DatabaseBoardAction.preview:
           onSelectFolder(folder);
         case _DatabaseBoardAction.open:
@@ -2219,7 +2215,7 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
               },
             ),
         child: _MiniDatabasePreviewFrame(
-          title: 'TWIC',
+          title: 'ChessEver',
           subtitle:
               totalAsync.valueOrNull == null
                   ? 'System database · mini preview'
@@ -3202,6 +3198,7 @@ class _FolderHeader extends StatelessWidget {
                     ? null
                     : folder.id,
             onNewFolder: onNewFolder,
+            onImportPgnFiles: onOpenLocalFiles,
           ),
           if (showOverflow && onAction != null) ...[
             const SizedBox(width: 8),
@@ -4435,10 +4432,17 @@ class _GamesTableRowState extends State<_GamesTableRow> {
         s('WhiteFederation').isNotEmpty ? s('WhiteFederation') : s('WhiteFed');
     final blackFed =
         s('BlackFederation').isNotEmpty ? s('BlackFederation') : s('BlackFed');
+    int? fideId(String key) {
+      final value = int.tryParse(s(key)) ?? 0;
+      return value > 0 ? value : null;
+    }
+
     final whiteTitle = s('WhiteTitle');
     final blackTitle = s('BlackTitle');
     final whiteRating = s('WhiteElo');
     final blackRating = s('BlackElo');
+    final whiteFideId = fideId('WhiteFideId');
+    final blackFideId = fideId('BlackFideId');
     final event = s('Event');
     final round = s('Round');
     final eco = s('ECO');
@@ -4473,6 +4477,7 @@ class _GamesTableRowState extends State<_GamesTableRow> {
           _GamesTableColumn.white => _PlayerCell(
             name: whiteName,
             federation: whiteFed,
+            fideId: whiteFideId,
             title: whiteTitle,
           ),
           _GamesTableColumn.whiteElo => _RatingCell(rating: whiteRating),
@@ -4480,6 +4485,7 @@ class _GamesTableRowState extends State<_GamesTableRow> {
           _GamesTableColumn.black => _PlayerCell(
             name: blackName,
             federation: blackFed,
+            fideId: blackFideId,
             title: blackTitle,
           ),
           _GamesTableColumn.blackElo => _RatingCell(rating: blackRating),
@@ -4599,12 +4605,14 @@ class _PlayerCell extends StatelessWidget {
   const _PlayerCell({
     required this.name,
     required this.federation,
+    this.fideId,
     required this.title,
     this.rating = '',
   });
 
   final String name;
   final String federation;
+  final int? fideId;
   final String title;
   final String rating;
 
@@ -4612,8 +4620,9 @@ class _PlayerCell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        FederationFlag(
+        BackfilledFederationFlag(
           federation: federation.isEmpty ? null : federation,
+          fideId: fideId,
           width: 18,
           height: 13,
           borderRadius: BorderRadius.circular(2),
@@ -5330,37 +5339,21 @@ Future<void> _onCreateFolder({
   }
 }
 
-Future<void> _pickAndImportFilesToFolder({
+Future<void> _showFolderOnMyDatabases({
   required BuildContext context,
   required WidgetRef ref,
   required LibraryFolder folder,
 }) async {
-  if (!isWritableLibraryFolder(folder)) {
-    _toast(context, '"${folder.name}" is read-only.', error: true);
+  if (folder.id == kTwicBookId) return;
+  final focus = ref.read(myDatabasesFocusProvider);
+  final isHidden = focus.hiddenCloudFolderIds.contains(folder.id);
+  if (!isHidden) {
+    _toast(context, '"${folder.name}" is already shown on My Databases.');
     return;
   }
-  final result = await FilePicker.platform.pickFiles(
-    dialogTitle: 'Add to My Database',
-    type: FileType.custom,
-    allowedExtensions: localChessPickerExtensions,
-    allowMultiple: true,
-    withData: false,
-    lockParentWindow: true,
-  );
-  if (result == null || result.files.isEmpty) return;
-  final paths = result.files
-      .map((file) => file.path)
-      .whereType<String>()
-      .where((path) => path.isNotEmpty)
-      .toList(growable: false);
-  if (paths.isEmpty) return;
+  await ref.read(myDatabasesFocusProvider.notifier).showCloudFolder(folder.id);
   if (!context.mounted) return;
-  await quickImportPathsToFolder(
-    context: context,
-    ref: ref,
-    folder: folder,
-    paths: paths,
-  );
+  _toast(context, 'Showing "${folder.name}" on My Databases.');
 }
 
 Future<void> _onFolderAction({
@@ -5371,8 +5364,8 @@ Future<void> _onFolderAction({
   required List<LibraryFolder> allFolders,
 }) async {
   switch (action) {
-    case LibraryFolderAction.addToMyDatabase:
-      await _pickAndImportFilesToFolder(
+    case LibraryFolderAction.showOnMyDatabases:
+      await _showFolderOnMyDatabases(
         context: context,
         ref: ref,
         folder: folder,
@@ -5816,7 +5809,7 @@ class _TwicContentView extends HookConsumerWidget {
         totalCount == null
             ? (isInitialLoading
                 ? 'Loading games…'
-                : 'Searchable master archive')
+                : 'Searchable ChessEver archive')
             : '${isEstimate ? '~' : ''}${formatCompactCount(totalCount)} games';
 
     return Container(
@@ -5957,7 +5950,7 @@ BoardTabGameArgs _buildTwicBoardArgs(
     fenSeed: game.fen,
     initialFen: initialFen,
     sourceGame: game,
-    databaseTitle: 'TWIC',
+    databaseTitle: 'ChessEver',
     databaseGames: summaries,
     databaseGamesContinuation: const BoardTabGamesContinuation.twicDatabase(),
     gameListSelectedId: game.gameId,
@@ -6075,7 +6068,7 @@ Future<void> _showTwicGameContextMenu({
         context: context,
         ref: ref,
         game: game,
-        sourceLabel: 'TWIC',
+        sourceLabel: 'ChessEver',
       );
     case _TwicGameContextAction.share:
       await showDesktopGameShareDialog(context: context, ref: ref, game: game);
@@ -6301,7 +6294,7 @@ class _TwicEventChips extends StatelessWidget {
           }
           final aggregate = events[index - 1];
           return _TwicChip(
-            label: aggregate.event,
+            label: aggregate.displayEvent,
             count: aggregate.gameCount,
             isSelected: selectedEvent == aggregate.event,
             onTap: () => onSelect(aggregate.event),
@@ -6487,7 +6480,7 @@ class _TwicSelectedEventBar extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  aggregate.event,
+                  aggregate.displayEvent,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -7314,6 +7307,11 @@ void _scrollDatabaseWorkspaceListToIndex(
   );
 }
 
+final _localDatabaseWorkspaceSourceProvider = FutureProvider.autoDispose
+    .family<LocalChessSource, String>((ref, path) {
+      return scanLocalChessPaths(<String>[path]);
+    });
+
 class _LocalDatabaseWorkspace extends ConsumerWidget {
   const _LocalDatabaseWorkspace({required this.tabId, required this.args});
 
@@ -7331,10 +7329,18 @@ class _LocalDatabaseWorkspace extends ConsumerWidget {
       );
     }
 
+    final sourceAsync = ref.watch(
+      _localDatabaseWorkspaceSourceProvider(localPath),
+    );
+
+    Future<void> refreshLocalSource() async {
+      ref.invalidate(_localDatabaseWorkspaceSourceProvider(localPath));
+      await ref.read(_localDatabaseWorkspaceSourceProvider(localPath).future);
+    }
+
     void selectPath(String path) {
-      ref.read(localChessLibraryProvider.notifier).selectPath(path);
-      final state = ref.read(localChessLibraryProvider);
-      final title = localDatabaseWorkspaceTitle(state.source, path);
+      final source = sourceAsync.valueOrNull;
+      final title = localDatabaseWorkspaceTitle(source, path);
       ref.read(databaseWorkspaceArgsByTabIdProvider.notifier).update((
         existing,
       ) {
@@ -7348,9 +7354,24 @@ class _LocalDatabaseWorkspace extends ConsumerWidget {
           .rename(tabId, title: title, subtitle: 'Local database');
     }
 
-    return LocalChessFilesView(
-      selectedPath: localPath,
-      onSelectPath: selectPath,
+    return sourceAsync.when(
+      loading: () => const _RailLoading(),
+      error:
+          (error, _) => _LibraryEmpty(
+            icon: Icons.error_outline_rounded,
+            title: 'Could not open local database',
+            message: localChessOpenErrorMessage(error),
+          ),
+      data:
+          (source) => LocalChessFilesView(
+            selectedPath: localPath,
+            onSelectPath: selectPath,
+            stateOverride: LocalChessLibraryState(
+              source: source,
+              selectedPath: localPath,
+            ),
+            onRefreshOverride: refreshLocalSource,
+          ),
     );
   }
 }
@@ -7363,6 +7384,15 @@ String localDatabaseWorkspaceTitle(LocalChessSource? source, String path) {
   if (sourceLabel.isNotEmpty) return sourceLabel;
   final basename = p.basename(path).trim();
   return basename.isNotEmpty ? basename : 'Local database';
+}
+
+String localDatabaseWorkspacePath(LocalChessSource? source, String path) {
+  final node = source?.nodeForPath(path);
+  if (node != null) {
+    final database = selectedLocalChessDatabaseFile(node);
+    if (database != null) return database.path;
+  }
+  return path;
 }
 
 class _FolderDatabaseWorkspace extends HookConsumerWidget {
@@ -7903,7 +7933,7 @@ class _TwicDatabaseWorkspace extends HookConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _DatabaseWorkspaceHeader(
-              title: 'TWIC',
+              title: 'ChessEver',
               subtitle: subtitle,
               badge: 'System database',
             ),
@@ -8221,10 +8251,17 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
         s('WhiteFederation').isNotEmpty ? s('WhiteFederation') : s('WhiteFed');
     final blackFed =
         s('BlackFederation').isNotEmpty ? s('BlackFederation') : s('BlackFed');
+    int? fideId(String key) {
+      final value = int.tryParse(s(key)) ?? 0;
+      return value > 0 ? value : null;
+    }
+
     final whiteTitle = s('WhiteTitle');
     final blackTitle = s('BlackTitle');
     final whiteRating = s('WhiteElo');
     final blackRating = s('BlackElo');
+    final whiteFideId = fideId('WhiteFideId');
+    final blackFideId = fideId('BlackFideId');
     final event = s('Event');
     final round = s('Round');
     final eco = s('ECO');
@@ -8251,6 +8288,7 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
           _GamesTableColumn.white => _PlayerCell(
             name: whiteName,
             federation: whiteFed,
+            fideId: whiteFideId,
             title: whiteTitle,
           ),
           _GamesTableColumn.whiteElo => _RatingCell(rating: whiteRating),
@@ -8258,6 +8296,7 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
           _GamesTableColumn.black => _PlayerCell(
             name: blackName,
             federation: blackFed,
+            fideId: blackFideId,
             title: blackTitle,
           ),
           _GamesTableColumn.blackElo => _RatingCell(rating: blackRating),

@@ -102,15 +102,43 @@ void main() {
         contains(KeyChord(keyId: LogicalKeyboardKey.arrowDown.keyId)),
       );
       expect(
+        shortcuts[BoardActionKey.openExplorer],
+        contains(KeyChord(keyId: LogicalKeyboardKey.enter.keyId)),
+      );
+      expect(
+        shortcuts[BoardActionKey.openExplorer],
+        contains(KeyChord(keyId: LogicalKeyboardKey.numpadEnter.keyId)),
+      );
+      expect(
         shortcuts[BoardActionKey.firstMove],
         contains(
           KeyChord(keyId: LogicalKeyboardKey.arrowLeft.keyId, ctrl: true),
         ),
       );
       expect(
+        shortcuts[BoardActionKey.firstMove],
+        contains(
+          KeyChord(
+            keyId: LogicalKeyboardKey.arrowLeft.keyId,
+            meta: true,
+            crossPlatform: true,
+          ),
+        ),
+      );
+      expect(
         shortcuts[BoardActionKey.lastMove],
         contains(
           KeyChord(keyId: LogicalKeyboardKey.arrowRight.keyId, ctrl: true),
+        ),
+      );
+      expect(
+        shortcuts[BoardActionKey.lastMove],
+        contains(
+          KeyChord(
+            keyId: LogicalKeyboardKey.arrowRight.keyId,
+            meta: true,
+            crossPlatform: true,
+          ),
         ),
       );
       expect(
@@ -173,12 +201,8 @@ void main() {
         contains(KeyChord(keyId: LogicalKeyboardKey.keyY.keyId, ctrl: true)),
       );
       expect(
-        shortcuts[BoardActionKey.showOpeningReference],
-        contains(KeyChord(keyId: LogicalKeyboardKey.f7.keyId, shift: true)),
-      );
-      expect(
         shortcuts[BoardActionKey.increaseEngineLines],
-        contains(KeyChord(keyId: LogicalKeyboardKey.add.keyId)),
+        contains(KeyChord(keyId: LogicalKeyboardKey.equal.keyId, shift: true)),
       );
       expect(
         shortcuts[BoardActionKey.decreaseEngineLines],
@@ -274,10 +298,7 @@ void main() {
           KeyChord(keyId: LogicalKeyboardKey.arrowRight.keyId, alt: true),
         ),
       );
-      expect(
-        shortcuts[BoardActionKey.rightRailActivateSelection],
-        contains(KeyChord(keyId: LogicalKeyboardKey.enter.keyId)),
-      );
+      expect(shortcuts[BoardActionKey.rightRailActivateSelection], isEmpty);
     });
     test('reserves Ctrl/Cmd+F for search instead of board flip', () {
       final ctrlF = KeyChord(keyId: LogicalKeyboardKey.keyF.keyId, ctrl: true);

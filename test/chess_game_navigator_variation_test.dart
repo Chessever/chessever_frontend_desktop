@@ -2,13 +2,18 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-ChessMove move(String san, {List<ChessLine>? variations}) {
+ChessMove move(
+  String san, {
+  Number num = 1,
+  ChessColor turn = ChessColor.white,
+  List<ChessLine>? variations,
+}) {
   return ChessMove(
-    num: 1,
+    num: num,
     fen: 'fen',
     san: san,
     uci: san,
-    turn: ChessColor.white,
+    turn: turn,
     variations: variations,
   );
 }
@@ -92,11 +97,40 @@ void main() {
   });
 
   test(
+    'promoteVariationToMainline demotes old first move when promoting an alternative first move',
+    () {
+      final alternativeFirstMove = [move('d4')];
+      final siblingVariation = [move('Nf3')];
+      final game = ChessGame(
+        gameId: 'g1',
+        startingFen: 'fen',
+        metadata: const {},
+        mainline: [
+          move('e4', variations: [alternativeFirstMove, siblingVariation]),
+          move('e5'),
+        ],
+      );
+      final navigator = ChessGameNavigator(game);
+
+      navigator.promoteVariationToMainline([0, 0, 0]);
+
+      final updated = navigator.state.game.mainline;
+      expect(updated.map((m) => m.san), ['d4']);
+      expect(updated.first.variations, isNotNull);
+      expect(updated.first.variations!.length, 2);
+      expect(updated.first.variations![0].map((m) => m.san), ['e4', 'e5']);
+      expect(updated.first.variations![1].map((m) => m.san), ['Nf3']);
+      expect(navigator.state.movePointer, equals(<int>[0]));
+    },
+  );
+
+  test(
     'promoteVariationToMainline preserves other variations and mainline continuation',
     () {
       final promotedLine = [
         move(
           'c5',
+          turn: ChessColor.black,
           variations: [
             [move('d4')],
           ],
@@ -145,7 +179,11 @@ void main() {
       final deepVariation = [move('d4')];
       final siblingVariation = [move('a6')];
       final firstVariation = [
-        move('c5', variations: [deepVariation, siblingVariation]),
+        move(
+          'c5',
+          turn: ChessColor.black,
+          variations: [deepVariation, siblingVariation],
+        ),
         move('Nc6'),
       ];
       final game = ChessGame(

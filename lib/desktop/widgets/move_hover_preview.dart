@@ -21,6 +21,8 @@ import 'package:chessever/theme/app_theme.dart';
 /// supplied starting FEN. Animation uses motor's [DesktopMotion.hover]
 /// for the fade/scale entry so the popup feels like everything else in
 /// the desktop chrome (sidebar nudge, segment-tab arrival, etc.).
+enum MoveHoverPreviewPlacement { tokenAnchored, engineLine }
+
 class MoveHoverPreview extends StatefulWidget {
   const MoveHoverPreview({
     super.key,
@@ -31,6 +33,8 @@ class MoveHoverPreview extends StatefulWidget {
     this.orientation = Side.white,
     this.enabled = true,
     this.lastMoveUci,
+    this.placement = MoveHoverPreviewPlacement.tokenAnchored,
+    this.placementAnchorKey,
   });
 
   /// FEN to start replay from. The popup renders the position reached by
@@ -60,8 +64,96 @@ class MoveHoverPreview extends StatefulWidget {
   /// When false, the popup is disabled (the child is rendered as-is).
   final bool enabled;
 
+  /// How the popup is placed. Engine PVs use [engineLine] so nearby moves
+  /// share a stable, clamped board location instead of anchoring directly
+  /// above the move text.
+  final MoveHoverPreviewPlacement placement;
+
+  /// Optional render anchor used by [MoveHoverPreviewPlacement.engineLine].
+  /// Pass a key for the whole PV line so moving between moves updates only
+  /// the board content while the preview location stays fixed.
+  final GlobalKey? placementAnchorKey;
+
   @override
   State<MoveHoverPreview> createState() => _MoveHoverPreviewState();
+}
+
+class MovePreviewBoard extends StatelessWidget {
+  const MovePreviewBoard({
+    super.key,
+    required this.startingFen,
+    required this.movesUpToHover,
+    this.lastMoveUci,
+    this.size = 180,
+    this.orientation = Side.white,
+  });
+
+  final String startingFen;
+  final List<String> movesUpToHover;
+  final String? lastMoveUci;
+  final double size;
+  final Side orientation;
+
+  @override
+  Widget build(BuildContext context) {
+    final replay = computeMovePreviewReplay(
+      startingFen: startingFen,
+      movesUpToHover: movesUpToHover,
+      lastMoveUci: lastMoveUci,
+    );
+    return _AnimatedHoverCard(
+      size: size,
+      fen: replay.fen,
+      preFen: replay.preFen,
+      lastMove: replay.lastMove,
+      orientation: orientation,
+    );
+  }
+}
+
+({String fen, String? preFen, Move? lastMove}) computeMovePreviewReplay({
+  required String startingFen,
+  required List<String> movesUpToHover,
+  String? lastMoveUci,
+}) {
+  Position position;
+  try {
+    position = Chess.fromSetup(
+      Setup.parseFen(startingFen),
+      ignoreImpossibleCheck: true,
+    );
+  } catch (_) {
+    final fallbackLast = movesUpToHover.isEmpty
+        ? Move.parse(lastMoveUci ?? '')
+        : null;
+    return (
+      fen: startingFen,
+      preFen: fallbackLast == null
+          ? null
+          : _reverseToPreMoveFen(startingFen, fallbackLast),
+      lastMove: fallbackLast,
+    );
+  }
+  Move? last;
+  Position? prePosition;
+  for (final uci in movesUpToHover) {
+    final move = Move.parse(uci);
+    if (move == null) break;
+    if (!position.isLegal(move)) break;
+    prePosition = position;
+    position = position.playUnchecked(move);
+    last = move;
+  }
+  String? preFen;
+  if (last != null && prePosition != null) {
+    preFen = prePosition.fen;
+  } else if (last == null && lastMoveUci != null) {
+    last = Move.parse(lastMoveUci);
+    if (last != null) {
+      preFen = _reverseToPreMoveFen(position.fen, last);
+    }
+  }
+  return (fen: position.fen, preFen: preFen, lastMove: last);
 }
 
 class _MoveHoverPreviewState extends State<MoveHoverPreview> {
@@ -84,9 +176,15 @@ class _MoveHoverPreviewState extends State<MoveHoverPreview> {
     if (overlay == null) return;
     _entry = OverlayEntry(
       builder: (context) {
-        final replay = _computeReplay();
+        final replay = computeMovePreviewReplay(
+          startingFen: widget.startingFen,
+          movesUpToHover: widget.movesUpToHover,
+          lastMoveUci: widget.lastMoveUci,
+        );
         return _MoveHoverPopup(
           link: _link,
+          placement: widget.placement,
+          placementAnchorKey: widget.placementAnchorKey,
           size: widget.size,
           fen: replay.fen,
           preFen: replay.preFen,
@@ -133,49 +231,6 @@ class _MoveHoverPreviewState extends State<MoveHoverPreview> {
     WidgetsBinding.instance.scheduleFrame();
   }
 
-  ({String fen, String? preFen, Move? lastMove}) _computeReplay() {
-    Position position;
-    try {
-      position = Chess.fromSetup(
-        Setup.parseFen(widget.startingFen),
-        ignoreImpossibleCheck: true,
-      );
-    } catch (_) {
-      final fallbackLast =
-          widget.movesUpToHover.isEmpty
-              ? Move.parse(widget.lastMoveUci ?? '')
-              : null;
-      return (
-        fen: widget.startingFen,
-        preFen:
-            fallbackLast == null
-                ? null
-                : _reverseToPreMoveFen(widget.startingFen, fallbackLast),
-        lastMove: fallbackLast,
-      );
-    }
-    Move? last;
-    Position? prePosition;
-    for (final uci in widget.movesUpToHover) {
-      final move = Move.parse(uci);
-      if (move == null) break;
-      if (!position.isLegal(move)) break;
-      prePosition = position;
-      position = position.playUnchecked(move);
-      last = move;
-    }
-    String? preFen;
-    if (last != null && prePosition != null) {
-      preFen = prePosition.fen;
-    } else if (last == null && widget.lastMoveUci != null) {
-      last = Move.parse(widget.lastMoveUci!);
-      if (last != null) {
-        preFen = _reverseToPreMoveFen(position.fen, last);
-      }
-    }
-    return (fen: position.fen, preFen: preFen, lastMove: last);
-  }
-
   @override
   void didUpdateWidget(covariant MoveHoverPreview old) {
     super.didUpdateWidget(old);
@@ -198,7 +253,6 @@ class _MoveHoverPreviewState extends State<MoveHoverPreview> {
       link: _link,
       child: MouseRegion(
         onEnter: (_) {
-          if (!widget.enabled) return;
           _hovered = true;
           _schedulePopupVisibilitySync();
         },
@@ -215,6 +269,8 @@ class _MoveHoverPreviewState extends State<MoveHoverPreview> {
 class _MoveHoverPopup extends ConsumerWidget {
   const _MoveHoverPopup({
     required this.link,
+    required this.placement,
+    required this.placementAnchorKey,
     required this.size,
     required this.fen,
     required this.preFen,
@@ -223,6 +279,8 @@ class _MoveHoverPopup extends ConsumerWidget {
   });
 
   final LayerLink link;
+  final MoveHoverPreviewPlacement placement;
+  final GlobalKey? placementAnchorKey;
   final double size;
   final String fen;
   final String? preFen;
@@ -231,6 +289,43 @@ class _MoveHoverPopup extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final cardSize = Size(size + 12, size + 12);
+    final card = _AnimatedHoverCard(
+      size: size,
+      fen: fen,
+      preFen: preFen,
+      lastMove: lastMove,
+      orientation: orientation,
+    );
+
+    if (placement == MoveHoverPreviewPlacement.engineLine) {
+      return Positioned.fill(
+        child: IgnorePointer(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final anchorRect = _anchorRect(context) ?? Rect.zero;
+              final origin = clampedHoverPreviewOrigin(
+                anchorRect: anchorRect,
+                overlaySize: constraints.biggest,
+                popupSize: cardSize,
+              );
+              return Stack(
+                children: [
+                  Positioned(
+                    left: origin.dx,
+                    top: origin.dy,
+                    width: cardSize.width,
+                    height: cardSize.height,
+                    child: card,
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+    }
+
     return Positioned(
       // CompositedTransformFollower handles the X/Y; this Positioned just
       // claims a zero-sized slot so the overlay can render anywhere.
@@ -245,17 +340,40 @@ class _MoveHoverPopup extends ConsumerWidget {
           targetAnchor: Alignment.topCenter,
           followerAnchor: Alignment.bottomCenter,
           offset: const Offset(0, -8),
-          child: _AnimatedHoverCard(
-            size: size,
-            fen: fen,
-            preFen: preFen,
-            lastMove: lastMove,
-            orientation: orientation,
-          ),
+          child: card,
         ),
       ),
     );
   }
+
+  Rect? _anchorRect(BuildContext overlayContext) {
+    final anchorContext = placementAnchorKey?.currentContext;
+    final anchor = anchorContext?.findRenderObject() as RenderBox?;
+    final overlay = overlayContext.findRenderObject() as RenderBox?;
+    if (anchor == null || overlay == null || !anchor.hasSize) return null;
+    final topLeft = anchor.localToGlobal(Offset.zero, ancestor: overlay);
+    return topLeft & anchor.size;
+  }
+}
+
+Offset clampedHoverPreviewOrigin({
+  required Rect anchorRect,
+  required Size overlaySize,
+  required Size popupSize,
+  double margin = 8,
+  double preferredVerticalGap = 10,
+}) {
+  final preferredLeft = anchorRect.center.dx - popupSize.width / 2 - 28;
+  final maxLeft = overlaySize.width - popupSize.width - margin;
+  final left = preferredLeft.clamp(margin, maxLeft < margin ? margin : maxLeft);
+
+  final belowTop = anchorRect.bottom + preferredVerticalGap;
+  final maxTop = overlaySize.height - popupSize.height - margin;
+  final fallbackTop = anchorRect.top - popupSize.height - preferredVerticalGap;
+  final preferredTop = belowTop <= maxTop ? belowTop : fallbackTop;
+  final top = preferredTop.clamp(margin, maxTop < margin ? margin : maxTop);
+
+  return Offset(left.toDouble(), top.toDouble());
 }
 
 class _AnimatedHoverCard extends ConsumerStatefulWidget {
@@ -420,8 +538,9 @@ class _PopupCard extends StatelessWidget {
               // Non-zero only when we have a pre-move FEN to slide from —
               // otherwise we'd animate phantom diffs when the popup first
               // mounts on a token we cannot rewind.
-              animationDuration:
-                  animate ? const Duration(milliseconds: 280) : Duration.zero,
+              animationDuration: animate
+                  ? const Duration(milliseconds: 280)
+                  : Duration.zero,
             ),
           ),
         ),
@@ -444,17 +563,15 @@ String? _reverseToPreMoveFen(String postFen, Move move) {
     final setup = Setup.parseFen(postFen);
     final pieceAtTo = setup.board.pieceAt(move.to);
     if (pieceAtTo == null) return null;
-    final originalPiece =
-        move.promotion != null
-            ? Piece(color: pieceAtTo.color, role: Role.pawn)
-            : pieceAtTo;
+    final originalPiece = move.promotion != null
+        ? Piece(color: pieceAtTo.color, role: Role.pawn)
+        : pieceAtTo;
     final newBoard = setup.board
         .removePieceAt(move.to)
         .setPieceAt(move.from, originalPiece);
-    final fullmoves =
-        (setup.turn == Side.white && setup.fullmoves > 1)
-            ? setup.fullmoves - 1
-            : setup.fullmoves;
+    final fullmoves = (setup.turn == Side.white && setup.fullmoves > 1)
+        ? setup.fullmoves - 1
+        : setup.fullmoves;
     return Setup(
       board: newBoard,
       turn: setup.turn.opposite,
@@ -472,8 +589,9 @@ IMap<Square, SquareHighlight> _lastMoveHighlights(Move? lastMove) {
   final out = <Square, SquareHighlight>{};
   for (final square in lastMove.squares) {
     final isLight = (square.file + square.rank) % 2 == 1;
-    final color =
-        isLight ? kLastMoveHighlightLightSquare : kLastMoveHighlightDarkSquare;
+    final color = isLight
+        ? kLastMoveHighlightLightSquare
+        : kLastMoveHighlightDarkSquare;
     out[square] = SquareHighlight(details: HighlightDetails(solidColor: color));
   }
   return out.lock;

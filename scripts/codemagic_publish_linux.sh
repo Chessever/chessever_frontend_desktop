@@ -188,6 +188,7 @@ build_deb() {
   cat > "$pkgroot/usr/bin/chessever" <<EOF
 #!/usr/bin/env sh
 cd /opt/chessever || exit 1
+export LD_LIBRARY_PATH="/opt/chessever/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 exec /opt/chessever/$PACKAGE_BINARY "\$@"
 EOF
 

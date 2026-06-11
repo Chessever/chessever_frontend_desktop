@@ -1955,7 +1955,17 @@ class BoardPane extends HookConsumerWidget {
       focusNode.requestFocus();
     }
 
-    void openExplorerTab() {
+    void openExplorerTab({bool toggle = false}) {
+      final tabsState = ref.read(desktopTabsProvider);
+      final activeTab = tabsState.active;
+      if (toggle &&
+          activeTab?.kind == TabKind.openingExplorer &&
+          activeTab != null) {
+        ref.read(desktopTabsProvider.notifier).close(activeTab.id);
+        focusNode.requestFocus();
+        return;
+      }
+
       final exactFenSearch =
           _fenPositionKey(chessGame.value.startingFen) !=
           _fenPositionKey(Chess.initial.fen);
@@ -2686,7 +2696,7 @@ class BoardPane extends HookConsumerWidget {
           unawaited(toggleEngineAction());
           return true;
         case BoardActionKey.openExplorer:
-          openExplorerTab();
+          openExplorerTab(toggle: true);
           return true;
         case BoardActionKey.openPositionSetup:
           unawaited(openPositionSetup());
@@ -2714,18 +2724,6 @@ class BoardPane extends HookConsumerWidget {
           return true;
         case BoardActionKey.deleteVariation:
           deleteActiveVariationAction();
-          return true;
-        case BoardActionKey.classifyByOpening:
-          openExplorerTab();
-          return true;
-        case BoardActionKey.classifyByThemes:
-          showUnsupportedReferenceShortcut('Theme classification');
-          return true;
-        case BoardActionKey.findNovelty:
-          openExplorerTab();
-          return true;
-        case BoardActionKey.showOpeningReference:
-          openExplorerTab();
           return true;
         case BoardActionKey.switchNotationView:
           final nextInline =
@@ -3490,10 +3488,10 @@ class _RightRailAnalysisState extends ConsumerState<_RightRailAnalysis> {
       if (!mounted) return;
       if (widget.showEngine) {
         if (!restoreWhenEnabled) return;
-        _splitController.restore(1);
+        _splitController.restore(0);
         return;
       }
-      _splitController.collapse(1, persist: false);
+      _splitController.collapse(0, persist: false);
     });
   }
 
@@ -3508,22 +3506,22 @@ class _RightRailAnalysisState extends ConsumerState<_RightRailAnalysis> {
     return ResizableSplitView(
       axis: Axis.vertical,
       controller: _splitController,
-      storageKey: 'board_pane.right_rail',
+      storageKey: 'board_pane.right_rail.engine_top.v1',
       children: [
         SplitChild(
-          minSize: 200,
-          initialWeight: 0.60,
-          label: 'Notation',
-          collapsedIcon: Icons.format_list_numbered_rounded,
-          child: widget.notationPanel,
-        ),
-        SplitChild(
-          minSize: 180,
-          initialWeight: 0.40,
+          minSize: 120,
+          initialWeight: 0.34,
           label: 'Engine',
           collapsedIcon: Icons.memory_rounded,
           onRestore: _resumeEngineFromRail,
           child: widget.enginePanel,
+        ),
+        SplitChild(
+          minSize: 240,
+          initialWeight: 0.66,
+          label: 'Notation',
+          collapsedIcon: Icons.format_list_numbered_rounded,
+          child: widget.notationPanel,
         ),
       ],
     );
@@ -4550,10 +4548,6 @@ Intent? _intentFor(BoardActionKey action) {
     case BoardActionKey.makeNextMoveVariation:
     case BoardActionKey.enterNullMove:
     case BoardActionKey.deleteVariation:
-    case BoardActionKey.classifyByOpening:
-    case BoardActionKey.classifyByThemes:
-    case BoardActionKey.findNovelty:
-    case BoardActionKey.showOpeningReference:
     case BoardActionKey.switchNotationView:
     case BoardActionKey.rightRailPreviousTab:
     case BoardActionKey.rightRailNextTab:

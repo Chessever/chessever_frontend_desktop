@@ -51,6 +51,10 @@ final RegExp _kPgnHeaderRegex = RegExp(
   multiLine: true,
 );
 
+final RegExp _kPgnHeaderLineRegex = RegExp(
+  r'^\[\s*\w+\s+"(?:[^"\\]|\\.)*"\s*\]',
+);
+
 final RegExp _kPgnMoveHintRegex = RegExp(r'\b\d+\s*\.');
 
 bool looksLikeLocalChessFile(String path) {
@@ -88,7 +92,7 @@ class LocalChessSource {
 
   LocalChessNode? nodeForPath(String? path) {
     if (path == null) return root;
-    return root.find(path) ?? root;
+    return root.find(path);
   }
 
   List<LocalChessNode> breadcrumbNodesForPath(String? path) {
@@ -332,7 +336,7 @@ class LocalChessGame {
 Future<LocalChessSource> scanLocalChessPaths(
   List<String> rawPaths, {
   String? sourceLabel,
-}) {
+}) async {
   final paths = dedupeLocalChessInputPaths(rawPaths);
   if (paths.isEmpty) {
     throw ArgumentError('No files or folders were provided.');
@@ -629,10 +633,11 @@ class _ScanWorker {
         games: games,
         sizeBytes: stat.size,
         modifiedAt: stat.modified,
-        message: granted < entries.length
-            ? 'Showing first $granted of ${entries.length} '
-                  'entries; the rest were skipped to stay within the index cap.'
-            : null,
+        message:
+            granted < entries.length
+                ? 'Showing first $granted of ${entries.length} '
+                    'entries; the rest were skipped to stay within the index cap.'
+                : null,
       );
     } catch (e) {
       return LocalChessFileNode(
@@ -682,32 +687,40 @@ List<_ParsedLocalChessGame> _parsePgnHeadersOnly(String text) {
   final trimmed = normalized.trim();
   if (trimmed.isEmpty) return const <_ParsedLocalChessGame>[];
 
-  final eventStarts = RegExp(
-    r'^\[Event\s',
-    multiLine: true,
-  ).allMatches(trimmed).map((match) => match.start).toList(growable: false);
-
-  final chunkRanges = <List<int>>[];
-  if (eventStarts.isEmpty) {
-    chunkRanges.add(<int>[0, trimmed.length]);
-  } else {
-    for (var i = 0; i < eventStarts.length; i++) {
-      final start = eventStarts[i];
-      final end = i + 1 < eventStarts.length
-          ? eventStarts[i + 1]
-          : trimmed.length;
-      chunkRanges.add(<int>[start, end]);
-    }
-  }
-
+  final chunks = _splitPgnGameChunks(trimmed);
   final entries = <_ParsedLocalChessGame>[];
-  for (final range in chunkRanges) {
-    final rawPgn = trimmed.substring(range[0], range[1]).trim();
+  for (final rawPgn in chunks) {
     if (rawPgn.isEmpty) continue;
     final entry = _entryFromPgnChunk(rawPgn);
     if (entry != null) entries.add(entry);
   }
   return entries;
+}
+
+List<String> _splitPgnGameChunks(String text) {
+  final chunks = <String>[];
+  final current = StringBuffer();
+  var sawMovetext = false;
+
+  for (final line in text.split('\n')) {
+    final trimmedLine = line.trimLeft();
+    final isHeader = _kPgnHeaderLineRegex.hasMatch(trimmedLine);
+    if (isHeader && sawMovetext && current.isNotEmpty) {
+      final chunk = current.toString().trim();
+      if (chunk.isNotEmpty) chunks.add(chunk);
+      current.clear();
+      sawMovetext = false;
+    }
+
+    current.writeln(line);
+    if (trimmedLine.isNotEmpty && !isHeader) {
+      sawMovetext = true;
+    }
+  }
+
+  final tail = current.toString().trim();
+  if (tail.isNotEmpty) chunks.add(tail);
+  return chunks;
 }
 
 _ParsedLocalChessGame? _entryFromPgnChunk(String rawPgn) {
@@ -724,9 +737,10 @@ _ParsedLocalChessGame? _entryFromPgnChunk(String rawPgn) {
   // A chunk that carries neither headers nor moves isn't a playable PGN.
   if (headers.isEmpty && !hasMoves) return null;
 
-  final startingFen = (headers['FEN']?.toString().trim().isNotEmpty == true)
-      ? headers['FEN'] as String
-      : _kStandardStartingFen;
+  final startingFen =
+      (headers['FEN']?.toString().trim().isNotEmpty == true)
+          ? headers['FEN'] as String
+          : _kStandardStartingFen;
 
   return _ParsedLocalChessGame(
     game: ChessGame(

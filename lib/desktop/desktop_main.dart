@@ -23,7 +23,6 @@ import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
 import 'package:chessever/desktop/services/desktop_window.dart';
-import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/desktop/services/window_state_persistence.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
@@ -243,15 +242,9 @@ Future<void> _desktopBoot({
     initialArguments: initialArguments,
   );
 
-  // Defer Stockfish warm-up and SFX preload until after the first foreground
-  // frame so the window's first paint isn't competing with engine spawn /
-  // audio asset decode. Mirrors the mobile pattern from
-  // `_initializePostStartupServices` — see `ForegroundTaskScheduler`.
-  ForegroundTaskScheduler.schedule(
-    key: 'desktop_startup_stockfish_warmup',
-    delay: kStartupWarmupDelay,
-    task: () => StockfishSingleton().warmUp(),
-  );
+  // Do not warm Stockfish on desktop startup. Analysis must remain completely
+  // idle until the user explicitly enables the engine from the board rail.
+  // Audio assets can still preload after first paint without spawning engine work.
   ForegroundTaskScheduler.schedule(
     key: 'desktop_startup_audio_assets',
     delay: kStartupWarmupDelay + const Duration(seconds: 1),
@@ -361,12 +354,13 @@ Future<void> _openLocalChessPaths(
       print('[desktop] opened ${paths.length} local chess path(s) in Library');
       return;
     }
+    final workspacePath = localDatabaseWorkspacePath(state.source, path);
 
     openDatabaseWorkspaceTabForContainer(
       container,
       DatabaseWorkspaceArgs.local(
-        localPath: path,
-        title: localDatabaseWorkspaceTitle(state.source, path),
+        localPath: workspacePath,
+        title: localDatabaseWorkspaceTitle(state.source, workspacePath),
       ),
     );
     print(

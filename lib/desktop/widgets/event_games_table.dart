@@ -121,10 +121,11 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
   bool _moveHighlightedGame(
     List<TournamentGameSummary> orderedGames, {
     required int delta,
+    String? fallbackSelectedGameId,
   }) {
     if (orderedGames.isEmpty || delta == 0) return false;
 
-    final activeId = _highlightedGameId;
+    final activeId = _highlightedGameId ?? fallbackSelectedGameId;
     final currentIdx =
         activeId == null
             ? -1
@@ -140,9 +141,16 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
 
   KeyEventResult _handleRailKeyEvent(
     KeyEvent event,
-    List<TournamentGameSummary> orderedGames,
-  ) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    List<TournamentGameSummary> orderedGames, {
+    required _GameListKind kind,
+    required List<TournamentGameSummary> eventGames,
+    required String tournamentTitle,
+    required String? selectedGameId,
+    required BoardTabGameArgs? activeArgs,
+  }) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
     if (HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed ||
         HardwareKeyboard.instance.isAltPressed) {
@@ -150,14 +158,47 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
     }
 
     if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-      return _moveHighlightedGame(orderedGames, delta: 1)
+      return _moveHighlightedGame(
+            orderedGames,
+            delta: 1,
+            fallbackSelectedGameId: selectedGameId,
+          )
           ? KeyEventResult.handled
           : KeyEventResult.ignored;
     }
     if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-      return _moveHighlightedGame(orderedGames, delta: -1)
+      return _moveHighlightedGame(
+            orderedGames,
+            delta: -1,
+            fallbackSelectedGameId: selectedGameId,
+          )
           ? KeyEventResult.handled
           : KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.enter ||
+        event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+      if (orderedGames.isEmpty) return KeyEventResult.ignored;
+      final activeId = _highlightedGameId ?? selectedGameId;
+      final index =
+          activeId == null
+              ? 0
+              : orderedGames.indexWhere((game) => game.id == activeId);
+      final game = orderedGames[index < 0 ? 0 : index];
+      if (_highlightedGameId != game.id) {
+        setState(() => _highlightedGameId = game.id);
+      }
+      unawaited(
+        _openEventGame(
+          ref: ref,
+          container: ProviderScope.containerOf(context, listen: false),
+          kind: kind,
+          game: game,
+          eventGames: eventGames,
+          tournamentTitle: tournamentTitle,
+          activeArgs: activeArgs,
+        ),
+      );
+      return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
   }
@@ -621,22 +662,29 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
 
     final countGames =
         resolved.kind == _GameListKind.event ? allOrderedGames : orderedGames;
-    final otherCount =
-        selectedGameId == null
-            ? countGames.length
-            : countGames.where((g) => g.id != selectedGameId).length;
     final countText = _railCountText(
       resolved: resolved,
       loadedCount: countGames.length,
-      otherCount: otherCount,
       pagination: databasePagination,
       continuation: continuationSnapshot,
       isLoadingMore: isLoadingMoreDatabase || isLoadingMoreContinuation,
     );
 
+    final railActivationGames =
+        resolved.kind == _GameListKind.event ? allOrderedGames : orderedGames;
+
     return Focus(
       focusNode: _railFocusNode,
-      onKeyEvent: (_, event) => _handleRailKeyEvent(event, orderedGames),
+      onKeyEvent:
+          (_, event) => _handleRailKeyEvent(
+            event,
+            orderedGames,
+            kind: resolved.kind,
+            eventGames: railActivationGames,
+            tournamentTitle: resolved.title,
+            selectedGameId: selectedGameId,
+            activeArgs: effectiveArgs,
+          ),
       child: Listener(
         behavior: HitTestBehavior.translucent,
         onPointerDown: (_) => _railFocusNode.requestFocus(),
@@ -646,15 +694,17 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Container(
-                          width: 6,
-                          height: 18,
+                          width: 4,
+                          height: 20,
+                          margin: const EdgeInsets.only(top: 1),
                           decoration: BoxDecoration(
                             color: kPrimaryColor,
                             borderRadius: BorderRadius.circular(999),
@@ -662,51 +712,46 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: Text(
-                            _railHeading(resolved.kind),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: kLightGreyColor,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.8,
+                          child: DesktopTooltip(
+                            message:
+                                resolved.title.isNotEmpty
+                                    ? resolved.title
+                                    : _railHeading(resolved.kind),
+                            child: Text(
+                              resolved.title.isNotEmpty
+                                  ? resolved.title
+                                  : _railHeading(resolved.kind),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: kWhiteColor,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                height: 1.15,
+                              ),
                             ),
                           ),
                         ),
-                        Text(
-                          countText,
-                          style: const TextStyle(
-                            color: kWhiteColor70,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
+                        if (countText.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            countText,
+                            style: const TextStyle(
+                              color: kWhiteColor70,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              fontFeatures: [FontFeature.tabularFigures()],
+                            ),
                           ),
-                        ),
+                        ],
                         if (widget.onClose != null) ...[
                           const SizedBox(width: 8),
                           _GameRailCloseButton(onClose: widget.onClose!),
                         ],
                       ],
                     ),
-                    if (resolved.title.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      DesktopTooltip(
-                        message: resolved.title,
-                        child: Text(
-                          resolved.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: kWhiteColor,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            height: 1.25,
-                          ),
-                        ),
-                      ),
-                    ],
                     if (rail.hasTabs) ...[
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 8),
                       DesktopSegmentedTabs<_GameRailTab>(
                         expand: true,
                         selected: selectedTab,
@@ -1137,7 +1182,6 @@ String _railHeading(_GameListKind kind) {
 String _railCountText({
   required _ResolvedEventGames resolved,
   required int loadedCount,
-  required int otherCount,
   required BoardTabDatabaseGamesPagination? pagination,
   required _ContinuationSnapshot? continuation,
   required bool isLoadingMore,
@@ -1159,7 +1203,7 @@ String _railCountText({
     if (pagination.hasMore) return '$loadedCount+ games';
     return loadedCount == 1 ? '1 game' : '$loadedCount games';
   }
-  return otherCount <= 0 ? '1 game' : '$otherCount other';
+  return loadedCount == 1 ? '1 game' : '$loadedCount games';
 }
 
 class _ResolvedEventGames {
@@ -1530,6 +1574,22 @@ int _compareEventGamesInRound(
   TournamentGameSummary a,
   TournamentGameSummary b,
 ) {
+  final aBoard = a.boardNumber;
+  final bBoard = b.boardNumber;
+  if (aBoard != null && bBoard != null && aBoard != bBoard) {
+    return aBoard.compareTo(bBoard);
+  }
+  if (aBoard != null && bBoard == null) return -1;
+  if (aBoard == null && bBoard != null) return 1;
+
+  final aGame = _parseGameNumber(a.roundSlug) ?? _parseGameNumber(a.id);
+  final bGame = _parseGameNumber(b.roundSlug) ?? _parseGameNumber(b.id);
+  if (aGame != null && bGame != null && aGame != bGame) {
+    return aGame.compareTo(bGame);
+  }
+  if (aGame != null && bGame == null) return -1;
+  if (aGame == null && bGame != null) return 1;
+
   final aStart = _eventGameDateTime(a);
   final bStart = _eventGameDateTime(b);
   if (aStart != null && bStart != null) {
@@ -1540,22 +1600,6 @@ int _compareEventGamesInRound(
   } else if (bStart != null) {
     return 1;
   }
-
-  final aGame = _parseGameNumber(a.roundSlug);
-  final bGame = _parseGameNumber(b.roundSlug);
-  if (aGame != null && bGame != null && aGame != bGame) {
-    return bGame.compareTo(aGame);
-  }
-  if (aGame != null && bGame == null) return -1;
-  if (aGame == null && bGame != null) return 1;
-
-  final aBoard = a.boardNumber;
-  final bBoard = b.boardNumber;
-  if (aBoard != null && bBoard != null && aBoard != bBoard) {
-    return aBoard.compareTo(bBoard);
-  }
-  if (aBoard != null && bBoard == null) return -1;
-  if (aBoard == null && bBoard != null) return 1;
 
   final whiteCompare = a.whitePlayer.compareTo(b.whitePlayer);
   if (whiteCompare != 0) return whiteCompare;
@@ -1573,7 +1617,7 @@ bool _isUpcomingGameForRail(TournamentGameSummary game) {
 int? _parseGameNumber(String value) {
   if (value.trim().isEmpty) return null;
   final match = RegExp(
-    r'(?:game|board|match)[\s_\-:]*?(\d+)',
+    r'(?:game|board|match)[\s_\-:.]*?(\d+)',
     caseSensitive: false,
   ).firstMatch(value);
   return match == null ? null : int.tryParse(match.group(1)!);
@@ -1667,6 +1711,7 @@ String _resultForSummary(GameStatus status) => switch (status) {
 
 Future<void> _openEventGame({
   required WidgetRef ref,
+  ProviderContainer? container,
   required _GameListKind kind,
   required TournamentGameSummary game,
   required List<TournamentGameSummary> eventGames,
@@ -1715,10 +1760,6 @@ Future<void> _openEventGame({
   }
 
   if (kind == _GameListKind.source) {
-    final container = ProviderScope.containerOf(
-      ref as BuildContext,
-      listen: false,
-    );
     final pgn = game.pgn?.trim() ?? '';
     final eventSeed = _eventSeedForSourceGame(game, activeArgs);
     final shouldHydrateEventGames =
@@ -1760,7 +1801,7 @@ Future<void> _openEventGame({
       reuseExisting: false,
       replaceActive: !inNewTab,
     );
-    if (shouldHydrateEventGames) {
+    if (shouldHydrateEventGames && container != null) {
       unawaited(
         _hydrateSourceGameEventContext(
           container: container,
@@ -2080,6 +2121,7 @@ class _EventRoundTable extends StatelessWidget {
         AdaptiveColumn<TournamentGameSummary>(
           id: 'board',
           label: 'BD',
+          minWidth: 28,
           cellBuilder:
               (_, game) => _BoardBadge(game: game, selected: _isSelected(game)),
         ),
@@ -2114,6 +2156,7 @@ class _EventRoundTable extends StatelessWidget {
       AdaptiveColumn<TournamentGameSummary>(
         id: 'status',
         label: 'RES',
+        minWidth: 38,
         headerAlignment: Alignment.center,
         cellAlignment: Alignment.center,
         cellBuilder: (_, game) {
@@ -2153,8 +2196,9 @@ class _EventRoundTable extends StatelessWidget {
       useFixedRowAlignment: true,
       minTableWidth: EventGamesTable.width,
       scrollController: ScrollController(),
+      showHeader: false,
       padding: const EdgeInsets.symmetric(horizontal: 6),
-      rowMinHeight: 50,
+      rowMinHeight: 34,
       rowKeyBuilder:
           (game) => game.id == _activeSelectionId ? selectedRowKey : null,
       onRowTap: (game, {required bool inNewTab}) {
@@ -2282,6 +2326,7 @@ class _EventRoundSection extends ConsumerWidget {
               onOpenGame: (game, {required bool inNewTab}) async {
                 await _openEventGame(
                   ref: ref,
+                  container: ProviderScope.containerOf(context, listen: false),
                   kind: kind,
                   game: game,
                   eventGames: eventGames,
@@ -2528,10 +2573,10 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
                     Transform.scale(scale: scale, child: child),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 100),
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
               decoration: BoxDecoration(
                 color: _hovered ? kBlack3Color : kBackgroundColor,
-                borderRadius: BorderRadius.circular(7),
+                borderRadius: BorderRadius.circular(6),
                 border: Border.all(
                   color:
                       _hovered
@@ -2541,49 +2586,36 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
               ),
               child: Row(
                 children: [
-                  _EventRoundStatusChip(status: group.status),
-                  const SizedBox(width: 8),
+                  if (group.status != RoundStatus.completed) ...[
+                    _EventRoundStatusChip(status: group.status),
+                    const SizedBox(width: 7),
+                  ],
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          group.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: kWhiteColor,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        if (subtitle.isNotEmpty) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            subtitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: kLightGreyColor,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ],
+                    child: Text(
+                      group.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: kWhiteColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${group.games.length}',
-                    style: const TextStyle(
-                      color: kWhiteColor70,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      fontFeatures: [FontFeature.tabularFigures()],
+                  if (subtitle.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        color: kLightGreyColor,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  ),
+                  ],
                   const SizedBox(width: 6),
                   SingleMotionBuilder(
                     value: widget.expanded ? 1.0 : 0.0,
@@ -2665,41 +2697,39 @@ class _BoardBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final boardNumber = game.boardNumber;
-    final label =
-        boardNumber == null
-            ? (game.roundLabel.isEmpty ? '-' : game.roundLabel)
-            : '#$boardNumber';
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: selected ? kPrimaryColor : kWhiteColor,
-            fontSize: 12,
-            fontWeight: FontWeight.w800,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
-        ),
-        if (boardNumber != null && game.roundLabel.isNotEmpty) ...[
-          const SizedBox(height: 2),
-          Text(
-            game.roundLabel,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: kLightGreyColor,
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ],
+    final label = boardNumber == null ? '-' : '$boardNumber';
+    return Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: selected ? kPrimaryColor : kWhiteColor70,
+        fontSize: 11,
+        fontWeight: FontWeight.w800,
+        fontFeatures: const [FontFeature.tabularFigures()],
+      ),
     );
   }
+}
+
+String _compactPlayerName(String name) {
+  final trimmed = name.trim();
+  if (trimmed.isEmpty) return '-';
+  final commaParts = trimmed.split(',');
+  if (commaParts.length >= 2) {
+    final last = commaParts.first.trim();
+    final first = commaParts.sublist(1).join(',').trim();
+    final initial =
+        first.isEmpty
+            ? ''
+            : String.fromCharCode(first.runes.first).toUpperCase();
+    return initial.isEmpty ? last : '$last,$initial';
+  }
+
+  // Most event-feed names already arrive as "Last, First". When they do
+  // not, keep the source spelling so legacy search/test finders and unusual
+  // name orders remain stable instead of guessing the surname.
+  return trimmed;
 }
 
 class _PlayerCell extends StatelessWidget {
@@ -2721,52 +2751,63 @@ class _PlayerCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final playerName = name.trim().isEmpty ? '-' : name.trim();
-    final meta = <String>[
-      if (title.trim().isNotEmpty) title.trim(),
-      if (rating > 0) rating.toString(),
-    ].join(' ');
+    final playerName = _compactPlayerName(name);
+    final titleText = title.trim();
+    final ratingText = rating > 0 ? rating.toString() : '';
 
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Row(
-          children: [
-            BackfilledFederationFlag(
-              federation: federation,
-              fideId: fideId,
-              width: 14,
-              height: 10,
-              borderRadius: BorderRadius.circular(2),
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                playerName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: selected ? kWhiteColor : kWhiteColor70,
-                  fontSize: 12,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
+        BackfilledFederationFlag(
+          federation: federation,
+          fideId: fideId,
+          width: 13,
+          height: 9,
+          borderRadius: BorderRadius.circular(2),
         ),
-        const SizedBox(height: 3),
-        Text(
-          meta.isEmpty ? ' ' : meta,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: kLightGreyColor,
-            fontSize: 10,
-            fontWeight: FontWeight.w500,
-            fontFeatures: [FontFeature.tabularFigures()],
+        const SizedBox(width: 4),
+        if (titleText.isNotEmpty) ...[
+          Text(
+            titleText,
+            maxLines: 1,
+            overflow: TextOverflow.fade,
+            softWrap: false,
+            style: const TextStyle(
+              color: kPrimaryColor,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.2,
+            ),
+          ),
+          const SizedBox(width: 3),
+        ],
+        Flexible(
+          child: Text(
+            playerName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: selected ? kWhiteColor : kWhiteColor70,
+              fontSize: 11.5,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+            ),
           ),
         ),
+        if (ratingText.isNotEmpty) ...[
+          const SizedBox(width: 4),
+          Text(
+            ratingText,
+            maxLines: 1,
+            overflow: TextOverflow.fade,
+            softWrap: false,
+            style: const TextStyle(
+              color: kLightGreyColor,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
       ],
     );
   }
