@@ -116,12 +116,6 @@ const _boardFocusBoardWeight = 0.60;
 const _boardFocusRightPaneWeight = 0.40;
 const _boardAreaPadding = 16.0;
 const _boardFocusPadding = 10.0;
-// When the user drags the board past this width the shell auto-enters
-// focus mode (sidebar, top bar, tab strip, games rail, move-nav cluster all
-// fold away) so the resize stays meaningful instead of just running out of
-// room. Mirrors lichess' implicit-focus heuristic.
-const _autoFocusBoardSizeThreshold = 760.0;
-const _resizeFocusOvershoot = 12.0;
 
 final _desktopBoardPlayerPhotoProvider = FutureProvider.autoDispose
     .family<String?, int>(
@@ -139,8 +133,7 @@ bool shouldEnterBoardFocusAfterResize({
   required bool grewPastResizeLimit,
   required bool isAlreadyFocused,
 }) {
-  if (isAlreadyFocused) return false;
-  return grewPastResizeLimit || requestedSize >= _autoFocusBoardSizeThreshold;
+  return false;
 }
 
 @visibleForTesting
@@ -363,7 +356,6 @@ class BoardPane extends HookConsumerWidget {
     final boardFocusMode = ref.watch(boardFocusModeProvider);
     final boardSizePreference = useState<double?>(null);
     final lastPersistedBoardSize = useRef<int?>(null);
-    final boardResizeHitSplitLimit = useRef<bool>(false);
     useEffect(() {
       var disposed = false;
       AppDatabase.instance.getInt(_boardSizePreferenceKey).then((value) {
@@ -391,7 +383,7 @@ class BoardPane extends HookConsumerWidget {
           size.clamp(_minDesktopBoardSize, _maxDesktopBoardSize).toDouble();
     }
 
-    void persistBoardSizePreference({bool grewPastResizeLimit = false}) {
+    void persistBoardSizePreference() {
       final size = boardSizePreference.value;
       if (size == null) return;
       final rounded = size.round();
@@ -400,17 +392,6 @@ class BoardPane extends HookConsumerWidget {
         unawaited(
           AppDatabase.instance.setInt(_boardSizePreferenceKey, rounded),
         );
-      }
-      // Crossing the threshold on grip-release latches the shell into
-      // focus mode (sidebar, top bar, tab strip, games rail, nav cluster
-      // all fold). Triggering on release — not mid-drag — keeps the
-      // resize handle mounted for the full drag gesture.
-      if (shouldEnterBoardFocusAfterResize(
-        requestedSize: size,
-        grewPastResizeLimit: grewPastResizeLimit,
-        isAlreadyFocused: ref.read(boardFocusModeProvider),
-      )) {
-        ref.read(boardFocusModeProvider.notifier).state = true;
       }
     }
 
@@ -3314,23 +3295,16 @@ class BoardPane extends HookConsumerWidget {
                                     : 0.0;
                             final targetColumnSize =
                                 size + evalBarReservation + 48;
-                            final appliedColumnSize = mainSplitController
-                                .setSize(boardSplitIndex, targetColumnSize);
-                            boardResizeHitSplitLimit.value =
-                                appliedColumnSize != null &&
-                                targetColumnSize >
-                                    appliedColumnSize + _resizeFocusOvershoot;
+                            mainSplitController.setSize(
+                              boardSplitIndex,
+                              targetColumnSize,
+                            );
                           },
                           onBoardSizeReset: () {
                             setBoardSizePreference(null);
                           },
                           onBoardSizeChangeEnd: () {
-                            final grewPastSplitLimit =
-                                boardResizeHitSplitLimit.value;
-                            boardResizeHitSplitLimit.value = false;
-                            persistBoardSizePreference(
-                              grewPastResizeLimit: grewPastSplitLimit,
-                            );
+                            persistBoardSizePreference();
                           },
                         ),
                       ),
@@ -5211,7 +5185,6 @@ class _BoardArea extends ConsumerWidget {
             maxSize: math.min(vLimit, _maxDesktopBoardSize),
             onResize: onBoardSizeChanged,
             onResizeEnd: onBoardSizeChangeEnd,
-            onGrowPastLimit: () => onFocusModeChanged(true),
             onReset: onBoardSizeReset,
           );
 
@@ -5356,7 +5329,6 @@ class _BoardResizeHandle extends StatefulWidget {
     required this.maxSize,
     required this.onResize,
     required this.onResizeEnd,
-    required this.onGrowPastLimit,
     required this.onReset,
   });
 
@@ -5365,7 +5337,6 @@ class _BoardResizeHandle extends StatefulWidget {
   final double maxSize;
   final ValueChanged<double> onResize;
   final VoidCallback onResizeEnd;
-  final VoidCallback onGrowPastLimit;
   final VoidCallback onReset;
 
   @override
@@ -5376,12 +5347,10 @@ class _BoardResizeHandleState extends State<_BoardResizeHandle> {
   Offset? _dragStart;
   double? _sizeStart;
   bool _active = false;
-  bool _grewPastLimit = false;
 
   void _begin(DragStartDetails details) {
     _dragStart = details.globalPosition;
     _sizeStart = widget.boardSize;
-    _grewPastLimit = false;
     setState(() => _active = true);
   }
 
@@ -5392,21 +5361,15 @@ class _BoardResizeHandleState extends State<_BoardResizeHandle> {
     final offset = details.globalPosition - start;
     final delta = desktopBoardResizeDragDelta(offset);
     final rawSize = sizeStart + delta;
-    if (rawSize > widget.maxSize + _resizeFocusOvershoot) {
-      _grewPastLimit = true;
-    }
     widget.onResize(rawSize.clamp(widget.minSize, widget.maxSize).toDouble());
   }
 
   void _end() {
     if (!_active) return;
-    final grewPastLimit = _grewPastLimit;
     _dragStart = null;
     _sizeStart = null;
-    _grewPastLimit = false;
     setState(() => _active = false);
     widget.onResizeEnd();
-    if (grewPastLimit) widget.onGrowPastLimit();
   }
 
   @override
