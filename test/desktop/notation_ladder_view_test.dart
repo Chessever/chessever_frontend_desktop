@@ -1,4 +1,5 @@
 import 'package:chessground/chessground.dart' show PieceAssets;
+import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
@@ -12,6 +13,17 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('can render notation moves without mini-board hover previews', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(game: _sampleGame(), onJump: (_) {}, enableMoveHoverPreview: false),
+    );
+
+    expect(find.text('e4', findRichText: true), findsOneWidget);
+    expect(find.byType(MoveHoverPreview), findsNothing);
+  });
+
   testWidgets(
     'switches to inline notation and keeps variation moves clickable',
     (tester) async {
@@ -747,6 +759,7 @@ Widget _host({
   void Function(ChessMovePointer pointer)? onDeleteVariation,
   ValueNotifier<NotationLayoutMode>? layoutModeController,
   NotationVariationCollapseController? variationCollapseController,
+  bool enableMoveHoverPreview = true,
 }) {
   final notation = NotationLadderView(
     game: game,
@@ -764,6 +777,7 @@ Widget _host({
     onDeleteVariation: onDeleteVariation,
     layoutModeController: layoutModeController,
     variationCollapseController: variationCollapseController,
+    enableMoveHoverPreview: enableMoveHoverPreview,
     useFigurine: useFigurine,
     pieceAssets: pieceAssets,
   );

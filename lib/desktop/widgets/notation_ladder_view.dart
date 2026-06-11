@@ -121,6 +121,7 @@ class NotationLadderView extends StatefulWidget {
     this.visibleMoveOrderController,
     this.variationCollapseController,
     this.showHeader = true,
+    this.enableMoveHoverPreview = true,
   });
 
   /// Optional external controller for the ladder/inline toggle. When
@@ -134,6 +135,9 @@ class NotationLadderView extends StatefulWidget {
   /// Whether to show the notation header chrome (title, collapse/expand, help).
   /// Compact previews can hide it while keeping the same move rendering.
   final bool showHeader;
+
+  /// Whether move chips should show the floating mini-board preview on hover.
+  final bool enableMoveHoverPreview;
 
   /// Optional sink for the exact visible move-token traversal order rendered
   /// by this widget after expand/collapse state is applied. Board-level
@@ -479,118 +483,138 @@ class _NotationLadderViewState extends State<NotationLadderView> {
       _publishVisibleMoveOrder(visibleMoveOrder);
     }
 
-    return CallbackShortcuts(
-      bindings: {
-        const SingleActivator(LogicalKeyboardKey.bracketLeft, control: true):
-            _collapseAllVariations,
-        const SingleActivator(LogicalKeyboardKey.bracketLeft, meta: true):
-            _collapseAllVariations,
-        const SingleActivator(LogicalKeyboardKey.bracketRight, control: true):
-            _expandAllVariations,
-        const SingleActivator(LogicalKeyboardKey.bracketRight, meta: true):
-            _expandAllVariations,
-      },
-      child: Container(
-        color: kBlack2Color,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (widget.showHeader)
-              _Header(
-                metadata: notationHeaderMetadataFromPgn(widget.game.metadata),
+    return _MoveHoverPreviewScope(
+      enabled: widget.enableMoveHoverPreview,
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.bracketLeft, control: true):
+              _collapseAllVariations,
+          const SingleActivator(LogicalKeyboardKey.bracketLeft, meta: true):
+              _collapseAllVariations,
+          const SingleActivator(LogicalKeyboardKey.bracketRight, control: true):
+              _expandAllVariations,
+          const SingleActivator(LogicalKeyboardKey.bracketRight, meta: true):
+              _expandAllVariations,
+        },
+        child: Container(
+          color: kBlack2Color,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (widget.showHeader)
+                _Header(
+                  metadata: notationHeaderMetadataFromPgn(widget.game.metadata),
+                ),
+              Expanded(
+                child:
+                    mainline.isEmpty
+                        ? const _EmptyLadderHint()
+                        : _layoutMode == NotationLayoutMode.inline
+                        ? SingleChildScrollView(
+                          controller: _scroll,
+                          physics: const DesktopScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 18),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              KeyedSubtree(
+                                key: _inlineNotationKey,
+                                child: _InlineNotationBlock(
+                                  line: mainline,
+                                  pointerPrefix: const <int>[],
+                                  depth: 0,
+                                  isMainlineRoot: true,
+                                  startPly: startingPly,
+                                  activePointer: widget.activePointer,
+                                  activeKey: _activeKey,
+                                  onJump: widget.onJump,
+                                  lichessAnnotations: widget.lichessAnnotations,
+                                  userNags: widget.userNags,
+                                  onSetUserQualityNag:
+                                      widget.onSetUserQualityNag,
+                                  onToggleUserNag: widget.onToggleUserNag,
+                                  onToggleMoveNag: widget.onToggleMoveNag,
+                                  onSetMoveComment: widget.onSetMoveComment,
+                                  onPromoteVariation: widget.onPromoteVariation,
+                                  onDeleteVariation: widget.onDeleteVariation,
+                                  onTrimContinuation: widget.onTrimContinuation,
+                                  forcedOpenIds: forcedOpenIds,
+                                  collapsedIds: _collapsed,
+                                  expandedIds: _expanded,
+                                  onToggleCollapsed: _toggleCollapsed,
+                                  autoCollapseDepth: widget.autoCollapseDepth,
+                                  autoCollapseMoveThreshold:
+                                      widget.autoCollapseMoveThreshold,
+                                  useFigurine: widget.useFigurine,
+                                  pieceAssets: widget.pieceAssets,
+                                ),
+                              ),
+                              if (gameResult != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 14),
+                                  child: _GameResultRow(result: gameResult),
+                                ),
+                            ],
+                          ),
+                        )
+                        : SingleChildScrollView(
+                          controller: _scroll,
+                          physics: const DesktopScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: _LineBlock(
+                            line: mainline,
+                            pointerPrefix: const <int>[],
+                            depth: 0,
+                            isMainlineRoot: true,
+                            startPly: startingPly,
+                            activePointer: widget.activePointer,
+                            activeKey: _activeKey,
+                            onJump: widget.onJump,
+                            lichessAnnotations: widget.lichessAnnotations,
+                            userNags: widget.userNags,
+                            onSetUserQualityNag: widget.onSetUserQualityNag,
+                            onToggleUserNag: widget.onToggleUserNag,
+                            onToggleMoveNag: widget.onToggleMoveNag,
+                            onSetMoveComment: widget.onSetMoveComment,
+                            onPromoteVariation: widget.onPromoteVariation,
+                            onDeleteVariation: widget.onDeleteVariation,
+                            onTrimContinuation: widget.onTrimContinuation,
+                            forcedOpenIds: forcedOpenIds,
+                            collapsedIds: _collapsed,
+                            expandedIds: _expanded,
+                            onToggleCollapsed: _toggleCollapsed,
+                            autoCollapseDepth: widget.autoCollapseDepth,
+                            autoCollapseMoveThreshold:
+                                widget.autoCollapseMoveThreshold,
+                            useFigurine: widget.useFigurine,
+                            pieceAssets: widget.pieceAssets,
+                            gameResult: gameResult,
+                          ),
+                        ),
               ),
-            Expanded(
-              child:
-                  mainline.isEmpty
-                      ? const _EmptyLadderHint()
-                      : _layoutMode == NotationLayoutMode.inline
-                      ? SingleChildScrollView(
-                        controller: _scroll,
-                        physics: const DesktopScrollPhysics(),
-                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 18),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            KeyedSubtree(
-                              key: _inlineNotationKey,
-                              child: _InlineNotationBlock(
-                                line: mainline,
-                                pointerPrefix: const <int>[],
-                                depth: 0,
-                                isMainlineRoot: true,
-                                startPly: startingPly,
-                                activePointer: widget.activePointer,
-                                activeKey: _activeKey,
-                                onJump: widget.onJump,
-                                lichessAnnotations: widget.lichessAnnotations,
-                                userNags: widget.userNags,
-                                onSetUserQualityNag: widget.onSetUserQualityNag,
-                                onToggleUserNag: widget.onToggleUserNag,
-                                onToggleMoveNag: widget.onToggleMoveNag,
-                                onSetMoveComment: widget.onSetMoveComment,
-                                onPromoteVariation: widget.onPromoteVariation,
-                                onDeleteVariation: widget.onDeleteVariation,
-                                onTrimContinuation: widget.onTrimContinuation,
-                                forcedOpenIds: forcedOpenIds,
-                                collapsedIds: _collapsed,
-                                expandedIds: _expanded,
-                                onToggleCollapsed: _toggleCollapsed,
-                                autoCollapseDepth: widget.autoCollapseDepth,
-                                autoCollapseMoveThreshold:
-                                    widget.autoCollapseMoveThreshold,
-                                useFigurine: widget.useFigurine,
-                                pieceAssets: widget.pieceAssets,
-                              ),
-                            ),
-                            if (gameResult != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 14),
-                                child: _GameResultRow(result: gameResult),
-                              ),
-                          ],
-                        ),
-                      )
-                      : SingleChildScrollView(
-                        controller: _scroll,
-                        physics: const DesktopScrollPhysics(),
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        child: _LineBlock(
-                          line: mainline,
-                          pointerPrefix: const <int>[],
-                          depth: 0,
-                          isMainlineRoot: true,
-                          startPly: startingPly,
-                          activePointer: widget.activePointer,
-                          activeKey: _activeKey,
-                          onJump: widget.onJump,
-                          lichessAnnotations: widget.lichessAnnotations,
-                          userNags: widget.userNags,
-                          onSetUserQualityNag: widget.onSetUserQualityNag,
-                          onToggleUserNag: widget.onToggleUserNag,
-                          onToggleMoveNag: widget.onToggleMoveNag,
-                          onSetMoveComment: widget.onSetMoveComment,
-                          onPromoteVariation: widget.onPromoteVariation,
-                          onDeleteVariation: widget.onDeleteVariation,
-                          onTrimContinuation: widget.onTrimContinuation,
-                          forcedOpenIds: forcedOpenIds,
-                          collapsedIds: _collapsed,
-                          expandedIds: _expanded,
-                          onToggleCollapsed: _toggleCollapsed,
-                          autoCollapseDepth: widget.autoCollapseDepth,
-                          autoCollapseMoveThreshold:
-                              widget.autoCollapseMoveThreshold,
-                          useFigurine: widget.useFigurine,
-                          pieceAssets: widget.pieceAssets,
-                          gameResult: gameResult,
-                        ),
-                      ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
+}
+
+class _MoveHoverPreviewScope extends InheritedWidget {
+  const _MoveHoverPreviewScope({required this.enabled, required super.child});
+
+  final bool enabled;
+
+  static bool enabledOf(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<_MoveHoverPreviewScope>()
+          ?.enabled ??
+      true;
+
+  @override
+  bool updateShouldNotify(_MoveHoverPreviewScope oldWidget) =>
+      enabled != oldWidget.enabled;
 }
 
 class _NotationAnnotationToolbar extends StatelessWidget {
@@ -3325,7 +3349,7 @@ class _LadderChipState extends State<_LadderChip> {
     // render that position. Wraps every chip with a fen so even deep
     // sub-variations get the preview that database users expect.
     final preview =
-        widget.fen.isEmpty
+        widget.fen.isEmpty || !_MoveHoverPreviewScope.enabledOf(context)
             ? chip
             : MoveHoverPreview(
               startingFen: widget.fen,
