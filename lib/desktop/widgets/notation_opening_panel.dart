@@ -176,7 +176,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
 
   int _readStoredPage() {
     final raw = ref.read(rightRailActivePageProvider(_storeKey));
-    return raw.clamp(0, 1);
+    return raw.clamp(0, 2);
   }
 
   void _writeStoredPage(int page) {
@@ -191,11 +191,11 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
   }
 
   void _rememberBuiltPage(int page) {
-    if (page == 1) _buildExplorerPage = true;
+    if (page > 0) _buildExplorerPage = true;
   }
 
   void _setCurrentPage(int page) {
-    _page = page.clamp(0, 1);
+    _page = page.clamp(0, 2);
     _rememberBuiltPage(_page);
   }
 
@@ -252,7 +252,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
   }
 
   void _focusActivePage() {
-    final node = _page == 0 ? _notationFocusNode : _pageScopes[_page];
+    final node = _page == 0 ? _notationFocusNode : _pageScopes[1];
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       node.requestFocus();
@@ -260,7 +260,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
   }
 
   void _ensurePageActive(int page, {bool force = false}) {
-    final next = page.clamp(0, 1);
+    final next = page.clamp(0, 2);
     final pageChanged = _page != next;
     if (pageChanged) {
       setState(() => _setCurrentPage(next));
@@ -269,14 +269,18 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
     _focusActivePage();
   }
 
+  void _activateNotation() => _ensurePageActive(0);
+
   void _keepExplorerActive() => _ensurePageActive(1);
+
+  void _keepGamesActive() => _ensurePageActive(2);
 
   void _cancelPageRestoreLock() {
     _pageRestoreToken++;
   }
 
   void _restorePageAfterMutation(int page) {
-    final next = page.clamp(0, 1);
+    final next = page.clamp(0, 2);
     final token = ++_pageRestoreToken;
 
     void restore() {
@@ -327,7 +331,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
   }
 
   void _goRelative(int delta) {
-    final next = (_page + delta).clamp(0, 1);
+    final next = (_page + delta).clamp(0, 2);
     _go(next);
   }
 
@@ -342,7 +346,13 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.enter && !_hasAnyModifierPressed()) {
-      if (event is KeyDownEvent) _go(_page == 1 ? 0 : 1);
+      if (event is KeyDownEvent) {
+        if ((_buildExplorerPage || _page > 0) && _page > 0) {
+          _go(0);
+        } else {
+          _go(1);
+        }
+      }
       return KeyEventResult.handled;
     }
     final hasModifier = _hasAnyModifierPressed();
@@ -377,9 +387,9 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
 
   void _showGamesForMove(String uci) {
     setState(() {
-      _setCurrentPage(1);
+      _setCurrentPage(2);
     });
-    _writeStoredPage(1);
+    _writeStoredPage(2);
     _focusActivePage();
   }
 
@@ -392,17 +402,17 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
   @override
   Widget build(BuildContext context) {
     ref.listen<int>(rightRailActivePageProvider(_storeKey), (previous, next) {
-      final page = next.clamp(0, 1);
+      final page = next.clamp(0, 2);
       if (page != _page) _go(page, persist: false);
     });
-    final explorerOpen = _page == 1;
-    final buildExplorerPage = explorerOpen || _buildExplorerPage;
+    final explorerVisible = _buildExplorerPage || _page > 0;
+    final buildExplorerPage = explorerVisible;
     final notationPane = FocusScope(
       node: _pageScopes[0],
       child: _NotationKeyboardArea(
-        active: !explorerOpen,
+        active: _page == 0,
         focusNode: _notationFocusNode,
-        onActivate: () => _notationFocusNode.requestFocus(),
+        onActivate: _activateNotation,
         onVertical: widget.onNotationVertical,
         onStep: widget.onNotationStep,
         onJumpToHead: widget.onNotationJumpToHead,
@@ -415,7 +425,8 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
       child:
           buildExplorerPage
               ? _OpeningExplorerPage(
-                active: explorerOpen,
+                active: explorerVisible,
+                activeSection: _page,
                 currentFen: widget.currentFen,
                 startingFen: widget.startingFen,
                 lineUcis: widget.lineUcis,
@@ -432,6 +443,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                 onShowGames: _showGamesForMove,
                 onNotationStep: widget.onNotationStep,
                 onKeepExplorerActive: _keepExplorerActive,
+                onKeepGamesActive: _keepGamesActive,
                 explorerScope: widget.explorerScope,
                 exactFenSearch: !_isInitialPositionFen(widget.startingFen),
               )
@@ -447,7 +459,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
           children: [
             Expanded(
               child:
-                  explorerOpen
+                  explorerVisible
                       ? ResizableSplitView(
                         axis: Axis.vertical,
                         storageKey:
@@ -476,8 +488,19 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                       : notationPane,
             ),
             _SegmentBar(
-              explorerOpen: explorerOpen,
-              onToggleExplorer: () => _go(explorerOpen ? 0 : 1),
+              explorerOpen: explorerVisible,
+              onToggleExplorer: () {
+                if (explorerVisible) {
+                  setState(() {
+                    _buildExplorerPage = false;
+                    _setCurrentPage(0);
+                  });
+                  _writeStoredPage(0);
+                  _focusActivePage();
+                } else {
+                  _go(1);
+                }
+              },
               explorerScope: widget.explorerScope,
               trailingActions: widget.trailingActions,
             ),
@@ -526,6 +549,9 @@ bool debugIsRightRailNextTabChord({
     return key == LogicalKeyboardKey.arrowRight ||
         key == LogicalKeyboardKey.arrowDown;
   }
+  if (shift && !ctrl && !alt && !meta) {
+    return key == LogicalKeyboardKey.arrowDown;
+  }
   final primary = isMac ? (meta && !ctrl) : (ctrl && !meta);
   if (!primary || alt) return false;
   return key == LogicalKeyboardKey.greater ||
@@ -547,6 +573,9 @@ bool debugIsRightRailPreviousTabChord({
   if (alt && !ctrl && !meta && !shift) {
     return key == LogicalKeyboardKey.arrowLeft ||
         key == LogicalKeyboardKey.arrowUp;
+  }
+  if (shift && !ctrl && !alt && !meta) {
+    return key == LogicalKeyboardKey.arrowUp;
   }
   final primary = isMac ? (meta && !ctrl) : (ctrl && !meta);
   if (!primary || alt) return false;
@@ -691,6 +720,7 @@ class _RailIconButtonState extends State<_RailIconButton> {
 class _OpeningExplorerPage extends ConsumerStatefulWidget {
   const _OpeningExplorerPage({
     required this.active,
+    required this.activeSection,
     required this.currentFen,
     required this.startingFen,
     required this.lineUcis,
@@ -704,6 +734,7 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
     required this.onShowGames,
     required this.onNotationStep,
     required this.onKeepExplorerActive,
+    required this.onKeepGamesActive,
     required this.explorerScope,
     this.exactFenSearch = false,
   });
@@ -712,6 +743,7 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
   final String startingFen;
   final List<String> lineUcis;
   final bool active;
+  final int activeSection;
   final int previewLineStep;
   final bool previewLineAutoplay;
   final void Function(String uci) onPlayUciMove;
@@ -722,6 +754,7 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
   final void Function(String uci) onShowGames;
   final bool Function(int delta)? onNotationStep;
   final VoidCallback onKeepExplorerActive;
+  final VoidCallback onKeepGamesActive;
   final BoardExplorerScope? explorerScope;
   final bool exactFenSearch;
 
@@ -793,8 +826,17 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
     _syncProvider();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (widget.active) _keepExplorerFocus();
+      if (widget.active && widget.activeSection > 0) _keepExplorerFocus();
     });
+  }
+
+  void _focusRequestedSection({bool requestFocus = true}) {
+    if (!widget.active) return;
+    if (widget.activeSection == 2) {
+      _focusGamesPane(requestFocus: requestFocus);
+    } else if (widget.activeSection == 1) {
+      _focusMovesPane(requestFocus: requestFocus);
+    }
   }
 
   @override
@@ -802,7 +844,9 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
     super.didUpdateWidget(old);
     if (!old.active && widget.active) {
       _syncProvider(force: true);
-      _keepExplorerFocusAfterFrame();
+      _focusRequestedSection(requestFocus: false);
+    } else if (old.activeSection != widget.activeSection && widget.active) {
+      _focusRequestedSection(requestFocus: false);
     }
     final oldScopeKey = old.explorerScope?.identityKey;
     final nextScopeKey = widget.explorerScope?.identityKey;
@@ -820,7 +864,9 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       _moveCount = 0;
       _gamesController.select(null);
       _syncProvider();
-      if (widget.active) _keepExplorerFocusAfterFrame();
+      if (widget.active && widget.activeSection > 0) {
+        _keepExplorerFocusAfterFrame();
+      }
     }
   }
 
@@ -880,7 +926,11 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
 
   void _keepExplorerFocus() {
     if (!mounted || !widget.active) return;
-    widget.onKeepExplorerActive();
+    if (_activeTable == _ExplorerTableFocus.games) {
+      widget.onKeepGamesActive();
+    } else {
+      widget.onKeepExplorerActive();
+    }
     _requestExplorerFocus();
   }
 
@@ -911,7 +961,7 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
     widget.onPreviewUciLine?.call(ucis, autoplay: autoplay, step: step);
   }
 
-  void _focusMovesPane({int? index}) {
+  void _focusMovesPane({int? index, bool requestFocus = true}) {
     _pendingGamesFocus = false;
     final hadFocus = _focusedMoveIndex >= 0;
     final next =
@@ -923,10 +973,10 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       _focusedGameAutoplaying = false;
     });
     _gamesController.select(null, clearPreview: false);
-    _keepExplorerFocus();
+    if (requestFocus) _keepExplorerFocus();
   }
 
-  void _focusGamesPane({int? index}) {
+  void _focusGamesPane({int? index, bool requestFocus = true}) {
     widget.onClearPreviewUciMove?.call();
     if (_gamesController.rowCount <= 0) {
       _pendingGamesFocus = true;
@@ -937,7 +987,7 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
         _focusedGameAutoplaying = false;
       });
       _gamesController.select(null, clearPreview: false);
-      _keepExplorerFocus();
+      if (requestFocus) _keepExplorerFocus();
       return;
     }
     final next = index ?? (_focusedGameIndex >= 0 ? _focusedGameIndex : 0);
@@ -948,7 +998,7 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       _focusedGameAutoplaying = false;
     });
     _syncGamesSelection(_focusedGameIndex);
-    _keepExplorerFocus();
+    if (requestFocus) _keepExplorerFocus();
   }
 
   void _focusGamesRow(int next) {
@@ -1414,7 +1464,7 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
     );
     return Focus(
       focusNode: _focusNode,
-      autofocus: widget.active,
+      autofocus: widget.active && widget.activeSection > 0,
       onKeyEvent: _handleKey,
       child: Listener(
         // Listener sees pointer-down on descendants regardless of nested
