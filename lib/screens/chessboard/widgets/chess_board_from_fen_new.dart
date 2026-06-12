@@ -70,8 +70,9 @@ final _gamebaseFinalFenProvider = FutureProvider.autoDispose
     });
 
 bool _shouldShowEvalBar(WidgetRef ref) {
-  final settings = ref.watch(engineSettingsProviderNew).valueOrNull;
-  return settings?.showEngineGauge ?? true;
+  return shouldShowGameCardEvalBarFromSettings(
+    ref.watch(engineSettingsProviderNew),
+  );
 }
 
 /// Resolved FEN provider that caches the resolution logic for a game model

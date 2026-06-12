@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/panes/board_pane.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -23,6 +24,27 @@ void main() {
         const EngineSettings(showEngineAnalysis: true, showEngineGauge: true),
       ),
       isTrue,
+    );
+  });
+
+  test('game-card eval bar follows engine gauge setting only after load', () {
+    expect(
+      shouldShowGameCardEvalBarFromSettings(
+        const AsyncValue.data(EngineSettings(showEngineGauge: true)),
+      ),
+      isTrue,
+    );
+    expect(
+      shouldShowGameCardEvalBarFromSettings(
+        const AsyncValue.data(EngineSettings(showEngineGauge: false)),
+      ),
+      isFalse,
+    );
+    expect(
+      shouldShowGameCardEvalBarFromSettings(
+        const AsyncValue<EngineSettings>.loading(),
+      ),
+      isFalse,
     );
   });
 

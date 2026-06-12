@@ -165,6 +165,12 @@ final engineDepthStatusProvider = Provider<EngineDepthSnapshot?>((ref) {
   );
 });
 
+bool shouldShowGameCardEvalBarFromSettings(
+  AsyncValue<EngineSettings> settings,
+) {
+  return settings.valueOrNull?.showEngineGauge == true;
+}
+
 /// Engine settings configuration class
 class EngineSettings {
   const EngineSettings({

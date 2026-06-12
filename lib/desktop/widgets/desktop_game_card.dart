@@ -13,6 +13,7 @@ import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
+import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:chessever/screens/chessboard/provider/current_eval_provider.dart';
@@ -110,9 +111,13 @@ class DesktopGameCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final showEvaluationBar =
+    final showBoardEvalBar =
         ref.watch(boardSettingsProviderNew).valueOrNull?.showEvaluationBar ??
         true;
+    final showEngineGauge = shouldShowGameCardEvalBarFromSettings(
+      ref.watch(engineSettingsProviderNew),
+    );
+    final showEvaluationBar = showBoardEvalBar && showEngineGauge;
     final Widget card;
     switch (layout) {
       case DesktopCardLayout.grid:
