@@ -5765,6 +5765,7 @@ List<cg.Shape> _enginePvArrowShapes({
       position: position,
       rawUci: firstMove,
       color: enginePvArrowColor(i),
+      scale: enginePvArrowScale(i),
     );
     if (arrow != null) out.add(arrow);
   }
@@ -5775,6 +5776,7 @@ cg.Arrow? _engineArrowFromUci({
   required Position position,
   required String rawUci,
   required Color color,
+  required double scale,
 }) {
   final uci = rawUci.trim().toLowerCase();
   if (uci.isEmpty) return null;
@@ -5783,14 +5785,14 @@ cg.Arrow? _engineArrowFromUci({
     if (uci.contains('@')) {
       if (uci.length != 4 || uci[1] != '@') return null;
       final square = Square.fromName(uci.substring(2, 4));
-      return cg.Arrow(color: color, orig: square, dest: square);
+      return cg.Arrow(color: color, orig: square, dest: square, scale: scale);
     }
 
     final move = Move.parse(uci);
     if (move is! NormalMove || !position.isLegal(move)) {
       return null;
     }
-    return cg.Arrow(color: color, orig: move.from, dest: move.to);
+    return cg.Arrow(color: color, orig: move.from, dest: move.to, scale: scale);
   } catch (_) {
     return null;
   }
