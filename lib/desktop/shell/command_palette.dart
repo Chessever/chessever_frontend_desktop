@@ -502,13 +502,33 @@ class _PaletteSection {
   final List<Widget> children;
 }
 
-class _PaletteSectionColumn extends StatelessWidget {
+class _PaletteSectionColumn extends StatefulWidget {
   const _PaletteSectionColumn({required this.section});
 
   final _PaletteSection section;
 
   @override
+  State<_PaletteSectionColumn> createState() => _PaletteSectionColumnState();
+}
+
+class _PaletteSectionColumnState extends State<_PaletteSectionColumn> {
+  late final ScrollController _scrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final section = widget.section;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -519,8 +539,12 @@ class _PaletteSectionColumn extends StatelessWidget {
         ),
         Expanded(
           child: Scrollbar(
+            controller: _scrollController,
             thumbVisibility: false,
+            interactive: true,
             child: ListView(
+              controller: _scrollController,
+              primary: false,
               padding: const EdgeInsets.only(bottom: 6),
               children: section.children,
             ),
