@@ -91,6 +91,140 @@ void main() {
     expect(argsByTab.values.single.gameId, 'gamebase-0');
   });
 
+  testWidgets('Explorer bottom strip navigation controls are always visible', (
+    tester,
+  ) async {
+    _ignoreExplorerEmptyStateOverflowForTest();
+    final repository = _FakeExplorerRepository();
+
+    await tester.pumpWidget(
+      _harness(
+        repository: repository,
+        canGoBack: true,
+        canGoForward: true,
+        onFirstMove: () {},
+        onPreviousMove: () {},
+        onNextMove: () {},
+        onLastMove: () {},
+        onPreviousGame: () {},
+        onNextGame: () {},
+        height: 1000,
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byIcon(Icons.keyboard_double_arrow_left_rounded),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.first_page_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.chevron_left_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.chevron_right_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.last_page_rounded), findsOneWidget);
+    expect(
+      find.byIcon(Icons.keyboard_double_arrow_right_rounded),
+      findsOneWidget,
+    );
+
+    await _openExplorerFromStripIcon(tester);
+
+    expect(
+      find.byIcon(Icons.keyboard_double_arrow_left_rounded),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.first_page_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.chevron_left_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.chevron_right_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.last_page_rounded), findsOneWidget);
+    expect(
+      find.byIcon(Icons.keyboard_double_arrow_right_rounded),
+      findsOneWidget,
+    );
+    await _drainStripTestTimers(tester);
+  });
+
+  testWidgets('Explorer bottom strip disables unavailable move controls', (
+    tester,
+  ) async {
+    _ignoreExplorerEmptyStateOverflowForTest();
+    final repository = _FakeExplorerRepository();
+    var firstMoves = 0;
+    var previousMoves = 0;
+    var nextMoves = 0;
+    var lastMoves = 0;
+
+    await tester.pumpWidget(
+      _harness(
+        repository: repository,
+        canGoBack: false,
+        canGoForward: false,
+        onFirstMove: () => firstMoves += 1,
+        onPreviousMove: () => previousMoves += 1,
+        onNextMove: () => nextMoves += 1,
+        onLastMove: () => lastMoves += 1,
+        height: 1000,
+      ),
+    );
+    await _openExplorerFromStripIcon(tester);
+
+    await tester.tap(find.byIcon(Icons.first_page_rounded));
+    await tester.tap(find.byIcon(Icons.chevron_left_rounded));
+    await tester.tap(find.byIcon(Icons.chevron_right_rounded));
+    await tester.tap(find.byIcon(Icons.last_page_rounded));
+    await tester.pump();
+
+    expect(firstMoves, 0);
+    expect(previousMoves, 0);
+    expect(nextMoves, 0);
+    expect(lastMoves, 0);
+    await _drainStripTestTimers(tester);
+  });
+
+  testWidgets('Explorer bottom strip invokes enabled navigation callbacks', (
+    tester,
+  ) async {
+    _ignoreExplorerEmptyStateOverflowForTest();
+    final repository = _FakeExplorerRepository();
+    var firstMoves = 0;
+    var previousMoves = 0;
+    var nextMoves = 0;
+    var lastMoves = 0;
+    var previousGames = 0;
+    var nextGames = 0;
+
+    await tester.pumpWidget(
+      _harness(
+        repository: repository,
+        canGoBack: true,
+        canGoForward: true,
+        onFirstMove: () => firstMoves += 1,
+        onPreviousMove: () => previousMoves += 1,
+        onNextMove: () => nextMoves += 1,
+        onLastMove: () => lastMoves += 1,
+        onPreviousGame: () => previousGames += 1,
+        onNextGame: () => nextGames += 1,
+        height: 1000,
+      ),
+    );
+    await _openExplorerFromStripIcon(tester);
+
+    await tester.tap(find.byIcon(Icons.keyboard_double_arrow_left_rounded));
+    await tester.tap(find.byIcon(Icons.first_page_rounded));
+    await tester.tap(find.byIcon(Icons.chevron_left_rounded));
+    await tester.tap(find.byIcon(Icons.chevron_right_rounded));
+    await tester.tap(find.byIcon(Icons.last_page_rounded));
+    await tester.tap(find.byIcon(Icons.keyboard_double_arrow_right_rounded));
+    await tester.pump();
+
+    expect(previousGames, 1);
+    expect(firstMoves, 1);
+    expect(previousMoves, 1);
+    expect(nextMoves, 1);
+    expect(lastMoves, 1);
+    expect(nextGames, 1);
+    await _drainStripTestTimers(tester);
+  });
+
   testWidgets(
     'ArrowDown inside Explorer games keeps the selected game visible',
     (tester) async {
@@ -1684,9 +1818,18 @@ Widget _harness({
   onPreviewUciLine,
   ValueChanged<NotationVerticalDirection>? onNotationVertical,
   bool Function(int delta)? onNotationStep,
+  bool canGoBack = false,
+  bool canGoForward = false,
+  VoidCallback? onFirstMove,
+  VoidCallback? onPreviousMove,
+  VoidCallback? onNextMove,
+  VoidCallback? onLastMove,
+  VoidCallback? onPreviousGame,
+  VoidCallback? onNextGame,
   int previewLineStep = 0,
   bool previewLineAutoplay = false,
   double width = 760,
+  double height = 360,
 }) {
   return ProviderScope(
     overrides: [
@@ -1701,7 +1844,7 @@ Widget _harness({
         backgroundColor: kBackgroundColor,
         body: SizedBox(
           width: width,
-          height: 360,
+          height: height,
           child: NotationOpeningPanel(
             notationChild: const Center(child: Text('Notation')),
             currentFen: _initialFen,
@@ -1716,11 +1859,34 @@ Widget _harness({
             previewLineAutoplay: previewLineAutoplay,
             onNotationVertical: onNotationVertical,
             onNotationStep: onNotationStep,
+            canGoBack: canGoBack,
+            canGoForward: canGoForward,
+            onFirstMove: onFirstMove,
+            onPreviousMove: onPreviousMove,
+            onNextMove: onNextMove,
+            onLastMove: onLastMove,
+            onPreviousGame: onPreviousGame,
+            onNextGame: onNextGame,
           ),
         ),
       ),
     ),
   );
+}
+
+void _ignoreExplorerEmptyStateOverflowForTest() {
+  final previous = FlutterError.onError;
+  FlutterError.onError = (details) {
+    if (details.exceptionAsString().contains('A RenderFlex overflowed')) {
+      return;
+    }
+    previous?.call(details);
+  };
+  addTearDown(() => FlutterError.onError = previous);
+}
+
+Future<void> _drainStripTestTimers(WidgetTester tester) async {
+  await tester.pump(const Duration(milliseconds: 100));
 }
 
 class _PreviewLineCall {
@@ -2174,6 +2340,12 @@ Future<void> _openExplorerTab(WidgetTester tester) async {
     explorerTab.evaluate().isNotEmpty ? explorerTab : compactExplorerTab,
   );
   await tester.pumpAndSettle();
+}
+
+Future<void> _openExplorerFromStripIcon(WidgetTester tester) async {
+  await tester.pump();
+  await tester.tap(find.byIcon(Icons.menu_book_outlined).first);
+  await tester.pump();
 }
 
 Future<void> _openGamesTab(WidgetTester tester) async {
