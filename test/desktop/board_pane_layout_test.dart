@@ -26,39 +26,40 @@ void main() {
     );
   });
 
-  test('board resize enters focus after threshold or max overshoot', () {
-    expect(
-      shouldEnterBoardFocusAfterResize(
-        requestedSize: 759,
+  test('board resize never enters focus mode implicitly', () {
+    final scenarios = [
+      (
+        requestedSize: 759.0,
         grewPastResizeLimit: false,
         isAlreadyFocused: false,
       ),
-      isFalse,
-    );
-    expect(
-      shouldEnterBoardFocusAfterResize(
-        requestedSize: 760,
+      (
+        requestedSize: 760.0,
         grewPastResizeLimit: false,
         isAlreadyFocused: false,
       ),
-      isTrue,
-    );
-    expect(
-      shouldEnterBoardFocusAfterResize(
-        requestedSize: 620,
+      (
+        requestedSize: 900.0,
+        grewPastResizeLimit: false,
+        isAlreadyFocused: false,
+      ),
+      (
+        requestedSize: 620.0,
         grewPastResizeLimit: true,
         isAlreadyFocused: false,
       ),
-      isTrue,
-    );
-    expect(
-      shouldEnterBoardFocusAfterResize(
-        requestedSize: 900,
-        grewPastResizeLimit: true,
-        isAlreadyFocused: true,
-      ),
-      isFalse,
-    );
+      (requestedSize: 900.0, grewPastResizeLimit: true, isAlreadyFocused: true),
+    ];
+    for (final scenario in scenarios) {
+      expect(
+        shouldEnterBoardFocusAfterResize(
+          requestedSize: scenario.requestedSize,
+          grewPastResizeLimit: scenario.grewPastResizeLimit,
+          isAlreadyFocused: scenario.isAlreadyFocused,
+        ),
+        isFalse,
+      );
+    }
   });
 
   test('board resize drag uses dominant signed axis without cancellation', () {
