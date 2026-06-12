@@ -110,6 +110,9 @@ class DesktopGameCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final showEvaluationBar =
+        ref.watch(boardSettingsProviderNew).valueOrNull?.showEvaluationBar ??
+        true;
     final Widget card;
     switch (layout) {
       case DesktopCardLayout.grid:
@@ -117,18 +120,21 @@ class DesktopGameCard extends ConsumerWidget {
           data: data,
           selected: selected,
           allowStockfishFallback: allowStockfishFallback,
+          showEvaluationBar: showEvaluationBar,
         );
       case DesktopCardLayout.compact:
         card = _CompactLayout(
           data: data,
           selected: selected,
           allowStockfishFallback: allowStockfishFallback,
+          showEvaluationBar: showEvaluationBar,
         );
       case DesktopCardLayout.list:
         card = _ListLayout(
           data: data,
           selected: selected,
           allowStockfishFallback: allowStockfishFallback,
+          showEvaluationBar: showEvaluationBar,
         );
     }
 
@@ -252,10 +258,12 @@ class _ListLayout extends StatefulWidget {
     required this.data,
     required this.selected,
     required this.allowStockfishFallback,
+    required this.showEvaluationBar,
   });
   final GameCardData data;
   final bool selected;
   final bool allowStockfishFallback;
+  final bool showEvaluationBar;
 
   @override
   State<_ListLayout> createState() => _ListLayoutState();
@@ -343,16 +351,17 @@ class _ListLayoutState extends State<_ListLayout> {
                   ),
                 ),
                 if (isLive) ...[
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: _HorizontalEvalBar(
-                      fen: widget.data.fen,
-                      height: 3,
-                      allowStockfishFallback: widget.allowStockfishFallback,
+                  if (widget.showEvaluationBar)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: _HorizontalEvalBar(
+                        fen: widget.data.fen,
+                        height: 3,
+                        allowStockfishFallback: widget.allowStockfishFallback,
+                      ),
                     ),
-                  ),
                   Positioned(
                     top: 8,
                     right: 10,
@@ -814,10 +823,12 @@ class _CompactLayout extends StatefulWidget {
     required this.data,
     required this.selected,
     required this.allowStockfishFallback,
+    required this.showEvaluationBar,
   });
   final GameCardData data;
   final bool selected;
   final bool allowStockfishFallback;
+  final bool showEvaluationBar;
 
   @override
   State<_CompactLayout> createState() => _CompactLayoutState();
@@ -908,16 +919,17 @@ class _CompactLayoutState extends State<_CompactLayout> {
                   ),
                 ),
                 if (isLive) ...[
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: _HorizontalEvalBar(
-                      fen: widget.data.fen,
-                      height: 3,
-                      allowStockfishFallback: widget.allowStockfishFallback,
+                  if (widget.showEvaluationBar)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: _HorizontalEvalBar(
+                        fen: widget.data.fen,
+                        height: 3,
+                        allowStockfishFallback: widget.allowStockfishFallback,
+                      ),
                     ),
-                  ),
                   Positioned(
                     top: 5,
                     left: 12,
@@ -948,10 +960,12 @@ class _GridLayout extends StatefulWidget {
     required this.data,
     required this.selected,
     required this.allowStockfishFallback,
+    required this.showEvaluationBar,
   });
   final GameCardData data;
   final bool selected;
   final bool allowStockfishFallback;
+  final bool showEvaluationBar;
 
   @override
   State<_GridLayout> createState() => _GridLayoutState();
@@ -1037,7 +1051,7 @@ class _GridLayoutState extends State<_GridLayout> {
                       if (!side.isFinite || side <= 0) {
                         return const SizedBox.shrink();
                       }
-                      const railWidth = 14.0;
+                      final railWidth = widget.showEvaluationBar ? 14.0 : 0.0;
                       final boardSide = math.min(w - railWidth, hSafe);
                       if (!boardSide.isFinite || boardSide <= 0) {
                         return const SizedBox.shrink();
@@ -1051,23 +1065,24 @@ class _GridLayoutState extends State<_GridLayout> {
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                // Give the mini-board eval rail enough
-                                // left-side width for readable numeric
-                                // labels. The earlier 8px sliver made the
-                                // top readout effectively disappear in dense
-                                // tournament grids.
-                                SizedBox(
-                                  width: railWidth,
-                                  height: boardSide,
-                                  child: _EvalRail(
-                                    fen: widget.data.fen,
+                                if (widget.showEvaluationBar)
+                                  // Give the mini-board eval rail enough
+                                  // left-side width for readable numeric
+                                  // labels. The earlier 8px sliver made the
+                                  // top readout effectively disappear in dense
+                                  // tournament grids.
+                                  SizedBox(
                                     width: railWidth,
                                     height: boardSide,
-                                    view: PlayerView.gridView,
-                                    allowStockfishFallback:
-                                        widget.allowStockfishFallback,
+                                    child: _EvalRail(
+                                      fen: widget.data.fen,
+                                      width: railWidth,
+                                      height: boardSide,
+                                      view: PlayerView.gridView,
+                                      allowStockfishFallback:
+                                          widget.allowStockfishFallback,
+                                    ),
                                   ),
-                                ),
                                 Expanded(
                                   child: _BoardPreview(
                                     data: widget.data,
