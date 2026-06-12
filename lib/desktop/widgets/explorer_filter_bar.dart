@@ -196,15 +196,12 @@ class PlayerOpeningTreeProgressChip extends StatelessWidget {
     final status = progress.status;
     final isError = status == PlayerOpeningTreeStatus.error;
     final isComplete = status == PlayerOpeningTreeStatus.complete;
-    final fetchedLabel = _priorityFetchedLabel(progress);
     final label =
         isError
             ? 'Tree failed'
             : isComplete
-            ? 'Tree complete · ${_fmt(progress.processedGames)} games'
-            : '$fetchedLabel'
-                ' · building ${_fmt(progress.processedGames)}'
-                ' · ${_fmt(progress.indexedPositions)} positions';
+            ? 'Tree ready · ${_fmt(progress.indexedPositions)} positions'
+            : 'Building player tree';
     final color =
         isError
             ? kRedColor
@@ -261,20 +258,6 @@ class PlayerOpeningTreeProgressChip extends StatelessWidget {
       ),
     );
   }
-}
-
-String _priorityFetchedLabel(PlayerOpeningTreeProgress progress) {
-  final priorityFetched = progress.priorityFetchedGames;
-  final priorityTotal = progress.priorityTotalGames;
-  final color = progress.priorityColor;
-  if (priorityFetched != null && color != null && color.isNotEmpty) {
-    final colorLabel = color.toLowerCase();
-    if (priorityTotal != null) {
-      return 'Fetched $colorLabel ${_fmt(priorityFetched)}/${_fmt(priorityTotal)}';
-    }
-    return 'Fetched $colorLabel ${_fmt(priorityFetched)}';
-  }
-  return 'Fetched ${_fmt(progress.fetchedGames)}';
 }
 
 String _fmt(int value) {

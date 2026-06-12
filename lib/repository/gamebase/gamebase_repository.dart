@@ -114,6 +114,29 @@ class GamebaseRepository {
   Options _requestOptions({Duration? receiveTimeout}) =>
       Options(headers: _headers, receiveTimeout: receiveTimeout);
 
+  bool get _useDirectOpeningTreeApi =>
+      kDebugMode && (_env('GAMEBASE_API_KEY')?.isNotEmpty == true);
+
+  String get _openingTreeBaseUrl {
+    if (!_useDirectOpeningTreeApi) return _baseUrl;
+    final explicitBase = _env('GAMEBASE_OPENING_TREE_BASE');
+    if (explicitBase != null && explicitBase.isNotEmpty) {
+      return _trimTrailingSlash(explicitBase);
+    }
+    return 'https://service.chessever.com';
+  }
+
+  Options _openingTreeRequestOptions() {
+    if (!_useDirectOpeningTreeApi) return _requestOptions();
+    return Options(
+      headers: <String, String>{
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'X-API-Key': _env('GAMEBASE_API_KEY')!,
+      },
+    );
+  }
+
   Future<GamebaseResponse> getMoveAggregates({
     required String fen,
     List<String> moves = const [],
@@ -860,6 +883,106 @@ class GamebaseRepository {
     return Map<String, dynamic>.from(response.data);
   }
 
+  /// Start or reuse a backend-built player opening tree.
+  ///
+  /// Build Tree tabs always pass `forceRebuild: false`; the parameter remains
+  /// explicit for the API surface, but callers should not force rebuilds from
+  /// the desktop UI.
+  Future<Map<String, dynamic>> startPlayerOpeningTreeBuild({
+    required String playerId,
+    int maxPly = 40,
+    bool forceRebuild = false,
+  }) async {
+    final baseUrl = _openingTreeBaseUrl;
+    final url = '$baseUrl/api/player/$playerId/opening-tree/build';
+    try {
+      if (kDebugMode) {
+        debugPrint(
+          '[PlayerOpeningTree][Repository] build request '
+          'url=$url mode=${_useDirectOpeningTreeApi ? 'direct' : 'proxy'} '
+          'player=$playerId maxPly=$maxPly forceRebuild=$forceRebuild',
+        );
+      }
+      final response = await _dio.post(
+        url,
+        data: <String, dynamic>{'maxPly': maxPly, 'forceRebuild': forceRebuild},
+        options: _openingTreeRequestOptions(),
+      );
+      if (kDebugMode) {
+        debugPrint(
+          '[PlayerOpeningTree][Repository] build response '
+          'player=$playerId http=${response.statusCode} body=${_debugBody(response.data)}',
+        );
+      }
+      return Map<String, dynamic>.from(response.data);
+    } on DioException catch (e) {
+      if (kDebugMode) {
+        debugPrint(
+          '[PlayerOpeningTree][Repository] build failed '
+          'player=$playerId http=${e.response?.statusCode} type=${e.type} '
+          'body=${_debugBody(e.response?.data)}',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// Poll the backend player opening tree build status.
+  Future<Map<String, dynamic>> getPlayerOpeningTreeStatus({
+    required String playerId,
+    required String treeId,
+  }) async {
+    final response = await _dio.get(
+      '$_openingTreeBaseUrl/api/player/$playerId/opening-tree/status',
+      queryParameters: <String, dynamic>{'treeId': treeId},
+      options: _openingTreeRequestOptions(),
+    );
+    if (kDebugMode) {
+      debugPrint(
+        '[PlayerOpeningTree][Repository] status response '
+        'player=$playerId treeId=$treeId http=${response.statusCode} '
+        'body=${_debugBody(response.data)}',
+      );
+    }
+    return Map<String, dynamic>.from(response.data);
+  }
+
+  /// Download a ready backend player opening tree.
+  ///
+  /// Returns `null` when the backend responds with HTTP 202, meaning the tree is
+  /// still being prepared.
+  Future<Map<String, dynamic>?> getPlayerOpeningTree({
+    required String playerId,
+    required String treeId,
+  }) async {
+    try {
+      final response = await _dio.get(
+        '$_openingTreeBaseUrl/api/player/$playerId/opening-tree',
+        queryParameters: <String, dynamic>{'treeId': treeId},
+        options: _openingTreeRequestOptions(),
+      );
+      if (kDebugMode) {
+        debugPrint(
+          '[PlayerOpeningTree][Repository] download tree '
+          'player=$playerId treeId=$treeId http=${response.statusCode} '
+          'body=${_debugBody(response.data)}',
+        );
+      }
+      if (response.statusCode == 202) return null;
+      return Map<String, dynamic>.from(response.data);
+    } on DioException catch (e) {
+      if (kDebugMode) {
+        debugPrint(
+          '[PlayerOpeningTree][Repository] download tree failed '
+          'player=$playerId treeId=$treeId http=${e.response?.statusCode} '
+          'type=${e.type} body=${_debugBody(e.response?.data)}',
+        );
+      }
+      if (e.response?.statusCode == 202) return null;
+      rethrow;
+    }
+  }
+
   /// List example games for a given position (and optionally a specific move from that position).
   ///
   /// Pagination is 0-indexed per the API spec for this endpoint.
@@ -1050,6 +1173,12 @@ class GamebaseRepository {
       throw Exception('Failed to load FEN position games: $e');
     }
   }
+}
+
+String _debugBody(Object? data) {
+  final text = data?.toString() ?? 'null';
+  if (text.length <= 500) return text;
+  return '${text.substring(0, 500)}...';
 }
 
 final gamebaseRepositoryProvider = Provider<GamebaseRepository>((ref) {

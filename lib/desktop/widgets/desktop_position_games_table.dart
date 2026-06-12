@@ -199,6 +199,8 @@ class DesktopPositionGamesTable extends ConsumerStatefulWidget {
     this.activeContinuationStep,
     this.activeContinuationAutoplay = false,
     this.active = true,
+    this.waitForPlayerOpeningTree = false,
+    this.playerOpeningTreePlayerId,
   });
 
   /// Optional bridge for host-driven keyboard navigation. The host calls
@@ -229,6 +231,14 @@ class DesktopPositionGamesTable extends ConsumerStatefulWidget {
   /// but pagination and query refresh work should pause until the page is
   /// foregrounded again.
   final bool active;
+
+  /// True only for player-profile Build Tree scopes. When set, the table waits
+  /// for the backend tree snapshot before using the normal position-games API.
+  final bool waitForPlayerOpeningTree;
+
+  /// Player id for the Build Tree scope. Supplying this prevents the first
+  /// frame from fetching unscoped games before global explorer filters apply.
+  final String? playerOpeningTreePlayerId;
 
   /// reference-style compact position-reference density for the in-game
   /// Explorer split. The column schema stays shared with the standalone
@@ -291,6 +301,7 @@ class _DesktopPositionGamesTableState
   BoardTabPositionGamesApi? _resolvedApi;
   GamebasePositionGamesQuery? _lastSuccessfulQuery;
   String? _error;
+  String? _waitingForTreeMessage;
   bool _needsRefresh = false;
 
   /// Local sort override. Click on a sortable column header sets this and
@@ -398,6 +409,31 @@ class _DesktopPositionGamesTableState
       return;
     }
     _needsRefresh = false;
+    final treeWaitMessage = _playerTreeWaitMessage();
+    if (treeWaitMessage != null) {
+      _requestToken += 1;
+      _fullContinuationCache.clear();
+      _loadingFullContinuations.clear();
+      setState(() {
+        _rows.clear();
+        _isInitialLoading = false;
+        _isLoadingMore = false;
+        _hasMore = false;
+        _nextPageNumber = 0;
+        _totalCount = null;
+        _resolvedApi = null;
+        _lastSuccessfulQuery = null;
+        _error = null;
+        _waitingForTreeMessage = treeWaitMessage;
+      });
+      _pruneRowKeys(const <String>[]);
+      widget.controller?._setRows(
+        const <String>[],
+        const <List<String>>[],
+        const <String?>[],
+      );
+      return;
+    }
     final pageNumber = reset ? 0 : _nextPageNumber;
     if (reset) {
       _requestToken += 1;
@@ -413,6 +449,7 @@ class _DesktopPositionGamesTableState
         _resolvedApi = null;
         _lastSuccessfulQuery = null;
         _error = null;
+        _waitingForTreeMessage = null;
       });
       if (!hadRows) {
         _pruneRowKeys(const <String>[]);
@@ -506,6 +543,67 @@ class _DesktopPositionGamesTableState
         );
       }
     }
+  }
+
+  String? _playerTreeWaitMessage() {
+    if (!widget.waitForPlayerOpeningTree) return null;
+    final filters = ref.read(gamebaseExplorerProvider).filters;
+    final scopedPlayerId = widget.playerOpeningTreePlayerId?.trim();
+    final playerId =
+        scopedPlayerId != null && scopedPlayerId.isNotEmpty
+            ? scopedPlayerId
+            : filters.playerIds.length == 1
+            ? filters.playerIds.first.trim()
+            : '';
+    if (playerId.isEmpty) {
+      _logPlayerTreeWait('no player id available for Build Tree wait gate');
+      return null;
+    }
+
+    final treeState = ref.read(playerOpeningTreeProvider(playerId));
+    _schedulePlayerTreeStart(playerId);
+    if (filters.playerIds.length != 1 ||
+        filters.playerIds.first.trim() != playerId) {
+      _logPlayerTreeWait(
+        'waiting for scoped filters player=$playerId '
+        'filterPlayerIds=${filters.playerIds}',
+      );
+      return 'Games will load after the player tree scope is ready.';
+    }
+    if (treeState.progress.status == PlayerOpeningTreeStatus.complete) {
+      _logPlayerTreeWait(
+        'tree ready, games may fetch player=$playerId '
+        'treeId=${treeState.treeId} positions=${treeState.index.positionCount}',
+      );
+      return null;
+    }
+    if (treeState.progress.status == PlayerOpeningTreeStatus.error) {
+      _logPlayerTreeWait(
+        'tree error player=$playerId treeId=${treeState.treeId} '
+        'error=${treeState.progress.error}',
+      );
+      return treeState.progress.error ?? 'Player tree build failed.';
+    }
+    _logPlayerTreeWait(
+      'waiting for tree player=$playerId treeId=${treeState.treeId} '
+      'status=${treeState.progress.status.name}',
+    );
+    return 'Games will load after the player tree is ready.';
+  }
+
+  void _schedulePlayerTreeStart(String playerId) {
+    Future.microtask(() {
+      if (!mounted) return;
+      _logPlayerTreeWait('scheduled tree start player=$playerId');
+      ref
+          .read(gamebaseExplorerProvider.notifier)
+          .enableLocalPlayerTree(playerId);
+      ref.read(playerOpeningTreeProvider(playerId).notifier).start();
+    });
+  }
+
+  void _logPlayerTreeWait(String message) {
+    if (kDebugMode) debugPrint('[PlayerOpeningTree][GamesTable] $message');
   }
 
   GamebasePositionGamesQuery _buildQuery({required int pageNumber}) {
@@ -1082,6 +1180,13 @@ class _DesktopPositionGamesTableState
   }
 
   Widget _buildBody(BoardSettingsNew boardSettings) {
+    if (_waitingForTreeMessage != null && _rows.isEmpty) {
+      return _Empty(
+        icon: Icons.account_tree_outlined,
+        title: 'Building player tree',
+        message: _waitingForTreeMessage!,
+      );
+    }
     if (_isInitialLoading && _rows.isEmpty) {
       return const Center(
         child: SizedBox(

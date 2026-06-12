@@ -1442,12 +1442,15 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       sortedAggregatesCallback: (next) => _sortedAggs = next,
       onMove: _activateExplorerMove,
       onShowGames: widget.onShowGames,
+      usePlayerOpeningTree: widget.explorerScope != null,
     );
     final gamesPanel = DesktopPositionGamesTable(
       fen: widget.currentFen,
       moves: widget.lineUcis,
       exactFenSearch: widget.exactFenSearch,
       active: widget.active,
+      waitForPlayerOpeningTree: widget.explorerScope != null,
+      playerOpeningTreePlayerId: widget.explorerScope?.player.id,
       controller: _gamesController,
       referenceLayout: true,
       activeContinuationStep: activeContinuationStep,
