@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
@@ -7,9 +8,14 @@ import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
+import 'package:chessever/repository/supabase/calendar_event/calendar_event.dart';
+import 'package:chessever/repository/supabase/calendar_event/calendar_event_repository.dart';
+import 'package:chessever/repository/supabase/group_broadcast/group_tour_repository.dart';
+import 'package:chessever/screens/calendar/calendar_event_detail_screen.dart';
 import 'package:chessever/screens/calendar/calendar_screen.dart';
 import 'package:chessever/screens/calendar/provider/calendar_screen_provider.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
+import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 /// Desktop calendar pane.
@@ -30,6 +36,7 @@ class _CalendarPaneState extends ConsumerState<CalendarPane> {
   /// `null` means "show every event in the active month". Tapping a day
   /// in the grid drills into just that day; tap again to clear.
   int? _selectedDay;
+  String? _selectedEventId;
   final TextEditingController _searchController = TextEditingController();
 
   @override
@@ -78,14 +85,20 @@ class _CalendarPaneState extends ConsumerState<CalendarPane> {
               final now = DateTime.now();
               ref.read(selectedYearProvider.notifier).state = now.year;
               ref.read(selectedMonthProvider.notifier).state = now.month;
-              setState(() => _selectedDay = now.day);
+              setState(() {
+                _selectedDay = now.day;
+                _selectedEventId = null;
+              });
             },
           ),
           _MonthPills(
             selected: selectedMonth,
             onSelect: (month) {
               ref.read(selectedMonthProvider.notifier).state = month;
-              setState(() => _selectedDay = null);
+              setState(() {
+                _selectedDay = null;
+                _selectedEventId = null;
+              });
             },
           ),
           const Divider(height: 1, color: kDividerColor),
@@ -97,9 +110,15 @@ class _CalendarPaneState extends ConsumerState<CalendarPane> {
                   year: selectedYear,
                   month: selectedMonth,
                   selectedDay: _selectedDay,
+                  selectedEventId: _selectedEventId,
                   monthEvents: monthSummary?.events ?? const [],
-                  onSelectDay: (day) =>
-                      setState(() => _selectedDay = day),
+                  onSelectDay: (day) => setState(() {
+                    _selectedDay = day;
+                    _selectedEventId = null;
+                  }),
+                  onSelectEvent: (event) =>
+                      setState(() => _selectedEventId = event.id),
+                  onOpenEvent: _openEvent,
                 );
               },
               loading: () => const Center(
@@ -131,13 +150,79 @@ class _CalendarPaneState extends ConsumerState<CalendarPane> {
 
   void _setYear(int year) {
     ref.read(selectedYearProvider.notifier).state = year;
-    setState(() => _selectedDay = null);
+    setState(() {
+      _selectedDay = null;
+      _selectedEventId = null;
+    });
   }
 
-  MonthEventsSummary? _summaryFor(
-    List<MonthEventsSummary> months,
-    int month,
-  ) {
+  Future<void> _openEvent(GroupEventCardModel event) async {
+    try {
+      if (event.eventSource == EventSource.communityEvent) {
+        final repo = ref.read(calendarEventRepositoryProvider);
+        final yearEvents = await repo.getCalendarEventsForYear(
+          year: ref.read(selectedYearProvider),
+          limit: 1000,
+        );
+        final byId = <String, CalendarEvent>{
+          for (final calendarEvent in yearEvents)
+            _sanitizeCalendarEventId(calendarEvent.name): calendarEvent,
+        };
+        CalendarEvent? match = byId[event.id];
+
+        if (match == null) {
+          final results = await repo.searchCalendarEvents(event.title);
+          for (final calendarEvent in results) {
+            if (_sanitizeCalendarEventId(calendarEvent.name) == event.id) {
+              match = calendarEvent;
+              break;
+            }
+          }
+          match ??= results.isNotEmpty ? results.first : null;
+        }
+
+        if (!mounted) return;
+        if (match == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Event details not found')),
+          );
+          return;
+        }
+
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => CalendarEventDetailScreen(event: match!),
+          ),
+        );
+        return;
+      }
+
+      final broadcast = await ref
+          .read(groupBroadcastRepositoryProvider)
+          .getGroupBroadcastById(event.id);
+      ref.read(selectedBroadcastModelProvider.notifier).state = broadcast;
+
+      if (!mounted) return;
+      if (ref.read(selectedBroadcastModelProvider) != null) {
+        Navigator.pushNamed(context, '/tournament_detail_screen');
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Unable to open event')));
+    }
+  }
+
+  String _sanitizeCalendarEventId(String name) {
+    final sanitizedName = name
+        .replaceAll(' ', '_')
+        .replaceAll(RegExp(r'[^\w\-]'), '')
+        .toLowerCase();
+    return 'cal_event_$sanitizedName';
+  }
+
+  MonthEventsSummary? _summaryFor(List<MonthEventsSummary> months, int month) {
     for (final summary in months) {
       if (summary.monthNumber == month) return summary;
     }
@@ -179,11 +264,7 @@ class _YearBar extends StatelessWidget {
           const SizedBox(width: 6),
           _IconBtn(icon: Icons.chevron_right_rounded, onTap: onNext),
           const Spacer(),
-          _PillBtn(
-            label: 'Today',
-            icon: Icons.today_rounded,
-            onTap: onToday,
-          ),
+          _PillBtn(label: 'Today', icon: Icons.today_rounded, onTap: onToday),
         ],
       ),
     );
@@ -197,8 +278,18 @@ class _MonthPills extends StatelessWidget {
   final ValueChanged<int> onSelect;
 
   static const _names = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
 
   @override
@@ -267,25 +358,25 @@ class _MonthPillState extends State<_MonthPill> {
             builder: (context, scale, child) =>
                 Transform.scale(scale: scale, child: child),
             child: AnimatedContainer(
-            duration: const Duration(milliseconds: 80),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: selected
-                  ? kPrimaryColor
-                  : (_hovered ? kBlack3Color : kBlack2Color),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: selected ? kPrimaryColor : kDividerColor,
+              duration: const Duration(milliseconds: 80),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: selected
+                    ? kPrimaryColor
+                    : (_hovered ? kBlack3Color : kBlack2Color),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: selected ? kPrimaryColor : kDividerColor,
+                ),
               ),
-            ),
-            child: Text(
-              widget.label,
-              style: TextStyle(
-                color: selected ? kBackgroundColor : kWhiteColor,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
+              child: Text(
+                widget.label,
+                style: TextStyle(
+                  color: selected ? kBackgroundColor : kWhiteColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
             ),
           ),
         ),
@@ -390,15 +481,21 @@ class _Body extends StatelessWidget {
     required this.year,
     required this.month,
     required this.selectedDay,
+    required this.selectedEventId,
     required this.monthEvents,
     required this.onSelectDay,
+    required this.onSelectEvent,
+    required this.onOpenEvent,
   });
 
   final int year;
   final int month;
   final int? selectedDay;
+  final String? selectedEventId;
   final List<GroupEventCardModel> monthEvents;
   final ValueChanged<int?> onSelectDay;
+  final ValueChanged<GroupEventCardModel> onSelectEvent;
+  final ValueChanged<GroupEventCardModel> onOpenEvent;
 
   @override
   Widget build(BuildContext context) {
@@ -410,13 +507,11 @@ class _Body extends StatelessWidget {
             if (start == null) return false;
             final selected = DateTime(year, month, selectedDay!);
             // Inclusive range — show event on every day it spans.
-            final startDay =
-                DateTime(start.year, start.month, start.day);
+            final startDay = DateTime(start.year, start.month, start.day);
             final endDay = end == null
                 ? startDay
                 : DateTime(end.year, end.month, end.day);
-            return !selected.isBefore(startDay) &&
-                !selected.isAfter(endDay);
+            return !selected.isBefore(startDay) && !selected.isAfter(endDay);
           }).toList();
 
     return Row(
@@ -440,6 +535,9 @@ class _Body extends StatelessWidget {
             heading: selectedDay == null
                 ? '${_monthNames[month - 1]} $year'
                 : '${_monthNames[month - 1]} $selectedDay, $year',
+            selectedEventId: selectedEventId,
+            onSelectEvent: onSelectEvent,
+            onOpenEvent: onOpenEvent,
           ),
         ),
       ],
@@ -516,8 +614,7 @@ class _MonthGrid extends StatelessWidget {
                   selected: selectedDay == day,
                   isToday: isCurrentMonth && today.day == day,
                   eventCount: eventsByDay[day] ?? 0,
-                  onTap: () =>
-                      onSelectDay(selectedDay == day ? null : day),
+                  onTap: () => onSelectDay(selectedDay == day ? null : day),
                 );
               },
             ),
@@ -611,66 +708,69 @@ class _DayCellState extends State<_DayCell> {
             builder: (context, scale, child) =>
                 Transform.scale(scale: scale, child: child),
             child: AnimatedContainer(
-            duration: const Duration(milliseconds: 80),
-            decoration: BoxDecoration(
-              color: bg,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: selected
-                    ? kPrimaryColor
-                    : (isToday ? kPrimaryColor : kDividerColor),
-                width: isToday && !selected ? 1.5 : 1,
-              ),
-            ),
-            padding: const EdgeInsets.all(6),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${widget.day}',
-                  style: TextStyle(
-                    color: fg,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
+              duration: const Duration(milliseconds: 80),
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: selected
+                      ? kPrimaryColor
+                      : (isToday ? kPrimaryColor : kDividerColor),
+                  width: isToday && !selected ? 1.5 : 1,
                 ),
-                const Spacer(),
-                if (hasEvents)
-                  Row(
-                    children: [
-                      for (var i = 0;
-                          i < widget.eventCount.clamp(1, 3);
-                          i++) ...[
-                        Container(
-                          width: 5,
-                          height: 5,
-                          decoration: BoxDecoration(
-                            color: selected ? kBackgroundColor : kPrimaryColor,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        if (i <
-                            widget.eventCount.clamp(1, 3) - 1)
-                          const SizedBox(width: 3),
-                      ],
-                      if (widget.eventCount > 3) ...[
-                        const SizedBox(width: 3),
-                        Text(
-                          '+${widget.eventCount - 3}',
-                          style: TextStyle(
-                            color: selected
-                                ? kBackgroundColor
-                                : kLightGreyColor,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ],
+              ),
+              padding: const EdgeInsets.all(6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${widget.day}',
+                    style: TextStyle(
+                      color: fg,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
                   ),
-              ],
-            ),
+                  const Spacer(),
+                  if (hasEvents)
+                    Row(
+                      children: [
+                        for (
+                          var i = 0;
+                          i < widget.eventCount.clamp(1, 3);
+                          i++
+                        ) ...[
+                          Container(
+                            width: 5,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? kBackgroundColor
+                                  : kPrimaryColor,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          if (i < widget.eventCount.clamp(1, 3) - 1)
+                            const SizedBox(width: 3),
+                        ],
+                        if (widget.eventCount > 3) ...[
+                          const SizedBox(width: 3),
+                          Text(
+                            '+${widget.eventCount - 3}',
+                            style: TextStyle(
+                              color: selected
+                                  ? kBackgroundColor
+                                  : kLightGreyColor,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                ],
+              ),
             ),
           ),
         ),
@@ -680,9 +780,18 @@ class _DayCellState extends State<_DayCell> {
 }
 
 class _EventsList extends StatelessWidget {
-  const _EventsList({required this.events, required this.heading});
+  const _EventsList({
+    required this.events,
+    required this.heading,
+    required this.selectedEventId,
+    required this.onSelectEvent,
+    required this.onOpenEvent,
+  });
   final List<GroupEventCardModel> events;
   final String heading;
+  final String? selectedEventId;
+  final ValueChanged<GroupEventCardModel> onSelectEvent;
+  final ValueChanged<GroupEventCardModel> onOpenEvent;
 
   @override
   Widget build(BuildContext context) {
@@ -703,8 +812,7 @@ class _EventsList extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: kBlack3Color,
                   borderRadius: BorderRadius.circular(4),
@@ -730,8 +838,15 @@ class _EventsList extends StatelessWidget {
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
                   itemCount: events.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 6),
-                  itemBuilder: (context, i) =>
-                      _EventCard(event: events[i]),
+                  itemBuilder: (context, i) {
+                    final event = events[i];
+                    return _EventCard(
+                      event: event,
+                      selected: selectedEventId == event.id,
+                      onSelect: () => onSelectEvent(event),
+                      onOpen: () => onOpenEvent(event),
+                    );
+                  },
                 ),
         ),
       ],
@@ -740,100 +855,178 @@ class _EventsList extends StatelessWidget {
 }
 
 class _EventCard extends StatefulWidget {
-  const _EventCard({required this.event});
+  const _EventCard({
+    required this.event,
+    required this.selected,
+    required this.onSelect,
+    required this.onOpen,
+  });
+
   final GroupEventCardModel event;
+  final bool selected;
+  final VoidCallback onSelect;
+  final VoidCallback onOpen;
 
   @override
   State<_EventCard> createState() => _EventCardState();
 }
 
 class _EventCardState extends State<_EventCard> {
+  final FocusNode _focusNode = FocusNode();
   bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final e = widget.event;
-    return ClickCursor(
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: MotionCard(
-          borderRadius: 6,
-          child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: _hovered ? kBlack3Color : kBlack2Color,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: _hovered
-                  ? kPrimaryColor.withValues(alpha: 0.3)
-                  : kDividerColor,
-            ),
+    final active = widget.selected || _focused;
+    final borderColor = active
+        ? kPrimaryColor.withValues(alpha: 0.75)
+        : (_hovered ? kPrimaryColor.withValues(alpha: 0.3) : kDividerColor);
+    final background = active
+        ? kPrimaryColor.withValues(alpha: 0.09)
+        : (_hovered ? kBlack3Color : kBlack2Color);
+
+    return Shortcuts(
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.numpadEnter): ActivateIntent(),
+      },
+      child: Actions(
+        actions: {
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              widget.onSelect();
+              widget.onOpen();
+              return null;
+            },
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                e.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  const Icon(Icons.event_outlined,
-                      size: 11, color: kLightGreyColor),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      e.dates,
-                      style: const TextStyle(
-                        color: kLightGreyColor,
-                        fontSize: 11,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                      ),
+        },
+        child: Focus(
+          focusNode: _focusNode,
+          onFocusChange: (focused) => setState(() => _focused = focused),
+          child: ClickCursor(
+            child: MouseRegion(
+              onEnter: (_) => setState(() => _hovered = true),
+              onExit: (_) => setState(() => _hovered = false),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  _focusNode.requestFocus();
+                  widget.onSelect();
+                },
+                onDoubleTap: () {
+                  _focusNode.requestFocus();
+                  widget.onSelect();
+                  widget.onOpen();
+                },
+                child: MotionCard(
+                  borderRadius: 6,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 80),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: background,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: borderColor),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                e.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: kWhiteColor,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            if (active) ...[
+                              const SizedBox(width: 8),
+                              const Icon(
+                                Icons.keyboard_return_rounded,
+                                size: 13,
+                                color: kPrimaryColor,
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.event_outlined,
+                              size: 11,
+                              color: kLightGreyColor,
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                e.dates,
+                                style: const TextStyle(
+                                  color: kLightGreyColor,
+                                  fontSize: 11,
+                                  fontFeatures: [FontFeature.tabularFigures()],
+                                ),
+                              ),
+                            ),
+                            if (e.timeControl.isNotEmpty)
+                              Text(
+                                e.timeControl,
+                                style: const TextStyle(
+                                  color: kWhiteColor70,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                          ],
+                        ),
+                        if ((e.location ?? '').isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.place_outlined,
+                                size: 11,
+                                color: kLightGreyColor,
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  e.location!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: kLightGreyColor,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
                     ),
                   ),
-                  if (e.timeControl.isNotEmpty)
-                    Text(
-                      e.timeControl,
-                      style: const TextStyle(
-                        color: kWhiteColor70,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                ],
-              ),
-              if ((e.location ?? '').isNotEmpty) ...[
-                const SizedBox(height: 2),
-                Row(
-                  children: [
-                    const Icon(Icons.place_outlined,
-                        size: 11, color: kLightGreyColor),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        e.location!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: kLightGreyColor,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ),
-                  ],
                 ),
-              ],
-            ],
-          ),
+              ),
+            ),
           ),
         ),
       ),
@@ -852,8 +1045,7 @@ class _EmptyEvents extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: const [
-            Icon(Icons.event_busy_outlined,
-                size: 24, color: kLightGreyColor),
+            Icon(Icons.event_busy_outlined, size: 24, color: kLightGreyColor),
             SizedBox(height: 8),
             Text(
               'Nothing scheduled',
@@ -871,6 +1063,16 @@ class _EmptyEvents extends StatelessWidget {
 }
 
 const List<String> _monthNames = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
 ];
