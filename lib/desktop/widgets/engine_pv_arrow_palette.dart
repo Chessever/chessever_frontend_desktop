@@ -29,10 +29,10 @@ const List<double> enginePvArrowRankScales = <double>[
 /// enough on muted grey boards without letting them compete with the first PV.
 const List<double> enginePvArrowRankAlphas = <double>[
   0.88,
-  0.74,
-  0.62,
   0.50,
-  0.40,
+  0.38,
+  0.26,
+  0.18,
 ];
 
 Color enginePvArrowColor(int index) {
