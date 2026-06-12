@@ -6,13 +6,12 @@ import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/theme/app_theme.dart';
 
-/// Prominent move-navigation cluster shown directly under the chessboard.
+/// Compact move-navigation cluster shown directly under the chessboard.
 ///
-/// Replaces the prior full-width pane-bottom row, which felt tucked into
-/// the corner. The cluster is centred horizontally so the controls land
-/// exactly where the user's eyes already are after looking at a move,
-/// and the primary Prev/Next chevrons are visually large + filled with
-/// the brand colour so they read instantly even on a 1440-px window.
+/// The buttons intentionally share one quiet visual treatment: game jumps,
+/// move jumps, autoplay, and flip-board should read as one native Chess Ever
+/// control strip rather than a copied media-player row with a special primary
+/// play button.
 ///
 /// Keyboard controls (← → / Home End / F) are wired at the pane root via
 /// `Shortcuts`/`Actions`, not on this widget — the bar is purely visual.
@@ -28,6 +27,8 @@ class MoveNavigationBar extends StatelessWidget {
     this.onFlipBoard,
     this.showFlipBoard = true,
     this.onPlayPause,
+    this.onPreviousGame,
+    this.onNextGame,
     this.isPlaying = false,
     this.moveLabel,
     this.hasUnseenLiveMove = false,
@@ -42,6 +43,8 @@ class MoveNavigationBar extends StatelessWidget {
   final VoidCallback? onFlipBoard;
   final bool showFlipBoard;
   final VoidCallback? onPlayPause;
+  final VoidCallback? onPreviousGame;
+  final VoidCallback? onNextGame;
   final bool isPlaying;
 
   /// Optional label shown above the cluster — typically "23. Nf3" or
@@ -79,12 +82,22 @@ class MoveNavigationBar extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              if (onPreviousGame != null) ...[
+                _NavButton(
+                  icon: Icons.keyboard_double_arrow_left_rounded,
+                  tooltip: 'Previous game',
+                  enabled: true,
+                  onTap: onPreviousGame!,
+                  size: _kButtonSize,
+                ),
+                const SizedBox(width: 8),
+              ],
               _NavButton(
                 icon: Icons.first_page_rounded,
                 tooltip: 'First move (Home)',
                 enabled: canGoBack,
                 onTap: onFirst,
-                size: _kSecondaryButtonSize,
+                size: _kButtonSize,
               ),
               const SizedBox(width: 8),
               _NavButton(
@@ -92,32 +105,30 @@ class MoveNavigationBar extends StatelessWidget {
                 tooltip: 'Previous move (←)',
                 enabled: canGoBack,
                 onTap: onPrevious,
-                size: _kPrimaryButtonSize,
-                primary: true,
+                size: _kButtonSize,
               ),
               if (onPlayPause != null) ...[
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
                 _NavButton(
-                  icon:
-                      isPlaying
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                  tooltip:
-                      isPlaying ? 'Pause autoplay (Space)' : 'Autoplay (Space)',
+                  icon: isPlaying
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
+                  tooltip: isPlaying
+                      ? 'Pause autoplay (Space)'
+                      : 'Autoplay (Space)',
                   enabled: canGoForward || isPlaying,
                   onTap: onPlayPause!,
-                  size: _kSecondaryButtonSize,
+                  size: _kButtonSize,
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
               ] else
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
               _NavButton(
                 icon: Icons.chevron_right_rounded,
                 tooltip: 'Next move (→)',
                 enabled: canGoForward,
                 onTap: onNext,
-                size: _kPrimaryButtonSize,
-                primary: true,
+                size: _kButtonSize,
               ),
               const SizedBox(width: 8),
               _LastMoveButton(
@@ -125,8 +136,18 @@ class MoveNavigationBar extends StatelessWidget {
                 onTap: onLast,
                 showLiveDot: hasUnseenLiveMove,
               ),
+              if (onNextGame != null) ...[
+                const SizedBox(width: 8),
+                _NavButton(
+                  icon: Icons.keyboard_double_arrow_right_rounded,
+                  tooltip: 'Next game',
+                  enabled: true,
+                  onTap: onNextGame!,
+                  size: _kButtonSize,
+                ),
+              ],
               if (showFlipBoard && onFlipBoard != null) ...[
-                const SizedBox(width: 24),
+                const SizedBox(width: 16),
                 // Flip board sits separated from the move-step cluster by a
                 // wider gap so it doesn't read as another sibling step.
                 _NavButton(
@@ -134,7 +155,7 @@ class MoveNavigationBar extends StatelessWidget {
                   tooltip: 'Flip board (F)',
                   enabled: true,
                   onTap: onFlipBoard!,
-                  size: _kSecondaryButtonSize,
+                  size: _kButtonSize,
                 ),
               ],
             ],
@@ -145,8 +166,7 @@ class MoveNavigationBar extends StatelessWidget {
   }
 }
 
-const double _kPrimaryButtonSize = 52;
-const double _kSecondaryButtonSize = 40;
+const double _kButtonSize = 40;
 
 /// Last-move nav button with an optional blinking red dot overlay used to
 /// announce a new broadcast tick. The dot is positioned absolutely on the
@@ -203,21 +223,20 @@ class _LastMoveButtonState extends State<_LastMoveButton>
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: _kSecondaryButtonSize,
-      height: _kSecondaryButtonSize,
+      width: _kButtonSize,
+      height: _kButtonSize,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
           Positioned.fill(
             child: _NavButton(
               icon: Icons.last_page_rounded,
-              tooltip:
-                  widget.showLiveDot
-                      ? 'New move — jump to live (End)'
-                      : 'Last move (End)',
+              tooltip: widget.showLiveDot
+                  ? 'New move — jump to live (End)'
+                  : 'Last move (End)',
               enabled: widget.enabled,
               onTap: widget.onTap,
-              size: _kSecondaryButtonSize,
+              size: _kButtonSize,
             ),
           ),
           if (widget.showLiveDot)
@@ -260,7 +279,6 @@ class _NavButton extends StatefulWidget {
     required this.enabled,
     required this.onTap,
     required this.size,
-    this.primary = false,
   });
 
   final IconData icon;
@@ -268,7 +286,6 @@ class _NavButton extends StatefulWidget {
   final bool enabled;
   final VoidCallback onTap;
   final double size;
-  final bool primary;
 
   @override
   State<_NavButton> createState() => _NavButtonState();
@@ -281,48 +298,24 @@ class _NavButtonState extends State<_NavButton> {
   @override
   Widget build(BuildContext context) {
     final disabled = !widget.enabled;
-    final iconSize = widget.primary ? widget.size * 0.55 : widget.size * 0.50;
+    final iconSize = widget.size * 0.50;
 
     final Color bg;
     final Color iconColor;
     final Color border;
 
-    if (widget.primary) {
-      // Filled primary button — eye-catching, instantly readable.
-      if (disabled) {
-        bg = kPrimaryColor.withValues(alpha: 0.18);
-        iconColor = kBackgroundColor.withValues(alpha: 0.55);
-        border = Colors.transparent;
-      } else if (_pressed) {
-        bg = kPrimaryColor;
-        iconColor = kBackgroundColor;
-        border = Colors.transparent;
-      } else if (_hovered) {
-        bg = kPrimaryColor;
-        iconColor = kBackgroundColor;
-        border = Colors.transparent;
-      } else {
-        bg = kPrimaryColor.withValues(alpha: 0.92);
-        iconColor = kBackgroundColor;
-        border = Colors.transparent;
-      }
-    } else {
-      // Secondary button — flat, hover background.
-      iconColor =
-          disabled ? kLightGreyColor : (_hovered ? kWhiteColor : kWhiteColor70);
-      bg =
-          disabled
-              ? Colors.transparent
-              : (_pressed
-                  ? kBlack3Color
-                  : (_hovered ? kBlack2Color : Colors.transparent));
-      border =
-          disabled
-              ? Colors.transparent
-              : (_hovered
-                  ? kPrimaryColor.withValues(alpha: 0.4)
-                  : kDividerColor);
-    }
+    // One quiet button language for every control, including Play/Pause.
+    iconColor = disabled
+        ? kLightGreyColor
+        : (_hovered ? kWhiteColor : kWhiteColor70);
+    bg = disabled
+        ? Colors.transparent
+        : (_pressed
+              ? kBlack3Color
+              : (_hovered ? kBlack2Color : Colors.transparent));
+    border = disabled
+        ? Colors.transparent
+        : (_hovered ? kPrimaryColor.withValues(alpha: 0.4) : kDividerColor);
 
     return DesktopTooltip(
       message: widget.tooltip,
@@ -330,51 +323,36 @@ class _NavButtonState extends State<_NavButton> {
         enabled: !disabled,
         child: MouseRegion(
           onEnter: (_) => setState(() => _hovered = true),
-          onExit:
-              (_) => setState(() {
-                _hovered = false;
-                _pressed = false;
-              }),
+          onExit: (_) => setState(() {
+            _hovered = false;
+            _pressed = false;
+          }),
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTapDown: disabled ? null : (_) => setState(() => _pressed = true),
             onTapUp: disabled ? null : (_) => setState(() => _pressed = false),
-            onTapCancel:
-                disabled ? null : () => setState(() => _pressed = false),
+            onTapCancel: disabled
+                ? null
+                : () => setState(() => _pressed = false),
             onTap: disabled ? null : widget.onTap,
             child: SingleMotionBuilder(
-              value:
-                  disabled ? 1.0 : (_pressed ? 0.93 : (_hovered ? 1.04 : 1.0)),
+              value: disabled
+                  ? 1.0
+                  : (_pressed ? 0.93 : (_hovered ? 1.04 : 1.0)),
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-              builder:
-                  (context, scale, child) => Transform.scale(
-                    scale: scale,
-                    alignment: Alignment.center,
-                    child: child,
-                  ),
+              builder: (context, scale, child) => Transform.scale(
+                scale: scale,
+                alignment: Alignment.center,
+                child: child,
+              ),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 90),
                 width: widget.size,
                 height: widget.size,
                 decoration: BoxDecoration(
                   color: bg,
-                  borderRadius: BorderRadius.circular(
-                    widget.primary ? widget.size * 0.28 : 10,
-                  ),
-                  border:
-                      widget.primary && border == Colors.transparent
-                          ? null
-                          : Border.all(color: border),
-                  boxShadow:
-                      widget.primary && !disabled
-                          ? [
-                            BoxShadow(
-                              color: kPrimaryColor.withValues(alpha: 0.30),
-                              blurRadius: _hovered ? 14 : 8,
-                              offset: const Offset(0, 2),
-                            ),
-                          ]
-                          : null,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: border),
                 ),
                 alignment: Alignment.center,
                 child: Icon(widget.icon, size: iconSize, color: iconColor),

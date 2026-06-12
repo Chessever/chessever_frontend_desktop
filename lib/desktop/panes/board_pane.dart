@@ -1396,7 +1396,7 @@ class BoardPane extends HookConsumerWidget {
 
     useEffect(() {
       if (!autoReplay.value) return null;
-      final timer = Timer.periodic(const Duration(milliseconds: 850), (_) {
+      final timer = Timer.periodic(const Duration(milliseconds: 700), (_) {
         if (!context.mounted) return;
         if (_nextPointer(chessGame.value, pointer.value) == null) {
           autoReplay.value = false;
@@ -2037,6 +2037,40 @@ class BoardPane extends HookConsumerWidget {
       showToast(autoReplay.value ? 'Auto-replay on' : 'Auto-replay off');
     }
 
+    void pauseAutoReplayForManualNavigation() {
+      if (autoReplay.value) autoReplay.value = false;
+    }
+
+    void goFirstManually() {
+      pauseAutoReplayForManualNavigation();
+      goFirst();
+    }
+
+    void goPrevManually() {
+      pauseAutoReplayForManualNavigation();
+      goPrev();
+    }
+
+    Future<void> goNextManually() async {
+      pauseAutoReplayForManualNavigation();
+      await goNextInteractive();
+    }
+
+    void goLastManually() {
+      pauseAutoReplayForManualNavigation();
+      goLast();
+    }
+
+    void navigatePreviousGameManually() {
+      pauseAutoReplayForManualNavigation();
+      unawaited(navigateActiveEventGame(ref, delta: -1));
+    }
+
+    void navigateNextGameManually() {
+      pauseAutoReplayForManualNavigation();
+      unawaited(navigateActiveEventGame(ref, delta: 1));
+    }
+
     void takebackForVariationAction() {
       goPrev();
       showToast('Next board move will branch as a variation when applicable');
@@ -2639,10 +2673,10 @@ class BoardPane extends HookConsumerWidget {
 
       switch (action) {
         case BoardActionKey.prevMove:
-          goPrev();
+          goPrevManually();
           return true;
         case BoardActionKey.nextMove:
-          unawaited(goNextInteractive());
+          unawaited(goNextManually());
           return true;
         case BoardActionKey.previousNotationLine:
           goNotationLine(NotationVerticalDirection.up);
@@ -2651,10 +2685,10 @@ class BoardPane extends HookConsumerWidget {
           goNotationLine(NotationVerticalDirection.down);
           return true;
         case BoardActionKey.firstMove:
-          goFirst();
+          goFirstManually();
           return true;
         case BoardActionKey.lastMove:
-          goLast();
+          goLastManually();
           return true;
         case BoardActionKey.prevVariation:
           goPrevVariation();
@@ -2705,10 +2739,10 @@ class BoardPane extends HookConsumerWidget {
           openBoardSettingsTab();
           return true;
         case BoardActionKey.prevGame:
-          unawaited(navigateActiveEventGame(ref, delta: -1));
+          navigatePreviousGameManually();
           return true;
         case BoardActionKey.nextGame:
-          unawaited(navigateActiveEventGame(ref, delta: 1));
+          navigateNextGameManually();
           return true;
         case BoardActionKey.autoReplay:
           toggleAutoReplayAction();
@@ -3343,10 +3377,14 @@ class BoardPane extends HookConsumerWidget {
                       MoveNavigationBar(
                         canGoBack: canBack,
                         canGoForward: canForward,
-                        onFirst: goFirst,
-                        onPrevious: goPrev,
-                        onNext: () => unawaited(goNextInteractive()),
-                        onLast: goLast,
+                        onFirst: goFirstManually,
+                        onPrevious: goPrevManually,
+                        onNext: () => unawaited(goNextManually()),
+                        onLast: goLastManually,
+                        onPlayPause: toggleAutoReplayAction,
+                        onPreviousGame: navigatePreviousGameManually,
+                        onNextGame: navigateNextGameManually,
+                        isPlaying: autoReplay.value,
                         onFlipBoard: () => flipped.value = !flipped.value,
                         moveLabel: _moveLabel(history, cursor),
                         hasUnseenLiveMove: hasUnseenMoves.value,
