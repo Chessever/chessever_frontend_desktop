@@ -19,6 +19,7 @@ import 'package:chessever/desktop/widgets/desktop_update_chip.dart';
 import 'package:chessever/desktop/widgets/desktop_user_profile_button.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
+import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/screens/chessboard/provider/current_eval_provider.dart';
 import 'package:chessever/screens/chessboard/widgets/evaluation_bar_widget.dart';
 import 'package:chessever/screens/chessboard/widgets/player_first_row_detail_widget.dart'
@@ -454,7 +455,8 @@ class _TabChipState extends ConsumerState<_TabChip> {
           PopupMenuItem<_TabAction>(
             value: _TabAction.toggleMute,
             child: _MenuRow(
-              icon: isMuted ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+              icon:
+                  isMuted ? Icons.volume_up_rounded : Icons.volume_off_rounded,
               label: isMuted ? 'Unmute tab' : 'Mute tab',
             ),
           ),
@@ -530,6 +532,9 @@ class _TabChipState extends ConsumerState<_TabChip> {
             : null;
     final hasGameFen =
         boardFen != null && boardFen.isNotEmpty && boardFen != _initialFen;
+    final showGameCardEvalBar = shouldShowGameCardEvalBarFromSettings(
+      ref.watch(engineSettingsProviderNew),
+    );
     final soundMuted =
         widget.tab.kind == TabKind.board &&
         ref.watch(isBoardTabSoundMutedProvider(widget.tab.id));
@@ -619,19 +624,20 @@ class _TabChipState extends ConsumerState<_TabChip> {
                                       ),
                                     ),
                                   ),
-                                  // Eval strip pinned to the chip's bottom edge —
-                                  // full bleed, Chrome-style indicator under the
-                                  // tab title.
-                                  SizedBox(
-                                    height: 3,
-                                    child: _HorizontalEvalBar(
-                                      fen:
-                                          (boardFen != null &&
-                                                  boardFen.isNotEmpty)
-                                              ? boardFen
-                                              : (gameArgs.fenSeed ?? ''),
+                                  if (showGameCardEvalBar)
+                                    // Eval strip pinned to the chip's bottom edge —
+                                    // full bleed, Chrome-style indicator under the
+                                    // tab title.
+                                    SizedBox(
+                                      height: 3,
+                                      child: _HorizontalEvalBar(
+                                        fen:
+                                            (boardFen != null &&
+                                                    boardFen.isNotEmpty)
+                                                ? boardFen
+                                                : (gameArgs.fenSeed ?? ''),
+                                      ),
                                     ),
-                                  ),
                                 ],
                               )
                               : _RegularTabChipContent(
@@ -641,6 +647,7 @@ class _TabChipState extends ConsumerState<_TabChip> {
                                 hovered: _hovered,
                                 boardFen: boardFen,
                                 hasGameFen: hasGameFen,
+                                showGameCardEvalBar: showGameCardEvalBar,
                                 playerProfileArgs: playerProfileArgs,
                                 onClose: widget.onClose,
                               ),
@@ -785,7 +792,8 @@ class _GameTabChipContent extends StatelessWidget {
         final showTitles = w >= 210 && (whiteHasTitle || blackHasTitle);
         final useFullNames = w >= 280;
         final reserveClose = onClose != null && (showClose || w >= 150);
-        final rightInset = reserveClose ? (muted ? 40.0 : 22.0) : (muted ? 18.0 : 0.0);
+        final rightInset =
+            reserveClose ? (muted ? 40.0 : 22.0) : (muted ? 18.0 : 0.0);
 
         if (!hasNamedSides) {
           final label = args.label.trim().isEmpty ? 'Board' : args.label.trim();
@@ -987,6 +995,7 @@ class _RegularTabChipContent extends StatelessWidget {
     required this.hovered,
     required this.boardFen,
     required this.hasGameFen,
+    required this.showGameCardEvalBar,
     required this.playerProfileArgs,
     required this.onClose,
   });
@@ -997,6 +1006,7 @@ class _RegularTabChipContent extends StatelessWidget {
   final bool hovered;
   final String? boardFen;
   final bool hasGameFen;
+  final bool showGameCardEvalBar;
   final PlayerProfileArgs? playerProfileArgs;
   final VoidCallback? onClose;
 
@@ -1097,7 +1107,7 @@ class _RegularTabChipContent extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           mainAxisSize: MainAxisSize.max,
           children: [
-            if (hasGameFen && w >= 110) ...[
+            if (showGameCardEvalBar && hasGameFen && w >= 110) ...[
               ClipRRect(
                 borderRadius: BorderRadius.circular(2),
                 child: SizedBox(
