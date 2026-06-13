@@ -471,6 +471,9 @@ class BoardPane extends HookConsumerWidget {
             s.valueOrNull?.pieceAssets ?? const BoardSettingsNew().pieceAssets,
       ),
     );
+    final rightRailActivePage = ref.watch(
+      rightRailActivePageProvider(activeTabId ?? '__none__'),
+    );
 
     final latestPgnImport = ref.watch(pgnIntakeProvider);
     final legacyActiveGameId = ref.watch(
@@ -3055,6 +3058,7 @@ class BoardPane extends HookConsumerWidget {
       return NotationLadderView(
         game: chessGame.value,
         activePointer: activePointer,
+        showActiveHighlight: rightRailActivePage == 0,
         onJump: onJump,
         scrollController: scrollController,
         visibleMoveOrderController: visibleNotationMoveOrderController,

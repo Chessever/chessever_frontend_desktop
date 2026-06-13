@@ -101,6 +101,7 @@ class NotationLadderView extends StatefulWidget {
     required this.game,
     required this.activePointer,
     required this.onJump,
+    this.showActiveHighlight = true,
     this.lichessAnnotations = const <int, LichessMoveAnnotation>{},
     this.userNags = const <int, List<int>>{},
     this.onSetUserQualityNag,
@@ -150,6 +151,7 @@ class NotationLadderView extends StatefulWidget {
   final ChessGame game;
   final ChessMovePointer activePointer;
   final ValueChanged<ChessMovePointer> onJump;
+  final bool showActiveHighlight;
 
   /// Lichess analysis annotations keyed by zero-based mainline half-move
   /// index (`0` == move #1 white, `1` == move #1 black, ...). Only consulted
@@ -478,6 +480,8 @@ class _NotationLadderViewState extends State<NotationLadderView> {
     } else {
       _publishVisibleMoveOrder(visibleMoveOrder);
     }
+    final displayActivePointer =
+        widget.showActiveHighlight ? widget.activePointer : const <int>[];
 
     return CallbackShortcuts(
       bindings: {
@@ -520,7 +524,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                                 depth: 0,
                                 isMainlineRoot: true,
                                 startPly: startingPly,
-                                activePointer: widget.activePointer,
+                                activePointer: displayActivePointer,
                                 activeKey: _activeKey,
                                 onJump: widget.onJump,
                                 lichessAnnotations: widget.lichessAnnotations,
@@ -561,7 +565,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                           depth: 0,
                           isMainlineRoot: true,
                           startPly: startingPly,
-                          activePointer: widget.activePointer,
+                          activePointer: displayActivePointer,
                           activeKey: _activeKey,
                           onJump: widget.onJump,
                           lichessAnnotations: widget.lichessAnnotations,
