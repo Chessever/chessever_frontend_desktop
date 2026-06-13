@@ -10,10 +10,80 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-class CalendarEventDetailScreen extends StatelessWidget {
-  const CalendarEventDetailScreen({super.key, required this.event});
+class CalendarEventDetailScreen extends StatefulWidget {
+  const CalendarEventDetailScreen({
+    super.key,
+    required this.event,
+    this.navigationEvents = const <CalendarEvent>[],
+    this.initialEventIndex,
+  });
 
   final CalendarEvent event;
+  final List<CalendarEvent> navigationEvents;
+  final int? initialEventIndex;
+
+  @override
+  State<CalendarEventDetailScreen> createState() =>
+      _CalendarEventDetailScreenState();
+}
+
+class _CalendarEventDetailScreenState extends State<CalendarEventDetailScreen> {
+  late CalendarEvent event;
+  late int _currentIndex;
+
+  List<CalendarEvent> get _navigationEvents => widget.navigationEvents;
+  bool get _canNavigate => _navigationEvents.length > 1;
+  bool get _hasPrevious => _canNavigate && _currentIndex > 0;
+  bool get _hasNext =>
+      _canNavigate && _currentIndex < _navigationEvents.length - 1;
+
+  @override
+  void initState() {
+    super.initState();
+    event = widget.event;
+    _currentIndex =
+        widget.initialEventIndex ??
+        _navigationEvents.indexWhere(
+          (candidate) =>
+              candidate.name == widget.event.name &&
+              candidate.startDate == widget.event.startDate &&
+              candidate.endDate == widget.event.endDate,
+        );
+    if (_currentIndex < 0 && _navigationEvents.isNotEmpty) {
+      _currentIndex = 0;
+    }
+  }
+
+  @override
+  void didUpdateWidget(CalendarEventDetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.event != widget.event ||
+        oldWidget.navigationEvents != widget.navigationEvents) {
+      event = widget.event;
+      _currentIndex =
+          widget.initialEventIndex ??
+          _navigationEvents.indexWhere(
+            (candidate) =>
+                candidate.name == widget.event.name &&
+                candidate.startDate == widget.event.startDate &&
+                candidate.endDate == widget.event.endDate,
+          );
+      if (_currentIndex < 0 && _navigationEvents.isNotEmpty) {
+        _currentIndex = 0;
+      }
+    }
+  }
+
+  void _showEventAt(int index) {
+    if (index < 0 || index >= _navigationEvents.length) return;
+    setState(() {
+      _currentIndex = index;
+      event = _navigationEvents[index];
+    });
+  }
+
+  void _showPreviousEvent() => _showEventAt(_currentIndex - 1);
+  void _showNextEvent() => _showEventAt(_currentIndex + 1);
 
   String _formatDateRange() {
     final dateFormat = DateFormat('MMM d, yyyy');
@@ -94,6 +164,19 @@ class CalendarEventDetailScreen extends StatelessWidget {
         backgroundColor: kBlack2Color,
         iconTheme: const IconThemeData(color: kWhiteColor),
         actions: [
+          if (_canNavigate) ...[
+            IconButton(
+              tooltip: 'Previous event',
+              onPressed: _hasPrevious ? _showPreviousEvent : null,
+              icon: const Icon(Icons.chevron_left_rounded),
+            ),
+            IconButton(
+              tooltip: 'Next event',
+              onPressed: _hasNext ? _showNextEvent : null,
+              icon: const Icon(Icons.chevron_right_rounded),
+            ),
+            const SizedBox(width: 4),
+          ],
           if (_sourceUrl.isNotEmpty)
             TextButton.icon(
               onPressed: () => _launch(_sourceUrl),
@@ -104,68 +187,94 @@ class CalendarEventDetailScreen extends StatelessWidget {
           const SizedBox(width: 8),
         ],
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1180),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(28, 22, 28, 28),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _HeroHeader(
-                  event: event,
-                  dateRange: _formatDateRange(),
-                  location:
-                      location.isEmpty ? event.location ?? 'TBA' : location,
-                  onOpenSource:
-                      _sourceUrl.isEmpty ? null : () => _launch(_sourceUrl),
-                ),
-                const SizedBox(height: 18),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final wide = constraints.maxWidth >= 860;
-                    final main = _MainDetails(
-                      event: event,
-                      topPlayers: topPlayers,
-                      onLaunchWebsite:
-                          website == null ? null : () => _launch(website),
-                      onLaunchEmail:
-                          event.email == null
-                              ? null
-                              : () => _launchEmail(event.email),
-                    );
-                    final summary = _SummaryRail(
+      body: Stack(
+        children: [
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1180),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(28, 22, 28, 28),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _HeroHeader(
                       event: event,
                       dateRange: _formatDateRange(),
-                      sourceUrl: _sourceUrl,
-                      onOpenSource:
-                          _sourceUrl.isEmpty ? null : () => _launch(_sourceUrl),
-                      onCopyAddress:
-                          _copyableAddress(event).isEmpty
+                      location: location.isEmpty
+                          ? event.location ?? 'TBA'
+                          : location,
+                      onOpenSource: _sourceUrl.isEmpty
+                          ? null
+                          : () => _launch(_sourceUrl),
+                    ),
+                    const SizedBox(height: 18),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final wide = constraints.maxWidth >= 860;
+                        final main = _MainDetails(
+                          event: event,
+                          topPlayers: topPlayers,
+                          onLaunchWebsite: website == null
+                              ? null
+                              : () => _launch(website),
+                          onLaunchEmail: event.email == null
+                              ? null
+                              : () => _launchEmail(event.email),
+                        );
+                        final summary = _SummaryRail(
+                          event: event,
+                          dateRange: _formatDateRange(),
+                          sourceUrl: _sourceUrl,
+                          onOpenSource: _sourceUrl.isEmpty
+                              ? null
+                              : () => _launch(_sourceUrl),
+                          onCopyAddress: _copyableAddress(event).isEmpty
                               ? null
                               : () => Clipboard.setData(
-                                ClipboardData(text: _copyableAddress(event)),
-                              ),
-                    );
-                    if (!wide) {
-                      return Column(
-                        children: [main, const SizedBox(height: 16), summary],
-                      );
-                    }
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(flex: 7, child: main),
-                        const SizedBox(width: 16),
-                        Expanded(flex: 3, child: summary),
-                      ],
-                    );
-                  },
+                                  ClipboardData(text: _copyableAddress(event)),
+                                ),
+                        );
+                        if (!wide) {
+                          return Column(
+                            children: [
+                              main,
+                              const SizedBox(height: 16),
+                              summary,
+                            ],
+                          );
+                        }
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(flex: 7, child: main),
+                            const SizedBox(width: 16),
+                            Expanded(flex: 3, child: summary),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
-        ),
+          if (_canNavigate) ...[
+            _EventSideArrow(
+              alignment: Alignment.centerLeft,
+              icon: Icons.chevron_left_rounded,
+              tooltip: 'Previous event',
+              enabled: _hasPrevious,
+              onTap: _showPreviousEvent,
+            ),
+            _EventSideArrow(
+              alignment: Alignment.centerRight,
+              icon: Icons.chevron_right_rounded,
+              tooltip: 'Next event',
+              enabled: _hasNext,
+              onTap: _showNextEvent,
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -176,6 +285,52 @@ class CalendarEventDetailScreen extends StatelessWidget {
     event.city,
     event.country,
   ].where((v) => v != null && v.trim().isNotEmpty).join(', ');
+}
+
+class _EventSideArrow extends StatelessWidget {
+  const _EventSideArrow({
+    required this.alignment,
+    required this.icon,
+    required this.tooltip,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final Alignment alignment;
+  final IconData icon;
+  final String tooltip;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: alignment,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: Tooltip(
+          message: tooltip,
+          child: Material(
+            color: kBlack2Color.withValues(alpha: enabled ? 0.92 : 0.42),
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: enabled ? onTap : null,
+              child: SizedBox(
+                width: 44,
+                height: 44,
+                child: Icon(
+                  icon,
+                  color: enabled ? kWhiteColor : kWhiteColor.withValues(alpha: 0.3),
+                  size: 30,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _HeroHeader extends StatelessWidget {
@@ -339,98 +494,84 @@ class _MainDetails extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children:
-          [
-            if ((event.description ?? '').trim().isNotEmpty)
-              _SectionCard(
-                title: 'About',
-                children: [
-                  SelectableText(
-                    event.description!.trim(),
-                    style: const TextStyle(
-                      color: kWhiteColor70,
-                      height: 1.45,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
+      children: [
+        if ((event.description ?? '').trim().isNotEmpty)
+          _SectionCard(
+            title: 'About',
+            children: [
+              SelectableText(
+                event.description!.trim(),
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  height: 1.45,
+                  fontSize: 13,
+                ),
               ),
-            _SectionCard(
-              title: 'Format',
-              children: [
-                _InfoGrid(
-                  items: [
-                    _InfoItem('Type of event', event.eventType),
-                    _InfoItem('Time control', event.timeControl ?? 'Standard'),
-                    _InfoItem(
-                      'Time control description',
-                      event.timeControlDescription,
-                    ),
-                    _InfoItem('Tournament system', event.tournamentSystem),
-                    _InfoItem(
-                      'Number of rounds',
-                      event.numberOfRounds?.toString(),
-                    ),
-                    _InfoItem(
-                      'Number of players',
-                      event.numberOfPlayers?.toString(),
-                    ),
-                    _InfoItem('Total prize fund', event.totalPrizeFund),
-                  ],
+            ],
+          ),
+        _SectionCard(
+          title: 'Format',
+          children: [
+            _InfoGrid(
+              items: [
+                _InfoItem('Type of event', event.eventType),
+                _InfoItem('Time control', event.timeControl ?? 'Standard'),
+                _InfoItem(
+                  'Time control description',
+                  event.timeControlDescription,
                 ),
+                _InfoItem('Tournament system', event.tournamentSystem),
+                _InfoItem('Number of rounds', event.numberOfRounds?.toString()),
+                _InfoItem(
+                  'Number of players',
+                  event.numberOfPlayers?.toString(),
+                ),
+                _InfoItem('Total prize fund', event.totalPrizeFund),
               ],
             ),
-            _SectionCard(
-              title: 'Address',
-              children: [
-                _InfoGrid(
-                  items: [
-                    _InfoItem('Country', event.country),
-                    _InfoItem('City', event.city),
-                    _InfoItem('Venue', event.venue),
-                    _InfoItem('Address', event.address ?? event.location),
-                  ],
-                ),
+          ],
+        ),
+        _SectionCard(
+          title: 'Address',
+          children: [
+            _InfoGrid(
+              items: [
+                _InfoItem('Country', event.country),
+                _InfoItem('City', event.city),
+                _InfoItem('Venue', event.venue),
+                _InfoItem('Address', event.address ?? event.location),
               ],
             ),
-            _SectionCard(
-              title: 'Contacts',
-              children: [
-                _LinkRow(
-                  label: 'Website',
-                  value: event.website ?? event.websiteUrl,
-                  onTap: onLaunchWebsite,
-                ),
-                _LinkRow(
-                  label: 'E-mail',
-                  value: event.email,
-                  onTap: onLaunchEmail,
-                ),
-              ],
+          ],
+        ),
+        _SectionCard(
+          title: 'Contacts',
+          children: [
+            _LinkRow(
+              label: 'Website',
+              value: event.website ?? event.websiteUrl,
+              onTap: onLaunchWebsite,
             ),
-            if (topPlayers.isNotEmpty)
-              _SectionCard(
-                title: 'Players',
-                children: [
-                  SelectableText(
-                    topPlayers.join(', '),
-                    style: const TextStyle(
-                      color: kWhiteColor70,
-                      height: 1.4,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
+            _LinkRow(label: 'E-mail', value: event.email, onTap: onLaunchEmail),
+          ],
+        ),
+        if (topPlayers.isNotEmpty)
+          _SectionCard(
+            title: 'Players',
+            children: [
+              SelectableText(
+                topPlayers.join(', '),
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  height: 1.4,
+                  fontSize: 13,
+                ),
               ),
-            _ListSection(
-              title: 'Documents',
-              values: _stringList(event.documents),
-            ),
-            _ListSection(
-              title: 'Arbiters',
-              values: _stringList(event.arbiters),
-            ),
-          ].where((w) => w is! _EmptySection).toList(),
+            ],
+          ),
+        _ListSection(title: 'Documents', values: _stringList(event.documents)),
+        _ListSection(title: 'Arbiters', values: _stringList(event.arbiters)),
+      ].where((w) => w is! _EmptySection).toList(),
     );
   }
 
@@ -500,8 +641,9 @@ class _SummaryRail extends StatelessWidget {
           const SizedBox(height: 12),
           _ActionButton(
             icon: Icons.open_in_new_rounded,
-            label:
-                event.fideEventId == null ? 'Open website' : 'Open FIDE page',
+            label: event.fideEventId == null
+                ? 'Open website'
+                : 'Open FIDE page',
             onTap: onOpenSource,
           ),
         ],
@@ -562,12 +704,9 @@ class _InfoGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final visible =
-        items
-            .where(
-              (item) => item.value != null && item.value!.trim().isNotEmpty,
-            )
-            .toList();
+    final visible = items
+        .where((item) => item.value != null && item.value!.trim().isNotEmpty)
+        .toList();
     if (visible.isEmpty) return const _EmptySection();
     return Wrap(
       spacing: 12,
