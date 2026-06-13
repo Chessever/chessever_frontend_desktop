@@ -4,13 +4,13 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('eventInfoDisplayEvent', () {
-    test('keeps raw event when broadcast name exists', () {
+    test('returns broadcast name when available', () {
       expect(
         eventInfoDisplayEvent({
           'Event': '2026 Titled Tuesday Blitz June 02',
           'BroadcastName': 'Titled Tuesday June 2 2026 - Boards 1-100',
         }),
-        '2026 Titled Tuesday Blitz June 02',
+        'Titled Tuesday June 2 2026 - Boards 1-100',
       );
     });
 
