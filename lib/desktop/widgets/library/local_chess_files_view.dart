@@ -905,9 +905,10 @@ class _LocalGamesTable extends HookConsumerWidget {
     Future<void> openRowMenu(LocalChessGame game, Offset position) async {
       final rowIndex = games.indexWhere((row) => row.id == game.id);
       if (rowIndex < 0) return;
-      final rowScope = effectiveSelectedIds.contains(game.id)
-          ? selectedGames
-          : <LocalChessGame>[game];
+      final rowScope =
+          effectiveSelectedIds.contains(game.id)
+              ? selectedGames
+              : <LocalChessGame>[game];
       if (!effectiveSelectedIds.contains(game.id)) {
         selectIndex(rowIndex);
       }
@@ -1560,7 +1561,9 @@ BoardTabGameArgs _boardArgsForLocalGame(
     blackFideId: fideId('BlackFideId'),
     fenSeed: game.startingFen,
     databaseTitle: sourceLabel,
-    databaseGames: _summariesFromLocalGames(databaseGames),
+    databaseGames: _summariesFromLocalGames(
+      _localBoardContextGames(localGame, databaseGames),
+    ),
     gameListSelectedId: localGame.id,
     librarySaveOrigin: BoardTabLibrarySaveOrigin.localPgnFile(
       sourcePath: localGame.sourcePath,
@@ -1569,6 +1572,30 @@ BoardTabGameArgs _boardArgsForLocalGame(
       title: localGame.title,
     ),
   );
+}
+
+const int _kLocalBoardContextRadius = 100;
+
+List<LocalChessGame> _localBoardContextGames(
+  LocalChessGame selected,
+  List<LocalChessGame> databaseGames,
+) {
+  if (databaseGames.isEmpty) return <LocalChessGame>[selected];
+
+  final selectedIndex = databaseGames.indexWhere(
+    (game) => game.id == selected.id,
+  );
+  if (selectedIndex < 0) return <LocalChessGame>[selected];
+
+  final start =
+      selectedIndex - _kLocalBoardContextRadius < 0
+          ? 0
+          : selectedIndex - _kLocalBoardContextRadius;
+  final end =
+      selectedIndex + _kLocalBoardContextRadius + 1 > databaseGames.length
+          ? databaseGames.length
+          : selectedIndex + _kLocalBoardContextRadius + 1;
+  return databaseGames.sublist(start, end);
 }
 
 List<TournamentGameSummary> _summariesFromLocalGames(
