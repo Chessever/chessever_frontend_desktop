@@ -79,6 +79,7 @@ import 'package:chessever/repository/library/library_repository.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
+import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/chessboard/provider/lichess_move_annotations_provider.dart';
 import 'package:chessever/screens/library/providers/library_folders_provider.dart';
@@ -253,8 +254,35 @@ computeBoardAreaChromeMetrics({
 /// hard-codes `PieceShiftMethod.tapTwoSquares` plus PageView swipes. Per
 /// `CLAUDE.md`, desktop wraps and replaces, it does not edit mobile
 /// widgets in place.
-class BoardPane extends HookConsumerWidget {
+class BoardPane extends ConsumerWidget {
   const BoardPane({super.key, this.tabId});
+
+  final String? tabId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final activeTabId =
+        tabId ?? ref.watch(desktopTabsProvider.select((s) => s.activeId));
+
+    if (activeTabId == null) {
+      return const _BoardPaneContent();
+    }
+
+    return ProviderScope(
+      key: ValueKey<String>('board-explorer-scope:$activeTabId'),
+      overrides: [
+        gamebaseExplorerProvider.overrideWith(
+          (ref) => GamebaseExplorerNotifier(ref),
+        ),
+        appliedBoardExplorerScopeKeyProvider.overrideWith((ref) => null),
+      ],
+      child: _BoardPaneContent(tabId: activeTabId),
+    );
+  }
+}
+
+class _BoardPaneContent extends HookConsumerWidget {
+  const _BoardPaneContent({this.tabId});
 
   final String? tabId;
 
@@ -1976,11 +2004,13 @@ class BoardPane extends HookConsumerWidget {
         moves: exactFenSearch ? const <String>[] : lineUcis,
         exactFenSearch: exactFenSearch,
       );
-      ref.read(desktopTabsProvider.notifier).open(
-        TabKind.openingExplorer,
-        title: _explorerTabTitle(chessGame.value),
-        reuseExisting: false,
-      );
+      ref
+          .read(desktopTabsProvider.notifier)
+          .open(
+            TabKind.openingExplorer,
+            title: _explorerTabTitle(chessGame.value),
+            reuseExisting: false,
+          );
     }
 
     void switchRightRailPage(int delta) {
