@@ -174,7 +174,7 @@ class EngineSettings {
   const EngineSettings({
     this.showEngineGauge = true,
     this.showDepthOverlay = true,
-    this.showPvArrows = true,
+    this.showPvArrows = false,
     this.showEngineAnalysis = false,
     this.searchTimeIndex = 0,
     int principalVariationIndex = 4, // Default to 5 lines (index 4)
@@ -581,14 +581,21 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
         return const EngineSettings();
       }
 
+      const defaults = EngineSettings();
       final settings = EngineSettings(
-        showEngineGauge: map['showEngineGauge'] as bool? ?? true,
-        showDepthOverlay: map['showDepthOverlay'] as bool? ?? true,
-        showPvArrows: map['showPvArrows'] as bool? ?? true,
-        showEngineAnalysis: map['showEngineAnalysis'] as bool? ?? false,
-        searchTimeIndex: map['searchTimeIndex'] as int? ?? 0,
-        principalVariationIndex: map['principalVariationIndex'] as int? ?? 4,
-        maxArrowsOnBoard: map['maxArrowsOnBoard'] as int? ?? 2,
+        showEngineGauge:
+            map['showEngineGauge'] as bool? ?? defaults.showEngineGauge,
+        showDepthOverlay:
+            map['showDepthOverlay'] as bool? ?? defaults.showDepthOverlay,
+        showPvArrows: map['showPvArrows'] as bool? ?? defaults.showPvArrows,
+        showEngineAnalysis:
+            map['showEngineAnalysis'] as bool? ?? defaults.showEngineAnalysis,
+        searchTimeIndex: map['searchTimeIndex'] as int? ?? defaults.searchTimeIndex,
+        principalVariationIndex:
+            map['principalVariationIndex'] as int? ??
+            defaults.principalVariationIndex,
+        maxArrowsOnBoard:
+            map['maxArrowsOnBoard'] as int? ?? defaults.maxArrowsOnBoard,
       );
       debugPrint('[EngineSettings] Loaded settings from cache');
       return settings;

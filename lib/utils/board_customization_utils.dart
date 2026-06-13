@@ -56,12 +56,12 @@ const List<BoardThemeOption> kBoardThemes = [
 /// Available piece sets from chessground package
 const List<PieceSet> kPieceSets = PieceSet.values;
 
-/// Get board theme by index, with fallback to brown (index 0)
+/// Get board theme by index, with fallback to blue (index 1)
 BoardThemeOption getBoardThemeByIndex(int index) {
   if (index >= 0 && index < kBoardThemes.length) {
     return kBoardThemes[index];
   }
-  return kBoardThemes[0]; // Default to brown
+  return kBoardThemes[1]; // Default to blue
 }
 
 /// Get piece set by index, with fallback to cburnett (index 0)
