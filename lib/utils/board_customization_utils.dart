@@ -125,5 +125,5 @@ int migrateOldBoardColorToTheme(int oldBoardColorIndex) {
     6: 1, // blue -> Blue
     7: 18, // pink -> Pink Pyramid
   };
-  return migrationMap[oldBoardColorIndex] ?? 0;
+  return migrationMap[oldBoardColorIndex] ?? 1;
 }

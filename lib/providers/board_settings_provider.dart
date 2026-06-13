@@ -50,7 +50,7 @@ class _BoardSettingsNotifier extends StateNotifier<BoardSettings> {
   _BoardSettingsNotifier({required this.ref})
     : super(
         const BoardSettings(
-          boardColor: Color(0xFF0FB4E5),
+          boardColor: Colors.blue,
           showEvaluationBar: true,
           soundEnabled: true,
           chatEnabled: true,
