@@ -149,10 +149,15 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
 
   void _highlightGameRange(
     List<TournamentGameSummary> orderedGames,
-    TournamentGameSummary target,
-  ) {
+    TournamentGameSummary target, {
+    String? fallbackAnchorGameId,
+  }) {
     _railFocusNode.requestFocus();
-    final anchorId = _rangeAnchorGameId ?? _highlightedGameId ?? target.id;
+    final anchorId =
+        _rangeAnchorGameId ??
+        _highlightedGameId ??
+        fallbackAnchorGameId ??
+        target.id;
     final nextIds =
         eventRailRangeSelectionIds(
           orderedGames: orderedGames,
@@ -881,7 +886,11 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
                         showBoardColumn: showBoardColumn,
                         onHighlightGame: _highlightGame,
                         onRangeHighlightGame:
-                            (game) => _highlightGameRange(orderedGames, game),
+                            (game) => _highlightGameRange(
+                              orderedGames,
+                              game,
+                              fallbackAnchorGameId: selectedGameId,
+                            ),
                       ),
                     if (resolved.kind == _GameListKind.database &&
                         (isLoadingMoreDatabase ||
@@ -2269,13 +2278,13 @@ class _EventRoundTable extends StatelessWidget {
       rowMinHeight: 34,
       rowKeyBuilder:
           (game) => game.id == _activeSelectionId ? selectedRowKey : null,
-      onRowTap: (game, {required bool inNewTab}) {
+      onRowTap: (game, {required bool inNewTab, required bool shiftPressed}) {
         if (inNewTab) {
           onHighlightGame(game);
           unawaited(onOpenGame(game, inNewTab: true));
           return;
         }
-        if (HardwareKeyboard.instance.isShiftPressed) {
+        if (shiftPressed) {
           onRangeHighlightGame(game);
           return;
         }
