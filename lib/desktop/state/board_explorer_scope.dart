@@ -58,13 +58,12 @@ GamebaseFilters? boardExplorerFiltersForScope({
       : scope.initialScopedFilters;
 }
 
-/// Tracks the player-scoped Build Tree filter currently applied to the shared
-/// gamebase Explorer provider.
+/// Tracks the player-scoped Build Tree filter currently applied to this board
+/// tab's Gamebase Explorer provider scope.
 ///
-/// The Explorer provider itself is global, while Board tabs are independent. A
-/// normal Board tab therefore cannot rely on its local widget state to know
-/// whether another tab left a player scope behind; this key lets the next
-/// unscoped Board Explorer clear that global filter back to the default view.
+/// Board tabs keep independent explorer providers, but each tab still needs to
+/// know whether its own explorer previously applied a player scope so returning
+/// to an unscoped board can clear those filters back to the default view.
 final appliedBoardExplorerScopeKeyProvider = StateProvider<String?>(
   (_) => null,
 );
