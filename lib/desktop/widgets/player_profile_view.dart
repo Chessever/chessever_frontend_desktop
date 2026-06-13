@@ -36,7 +36,6 @@ import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
     show LiveDesktopGameCard, openTournamentGameTab;
-import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/providers/player_backfill_provider.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
@@ -575,10 +574,11 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
                     hasActiveFilter: hasActiveFilter,
                     isTwicLoading: isTwicLoading,
                     activeKey: activeKey,
-                    fideId: widget.args.fideId,
-                    playerName: widget.args.playerName,
+                    fideId: effectiveFideId,
+                    playerName: effectiveName,
                     dataSource: _dataSource,
                     gamebasePlayerId: _gamebasePlayerId,
+                    federation: effectiveFederation,
                   ),
                 ),
               ],
@@ -1567,6 +1567,7 @@ class _RightPane extends StatelessWidget {
     required this.playerName,
     required this.dataSource,
     required this.gamebasePlayerId,
+    required this.federation,
   });
 
   final _ProfileTab currentTab;
@@ -1578,6 +1579,7 @@ class _RightPane extends StatelessWidget {
   final String playerName;
   final PlayerProfileDataSource dataSource;
   final String? gamebasePlayerId;
+  final String? federation;
 
   @override
   Widget build(BuildContext context) {
@@ -1602,7 +1604,9 @@ class _RightPane extends StatelessWidget {
               ),
               _GamesBody(
                 activeKey: activeKey,
+                fideId: fideId,
                 playerName: playerName,
+                federation: federation,
                 dataSource: dataSource,
                 isActive: currentTab == _ProfileTab.games,
               ),
@@ -2679,13 +2683,17 @@ class _ErrorState extends StatelessWidget {
 class _GamesBody extends ConsumerStatefulWidget {
   const _GamesBody({
     required this.activeKey,
+    required this.fideId,
     required this.playerName,
+    required this.federation,
     required this.dataSource,
     required this.isActive,
   });
 
   final PlayerProfileKey activeKey;
+  final int? fideId;
   final String playerName;
+  final String? federation;
   final PlayerProfileDataSource dataSource;
   final bool isActive;
 
@@ -3144,6 +3152,9 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
         onToggleSelection: _toggleGameSelection,
         onReplaceSelection: _replaceGameSelection,
         onContext: _showRowContextMenu,
+        profilePlayerName: widget.playerName,
+        profilePlayerFideId: widget.fideId,
+        profileFederationFallback: widget.federation,
       );
     }
 
@@ -3162,9 +3173,6 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
       events: eventsAsync.valueOrNull ?? const [],
     );
 
-    final countrymanIso2 =
-        ref.watch(countryDropdownProvider).valueOrNull?.countryCode;
-
     return _GroupedGamesList(
       autofocus: widget.isActive,
       enabled: widget.isActive,
@@ -3181,7 +3189,7 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
       selectedIds: _selectedGameIds,
       onToggleSelection: _toggleGameSelection,
       profilePlayerName: widget.playerName,
-      profileFederationFallback: countrymanIso2,
+      profileFederationFallback: widget.federation,
       footer: _twicFooter(state),
     );
   }
@@ -4310,6 +4318,9 @@ class _PlayerGamesDatabaseTable extends ConsumerStatefulWidget {
     required this.onToggleSelection,
     required this.onReplaceSelection,
     required this.onContext,
+    required this.profilePlayerName,
+    required this.profilePlayerFideId,
+    required this.profileFederationFallback,
     this.footer,
   });
 
@@ -4327,6 +4338,9 @@ class _PlayerGamesDatabaseTable extends ConsumerStatefulWidget {
     required GamesTourModel game,
   })
   onContext;
+  final String? profilePlayerName;
+  final int? profilePlayerFideId;
+  final String? profileFederationFallback;
   final Widget? footer;
 
   @override
@@ -4352,6 +4366,9 @@ class _PlayerGamesDatabaseTableState
       onContext: widget.onContext,
       footer: widget.footer,
       rowKeyPrefix: 'player-game-table',
+      profilePlayerName: widget.profilePlayerName,
+      profilePlayerFideId: widget.profilePlayerFideId,
+      profileFederationFallback: widget.profileFederationFallback,
     );
   }
 }

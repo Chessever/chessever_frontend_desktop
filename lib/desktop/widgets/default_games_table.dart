@@ -39,6 +39,9 @@ class DefaultGamesTable extends ConsumerStatefulWidget {
     this.onContext,
     this.footer,
     this.rowKeyPrefix = 'default-game-table',
+    this.profilePlayerName,
+    this.profilePlayerFideId,
+    this.profileFederationFallback,
   });
 
   final bool active;
@@ -60,6 +63,9 @@ class DefaultGamesTable extends ConsumerStatefulWidget {
   onContext;
   final Widget? footer;
   final String rowKeyPrefix;
+  final String? profilePlayerName;
+  final int? profilePlayerFideId;
+  final String? profileFederationFallback;
 
   @override
   ConsumerState<DefaultGamesTable> createState() => _DefaultGamesTableState();
@@ -134,13 +140,33 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         return _compareInt(a.blackPlayer.rating, b.blackPlayer.rating);
       case GamebaseSortField.whiteFed:
         return _compareText(
-          _playerFederation(a.whitePlayer),
-          _playerFederation(b.whitePlayer),
+          defaultGamePlayerFederation(
+            a.whitePlayer,
+            profilePlayerName: widget.profilePlayerName,
+            profilePlayerFideId: widget.profilePlayerFideId,
+            profileFederationFallback: widget.profileFederationFallback,
+          ),
+          defaultGamePlayerFederation(
+            b.whitePlayer,
+            profilePlayerName: widget.profilePlayerName,
+            profilePlayerFideId: widget.profilePlayerFideId,
+            profileFederationFallback: widget.profileFederationFallback,
+          ),
         );
       case GamebaseSortField.blackFed:
         return _compareText(
-          _playerFederation(a.blackPlayer),
-          _playerFederation(b.blackPlayer),
+          defaultGamePlayerFederation(
+            a.blackPlayer,
+            profilePlayerName: widget.profilePlayerName,
+            profilePlayerFideId: widget.profilePlayerFideId,
+            profileFederationFallback: widget.profileFederationFallback,
+          ),
+          defaultGamePlayerFederation(
+            b.blackPlayer,
+            profilePlayerName: widget.profilePlayerName,
+            profilePlayerFideId: widget.profilePlayerFideId,
+            profileFederationFallback: widget.profileFederationFallback,
+          ),
         );
       case GamebaseSortField.whitePlayerId:
         return _compareText(
@@ -411,8 +437,12 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         id: 'white',
         label: 'WHITE',
         sortField: GamebaseSortField.whiteName,
-        cellBuilder: (_, game) =>
-            _DefaultGamesPlayerCell(player: game.whitePlayer),
+        cellBuilder: (_, game) => _DefaultGamesPlayerCell(
+          player: game.whitePlayer,
+          profilePlayerName: widget.profilePlayerName,
+          profilePlayerFideId: widget.profilePlayerFideId,
+          profileFederationFallback: widget.profileFederationFallback,
+        ),
       ),
       AdaptiveColumn<GamesTourModel>(
         id: 'whiteElo',
@@ -428,8 +458,12 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         id: 'black',
         label: 'BLACK',
         sortField: GamebaseSortField.blackName,
-        cellBuilder: (_, game) =>
-            _DefaultGamesPlayerCell(player: game.blackPlayer),
+        cellBuilder: (_, game) => _DefaultGamesPlayerCell(
+          player: game.blackPlayer,
+          profilePlayerName: widget.profilePlayerName,
+          profilePlayerFideId: widget.profilePlayerFideId,
+          profileFederationFallback: widget.profileFederationFallback,
+        ),
       ),
       AdaptiveColumn<GamesTourModel>(
         id: 'blackElo',
@@ -601,13 +635,26 @@ class _DefaultGamesResultCell extends StatelessWidget {
 }
 
 class _DefaultGamesPlayerCell extends StatelessWidget {
-  const _DefaultGamesPlayerCell({required this.player});
+  const _DefaultGamesPlayerCell({
+    required this.player,
+    this.profilePlayerName,
+    this.profilePlayerFideId,
+    this.profileFederationFallback,
+  });
 
   final PlayerCard player;
+  final String? profilePlayerName;
+  final int? profilePlayerFideId;
+  final String? profileFederationFallback;
 
   @override
   Widget build(BuildContext context) {
-    final federation = _playerFederation(player);
+    final federation = defaultGamePlayerFederation(
+      player,
+      profilePlayerName: profilePlayerName,
+      profilePlayerFideId: profilePlayerFideId,
+      profileFederationFallback: profileFederationFallback,
+    );
     final iso2 = federation.isEmpty ? '' : CountryUtils.toIso2Code(federation);
     final title = player.title.trim();
     return ConstrainedBox(
@@ -804,10 +851,59 @@ String defaultGameResultText(GameStatus status) {
   }
 }
 
+String defaultGamePlayerFederation(
+  PlayerCard player, {
+  String? profilePlayerName,
+  int? profilePlayerFideId,
+  String? profileFederationFallback,
+}) {
+  final fed = _playerFederation(player);
+  final fallback = profileFederationFallback?.trim() ?? '';
+  if (fallback.isEmpty || fallback.toUpperCase() == 'FID') return fed;
+  if (fed.isNotEmpty && fed.toUpperCase() != 'FID') return fed;
+  if (!_isProfilePlayer(
+    player,
+    profilePlayerName: profilePlayerName,
+    profilePlayerFideId: profilePlayerFideId,
+  )) {
+    return fed;
+  }
+  return fallback;
+}
+
 String _playerFederation(PlayerCard player) {
   final fed = player.federation.trim();
   if (fed.isNotEmpty) return fed;
   return player.countryCode.trim();
+}
+
+bool _isProfilePlayer(
+  PlayerCard player, {
+  String? profilePlayerName,
+  int? profilePlayerFideId,
+}) {
+  final fideId = profilePlayerFideId;
+  if (fideId != null && fideId > 0 && player.fideId == fideId) return true;
+
+  final profileName = _normalizePlayerNameForMatch(profilePlayerName ?? '');
+  if (profileName.isEmpty) return false;
+  return _normalizePlayerNameForMatch(player.name) == profileName;
+}
+
+String _normalizePlayerNameForMatch(String value) {
+  var normalized = value.trim().toLowerCase();
+  if (normalized.isEmpty) return '';
+  normalized = normalized.replaceFirst(
+    RegExp(r'^(gm|im|fm|cm|wgm|wim|wfm|wcm)\s+', caseSensitive: false),
+    '',
+  );
+  final commaIndex = normalized.indexOf(',');
+  if (commaIndex >= 0) {
+    final last = normalized.substring(0, commaIndex).trim();
+    final first = normalized.substring(commaIndex + 1).trim();
+    normalized = '$first $last';
+  }
+  return normalized.replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
 }
 
 int _compareText(String? a, String? b) =>

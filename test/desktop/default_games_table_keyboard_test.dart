@@ -6,6 +6,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/widgets/default_games_table.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/widgets/federation_flag.dart';
 
 void main() {
   test(
@@ -34,6 +35,68 @@ void main() {
       ),
       '—',
     );
+  });
+
+  test(
+    'uses profile federation fallback for placeholder profile-player rows',
+    () {
+      expect(
+        defaultGamePlayerFederation(
+          _player('Elber Zhu', federation: 'FID', fideId: 2620965),
+          profilePlayerName: 'Elber Zhu',
+          profilePlayerFideId: 2620965,
+          profileFederationFallback: 'CAN',
+        ),
+        'CAN',
+      );
+      expect(
+        defaultGamePlayerFederation(
+          _player('Zhu, Elber', federation: '', countryCode: '', fideId: 0),
+          profilePlayerName: 'Elber Zhu',
+          profileFederationFallback: 'CAN',
+        ),
+        'CAN',
+      );
+      expect(
+        defaultGamePlayerFederation(
+          _player('Different Player', federation: 'FID', fideId: 0),
+          profilePlayerName: 'Elber Zhu',
+          profileFederationFallback: 'CAN',
+        ),
+        'FID',
+      );
+    },
+  );
+
+  testWidgets('table renders profile federation fallback flag', (tester) async {
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _wrap(
+        controller: controller,
+        onOpen: (_) {},
+        games: [
+          _game(
+            0,
+            whitePlayer: _player(
+              'Elber Zhu',
+              federation: 'FID',
+              fideId: 2620965,
+            ),
+            blackPlayer: _player('Opponent', federation: '', countryCode: ''),
+          ),
+        ],
+        profilePlayerName: 'Elber Zhu',
+        profilePlayerFideId: 2620965,
+        profileFederationFallback: 'CAN',
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(FederationFlag), findsOneWidget);
+    final flag = tester.widget<FederationFlag>(find.byType(FederationFlag));
+    expect(flag.federation, 'CA');
   });
 
   testWidgets('single click highlights and arrows move highlighted game', (
@@ -124,6 +187,10 @@ Widget _wrap({
   Set<String> selectedIds = const <String>{},
   ValueChanged<String>? onToggleSelection,
   ValueChanged<Set<String>>? onReplaceSelection,
+  List<GamesTourModel>? games,
+  String? profilePlayerName,
+  int? profilePlayerFideId,
+  String? profileFederationFallback,
 }) {
   return ProviderScope(
     child: MaterialApp(
@@ -134,13 +201,16 @@ Widget _wrap({
           height: 180,
           child: DefaultGamesTable(
             active: true,
-            games: List.generate(24, _game),
+            games: games ?? List.generate(24, _game),
             controller: controller,
             selectionMode: selectionMode,
             selectedIds: selectedIds,
             onToggleSelection: onToggleSelection,
             onReplaceSelection: onReplaceSelection,
             onOpenGame: (game, {required bool inNewTab}) => onOpen(game),
+            profilePlayerName: profilePlayerName,
+            profilePlayerFideId: profilePlayerFideId,
+            profileFederationFallback: profileFederationFallback,
           ),
         ),
       ),
@@ -148,11 +218,15 @@ Widget _wrap({
   );
 }
 
-GamesTourModel _game(int index) {
+GamesTourModel _game(
+  int index, {
+  PlayerCard? whitePlayer,
+  PlayerCard? blackPlayer,
+}) {
   return GamesTourModel(
     gameId: 'game-$index',
-    whitePlayer: _player('White$index'),
-    blackPlayer: _player('Black$index'),
+    whitePlayer: whitePlayer ?? _player('White$index'),
+    blackPlayer: blackPlayer ?? _player('Black$index'),
     whiteTimeDisplay: '',
     blackTimeDisplay: '',
     whiteClockCentiseconds: 0,
@@ -165,13 +239,19 @@ GamesTourModel _game(int index) {
   );
 }
 
-PlayerCard _player(String name) {
+PlayerCard _player(
+  String name, {
+  String federation = 'USA',
+  String countryCode = 'USA',
+  int fideId = 0,
+}) {
   return PlayerCard(
     name: name,
-    federation: 'USA',
+    federation: federation,
     title: 'GM',
     rating: 2600,
-    countryCode: 'USA',
+    fideId: fideId,
+    countryCode: countryCode,
     team: null,
   );
 }
