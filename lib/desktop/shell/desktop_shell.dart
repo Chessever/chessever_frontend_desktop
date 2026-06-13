@@ -24,6 +24,7 @@ import 'package:chessever/desktop/panes/settings_pane.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart';
 import 'package:chessever/desktop/panes/tournaments_pane.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
+import 'package:chessever/desktop/widgets/paywall/desktop_billing_issue_dialog.dart';
 import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/services/pgn_file_picker.dart';
 import 'package:chessever/desktop/shell/command_palette.dart';
@@ -582,7 +583,8 @@ class DesktopShell extends HookConsumerWidget {
             },
             child: Scaffold(
               backgroundColor: kBackgroundColor,
-              body: Stack(
+              body: DesktopBillingIssueGate(
+                child: Stack(
                 children: [
                   RepaintBoundary(
                     key: feedbackScreenshotKey,
@@ -656,6 +658,7 @@ class DesktopShell extends HookConsumerWidget {
                   ),
                   if (isLocalPgnLoading) const _DesktopPgnLoadingOverlay(),
                 ],
+              ),
               ),
             ),
           ),
@@ -786,7 +789,15 @@ Widget _resolveTab(DesktopTab? tab) {
       // move-stats table in the middle, persistent filter panel on the
       // right. Replaces embedding the mobile screen (which spawned
       // bottom sheets for filters / sort / position-games).
-      return OpeningExplorerPane(tabId: tab.id);
+      return ProviderScope(
+        key: ValueKey('opening-explorer-scope-${tab.id}'),
+        overrides: [
+          gamebaseExplorerProvider.overrideWith(
+            (ref) => GamebaseExplorerNotifier(ref),
+          ),
+        ],
+        child: OpeningExplorerPane(tabId: tab.id),
+      );
     case TabKind.boardEditor:
       return const BoardEditorPane();
     case TabKind.watch:

@@ -15,6 +15,10 @@ void main() {
       VoidCallback? onFirst,
       VoidCallback? onLast,
       VoidCallback? onFlip,
+      VoidCallback? onPlayPause,
+      VoidCallback? onPreviousGame,
+      VoidCallback? onNextGame,
+      bool isPlaying = false,
       String? moveLabel,
     }) async {
       await tester.pumpWidget(
@@ -27,6 +31,10 @@ void main() {
               onPrevious: onPrevious ?? () {},
               onNext: onNext ?? () {},
               onLast: onLast ?? () {},
+              onPlayPause: onPlayPause,
+              onPreviousGame: onPreviousGame,
+              onNextGame: onNextGame,
+              isPlaying: isPlaying,
               onFlipBoard: onFlip ?? () {},
               moveLabel: moveLabel,
             ),
@@ -95,6 +103,37 @@ void main() {
       );
 
       expect(_byDesktopTooltip('Flip board (F)'), findsNothing);
+    });
+
+    testWidgets('shows optional previous and next game jump controls', (
+      tester,
+    ) async {
+      var previousGamePressed = false;
+      var nextGamePressed = false;
+      await pumpBar(
+        tester,
+        onPreviousGame: () => previousGamePressed = true,
+        onNextGame: () => nextGamePressed = true,
+      );
+
+      await tester.tap(_byDesktopTooltip('Previous game'));
+      await tester.pumpAndSettle(const Duration(milliseconds: 400));
+      await tester.tap(_byDesktopTooltip('Next game'));
+      await tester.pumpAndSettle(const Duration(milliseconds: 400));
+
+      expect(previousGamePressed, isTrue);
+      expect(nextGamePressed, isTrue);
+    });
+
+    testWidgets('play pause uses the same compact button slot', (tester) async {
+      var pressed = false;
+      await pumpBar(tester, onPlayPause: () => pressed = true);
+
+      await tester.tap(_byDesktopTooltip('Autoplay (Space)'));
+      await tester.pumpAndSettle(const Duration(milliseconds: 400));
+
+      expect(pressed, isTrue);
+      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
     });
   });
 }

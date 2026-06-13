@@ -97,6 +97,8 @@ class DesktopSubscriptionNotifier extends SubscriptionNotifier {
         isLoading: false,
         expirationDate: ent.expiresAt,
         willRenew: ent.willRenew,
+        provider: ent.provider,
+        inBillingGracePeriod: ent.inBillingGracePeriod,
       );
       return ent;
     } on DesktopBillingAuthException catch (e) {

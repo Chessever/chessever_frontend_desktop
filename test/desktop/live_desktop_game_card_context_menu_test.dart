@@ -4,9 +4,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
+import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart';
+import 'package:chessever/providers/board_settings_provider_new.dart';
+import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
+import 'package:chessever/screens/chessboard/provider/current_eval_provider.dart';
+import 'package:chessever/screens/chessboard/widgets/evaluation_bar_widget.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/utils/responsive_helper.dart';
+
+const _kFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 class _FakeGameStreamRepository extends GameStreamRepository {
   @override
@@ -36,12 +44,37 @@ void main() {
     expect(find.text('Save to library'), findsNothing);
     expect(find.text('Share Game'), findsOneWidget);
   });
+
+  testWidgets('grid cards hide eval rail when board setting is disabled', (
+    tester,
+  ) async {
+    await _pumpDesktopGameCard(
+      tester,
+      _cardData(),
+      _EvaluationBarOffNotifier.new,
+    );
+
+    expect(find.byType(EvaluationBarWidgetForGames), findsNothing);
+  });
+
+  testWidgets('grid cards show eval rail when board setting is enabled', (
+    tester,
+  ) async {
+    await _pumpDesktopGameCard(
+      tester,
+      _cardData(),
+      _EvaluationBarOnNotifier.new,
+    );
+
+    expect(find.byType(EvaluationBarWidgetForGames), findsOneWidget);
+  });
 }
 
 Future<void> _pumpCard(WidgetTester tester, GamesTourModel game) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        boardSettingsProviderNew.overrideWith(_EvaluationBarOnNotifier.new),
         gameStreamRepositoryProvider.overrideWithValue(
           _FakeGameStreamRepository(),
         ),
@@ -58,6 +91,48 @@ Future<void> _pumpCard(WidgetTester tester, GamesTourModel game) async {
               ),
             ),
           ),
+        ),
+      ),
+    ),
+  );
+  await tester.pump();
+}
+
+Future<void> _pumpDesktopGameCard(
+  WidgetTester tester,
+  GameCardData data,
+  BoardSettingsNotifierNew Function() createNotifier,
+) async {
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        boardSettingsProviderNew.overrideWith(createNotifier),
+        gameCardEvalWithStockfishFallbackProvider.overrideWith(
+          (ref, fen) async => _cloudEval(),
+        ),
+        gameCardEvalCacheOnlyProvider.overrideWith(
+          (ref, fen) async => _cloudEval(),
+        ),
+      ],
+      child: MaterialApp(
+        home: Builder(
+          builder: (context) {
+            ResponsiveHelper.init(context);
+            return Scaffold(
+              body: Center(
+                child: SizedBox(
+                  width: 260,
+                  height: 320,
+                  child: DesktopGameCard(
+                    data: data,
+                    layout: DesktopCardLayout.grid,
+                    allowStockfishFallback: false,
+                    onTap: () {},
+                  ),
+                ),
+              ),
+            );
+          },
         ),
       ),
     ),
@@ -99,4 +174,50 @@ PlayerCard _player(String name) {
     countryCode: 'USA',
     team: null,
   );
+}
+
+CloudEval _cloudEval() {
+  return CloudEval(
+    fen: _kFen,
+    knodes: 0,
+    depth: 12,
+    pvs: [Pv(moves: 'e2e4', cp: 32)],
+    requestedMultiPv: 1,
+  );
+}
+
+GameCardData _cardData() {
+  return const GameCardData(
+    id: 'live-grid-card',
+    title: 'White vs Black',
+    whiteName: 'White',
+    blackName: 'Black',
+    whiteFederation: 'USA',
+    blackFederation: 'USA',
+    whiteTitle: 'GM',
+    blackTitle: 'GM',
+    whiteRating: 2700,
+    blackRating: 2700,
+    fen: _kFen,
+    status: GameStatus.ongoing,
+    hasStarted: true,
+  );
+}
+
+class _EvaluationBarOffNotifier extends BoardSettingsNotifierNew {
+  @override
+  Future<BoardSettingsNew> build() async {
+    const settings = BoardSettingsNew(showEvaluationBar: false);
+    state = const AsyncValue.data(settings);
+    return settings;
+  }
+}
+
+class _EvaluationBarOnNotifier extends BoardSettingsNotifierNew {
+  @override
+  Future<BoardSettingsNew> build() async {
+    const settings = BoardSettingsNew(showEvaluationBar: true);
+    state = const AsyncValue.data(settings);
+    return settings;
+  }
 }

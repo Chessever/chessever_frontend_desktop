@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/panes/board_pane.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -26,39 +27,61 @@ void main() {
     );
   });
 
-  test('board resize enters focus after threshold or max overshoot', () {
+  test('game-card eval bar follows engine gauge setting only after load', () {
     expect(
-      shouldEnterBoardFocusAfterResize(
-        requestedSize: 759,
-        grewPastResizeLimit: false,
-        isAlreadyFocused: false,
-      ),
-      isFalse,
-    );
-    expect(
-      shouldEnterBoardFocusAfterResize(
-        requestedSize: 760,
-        grewPastResizeLimit: false,
-        isAlreadyFocused: false,
+      shouldShowGameCardEvalBarFromSettings(
+        const AsyncValue.data(EngineSettings(showEngineGauge: true)),
       ),
       isTrue,
     );
     expect(
-      shouldEnterBoardFocusAfterResize(
-        requestedSize: 620,
-        grewPastResizeLimit: true,
-        isAlreadyFocused: false,
-      ),
-      isTrue,
-    );
-    expect(
-      shouldEnterBoardFocusAfterResize(
-        requestedSize: 900,
-        grewPastResizeLimit: true,
-        isAlreadyFocused: true,
+      shouldShowGameCardEvalBarFromSettings(
+        const AsyncValue.data(EngineSettings(showEngineGauge: false)),
       ),
       isFalse,
     );
+    expect(
+      shouldShowGameCardEvalBarFromSettings(
+        const AsyncValue<EngineSettings>.loading(),
+      ),
+      isFalse,
+    );
+  });
+
+  test('board resize never enters focus mode implicitly', () {
+    final scenarios = [
+      (
+        requestedSize: 759.0,
+        grewPastResizeLimit: false,
+        isAlreadyFocused: false,
+      ),
+      (
+        requestedSize: 760.0,
+        grewPastResizeLimit: false,
+        isAlreadyFocused: false,
+      ),
+      (
+        requestedSize: 900.0,
+        grewPastResizeLimit: false,
+        isAlreadyFocused: false,
+      ),
+      (
+        requestedSize: 620.0,
+        grewPastResizeLimit: true,
+        isAlreadyFocused: false,
+      ),
+      (requestedSize: 900.0, grewPastResizeLimit: true, isAlreadyFocused: true),
+    ];
+    for (final scenario in scenarios) {
+      expect(
+        shouldEnterBoardFocusAfterResize(
+          requestedSize: scenario.requestedSize,
+          grewPastResizeLimit: scenario.grewPastResizeLimit,
+          isAlreadyFocused: scenario.isAlreadyFocused,
+        ),
+        isFalse,
+      );
+    }
   });
 
   test('board resize drag uses dominant signed axis without cancellation', () {

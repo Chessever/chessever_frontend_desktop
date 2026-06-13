@@ -65,6 +65,7 @@ import 'package:chessever/desktop/widgets/engine_pv_arrow_palette.dart';
 import 'package:chessever/desktop/widgets/event_games_table.dart';
 import 'package:chessever/desktop/widgets/event_info_popover.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
+import 'package:chessever/desktop/widgets/move_navigation_bar.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
@@ -78,6 +79,7 @@ import 'package:chessever/repository/library/library_repository.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
+import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/chessboard/provider/lichess_move_annotations_provider.dart';
 import 'package:chessever/screens/library/providers/library_folders_provider.dart';
@@ -115,12 +117,6 @@ const _boardFocusBoardWeight = 0.60;
 const _boardFocusRightPaneWeight = 0.40;
 const _boardAreaPadding = 16.0;
 const _boardFocusPadding = 10.0;
-// When the user drags the board past this width the shell auto-enters
-// focus mode (sidebar, top bar, tab strip, games rail, move-nav cluster all
-// fold away) so the resize stays meaningful instead of just running out of
-// room. Mirrors lichess' implicit-focus heuristic.
-const _autoFocusBoardSizeThreshold = 760.0;
-const _resizeFocusOvershoot = 12.0;
 
 final _desktopBoardPlayerPhotoProvider = FutureProvider.autoDispose
     .family<String?, int>(
@@ -138,8 +134,7 @@ bool shouldEnterBoardFocusAfterResize({
   required bool grewPastResizeLimit,
   required bool isAlreadyFocused,
 }) {
-  if (isAlreadyFocused) return false;
-  return grewPastResizeLimit || requestedSize >= _autoFocusBoardSizeThreshold;
+  return false;
 }
 
 @visibleForTesting
@@ -252,8 +247,35 @@ computeBoardAreaChromeMetrics({
 /// hard-codes `PieceShiftMethod.tapTwoSquares` plus PageView swipes. Per
 /// `CLAUDE.md`, desktop wraps and replaces, it does not edit mobile
 /// widgets in place.
-class BoardPane extends HookConsumerWidget {
+class BoardPane extends ConsumerWidget {
   const BoardPane({super.key, this.tabId});
+
+  final String? tabId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final activeTabId =
+        tabId ?? ref.watch(desktopTabsProvider.select((s) => s.activeId));
+
+    if (activeTabId == null) {
+      return const _BoardPaneContent();
+    }
+
+    return ProviderScope(
+      key: ValueKey<String>('board-explorer-scope:$activeTabId'),
+      overrides: [
+        gamebaseExplorerProvider.overrideWith(
+          (ref) => GamebaseExplorerNotifier(ref),
+        ),
+        appliedBoardExplorerScopeKeyProvider.overrideWith((ref) => null),
+      ],
+      child: _BoardPaneContent(tabId: activeTabId),
+    );
+  }
+}
+
+class _BoardPaneContent extends HookConsumerWidget {
+  const _BoardPaneContent({this.tabId});
 
   final String? tabId;
 
@@ -362,7 +384,6 @@ class BoardPane extends HookConsumerWidget {
     final boardFocusMode = ref.watch(boardFocusModeProvider);
     final boardSizePreference = useState<double?>(null);
     final lastPersistedBoardSize = useRef<int?>(null);
-    final boardResizeHitSplitLimit = useRef<bool>(false);
     useEffect(() {
       var disposed = false;
       AppDatabase.instance.getInt(_boardSizePreferenceKey).then((value) {
@@ -390,7 +411,7 @@ class BoardPane extends HookConsumerWidget {
           size.clamp(_minDesktopBoardSize, _maxDesktopBoardSize).toDouble();
     }
 
-    void persistBoardSizePreference({bool grewPastResizeLimit = false}) {
+    void persistBoardSizePreference() {
       final size = boardSizePreference.value;
       if (size == null) return;
       final rounded = size.round();
@@ -399,17 +420,6 @@ class BoardPane extends HookConsumerWidget {
         unawaited(
           AppDatabase.instance.setInt(_boardSizePreferenceKey, rounded),
         );
-      }
-      // Crossing the threshold on grip-release latches the shell into
-      // focus mode (sidebar, top bar, tab strip, games rail, nav cluster
-      // all fold). Triggering on release — not mid-drag — keeps the
-      // resize handle mounted for the full drag gesture.
-      if (shouldEnterBoardFocusAfterResize(
-        requestedSize: size,
-        grewPastResizeLimit: grewPastResizeLimit,
-        isAlreadyFocused: ref.read(boardFocusModeProvider),
-      )) {
-        ref.read(boardFocusModeProvider.notifier).state = true;
       }
     }
 
@@ -469,6 +479,13 @@ class BoardPane extends HookConsumerWidget {
       boardSettingsProviderNew.select(
         (s) =>
             s.valueOrNull?.pieceAssets ?? const BoardSettingsNew().pieceAssets,
+      ),
+    );
+    final showMoveNavigation = ref.watch(
+      boardSettingsProviderNew.select(
+        (s) =>
+            s.valueOrNull?.showMoveNavigation ??
+            const BoardSettingsNew().showMoveNavigation,
       ),
     );
     final rightRailActivePage = ref.watch(
@@ -1166,6 +1183,8 @@ class BoardPane extends HookConsumerWidget {
     final cursor = history.length - 1;
     final currentPly = history[cursor];
     final position = currentPly.position;
+    final canBack = pointer.value.isNotEmpty;
+    final canForward = _nextPointer(chessGame.value, pointer.value) != null;
     // ---- Per-side clocks at the active pointer ---------------------
     // Walk the active line *backwards* once and pick up the most
     // recent `[%clk …]` annotation we find for each colour. Clock
@@ -1388,7 +1407,7 @@ class BoardPane extends HookConsumerWidget {
 
     useEffect(() {
       if (!autoReplay.value) return null;
-      final timer = Timer.periodic(const Duration(milliseconds: 850), (_) {
+      final timer = Timer.periodic(const Duration(milliseconds: 700), (_) {
         if (!context.mounted) return;
         if (_nextPointer(chessGame.value, pointer.value) == null) {
           autoReplay.value = false;
@@ -1968,7 +1987,13 @@ class BoardPane extends HookConsumerWidget {
         moves: exactFenSearch ? const <String>[] : lineUcis,
         exactFenSearch: exactFenSearch,
       );
-      ref.read(desktopTabsProvider.notifier).open(TabKind.openingExplorer);
+      ref
+          .read(desktopTabsProvider.notifier)
+          .open(
+            TabKind.openingExplorer,
+            title: _explorerTabTitle(chessGame.value),
+            reuseExisting: false,
+          );
     }
 
     void switchRightRailPage(int delta) {
@@ -2027,6 +2052,40 @@ class BoardPane extends HookConsumerWidget {
       }
       autoReplay.value = !autoReplay.value;
       showToast(autoReplay.value ? 'Auto-replay on' : 'Auto-replay off');
+    }
+
+    void pauseAutoReplayForManualNavigation() {
+      if (autoReplay.value) autoReplay.value = false;
+    }
+
+    void goFirstManually() {
+      pauseAutoReplayForManualNavigation();
+      goFirst();
+    }
+
+    void goPrevManually() {
+      pauseAutoReplayForManualNavigation();
+      goPrev();
+    }
+
+    Future<void> goNextManually() async {
+      pauseAutoReplayForManualNavigation();
+      await goNextInteractive();
+    }
+
+    void goLastManually() {
+      pauseAutoReplayForManualNavigation();
+      goLast();
+    }
+
+    void navigatePreviousGameManually() {
+      pauseAutoReplayForManualNavigation();
+      unawaited(navigateActiveEventGame(ref, delta: -1));
+    }
+
+    void navigateNextGameManually() {
+      pauseAutoReplayForManualNavigation();
+      unawaited(navigateActiveEventGame(ref, delta: 1));
     }
 
     void takebackForVariationAction() {
@@ -2631,10 +2690,10 @@ class BoardPane extends HookConsumerWidget {
 
       switch (action) {
         case BoardActionKey.prevMove:
-          goPrev();
+          goPrevManually();
           return true;
         case BoardActionKey.nextMove:
-          unawaited(goNextInteractive());
+          unawaited(goNextManually());
           return true;
         case BoardActionKey.previousNotationLine:
           goNotationLine(NotationVerticalDirection.up);
@@ -2643,10 +2702,10 @@ class BoardPane extends HookConsumerWidget {
           goNotationLine(NotationVerticalDirection.down);
           return true;
         case BoardActionKey.firstMove:
-          goFirst();
+          goFirstManually();
           return true;
         case BoardActionKey.lastMove:
-          goLast();
+          goLastManually();
           return true;
         case BoardActionKey.prevVariation:
           goPrevVariation();
@@ -2697,10 +2756,10 @@ class BoardPane extends HookConsumerWidget {
           openBoardSettingsTab();
           return true;
         case BoardActionKey.prevGame:
-          unawaited(navigateActiveEventGame(ref, delta: -1));
+          navigatePreviousGameManually();
           return true;
         case BoardActionKey.nextGame:
-          unawaited(navigateActiveEventGame(ref, delta: 1));
+          navigateNextGameManually();
           return true;
         case BoardActionKey.autoReplay:
           toggleAutoReplayAction();
@@ -3308,27 +3367,40 @@ class BoardPane extends HookConsumerWidget {
                                     : 0.0;
                             final targetColumnSize =
                                 size + evalBarReservation + 48;
-                            final appliedColumnSize = mainSplitController
-                                .setSize(boardSplitIndex, targetColumnSize);
-                            boardResizeHitSplitLimit.value =
-                                appliedColumnSize != null &&
-                                targetColumnSize >
-                                    appliedColumnSize + _resizeFocusOvershoot;
+                            mainSplitController.setSize(
+                              boardSplitIndex,
+                              targetColumnSize,
+                            );
                           },
                           onBoardSizeReset: () {
                             setBoardSizePreference(null);
                           },
                           onBoardSizeChangeEnd: () {
-                            final grewPastSplitLimit =
-                                boardResizeHitSplitLimit.value;
-                            boardResizeHitSplitLimit.value = false;
-                            persistBoardSizePreference(
-                              grewPastResizeLimit: grewPastSplitLimit,
-                            );
+                            persistBoardSizePreference();
                           },
                         ),
                       ),
                     ),
+                    // Optional move-nav cluster sits directly under the board.
+                    // It is hidden by default so the board reclaims the
+                    // vertical space; keyboard, mouse-wheel, and notation
+                    // navigation remain active regardless of this visual row.
+                    if (!boardFocusMode && showMoveNavigation)
+                      MoveNavigationBar(
+                        canGoBack: canBack,
+                        canGoForward: canForward,
+                        onFirst: goFirstManually,
+                        onPrevious: goPrevManually,
+                        onNext: () => unawaited(goNextManually()),
+                        onLast: goLastManually,
+                        onPlayPause: toggleAutoReplayAction,
+                        onPreviousGame: navigatePreviousGameManually,
+                        onNextGame: navigateNextGameManually,
+                        isPlaying: autoReplay.value,
+                        onFlipBoard: () => flipped.value = !flipped.value,
+                        moveLabel: _moveLabel(history, cursor),
+                        hasUnseenLiveMove: hasUnseenMoves.value,
+                      ),
                   ],
                 ),
               ),
@@ -3398,6 +3470,14 @@ class BoardPane extends HookConsumerWidget {
                       onNotationStep: stepNotationHorizontally,
                       onNotationJumpToHead: goFirst,
                       onNotationJumpToTip: goLast,
+                      canGoBack: canBack,
+                      canGoForward: canForward,
+                      onFirstMove: goFirstManually,
+                      onPreviousMove: goPrevManually,
+                      onNextMove: () => unawaited(goNextManually()),
+                      onLastMove: goLastManually,
+                      onPreviousGame: navigatePreviousGameManually,
+                      onNextGame: navigateNextGameManually,
                       trailingActions: boardActionCluster,
                     ),
                     enginePanel: EnginePanel(
@@ -3694,6 +3774,17 @@ String _libraryGameTitle(ChessGame game) {
     return event.isEmpty || event == '?' ? 'Saved analysis' : event;
   }
   return '${white.isEmpty ? 'White' : white} vs ${black.isEmpty ? 'Black' : black}';
+}
+
+String _explorerTabTitle(ChessGame game) {
+  final white = (game.metadata['White']?.toString().trim() ?? '');
+  final black = (game.metadata['Black']?.toString().trim() ?? '');
+  if (white.isNotEmpty || black.isNotEmpty) {
+    return '${white.isEmpty ? 'White' : white} Explorer';
+  }
+  final event = (game.metadata['Event']?.toString().trim() ?? '');
+  if (event.isNotEmpty && event != '?') return '$event Explorer';
+  return 'Board Explorer';
 }
 
 Map<String, String> _headersFromBoardArgs(BoardTabGameArgs args) {
@@ -5189,7 +5280,6 @@ class _BoardArea extends ConsumerWidget {
             maxSize: math.min(vLimit, _maxDesktopBoardSize),
             onResize: onBoardSizeChanged,
             onResizeEnd: onBoardSizeChangeEnd,
-            onGrowPastLimit: () => onFocusModeChanged(true),
             onReset: onBoardSizeReset,
           );
 
@@ -5334,7 +5424,6 @@ class _BoardResizeHandle extends StatefulWidget {
     required this.maxSize,
     required this.onResize,
     required this.onResizeEnd,
-    required this.onGrowPastLimit,
     required this.onReset,
   });
 
@@ -5343,7 +5432,6 @@ class _BoardResizeHandle extends StatefulWidget {
   final double maxSize;
   final ValueChanged<double> onResize;
   final VoidCallback onResizeEnd;
-  final VoidCallback onGrowPastLimit;
   final VoidCallback onReset;
 
   @override
@@ -5354,12 +5442,10 @@ class _BoardResizeHandleState extends State<_BoardResizeHandle> {
   Offset? _dragStart;
   double? _sizeStart;
   bool _active = false;
-  bool _grewPastLimit = false;
 
   void _begin(DragStartDetails details) {
     _dragStart = details.globalPosition;
     _sizeStart = widget.boardSize;
-    _grewPastLimit = false;
     setState(() => _active = true);
   }
 
@@ -5370,21 +5456,15 @@ class _BoardResizeHandleState extends State<_BoardResizeHandle> {
     final offset = details.globalPosition - start;
     final delta = desktopBoardResizeDragDelta(offset);
     final rawSize = sizeStart + delta;
-    if (rawSize > widget.maxSize + _resizeFocusOvershoot) {
-      _grewPastLimit = true;
-    }
     widget.onResize(rawSize.clamp(widget.minSize, widget.maxSize).toDouble());
   }
 
   void _end() {
     if (!_active) return;
-    final grewPastLimit = _grewPastLimit;
     _dragStart = null;
     _sizeStart = null;
-    _grewPastLimit = false;
     setState(() => _active = false);
     widget.onResizeEnd();
-    if (grewPastLimit) widget.onGrowPastLimit();
   }
 
   @override
@@ -5780,6 +5860,7 @@ List<cg.Shape> _enginePvArrowShapes({
       position: position,
       rawUci: firstMove,
       color: enginePvArrowColor(i),
+      scale: enginePvArrowScale(i),
     );
     if (arrow != null) out.add(arrow);
   }
@@ -5790,6 +5871,7 @@ cg.Arrow? _engineArrowFromUci({
   required Position position,
   required String rawUci,
   required Color color,
+  required double scale,
 }) {
   final uci = rawUci.trim().toLowerCase();
   if (uci.isEmpty) return null;
@@ -5798,14 +5880,14 @@ cg.Arrow? _engineArrowFromUci({
     if (uci.contains('@')) {
       if (uci.length != 4 || uci[1] != '@') return null;
       final square = Square.fromName(uci.substring(2, 4));
-      return cg.Arrow(color: color, orig: square, dest: square);
+      return cg.Arrow(color: color, orig: square, dest: square, scale: scale);
     }
 
     final move = Move.parse(uci);
     if (move is! NormalMove || !position.isLegal(move)) {
       return null;
     }
-    return cg.Arrow(color: color, orig: move.from, dest: move.to);
+    return cg.Arrow(color: color, orig: move.from, dest: move.to, scale: scale);
   } catch (_) {
     return null;
   }
@@ -6511,6 +6593,16 @@ class _Ply {
   final Square? lastMoveSquare;
 
   Move? get uciMove => move;
+}
+
+String _moveLabel(List<_Ply> history, int cursor) {
+  if (cursor == 0) return 'Start position';
+  final fullMove = (cursor + 1) ~/ 2;
+  final isWhite = cursor.isOdd;
+  final san = history[cursor].san ?? '';
+  final marker = isWhite ? '$fullMove.' : '$fullMove...';
+  final progress = '$cursor / ${history.length - 1}';
+  return '$marker $san   ·   $progress';
 }
 
 /// Pull a Lichess game id out of a parsed PGN's headers. Mirrors the

@@ -1,13 +1,10 @@
-import 'dart:async';
 import 'dart:convert';
 
-import 'package:chessever/repository/board_settings/models/board_settings_model.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/utils/board_customization_utils.dart';
 import 'package:chessground/chessground.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Board color enum matching index values stored in Supabase (DEPRECATED - kept for migration)
 enum BoardColor {
@@ -150,7 +147,7 @@ class BoardSettingsNew {
   }
 }
 
-/// Provider for managing board settings with Supabase + SharedPreferences sync
+/// Provider for managing board settings as device-local preferences.
 final boardSettingsProviderNew =
     AsyncNotifierProvider<BoardSettingsNotifierNew, BoardSettingsNew>(
       BoardSettingsNotifierNew.new,
@@ -159,8 +156,6 @@ final boardSettingsProviderNew =
 class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
   static const String _cacheKey = 'cached_board_settings';
 
-  SupabaseClient get _supabase => Supabase.instance.client;
-
   @override
   Future<BoardSettingsNew> build() async {
     return await _loadSettings();
@@ -168,78 +163,13 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
 
   Future<BoardSettingsNew> _loadSettings() async {
     try {
-      final userId = _supabase.auth.currentUser?.id;
-      if (userId == null) {
-        debugPrint('[BoardSettings] No user logged in, returning defaults');
-        return const BoardSettingsNew();
-      }
-
-      // Fetch from Supabase (source of truth)
-      // Note: Using user_engine_settings table (unified settings table)
-      final response =
-          await _supabase
-              .from('user_engine_settings')
-              .select()
-              .eq('user_id', userId)
-              .maybeSingle();
-
-      if (response == null) {
-        debugPrint(
-          '[BoardSettings] No settings found in Supabase, creating defaults',
-        );
-        // Save defaults to Supabase (upsert handles race conditions)
-        try {
-          await _saveToSupabase(const BoardSettingsNew(), userId);
-        } catch (e) {
-          // Ignore duplicate errors - another process may have created it
-          debugPrint(
-            '[BoardSettings] Info: ${e.toString().contains('duplicate') ? 'Settings already exist' : 'Error creating defaults: $e'}',
-          );
-        }
-        return const BoardSettingsNew();
-      }
-
-      final model = BoardSettingsModel.fromSupabase(response);
-
-      // Migration: If boardThemeIndex is 0 (default) but boardColorIndex is set,
-      // migrate old color to new theme
-      int boardThemeIndex = model.boardThemeIndex;
-      if (boardThemeIndex == 0 && model.boardColorIndex > 0) {
-        boardThemeIndex = migrateOldBoardColorToTheme(model.boardColorIndex);
-        debugPrint(
-          '[BoardSettings] Migrated old boardColorIndex ${model.boardColorIndex} to boardThemeIndex $boardThemeIndex',
-        );
-      }
-
-      // Desktop-only preferences are not stored in Supabase — pull the last
-      // cached values so they survive a fresh Supabase fetch.
-      final cachedInline = await _getCachedNotationInline();
-      final cachedShowMoveNavigation = await _getCachedShowMoveNavigation();
-
-      final settings = BoardSettingsNew(
-        boardColorIndex: model.boardColorIndex,
-        boardThemeIndex: boardThemeIndex,
-        showEvaluationBar: model.showEvaluationBar,
-        soundEnabled: model.soundEnabled,
-        chatEnabled: model.chatEnabled,
-        pieceStyleIndex: model.pieceStyleIndex,
-        gamesListViewModeIndex: model.gamesListViewModeIndex,
-        useFigurine: model.useFigurine,
-        notationInline: cachedInline,
-        showMoveNavigation: cachedShowMoveNavigation,
-      );
-
-      // Cache locally
-      await _cacheSettings(settings);
-
-      debugPrint('[BoardSettings] Fetched settings from Supabase');
-      return settings;
-    } catch (e, st) {
-      debugPrint('[BoardSettings] Error fetching from Supabase: $e');
-      debugPrint('[BoardSettings] Stack: $st');
-
-      // Fallback to local cache
+      // Board/UI preferences are device-local. Do not fetch them from
+      // Supabase, otherwise desktop and phone overwrite each other.
       return await _getCachedSettings();
+    } catch (e, st) {
+      debugPrint('[BoardSettings] Error loading local settings: $e');
+      debugPrint('[BoardSettings] Stack: $st');
+      return const BoardSettingsNew();
     }
   }
 
@@ -369,18 +299,18 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
     await _persist(newSettings);
   }
 
-  /// Refresh settings from Supabase
+  /// Refresh settings from the on-device cache.
   Future<void> refresh() async {
     state = const AsyncValue.loading();
     state = await AsyncValue.guard(() => _loadSettings());
   }
 
-  /// Sync settings from Supabase to local cache
+  /// Refresh device-local settings from the on-device cache.
   Future<void> syncFromSupabase() async {
-    debugPrint('[BoardSettings] Starting sync...');
+    debugPrint('[BoardSettings] Refreshing local settings...');
     try {
       await refresh();
-      debugPrint('[BoardSettings] Sync complete');
+      debugPrint('[BoardSettings] Local refresh complete');
     } catch (e, st) {
       debugPrint('[BoardSettings] Error syncing: $e');
       debugPrint('[BoardSettings] Stack: $st');
@@ -391,49 +321,15 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
 
   Future<void> _persist(BoardSettingsNew settings) async {
     try {
-      // Cache locally first (fast, immediate). Desktop-only preferences rely on
-      // this path and should persist even when Supabase is unavailable.
+      // Cache locally first (fast, immediate). Board/UI preferences are
+      // intentionally not synced across platforms because desktop and phone
+      // users can choose different layouts, board themes, notation, sounds,
+      // and other device-specific settings.
       await _cacheSettings(settings);
-
-      final userId = _supabase.auth.currentUser?.id;
-      if (userId == null) {
-        debugPrint('[BoardSettings] No user logged in, skipping persist');
-        return;
-      }
-
-      // Save to Supabase in background (fire-and-forget, non-blocking)
-      unawaited(_saveToSupabase(settings, userId));
     } catch (e, st) {
       debugPrint('[BoardSettings] Error persisting settings: $e');
       debugPrint('[BoardSettings] Stack: $st');
       // Don't rethrow - we don't want to block UI on persistence errors
-    }
-  }
-
-  Future<void> _saveToSupabase(BoardSettingsNew settings, String userId) async {
-    try {
-      // Use upsert with onConflict to handle existing records
-      // Note: Using user_engine_settings table (unified settings table)
-      await _supabase.from('user_engine_settings').upsert(
-        {
-          'user_id': userId,
-          'board_color_index': settings.boardColorIndex,
-          'board_theme_index': settings.boardThemeIndex,
-          'show_evaluation_bar': settings.showEvaluationBar,
-          'sound_enabled': settings.soundEnabled,
-          'chat_enabled': settings.chatEnabled,
-          'piece_style_index': settings.pieceStyleIndex,
-          'games_list_view_mode_index': settings.gamesListViewModeIndex,
-          'use_figurine': settings.useFigurine,
-          // Desktop-only preferences intentionally omitted — local cache only.
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
-        },
-        onConflict: 'user_id', // Specify conflict column
-      );
-      debugPrint('[BoardSettings] ✅ Saved to Supabase');
-    } catch (e) {
-      debugPrint('[BoardSettings] ❌ Error saving to Supabase: $e');
-      rethrow;
     }
   }
 
@@ -503,32 +399,6 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
     } catch (e) {
       debugPrint('[BoardSettings] Error getting cached settings: $e');
       return const BoardSettingsNew();
-    }
-  }
-
-  Future<bool> _getCachedNotationInline() async {
-    try {
-      final db = AppDatabase.instance;
-      final json = await db.getString(_cacheKey);
-      if (json == null) return const BoardSettingsNew().notationInline;
-      final map = jsonDecode(json) as Map<String, dynamic>;
-      return map['notationInline'] as bool? ??
-          const BoardSettingsNew().notationInline;
-    } catch (_) {
-      return const BoardSettingsNew().notationInline;
-    }
-  }
-
-  Future<bool> _getCachedShowMoveNavigation() async {
-    try {
-      final db = AppDatabase.instance;
-      final json = await db.getString(_cacheKey);
-      if (json == null) return const BoardSettingsNew().showMoveNavigation;
-      final map = jsonDecode(json) as Map<String, dynamic>;
-      return map['showMoveNavigation'] as bool? ??
-          const BoardSettingsNew().showMoveNavigation;
-    } catch (_) {
-      return const BoardSettingsNew().showMoveNavigation;
     }
   }
 

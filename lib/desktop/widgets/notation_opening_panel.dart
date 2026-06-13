@@ -70,6 +70,14 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.onNotationStep,
     this.onNotationJumpToHead,
     this.onNotationJumpToTip,
+    this.canGoBack = false,
+    this.canGoForward = false,
+    this.onFirstMove,
+    this.onPreviousMove,
+    this.onNextMove,
+    this.onLastMove,
+    this.onPreviousGame,
+    this.onNextGame,
     this.trailingActions,
   });
 
@@ -102,6 +110,17 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
 
   /// End key handler for the Notation tab — jumps to the tip / last ply.
   final VoidCallback? onNotationJumpToTip;
+
+  /// Optional board navigation controls rendered in the bottom strip while
+  /// the Explorer is open.
+  final bool canGoBack;
+  final bool canGoForward;
+  final VoidCallback? onFirstMove;
+  final VoidCallback? onPreviousMove;
+  final VoidCallback? onNextMove;
+  final VoidCallback? onLastMove;
+  final VoidCallback? onPreviousGame;
+  final VoidCallback? onNextGame;
 
   /// Optional compact actions shown on the right side of the top tab strip.
   /// Used by the desktop board to keep Save / Play-from-here / Info visible
@@ -503,6 +522,14 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                 }
               },
               explorerScope: widget.explorerScope,
+              canGoBack: widget.canGoBack,
+              canGoForward: widget.canGoForward,
+              onFirstMove: widget.onFirstMove,
+              onPreviousMove: widget.onPreviousMove,
+              onNextMove: widget.onNextMove,
+              onLastMove: widget.onLastMove,
+              onPreviousGame: widget.onPreviousGame,
+              onNextGame: widget.onNextGame,
               trailingActions: widget.trailingActions,
             ),
           ],
@@ -591,12 +618,28 @@ class _SegmentBar extends ConsumerWidget {
     required this.explorerOpen,
     required this.onToggleExplorer,
     required this.explorerScope,
+    required this.canGoBack,
+    required this.canGoForward,
+    this.onFirstMove,
+    this.onPreviousMove,
+    this.onNextMove,
+    this.onLastMove,
+    this.onPreviousGame,
+    this.onNextGame,
     this.trailingActions,
   });
 
   final bool explorerOpen;
   final VoidCallback onToggleExplorer;
   final BoardExplorerScope? explorerScope;
+  final bool canGoBack;
+  final bool canGoForward;
+  final VoidCallback? onFirstMove;
+  final VoidCallback? onPreviousMove;
+  final VoidCallback? onNextMove;
+  final VoidCallback? onLastMove;
+  final VoidCallback? onPreviousGame;
+  final VoidCallback? onNextGame;
   final Widget? trailingActions;
 
   @override
@@ -606,6 +649,13 @@ class _SegmentBar extends ConsumerWidget {
         scopedPlayer == null
             ? null
             : ref.watch(playerOpeningTreeProvider(scopedPlayer.id));
+    final hasNavigationControls =
+        onFirstMove != null ||
+        onPreviousMove != null ||
+        onNextMove != null ||
+        onLastMove != null ||
+        onPreviousGame != null ||
+        onNextGame != null;
     return Container(
       height: 42,
       padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -644,10 +694,114 @@ class _SegmentBar extends ConsumerWidget {
                           .retry(),
             ),
           ],
-          const Spacer(),
-          if (trailingActions != null) trailingActions!,
+          if (hasNavigationControls)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: _ExplorerNavigationCluster(
+                    canGoBack: canGoBack,
+                    canGoForward: canGoForward,
+                    onFirstMove: onFirstMove,
+                    onPreviousMove: onPreviousMove,
+                    onNextMove: onNextMove,
+                    onLastMove: onLastMove,
+                    onPreviousGame: onPreviousGame,
+                    onNextGame: onNextGame,
+                  ),
+                ),
+              ),
+            )
+          else
+            const Spacer(),
+          if (trailingActions != null) ...[
+            if (hasNavigationControls) const SizedBox(width: 8),
+            trailingActions!,
+          ],
         ],
       ),
+    );
+  }
+}
+
+class _ExplorerNavigationCluster extends StatelessWidget {
+  const _ExplorerNavigationCluster({
+    required this.canGoBack,
+    required this.canGoForward,
+    this.onFirstMove,
+    this.onPreviousMove,
+    this.onNextMove,
+    this.onLastMove,
+    this.onPreviousGame,
+    this.onNextGame,
+  });
+
+  final bool canGoBack;
+  final bool canGoForward;
+  final VoidCallback? onFirstMove;
+  final VoidCallback? onPreviousMove;
+  final VoidCallback? onNextMove;
+  final VoidCallback? onLastMove;
+  final VoidCallback? onPreviousGame;
+  final VoidCallback? onNextGame;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (onPreviousGame != null) ...[
+          _RailIconButton(
+            icon: Icons.keyboard_double_arrow_left_rounded,
+            tooltip: 'Previous game',
+            onTap: onPreviousGame!,
+          ),
+          const SizedBox(width: 4),
+        ],
+        if (onFirstMove != null) ...[
+          _RailIconButton(
+            icon: Icons.first_page_rounded,
+            tooltip: 'First move',
+            enabled: canGoBack,
+            onTap: onFirstMove!,
+          ),
+          const SizedBox(width: 4),
+        ],
+        if (onPreviousMove != null) ...[
+          _RailIconButton(
+            icon: Icons.chevron_left_rounded,
+            tooltip: 'Previous move',
+            enabled: canGoBack,
+            onTap: onPreviousMove!,
+          ),
+          const SizedBox(width: 4),
+        ],
+        if (onNextMove != null) ...[
+          _RailIconButton(
+            icon: Icons.chevron_right_rounded,
+            tooltip: 'Next move',
+            enabled: canGoForward,
+            onTap: onNextMove!,
+          ),
+          const SizedBox(width: 4),
+        ],
+        if (onLastMove != null) ...[
+          _RailIconButton(
+            icon: Icons.last_page_rounded,
+            tooltip: 'Last move',
+            enabled: canGoForward,
+            onTap: onLastMove!,
+          ),
+          const SizedBox(width: 4),
+        ],
+        if (onNextGame != null)
+          _RailIconButton(
+            icon: Icons.keyboard_double_arrow_right_rounded,
+            tooltip: 'Next game',
+            onTap: onNextGame!,
+          ),
+      ],
     );
   }
 }
@@ -658,12 +812,14 @@ class _RailIconButton extends StatefulWidget {
     required this.tooltip,
     required this.onTap,
     this.selected = false,
+    this.enabled = true,
   });
 
   final IconData icon;
   final String tooltip;
   final VoidCallback onTap;
   final bool selected;
+  final bool enabled;
 
   @override
   State<_RailIconButton> createState() => _RailIconButtonState();
@@ -674,16 +830,19 @@ class _RailIconButtonState extends State<_RailIconButton> {
 
   @override
   Widget build(BuildContext context) {
-    final active = widget.selected || _hovered;
+    final active = widget.enabled && (widget.selected || _hovered);
     return DesktopTooltip(
       message: widget.tooltip,
       child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
+        cursor:
+            widget.enabled
+                ? SystemMouseCursors.click
+                : SystemMouseCursors.basic,
+        onEnter: widget.enabled ? (_) => setState(() => _hovered = true) : null,
+        onExit: widget.enabled ? (_) => setState(() => _hovered = false) : null,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: widget.onTap,
+          onTap: widget.enabled ? widget.onTap : null,
           child: Container(
             width: 28,
             height: 28,
@@ -704,7 +863,10 @@ class _RailIconButtonState extends State<_RailIconButton> {
             child: Icon(
               widget.icon,
               size: 16,
-              color: widget.selected ? kPrimaryColor : kWhiteColor70,
+              color:
+                  widget.enabled
+                      ? (widget.selected ? kPrimaryColor : kWhiteColor70)
+                      : kLightGreyColor,
             ),
           ),
         ),
