@@ -1205,7 +1205,7 @@ class _DesktopPositionGamesTableState
       enableRowHover: false,
       onRowHover: _handleRowHover,
       onRowTap:
-          (row, {required bool inNewTab}) =>
+          (row, {required bool inNewTab, required bool shiftPressed}) =>
               _handleRowTap(row, inNewTab: inNewTab),
       onRowSecondaryTap:
           (row, position) => unawaited(_showRowContextMenu(row, position)),

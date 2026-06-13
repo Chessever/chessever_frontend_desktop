@@ -461,6 +461,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                 onClearPreviewUciMove: widget.onClearPreviewUciMove,
                 onShowGames: _showGamesForMove,
                 onNotationStep: widget.onNotationStep,
+                onKeepNotationActive: _activateNotation,
                 onKeepExplorerActive: _keepExplorerActive,
                 onKeepGamesActive: _keepGamesActive,
                 explorerScope: widget.explorerScope,
@@ -895,6 +896,7 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
     required this.onClearPreviewUciMove,
     required this.onShowGames,
     required this.onNotationStep,
+    required this.onKeepNotationActive,
     required this.onKeepExplorerActive,
     required this.onKeepGamesActive,
     required this.explorerScope,
@@ -915,6 +917,7 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
   final VoidCallback? onClearPreviewUciMove;
   final void Function(String uci) onShowGames;
   final bool Function(int delta)? onNotationStep;
+  final VoidCallback onKeepNotationActive;
   final VoidCallback onKeepExplorerActive;
   final VoidCallback onKeepGamesActive;
   final BoardExplorerScope? explorerScope;
@@ -1412,10 +1415,14 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
 
   void _switchTable(int delta) {
     if (delta > 0) {
-      _focusGamesPane();
+      if (_activeTable == _ExplorerTableFocus.moves) {
+        _focusGamesPane();
+      } else {
+        _keepExplorerFocus();
+      }
     } else if (delta < 0) {
       if (_activeTable == _ExplorerTableFocus.moves) {
-        _keepExplorerFocus();
+        widget.onKeepNotationActive();
         return;
       }
       _focusMovesPane();
@@ -1472,6 +1479,7 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
     // generic/customizable right-rail shortcut that can be confused with
     // board or tab navigation.
     if (_isExplorerTableSwitchChord(event, forward: true) ||
+        _isRightRailNextTabChord(event) ||
         _matchesAction(event, shortcuts, BoardActionKey.rightRailNextTable) ||
         (key == LogicalKeyboardKey.tab &&
             !HardwareKeyboard.instance.isShiftPressed)) {
@@ -1479,6 +1487,7 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       return KeyEventResult.handled;
     }
     if (_isExplorerTableSwitchChord(event, forward: false) ||
+        _isRightRailPreviousTabChord(event) ||
         _matchesAction(
           event,
           shortcuts,
@@ -1591,7 +1600,8 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       enableRowHover: false,
       shrinkWrap: false,
       focusedMoveIndex:
-          _activeTable == _ExplorerTableFocus.moves &&
+          widget.activeSection == 1 &&
+                  _activeTable == _ExplorerTableFocus.moves &&
                   _focusedMoveIndex >= 0 &&
                   _focusedMoveIndex < _moveCount
               ? _focusedMoveIndex

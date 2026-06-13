@@ -6,6 +6,7 @@ import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 
 enum _BoardContextAction {
   share,
+  flipBoard,
   copyPgn,
   copyFen,
   saveGameToLibrary,
@@ -21,6 +22,7 @@ Future<void> showBoardContextMenu(
   BuildContext context, {
   required Offset position,
   required VoidCallback onShareGame,
+  required VoidCallback onFlipBoard,
   required VoidCallback onCopyPgn,
   required VoidCallback onCopyFen,
   required VoidCallback onSavePgn,
@@ -49,6 +51,11 @@ Future<void> showBoardContextMenu(
         value: _BoardContextAction.share,
         icon: Icons.share_rounded,
         label: 'Share Game',
+      ),
+      const DesktopContextMenuItem(
+        value: _BoardContextAction.flipBoard,
+        icon: Icons.flip_camera_android_rounded,
+        label: 'Flip board',
       ),
       const DesktopContextMenuDivider(),
       DesktopContextMenuItem(
@@ -104,6 +111,8 @@ Future<void> showBoardContextMenu(
   switch (selected) {
     case _BoardContextAction.share:
       onShareGame();
+    case _BoardContextAction.flipBoard:
+      onFlipBoard();
     case _BoardContextAction.copyPgn:
       onCopyPgn();
     case _BoardContextAction.copyFen:

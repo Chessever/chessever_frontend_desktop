@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -44,6 +45,28 @@ final _eventUpcomingVisibleProvider = StateProvider.autoDispose
 final _gameRailTabProvider = StateProvider.autoDispose
     .family<_GameRailTab?, String>((ref, tabId) => null);
 
+@visibleForTesting
+List<String> eventRailRangeSelectionIds({
+  required List<TournamentGameSummary> orderedGames,
+  required String? anchorGameId,
+  required String targetGameId,
+}) {
+  if (orderedGames.isEmpty) return const <String>[];
+  final targetIndex = orderedGames.indexWhere(
+    (game) => game.id == targetGameId,
+  );
+  if (targetIndex < 0) return const <String>[];
+  final anchorIndex =
+      anchorGameId == null
+          ? -1
+          : orderedGames.indexWhere((game) => game.id == anchorGameId);
+  final start =
+      anchorIndex < 0 ? targetIndex : math.min(anchorIndex, targetIndex);
+  final end =
+      anchorIndex < 0 ? targetIndex : math.max(anchorIndex, targetIndex);
+  return [for (var i = start; i <= end; i++) orderedGames[i].id];
+}
+
 /// Board-pane companion table for the event that produced the active game.
 ///
 /// The source of truth is the active Board tab's [BoardTabGameArgs]. The
@@ -76,6 +99,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
   String? _loadingDatabaseTabId;
   String? _databaseLoadErrorTabId;
   String? _highlightedGameId;
+  String? _rangeAnchorGameId;
+  Set<String> _highlightedGameIds = const <String>{};
   String? _databaseLoadError;
   String? _loadingContinuationKey;
   String? _continuationLoadErrorKey;
@@ -114,8 +139,36 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
 
   void _highlightGame(TournamentGameSummary game) {
     _railFocusNode.requestFocus();
-    if (_highlightedGameId == game.id) return;
-    setState(() => _highlightedGameId = game.id);
+    if (_highlightedGameId == game.id && _highlightedGameIds.isEmpty) return;
+    setState(() {
+      _highlightedGameId = game.id;
+      _rangeAnchorGameId = game.id;
+      _highlightedGameIds = const <String>{};
+    });
+  }
+
+  void _highlightGameRange(
+    List<TournamentGameSummary> orderedGames,
+    TournamentGameSummary target, {
+    String? fallbackAnchorGameId,
+  }) {
+    _railFocusNode.requestFocus();
+    final anchorId =
+        _rangeAnchorGameId ??
+        _highlightedGameId ??
+        fallbackAnchorGameId ??
+        target.id;
+    final nextIds =
+        eventRailRangeSelectionIds(
+          orderedGames: orderedGames,
+          anchorGameId: anchorId,
+          targetGameId: target.id,
+        ).toSet();
+    setState(() {
+      _rangeAnchorGameId = anchorId;
+      _highlightedGameId = target.id;
+      _highlightedGameIds = nextIds;
+    });
   }
 
   bool _moveHighlightedGame(
@@ -134,8 +187,14 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
         currentIdx >= 0 ? currentIdx : (delta > 0 ? -1 : orderedGames.length);
     final nextIdx = (anchor + delta).clamp(0, orderedGames.length - 1);
     final nextGame = orderedGames[nextIdx];
-    if (nextGame.id == _highlightedGameId) return true;
-    setState(() => _highlightedGameId = nextGame.id);
+    if (nextGame.id == _highlightedGameId && _highlightedGameIds.isEmpty) {
+      return true;
+    }
+    setState(() {
+      _highlightedGameId = nextGame.id;
+      _rangeAnchorGameId = nextGame.id;
+      _highlightedGameIds = const <String>{};
+    });
     return true;
   }
 
@@ -574,10 +633,18 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
             )
             : allRoundGroups;
     final showBoardColumn = resolved.kind == _GameListKind.event;
+    final expandedByGroup = <String, bool>{
+      for (final group in roundGroups)
+        group.id: ref.watch(_eventRoundExpandedProvider(group.id)),
+    };
+    final visibleRoundGroups = [
+      for (final group in roundGroups)
+        if (expandedByGroup[group.id] == true) group,
+    ];
     final allOrderedGames = allRoundGroups
         .expand((round) => round.games)
         .toList(growable: false);
-    final orderedGames = roundGroups
+    final orderedGames = visibleRoundGroups
         .expand((round) => round.games)
         .toList(growable: false);
     final selectedGameId = resolved.selectedGameId;
@@ -599,10 +666,6 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
               ).select((async) => _EventLiveSummaries.from(async.valueOrNull)),
             );
 
-    final expandedByGroup = <String, bool>{
-      for (final group in roundGroups)
-        group.id: ref.watch(_eventRoundExpandedProvider(group.id)),
-    };
     final scrollSignature = [
       activeSelectionId ?? '',
       for (final group in roundGroups)
@@ -804,6 +867,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
                       _EventRoundSection(
                         group: group,
                         selectedGameId: selectedGameId,
+                        selectedGameIds: _highlightedGameIds,
                         highlightedGameId: _highlightedGameId,
                         selectedRowKey:
                             (_highlightedGameId ?? selectedGameId) == null
@@ -821,6 +885,12 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
                         activeArgs: effectiveArgs,
                         showBoardColumn: showBoardColumn,
                         onHighlightGame: _highlightGame,
+                        onRangeHighlightGame:
+                            (game) => _highlightGameRange(
+                              orderedGames,
+                              game,
+                              fallbackAnchorGameId: selectedGameId,
+                            ),
                       ),
                     if (resolved.kind == _GameListKind.database &&
                         (isLoadingMoreDatabase ||
@@ -2087,22 +2157,26 @@ class _EventRoundTable extends StatelessWidget {
   const _EventRoundTable({
     required this.games,
     required this.selectedGameId,
+    required this.selectedGameIds,
     required this.highlightedGameId,
     required this.selectedRowKey,
     required this.liveSummaries,
     required this.showBoardColumn,
     required this.onHighlightGame,
+    required this.onRangeHighlightGame,
     required this.onOpenGame,
     required this.onInsertGame,
   });
 
   final List<TournamentGameSummary> games;
   final String? selectedGameId;
+  final Set<String> selectedGameIds;
   final String? highlightedGameId;
   final GlobalKey? selectedRowKey;
   final _EventLiveSummaries liveSummaries;
   final bool showBoardColumn;
   final void Function(TournamentGameSummary game) onHighlightGame;
+  final void Function(TournamentGameSummary game) onRangeHighlightGame;
   final Future<void> Function(
     TournamentGameSummary game, {
     required bool inNewTab,
@@ -2112,7 +2186,10 @@ class _EventRoundTable extends StatelessWidget {
 
   String? get _activeSelectionId => highlightedGameId ?? selectedGameId;
 
-  bool _isSelected(TournamentGameSummary game) => game.id == _activeSelectionId;
+  bool _isSelected(TournamentGameSummary game) {
+    if (selectedGameIds.isNotEmpty) return selectedGameIds.contains(game.id);
+    return game.id == _activeSelectionId;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2201,11 +2278,17 @@ class _EventRoundTable extends StatelessWidget {
       rowMinHeight: 34,
       rowKeyBuilder:
           (game) => game.id == _activeSelectionId ? selectedRowKey : null,
-      onRowTap: (game, {required bool inNewTab}) {
-        onHighlightGame(game);
+      onRowTap: (game, {required bool inNewTab, required bool shiftPressed}) {
         if (inNewTab) {
+          onHighlightGame(game);
           unawaited(onOpenGame(game, inNewTab: true));
+          return;
         }
+        if (shiftPressed) {
+          onRangeHighlightGame(game);
+          return;
+        }
+        onHighlightGame(game);
       },
       onRowDoubleTap: (game, {required bool inNewTab}) {
         onHighlightGame(game);
@@ -2272,6 +2355,7 @@ class _EventRoundSection extends ConsumerWidget {
   const _EventRoundSection({
     required this.group,
     required this.selectedGameId,
+    required this.selectedGameIds,
     required this.highlightedGameId,
     required this.selectedRowKey,
     required this.liveSummaries,
@@ -2281,10 +2365,12 @@ class _EventRoundSection extends ConsumerWidget {
     required this.activeArgs,
     required this.showBoardColumn,
     required this.onHighlightGame,
+    required this.onRangeHighlightGame,
   });
 
   final _EventRoundGroup group;
   final String? selectedGameId;
+  final Set<String> selectedGameIds;
   final String? highlightedGameId;
   final GlobalKey? selectedRowKey;
   final _EventLiveSummaries liveSummaries;
@@ -2294,6 +2380,7 @@ class _EventRoundSection extends ConsumerWidget {
   final BoardTabGameArgs? activeArgs;
   final bool showBoardColumn;
   final void Function(TournamentGameSummary game) onHighlightGame;
+  final void Function(TournamentGameSummary game) onRangeHighlightGame;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -2318,11 +2405,13 @@ class _EventRoundSection extends ConsumerWidget {
             _EventRoundTable(
               games: group.games,
               selectedGameId: selectedGameId,
+              selectedGameIds: selectedGameIds,
               highlightedGameId: highlightedGameId,
               selectedRowKey: selectedRowKey,
               liveSummaries: liveSummaries,
               showBoardColumn: showBoardColumn,
               onHighlightGame: onHighlightGame,
+              onRangeHighlightGame: onRangeHighlightGame,
               onOpenGame: (game, {required bool inNewTab}) async {
                 await _openEventGame(
                   ref: ref,

@@ -475,6 +475,12 @@ class _BoardPaneContent extends HookConsumerWidget {
             s.valueOrNull?.useFigurine ?? const BoardSettingsNew().useFigurine,
       ),
     );
+    final notationPieceAssets = ref.watch(
+      boardSettingsProviderNew.select(
+        (s) =>
+            s.valueOrNull?.pieceAssets ?? const BoardSettingsNew().pieceAssets,
+      ),
+    );
     final showMoveNavigation = ref.watch(
       boardSettingsProviderNew.select(
         (s) =>
@@ -482,11 +488,8 @@ class _BoardPaneContent extends HookConsumerWidget {
             const BoardSettingsNew().showMoveNavigation,
       ),
     );
-    final notationPieceAssets = ref.watch(
-      boardSettingsProviderNew.select(
-        (s) =>
-            s.valueOrNull?.pieceAssets ?? const BoardSettingsNew().pieceAssets,
-      ),
+    final rightRailActivePage = ref.watch(
+      rightRailActivePageProvider(activeTabId ?? '__none__'),
     );
 
     final latestPgnImport = ref.watch(pgnIntakeProvider);
@@ -1182,7 +1185,6 @@ class _BoardPaneContent extends HookConsumerWidget {
     final position = currentPly.position;
     final canBack = pointer.value.isNotEmpty;
     final canForward = _nextPointer(chessGame.value, pointer.value) != null;
-
     // ---- Per-side clocks at the active pointer ---------------------
     // Walk the active line *backwards* once and pick up the most
     // recent `[%clk …]` annotation we find for each colour. Clock
@@ -3115,6 +3117,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       return NotationLadderView(
         game: chessGame.value,
         activePointer: activePointer,
+        showActiveHighlight: rightRailActivePage == 0,
         onJump: onJump,
         scrollController: scrollController,
         visibleMoveOrderController: visibleNotationMoveOrderController,
@@ -3290,6 +3293,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                             context,
                             position: details.globalPosition,
                             onShareGame: shareGameAction,
+                            onFlipBoard: () => flipped.value = !flipped.value,
                             onCopyPgn: copyPgnAction,
                             onCopyFen: copyFenAction,
                             onSavePgn: savePgnAction,
@@ -6596,7 +6600,7 @@ String _moveLabel(List<_Ply> history, int cursor) {
   final fullMove = (cursor + 1) ~/ 2;
   final isWhite = cursor.isOdd;
   final san = history[cursor].san ?? '';
-  final marker = isWhite ? '$fullMove.' : '$fullMove…';
+  final marker = isWhite ? '$fullMove.' : '$fullMove...';
   final progress = '$cursor / ${history.length - 1}';
   return '$marker $san   ·   $progress';
 }
