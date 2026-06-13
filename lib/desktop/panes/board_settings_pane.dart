@@ -541,14 +541,6 @@ class _DisplayCard extends StatelessWidget {
             value: settings.notationInline,
             onChange: notifier.toggleNotationInline,
           ),
-          const _RowDivider(),
-          _SwitchRow(
-            label: 'Move navigation controls',
-            description:
-                'Show the mouse step buttons under the board. Off by default so the board uses that space; keyboard navigation still works.',
-            value: settings.showMoveNavigation,
-            onChange: notifier.toggleMoveNavigation,
-          ),
           const SizedBox(height: 18),
           _SegmentedField(
             label: 'Tournament games view',

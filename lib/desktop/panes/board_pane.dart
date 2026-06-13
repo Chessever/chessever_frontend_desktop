@@ -65,7 +65,6 @@ import 'package:chessever/desktop/widgets/engine_pv_arrow_palette.dart';
 import 'package:chessever/desktop/widgets/event_games_table.dart';
 import 'package:chessever/desktop/widgets/event_info_popover.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
-import 'package:chessever/desktop/widgets/move_navigation_bar.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
@@ -464,13 +463,6 @@ class BoardPane extends HookConsumerWidget {
       boardSettingsProviderNew.select(
         (s) =>
             s.valueOrNull?.useFigurine ?? const BoardSettingsNew().useFigurine,
-      ),
-    );
-    final showMoveNavigation = ref.watch(
-      boardSettingsProviderNew.select(
-        (s) =>
-            s.valueOrNull?.showMoveNavigation ??
-            const BoardSettingsNew().showMoveNavigation,
       ),
     );
     final notationPieceAssets = ref.watch(
@@ -1171,9 +1163,6 @@ class BoardPane extends HookConsumerWidget {
     final cursor = history.length - 1;
     final currentPly = history[cursor];
     final position = currentPly.position;
-    final canBack = pointer.value.isNotEmpty;
-    final canForward = _nextPointer(chessGame.value, pointer.value) != null;
-
     // ---- Per-side clocks at the active pointer ---------------------
     // Walk the active line *backwards* once and pick up the most
     // recent `[%clk …]` annotation we find for each colour. Clock
@@ -3241,6 +3230,7 @@ class BoardPane extends HookConsumerWidget {
                             context,
                             position: details.globalPosition,
                             onShareGame: shareGameAction,
+                            onFlipBoard: () => flipped.value = !flipped.value,
                             onCopyPgn: copyPgnAction,
                             onCopyFen: copyFenAction,
                             onSavePgn: savePgnAction,
@@ -3335,22 +3325,6 @@ class BoardPane extends HookConsumerWidget {
                         ),
                       ),
                     ),
-                    // Optional move-nav cluster sits directly under the board.
-                    // It is hidden by default so the board reclaims the
-                    // vertical space; keyboard, mouse-wheel, and notation
-                    // navigation remain active regardless of this visual row.
-                    if (!boardFocusMode && showMoveNavigation)
-                      MoveNavigationBar(
-                        canGoBack: canBack,
-                        canGoForward: canForward,
-                        onFirst: goFirst,
-                        onPrevious: goPrev,
-                        onNext: () => unawaited(goNextInteractive()),
-                        onLast: goLast,
-                        onFlipBoard: () => flipped.value = !flipped.value,
-                        moveLabel: _moveLabel(history, cursor),
-                        hasUnseenLiveMove: hasUnseenMoves.value,
-                      ),
                   ],
                 ),
               ),
@@ -6533,16 +6507,6 @@ class _Ply {
   final Square? lastMoveSquare;
 
   Move? get uciMove => move;
-}
-
-String _moveLabel(List<_Ply> history, int cursor) {
-  if (cursor == 0) return 'Start position';
-  final fullMove = (cursor + 1) ~/ 2;
-  final isWhite = cursor.isOdd;
-  final san = history[cursor].san ?? '';
-  final marker = isWhite ? '$fullMove.' : '$fullMove…';
-  final progress = '$cursor / ${history.length - 1}';
-  return '$marker $san   ·   $progress';
 }
 
 /// Pull a Lichess game id out of a parsed PGN's headers. Mirrors the
