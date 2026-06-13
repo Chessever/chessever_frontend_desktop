@@ -128,10 +128,6 @@ class _Body extends StatelessWidget {
     if (event != null) {
       rows.add(_HeaderRow(label: 'Event', value: event));
     }
-    final broadcastName = eventInfoDisplayBroadcastName(headers);
-    if (broadcastName != null) {
-      rows.add(_HeaderRow(label: 'Broadcast', value: broadcastName));
-    }
     addIfPresent('Site', 'Site');
     addIfPresent('Date', 'Date');
     addIfPresent('Round', 'Round');
@@ -195,6 +191,9 @@ class _Body extends StatelessWidget {
 
 @visibleForTesting
 String? eventInfoDisplayEvent(Map<String, String> headers) {
+  final broadcastName = eventInfoDisplayBroadcastName(headers);
+  if (broadcastName != null) return broadcastName;
+
   final value = headers['Event']?.trim();
   if (value != null && value.isNotEmpty && value != '?') return value;
   return null;

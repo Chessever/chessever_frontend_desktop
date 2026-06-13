@@ -21,8 +21,8 @@ enum BoardColor {
 /// Board settings configuration class
 class BoardSettingsNew {
   const BoardSettingsNew({
-    this.boardColorIndex = 0,
-    this.boardThemeIndex = 0, // New: chessground theme index
+    this.boardColorIndex = 6,
+    this.boardThemeIndex = 1, // New: chessground theme index
     this.showEvaluationBar = true,
     this.soundEnabled = true,
     this.chatEnabled = true,
@@ -365,8 +365,13 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
       }
 
       final map = jsonDecode(json) as Map<String, dynamic>;
-      final boardColorIndex = map['boardColorIndex'] as int? ?? 0;
-      int boardThemeIndex = map['boardThemeIndex'] as int? ?? 0;
+      final defaults = const BoardSettingsNew();
+      final boardColorIndex =
+          map['boardColorIndex'] as int? ?? defaults.boardColorIndex;
+      final hasBoardThemeIndex = map.containsKey('boardThemeIndex');
+      int boardThemeIndex = hasBoardThemeIndex
+          ? map['boardThemeIndex'] as int? ?? defaults.boardThemeIndex
+          : (map.containsKey('boardColorIndex') ? 0 : defaults.boardThemeIndex);
 
       // Migration: If boardThemeIndex is 0 (default) but boardColorIndex is set,
       // migrate old color to new theme
@@ -380,19 +385,20 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
       final settings = BoardSettingsNew(
         boardColorIndex: boardColorIndex,
         boardThemeIndex: boardThemeIndex,
-        showEvaluationBar: map['showEvaluationBar'] as bool? ?? true,
-        soundEnabled: map['soundEnabled'] as bool? ?? true,
-        chatEnabled: map['chatEnabled'] as bool? ?? true,
-        pieceStyleIndex: map['pieceStyleIndex'] as int? ?? 0,
-        gamesListViewModeIndex: map['gamesListViewModeIndex'] as int? ?? 0,
-        useFigurine:
-            map['useFigurine'] as bool? ?? const BoardSettingsNew().useFigurine,
+        showEvaluationBar:
+            map['showEvaluationBar'] as bool? ?? defaults.showEvaluationBar,
+        soundEnabled: map['soundEnabled'] as bool? ?? defaults.soundEnabled,
+        chatEnabled: map['chatEnabled'] as bool? ?? defaults.chatEnabled,
+        pieceStyleIndex:
+            map['pieceStyleIndex'] as int? ?? defaults.pieceStyleIndex,
+        gamesListViewModeIndex:
+            map['gamesListViewModeIndex'] as int? ??
+            defaults.gamesListViewModeIndex,
+        useFigurine: map['useFigurine'] as bool? ?? defaults.useFigurine,
         notationInline:
-            map['notationInline'] as bool? ??
-            const BoardSettingsNew().notationInline,
+            map['notationInline'] as bool? ?? defaults.notationInline,
         showMoveNavigation:
-            map['showMoveNavigation'] as bool? ??
-            const BoardSettingsNew().showMoveNavigation,
+            map['showMoveNavigation'] as bool? ?? defaults.showMoveNavigation,
       );
       debugPrint('[BoardSettings] Loaded settings from cache');
       return settings;

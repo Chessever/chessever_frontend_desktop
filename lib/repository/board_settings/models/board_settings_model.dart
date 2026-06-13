@@ -40,8 +40,8 @@ class BoardSettingsModel with BoardSettingsModelMappable {
     return BoardSettingsModel(
       id: json['id'] as String,
       userId: json['user_id'] as String,
-      boardColorIndex: json['board_color_index'] as int? ?? 0,
-      boardThemeIndex: json['board_theme_index'] as int? ?? 0,
+      boardColorIndex: json['board_color_index'] as int? ?? 6,
+      boardThemeIndex: json['board_theme_index'] as int? ?? 1,
       showEvaluationBar: json['show_evaluation_bar'] as bool? ?? true,
       soundEnabled: json['sound_enabled'] as bool? ?? true,
       chatEnabled: json['chat_enabled'] as bool? ?? true,
@@ -93,8 +93,8 @@ class BoardSettingsModel with BoardSettingsModelMappable {
     return BoardSettingsModel(
       id: '',
       userId: userId,
-      boardColorIndex: 0, // DEPRECATED
-      boardThemeIndex: 0, // Brown (default)
+      boardColorIndex: 6, // DEPRECATED: blue
+      boardThemeIndex: 1, // Blue (default)
       showEvaluationBar: true,
       soundEnabled: true,
       chatEnabled: true,
