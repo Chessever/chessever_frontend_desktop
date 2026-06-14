@@ -278,7 +278,11 @@ TournamentGameSummary gamebasePositionGameSummaryFromRow(
 }
 
 GameStatus gamebaseStatusFromResult(String result) {
-  switch (result.replaceAll('½', '1/2').trim()) {
+  final normalized = result
+      .replaceAll('½', '1/2')
+      .replaceAll(RegExp(r'[\u2010-\u2015\u2212]'), '-')
+      .trim();
+  switch (normalized) {
     case '1-0':
       return GameStatus.whiteWins;
     case '0-1':

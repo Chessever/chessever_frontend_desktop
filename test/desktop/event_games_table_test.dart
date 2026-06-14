@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/event_games_table.dart';
@@ -17,6 +18,12 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:dio/dio.dart';
 
 void main() {
+  test('gamebase result parsing accepts unicode dashes', () {
+    expect(gamebaseStatusFromResult('0–1'), GameStatus.blackWins);
+    expect(gamebaseStatusFromResult('1—0'), GameStatus.whiteWins);
+    expect(gamebaseStatusFromResult('½–½'), GameStatus.draw);
+  });
+
   test('event rail range selection follows visible row order', () {
     final games = [
       _summary(id: 'game-1', roundLabel: 'R1'),
@@ -88,6 +95,41 @@ void main() {
     expect(find.text('R9'), findsNothing);
     expect(find.text('White Player'), findsOneWidget);
     expect(find.text('Black Player'), findsOneWidget);
+  });
+
+  testWidgets('database game rows show result instead of vs fallback', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          pgn: '1. e4 e5 0-1',
+          label: 'Database game',
+          whiteName: 'White',
+          blackName: 'Black',
+          databaseTitle: 'Continuation after 1.e4 e5',
+          databaseGames: [
+            _summary(
+              id: 'db-game-1',
+              roundLabel: '2026',
+              whitePlayer: 'Esipenko,A',
+              blackPlayer: 'Radjabov,T',
+              status: GameStatus.blackWins,
+            ),
+          ],
+          gameListSelectedId: 'db-game-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('vs'), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is Text && widget.textSpan?.toPlainText() == '0–1',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets(
