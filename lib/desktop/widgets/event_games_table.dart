@@ -2939,7 +2939,7 @@ class _StatusPill extends StatelessWidget {
       );
     }
     return Text(
-      'vs',
+      '—',
       maxLines: 1,
       textAlign: TextAlign.center,
       style: TextStyle(
