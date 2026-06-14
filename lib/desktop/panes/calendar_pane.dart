@@ -8,6 +8,7 @@ import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
+import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/repository/supabase/calendar_event/calendar_event.dart';
 import 'package:chessever/repository/supabase/calendar_event/calendar_event_repository.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_tour_repository.dart';
@@ -159,28 +160,7 @@ class _CalendarPaneState extends ConsumerState<CalendarPane> {
   Future<void> _openEvent(GroupEventCardModel event) async {
     try {
       if (event.eventSource == EventSource.communityEvent) {
-        final repo = ref.read(calendarEventRepositoryProvider);
-        final yearEvents = await repo.getCalendarEventsForYear(
-          year: ref.read(selectedYearProvider),
-          limit: 1000,
-        );
-        final byId = <String, CalendarEvent>{
-          for (final calendarEvent in yearEvents)
-            _sanitizeCalendarEventId(calendarEvent.name): calendarEvent,
-        };
-        CalendarEvent? match = byId[event.id];
-
-        if (match == null) {
-          final results = await repo.searchCalendarEvents(event.title);
-          for (final calendarEvent in results) {
-            if (_sanitizeCalendarEventId(calendarEvent.name) == event.id) {
-              match = calendarEvent;
-              break;
-            }
-          }
-          match ??= results.isNotEmpty ? results.first : null;
-        }
-
+        final match = await _resolveCalendarEvent(event);
         if (!mounted) return;
         if (match == null) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -189,9 +169,23 @@ class _CalendarPaneState extends ConsumerState<CalendarPane> {
           return;
         }
 
+        final internalTournament = await _findInternalTournamentFor(match);
+        if (!mounted) return;
+        if (internalTournament != null) {
+          setActiveTournament(ref, internalTournament);
+          return;
+        }
+
+        final navigationEvents = await _calendarEventsForCurrentYear();
+        if (!mounted) return;
+        final initialIndex = _indexOfCalendarEvent(navigationEvents, match);
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => CalendarEventDetailScreen(event: match!),
+            builder: (_) => CalendarEventDetailScreen(
+              event: match,
+              navigationEvents: navigationEvents,
+              initialEventIndex: initialIndex < 0 ? null : initialIndex,
+            ),
           ),
         );
         return;
@@ -203,15 +197,172 @@ class _CalendarPaneState extends ConsumerState<CalendarPane> {
       ref.read(selectedBroadcastModelProvider.notifier).state = broadcast;
 
       if (!mounted) return;
-      if (ref.read(selectedBroadcastModelProvider) != null) {
-        Navigator.pushNamed(context, '/tournament_detail_screen');
-      }
+      setActiveTournament(
+        ref,
+        GroupEventCardModel.fromGroupBroadcast(broadcast, const <String>[]),
+      );
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Unable to open event')));
     }
+  }
+
+  Future<CalendarEvent?> _resolveCalendarEvent(
+    GroupEventCardModel event,
+  ) async {
+    final yearEvents = await _calendarEventsForCurrentYear();
+    final byId = <String, CalendarEvent>{
+      for (final calendarEvent in yearEvents)
+        _sanitizeCalendarEventId(calendarEvent.name): calendarEvent,
+    };
+    CalendarEvent? match = byId[event.id];
+
+    if (match == null) {
+      final results = await ref
+          .read(calendarEventRepositoryProvider)
+          .searchCalendarEvents(event.title);
+      for (final calendarEvent in results) {
+        if (_sanitizeCalendarEventId(calendarEvent.name) == event.id) {
+          match = calendarEvent;
+          break;
+        }
+      }
+      match ??= results.isNotEmpty ? results.first : null;
+    }
+    return match;
+  }
+
+  Future<List<CalendarEvent>> _calendarEventsForCurrentYear() async {
+    final events = await ref
+        .read(calendarEventRepositoryProvider)
+        .getCalendarEventsForYear(
+          year: ref.read(selectedYearProvider),
+          limit: 1000,
+        );
+    events.sort((a, b) {
+      final byDate = (a.startDate ?? DateTime(9999)).compareTo(
+        b.startDate ?? DateTime(9999),
+      );
+      if (byDate != 0) return byDate;
+      return a.name.compareTo(b.name);
+    });
+    return events;
+  }
+
+  Future<GroupEventCardModel?> _findInternalTournamentFor(
+    CalendarEvent calendarEvent,
+  ) async {
+    if (!_isActiveOrFuture(calendarEvent)) return null;
+    final broadcasts = await ref
+        .read(groupBroadcastRepositoryProvider)
+        .searchGroupBroadcastsFromSupabase(calendarEvent.name);
+    if (broadcasts.isEmpty) return null;
+
+    for (final broadcast in broadcasts) {
+      if (_isLikelySameEvent(
+        calendarEvent,
+        broadcast.name,
+        broadcast.dateStart,
+        broadcast.dateEnd,
+      )) {
+        return GroupEventCardModel.fromGroupBroadcast(
+          broadcast,
+          const <String>[],
+        );
+      }
+    }
+    return null;
+  }
+
+  bool _isActiveOrFuture(CalendarEvent event) {
+    final now = DateTime.now();
+    final end = event.endDate ?? event.startDate;
+    return end == null ||
+        !DateTime(end.year, end.month, end.day, 23, 59, 59).isBefore(now);
+  }
+
+  bool _isLikelySameEvent(
+    CalendarEvent calendarEvent,
+    String tournamentName,
+    DateTime? tournamentStart,
+    DateTime? tournamentEnd,
+  ) {
+    if (!_dateRangesOverlap(
+      calendarEvent.startDate,
+      calendarEvent.endDate,
+      tournamentStart,
+      tournamentEnd,
+    )) {
+      return false;
+    }
+
+    final calendarTitle = _normalizeEventTitle(calendarEvent.name);
+    final tournamentTitle = _normalizeEventTitle(tournamentName);
+    if (calendarTitle.isEmpty || tournamentTitle.isEmpty) return false;
+    if (calendarTitle.contains(tournamentTitle) ||
+        tournamentTitle.contains(calendarTitle)) {
+      return true;
+    }
+
+    final calendarTokens = _eventTitleTokens(calendarEvent.name);
+    final tournamentTokens = _eventTitleTokens(tournamentName);
+    if (calendarTokens.isEmpty || tournamentTokens.isEmpty) return false;
+    final overlap = calendarTokens.intersection(tournamentTokens).length;
+    return overlap >= 2 && overlap >= (calendarTokens.length * 0.45).ceil();
+  }
+
+  bool _dateRangesOverlap(
+    DateTime? aStart,
+    DateTime? aEnd,
+    DateTime? bStart,
+    DateTime? bEnd,
+  ) {
+    if (aStart == null || bStart == null) return true;
+    final aFrom = DateTime(aStart.year, aStart.month, aStart.day);
+    final aToRaw = aEnd ?? aStart;
+    final aTo = DateTime(aToRaw.year, aToRaw.month, aToRaw.day);
+    final bFrom = DateTime(bStart.year, bStart.month, bStart.day);
+    final bToRaw = bEnd ?? bStart;
+    final bTo = DateTime(bToRaw.year, bToRaw.month, bToRaw.day);
+    return !aTo.isBefore(bFrom) && !bTo.isBefore(aFrom);
+  }
+
+  String _normalizeEventTitle(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+        .trim()
+        .replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  Set<String> _eventTitleTokens(String value) {
+    const stopWords = {
+      'chess',
+      'championship',
+      'championships',
+      'tournament',
+      'festival',
+      'open',
+      'fide',
+      'the',
+      'of',
+      'and',
+    };
+    return _normalizeEventTitle(value)
+        .split(' ')
+        .where((token) => token.length > 2 && !stopWords.contains(token))
+        .toSet();
+  }
+
+  int _indexOfCalendarEvent(List<CalendarEvent> events, CalendarEvent target) {
+    return events.indexWhere(
+      (event) =>
+          event.name == target.name &&
+          event.startDate == target.startDate &&
+          event.endDate == target.endDate,
+    );
   }
 
   String _sanitizeCalendarEventId(String name) {
