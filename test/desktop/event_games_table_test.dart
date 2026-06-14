@@ -73,6 +73,53 @@ void main() {
     );
   });
 
+  test('event rail copy selection preserves highlighted row order', () {
+    final games = [
+      _summary(id: 'game-1', roundLabel: 'R1'),
+      _summary(id: 'game-2', roundLabel: 'R1'),
+      _summary(id: 'game-3', roundLabel: 'R1'),
+    ];
+
+    expect(
+      eventRailGamesForCopy(
+        orderedGames: games,
+        selectedIds: {'game-1', 'game-3'},
+        highlightedGameId: 'game-3',
+        selectedGameId: 'game-1',
+      ).map((game) => game.id),
+      ['game-1', 'game-3'],
+    );
+
+    expect(
+      eventRailGamesForCopy(
+        orderedGames: games,
+        selectedIds: const <String>{},
+        highlightedGameId: 'game-2',
+        selectedGameId: 'game-1',
+      ).map((game) => game.id),
+      ['game-2'],
+    );
+  });
+
+  test('event rail copy selection can span rounds', () {
+    final games = [
+      _summary(id: 'round-1-game-1', roundLabel: 'Round 1'),
+      _summary(id: 'round-1-game-2', roundLabel: 'Round 1'),
+      _summary(id: 'round-2-game-1', roundLabel: 'Round 2'),
+      _summary(id: 'round-2-game-2', roundLabel: 'Round 2'),
+    ];
+
+    expect(
+      eventRailGamesForCopy(
+        orderedGames: games,
+        selectedIds: {'round-1-game-2', 'round-2-game-1', 'round-2-game-2'},
+        highlightedGameId: 'round-2-game-2',
+        selectedGameId: 'round-1-game-2',
+      ).map((game) => game.id),
+      ['round-1-game-2', 'round-2-game-1', 'round-2-game-2'],
+    );
+  });
+
   testWidgets('database games hide the board and round column', (tester) async {
     await tester.pumpWidget(
       _wrap(
