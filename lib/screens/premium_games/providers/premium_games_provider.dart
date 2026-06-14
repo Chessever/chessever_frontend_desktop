@@ -18,6 +18,15 @@ enum PremiumGamesType {
 
   /// Games featuring players from the user's country.
   countrymen,
+
+  /// All games that are currently live.
+  live,
+
+  /// Games where the average rating of both players is at least 2500.
+  gm,
+
+  /// Games from classical/standard time-control broadcasts.
+  classical,
 }
 
 /// Date range filter for premium games.
@@ -274,6 +283,15 @@ class PremiumGamesNotifier
       case PremiumGamesType.countrymen:
         newGames = await _fetchCountrymenGames(repository);
         break;
+      case PremiumGamesType.live:
+        newGames = await _fetchLiveGames(repository);
+        break;
+      case PremiumGamesType.gm:
+        newGames = await _fetchGmGames(repository);
+        break;
+      case PremiumGamesType.classical:
+        newGames = await _fetchClassicalGames(repository);
+        break;
     }
 
     if (newGames.isEmpty) {
@@ -363,9 +381,63 @@ class PremiumGamesNotifier
     }
   }
 
+  /// Fetch all live games globally.
+  Future<List<GamesTourModel>> _fetchLiveGames(
+    GameRepository repository,
+  ) async {
+    try {
+      final games = await repository.getLiveGames(
+        limit: _pageSize,
+        offset: _offset,
+      );
+
+      return games.map((g) => GamesTourModel.fromGame(g)).toList();
+    } catch (e) {
+      debugPrint('[PremiumGames] Error fetching live games: $e');
+      return [];
+    }
+  }
+
+  /// Fetch games with average rating >= 2500, matching the phone smart
+  /// collection intent instead of the older "one player over 2500" fallback.
+  Future<List<GamesTourModel>> _fetchGmGames(GameRepository repository) async {
+    try {
+      final games = await repository.getHighAverageEloGames(
+        minAverageElo: 2500,
+        limit: 200,
+        offset: 0,
+      );
+      _hasMore = false;
+
+      return games.map((g) => GamesTourModel.fromGame(g)).toList();
+    } catch (e) {
+      debugPrint('[PremiumGames] Error fetching GM games: $e');
+      return [];
+    }
+  }
+
+  /// Fetch classical/standard games globally.
+  Future<List<GamesTourModel>> _fetchClassicalGames(
+    GameRepository repository,
+  ) async {
+    try {
+      final games = await repository.getClassicalGames(
+        limit: _pageSize,
+        offset: 0,
+      );
+      _hasMore = false;
+
+      return games.map((g) => GamesTourModel.fromGame(g)).toList();
+    } catch (e) {
+      debugPrint('[PremiumGames] Error fetching classical games: $e');
+      return [];
+    }
+  }
+
   void _sortGames() {
     _allGames.sort((a, b) {
-      if (_type == PremiumGamesType.countrymen) {
+      if (_type == PremiumGamesType.countrymen ||
+          _type == PremiumGamesType.gm) {
         // For Countrymen: Primary is avgElo DESC, Secondary is lastMoveTime DESC
         final aElo = _avgElo(a);
         final bElo = _avgElo(b);

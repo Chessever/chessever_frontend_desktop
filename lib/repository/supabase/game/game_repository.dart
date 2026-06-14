@@ -68,6 +68,13 @@ const String _gameListSelectColumns = '''
           )
         ''';
 
+const List<String> _classicalTimeControlValues = [
+  'standard',
+  'classical',
+  'Standard',
+  'Classical',
+];
+
 class GameRepository extends BaseRepository {
   List<int> _parseFideIds(List<String> fideIds) {
     return fideIds.map((id) => int.tryParse(id)).whereType<int>().toList();
@@ -502,6 +509,198 @@ class GameRepository extends BaseRepository {
 
       return games;
     });
+  }
+
+  /// Get games where the average rating of the two players is at least
+  /// [minAverageElo]. Used by smart event collections where "GM" means a
+  /// genuinely elite game, not just one 2500+ player paired down.
+  Future<List<Games>> getHighAverageEloGames({
+    int minAverageElo = 2500,
+    int limit = 30,
+    int offset = 0,
+  }) async {
+    return handleApiCall(() async {
+      debugPrint(
+        '===== GameRepository: Fetching avg ELO games (>= $minAverageElo) =====',
+      );
+
+      final collected = <Games>[];
+
+      // Start from recent broadcasts/tours, then apply the exact per-game PGN
+      // WhiteElo/BlackElo predicate below. Event strength and denormalized
+      // player_max_rating can be stale or missing on imported rows, so neither
+      // is allowed to decide membership in the GM smart collection.
+      final broadcastResponse = await supabase
+          .from('group_broadcasts')
+          .select('id')
+          .order('date_start', ascending: false, nullsFirst: false)
+          .range(offset, offset + 119);
+
+      final broadcastIds =
+          (broadcastResponse as List)
+              .map((row) => row['id'] as String?)
+              .whereType<String>()
+              .toList();
+
+      if (broadcastIds.isNotEmpty) {
+        final tourIds = <String>[];
+        for (final chunk in _chunks(broadcastIds, 40)) {
+          final tourResponse = await supabase
+              .from('tours')
+              .select('id')
+              .inFilter('group_broadcast_id', chunk);
+          tourIds.addAll(
+            (tourResponse as List)
+                .map((row) => row['id'] as String?)
+                .whereType<String>(),
+          );
+        }
+
+        for (final chunk in _chunks(tourIds, 40)) {
+          final response = await supabase
+              .from('games')
+              .select(_gameListSelectColumns)
+              .inFilter('tour_id', chunk)
+              .order('date_start', ascending: false, nullsFirst: false)
+              .order('last_move_time', ascending: false, nullsFirst: false)
+              .limit(limit * 2);
+
+          final jsonList =
+              (response as List).map((item) => json.encode(item)).toList();
+          final games = await compute(_decodeGamesInIsolate, jsonList);
+          collected.addAll(
+            games.where((game) => _pgnAverageRating(game.pgn) >= minAverageElo),
+          );
+        }
+      }
+
+      var rawOffset = offset;
+      var exhausted = false;
+
+      // Fallback for rows outside the recent broadcast window. This is only a
+      // candidate source; the PGN average check remains the source of truth.
+      while (collected.length < limit && !exhausted) {
+        final rawLimit = (limit - collected.length) * 3;
+        final response = await supabase
+            .from('games')
+            .select(_gameListSelectColumns)
+            .gte('player_max_rating', minAverageElo)
+            .order('date_start', ascending: false, nullsFirst: false)
+            .order('last_move_time', ascending: false, nullsFirst: false)
+            .range(rawOffset, rawOffset + rawLimit - 1);
+
+        final rawRows = response as List;
+        exhausted = rawRows.length < rawLimit;
+        rawOffset += rawRows.length;
+
+        final jsonList = rawRows.map((item) => json.encode(item)).toList();
+        final games = await compute(_decodeGamesInIsolate, jsonList);
+
+        collected.addAll(
+          games.where((game) => _pgnAverageRating(game.pgn) >= minAverageElo),
+        );
+      }
+
+      final result = _deduplicateGames(collected);
+      result.sort((a, b) {
+        final eloCompare = _pgnAverageRating(
+          b.pgn,
+        ).compareTo(_pgnAverageRating(a.pgn));
+        if (eloCompare != 0) return eloCompare;
+
+        final aDate = a.lastMoveTime ?? a.gameDay ?? a.dateStart ?? DateTime(0);
+        final bDate = b.lastMoveTime ?? b.gameDay ?? b.dateStart ?? DateTime(0);
+        return bDate.compareTo(aDate);
+      });
+
+      return result.take(limit).toList();
+    });
+  }
+
+  /// Get classical/standard games globally.
+  Future<List<Games>> getClassicalGames({
+    int limit = 30,
+    int offset = 0,
+  }) async {
+    return handleApiCall(() async {
+      debugPrint('===== GameRepository: Fetching classical games =====');
+
+      final broadcastResponse = await supabase
+          .from('group_broadcasts')
+          .select('id')
+          .inFilter('time_control', _classicalTimeControlValues)
+          .order('date_start', ascending: false, nullsFirst: false)
+          .range(offset, offset + 79);
+
+      final broadcastIds =
+          (broadcastResponse as List)
+              .map((row) => row['id'] as String?)
+              .whereType<String>()
+              .toList();
+
+      if (broadcastIds.isEmpty) return <Games>[];
+
+      final tourIds = <String>[];
+      for (final chunk in _chunks(broadcastIds, 40)) {
+        final tourResponse = await supabase
+            .from('tours')
+            .select('id')
+            .inFilter('group_broadcast_id', chunk);
+        tourIds.addAll(
+          (tourResponse as List)
+              .map((row) => row['id'] as String?)
+              .whereType<String>(),
+        );
+      }
+
+      if (tourIds.isEmpty) return <Games>[];
+
+      final collected = <Games>[];
+      for (final chunk in _chunks(tourIds, 40)) {
+        final response = await supabase
+            .from('games')
+            .select(_gameListSelectColumns)
+            .inFilter('tour_id', chunk)
+            .order('date_start', ascending: false, nullsFirst: false)
+            .order('last_move_time', ascending: false, nullsFirst: false)
+            .limit(limit);
+
+        final jsonList =
+            (response as List).map((item) => json.encode(item)).toList();
+        final games = await compute(_decodeGamesInIsolate, jsonList);
+        collected.addAll(games.where(_isClassicalTimeControl));
+      }
+
+      collected.sort((a, b) {
+        final aDate = a.lastMoveTime ?? a.gameDay ?? a.dateStart ?? DateTime(0);
+        final bDate = b.lastMoveTime ?? b.gameDay ?? b.dateStart ?? DateTime(0);
+        return bDate.compareTo(aDate);
+      });
+
+      return _deduplicateGames(collected).take(limit).toList();
+    });
+  }
+
+  int _pgnAverageRating(String? pgn) {
+    final whiteElo = _pgnIntTag(pgn, 'WhiteElo');
+    final blackElo = _pgnIntTag(pgn, 'BlackElo');
+    if (whiteElo == null || blackElo == null) return 0;
+    return (whiteElo + blackElo) ~/ 2;
+  }
+
+  int? _pgnIntTag(String? pgn, String tag) {
+    if (pgn == null || pgn.isEmpty) return null;
+    final match = RegExp(
+      r'^\[' + RegExp.escape(tag) + r'\s+"(\d+)"\]',
+      multiLine: true,
+    ).firstMatch(pgn);
+    if (match == null) return null;
+    return int.tryParse(match.group(1)!);
+  }
+
+  bool _isClassicalTimeControl(Games game) {
+    final normalized = game.timeControl?.trim().toLowerCase();
+    return normalized == 'standard' || normalized == 'classical';
   }
 
   /// Get LIVE games (status = '*') - highest priority in For You
@@ -1423,4 +1622,11 @@ List<Games> _decodeGamesInIsolate(List<String> gameJsonList) {
 List<Games> _deduplicateGames(List<Games> games) {
   final seen = <String>{};
   return games.where((game) => seen.add(game.id)).toList();
+}
+
+Iterable<List<T>> _chunks<T>(List<T> items, int size) sync* {
+  for (var start = 0; start < items.length; start += size) {
+    final end = start + size > items.length ? items.length : start + size;
+    yield items.sublist(start, end);
+  }
 }
