@@ -793,6 +793,33 @@ class _LocalGamesTable extends HookConsumerWidget {
       return null;
     }, [games]);
 
+    void scrollToIndex(int index) {
+      if (!controller.hasClients) return;
+      final position = controller.position;
+      if (!position.hasViewportDimension) return;
+      final viewport = position.viewportDimension;
+      final pixels = position.pixels;
+      final rowTop = index * _kLocalGameRowHeight;
+      final rowBottom = rowTop + _kLocalGameRowHeight;
+      double? target;
+      if (rowTop < pixels) {
+        target = rowTop;
+      } else if (rowBottom > pixels + viewport) {
+        target = rowBottom - viewport;
+      }
+      if (target == null) return;
+      final clamped = target.clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      if ((clamped - pixels).abs() < 0.5) return;
+      controller.animateTo(
+        clamped.toDouble(),
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
+      );
+    }
+
     void selectIndex(int index, {bool toggle = false, bool range = false}) {
       if (games.isEmpty) return;
       final next = index.clamp(0, games.length - 1).toInt();
@@ -817,7 +844,70 @@ class _LocalGamesTable extends HookConsumerWidget {
         selectionAnchor.value = next;
         selectionExtent.value = next;
       }
+      scrollToIndex(next);
       focusNode.requestFocus();
+    }
+
+    bool moveSelection(int delta, {bool range = false}) {
+      if (games.isEmpty) return false;
+      final current = selectionExtent.value ??
+          games.indexWhere((game) => game.id == selectedId.value);
+      final next = (current < 0 ? 0 : current + delta)
+          .clamp(0, games.length - 1)
+          .toInt();
+      selectIndex(next, range: range);
+      return true;
+    }
+
+    bool selectBoundary(int index, {bool range = false}) {
+      if (games.isEmpty) return false;
+      selectIndex(index, range: range);
+      return true;
+    }
+
+    bool openSelectedGame() {
+      if (games.isEmpty) return false;
+      final index = games.indexWhere((game) => game.id == selectedId.value);
+      final game = games[index < 0 ? 0 : index];
+      _openLocalGame(
+        ref,
+        game,
+        sourceLabel: databaseTitle,
+        databaseGames: databaseGames,
+      );
+      return true;
+    }
+
+    KeyEventResult handleTableKey(FocusNode node, KeyEvent event) {
+      if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+        return KeyEventResult.ignored;
+      }
+      final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+      final hasShortcutModifier =
+          pressed.contains(LogicalKeyboardKey.control) ||
+          pressed.contains(LogicalKeyboardKey.controlLeft) ||
+          pressed.contains(LogicalKeyboardKey.controlRight) ||
+          pressed.contains(LogicalKeyboardKey.meta) ||
+          pressed.contains(LogicalKeyboardKey.metaLeft) ||
+          pressed.contains(LogicalKeyboardKey.metaRight) ||
+          pressed.contains(LogicalKeyboardKey.alt) ||
+          pressed.contains(LogicalKeyboardKey.altLeft) ||
+          pressed.contains(LogicalKeyboardKey.altRight);
+      if (hasShortcutModifier) return KeyEventResult.ignored;
+      final shift =
+          pressed.contains(LogicalKeyboardKey.shift) ||
+          pressed.contains(LogicalKeyboardKey.shiftLeft) ||
+          pressed.contains(LogicalKeyboardKey.shiftRight);
+      final handled = switch (event.logicalKey) {
+        LogicalKeyboardKey.arrowDown => moveSelection(1, range: shift),
+        LogicalKeyboardKey.arrowUp => moveSelection(-1, range: shift),
+        LogicalKeyboardKey.home => selectBoundary(0, range: shift),
+        LogicalKeyboardKey.end => selectBoundary(games.length - 1, range: shift),
+        LogicalKeyboardKey.enter || LogicalKeyboardKey.numpadEnter
+            when !shift => openSelectedGame(),
+        _ => false,
+      };
+      return handled ? KeyEventResult.handled : KeyEventResult.ignored;
     }
 
     Future<void> copySelectedGames({List<LocalChessGame>? scope}) async {
@@ -970,6 +1060,7 @@ class _LocalGamesTable extends HookConsumerWidget {
       child: Focus(
         focusNode: focusNode,
         canRequestFocus: true,
+        onKeyEvent: handleTableKey,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
           child: Column(
