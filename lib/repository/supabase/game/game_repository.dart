@@ -504,6 +504,73 @@ class GameRepository extends BaseRepository {
     });
   }
 
+  /// Get games where the average rating of the two players is at least
+  /// [minAverageElo]. Used by smart event collections where "GM" means a
+  /// genuinely elite game, not just one 2500+ player paired down.
+  Future<List<Games>> getHighAverageEloGames({
+    int minAverageElo = 2500,
+    int limit = 30,
+    int offset = 0,
+  }) async {
+    return handleApiCall(() async {
+      debugPrint(
+        '===== GameRepository: Fetching avg ELO games (>= $minAverageElo) =====',
+      );
+
+      final response = await supabase
+          .from('games')
+          .select(_gameListSelectColumns)
+          .order('date_start', ascending: false, nullsFirst: false)
+          .order('last_move_time', ascending: false, nullsFirst: false)
+          .range(offset, offset + (limit * 4) - 1);
+
+      final jsonList =
+          (response as List).map((item) => json.encode(item)).toList();
+      final games = await compute(_decodeGamesInIsolate, jsonList);
+
+      return games
+          .where((game) => _averageRating(game) >= minAverageElo)
+          .take(limit)
+          .toList();
+    });
+  }
+
+  /// Get classical/standard games globally.
+  Future<List<Games>> getClassicalGames({int limit = 30, int offset = 0}) async {
+    return handleApiCall(() async {
+      debugPrint('===== GameRepository: Fetching classical games =====');
+
+      final response = await supabase
+          .from('games')
+          .select(_gameListSelectColumns)
+          .order('date_start', ascending: false, nullsFirst: false)
+          .order('last_move_time', ascending: false, nullsFirst: false)
+          .range(offset, offset + (limit * 4) - 1);
+
+      final jsonList =
+          (response as List).map((item) => json.encode(item)).toList();
+      final games = await compute(_decodeGamesInIsolate, jsonList);
+
+      return games.where(_isClassicalTimeControl).take(limit).toList();
+    });
+  }
+
+  int _averageRating(Games game) {
+    final ratings =
+        game.players
+            ?.map((player) => player.rating)
+            .where((rating) => rating > 0)
+            .toList() ??
+        const <int>[];
+    if (ratings.length < 2) return 0;
+    return ratings.reduce((a, b) => a + b) ~/ ratings.length;
+  }
+
+  bool _isClassicalTimeControl(Games game) {
+    final normalized = game.timeControl?.trim().toLowerCase();
+    return normalized == 'standard' || normalized == 'classical';
+  }
+
   /// Get LIVE games (status = '*') - highest priority in For You
   /// These are ongoing games with recent activity
   Future<List<Games>> getLiveGames({int limit = 30, int offset = 0}) async {

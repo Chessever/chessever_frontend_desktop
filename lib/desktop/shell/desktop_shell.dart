@@ -21,6 +21,7 @@ import 'package:chessever/desktop/panes/play_pane.dart';
 import 'package:chessever/desktop/panes/play_profile_pane.dart';
 import 'package:chessever/desktop/panes/players_pane.dart';
 import 'package:chessever/desktop/panes/settings_pane.dart';
+import 'package:chessever/desktop/panes/desktop_smart_games_pane.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart';
 import 'package:chessever/desktop/panes/tournaments_pane.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
@@ -770,6 +771,8 @@ Widget _resolveTab(DesktopTab? tab) {
       return TournamentsPane(tabId: tab.id);
     case TabKind.tournamentDetail:
       return TournamentDetailPane(tabId: tab.id);
+    case TabKind.smartGames:
+      return DesktopSmartGamesPane(tabId: tab.id);
     case TabKind.library:
       return const LibraryPane();
     case TabKind.databaseWorkspace:
