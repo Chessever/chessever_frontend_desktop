@@ -66,12 +66,14 @@ class DesktopGameKeyboardFocus extends StatefulWidget {
     required this.builder,
     this.pageStride = kDesktopGameKeyboardDefaultPageStride,
     this.onActivateGame,
+    this.ensureInitialSelectionVisible = true,
   });
 
   final String scopeId;
   final List<GamesTourModel> games;
   final int pageStride;
   final ValueChanged<GamesTourModel>? onActivateGame;
+  final bool ensureInitialSelectionVisible;
   final Widget Function(
     BuildContext context,
     String? selectedGameId,
@@ -110,7 +112,9 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
       if (FocusScope.of(context).focusedChild == null) {
         _focusNode.requestFocus();
       }
-      _ensureSelectedVisible();
+      if (widget.ensureInitialSelectionVisible) {
+        _ensureSelectedVisible();
+      }
     });
   }
 
@@ -132,7 +136,9 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
       if (scopeChanged || hadFocus) {
         _focusNode.requestFocus();
       }
-      _ensureSelectedVisible();
+      if (widget.ensureInitialSelectionVisible) {
+        _ensureSelectedVisible();
+      }
     });
   }
 

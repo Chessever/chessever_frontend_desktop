@@ -382,7 +382,9 @@ class PremiumGamesNotifier
   }
 
   /// Fetch all live games globally.
-  Future<List<GamesTourModel>> _fetchLiveGames(GameRepository repository) async {
+  Future<List<GamesTourModel>> _fetchLiveGames(
+    GameRepository repository,
+  ) async {
     try {
       final games = await repository.getLiveGames(
         limit: _pageSize,
@@ -420,7 +422,7 @@ class PremiumGamesNotifier
   ) async {
     try {
       final games = await repository.getClassicalGames(
-        limit: 200,
+        limit: _pageSize,
         offset: 0,
       );
       _hasMore = false;
@@ -434,7 +436,8 @@ class PremiumGamesNotifier
 
   void _sortGames() {
     _allGames.sort((a, b) {
-      if (_type == PremiumGamesType.countrymen || _type == PremiumGamesType.gm) {
+      if (_type == PremiumGamesType.countrymen ||
+          _type == PremiumGamesType.gm) {
         // For Countrymen: Primary is avgElo DESC, Secondary is lastMoveTime DESC
         final aElo = _avgElo(a);
         final bElo = _avgElo(b);

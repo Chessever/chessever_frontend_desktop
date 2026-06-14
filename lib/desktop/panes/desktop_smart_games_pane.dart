@@ -180,6 +180,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
             scopeId: scopeId,
             games: widget.games,
             pageStride: columns * 3,
+            ensureInitialSelectionVisible: false,
             onActivateGame:
                 (game) =>
                     _openSmartGame(ref, game, widget.routeTitle, widget.games),
@@ -242,6 +243,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
     return DesktopGameKeyboardFocus(
       scopeId: scopeId,
       games: widget.games,
+      ensureInitialSelectionVisible: false,
       onActivateGame:
           (game) => _openSmartGame(ref, game, widget.routeTitle, widget.games),
       builder: (context, selectedGameId, selectGame, keyForGame) {
