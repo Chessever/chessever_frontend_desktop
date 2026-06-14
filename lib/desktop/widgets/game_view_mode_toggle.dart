@@ -38,7 +38,7 @@ class GameViewModeToggle extends ConsumerWidget {
         const SizedBox(width: 4),
         _ToggleButton(
           icon: Icons.view_list_rounded,
-          tooltip: 'List view',
+          tooltip: 'Table view',
           selected: mode == GamesListViewMode.chessBoard,
           onTap: () => select(GamesListViewMode.chessBoard),
         ),
@@ -94,9 +94,10 @@ class _ToggleButtonState extends State<_ToggleButton> {
               width: 28,
               height: 28,
               decoration: BoxDecoration(
-                color: selected
-                    ? kPrimaryColor.withValues(alpha: 0.15)
-                    : (_hovered ? kBlack3Color : Colors.transparent),
+                color:
+                    selected
+                        ? kPrimaryColor.withValues(alpha: 0.15)
+                        : (_hovered ? kBlack3Color : Colors.transparent),
                 borderRadius: BorderRadius.circular(5),
                 border: Border.all(
                   color: selected ? kPrimaryColor : kDividerColor,

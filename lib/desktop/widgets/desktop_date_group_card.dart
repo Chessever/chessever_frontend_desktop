@@ -12,82 +12,100 @@ class DesktopDateGroupCard extends StatelessWidget {
     super.key,
     required this.label,
     required this.gameCount,
+    this.collapsed = false,
+    this.onToggle,
   });
 
   final String label;
   final int gameCount;
+  final bool collapsed;
+  final VoidCallback? onToggle;
 
   @override
   Widget build(BuildContext context) {
     return FTheme(
       data: FThemes.zinc.dark,
-      child: FCard.raw(
-        style:
-            (style) => style.copyWith(
-              decoration: BoxDecoration(
-                color: kBlack2Color,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: kDividerColor),
-              ),
-            ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-          child: Row(
-            children: [
-              Container(
-                width: 3,
-                height: 24,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onToggle,
+        child: FCard.raw(
+          style:
+              (style) => style.copyWith(
                 decoration: BoxDecoration(
-                  color: kPrimaryColor,
-                  borderRadius: BorderRadius.circular(2),
+                  color: kBlack2Color,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: kDividerColor),
                 ),
               ),
-              const SizedBox(width: 10),
-              const Icon(
-                Icons.calendar_today_rounded,
-                size: 15,
-                color: kWhiteColor70,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: kWhiteColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            child: Row(
+              children: [
+                Container(
+                  width: 3,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: kPrimaryColor,
+                    borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              FBadge(
-                style: FBadgeStyle.outline(
-                  (style) => style.copyWith(
-                    decoration: BoxDecoration(
-                      color: kBlack3Color,
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: kDividerColor),
+                const SizedBox(width: 10),
+                const Icon(
+                  Icons.calendar_today_rounded,
+                  size: 15,
+                  color: kWhiteColor70,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
                     ),
-                    contentStyle:
-                        (content) => content.copyWith(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          labelTextStyle: const TextStyle(
-                            color: kWhiteColor70,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            fontFeatures: [FontFeature.tabularFigures()],
-                          ),
-                        ),
                   ),
                 ),
-                child: Text(gameCount == 1 ? '1 game' : '$gameCount games'),
-              ),
-            ],
+                const SizedBox(width: 12),
+                FBadge(
+                  style: FBadgeStyle.outline(
+                    (style) => style.copyWith(
+                      decoration: BoxDecoration(
+                        color: kBlack3Color,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: kDividerColor),
+                      ),
+                      contentStyle:
+                          (content) => content.copyWith(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            labelTextStyle: const TextStyle(
+                              color: kWhiteColor70,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              fontFeatures: [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                    ),
+                  ),
+                  child: Text(gameCount == 1 ? '1 game' : '$gameCount games'),
+                ),
+                if (onToggle != null) ...[
+                  const SizedBox(width: 8),
+                  Icon(
+                    collapsed
+                        ? Icons.keyboard_arrow_right_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    size: 18,
+                    color: kWhiteColor70,
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       ),
