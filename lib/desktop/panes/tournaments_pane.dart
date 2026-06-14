@@ -39,6 +39,7 @@ import 'package:chessever/screens/group_event/group_event_screen.dart' as ge;
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/group_event/providers/group_event_screen_provider.dart';
 import 'package:chessever/screens/group_event/providers/supabase_combined_search_provider.dart';
+import 'package:chessever/screens/group_event/smart_level_event.dart';
 import 'package:chessever/screens/group_event/widget/filter_popup/filter_popup_provider.dart';
 import 'package:chessever/screens/group_event/widget/filter_popup/filter_popup_state.dart';
 import 'package:chessever/screens/group_event/widget/filter_popup/group_event_filter_provider.dart';
@@ -347,6 +348,9 @@ class TournamentsPane extends HookConsumerWidget {
                             loadingId: loadingId.value,
                             tileKeys: tileKeys.value,
                             scrollController: listScrollController,
+                            showSmartLevelEvent:
+                                selectedCategory ==
+                                ge.GroupEventCategory.current,
                           ),
                         ),
                     loading: () => const _LoadingState(),
@@ -1425,7 +1429,7 @@ class _DesktopFilterChip extends StatelessWidget {
   }
 }
 
-class _TournamentBrowser extends StatelessWidget {
+class _TournamentBrowser extends ConsumerWidget {
   const _TournamentBrowser({
     required this.tournaments,
     required this.storageKey,
@@ -1435,6 +1439,7 @@ class _TournamentBrowser extends StatelessWidget {
     required this.loadingId,
     required this.tileKeys,
     required this.scrollController,
+    this.showSmartLevelEvent = false,
   });
 
   final List<GroupEventCardModel> tournaments;
@@ -1445,27 +1450,38 @@ class _TournamentBrowser extends StatelessWidget {
   final String? loadingId;
   final Map<String, GlobalKey> tileKeys;
   final ScrollController scrollController;
+  final bool showSmartLevelEvent;
 
   @override
-  Widget build(BuildContext context) {
-    if (tournaments.isEmpty) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final levelTier =
+        showSmartLevelEvent
+            ? SmartLevelTier.fromFilter(
+              ref.watch(currentPastAppliedFilterProvider),
+            )
+            : null;
+    if (tournaments.isEmpty && levelTier == null) {
       return const _EmptyTournamentList();
     }
 
-    final selectedIndex = resolveTournamentEventGridSelectionIndex(
-      ids: [for (final tournament in tournaments) tournament.id],
-      selectedId: selectedId,
-    );
+    final selectedIndex =
+        tournaments.isEmpty
+            ? 0
+            : resolveTournamentEventGridSelectionIndex(
+              ids: [for (final tournament in tournaments) tournament.id],
+              selectedId: selectedId,
+            );
 
     return _TournamentEventGrid(
       tournaments: tournaments,
       storageKey: storageKey,
-      selectedId: tournaments[selectedIndex].id,
+      selectedId: tournaments.isEmpty ? '' : tournaments[selectedIndex].id,
       loadingId: loadingId,
       onSelect: onSelect,
       onActivate: onActivate,
       tileKeys: tileKeys,
       scrollController: scrollController,
+      levelTier: levelTier,
     );
   }
 }
@@ -1480,6 +1496,7 @@ class _TournamentEventGrid extends StatelessWidget {
     required this.onActivate,
     required this.tileKeys,
     required this.scrollController,
+    this.levelTier,
   });
 
   final List<GroupEventCardModel> tournaments;
@@ -1490,6 +1507,7 @@ class _TournamentEventGrid extends StatelessWidget {
   final ValueChanged<GroupEventCardModel> onActivate;
   final Map<String, GlobalKey> tileKeys;
   final ScrollController scrollController;
+  final SmartLevelTier? levelTier;
 
   @override
   Widget build(BuildContext context) {
@@ -1498,12 +1516,13 @@ class _TournamentEventGrid extends StatelessWidget {
         final columns = calculateTournamentEventGridColumns(
           constraints.maxWidth,
         );
+        final smartCardCount = levelTier != null ? 1 : 0;
         return GridView.builder(
           key: storageKey,
           controller: scrollController,
           physics: const DesktopScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-          itemCount: tournaments.length,
+          itemCount: tournaments.length + smartCardCount,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
             mainAxisSpacing: 12,
@@ -1514,7 +1533,10 @@ class _TournamentEventGrid extends StatelessWidget {
             ),
           ),
           itemBuilder: (context, i) {
-            final tournament = tournaments[i];
+            if (levelTier != null && i == 0) {
+              return SmartLevelEventCard(tier: levelTier!);
+            }
+            final tournament = tournaments[i - smartCardCount];
             final key = tileKeys.putIfAbsent(
               tournament.id,
               () => GlobalKey(debugLabel: 'tournament-tile-${tournament.id}'),
@@ -2237,9 +2259,15 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     if (_selection == null && events.isNotEmpty) {
       _syncSelectionWithEvents(events);
     }
+    final levelTier = SmartLevelTier.fromFilter(
+      ref.watch(forYouAppliedFilterProvider),
+    );
+    final smartCardCount = levelTier != null ? 1 : 0;
     final showTrailingSpinner = state.hasMore && !state.isLoading;
-    // +1 for the collection cards header, +1 for the trailing spinner.
-    final itemCount = 1 + events.length + (showTrailingSpinner ? 1 : 0);
+    // +1 for the collection cards header, +1 for the smart level card if selected,
+    // +1 for the trailing spinner.
+    final itemCount =
+        1 + smartCardCount + events.length + (showTrailingSpinner ? 1 : 0);
 
     return Focus(
       focusNode: _focusNode,
@@ -2286,7 +2314,10 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                   },
                 );
               }
-              final eventIdx = index - 1;
+              if (levelTier != null && index == 1) {
+                return SmartLevelEventCard(tier: levelTier);
+              }
+              final eventIdx = index - 1 - smartCardCount;
               if (eventIdx >= events.length) {
                 return const Padding(
                   padding: EdgeInsets.symmetric(vertical: 16),
@@ -2687,7 +2718,8 @@ class _GamesStrip extends ConsumerWidget {
           // (e.g. before the SizedBox propagates) can't render too many.
           final tileMetrics = DesktopGameCardsFlow.metricsFor(layout);
           final rowHeight = _ForYouEventSection._rowHeightFor(layout);
-          final rows = ((rowHeight + tileMetrics.spacing) /
+          final rows =
+              ((rowHeight + tileMetrics.spacing) /
                       (tileMetrics.tileHeight + tileMetrics.spacing))
                   .floor()
                   .clamp(1, 100)
@@ -2695,7 +2727,8 @@ class _GamesStrip extends ConsumerWidget {
           return LayoutBuilder(
             builder: (context, constraints) {
               final maxW = constraints.maxWidth;
-              final cols = ((maxW + tileMetrics.spacing) /
+              final cols =
+                  ((maxW + tileMetrics.spacing) /
                           (tileMetrics.targetWidth + tileMetrics.spacing))
                       .floor()
                       .clamp(tileMetrics.minCols, tileMetrics.maxCols)
@@ -2714,15 +2747,16 @@ class _GamesStrip extends ConsumerWidget {
                 layout: layout,
                 itemCount: games.length,
                 embedded: true,
-                itemBuilder: (context, i) => LiveDesktopGameCard(
-                  game: games[i],
-                  tournamentTitle: tournamentTitle,
-                  layout: layout,
-                  selected: selectedGameIndex == i,
-                  viewSource: ChessboardView.forYou,
-                  liveBatchKey: liveBatchKey,
-                  allowStockfishFallback: !isScrolling,
-                ),
+                itemBuilder:
+                    (context, i) => LiveDesktopGameCard(
+                      game: games[i],
+                      tournamentTitle: tournamentTitle,
+                      layout: layout,
+                      selected: selectedGameIndex == i,
+                      viewSource: ChessboardView.forYou,
+                      liveBatchKey: liveBatchKey,
+                      allowStockfishFallback: !isScrolling,
+                    ),
               );
             },
           );
@@ -2777,16 +2811,16 @@ class _GamesStrip extends ConsumerWidget {
                 // Match the data-state cap: cols × rows fits the bounded
                 // event row, skeletons render at the same density as the
                 // real cards will.
-                final tileMetrics =
-                    DesktopGameCardsFlow.metricsFor(layout);
-                final rowHeight =
-                    _ForYouEventSection._rowHeightFor(layout);
-                final rows = ((rowHeight + tileMetrics.spacing) /
+                final tileMetrics = DesktopGameCardsFlow.metricsFor(layout);
+                final rowHeight = _ForYouEventSection._rowHeightFor(layout);
+                final rows =
+                    ((rowHeight + tileMetrics.spacing) /
                             (tileMetrics.tileHeight + tileMetrics.spacing))
                         .floor()
                         .clamp(1, 100)
                         .toInt();
-                final cols = ((constraints.maxWidth + tileMetrics.spacing) /
+                final cols =
+                    ((constraints.maxWidth + tileMetrics.spacing) /
                             (tileMetrics.targetWidth + tileMetrics.spacing))
                         .floor()
                         .clamp(tileMetrics.minCols, tileMetrics.maxCols)
@@ -2796,13 +2830,14 @@ class _GamesStrip extends ConsumerWidget {
                   layout: layout,
                   itemCount: count,
                   embedded: true,
-                  itemBuilder: (context, _) => DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: kBlack2Color,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: kDividerColor),
-                    ),
-                  ),
+                  itemBuilder:
+                      (context, _) => DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: kBlack2Color,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: kDividerColor),
+                        ),
+                      ),
                 );
               }
               final strip = DesktopForYouStripLayout.compute(
