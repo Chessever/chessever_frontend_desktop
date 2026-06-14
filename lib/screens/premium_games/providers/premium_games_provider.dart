@@ -421,10 +421,7 @@ class PremiumGamesNotifier
     GameRepository repository,
   ) async {
     try {
-      final games = await repository.getClassicalGames(
-        limit: _pageSize,
-        offset: 0,
-      );
+      final games = await repository.getClassicalGames(limit: 200, offset: 0);
       _hasMore = false;
 
       return games.map((g) => GamesTourModel.fromGame(g)).toList();
@@ -476,6 +473,25 @@ class PremiumGamesNotifier
     final filter = _ref.read(premiumGamesFilterProvider(_type));
 
     return _allGames.where((game) {
+      // Smart event collections should never show tomorrow/future games.
+      if (_type == PremiumGamesType.live ||
+          _type == PremiumGamesType.gm ||
+          _type == PremiumGamesType.classical) {
+        final bucketDate = game.bucketDate;
+        if (bucketDate != null) {
+          final now = DateTime.now();
+          final today = DateTime(now.year, now.month, now.day);
+          final day = DateTime(
+            bucketDate.year,
+            bucketDate.month,
+            bucketDate.day,
+          );
+          if (day.isAfter(today)) {
+            return false;
+          }
+        }
+      }
+
       // Date filter
       if (filter.dateRange.startDate != null) {
         final gameDate = game.lastMoveTime;
