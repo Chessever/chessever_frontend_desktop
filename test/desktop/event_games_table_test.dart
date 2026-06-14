@@ -94,6 +94,25 @@ void main() {
     );
   });
 
+  test('event rail copy selection can span rounds', () {
+    final games = [
+      _summary(id: 'round-1-game-1', roundLabel: 'Round 1'),
+      _summary(id: 'round-1-game-2', roundLabel: 'Round 1'),
+      _summary(id: 'round-2-game-1', roundLabel: 'Round 2'),
+      _summary(id: 'round-2-game-2', roundLabel: 'Round 2'),
+    ];
+
+    expect(
+      eventRailGamesForCopy(
+        orderedGames: games,
+        selectedIds: {'round-1-game-2', 'round-2-game-1', 'round-2-game-2'},
+        highlightedGameId: 'round-2-game-2',
+        selectedGameId: 'round-1-game-2',
+      ).map((game) => game.id),
+      ['round-1-game-2', 'round-2-game-1', 'round-2-game-2'],
+    );
+  });
+
   testWidgets('database games hide the board and round column', (tester) async {
     await tester.pumpWidget(
       _wrap(

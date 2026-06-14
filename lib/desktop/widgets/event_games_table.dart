@@ -2291,6 +2291,7 @@ class _UpcomingRoundsToggleState extends State<_UpcomingRoundsToggle> {
 class _EventRoundTable extends StatelessWidget {
   const _EventRoundTable({
     required this.games,
+    required this.copyScopeGames,
     required this.selectedGameId,
     required this.selectedGameIds,
     required this.highlightedGameId,
@@ -2305,6 +2306,7 @@ class _EventRoundTable extends StatelessWidget {
   });
 
   final List<TournamentGameSummary> games;
+  final List<TournamentGameSummary> copyScopeGames;
   final String? selectedGameId;
   final Set<String> selectedGameIds;
   final String? highlightedGameId;
@@ -2466,7 +2468,7 @@ class _EventRoundTable extends StatelessWidget {
             await onInsertGame(game);
           case _GameRowAction.copyPgn:
             final copyGames = eventRailGamesForCopy(
-              orderedGames: games,
+              orderedGames: copyScopeGames,
               selectedIds: selectedGameIds,
               highlightedGameId: highlightedGameId,
               selectedGameId: selectedGameId,
@@ -2559,6 +2561,7 @@ class _EventRoundSection extends ConsumerWidget {
             const SizedBox(height: 5),
             _EventRoundTable(
               games: group.games,
+              copyScopeGames: eventGames,
               selectedGameId: selectedGameId,
               selectedGameIds: selectedGameIds,
               highlightedGameId: highlightedGameId,
