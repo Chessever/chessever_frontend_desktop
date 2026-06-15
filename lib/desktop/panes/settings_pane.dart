@@ -426,10 +426,6 @@ class _SubscriptionSection extends HookConsumerWidget {
     }
 
     final isPro = entitlement?.isActive ?? false;
-    final provider = entitlement?.provider;
-    final isStripe = provider == 'stripe';
-    final managedByStore = isPro && !isStripe && provider != null;
-
     final statusLabel =
         !isPro
             ? 'Free'
@@ -438,13 +434,6 @@ class _SubscriptionSection extends HookConsumerWidget {
             : 'Pro · cancels at term end';
     final statusColor = isPro ? kGreenColor : kLightGreyColor;
 
-    // Stripe subscriptions are managed on the web. Opening the Stripe
-    // customer portal directly from the desktop app is unreliable — the
-    // portal's `return_url` cannot be a `chessever://` deep link — so we
-    // send the user to chessever.com/account, which signs them in and
-    // opens the portal with a valid web return URL. There they can cancel
-    // or change their plan. The desktop entitlement mirrors the change on
-    // the next refresh.
     Future<void> openManageOnWeb() async {
       error.value = null;
       loading.value = true;
@@ -490,37 +479,33 @@ class _SubscriptionSection extends HookConsumerWidget {
                           : 'Upgrade to Pro',
                   onTap: loading.value || pricing == null ? null : upgrade,
                 )
-              else if (managedByStore)
-                // Subscriptions purchased through the App Store or Google
-                // Play can only be cancelled in the original store. The
-                // button is rendered disabled so users see *why*.
-                _SecondaryButton(
-                  label: 'Managed in ${_storeLabel(provider)}',
-                  onTap: null,
-                )
-              else
+              else ...[
                 _SecondaryButton(
                   label:
                       loading.value
                           ? 'Opening browser…'
-                          : 'Cancel or manage on web',
+                          : 'Manage web subscription',
                   onTap: loading.value ? null : openManageOnWeb,
                 ),
+                const SizedBox(width: 8),
+                const _SecondaryButton(
+                  label: 'Manage mobile subscription',
+                  onTap: null,
+                ),
+              ],
             ],
           ),
-          const SizedBox(height: 12),
-          Text(
-            managedByStore
-                ? 'Your subscription is managed by ${_storeLabel(provider)}. Open the store on your phone to cancel or change your plan — changes will sync here within a few minutes.'
-                : isStripe
-                ? 'Manage billing, download invoices, or cancel anytime at chessever.com/account. Sign in with this account to open your secure billing portal — changes sync back here within a few minutes.'
-                : 'Subscribe on the web or in the iOS / Android app. One plan unlocks every ChessEver surface.',
-            style: const TextStyle(
-              color: kWhiteColor70,
-              fontSize: 12,
-              height: 1.4,
+          if (!isPro) ...[
+            const SizedBox(height: 12),
+            const Text(
+              'Subscribe on the web or in the iOS / Android app. One plan unlocks every ChessEver surface.',
+              style: TextStyle(
+                color: kWhiteColor70,
+                fontSize: 12,
+                height: 1.4,
+              ),
             ),
-          ),
+          ],
           if (error.value != null) ...[
             const SizedBox(height: 12),
             Text(
@@ -531,21 +516,6 @@ class _SubscriptionSection extends HookConsumerWidget {
         ],
       ),
     );
-  }
-}
-
-String _storeLabel(String? provider) {
-  switch (provider) {
-    case 'apple':
-      return 'the App Store';
-    case 'google':
-      return 'Google Play';
-    case 'revenuecat':
-      // Fallback when we only know it came through RevenueCat — copy stays
-      // useful even though we can't tell iOS from Android.
-      return 'the App Store / Google Play';
-    default:
-      return 'the original store';
   }
 }
 

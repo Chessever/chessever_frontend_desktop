@@ -242,6 +242,8 @@ class EntitlementSnapshot {
     this.expiresAt,
     this.willRenew = false,
     this.productId = '',
+    this.status,
+    this.inBillingGracePeriod = false,
   });
 
   /// True if the user has any active "pro" entitlement, regardless of plan.
@@ -264,11 +266,22 @@ class EntitlementSnapshot {
   /// Stripe product id of the active plan, or empty when not subscribed.
   final String productId;
 
+  /// Raw lifecycle status from the backend ('active' | 'trialing' |
+  /// 'past_due' | 'canceled' | 'paused'). 'past_due' with [isActive] still
+  /// true means the user is inside a billing-retry grace window.
+  final String? status;
+
+  /// True when the backend reports a payment failure but the subscription
+  /// is still honored (Stripe past_due, or a store billing retry surfaced
+  /// by the entitlement edge fn). Drives the desktop billing-issue dialog.
+  final bool inBillingGracePeriod;
+
   factory EntitlementSnapshot.fromJson(Map<String, dynamic> json) {
     final cancelAt = switch (json['cancel_at']) {
       String s => DateTime.tryParse(s),
       _ => null,
     };
+    final status = json['status'] as String?;
     return EntitlementSnapshot(
       isActive: json['is_premium'] as bool? ?? false,
       tier: json['tier'] as int?,
@@ -279,6 +292,8 @@ class EntitlementSnapshot {
       },
       willRenew: cancelAt == null,
       productId: json['product_id'] as String? ?? '',
+      status: status,
+      inBillingGracePeriod: status == 'past_due',
     );
   }
 
@@ -290,9 +305,19 @@ class EntitlementSnapshot {
       provider == other.provider &&
       expiresAt == other.expiresAt &&
       willRenew == other.willRenew &&
-      productId == other.productId;
+      productId == other.productId &&
+      status == other.status &&
+      inBillingGracePeriod == other.inBillingGracePeriod;
 
   @override
-  int get hashCode =>
-      Object.hash(isActive, tier, provider, expiresAt, willRenew, productId);
+  int get hashCode => Object.hash(
+        isActive,
+        tier,
+        provider,
+        expiresAt,
+        willRenew,
+        productId,
+        status,
+        inBillingGracePeriod,
+      );
 }

@@ -9,6 +9,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/state/active_player.dart';
+import 'package:chessever/desktop/state/desktop_smart_games.dart';
 import 'package:chessever/desktop/state/global_search_query.dart';
 import 'package:chessever/desktop/utils/event_game_card_keyboard_navigation.dart';
 import 'package:chessever/desktop/utils/list_keyboard_nav.dart';
@@ -42,6 +43,7 @@ import 'package:chessever/screens/group_event/providers/supabase_combined_search
 import 'package:chessever/screens/group_event/widget/filter_popup/filter_popup_provider.dart';
 import 'package:chessever/screens/group_event/widget/filter_popup/filter_popup_state.dart';
 import 'package:chessever/screens/group_event/widget/filter_popup/group_event_filter_provider.dart';
+import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -61,6 +63,16 @@ LiveGamesBatchKey _desktopForYouLiveBatchKey({
     scopeId: 'desktop_for_you:$eventId:$tourId',
     gameIds: games.map((game) => game.gameId),
   );
+}
+
+String _smartCollectionTitle(PremiumGamesType type) {
+  return switch (type) {
+    PremiumGamesType.live => 'Live',
+    PremiumGamesType.gm => 'GM',
+    PremiumGamesType.classical => 'Classical',
+    PremiumGamesType.favorites => 'Favorites',
+    PremiumGamesType.countrymen => 'Countrymen',
+  };
 }
 
 /// Desktop tournaments pane.
@@ -2283,6 +2295,16 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                         .read(selectedCountrymenModeProvider.notifier)
                         .update((_) => CountrymenScreenMode.games);
                     _navigateToTab(TabKind.countrymen);
+                  },
+                  onSmartCollectionTap: (type) {
+                    final tabId = ref.read(desktopTabsProvider.notifier).open(
+                      TabKind.smartGames,
+                      title: _smartCollectionTitle(type),
+                      reuseExisting: false,
+                    );
+                    ref
+                        .read(desktopSmartGamesTypeByTabIdProvider.notifier)
+                        .update((types) => {...types, tabId: type});
                   },
                 );
               }

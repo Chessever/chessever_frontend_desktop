@@ -457,7 +457,7 @@ void main() {
     },
   );
 
-  testWidgets('hovering an annotation glyph jumps to that move', (
+  testWidgets('hovering an annotation glyph does not jump to that move', (
     tester,
   ) async {
     final jumps = <ChessMovePointer>[];
@@ -476,6 +476,11 @@ void main() {
     final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await gesture.addPointer();
     await gesture.moveTo(tester.getCenter(glyph));
+    await tester.pump();
+
+    expect(jumps, isEmpty);
+
+    await tester.tap(glyph);
     await tester.pump();
 
     expect(jumps, [

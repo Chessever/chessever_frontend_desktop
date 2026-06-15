@@ -14,6 +14,7 @@ enum TabKind {
   /// A single tournament's detail (about / games / standings). The active
   /// tournament is read from `activeTournamentProvider`.
   tournamentDetail,
+  smartGames,
   library,
   favorites,
   players,
@@ -66,6 +67,8 @@ extension TabKindLabel on TabKind {
         return 'Tournaments';
       case TabKind.tournamentDetail:
         return 'Tournament';
+      case TabKind.smartGames:
+        return 'Games';
       case TabKind.library:
         return 'Library';
       case TabKind.favorites:

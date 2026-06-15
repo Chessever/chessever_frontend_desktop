@@ -199,6 +199,29 @@ void main() {
       );
       expect(tabs.state.active?.title, 'Rep-Ruben.pgn');
     });
+
+    test('opens board Explorer requests as separate Explorer tabs', () {
+      final tabs = DesktopTabsNotifier();
+
+      final first = tabs.open(
+        TabKind.openingExplorer,
+        title: 'Esipenko Explorer',
+        reuseExisting: false,
+      );
+      final second = tabs.open(
+        TabKind.openingExplorer,
+        title: 'Board Explorer',
+        reuseExisting: false,
+      );
+
+      expect(first, isNot(second));
+      expect(tabs.state.activeId, second);
+      expect(
+        tabs.state.tabs.where((t) => t.kind == TabKind.openingExplorer),
+        hasLength(2),
+      );
+      expect(tabs.state.active?.title, 'Board Explorer');
+    });
     test(
       'container helper reuses an existing local database workspace tab',
       () {

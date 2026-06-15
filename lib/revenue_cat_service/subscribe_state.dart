@@ -395,6 +395,18 @@ class SubscriptionState {
   /// False if user has cancelled (but may still have access until expirationDate).
   final bool willRenew;
 
+  /// 'stripe' | 'apple' | 'google' | 'revenuecat' | null. On desktop this
+  /// comes from the entitlement edge fn and decides where the billing-issue
+  /// dialog sends the user: chessever.com/account for Stripe vs the store
+  /// on their phone.
+  final String? provider;
+
+  /// True when the store / backend reports a failed payment but the
+  /// entitlement is still honored (Stripe past_due / App Store / Play
+  /// billing-retry window). Drives the billing-issue dialog so the user can
+  /// update their card before access ends.
+  final bool inBillingGracePeriod;
+
   SubscriptionState({
     this.isSubscribed = false,
     this.isLoading = false,
@@ -403,6 +415,8 @@ class SubscriptionState {
     this.expirationDate,
     this.managementUrl,
     this.willRenew = true,
+    this.provider,
+    this.inBillingGracePeriod = false,
   });
 
   SubscriptionState copyWith({
@@ -413,6 +427,8 @@ class SubscriptionState {
     DateTime? expirationDate,
     String? managementUrl,
     bool? willRenew,
+    String? provider,
+    bool? inBillingGracePeriod,
   }) {
     return SubscriptionState(
       isSubscribed: isSubscribed ?? this.isSubscribed,
@@ -422,6 +438,9 @@ class SubscriptionState {
       expirationDate: expirationDate ?? this.expirationDate,
       managementUrl: managementUrl ?? this.managementUrl,
       willRenew: willRenew ?? this.willRenew,
+      provider: provider ?? this.provider,
+      inBillingGracePeriod:
+          inBillingGracePeriod ?? this.inBillingGracePeriod,
     );
   }
 }

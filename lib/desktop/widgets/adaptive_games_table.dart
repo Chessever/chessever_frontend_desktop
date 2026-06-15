@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -194,7 +195,12 @@ class AdaptiveGamesTable<T> extends StatelessWidget {
   /// Single-click row handler. In table view this should select/highlight the
   /// row only. Opening a game belongs to [onRowDoubleTap] or caller-owned
   /// Enter-key handling.
-  final void Function(T row, {required bool inNewTab})? onRowTap;
+  final void Function(
+    T row, {
+    required bool inNewTab,
+    required bool shiftPressed,
+  })?
+  onRowTap;
 
   /// Double-click row handler. Use this for opening games from table view.
   final void Function(T row, {required bool inNewTab})? onRowDoubleTap;
@@ -349,7 +355,12 @@ class _SingleTableBody<T> extends StatefulWidget {
   final double rowMinHeight;
   final EdgeInsetsGeometry padding;
   final bool rowSeparator;
-  final void Function(T row, {required bool inNewTab})? onRowTap;
+  final void Function(
+    T row, {
+    required bool inNewTab,
+    required bool shiftPressed,
+  })?
+  onRowTap;
   final void Function(T row, {required bool inNewTab})? onRowDoubleTap;
   final void Function(T row, Offset globalPosition)? onRowSecondaryTap;
   final void Function(T row, int rowIndex)? onRowHover;
@@ -372,15 +383,25 @@ class _SingleTableBody<T> extends StatefulWidget {
 class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
   int? _hoveredIndex;
   bool _lastPointerDownInNewTab = false;
+  bool _lastPointerDownShiftPressed = false;
 
-  void _captureNewTabModifier(TapDownDetails _) {
+  void _captureGestureModifiers(TapDownDetails _) {
     _lastPointerDownInNewTab = isNewTabModifierPressed();
+    _lastPointerDownShiftPressed = HardwareKeyboard.instance.isShiftPressed;
   }
 
   bool _newTabForGesture() {
     final inNewTab = _lastPointerDownInNewTab || isNewTabModifierPressed();
     _lastPointerDownInNewTab = false;
     return inNewTab;
+  }
+
+  bool _shiftForGesture() {
+    final shiftPressed =
+        _lastPointerDownShiftPressed ||
+        HardwareKeyboard.instance.isShiftPressed;
+    _lastPointerDownShiftPressed = false;
+    return shiftPressed;
   }
 
   void _setHover(int? next) {
@@ -546,11 +567,15 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
         onTapDown:
             widget.onRowTap == null && widget.onRowDoubleTap == null
                 ? null
-                : _captureNewTabModifier,
+                : _captureGestureModifiers,
         onTap:
             widget.onRowTap == null
                 ? null
-                : () => widget.onRowTap!(row, inNewTab: _newTabForGesture()),
+                : () => widget.onRowTap!(
+                  row,
+                  inNewTab: _newTabForGesture(),
+                  shiftPressed: _shiftForGesture(),
+                ),
         onDoubleTap:
             widget.onRowDoubleTap == null
                 ? null
@@ -649,11 +674,15 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
         onTapDown:
             widget.onRowTap == null && widget.onRowDoubleTap == null
                 ? null
-                : _captureNewTabModifier,
+                : _captureGestureModifiers,
         onTap:
             widget.onRowTap == null
                 ? null
-                : () => widget.onRowTap!(row, inNewTab: _newTabForGesture()),
+                : () => widget.onRowTap!(
+                  row,
+                  inNewTab: _newTabForGesture(),
+                  shiftPressed: _shiftForGesture(),
+                ),
         onDoubleTap:
             widget.onRowDoubleTap == null
                 ? null

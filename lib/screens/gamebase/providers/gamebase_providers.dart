@@ -988,6 +988,9 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
           state = state.copyWith(
             currentFen: normalized,
             movePointer: existingPointer,
+            isLoading: true,
+            error: null,
+            moveAggregates: const [],
           );
           _scheduleFetch();
           return;
@@ -1064,6 +1067,9 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
             pathMatchesTarget && mainline.isNotEmpty
                 ? [mainline.length - 1]
                 : const [],
+        isLoading: true,
+        error: null,
+        moveAggregates: const [],
       );
       _scheduleFetch();
     } catch (e) {
@@ -1132,7 +1138,13 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
 
   /// Update filters and refetch data
   void updateFilters(GamebaseFilters filters) {
-    state = state.copyWith(filters: filters);
+    _fetchToken++;
+    state = state.copyWith(
+      filters: filters,
+      isLoading: true,
+      error: null,
+      moveAggregates: const [],
+    );
     _scheduleFetch();
   }
 

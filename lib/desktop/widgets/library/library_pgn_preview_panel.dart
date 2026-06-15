@@ -71,7 +71,9 @@ class LibraryPgnPreviewPanel extends HookConsumerWidget {
           label: _titleFor(game),
           pgn: pgn,
           databaseTitle: buffer.sourceLabel,
-          databaseGames: _summariesFromGames(buffer.games),
+          databaseGames: _summariesFromGames(
+            _previewBoardContextGames(game, buffer.games),
+          ),
         ),
         reuseExisting: false,
         focus: focus,
@@ -217,6 +219,30 @@ BoardTabGameArgs _boardArgsFor(
 
 List<TournamentGameSummary> _summariesFromGames(List<ChessGame> games) {
   return [for (final game in games) _summaryFromGame(game)];
+}
+
+const int _kPreviewBoardContextRadius = 100;
+
+List<ChessGame> _previewBoardContextGames(
+  ChessGame selected,
+  List<ChessGame> games,
+) {
+  if (games.isEmpty) return <ChessGame>[selected];
+
+  final selectedIndex = games.indexWhere(
+    (game) => game.gameId == selected.gameId,
+  );
+  if (selectedIndex < 0) return <ChessGame>[selected];
+
+  final start =
+      selectedIndex - _kPreviewBoardContextRadius < 0
+          ? 0
+          : selectedIndex - _kPreviewBoardContextRadius;
+  final end =
+      selectedIndex + _kPreviewBoardContextRadius + 1 > games.length
+          ? games.length
+          : selectedIndex + _kPreviewBoardContextRadius + 1;
+  return games.sublist(start, end);
 }
 
 TournamentGameSummary _summaryFromGame(ChessGame game) {

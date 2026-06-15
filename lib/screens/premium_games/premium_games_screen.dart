@@ -205,6 +205,12 @@ class _PremiumGamesScreenState extends ConsumerState<PremiumGamesScreen> {
         return 'Favorite Games';
       case PremiumGamesType.countrymen:
         return 'Countrymen Games';
+      case PremiumGamesType.live:
+        return 'Live Games';
+      case PremiumGamesType.gm:
+        return 'GM Games';
+      case PremiumGamesType.classical:
+        return 'Classical Games';
     }
   }
 
@@ -348,6 +354,21 @@ class _EmptyState extends StatelessWidget {
         Icons.flag_outlined,
         'No countrymen games yet',
         'Games from players in your country will appear here',
+      ),
+      PremiumGamesType.live => (
+        Icons.bolt_rounded,
+        'No live games right now',
+        'Live games will appear here when broadcasts are active',
+      ),
+      PremiumGamesType.gm => (
+        Icons.military_tech_rounded,
+        'No GM games found',
+        'Games averaging 2500+ will appear here',
+      ),
+      PremiumGamesType.classical => (
+        Icons.timer_outlined,
+        'No classical games found',
+        'Classical and standard games will appear here',
       ),
     };
 

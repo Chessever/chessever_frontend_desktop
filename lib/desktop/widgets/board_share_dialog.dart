@@ -46,7 +46,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
 
   String get _whiteName => widget.headers['White']?.trim() ?? 'White';
   String get _blackName => widget.headers['Black']?.trim() ?? 'Black';
-  String get _event => widget.headers['Event']?.trim() ?? '';
+  String get _event => boardShareDisplayEvent(widget.headers) ?? '';
   String get _result => widget.headers['Result']?.trim() ?? '';
 
   String get _pgn => exportGameToPgn(widget.chessGame);
@@ -476,6 +476,21 @@ String _sanitizeFilename(String input) {
       .replaceAll(RegExp(r'[^\w\s-]'), '')
       .trim()
       .replaceAll(RegExp(r'\s+'), '_');
+}
+
+@visibleForTesting
+String? boardShareDisplayEvent(Map<String, String> headers) {
+  String? header(String key) {
+    final value = headers[key]?.trim();
+    if (value == null || value.isEmpty || value == '?') return null;
+    return value;
+  }
+
+  return header('BroadcastName') ??
+      header('Broadcast Name') ??
+      header('GroupBroadcastName') ??
+      header('Group Broadcast Name') ??
+      header('Event');
 }
 
 /// Show the desktop share dialog.

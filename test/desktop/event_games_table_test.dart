@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/event_games_table.dart';
@@ -17,6 +18,108 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:dio/dio.dart';
 
 void main() {
+  test('gamebase result parsing accepts unicode dashes', () {
+    expect(gamebaseStatusFromResult('0–1'), GameStatus.blackWins);
+    expect(gamebaseStatusFromResult('1—0'), GameStatus.whiteWins);
+    expect(gamebaseStatusFromResult('½–½'), GameStatus.draw);
+  });
+
+  test('event rail range selection follows visible row order', () {
+    final games = [
+      _summary(id: 'game-1', roundLabel: 'R1'),
+      _summary(id: 'game-2', roundLabel: 'R1'),
+      _summary(id: 'game-3', roundLabel: 'R1'),
+      _summary(id: 'game-4', roundLabel: 'R1'),
+    ];
+
+    expect(
+      eventRailRangeSelectionIds(
+        orderedGames: games,
+        anchorGameId: 'game-2',
+        targetGameId: 'game-4',
+      ),
+      ['game-2', 'game-3', 'game-4'],
+    );
+    expect(
+      eventRailRangeSelectionIds(
+        orderedGames: games,
+        anchorGameId: 'game-3',
+        targetGameId: 'game-1',
+      ),
+      ['game-1', 'game-2', 'game-3'],
+    );
+    expect(
+      eventRailRangeSelectionIds(
+        orderedGames: [games[0], games[3]],
+        anchorGameId: 'game-1',
+        targetGameId: 'game-4',
+      ),
+      ['game-1', 'game-4'],
+    );
+
+    final gamesAcrossRounds = [
+      _summary(id: 'round-1-game-1', roundLabel: 'Round 1'),
+      _summary(id: 'round-1-game-2', roundLabel: 'Round 1'),
+      _summary(id: 'round-2-game-1', roundLabel: 'Round 2'),
+      _summary(id: 'round-2-game-2', roundLabel: 'Round 2'),
+    ];
+    expect(
+      eventRailRangeSelectionIds(
+        orderedGames: gamesAcrossRounds,
+        anchorGameId: 'round-1-game-2',
+        targetGameId: 'round-2-game-2',
+      ),
+      ['round-1-game-2', 'round-2-game-1', 'round-2-game-2'],
+    );
+  });
+
+  test('event rail copy selection preserves highlighted row order', () {
+    final games = [
+      _summary(id: 'game-1', roundLabel: 'R1'),
+      _summary(id: 'game-2', roundLabel: 'R1'),
+      _summary(id: 'game-3', roundLabel: 'R1'),
+    ];
+
+    expect(
+      eventRailGamesForCopy(
+        orderedGames: games,
+        selectedIds: {'game-1', 'game-3'},
+        highlightedGameId: 'game-3',
+        selectedGameId: 'game-1',
+      ).map((game) => game.id),
+      ['game-1', 'game-3'],
+    );
+
+    expect(
+      eventRailGamesForCopy(
+        orderedGames: games,
+        selectedIds: const <String>{},
+        highlightedGameId: 'game-2',
+        selectedGameId: 'game-1',
+      ).map((game) => game.id),
+      ['game-2'],
+    );
+  });
+
+  test('event rail copy selection can span rounds', () {
+    final games = [
+      _summary(id: 'round-1-game-1', roundLabel: 'Round 1'),
+      _summary(id: 'round-1-game-2', roundLabel: 'Round 1'),
+      _summary(id: 'round-2-game-1', roundLabel: 'Round 2'),
+      _summary(id: 'round-2-game-2', roundLabel: 'Round 2'),
+    ];
+
+    expect(
+      eventRailGamesForCopy(
+        orderedGames: games,
+        selectedIds: {'round-1-game-2', 'round-2-game-1', 'round-2-game-2'},
+        highlightedGameId: 'round-2-game-2',
+        selectedGameId: 'round-1-game-2',
+      ).map((game) => game.id),
+      ['round-1-game-2', 'round-2-game-1', 'round-2-game-2'],
+    );
+  });
+
   testWidgets('database games hide the board and round column', (tester) async {
     await tester.pumpWidget(
       _wrap(
@@ -39,6 +142,41 @@ void main() {
     expect(find.text('R9'), findsNothing);
     expect(find.text('White Player'), findsOneWidget);
     expect(find.text('Black Player'), findsOneWidget);
+  });
+
+  testWidgets('database game rows show result instead of vs fallback', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          pgn: '1. e4 e5 0-1',
+          label: 'Database game',
+          whiteName: 'White',
+          blackName: 'Black',
+          databaseTitle: 'Continuation after 1.e4 e5',
+          databaseGames: [
+            _summary(
+              id: 'db-game-1',
+              roundLabel: '2026',
+              whitePlayer: 'Esipenko,A',
+              blackPlayer: 'Radjabov,T',
+              status: GameStatus.blackWins,
+            ),
+          ],
+          gameListSelectedId: 'db-game-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('vs'), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is Text && widget.textSpan?.toPlainText() == '0–1',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets(
@@ -630,6 +768,86 @@ void main() {
     expect(args.gameListSelectedId, 'event-game-1');
   });
 
+  testWidgets('Shift click ranges from the active event game across rounds', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'round-2-game-1',
+          pgn: '1. e4 e5 *',
+          label: 'Event game',
+          whiteName: 'Round Two White One',
+          blackName: 'Round Two Black One',
+          tournamentTitle: 'Event',
+          eventGames: [
+            _summary(
+              id: 'round-2-game-1',
+              roundLabel: 'R2',
+              roundName: 'Round 2',
+              whitePlayer: 'Round Two White One',
+              blackPlayer: 'Round Two Black One',
+              boardNumber: 1,
+              startsAt: DateTime(2026, 1, 2, 10),
+            ),
+            _summary(
+              id: 'round-2-game-2',
+              roundLabel: 'R2',
+              roundName: 'Round 2',
+              whitePlayer: 'Round Two White Two',
+              blackPlayer: 'Round Two Black Two',
+              boardNumber: 2,
+              startsAt: DateTime(2026, 1, 2, 10),
+            ),
+            _summary(
+              id: 'round-1-game-1',
+              roundLabel: 'R1',
+              roundName: 'Round 1',
+              whitePlayer: 'Round One White One',
+              blackPlayer: 'Round One Black One',
+              boardNumber: 1,
+              startsAt: DateTime(2026, 1, 1, 10),
+            ),
+          ],
+          gameListSelectedId: 'round-2-game-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    var firstRoundTable = tester.widget<Table>(find.byType(Table).at(0));
+    var secondRoundTable = tester.widget<Table>(find.byType(Table).at(1));
+    expect(
+      (firstRoundTable.children[0].decoration as BoxDecoration).color,
+      isNot(Colors.transparent),
+    );
+    expect(
+      (firstRoundTable.children[1].decoration as BoxDecoration).color,
+      Colors.transparent,
+    );
+    expect(
+      (secondRoundTable.children[0].decoration as BoxDecoration).color,
+      Colors.transparent,
+    );
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.ensureVisible(find.text('Round One Black One'));
+    await tester.tap(find.text('Round One Black One'));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump(const Duration(milliseconds: 120));
+
+    firstRoundTable = tester.widget<Table>(find.byType(Table).at(0));
+    secondRoundTable = tester.widget<Table>(find.byType(Table).at(1));
+    expect(
+      (firstRoundTable.children[0].decoration as BoxDecoration).color,
+      isNot(Colors.transparent),
+    );
+    expect(
+      (secondRoundTable.children[0].decoration as BoxDecoration).color,
+      isNot(Colors.transparent),
+    );
+  });
+
   testWidgets('Ctrl click opens a game row in a new tab', (tester) async {
     await tester.pumpWidget(
       _wrap(
@@ -955,6 +1173,8 @@ TournamentGameSummary _summary({
   DateTime? lastMoveTime,
   String roundName = '',
   int? boardNumber,
+  String whiteTitle = '',
+  String blackTitle = '',
 }) {
   return TournamentGameSummary(
     id: id,

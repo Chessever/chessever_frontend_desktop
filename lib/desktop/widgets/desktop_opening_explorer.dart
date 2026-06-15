@@ -500,7 +500,6 @@ class _ColumnDims {
     required this.resultBar,
     required this.gap,
     required this.horizontalPad,
-    required this.useFullDate,
     required this.useFullCount,
     required this.showResultBar,
     required this.headerHeight,
@@ -521,7 +520,6 @@ class _ColumnDims {
 
   final double gap;
   final double horizontalPad;
-  final bool useFullDate;
   final bool useFullCount;
   final bool showResultBar;
   final double headerHeight;
@@ -556,12 +554,12 @@ class _ColumnDims {
         const move = 72.0;
         const gamesValue = 36.0;
         const gamesIcon = 0.0;
-        // Keep the last-played year visually separated from the games count.
+        // Keep the month-year date visually separated from the games count.
         // The final date is right-aligned at the rail edge, so a wider LAST
         // slot shifts the games count left instead of crowding both values.
-        const last = 42.0;
+        const last = 64.0;
         const double? score = null;
-        const gap = 5.0;
+        const gap = 8.0;
         return _ColumnDims(
           move: move,
           gamesValue: gamesValue,
@@ -579,7 +577,6 @@ class _ColumnDims {
           ),
           gap: gap,
           horizontalPad: horizontalPad,
-          useFullDate: false,
           useFullCount: true,
           showResultBar: true,
           headerHeight: 24,
@@ -590,9 +587,9 @@ class _ColumnDims {
       const move = 58.0;
       const gamesValue = 30.0;
       const gamesIcon = 0.0;
-      const last = 34.0;
+      const last = 64.0;
       const double? score = null;
-      const gap = 4.0;
+      const gap = 6.0;
       return _ColumnDims(
         move: move,
         gamesValue: gamesValue,
@@ -610,7 +607,6 @@ class _ColumnDims {
         ),
         gap: gap,
         horizontalPad: horizontalPad,
-        useFullDate: false,
         useFullCount: false,
         showResultBar: true,
         headerHeight: 24,
@@ -642,7 +638,6 @@ class _ColumnDims {
         ),
         gap: gap,
         horizontalPad: horizontalPad,
-        useFullDate: true,
         useFullCount: true,
         showResultBar: true,
         headerHeight: 28,
@@ -654,7 +649,7 @@ class _ColumnDims {
       const move = 88.0;
       const gamesValue = 48.0;
       const gamesIcon = 18.0;
-      const last = 56.0;
+      const last = 64.0;
       const double? score = null;
       const gap = 6.0;
       return _ColumnDims(
@@ -674,7 +669,6 @@ class _ColumnDims {
         ),
         gap: gap,
         horizontalPad: horizontalPad,
-        useFullDate: false,
         useFullCount: true,
         showResultBar: true,
         headerHeight: 28,
@@ -686,9 +680,9 @@ class _ColumnDims {
       const move = 72.0;
       const gamesValue = 38.0;
       const gamesIcon = 14.0;
-      const last = 42.0;
+      const last = 64.0;
       const double? score = null;
-      const gap = 5.0;
+      const gap = 6.0;
       return _ColumnDims(
         move: move,
         gamesValue: gamesValue,
@@ -706,7 +700,6 @@ class _ColumnDims {
         ),
         gap: gap,
         horizontalPad: horizontalPad,
-        useFullDate: false,
         useFullCount: true,
         showResultBar: true,
         headerHeight: 28,
@@ -717,7 +710,7 @@ class _ColumnDims {
     const move = 62.0;
     const gamesValue = 32.0;
     const gamesIcon = 12.0;
-    const last = 34.0;
+    const last = 64.0;
     const double? score = null;
     const gap = 4.0;
     return _ColumnDims(
@@ -737,7 +730,6 @@ class _ColumnDims {
       ),
       gap: gap,
       horizontalPad: horizontalPad,
-      useFullDate: false,
       useFullCount: false,
       showResultBar: true,
       headerHeight: 28,
@@ -1255,10 +1247,7 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
                   SizedBox(width: dims.gap),
                   SizedBox(
                     width: dims.last,
-                    child: _LastPlayedCell(
-                      aggregate: agg,
-                      full: dims.useFullDate,
-                    ),
+                    child: _LastPlayedCell(aggregate: agg),
                   ),
                 ],
                 if (dims.showResultBar) ...[
@@ -1290,10 +1279,7 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
                   SizedBox(width: dims.gap),
                   SizedBox(
                     width: dims.last,
-                    child: _LastPlayedCell(
-                      aggregate: agg,
-                      full: dims.useFullDate,
-                    ),
+                    child: _LastPlayedCell(aggregate: agg),
                   ),
                 ],
               ],
@@ -1332,15 +1318,14 @@ class _GamesCountCell extends StatelessWidget {
 }
 
 class _LastPlayedCell extends StatelessWidget {
-  const _LastPlayedCell({required this.aggregate, required this.full});
+  const _LastPlayedCell({required this.aggregate});
 
   final MoveAggregate aggregate;
-  final bool full;
 
   @override
   Widget build(BuildContext context) {
     return Text(
-      _formatLastPlayed(aggregate.lastPlayed, full: full),
+      _formatLastPlayed(aggregate.lastPlayed),
       textAlign: TextAlign.right,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
@@ -1664,9 +1649,8 @@ String _formatTotalCount(int n, {required bool full}) {
   return n.toString();
 }
 
-final DateFormat _yearFormat = DateFormat.y();
 final DateFormat _monthYearFormat = DateFormat('MMM yyyy');
-String _formatLastPlayed(DateTime? d, {required bool full}) {
+String _formatLastPlayed(DateTime? d) {
   if (d == null) return '—';
-  return full ? _monthYearFormat.format(d) : _yearFormat.format(d);
+  return _monthYearFormat.format(d);
 }

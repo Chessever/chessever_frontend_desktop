@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
+import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
@@ -17,6 +19,7 @@ import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
+import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
@@ -25,7 +28,7 @@ import 'package:chessever/screens/countrymen/provider/countrymen_combined_games_
 import 'package:chessever/screens/favorites/player_games/provider/favorites_combined_games_provider.dart';
 import 'package:chessever/screens/library/providers/gamebase_database_games_provider.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
-    show pgnHasMoves;
+    show buildPgnFromGamebaseData, pgnHasMoves;
 import 'package:chessever/screens/player_profile/provider/player_profile_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
@@ -43,6 +46,28 @@ final _eventUpcomingVisibleProvider = StateProvider.autoDispose
 
 final _gameRailTabProvider = StateProvider.autoDispose
     .family<_GameRailTab?, String>((ref, tabId) => null);
+
+@visibleForTesting
+List<String> eventRailRangeSelectionIds({
+  required List<TournamentGameSummary> orderedGames,
+  required String? anchorGameId,
+  required String targetGameId,
+}) {
+  if (orderedGames.isEmpty) return const <String>[];
+  final targetIndex = orderedGames.indexWhere(
+    (game) => game.id == targetGameId,
+  );
+  if (targetIndex < 0) return const <String>[];
+  final anchorIndex =
+      anchorGameId == null
+          ? -1
+          : orderedGames.indexWhere((game) => game.id == anchorGameId);
+  final start =
+      anchorIndex < 0 ? targetIndex : math.min(anchorIndex, targetIndex);
+  final end =
+      anchorIndex < 0 ? targetIndex : math.max(anchorIndex, targetIndex);
+  return [for (var i = start; i <= end; i++) orderedGames[i].id];
+}
 
 /// Board-pane companion table for the event that produced the active game.
 ///
@@ -76,6 +101,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
   String? _loadingDatabaseTabId;
   String? _databaseLoadErrorTabId;
   String? _highlightedGameId;
+  String? _rangeAnchorGameId;
+  Set<String> _highlightedGameIds = const <String>{};
   String? _databaseLoadError;
   String? _loadingContinuationKey;
   String? _continuationLoadErrorKey;
@@ -114,8 +141,36 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
 
   void _highlightGame(TournamentGameSummary game) {
     _railFocusNode.requestFocus();
-    if (_highlightedGameId == game.id) return;
-    setState(() => _highlightedGameId = game.id);
+    if (_highlightedGameId == game.id && _highlightedGameIds.isEmpty) return;
+    setState(() {
+      _highlightedGameId = game.id;
+      _rangeAnchorGameId = game.id;
+      _highlightedGameIds = const <String>{};
+    });
+  }
+
+  void _highlightGameRange(
+    List<TournamentGameSummary> orderedGames,
+    TournamentGameSummary target, {
+    String? fallbackAnchorGameId,
+  }) {
+    _railFocusNode.requestFocus();
+    final anchorId =
+        _rangeAnchorGameId ??
+        _highlightedGameId ??
+        fallbackAnchorGameId ??
+        target.id;
+    final nextIds =
+        eventRailRangeSelectionIds(
+          orderedGames: orderedGames,
+          anchorGameId: anchorId,
+          targetGameId: target.id,
+        ).toSet();
+    setState(() {
+      _rangeAnchorGameId = anchorId;
+      _highlightedGameId = target.id;
+      _highlightedGameIds = nextIds;
+    });
   }
 
   bool _moveHighlightedGame(
@@ -134,8 +189,14 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
         currentIdx >= 0 ? currentIdx : (delta > 0 ? -1 : orderedGames.length);
     final nextIdx = (anchor + delta).clamp(0, orderedGames.length - 1);
     final nextGame = orderedGames[nextIdx];
-    if (nextGame.id == _highlightedGameId) return true;
-    setState(() => _highlightedGameId = nextGame.id);
+    if (nextGame.id == _highlightedGameId && _highlightedGameIds.isEmpty) {
+      return true;
+    }
+    setState(() {
+      _highlightedGameId = nextGame.id;
+      _rangeAnchorGameId = nextGame.id;
+      _highlightedGameIds = const <String>{};
+    });
     return true;
   }
 
@@ -151,6 +212,22 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
+    final copyModifierPressed =
+        (HardwareKeyboard.instance.isControlPressed ||
+            HardwareKeyboard.instance.isMetaPressed) &&
+        !HardwareKeyboard.instance.isAltPressed;
+    if (copyModifierPressed && event.logicalKey == LogicalKeyboardKey.keyC) {
+      if (event is KeyDownEvent) {
+        unawaited(
+          _copyHighlightedGamesAsPgn(
+            orderedGames,
+            selectedGameId: selectedGameId,
+          ),
+        );
+      }
+      return KeyEventResult.handled;
+    }
+
     if (HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed ||
         HardwareKeyboard.instance.isAltPressed) {
@@ -201,6 +278,23 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
+  }
+
+  Future<void> _copyHighlightedGamesAsPgn(
+    List<TournamentGameSummary> orderedGames, {
+    required String? selectedGameId,
+  }) async {
+    final games = eventRailGamesForCopy(
+      orderedGames: orderedGames,
+      selectedIds: _highlightedGameIds,
+      highlightedGameId: _highlightedGameId,
+      selectedGameId: selectedGameId,
+    );
+    await _copyEventGameSummariesAsPgn(
+      context: context,
+      ref: ref,
+      games: games,
+    );
   }
 
   void _scheduleSelectedScroll({
@@ -574,10 +668,18 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
             )
             : allRoundGroups;
     final showBoardColumn = resolved.kind == _GameListKind.event;
+    final expandedByGroup = <String, bool>{
+      for (final group in roundGroups)
+        group.id: ref.watch(_eventRoundExpandedProvider(group.id)),
+    };
+    final visibleRoundGroups = [
+      for (final group in roundGroups)
+        if (expandedByGroup[group.id] == true) group,
+    ];
     final allOrderedGames = allRoundGroups
         .expand((round) => round.games)
         .toList(growable: false);
-    final orderedGames = roundGroups
+    final orderedGames = visibleRoundGroups
         .expand((round) => round.games)
         .toList(growable: false);
     final selectedGameId = resolved.selectedGameId;
@@ -599,10 +701,6 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
               ).select((async) => _EventLiveSummaries.from(async.valueOrNull)),
             );
 
-    final expandedByGroup = <String, bool>{
-      for (final group in roundGroups)
-        group.id: ref.watch(_eventRoundExpandedProvider(group.id)),
-    };
     final scrollSignature = [
       activeSelectionId ?? '',
       for (final group in roundGroups)
@@ -804,6 +902,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
                       _EventRoundSection(
                         group: group,
                         selectedGameId: selectedGameId,
+                        selectedGameIds: _highlightedGameIds,
                         highlightedGameId: _highlightedGameId,
                         selectedRowKey:
                             (_highlightedGameId ?? selectedGameId) == null
@@ -821,6 +920,12 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
                         activeArgs: effectiveArgs,
                         showBoardColumn: showBoardColumn,
                         onHighlightGame: _highlightGame,
+                        onRangeHighlightGame:
+                            (game) => _highlightGameRange(
+                              orderedGames,
+                              game,
+                              fallbackAnchorGameId: selectedGameId,
+                            ),
                       ),
                     if (resolved.kind == _GameListKind.database &&
                         (isLoadingMoreDatabase ||
@@ -848,6 +953,106 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
       ),
     );
   }
+}
+
+@visibleForTesting
+List<TournamentGameSummary> eventRailGamesForCopy({
+  required List<TournamentGameSummary> orderedGames,
+  required Set<String> selectedIds,
+  required String? highlightedGameId,
+  required String? selectedGameId,
+  TournamentGameSummary? fallbackGame,
+}) {
+  if (orderedGames.isEmpty) {
+    return fallbackGame == null
+        ? const <TournamentGameSummary>[]
+        : <TournamentGameSummary>[fallbackGame];
+  }
+
+  if (selectedIds.isNotEmpty) {
+    final selected = orderedGames
+        .where((game) => selectedIds.contains(game.id))
+        .toList(growable: false);
+    if (selected.isNotEmpty) return selected;
+  }
+
+  final activeId = highlightedGameId ?? selectedGameId ?? fallbackGame?.id;
+  if (activeId != null && activeId.isNotEmpty) {
+    final active = orderedGames.where((game) => game.id == activeId).toList();
+    if (active.isNotEmpty) return <TournamentGameSummary>[active.first];
+  }
+
+  return fallbackGame == null
+      ? const <TournamentGameSummary>[]
+      : <TournamentGameSummary>[fallbackGame];
+}
+
+Future<int> _copyEventGameSummariesAsPgn({
+  required BuildContext context,
+  required WidgetRef ref,
+  required List<TournamentGameSummary> games,
+}) async {
+  if (games.isEmpty) {
+    showDesktopToast(context, 'Nothing to copy.', error: true);
+    return 0;
+  }
+
+  final pgns = <String>[];
+  var skipped = 0;
+  for (final game in games) {
+    final pgn = await _resolveEventGameSummaryPgn(ref, game);
+    if (pgn != null && pgnHasMoves(pgn)) {
+      pgns.add(pgn.trim());
+    } else {
+      skipped += 1;
+    }
+  }
+
+  if (!context.mounted) return 0;
+  if (pgns.isEmpty) {
+    showDesktopToast(context, 'No PGN with moves to copy.', error: true);
+    return 0;
+  }
+
+  await Clipboard.setData(ClipboardData(text: pgns.join('\n\n')));
+  if (!context.mounted) return pgns.length;
+  final count = pgns.length;
+  final suffix = skipped > 0 ? ' ($skipped skipped without moves)' : '';
+  showDesktopToast(
+    context,
+    'Copied $count ${count == 1 ? 'game' : 'games'} as PGN$suffix.',
+  );
+  return count;
+}
+
+Future<String?> _resolveEventGameSummaryPgn(
+  WidgetRef ref,
+  TournamentGameSummary game,
+) async {
+  final direct = game.pgn?.trim();
+  if (direct != null && direct.isNotEmpty && pgnHasMoves(direct)) return direct;
+
+  final id = game.id.trim();
+  if (id.isEmpty) return null;
+
+  try {
+    final supabasePgn = await ref.read(gameRepositoryProvider).getGamePgn(id);
+    if (supabasePgn != null && pgnHasMoves(supabasePgn)) {
+      return supabasePgn.trim();
+    }
+  } catch (_) {}
+
+  try {
+    final fullGame = await ref
+        .read(gamebaseRepositoryProvider)
+        .getGameWithPgn(id);
+    final pgn = fullGame?.pgn;
+    if (pgn != null && pgnHasMoves(pgn)) return pgn.trim();
+    final built = buildPgnFromGamebaseData(fullGame?.data);
+    if (built != null && pgnHasMoves(built)) return built.trim();
+  } catch (_) {}
+
+  return null;
 }
 
 /// Switches the active board tab to the game offset by [delta] (e.g. -1 for
@@ -2086,33 +2291,44 @@ class _UpcomingRoundsToggleState extends State<_UpcomingRoundsToggle> {
 class _EventRoundTable extends StatelessWidget {
   const _EventRoundTable({
     required this.games,
+    required this.copyScopeGames,
     required this.selectedGameId,
+    required this.selectedGameIds,
     required this.highlightedGameId,
     required this.selectedRowKey,
     required this.liveSummaries,
     required this.showBoardColumn,
     required this.onHighlightGame,
+    required this.onRangeHighlightGame,
     required this.onOpenGame,
     required this.onInsertGame,
+    required this.onCopyGames,
   });
 
   final List<TournamentGameSummary> games;
+  final List<TournamentGameSummary> copyScopeGames;
   final String? selectedGameId;
+  final Set<String> selectedGameIds;
   final String? highlightedGameId;
   final GlobalKey? selectedRowKey;
   final _EventLiveSummaries liveSummaries;
   final bool showBoardColumn;
   final void Function(TournamentGameSummary game) onHighlightGame;
+  final void Function(TournamentGameSummary game) onRangeHighlightGame;
   final Future<void> Function(
     TournamentGameSummary game, {
     required bool inNewTab,
   })
   onOpenGame;
   final Future<void> Function(TournamentGameSummary game) onInsertGame;
+  final Future<void> Function(List<TournamentGameSummary> games) onCopyGames;
 
   String? get _activeSelectionId => highlightedGameId ?? selectedGameId;
 
-  bool _isSelected(TournamentGameSummary game) => game.id == _activeSelectionId;
+  bool _isSelected(TournamentGameSummary game) {
+    if (selectedGameIds.isNotEmpty) return selectedGameIds.contains(game.id);
+    return game.id == _activeSelectionId;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2201,11 +2417,19 @@ class _EventRoundTable extends StatelessWidget {
       rowMinHeight: 34,
       rowKeyBuilder:
           (game) => game.id == _activeSelectionId ? selectedRowKey : null,
-      onRowTap: (game, {required bool inNewTab}) {
-        onHighlightGame(game);
+      onRowTap: (game, {required bool inNewTab, required bool shiftPressed}) {
         if (inNewTab) {
+          onHighlightGame(game);
           unawaited(onOpenGame(game, inNewTab: true));
+          return;
         }
+        final effectiveShiftPressed =
+            shiftPressed || HardwareKeyboard.instance.isShiftPressed;
+        if (effectiveShiftPressed) {
+          onRangeHighlightGame(game);
+          return;
+        }
+        onHighlightGame(game);
       },
       onRowDoubleTap: (game, {required bool inNewTab}) {
         onHighlightGame(game);
@@ -2227,6 +2451,13 @@ class _EventRoundTable extends StatelessWidget {
               icon: Icons.call_merge_rounded,
               label: 'Insert game',
             ),
+            DesktopContextMenuDivider<_GameRowAction>(),
+            DesktopContextMenuItem<_GameRowAction>(
+              value: _GameRowAction.copyPgn,
+              icon: Icons.copy_rounded,
+              label: 'Copy PGN',
+              shortcut: 'Ctrl/⌘C',
+            ),
           ],
         );
         if (action == null) return;
@@ -2235,6 +2466,15 @@ class _EventRoundTable extends StatelessWidget {
             await onOpenGame(game, inNewTab: true);
           case _GameRowAction.insertGame:
             await onInsertGame(game);
+          case _GameRowAction.copyPgn:
+            final copyGames = eventRailGamesForCopy(
+              orderedGames: copyScopeGames,
+              selectedIds: selectedGameIds,
+              highlightedGameId: highlightedGameId,
+              selectedGameId: selectedGameId,
+              fallbackGame: game,
+            );
+            await onCopyGames(copyGames);
         }
       },
       rowDecorationBuilder: (game, hovered) {
@@ -2272,6 +2512,7 @@ class _EventRoundSection extends ConsumerWidget {
   const _EventRoundSection({
     required this.group,
     required this.selectedGameId,
+    required this.selectedGameIds,
     required this.highlightedGameId,
     required this.selectedRowKey,
     required this.liveSummaries,
@@ -2281,10 +2522,12 @@ class _EventRoundSection extends ConsumerWidget {
     required this.activeArgs,
     required this.showBoardColumn,
     required this.onHighlightGame,
+    required this.onRangeHighlightGame,
   });
 
   final _EventRoundGroup group;
   final String? selectedGameId;
+  final Set<String> selectedGameIds;
   final String? highlightedGameId;
   final GlobalKey? selectedRowKey;
   final _EventLiveSummaries liveSummaries;
@@ -2294,6 +2537,7 @@ class _EventRoundSection extends ConsumerWidget {
   final BoardTabGameArgs? activeArgs;
   final bool showBoardColumn;
   final void Function(TournamentGameSummary game) onHighlightGame;
+  final void Function(TournamentGameSummary game) onRangeHighlightGame;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -2317,12 +2561,15 @@ class _EventRoundSection extends ConsumerWidget {
             const SizedBox(height: 5),
             _EventRoundTable(
               games: group.games,
+              copyScopeGames: eventGames,
               selectedGameId: selectedGameId,
+              selectedGameIds: selectedGameIds,
               highlightedGameId: highlightedGameId,
               selectedRowKey: selectedRowKey,
               liveSummaries: liveSummaries,
               showBoardColumn: showBoardColumn,
               onHighlightGame: onHighlightGame,
+              onRangeHighlightGame: onRangeHighlightGame,
               onOpenGame: (game, {required bool inNewTab}) async {
                 await _openEventGame(
                   ref: ref,
@@ -2340,6 +2587,12 @@ class _EventRoundSection extends ConsumerWidget {
                     ref: ref,
                     game: game,
                     tournamentTitle: tournamentTitle,
+                  ),
+              onCopyGames:
+                  (games) => _copyEventGameSummariesAsPgn(
+                    context: context,
+                    ref: ref,
+                    games: games,
                   ),
             ),
           ],
@@ -2686,7 +2939,7 @@ class _EventRoundStatusChip extends StatelessWidget {
   }
 }
 
-enum _GameRowAction { openInNewTab, insertGame }
+enum _GameRowAction { openInNewTab, insertGame, copyPgn }
 
 class _BoardBadge extends StatelessWidget {
   const _BoardBadge({required this.game, required this.selected});
@@ -2850,7 +3103,7 @@ class _StatusPill extends StatelessWidget {
       );
     }
     return Text(
-      'vs',
+      '—',
       maxLines: 1,
       textAlign: TextAlign.center,
       style: TextStyle(

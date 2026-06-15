@@ -4997,7 +4997,11 @@ BoardTabGameArgs _boardArgsForLocalPreviewGame(
     initialFen: initialFen,
     databaseTitle: databaseTitle,
     databaseGames: [
-      for (final game in databaseGames) _summaryFromLocalPreviewGame(game),
+      for (final game in _localPreviewBoardContextGames(
+        localGame,
+        databaseGames,
+      ))
+        _summaryFromLocalPreviewGame(game),
     ],
     gameListSelectedId: localGame.id,
     librarySaveOrigin: BoardTabLibrarySaveOrigin.localPgnFile(
@@ -5007,6 +5011,31 @@ BoardTabGameArgs _boardArgsForLocalPreviewGame(
       title: localGame.title,
     ),
   );
+}
+
+const int _kLocalPreviewBoardContextRadius = 100;
+
+List<LocalChessGame> _localPreviewBoardContextGames(
+  LocalChessGame selected,
+  List<LocalChessGame> databaseGames,
+) {
+  if (databaseGames.isEmpty) return <LocalChessGame>[selected];
+
+  final selectedIndex = databaseGames.indexWhere(
+    (game) => game.id == selected.id,
+  );
+  if (selectedIndex < 0) return <LocalChessGame>[selected];
+
+  final start =
+      selectedIndex - _kLocalPreviewBoardContextRadius < 0
+          ? 0
+          : selectedIndex - _kLocalPreviewBoardContextRadius;
+  final end =
+      selectedIndex + _kLocalPreviewBoardContextRadius + 1 >
+              databaseGames.length
+          ? databaseGames.length
+          : selectedIndex + _kLocalPreviewBoardContextRadius + 1;
+  return databaseGames.sublist(start, end);
 }
 
 TournamentGameSummary _summaryFromLocalPreviewGame(LocalChessGame localGame) {

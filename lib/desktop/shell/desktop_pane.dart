@@ -60,8 +60,9 @@ DesktopPane? paneForTabKind(TabKind kind) {
       return DesktopPane.board;
     case TabKind.tournaments:
     case TabKind.tournamentDetail:
-      // Tournament detail tabs map back to the Tournaments sidebar entry —
-      // they're a deeper view of the same category.
+    case TabKind.smartGames:
+      // Tournament detail and smart game collection tabs map back to the
+      // Tournaments sidebar entry — they're deeper views of the same category.
       return DesktopPane.tournaments;
     case TabKind.library:
     case TabKind.databaseWorkspace:

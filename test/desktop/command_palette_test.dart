@@ -1,8 +1,37 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/shell/command_palette.dart';
 
 void main() {
+  testWidgets('command palette scrollbar thumb is attached to its list', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: CommandPalette(
+              onSelectPane: (_) {},
+              onAction: (_) {},
+              onDismiss: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final scrollbar = tester.widget<Scrollbar>(find.byType(Scrollbar).first);
+    final listView = tester.widget<ListView>(find.byType(ListView).first);
+
+    expect(scrollbar.controller, isNotNull);
+    expect(scrollbar.controller, same(listView.controller));
+    expect(listView.primary, isFalse);
+    expect(scrollbar.interactive, isTrue);
+  });
+
   test('command palette routes local intake through PGN import only', () {
     expect(
       debugCommandPaletteEntryTitles(),

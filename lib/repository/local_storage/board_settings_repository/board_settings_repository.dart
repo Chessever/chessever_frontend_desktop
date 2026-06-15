@@ -77,7 +77,7 @@ class _BoardSettingsRepository {
       return BoardColor.pink;
     } else {
       // Default fallback
-      return BoardColor.brown;
+      return BoardColor.blue;
     }
   }
 
@@ -174,7 +174,7 @@ class _BoardSettingsRepository {
         final Map<String, dynamic> data = jsonDecode(settingsString);
 
         final boardColorIndex =
-            data['boardColorIndex'] ?? BoardColor.brown.index;
+            data['boardColorIndex'] ?? BoardColor.blue.index;
         final boardColorEnum = BoardColor.values[boardColorIndex];
 
         return BoardSettings(
