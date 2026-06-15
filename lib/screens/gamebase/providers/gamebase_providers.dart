@@ -1400,6 +1400,7 @@ class PlayerOpeningTreeBuildController
   static const int _maxPly = 40;
   static const int _pageSize = 100;
   static const int _hydrateConcurrency = 4;
+  static const int _gamesPublishPageInterval = 4;
   static const Duration _pollInterval = Duration(seconds: 1);
 
   final Ref _ref;
@@ -1579,24 +1580,6 @@ class PlayerOpeningTreeBuildController
         fetched += rows.length;
         processed += hydrated.length;
         skipped += rows.length - hydrated.length;
-        final nextIndex = state.index.copyWithGames(gamesIndex);
-        state = state.copyWith(
-          index: nextIndex,
-          progress: state.progress.copyWith(
-            status: PlayerOpeningTreeStatus.complete,
-            currentPage: pageNumber,
-            fetchedGames: fetched,
-            processedGames: processed,
-            skippedGames: skipped,
-            indexedPositions: nextIndex.positionCount,
-          ),
-        );
-        _log(
-          'games batch player=$_playerId page=$pageNumber '
-          'rows=${rows.length} hydrated=${hydrated.length} '
-          'downloadedGames=${gamesIndex.gameCount} '
-          'gamePositions=${gamesIndex.positionCount}',
-        );
 
         final metadata = response['metadata'];
         final hasMore =
@@ -1605,6 +1588,30 @@ class PlayerOpeningTreeBuildController
                     pageRows.length >= _pageSize
                 : _readPlayerOpeningTreeHasMore(response) ??
                     pageRows.length >= _pageSize;
+        final shouldPublish =
+            pageNumber == 0 ||
+            !hasMore ||
+            (pageNumber + 1) % _gamesPublishPageInterval == 0;
+        if (shouldPublish) {
+          final nextIndex = state.index.copyWithGames(gamesIndex);
+          state = state.copyWith(
+            index: nextIndex,
+            progress: state.progress.copyWith(
+              status: PlayerOpeningTreeStatus.complete,
+              currentPage: pageNumber,
+              fetchedGames: fetched,
+              processedGames: processed,
+              skippedGames: skipped,
+              indexedPositions: nextIndex.positionCount,
+            ),
+          );
+        }
+        _log(
+          'games batch player=$_playerId page=$pageNumber '
+          'rows=${rows.length} hydrated=${hydrated.length} '
+          'downloadedGames=${gamesIndex.gameCount} '
+          'gamePositions=${gamesIndex.positionCount} publish=$shouldPublish',
+        );
         if (!hasMore) break;
         pageNumber += 1;
       }

@@ -286,6 +286,7 @@ class _DesktopPositionGamesTableState
   final Map<String, List<String>> _fullContinuationCache =
       <String, List<String>>{};
   final Set<String> _loadingFullContinuations = <String>{};
+  Timer? _localTreeRefreshDebounce;
   String? _lastPreviewedRowId;
   bool _lastPreviewAutoplay = true;
   int? _lastPreviewStep;
@@ -378,6 +379,7 @@ class _DesktopPositionGamesTableState
 
   @override
   void dispose() {
+    _localTreeRefreshDebounce?.cancel();
     widget.controller?._detach(this);
     widget.externalScrollController?.removeListener(_onScroll);
     _scroll.removeListener(_onScroll);
@@ -403,7 +405,10 @@ class _DesktopPositionGamesTableState
     }
   }
 
-  Future<void> _fetchPage({required bool reset}) async {
+  Future<void> _fetchPage({
+    required bool reset,
+    bool preserveRows = false,
+  }) async {
     if (!widget.active) {
       _needsRefresh = true;
       return;
@@ -440,8 +445,9 @@ class _DesktopPositionGamesTableState
       _fullContinuationCache.clear();
       _loadingFullContinuations.clear();
       final hadRows = _rows.isNotEmpty;
+      final keepRows = preserveRows && hadRows;
       setState(() {
-        _isInitialLoading = true;
+        _isInitialLoading = !keepRows;
         _isLoadingMore = false;
         _hasMore = true;
         _nextPageNumber = 0;
@@ -599,6 +605,17 @@ class _DesktopPositionGamesTableState
           .read(gamebaseExplorerProvider.notifier)
           .enableLocalPlayerTree(playerId);
       ref.read(playerOpeningTreeProvider(playerId).notifier).start();
+    });
+  }
+
+  void _scheduleLocalTreeRefresh() {
+    _localTreeRefreshDebounce?.cancel();
+    _localTreeRefreshDebounce = Timer(const Duration(milliseconds: 180), () {
+      if (!mounted || !widget.active) {
+        _needsRefresh = true;
+        return;
+      }
+      _fetchPage(reset: true, preserveRows: true);
     });
   }
 
@@ -1150,7 +1167,12 @@ class _DesktopPositionGamesTableState
             previous?.progress.status == next.progress.status) {
           return;
         }
-        _fetchPage(reset: true);
+        final previousGameCount = previous?.index.downloadedGameCount ?? 0;
+        final nextGameCount = next.index.downloadedGameCount;
+        final gamesChanged = previousGameCount != nextGameCount;
+        final statusChanged = previous?.progress.status != next.progress.status;
+        if (!gamesChanged && !statusChanged) return;
+        _scheduleLocalTreeRefresh();
       });
     }
     final boardSettings = ref.watch(
