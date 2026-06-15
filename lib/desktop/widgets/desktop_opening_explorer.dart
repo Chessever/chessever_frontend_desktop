@@ -1,5 +1,6 @@
 import 'package:chessground/chessground.dart' show PieceAssets;
 import 'package:dartchess/dartchess.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -44,6 +45,7 @@ class DesktopOpeningExplorer extends ConsumerWidget {
     this.compactColumns = false,
     this.showHeader = true,
     this.enableRowHover = true,
+    this.usePlayerOpeningTree = false,
   });
 
   /// Invoked when the user clicks a move row. UCI form (e.g. `e2e4`).
@@ -97,14 +99,22 @@ class DesktopOpeningExplorer extends ConsumerWidget {
   /// remain active.
   final bool enableRowHover;
 
+  /// True only for player-profile Build Tree scopes. Normal explorer sessions
+  /// with a player filter still use backend aggregate queries directly.
+  final bool usePlayerOpeningTree;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(gamebaseExplorerProvider);
     final localPlayerId =
-        state.filters.playerIds.length == 1
+        usePlayerOpeningTree && state.filters.playerIds.length == 1
             ? state.filters.playerIds.first.trim()
             : null;
     if (localPlayerId != null && localPlayerId.isNotEmpty) {
+      _logPlayerTree(
+        'moves panel scoped player=$localPlayerId '
+        'filtersPlayerIds=${state.filters.playerIds}',
+      );
       ref.listen<PlayerOpeningTreeState>(
         playerOpeningTreeProvider(localPlayerId),
         (previous, next) {
@@ -112,6 +122,11 @@ class DesktopOpeningExplorer extends ConsumerWidget {
               previous?.progress.status == next.progress.status) {
             return;
           }
+          _logPlayerTree(
+            'provider update player=$localPlayerId '
+            'status=${next.progress.status.name} treeId=${next.treeId} '
+            'positions=${next.index.positionCount}',
+          );
           Future.microtask(() {
             ref
                 .read(gamebaseExplorerProvider.notifier)
@@ -120,6 +135,9 @@ class DesktopOpeningExplorer extends ConsumerWidget {
         },
       );
       Future.microtask(() {
+        _logPlayerTree(
+          'scheduled moves panel tree start player=$localPlayerId',
+        );
         ref
             .read(gamebaseExplorerProvider.notifier)
             .enableLocalPlayerTree(localPlayerId);
@@ -127,6 +145,12 @@ class DesktopOpeningExplorer extends ConsumerWidget {
       });
     } else {
       Future.microtask(() {
+        if (usePlayerOpeningTree) {
+          _logPlayerTree(
+            'moves panel Build Tree enabled but no single player filter; '
+            'filtersPlayerIds=${state.filters.playerIds}',
+          );
+        }
         ref.read(gamebaseExplorerProvider.notifier).disableLocalPlayerTree();
       });
     }
@@ -150,6 +174,10 @@ class DesktopOpeningExplorer extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  void _logPlayerTree(String message) {
+    if (kDebugMode) debugPrint('[PlayerOpeningTree][MovesPanel] $message');
   }
 }
 

@@ -6,6 +6,7 @@ import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:dartchess/dartchess.dart';
+import 'package:dio/dio.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:flutter/foundation.dart';
@@ -225,16 +226,24 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
     if (localPlayerId != null && isLocalPlayerTreeEnabledFor(localPlayerId)) {
       final localState = ref.read(playerOpeningTreeProvider(localPlayerId));
       ref.read(playerOpeningTreeProvider(localPlayerId).notifier).start();
+      final localMoves = localState.index.movesForFen(
+        requestedFen,
+        filters: _localTreeCriteria(filtersSnapshot, localPlayerId),
+      );
       state = state.copyWith(
-        moveAggregates: localState.index.movesForFen(
-          requestedFen,
-          filters: _localTreeCriteria(filtersSnapshot, localPlayerId),
-        ),
+        moveAggregates: localMoves,
         isLoading: localState.progress.isRunning,
         error:
             localState.progress.status == PlayerOpeningTreeStatus.error
                 ? localState.progress.error
                 : null,
+      );
+      _prioritizeLocalTreeGames(
+        playerId: localPlayerId,
+        fen: requestedFen,
+        moves: state.exploredMoves,
+        moveAggregates: localMoves,
+        filters: filtersSnapshot,
       );
       return;
     }
@@ -1142,17 +1151,42 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
   void syncLocalPlayerTree(String playerId) {
     if (!isLocalPlayerTreeEnabledFor(playerId)) return;
     final localState = ref.read(playerOpeningTreeProvider(playerId));
+    final localMoves = localState.index.movesForFen(
+      state.currentFen,
+      filters: _localTreeCriteria(state.filters, playerId),
+    );
     state = state.copyWith(
-      moveAggregates: localState.index.movesForFen(
-        state.currentFen,
-        filters: _localTreeCriteria(state.filters, playerId),
-      ),
+      moveAggregates: localMoves,
       isLoading: localState.progress.isRunning,
       error:
           localState.progress.status == PlayerOpeningTreeStatus.error
               ? localState.progress.error
               : null,
     );
+    _prioritizeLocalTreeGames(
+      playerId: playerId,
+      fen: state.currentFen,
+      moves: state.exploredMoves,
+      moveAggregates: localMoves,
+      filters: state.filters,
+    );
+  }
+
+  void _prioritizeLocalTreeGames({
+    required String playerId,
+    required String fen,
+    required List<String> moves,
+    required List<MoveAggregate> moveAggregates,
+    required GamebaseFilters filters,
+  }) {
+    ref
+        .read(playerOpeningTreeProvider(playerId).notifier)
+        .prioritizePositionGames(
+          fen: fen,
+          moves: moves,
+          moveAggregates: moveAggregates,
+          filters: _localTreeCriteria(filters, playerId),
+        );
   }
 
   void enableLocalPlayerTree(String playerId) {
@@ -1408,20 +1442,35 @@ class PlayerOpeningTreeBuildController
   PlayerOpeningTreeBuildController(this._ref, this._playerId)
     : super(PlayerOpeningTreeState(playerId: _playerId));
 
+  static const int _maxPly = 40;
   static const int _pageSize = 100;
   static const int _hydrateConcurrency = 4;
+  static const int _gamesPublishPageInterval = 4;
+  static const int _priorityGamesPageSize = 50;
+  static const int _priorityMoveFanoutThreshold = 2;
+  static const Duration _pollInterval = Duration(seconds: 1);
 
   final Ref _ref;
   final String _playerId;
   int _generation = 0;
+  final Set<String> _priorityGameKeys = <String>{};
 
   void start({bool force = false}) {
     if (!force &&
         (state.progress.status == PlayerOpeningTreeStatus.building ||
             state.progress.status == PlayerOpeningTreeStatus.complete)) {
+      _log(
+        'start skipped player=$_playerId force=$force '
+        'status=${state.progress.status.name} treeId=${state.treeId}',
+      );
       return;
     }
     final generation = ++_generation;
+    _priorityGameKeys.clear();
+    _log(
+      'start player=$_playerId generation=$generation force=$force '
+      'requestForceRebuild=false maxPly=$_maxPly',
+    );
     state = PlayerOpeningTreeState(
       playerId: _playerId,
       progress: const PlayerOpeningTreeProgress(
@@ -1445,49 +1494,166 @@ class PlayerOpeningTreeBuildController
 
   void clear() {
     _generation++;
+    _priorityGameKeys.clear();
     state = PlayerOpeningTreeState(playerId: _playerId);
   }
 
+  void prioritizePositionGames({
+    required String fen,
+    required List<String> moves,
+    required List<MoveAggregate> moveAggregates,
+    required PlayerOpeningTreeFilterCriteria filters,
+  }) {
+    if (!mounted ||
+        state.progress.status != PlayerOpeningTreeStatus.complete ||
+        state.progress.gamesDownloadComplete ||
+        moveAggregates.isEmpty ||
+        moveAggregates.length > _priorityMoveFanoutThreshold) {
+      return;
+    }
+    if (state.index.gamesCountForFen(fen, filters: filters) > 0) return;
+
+    final ucis = <String>[
+      '',
+      for (final aggregate in moveAggregates)
+        if (aggregate.uci.trim().isNotEmpty) aggregate.uci.trim().toLowerCase(),
+    ];
+    final key = [
+      state.treeId ?? '',
+      _positionKeyForComparison(fen),
+      moves.join(','),
+      ucis.join(','),
+      filters.timeControl?.name ?? '',
+      filters.color ?? '',
+      filters.result ?? '',
+      filters.minRating?.toString() ?? '',
+      filters.maxRating?.toString() ?? '',
+      filters.yearFrom?.toString() ?? '',
+      filters.yearTo?.toString() ?? '',
+      filters.isOnline?.toString() ?? '',
+    ].join('|');
+    if (!_priorityGameKeys.add(key)) return;
+
+    _log(
+      'priority games request player=$_playerId '
+      'fen=${_positionKeyForComparison(fen)} moves=${moves.length} '
+      'fanout=${moveAggregates.length}',
+    );
+    unawaited(_runPriorityPositionGames(key, fen, moves, ucis, filters));
+  }
+
   Future<void> _run(int generation) async {
-    final phases = <String, _PlayerOpeningTreeFetchPhaseState>{
-      'all': _PlayerOpeningTreeFetchPhaseState('all'),
-      'white': _PlayerOpeningTreeFetchPhaseState('white'),
-      'black': _PlayerOpeningTreeFetchPhaseState('black'),
-    };
+    try {
+      final repository = _ref.read(gamebaseRepositoryProvider);
+      _log('build request player=$_playerId generation=$generation');
+      final buildResponse = await repository.startPlayerOpeningTreeBuild(
+        playerId: _playerId,
+        maxPly: _maxPly,
+        forceRebuild: false,
+      );
+      if (!mounted || generation != _generation) return;
+
+      final buildData = _responseData(buildResponse);
+      final treeId = buildData['treeId']?.toString().trim() ?? '';
+      _log(
+        'build response player=$_playerId generation=$generation '
+        'treeId=$treeId status=${buildData['status']} maxPly=${buildData['maxPly']}',
+      );
+      if (treeId.isEmpty) {
+        throw Exception('Backend did not return a player tree id.');
+      }
+
+      state = state.copyWith(treeId: treeId);
+
+      var pollCount = 0;
+      while (mounted && generation == _generation) {
+        pollCount += 1;
+        final statusResponse = await repository.getPlayerOpeningTreeStatus(
+          playerId: _playerId,
+          treeId: treeId,
+        );
+        if (!mounted || generation != _generation) return;
+
+        final statusData = _responseData(statusResponse);
+        final status =
+            statusData['status']?.toString().trim().toLowerCase() ?? '';
+        _log(
+          'poll #$pollCount player=$_playerId generation=$generation '
+          'treeId=$treeId status=$status',
+        );
+        if (status == 'error') {
+          throw Exception(
+            statusData['error']?.toString().trim().isNotEmpty == true
+                ? statusData['error'].toString()
+                : 'Backend tree build failed.',
+          );
+        }
+
+        final treeResponse = await repository.getPlayerOpeningTree(
+          playerId: _playerId,
+          treeId: treeId,
+        );
+        if (!mounted || generation != _generation) return;
+        if (treeResponse != null) {
+          _log(
+            'download ready player=$_playerId generation=$generation '
+            'treeId=$treeId poll=$pollCount',
+          );
+          _completeFromTreeResponse(treeId, treeResponse);
+          unawaited(_downloadGamesInBackground(generation));
+          return;
+        }
+        _log(
+          'download not ready player=$_playerId generation=$generation '
+          'treeId=$treeId poll=$pollCount nextPollIn=${_pollInterval.inMilliseconds}ms',
+        );
+
+        state = state.copyWith(
+          treeId: treeId,
+          progress: const PlayerOpeningTreeProgress(
+            status: PlayerOpeningTreeStatus.building,
+          ),
+        );
+        await Future<void>.delayed(_pollInterval);
+      }
+      _log(
+        'poll loop exited player=$_playerId generation=$generation '
+        'currentGeneration=$_generation mounted=$mounted',
+      );
+    } catch (e) {
+      if (!mounted || generation != _generation) return;
+      final message = _playerTreeErrorMessage(e);
+      _log(
+        'error player=$_playerId generation=$generation '
+        'treeId=${state.treeId} error=$message',
+      );
+      state = state.copyWith(
+        progress: state.progress.copyWith(
+          status: PlayerOpeningTreeStatus.error,
+          error: message,
+        ),
+      );
+    }
+  }
+
+  Future<void> _downloadGamesInBackground(int generation) async {
     var fetched = 0;
     var processed = 0;
     var skipped = 0;
-    var currentPage = 0;
-    var total = await _fetchTotalGames(generation);
-    if (!mounted || generation != _generation) return;
-    var index = const PlayerOpeningTreeIndex.empty();
+    var pageNumber = 0;
+    var gamesIndex = const PlayerOpeningTreeGamesIndex.empty();
     final seenGameIds = <String>{};
 
     try {
-      while (generation == _generation) {
-        final preferredColor = _preferredFetchColor();
-        final preferredPhase =
-            preferredColor == null ? null : phases[preferredColor.name];
-        if (preferredPhase != null && preferredPhase.totalCount == null) {
-          preferredPhase.totalCount = await _fetchTotalGames(
-            generation,
-            color: preferredPhase.apiColor,
-          );
-          if (!mounted || generation != _generation) return;
-        }
-        final phase = _nextPlayerOpeningTreeFetchPhase(
-          preferredColor: preferredColor,
-          phases: phases,
-        );
-        if (phase == null) break;
-
+      while (mounted && generation == _generation) {
         final response = await _ref
             .read(gamebaseRepositoryProvider)
             .getPlayerGames(
               playerId: _playerId,
-              color: phase.apiColor,
-              pageNumber: phase.nextPage,
+              color: 'all',
+              pageNumber: pageNumber,
               pageSize: _pageSize,
+              includePgn: true,
             );
         if (!mounted || generation != _generation) return;
 
@@ -1498,93 +1664,86 @@ class PlayerOpeningTreeBuildController
           if (id == null || id.isEmpty || !seenGameIds.add(id)) continue;
           rows.add(row);
         }
-        final metadata = response['metadata'];
-        if (metadata is Map) {
-          if (phase.usesAllColors) {
-            total =
-                _readPlayerOpeningTreeTotalCount(metadata) ??
-                _readPlayerOpeningTreeTotalCount(response) ??
-                total;
-          }
-          phase.totalCount =
-              _readPlayerOpeningTreeTotalCount(metadata) ??
-              _readPlayerOpeningTreeTotalCount(response) ??
-              phase.totalCount;
-          phase.isComplete =
-              !(_readPlayerOpeningTreeHasMore(metadata) ??
-                  pageRows.length >= _pageSize);
-        } else {
-          if (phase.usesAllColors) {
-            total = _readPlayerOpeningTreeTotalCount(response) ?? total;
-          }
-          phase.totalCount =
-              _readPlayerOpeningTreeTotalCount(response) ?? phase.totalCount;
-          phase.isComplete = pageRows.length < _pageSize;
-        }
-        phase.nextPage += 1;
-        fetched += rows.length;
-        phase.fetchedGames += rows.length;
 
         final hydrated = await _hydrateRows(rows, generation);
         if (!mounted || generation != _generation) return;
 
-        final batch = await buildPlayerOpeningTreeBatchAsync(hydrated);
+        final batch = await buildPlayerOpeningGamesIndexBatchAsync(hydrated);
         if (!mounted || generation != _generation) return;
 
-        index = mergePlayerOpeningTreeIndexes(index, batch);
+        gamesIndex = mergePlayerOpeningGamesIndexes(gamesIndex, batch);
+        fetched += rows.length;
         processed += hydrated.length;
         skipped += rows.length - hydrated.length;
 
-        final priorityProgress = _priorityProgressFields(
-          preferredColor: _preferredFetchColor(),
-          phases: phases,
+        final metadata = response['metadata'];
+        final hasMore =
+            metadata is Map
+                ? _readPlayerOpeningTreeHasMore(metadata) ??
+                    pageRows.length >= _pageSize
+                : _readPlayerOpeningTreeHasMore(response) ??
+                    pageRows.length >= _pageSize;
+        final shouldPublish =
+            pageNumber == 0 ||
+            !hasMore ||
+            (pageNumber + 1) % _gamesPublishPageInterval == 0;
+        if (shouldPublish) {
+          final combinedGames = mergePlayerOpeningGamesIndexes(
+            state.index.toGamesIndex(),
+            gamesIndex,
+          );
+          final nextIndex = state.index.copyWithGames(combinedGames);
+          state = state.copyWith(
+            index: nextIndex,
+            progress: state.progress.copyWith(
+              status: PlayerOpeningTreeStatus.complete,
+              currentPage: pageNumber,
+              fetchedGames: fetched,
+              processedGames: processed,
+              skippedGames: skipped,
+              indexedPositions: nextIndex.positionCount,
+            ),
+          );
+        }
+        _log(
+          'games batch player=$_playerId page=$pageNumber '
+          'rows=${rows.length} hydrated=${hydrated.length} '
+          'downloadedGames=${gamesIndex.gameCount} '
+          'gamePositions=${gamesIndex.positionCount} publish=$shouldPublish',
         );
-        state = PlayerOpeningTreeState(
-          playerId: _playerId,
-          index: index,
-          progress: PlayerOpeningTreeProgress(
-            status: PlayerOpeningTreeStatus.building,
-            currentPage: currentPage,
-            fetchedGames: fetched,
-            processedGames: processed,
-            skippedGames: skipped,
-            indexedPositions: index.positionCount,
-            totalGames: total,
-            priorityColor: priorityProgress.color,
-            priorityFetchedGames: priorityProgress.fetchedGames,
-            priorityTotalGames: priorityProgress.totalGames,
-          ),
-        );
-        currentPage += 1;
+        if (!hasMore) break;
+        pageNumber += 1;
       }
-
       if (!mounted || generation != _generation) return;
-      final priorityProgress = _priorityProgressFields(
-        preferredColor: _preferredFetchColor(),
-        phases: phases,
+      final combinedGames = mergePlayerOpeningGamesIndexes(
+        state.index.toGamesIndex(),
+        gamesIndex,
       );
+      final nextIndex = state.index.copyWithGames(combinedGames);
       state = state.copyWith(
-        index: index,
-        progress: PlayerOpeningTreeProgress(
+        index: nextIndex,
+        progress: state.progress.copyWith(
           status: PlayerOpeningTreeStatus.complete,
-          currentPage: currentPage,
+          currentPage: pageNumber,
           fetchedGames: fetched,
           processedGames: processed,
           skippedGames: skipped,
-          indexedPositions: index.positionCount,
-          totalGames: total,
-          priorityColor: priorityProgress.color,
-          priorityFetchedGames: priorityProgress.fetchedGames,
-          priorityTotalGames: priorityProgress.totalGames,
-          error: null,
+          indexedPositions: nextIndex.positionCount,
+          gamesDownloadComplete: true,
         ),
+      );
+      _log(
+        'games complete player=$_playerId fetched=$fetched '
+        'processed=$processed skipped=$skipped',
       );
     } catch (e) {
       if (!mounted || generation != _generation) return;
+      _log('games background error player=$_playerId error=$e');
       state = state.copyWith(
         progress: state.progress.copyWith(
-          status: PlayerOpeningTreeStatus.error,
-          error: e.toString().replaceFirst('Exception: ', ''),
+          status: PlayerOpeningTreeStatus.complete,
+          gamesDownloadComplete: true,
+          error: null,
         ),
       );
     }
@@ -1610,30 +1769,85 @@ class PlayerOpeningTreeBuildController
     return output;
   }
 
-  Future<int?> _fetchTotalGames(int generation, {String color = 'all'}) async {
-    if (generation != _generation) return null;
+  Future<void> _runPriorityPositionGames(
+    String key,
+    String fen,
+    List<String> moves,
+    List<String> ucis,
+    PlayerOpeningTreeFilterCriteria filters,
+  ) async {
     try {
-      final response = await _ref
-          .read(gamebaseRepositoryProvider)
-          .getPlayerStats(playerId: _playerId, color: color);
-      if (!mounted || generation != _generation) return null;
-      final data = response['data'];
-      if (data is Map) {
-        final totals = data['totals'];
-        if (totals is Map) {
-          return _readPlayerOpeningTreeTotalCount(totals);
-        }
-      }
-      return _readPlayerOpeningTreeTotalCount(response);
-    } catch (_) {
-      return null;
-    }
-  }
+      final repository = _ref.read(gamebaseRepositoryProvider);
+      final allRows = <Map<String, dynamic>>[];
+      final seen = <String>{};
 
-  GamebasePlayerColor? _preferredFetchColor() {
-    final filters = _ref.read(gamebaseExplorerProvider).filters;
-    if (_localTreePlayerId(filters) != _playerId) return null;
-    return filters.playerColor;
+      state = state.copyWith(
+        progress: state.progress.copyWith(
+          priorityColor: filters.color,
+          priorityFetchedGames: 0,
+          priorityTotalGames: null,
+        ),
+      );
+
+      for (final uci in ucis) {
+        if (!mounted || state.progress.gamesDownloadComplete) return;
+        final response = await repository.getPositionGames(
+          fen: fen,
+          moves: moves,
+          uci: uci.isEmpty ? null : uci,
+          playerId: _playerId,
+          timeControl: filters.timeControl,
+          color: filters.color,
+          result: filters.result,
+          minRating: filters.minRating,
+          maxRating: filters.maxRating,
+          yearFrom: filters.yearFrom,
+          yearTo: filters.yearTo,
+          isOnline: filters.isOnline,
+          sortBy: GamebaseSortField.date,
+          sortDirection: GamebaseSortDirection.desc,
+          pageNumber: 0,
+          pageSize: _priorityGamesPageSize,
+          notationPlies: 40,
+        );
+        for (final row in response.data) {
+          final id = row['id']?.toString().trim();
+          if (id == null || id.isEmpty || !seen.add(id)) continue;
+          allRows.add(Map<String, dynamic>.from(row));
+        }
+        state = state.copyWith(
+          progress: state.progress.copyWith(
+            priorityFetchedGames: allRows.length,
+            priorityTotalGames: response.metadata.totalCount,
+          ),
+        );
+      }
+
+      final hydrated = await _hydrateRows(allRows, _generation);
+      if (!mounted || hydrated.isEmpty) return;
+      final batch = await buildPlayerOpeningGamesIndexBatchAsync(hydrated);
+      if (!mounted || batch.gameCount == 0) return;
+
+      final nextGames = mergePlayerOpeningGamesIndexes(
+        state.index.toGamesIndex(),
+        batch,
+      );
+      final nextIndex = state.index.copyWithGames(nextGames);
+      state = state.copyWith(
+        index: nextIndex,
+        progress: state.progress.copyWith(
+          indexedPositions: nextIndex.positionCount,
+          priorityFetchedGames: hydrated.length,
+        ),
+      );
+      _log(
+        'priority games merged player=$_playerId rows=${allRows.length} '
+        'hydrated=${hydrated.length} downloadedGames=${nextGames.gameCount}',
+      );
+    } catch (e) {
+      _priorityGameKeys.remove(key);
+      _log('priority games error player=$_playerId error=$e');
+    }
   }
 
   Future<Map<String, dynamic>?> _hydrateRow(Map<String, dynamic> row) async {
@@ -1677,6 +1891,53 @@ class PlayerOpeningTreeBuildController
       'pgn': pgn,
     };
   }
+
+  void _completeFromTreeResponse(
+    String treeId,
+    Map<String, dynamic> treeResponse,
+  ) {
+    final snapshot = PlayerOpeningTreeSnapshot.fromJson(
+      _responseData(treeResponse),
+    );
+    final index = PlayerOpeningTreeIndex.fromSnapshot(snapshot);
+    _log(
+      'complete player=$_playerId treeId=$treeId '
+      'nodes=${snapshot.nodes.length} positions=${index.positionCount} '
+      'rootNodeId=${snapshot.rootNodeId} maxPly=${snapshot.maxPly}',
+    );
+    state = PlayerOpeningTreeState(
+      playerId: _playerId,
+      treeId: treeId,
+      index: index,
+      progress: PlayerOpeningTreeProgress(
+        status: PlayerOpeningTreeStatus.complete,
+        indexedPositions: index.positionCount,
+        processedGames: index.positionCount,
+        gamesDownloadComplete: false,
+        error: null,
+      ),
+    );
+  }
+
+  void _log(String message) {
+    if (kDebugMode) debugPrint('[PlayerOpeningTree] $message');
+  }
+}
+
+String _playerTreeErrorMessage(Object error) {
+  if (error is DioException) {
+    final statusCode = error.response?.statusCode;
+    final body = error.response?.data?.toString().trim();
+    final bodyText = body == null || body.isEmpty ? '' : ' body=$body';
+    return 'HTTP ${statusCode ?? 'unknown'} ${error.type.name}$bodyText';
+  }
+  return error.toString().replaceFirst('Exception: ', '');
+}
+
+Map<String, dynamic> _responseData(Map<String, dynamic> response) {
+  final data = response['data'];
+  if (data is Map) return Map<String, dynamic>.from(data);
+  return response;
 }
 
 List<Map<String, dynamic>> _rowsFromPlayerGamesResponse(
@@ -1691,32 +1952,12 @@ List<Map<String, dynamic>> _rowsFromPlayerGamesResponse(
       .toList(growable: false);
 }
 
-int? _readPlayerOpeningTreeTotalCount(Map<dynamic, dynamic> values) {
-  for (final key in const <String>[
-    'totalCount',
-    'total_count',
-    'total',
-    'count',
-    'games',
-  ]) {
-    final parsed = _readNullableInt(values[key]);
-    if (parsed != null) return parsed;
-  }
-  return null;
-}
-
 bool? _readPlayerOpeningTreeHasMore(Map<dynamic, dynamic> values) {
   for (final key in const <String>['hasMore', 'has_more', 'hasNextPage']) {
     final parsed = _readNullableBool(values[key]);
     if (parsed != null) return parsed;
   }
   return null;
-}
-
-int? _readNullableInt(Object? value) {
-  if (value is int) return value;
-  if (value is num) return value.toInt();
-  return int.tryParse(value?.toString().trim() ?? '');
 }
 
 bool? _readNullableBool(Object? value) {
@@ -1726,62 +1967,6 @@ bool? _readNullableBool(Object? value) {
   if (raw == 'true' || raw == '1' || raw == 'yes') return true;
   if (raw == 'false' || raw == '0' || raw == 'no') return false;
   return null;
-}
-
-_PlayerOpeningTreeFetchPhaseState? _nextPlayerOpeningTreeFetchPhase({
-  required GamebasePlayerColor? preferredColor,
-  required Map<String, _PlayerOpeningTreeFetchPhaseState> phases,
-}) {
-  final all = phases['all']!;
-  final white = phases['white']!;
-  final black = phases['black']!;
-  if (all.isComplete || (white.isComplete && black.isComplete)) return null;
-
-  switch (preferredColor) {
-    case GamebasePlayerColor.white:
-      if (!white.isComplete) return white;
-      if (!black.isComplete) return black;
-      return all.isComplete ? null : all;
-    case GamebasePlayerColor.black:
-      if (!black.isComplete) return black;
-      if (!white.isComplete) return white;
-      return all.isComplete ? null : all;
-    case null:
-      if (!all.isComplete && white.nextPage == 0 && black.nextPage == 0) {
-        return all;
-      }
-      if (!white.isComplete) return white;
-      if (!black.isComplete) return black;
-      return all.isComplete ? null : all;
-  }
-}
-
-({String? color, int? fetchedGames, int? totalGames}) _priorityProgressFields({
-  required GamebasePlayerColor? preferredColor,
-  required Map<String, _PlayerOpeningTreeFetchPhaseState> phases,
-}) {
-  final key = preferredColor?.name ?? 'all';
-  final phase = phases[key];
-  if (phase == null) {
-    return (color: null, fetchedGames: null, totalGames: null);
-  }
-  return (
-    color: phase.usesAllColors ? null : phase.apiColor,
-    fetchedGames: phase.fetchedGames,
-    totalGames: phase.totalCount,
-  );
-}
-
-class _PlayerOpeningTreeFetchPhaseState {
-  _PlayerOpeningTreeFetchPhaseState(this.apiColor);
-
-  final String apiColor;
-  int nextPage = 0;
-  int fetchedGames = 0;
-  int? totalCount;
-  bool isComplete = false;
-
-  bool get usesAllColors => apiColor == 'all';
 }
 
 /// Provider for managing the current page index of the opening explorer panels (0: Moves, 1: Notation).

@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
-import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 
 enum PlayerOpeningTreeStatus { idle, building, complete, canceled, error }
@@ -18,6 +17,7 @@ class PlayerOpeningTreeProgress {
     this.processedGames = 0,
     this.skippedGames = 0,
     this.indexedPositions = 0,
+    this.gamesDownloadComplete = false,
     this.totalGames,
     this.priorityColor,
     this.priorityFetchedGames,
@@ -31,6 +31,7 @@ class PlayerOpeningTreeProgress {
   final int processedGames;
   final int skippedGames;
   final int indexedPositions;
+  final bool gamesDownloadComplete;
   final int? totalGames;
   final String? priorityColor;
   final int? priorityFetchedGames;
@@ -46,6 +47,7 @@ class PlayerOpeningTreeProgress {
     int? processedGames,
     int? skippedGames,
     int? indexedPositions,
+    bool? gamesDownloadComplete,
     int? totalGames,
     String? priorityColor,
     int? priorityFetchedGames,
@@ -59,6 +61,8 @@ class PlayerOpeningTreeProgress {
       processedGames: processedGames ?? this.processedGames,
       skippedGames: skippedGames ?? this.skippedGames,
       indexedPositions: indexedPositions ?? this.indexedPositions,
+      gamesDownloadComplete:
+          gamesDownloadComplete ?? this.gamesDownloadComplete,
       totalGames: totalGames ?? this.totalGames,
       priorityColor: priorityColor ?? this.priorityColor,
       priorityFetchedGames: priorityFetchedGames ?? this.priorityFetchedGames,
@@ -72,23 +76,28 @@ class PlayerOpeningTreeProgress {
 class PlayerOpeningTreeState {
   const PlayerOpeningTreeState({
     this.playerId,
+    this.treeId,
     this.progress = const PlayerOpeningTreeProgress(),
     this.index = const PlayerOpeningTreeIndex.empty(),
   });
 
   final String? playerId;
+  final String? treeId;
   final PlayerOpeningTreeProgress progress;
   final PlayerOpeningTreeIndex index;
 
   bool get hasUsableIndex => index.positionCount > 0;
+  bool get isReady => progress.status == PlayerOpeningTreeStatus.complete;
 
   PlayerOpeningTreeState copyWith({
     String? playerId,
+    String? treeId,
     PlayerOpeningTreeProgress? progress,
     PlayerOpeningTreeIndex? index,
   }) {
     return PlayerOpeningTreeState(
       playerId: playerId ?? this.playerId,
+      treeId: treeId ?? this.treeId,
       progress: progress ?? this.progress,
       index: index ?? this.index,
     );
@@ -98,49 +107,93 @@ class PlayerOpeningTreeState {
 @immutable
 class PlayerOpeningTreeIndex {
   const PlayerOpeningTreeIndex({
-    required this.movesByFen,
+    required this.treeId,
+    required this.playerId,
+    required this.maxPly,
+    required this.rootNodeId,
+    required this.generatedAt,
+    required this.nodesById,
+    required this.nodesByFenKey,
     required this.gamesByFen,
     required this.gameRowsById,
   });
 
   const PlayerOpeningTreeIndex.empty()
-    : movesByFen = const <String, List<MoveAggregate>>{},
+    : treeId = null,
+      playerId = null,
+      maxPly = 0,
+      rootNodeId = 0,
+      generatedAt = null,
+      nodesById = const <int, PlayerOpeningTreeNode>{},
+      nodesByFenKey = const <String, PlayerOpeningTreeNode>{},
       gamesByFen = const <String, List<PlayerOpeningTreeGameRef>>{},
       gameRowsById = const <String, Map<String, dynamic>>{};
 
-  final Map<String, List<MoveAggregate>> movesByFen;
+  final String? treeId;
+  final String? playerId;
+  final int maxPly;
+  final int rootNodeId;
+  final DateTime? generatedAt;
+  final Map<int, PlayerOpeningTreeNode> nodesById;
+  final Map<String, PlayerOpeningTreeNode> nodesByFenKey;
   final Map<String, List<PlayerOpeningTreeGameRef>> gamesByFen;
   final Map<String, Map<String, dynamic>> gameRowsById;
 
-  int get positionCount => movesByFen.length;
+  int get positionCount => nodesByFenKey.length;
+  int get downloadedGameCount => gameRowsById.length;
+
+  factory PlayerOpeningTreeIndex.fromSnapshot(
+    PlayerOpeningTreeSnapshot snapshot,
+  ) {
+    return PlayerOpeningTreeIndex(
+      treeId: snapshot.treeId,
+      playerId: snapshot.playerId,
+      maxPly: snapshot.maxPly,
+      rootNodeId: snapshot.rootNodeId,
+      generatedAt: snapshot.generatedAt,
+      nodesById: Map<int, PlayerOpeningTreeNode>.unmodifiable({
+        for (final node in snapshot.nodes) node.id: node,
+      }),
+      nodesByFenKey: Map<String, PlayerOpeningTreeNode>.unmodifiable({
+        for (final node in snapshot.nodes) node.fenKey: node,
+      }),
+      gamesByFen: const <String, List<PlayerOpeningTreeGameRef>>{},
+      gameRowsById: const <String, Map<String, dynamic>>{},
+    );
+  }
+
+  PlayerOpeningTreeIndex copyWithGames(PlayerOpeningTreeGamesIndex games) {
+    return PlayerOpeningTreeIndex(
+      treeId: treeId,
+      playerId: playerId,
+      maxPly: maxPly,
+      rootNodeId: rootNodeId,
+      generatedAt: generatedAt,
+      nodesById: nodesById,
+      nodesByFenKey: nodesByFenKey,
+      gamesByFen: games.gamesByFen,
+      gameRowsById: games.gameRowsById,
+    );
+  }
+
+  PlayerOpeningTreeGamesIndex toGamesIndex() {
+    return PlayerOpeningTreeGamesIndex(
+      gamesByFen: gamesByFen,
+      gameRowsById: gameRowsById,
+    );
+  }
 
   List<MoveAggregate> movesForFen(
     String fen, {
     PlayerOpeningTreeFilterCriteria filters =
         const PlayerOpeningTreeFilterCriteria(),
   }) {
-    if (!filters.hasFilters) {
-      return movesByFen[_positionKey(fen)] ?? const <MoveAggregate>[];
-    }
-    final key = _positionKey(fen);
-    final refs = _filteredRefsForKey(key, filters);
-    final builders = <String, _MutableMoveAggregate>{};
-    for (final ref in refs) {
-      final row = gameRowsById[ref.gameId];
-      if (row == null) continue;
-      final uci = _nextUciForRef(row, ref);
-      if (uci == null) continue;
-      builders
-          .putIfAbsent(uci, () => _MutableMoveAggregate(uci))
-          .addGame(
-            result: row['result']?.toString() ?? '*',
-            gameId: ref.gameId,
-            date: _dateForRowValue(row['date']),
-          );
-    }
-    final moves =
-        builders.values.map((b) => b.toAggregate()).toList()
-          ..sort((a, b) => b.total.compareTo(a.total));
+    final node = nodesByFenKey[_fenKey(fen)];
+    if (node == null) return const <MoveAggregate>[];
+    final moves = node.moves
+      .map((move) => move.toMoveAggregate(filters: filters))
+      .where((move) => move.total > 0)
+      .toList(growable: false)..sort((a, b) => b.total.compareTo(a.total));
     return List<MoveAggregate>.unmodifiable(moves);
   }
 
@@ -154,7 +207,7 @@ class PlayerOpeningTreeIndex {
     required int pageNumber,
     required int pageSize,
   }) {
-    final key = _positionKey(fen);
+    final key = _fenKey(fen);
     var refs = _filteredRefsForKey(key, filters);
     final pinned = uci?.trim().toLowerCase();
     if (pinned != null && pinned.isNotEmpty) {
@@ -184,8 +237,7 @@ class PlayerOpeningTreeIndex {
     PlayerOpeningTreeFilterCriteria filters =
         const PlayerOpeningTreeFilterCriteria(),
   }) {
-    final key = _positionKey(fen);
-    final refs = _filteredRefsForKey(key, filters);
+    final refs = _filteredRefsForKey(_fenKey(fen), filters);
     final pinned = uci?.trim().toLowerCase();
     if (pinned == null || pinned.isEmpty) return refs.length;
     return refs.where((ref) => _refContinuationStartsWith(ref, pinned)).length;
@@ -268,16 +320,187 @@ class PlayerOpeningTreeIndex {
 }
 
 @immutable
-class PlayerOpeningTreeGameRef {
-  const PlayerOpeningTreeGameRef({
-    required this.gameId,
-    required this.fen,
-    required this.ply,
+class PlayerOpeningTreeSnapshot {
+  const PlayerOpeningTreeSnapshot({
+    required this.treeId,
+    required this.playerId,
+    required this.maxPly,
+    required this.rootNodeId,
+    required this.generatedAt,
+    required this.nodes,
   });
 
-  final String gameId;
-  final String fen;
+  final String treeId;
+  final String playerId;
+  final int maxPly;
+  final int rootNodeId;
+  final DateTime? generatedAt;
+  final List<PlayerOpeningTreeNode> nodes;
+
+  factory PlayerOpeningTreeSnapshot.fromJson(Map<String, dynamic> json) {
+    return PlayerOpeningTreeSnapshot(
+      treeId: json['treeId']?.toString() ?? '',
+      playerId: json['playerId']?.toString() ?? '',
+      maxPly: _readInt(json['maxPly']),
+      rootNodeId: _readInt(json['rootNodeId']),
+      generatedAt: DateTime.tryParse(json['generatedAt']?.toString() ?? ''),
+      nodes: List<PlayerOpeningTreeNode>.unmodifiable(
+        (json['nodes'] as List? ?? const []).whereType<Map>().map(
+          (node) =>
+              PlayerOpeningTreeNode.fromJson(Map<String, dynamic>.from(node)),
+        ),
+      ),
+    );
+  }
+}
+
+@immutable
+class PlayerOpeningTreeNode {
+  const PlayerOpeningTreeNode({
+    required this.id,
+    required this.fenKey,
+    required this.ply,
+    required this.moves,
+  });
+
+  final int id;
+  final String fenKey;
   final int ply;
+  final List<PlayerOpeningTreeMove> moves;
+
+  factory PlayerOpeningTreeNode.fromJson(Map<String, dynamic> json) {
+    return PlayerOpeningTreeNode(
+      id: _readInt(json['id']),
+      fenKey: json['fenKey']?.toString().trim() ?? '',
+      ply: _readInt(json['ply']),
+      moves: List<PlayerOpeningTreeMove>.unmodifiable(
+        (json['moves'] as List? ?? const []).whereType<Map>().map(
+          (move) =>
+              PlayerOpeningTreeMove.fromJson(Map<String, dynamic>.from(move)),
+        ),
+      ),
+    );
+  }
+}
+
+@immutable
+class PlayerOpeningTreeMove {
+  const PlayerOpeningTreeMove({
+    required this.uci,
+    required this.childNodeId,
+    required this.white,
+    required this.black,
+    required this.draws,
+    required this.total,
+    this.lastPlayed,
+    this.sampleGameId,
+    this.filterBuckets = const <String, PlayerOpeningTreeStats>{},
+  });
+
+  final String uci;
+  final int childNodeId;
+  final int white;
+  final int black;
+  final int draws;
+  final int total;
+  final DateTime? lastPlayed;
+  final String? sampleGameId;
+  final Map<String, PlayerOpeningTreeStats> filterBuckets;
+
+  factory PlayerOpeningTreeMove.fromJson(Map<String, dynamic> json) {
+    final buckets = <String, PlayerOpeningTreeStats>{};
+    final rawBuckets = json['filterBuckets'];
+    if (rawBuckets is Map) {
+      for (final entry in rawBuckets.entries) {
+        final value = entry.value;
+        if (value is! Map) continue;
+        buckets[entry.key.toString()] = PlayerOpeningTreeStats.fromJson(
+          Map<String, dynamic>.from(value),
+        );
+      }
+    }
+
+    return PlayerOpeningTreeMove(
+      uci: json['uci']?.toString().trim().toLowerCase() ?? '',
+      childNodeId: _readInt(json['childNodeId']),
+      white: _readInt(json['white']),
+      black: _readInt(json['black']),
+      draws: _readInt(json['draws']),
+      total: _readInt(json['total']),
+      lastPlayed: DateTime.tryParse(json['lastPlayed']?.toString() ?? ''),
+      sampleGameId: json['sampleGameId']?.toString().trim(),
+      filterBuckets: Map<String, PlayerOpeningTreeStats>.unmodifiable(buckets),
+    );
+  }
+
+  MoveAggregate toMoveAggregate({
+    PlayerOpeningTreeFilterCriteria filters =
+        const PlayerOpeningTreeFilterCriteria(),
+  }) {
+    final stats = filters.hasFilters ? _filteredStats(filters) : null;
+    final resolved =
+        stats ??
+        PlayerOpeningTreeStats(
+          white: white,
+          black: black,
+          draws: draws,
+          total: total,
+        );
+    return MoveAggregate(
+      uci: uci,
+      white: resolved.white,
+      black: resolved.black,
+      draws: resolved.draws,
+      total: resolved.total,
+      gameId: sampleGameId,
+      lastPlayed: lastPlayed,
+    );
+  }
+
+  PlayerOpeningTreeStats _filteredStats(PlayerOpeningTreeFilterCriteria f) {
+    var white = 0;
+    var black = 0;
+    var draws = 0;
+    var total = 0;
+    for (final entry in filterBuckets.entries) {
+      final bucket = _parseBucketKey(entry.key);
+      if (!_bucketMatches(bucket, f)) continue;
+      white += entry.value.white;
+      black += entry.value.black;
+      draws += entry.value.draws;
+      total += entry.value.total;
+    }
+    return PlayerOpeningTreeStats(
+      white: white,
+      black: black,
+      draws: draws,
+      total: total,
+    );
+  }
+}
+
+@immutable
+class PlayerOpeningTreeStats {
+  const PlayerOpeningTreeStats({
+    required this.white,
+    required this.black,
+    required this.draws,
+    required this.total,
+  });
+
+  final int white;
+  final int black;
+  final int draws;
+  final int total;
+
+  factory PlayerOpeningTreeStats.fromJson(Map<String, dynamic> json) {
+    return PlayerOpeningTreeStats(
+      white: _readInt(json['white']),
+      black: _readInt(json['black']),
+      draws: _readInt(json['draws']),
+      total: _readInt(json['total']),
+    );
+  }
 }
 
 @immutable
@@ -357,37 +580,52 @@ class PlayerOpeningTreeFilterCriteria {
   }
 }
 
-Future<PlayerOpeningTreeIndex> buildPlayerOpeningTreeBatchAsync(
-  List<Map<String, dynamic>> rows,
-) {
-  return compute(_buildPlayerOpeningTreeBatch, rows);
+@immutable
+class PlayerOpeningTreeGameRef {
+  const PlayerOpeningTreeGameRef({
+    required this.gameId,
+    required this.fen,
+    required this.ply,
+  });
+
+  final String gameId;
+  final String fen;
+  final int ply;
 }
 
-PlayerOpeningTreeIndex mergePlayerOpeningTreeIndexes(
-  PlayerOpeningTreeIndex left,
-  PlayerOpeningTreeIndex right,
-) {
-  if (left.positionCount == 0 && left.gameRowsById.isEmpty) return right;
-  if (right.positionCount == 0 && right.gameRowsById.isEmpty) return left;
+@immutable
+class PlayerOpeningTreeGamesIndex {
+  const PlayerOpeningTreeGamesIndex({
+    required this.gamesByFen,
+    required this.gameRowsById,
+  });
 
-  final mergedMoves = Map<String, List<MoveAggregate>>.from(left.movesByFen);
-  for (final entry in right.movesByFen.entries) {
-    final builders = <String, _MutableMoveAggregate>{};
-    for (final move in left.movesByFen[entry.key] ?? const <MoveAggregate>[]) {
-      builders
-          .putIfAbsent(move.uci, () => _MutableMoveAggregate(move.uci))
-          .addAggregate(move);
-    }
-    for (final move in entry.value) {
-      builders
-          .putIfAbsent(move.uci, () => _MutableMoveAggregate(move.uci))
-          .addAggregate(move);
-    }
-    final moves = builders.values
-      .map((m) => m.toAggregate())
-      .toList(growable: false)..sort((a, b) => b.total.compareTo(a.total));
-    mergedMoves[entry.key] = List<MoveAggregate>.unmodifiable(moves);
-  }
+  const PlayerOpeningTreeGamesIndex.empty()
+    : gamesByFen = const <String, List<PlayerOpeningTreeGameRef>>{},
+      gameRowsById = const <String, Map<String, dynamic>>{};
+
+  final Map<String, List<PlayerOpeningTreeGameRef>> gamesByFen;
+  final Map<String, Map<String, dynamic>> gameRowsById;
+
+  int get gameCount => gameRowsById.length;
+  int get positionCount => gamesByFen.length;
+}
+
+String _fenKey(String fen) =>
+    fen.trim().split(RegExp(r'\s+')).take(4).join(' ');
+
+Future<PlayerOpeningTreeGamesIndex> buildPlayerOpeningGamesIndexBatchAsync(
+  List<Map<String, dynamic>> rows,
+) {
+  return compute(_buildPlayerOpeningGamesIndexBatch, rows);
+}
+
+PlayerOpeningTreeGamesIndex mergePlayerOpeningGamesIndexes(
+  PlayerOpeningTreeGamesIndex left,
+  PlayerOpeningTreeGamesIndex right,
+) {
+  if (left.gameRowsById.isEmpty) return right;
+  if (right.gameRowsById.isEmpty) return left;
 
   final mergedRefs = Map<String, List<PlayerOpeningTreeGameRef>>.from(
     left.gamesByFen,
@@ -404,8 +642,7 @@ PlayerOpeningTreeIndex mergePlayerOpeningTreeIndexes(
     );
   }
 
-  return PlayerOpeningTreeIndex(
-    movesByFen: Map<String, List<MoveAggregate>>.unmodifiable(mergedMoves),
+  return PlayerOpeningTreeGamesIndex(
     gamesByFen: Map<String, List<PlayerOpeningTreeGameRef>>.unmodifiable(
       mergedRefs,
     ),
@@ -418,10 +655,9 @@ PlayerOpeningTreeIndex mergePlayerOpeningTreeIndexes(
   );
 }
 
-PlayerOpeningTreeIndex _buildPlayerOpeningTreeBatch(
+PlayerOpeningTreeGamesIndex _buildPlayerOpeningGamesIndexBatch(
   List<Map<String, dynamic>> rows,
 ) {
-  final movesByFen = <String, Map<String, _MutableMoveAggregate>>{};
   final gamesByFen = <String, Map<String, PlayerOpeningTreeGameRef>>{};
   final gameRowsById = <String, Map<String, dynamic>>{};
 
@@ -450,19 +686,7 @@ PlayerOpeningTreeIndex _buildPlayerOpeningTreeBatch(
     var previousFen =
         game.startingFen.trim().isEmpty ? Chess.initial.fen : game.startingFen;
     for (var i = 0; i < game.mainline.length; i++) {
-      final move = game.mainline[i];
-      final key = _positionKey(previousFen);
-      final uci = move.uci.trim().toLowerCase();
-      if (uci.isEmpty) {
-        previousFen = move.fen;
-        continue;
-      }
-
-      movesByFen
-          .putIfAbsent(key, () => <String, _MutableMoveAggregate>{})
-          .putIfAbsent(uci, () => _MutableMoveAggregate(uci))
-          .addGame(result: result, gameId: gameId, date: date);
-
+      final key = _fenKey(previousFen);
       gamesByFen.putIfAbsent(
         key,
         () => <String, PlayerOpeningTreeGameRef>{},
@@ -472,10 +696,10 @@ PlayerOpeningTreeIndex _buildPlayerOpeningTreeBatch(
         ply: i,
       );
 
-      previousFen = move.fen;
+      previousFen = game.mainline[i].fen;
     }
 
-    final finalKey = _positionKey(previousFen);
+    final finalKey = _fenKey(previousFen);
     gamesByFen.putIfAbsent(
       finalKey,
       () => <String, PlayerOpeningTreeGameRef>{},
@@ -486,22 +710,6 @@ PlayerOpeningTreeIndex _buildPlayerOpeningTreeBatch(
     );
   }
 
-  return _freezeIndex(movesByFen, gamesByFen, gameRowsById);
-}
-
-PlayerOpeningTreeIndex _freezeIndex(
-  Map<String, Map<String, _MutableMoveAggregate>> movesByFen,
-  Map<String, Map<String, PlayerOpeningTreeGameRef>> gamesByFen,
-  Map<String, Map<String, dynamic>> gameRowsById,
-) {
-  final frozenMoves = <String, List<MoveAggregate>>{};
-  for (final entry in movesByFen.entries) {
-    final moves = entry.value.values
-      .map((m) => m.toAggregate())
-      .toList(growable: false)..sort((a, b) => b.total.compareTo(a.total));
-    frozenMoves[entry.key] = List<MoveAggregate>.unmodifiable(moves);
-  }
-
   final frozenGames = <String, List<PlayerOpeningTreeGameRef>>{};
   for (final entry in gamesByFen.entries) {
     frozenGames[entry.key] = List<PlayerOpeningTreeGameRef>.unmodifiable(
@@ -509,20 +717,94 @@ PlayerOpeningTreeIndex _freezeIndex(
     );
   }
 
-  final frozenGameRows = <String, Map<String, dynamic>>{};
+  final frozenRows = <String, Map<String, dynamic>>{};
   for (final entry in gameRowsById.entries) {
-    frozenGameRows[entry.key] = Map<String, dynamic>.unmodifiable(entry.value);
+    frozenRows[entry.key] = Map<String, dynamic>.unmodifiable(entry.value);
   }
 
-  return PlayerOpeningTreeIndex(
-    movesByFen: Map<String, List<MoveAggregate>>.unmodifiable(frozenMoves),
+  return PlayerOpeningTreeGamesIndex(
     gamesByFen: Map<String, List<PlayerOpeningTreeGameRef>>.unmodifiable(
       frozenGames,
     ),
-    gameRowsById: Map<String, Map<String, dynamic>>.unmodifiable(
-      frozenGameRows,
+    gameRowsById: Map<String, Map<String, dynamic>>.unmodifiable(frozenRows),
+  );
+}
+
+GamebaseSearchQueryResponse localPlayerTreeGamesResponse({
+  required PlayerOpeningTreeIndex index,
+  required String fen,
+  required String? uci,
+  PlayerOpeningTreeFilterCriteria filters =
+      const PlayerOpeningTreeFilterCriteria(),
+  required GamebaseSortField sortBy,
+  required GamebaseSortDirection sortDirection,
+  required int pageNumber,
+  required int pageSize,
+}) {
+  final total = index.gamesCountForFen(fen, uci: uci, filters: filters);
+  final rows = index.gamesForFen(
+    fen,
+    uci: uci,
+    filters: filters,
+    sortBy: sortBy,
+    sortDirection: sortDirection,
+    pageNumber: pageNumber,
+    pageSize: pageSize,
+  );
+  return GamebaseSearchQueryResponse(
+    status: 'success',
+    data: rows,
+    metadata: GamebasePaginationMetadata(
+      pageNumber: pageNumber,
+      pageSize: pageSize,
+      totalCount: total,
+      hasMoreValue: (pageNumber + 1) * pageSize < total,
     ),
   );
+}
+
+Map<String, String> _parseBucketKey(String key) {
+  final bucket = <String, String>{};
+  for (final part in key.split('|')) {
+    final index = part.indexOf('=');
+    if (index <= 0 || index == part.length - 1) continue;
+    bucket[part.substring(0, index)] = part.substring(index + 1);
+  }
+  return bucket;
+}
+
+bool _bucketMatches(
+  Map<String, String> bucket,
+  PlayerOpeningTreeFilterCriteria f,
+) {
+  final color = f.color?.trim().toLowerCase();
+  if (color != null && color.isNotEmpty && bucket['color'] != color) {
+    return false;
+  }
+
+  final timeControl = f.timeControl?.name.toUpperCase();
+  if (timeControl != null && bucket['timeControl'] != timeControl) {
+    return false;
+  }
+
+  if (f.isOnline != null && bucket['isOnline'] != f.isOnline.toString()) {
+    return false;
+  }
+
+  final result = f.result?.trim().toUpperCase();
+  if (result != null && result.isNotEmpty && bucket['result'] != result) {
+    return false;
+  }
+
+  final year = int.tryParse(bucket['year'] ?? '');
+  if (f.yearFrom != null && (year == null || year < f.yearFrom!)) return false;
+  if (f.yearTo != null && (year == null || year > f.yearTo!)) return false;
+
+  final rating = int.tryParse(bucket['rating'] ?? '0') ?? 0;
+  if (f.minRating != null && rating + 99 < f.minRating!) return false;
+  if (f.maxRating != null && rating > f.maxRating!) return false;
+
+  return true;
 }
 
 String? _pgnForRow(Map<String, dynamic> row) {
@@ -671,32 +953,6 @@ DateTime? _dateForRow(Map<String, dynamic> row, ChessGame game) {
   return DateTime.tryParse(pgnDate.replaceAll('.', '-'));
 }
 
-DateTime? _dateForRowValue(Object? value) {
-  return DateTime.tryParse(value?.toString() ?? '');
-}
-
-String _positionKey(String fen) =>
-    normalizeFenForGamebase(fen).split(RegExp(r'\s+')).take(4).join(' ');
-
-int _readInt(dynamic value) {
-  if (value is int) return value;
-  if (value is num) return value.toInt();
-  return int.tryParse(value?.toString() ?? '') ?? 0;
-}
-
-bool? _readBool(dynamic value) {
-  if (value is bool) return value;
-  final raw = value?.toString().trim().toLowerCase();
-  if (raw == null || raw.isEmpty) return null;
-  if (raw == 'true' || raw == '1' || raw == 'yes' || raw == 'online') {
-    return true;
-  }
-  if (raw == 'false' || raw == '0' || raw == 'no' || raw == 'otb') {
-    return false;
-  }
-  return null;
-}
-
 List<String> _lineForRow(Map<String, dynamic> row) {
   final raw = row['line'];
   if (raw is! List) return const <String>[];
@@ -797,97 +1053,21 @@ int? _ratingForFilter(
   return ((white + black) / 2).round();
 }
 
-class _MutableMoveAggregate {
-  _MutableMoveAggregate(this.uci);
-
-  final String uci;
-  int white = 0;
-  int black = 0;
-  int draws = 0;
-  final Set<String> gameIds = <String>{};
-  DateTime? lastPlayed;
-
-  int get total => white + black + draws;
-
-  void addGame({
-    required String result,
-    required Object? gameId,
-    DateTime? date,
-  }) {
-    switch (_normalizeResult(result)) {
-      case '1-0':
-        white += 1;
-        break;
-      case '0-1':
-        black += 1;
-        break;
-      case '1/2-1/2':
-        draws += 1;
-        break;
-      default:
-        draws += 1;
-    }
-    final id = gameId?.toString().trim();
-    if (id != null && id.isNotEmpty) gameIds.add(id);
-    if (date != null && (lastPlayed == null || date.isAfter(lastPlayed!))) {
-      lastPlayed = date;
-    }
+bool? _readBool(Object? value) {
+  if (value is bool) return value;
+  final raw = value?.toString().trim().toLowerCase();
+  if (raw == null || raw.isEmpty) return null;
+  if (raw == 'true' || raw == '1' || raw == 'yes' || raw == 'online') {
+    return true;
   }
-
-  void addAggregate(MoveAggregate aggregate) {
-    white += aggregate.white;
-    black += aggregate.black;
-    draws += aggregate.draws;
-    final id = aggregate.gameId?.trim();
-    if (id != null && id.isNotEmpty) gameIds.add(id);
-    final date = aggregate.lastPlayed;
-    if (date != null && (lastPlayed == null || date.isAfter(lastPlayed!))) {
-      lastPlayed = date;
-    }
+  if (raw == 'false' || raw == '0' || raw == 'no' || raw == 'otb') {
+    return false;
   }
-
-  MoveAggregate toAggregate() {
-    return MoveAggregate(
-      uci: uci,
-      white: white,
-      black: black,
-      draws: draws,
-      total: total,
-      gameId: total == 1 && gameIds.length == 1 ? gameIds.first : null,
-      lastPlayed: lastPlayed,
-    );
-  }
+  return null;
 }
 
-GamebaseSearchQueryResponse localPlayerTreeGamesResponse({
-  required PlayerOpeningTreeIndex index,
-  required String fen,
-  required String? uci,
-  PlayerOpeningTreeFilterCriteria filters =
-      const PlayerOpeningTreeFilterCriteria(),
-  required GamebaseSortField sortBy,
-  required GamebaseSortDirection sortDirection,
-  required int pageNumber,
-  required int pageSize,
-}) {
-  final total = index.gamesCountForFen(fen, uci: uci, filters: filters);
-  final rows = index.gamesForFen(
-    fen,
-    uci: uci,
-    filters: filters,
-    sortBy: sortBy,
-    sortDirection: sortDirection,
-    pageNumber: pageNumber,
-    pageSize: pageSize,
-  );
-  return GamebaseSearchQueryResponse(
-    status: 'success',
-    data: rows,
-    metadata: GamebasePaginationMetadata(
-      pageNumber: pageNumber,
-      pageSize: pageSize,
-      totalCount: total,
-      hasMoreValue: (pageNumber + 1) * pageSize < total,
-    ),
-  );
+int _readInt(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '') ?? 0;
 }
