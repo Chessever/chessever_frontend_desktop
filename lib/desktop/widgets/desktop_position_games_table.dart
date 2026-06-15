@@ -597,36 +597,6 @@ class _DesktopPositionGamesTableState
     return 'Games will load after the player tree is ready.';
   }
 
-  PlayerOpeningTreeState? _scopedPlayerTreeState() {
-    if (!widget.waitForPlayerOpeningTree) return null;
-    final filters = ref.read(gamebaseExplorerProvider).filters;
-    final scopedPlayerId = widget.playerOpeningTreePlayerId?.trim();
-    final playerId =
-        scopedPlayerId != null && scopedPlayerId.isNotEmpty
-            ? scopedPlayerId
-            : filters.playerIds.length == 1
-            ? filters.playerIds.first.trim()
-            : '';
-    if (playerId.isEmpty) return null;
-    return ref.read(playerOpeningTreeProvider(playerId));
-  }
-
-  String? _playerTreeGamesFetchMessage() {
-    final treeState = _scopedPlayerTreeState();
-    if (treeState == null ||
-        treeState.progress.status != PlayerOpeningTreeStatus.complete ||
-        treeState.progress.gamesDownloadComplete) {
-      return null;
-    }
-
-    final fetched = treeState.progress.fetchedGames;
-    final processed = treeState.progress.processedGames;
-    if (fetched > 0) {
-      return 'Fetching games... $processed indexed';
-    }
-    return 'Fetching games...';
-  }
-
   void _schedulePlayerTreeStart(String playerId) {
     Future.microtask(() {
       if (!mounted) return;
@@ -1201,10 +1171,7 @@ class _DesktopPositionGamesTableState
         final nextGameCount = next.index.downloadedGameCount;
         final gamesChanged = previousGameCount != nextGameCount;
         final statusChanged = previous?.progress.status != next.progress.status;
-        final gamesDownloadChanged =
-            previous?.progress.gamesDownloadComplete !=
-            next.progress.gamesDownloadComplete;
-        if (!gamesChanged && !statusChanged && !gamesDownloadChanged) return;
+        if (!gamesChanged && !statusChanged) return;
         _scheduleLocalTreeRefresh();
       });
     }
@@ -1240,14 +1207,6 @@ class _DesktopPositionGamesTableState
         icon: Icons.account_tree_outlined,
         title: 'Building player tree',
         message: _waitingForTreeMessage!,
-      );
-    }
-    final gamesFetchMessage = _playerTreeGamesFetchMessage();
-    if (gamesFetchMessage != null && _rows.isEmpty) {
-      return _Empty(
-        icon: Icons.downloading_outlined,
-        title: 'Fetching games',
-        message: gamesFetchMessage,
       );
     }
     if (_isInitialLoading && _rows.isEmpty) {
@@ -1378,9 +1337,7 @@ class _DesktopPositionGamesTableState
       onRowSecondaryTap:
           (row, position) => unawaited(_showRowContextMenu(row, position)),
       footer:
-          gamesFetchMessage != null
-              ? _GamesFetchFooter(message: gamesFetchMessage)
-              : _hasMore
+          _hasMore
               ? const Padding(
                 padding: EdgeInsets.symmetric(vertical: 14),
                 child: Center(
@@ -2259,38 +2216,6 @@ class _ResultCell extends StatelessWidget {
 }
 
 enum _ResultOutcome { white, black, draw, none }
-
-class _GamesFetchFooter extends StatelessWidget {
-  const _GamesFetchFooter({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(
-            width: 12,
-            height: 12,
-            child: CircularProgressIndicator(
-              strokeWidth: 1.4,
-              valueColor: AlwaysStoppedAnimation(kPrimaryColor),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            message,
-            style: const TextStyle(color: kLightGreyColor, fontSize: 11),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _Empty extends StatelessWidget {
   const _Empty({

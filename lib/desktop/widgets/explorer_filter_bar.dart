@@ -196,16 +196,19 @@ class PlayerOpeningTreeProgressChip extends StatelessWidget {
     final status = progress.status;
     final isError = status == PlayerOpeningTreeStatus.error;
     final isComplete = status == PlayerOpeningTreeStatus.complete;
+    final isFetchingGames = isComplete && !progress.gamesDownloadComplete;
     final label =
         isError
             ? 'Tree failed'
+            : isFetchingGames
+            ? _fetchingGamesLabel(progress)
             : isComplete
             ? 'Tree ready · ${_fmt(progress.indexedPositions)} positions'
             : 'Building player tree';
     final color =
         isError
             ? kRedColor
-            : isComplete
+            : isComplete && !isFetchingGames
             ? kGreenColor
             : kPrimaryColor;
 
@@ -225,7 +228,7 @@ class PlayerOpeningTreeProgressChip extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (status == PlayerOpeningTreeStatus.building)
+              if (status == PlayerOpeningTreeStatus.building || isFetchingGames)
                 SizedBox(
                   width: 10,
                   height: 10,
@@ -258,6 +261,13 @@ class PlayerOpeningTreeProgressChip extends StatelessWidget {
       ),
     );
   }
+}
+
+String _fetchingGamesLabel(PlayerOpeningTreeProgress progress) {
+  if (progress.fetchedGames > 0) {
+    return 'Fetching games · ${_fmt(progress.processedGames)} indexed';
+  }
+  return 'Fetching games';
 }
 
 String _fmt(int value) {
