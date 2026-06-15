@@ -176,6 +176,13 @@ class PlayerOpeningTreeIndex {
     );
   }
 
+  PlayerOpeningTreeGamesIndex toGamesIndex() {
+    return PlayerOpeningTreeGamesIndex(
+      gamesByFen: gamesByFen,
+      gameRowsById: gameRowsById,
+    );
+  }
+
   List<MoveAggregate> movesForFen(
     String fen, {
     PlayerOpeningTreeFilterCriteria filters =
