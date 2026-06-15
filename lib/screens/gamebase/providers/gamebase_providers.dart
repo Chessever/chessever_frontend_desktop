@@ -1653,7 +1653,7 @@ class PlayerOpeningTreeBuildController
               color: 'all',
               pageNumber: pageNumber,
               pageSize: _pageSize,
-              includePgn: true,
+              includeData: true,
             );
         if (!mounted || generation != _generation) return;
 
