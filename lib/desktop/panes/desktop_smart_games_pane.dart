@@ -6,6 +6,7 @@ import 'package:chessever/desktop/utils/game_date_groups.dart';
 import 'package:chessever/desktop/widgets/desktop_date_group_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
+import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
@@ -16,16 +17,39 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 
-class DesktopSmartGamesPane extends ConsumerWidget {
+class DesktopSmartGamesPane extends ConsumerStatefulWidget {
   const DesktopSmartGamesPane({super.key, required this.tabId});
 
   final String tabId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<DesktopSmartGamesPane> createState() =>
+      _DesktopSmartGamesPaneState();
+}
+
+class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
+  late final TextEditingController _searchController;
+  String _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final type =
         ref.watch(
-          desktopSmartGamesTypeByTabIdProvider.select((types) => types[tabId]),
+          desktopSmartGamesTypeByTabIdProvider.select(
+            (types) => types[widget.tabId],
+          ),
         ) ??
         PremiumGamesType.live;
     final gamesAsync = ref.watch(premiumGamesProvider(type));
@@ -75,6 +99,18 @@ class DesktopSmartGamesPane extends ConsumerWidget {
               ],
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 14),
+            child: DesktopSearchField(
+              controller: _searchController,
+              hintText: 'Search games — player, event, opening, ECO…',
+              onChanged: (value) => setState(() => _query = value),
+              onClear: () {
+                _searchController.clear();
+                setState(() => _query = '');
+              },
+            ),
+          ),
           Expanded(
             child: gamesAsync.when(
               loading:
@@ -91,6 +127,10 @@ class DesktopSmartGamesPane extends ConsumerWidget {
                     error: true,
                   ),
               data: (state) {
+                final visibleGames = filterDesktopSmartGames(
+                  state.games,
+                  _query,
+                );
                 if (state.games.isEmpty) {
                   return _PaneMessage(
                     icon: Icons.grid_off_rounded,
@@ -98,8 +138,15 @@ class DesktopSmartGamesPane extends ConsumerWidget {
                     message: copy.emptyMessage,
                   );
                 }
+                if (visibleGames.isEmpty) {
+                  return _PaneMessage(
+                    icon: Icons.search_off_rounded,
+                    title: 'No matching games',
+                    message: 'No games match "${_query.trim()}".',
+                  );
+                }
                 return _SmartGamesList(
-                  games: state.games,
+                  games: visibleGames,
                   routeTitle: copy.title,
                   hasMore: state.hasMore,
                   isLoading: state.isLoadingMore,
@@ -137,6 +184,7 @@ class _SmartGamesList extends ConsumerStatefulWidget {
 
 class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
   final ScrollController _scrollController = ScrollController();
+  final Set<String> _collapsedGroups = <String>{};
 
   @override
   void initState() {
@@ -165,7 +213,18 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
   @override
   Widget build(BuildContext context) {
     final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
-    final groups = buildDesktopGameDateGroups(widget.games);
+    final groups = buildDesktopGameDateGroups(
+      widget.games,
+      includeToday: true,
+      excludeFuture: true,
+    );
+    final groupedGames = <GamesTourModel>[
+      for (final group in groups) ...group.games,
+    ];
+    final keyboardGames = <GamesTourModel>[
+      for (final group in groups)
+        if (!_collapsedGroups.contains(group.key)) ...group.games,
+    ];
     final scopeId = 'smart-games-${widget.routeTitle.toLowerCase()}';
 
     if (layout == DesktopCardLayout.grid) {
@@ -178,12 +237,12 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
           );
           return DesktopGameKeyboardFocus(
             scopeId: scopeId,
-            games: widget.games,
+            games: keyboardGames,
             pageStride: columns * 3,
             ensureInitialSelectionVisible: false,
             onActivateGame:
                 (game) =>
-                    _openSmartGame(ref, game, widget.routeTitle, widget.games),
+                    _openSmartGame(ref, game, widget.routeTitle, groupedGames),
             builder: (context, selectedGameId, selectGame, keyForGame) {
               return CustomScrollView(
                 controller: _scrollController,
@@ -195,39 +254,42 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                     groupIndex++
                   ) ...[
                     _dateHeader(
+                      groups[groupIndex].key,
                       groups[groupIndex].label,
                       groups[groupIndex].games.length,
                       groupIndex,
                     ),
-                    SliverPadding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      sliver: SliverGrid(
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: columns,
-                          mainAxisSpacing: 8,
-                          crossAxisSpacing: 8,
-                          childAspectRatio: 0.95,
+                    if (!_collapsedGroups.contains(groups[groupIndex].key))
+                      SliverPadding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        sliver: SliverGrid(
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: columns,
+                                mainAxisSpacing: 8,
+                                crossAxisSpacing: 8,
+                                childAspectRatio: 0.95,
+                              ),
+                          delegate: SliverChildBuilderDelegate((context, i) {
+                            final game = groups[groupIndex].games[i];
+                            return DesktopGameKeyboardItem(
+                              itemKey: keyForGame(game.gameId),
+                              gameId: game.gameId,
+                              onSelect: selectGame,
+                              child: LiveDesktopGameCard(
+                                game: game,
+                                tournamentTitle:
+                                    game.tourSlug ?? widget.routeTitle,
+                                routeTitle: widget.routeTitle,
+                                routeGames: groupedGames,
+                                layout: DesktopCardLayout.grid,
+                                selected: selectedGameId == game.gameId,
+                                viewSource: ChessboardView.tour,
+                              ),
+                            );
+                          }, childCount: groups[groupIndex].games.length),
                         ),
-                        delegate: SliverChildBuilderDelegate((context, i) {
-                          final game = groups[groupIndex].games[i];
-                          return DesktopGameKeyboardItem(
-                            itemKey: keyForGame(game.gameId),
-                            gameId: game.gameId,
-                            onSelect: selectGame,
-                            child: LiveDesktopGameCard(
-                              game: game,
-                              tournamentTitle:
-                                  game.tourSlug ?? widget.routeTitle,
-                              routeTitle: widget.routeTitle,
-                              routeGames: widget.games,
-                              layout: DesktopCardLayout.grid,
-                              selected: selectedGameId == game.gameId,
-                              viewSource: ChessboardView.tour,
-                            ),
-                          );
-                        }, childCount: groups[groupIndex].games.length),
                       ),
-                    ),
                   ],
                   if (widget.isLoading)
                     const SliverToBoxAdapter(child: _InlineLoader()),
@@ -239,13 +301,59 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
         },
       );
     }
+    if (layout == DesktopCardLayout.list) {
+      return DesktopGameKeyboardFocus(
+        scopeId: scopeId,
+        games: keyboardGames,
+        onActivateGame:
+            (game) =>
+                _openSmartGame(ref, game, widget.routeTitle, groupedGames),
+        builder: (context, selectedGameId, selectGame, keyForGame) {
+          return CustomScrollView(
+            controller: _scrollController,
+            physics: const DesktopScrollPhysics(),
+            slivers: [
+              for (
+                var groupIndex = 0;
+                groupIndex < groups.length;
+                groupIndex++
+              ) ...[
+                _dateHeader(
+                  groups[groupIndex].key,
+                  groups[groupIndex].label,
+                  groups[groupIndex].games.length,
+                  groupIndex,
+                ),
+                if (!_collapsedGroups.contains(groups[groupIndex].key))
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    sliver: SliverToBoxAdapter(
+                      child: _SmartGamesTable(
+                        games: groups[groupIndex].games,
+                        routeTitle: widget.routeTitle,
+                        routeGames: groupedGames,
+                        selectedGameId: selectedGameId,
+                        onSelectGame: selectGame,
+                        keyForGame: keyForGame,
+                      ),
+                    ),
+                  ),
+              ],
+              if (widget.isLoading)
+                const SliverToBoxAdapter(child: _InlineLoader()),
+              const SliverToBoxAdapter(child: SizedBox(height: 24)),
+            ],
+          );
+        },
+      );
+    }
 
     return DesktopGameKeyboardFocus(
       scopeId: scopeId,
-      games: widget.games,
+      games: keyboardGames,
       ensureInitialSelectionVisible: false,
       onActivateGame:
-          (game) => _openSmartGame(ref, game, widget.routeTitle, widget.games),
+          (game) => _openSmartGame(ref, game, widget.routeTitle, groupedGames),
       builder: (context, selectedGameId, selectGame, keyForGame) {
         return CustomScrollView(
           controller: _scrollController,
@@ -257,37 +365,39 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
               groupIndex++
             ) ...[
               _dateHeader(
+                groups[groupIndex].key,
                 groups[groupIndex].label,
                 groups[groupIndex].games.length,
                 groupIndex,
               ),
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                sliver: SliverToBoxAdapter(
-                  child: DesktopGameCardsFlow(
-                    layout: layout,
-                    embedded: true,
-                    itemCount: groups[groupIndex].games.length,
-                    itemBuilder: (context, i) {
-                      final game = groups[groupIndex].games[i];
-                      return DesktopGameKeyboardItem(
-                        itemKey: keyForGame(game.gameId),
-                        gameId: game.gameId,
-                        onSelect: selectGame,
-                        child: LiveDesktopGameCard(
-                          game: game,
-                          tournamentTitle: game.tourSlug ?? widget.routeTitle,
-                          routeTitle: widget.routeTitle,
-                          routeGames: widget.games,
-                          layout: layout,
-                          selected: selectedGameId == game.gameId,
-                          viewSource: ChessboardView.tour,
-                        ),
-                      );
-                    },
+              if (!_collapsedGroups.contains(groups[groupIndex].key))
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  sliver: SliverToBoxAdapter(
+                    child: DesktopGameCardsFlow(
+                      layout: layout,
+                      embedded: true,
+                      itemCount: groups[groupIndex].games.length,
+                      itemBuilder: (context, i) {
+                        final game = groups[groupIndex].games[i];
+                        return DesktopGameKeyboardItem(
+                          itemKey: keyForGame(game.gameId),
+                          gameId: game.gameId,
+                          onSelect: selectGame,
+                          child: LiveDesktopGameCard(
+                            game: game,
+                            tournamentTitle: game.tourSlug ?? widget.routeTitle,
+                            routeTitle: widget.routeTitle,
+                            routeGames: groupedGames,
+                            layout: layout,
+                            selected: selectedGameId == game.gameId,
+                            viewSource: ChessboardView.tour,
+                          ),
+                        );
+                      },
+                    ),
                   ),
                 ),
-              ),
             ],
             if (widget.isLoading)
               const SliverToBoxAdapter(child: _InlineLoader()),
@@ -298,11 +408,30 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
     );
   }
 
-  SliverPadding _dateHeader(String label, int gameCount, int groupIndex) {
+  SliverPadding _dateHeader(
+    String groupKey,
+    String label,
+    int gameCount,
+    int groupIndex,
+  ) {
+    final collapsed = _collapsedGroups.contains(groupKey);
     return SliverPadding(
       padding: EdgeInsets.fromLTRB(24, groupIndex == 0 ? 4 : 16, 24, 8),
       sliver: SliverToBoxAdapter(
-        child: DesktopDateGroupCard(label: label, gameCount: gameCount),
+        child: DesktopDateGroupCard(
+          label: label,
+          gameCount: gameCount,
+          collapsed: collapsed,
+          onToggle: () {
+            setState(() {
+              if (collapsed) {
+                _collapsedGroups.remove(groupKey);
+              } else {
+                _collapsedGroups.add(groupKey);
+              }
+            });
+          },
+        ),
       ),
     );
   }
@@ -322,6 +451,321 @@ void _openSmartGame(
     routeGames: routeGames,
     viewSource: ChessboardView.tour,
   );
+}
+
+List<GamesTourModel> filterDesktopSmartGames(
+  List<GamesTourModel> games,
+  String query,
+) {
+  final normalized = query.trim().toLowerCase();
+  if (normalized.isEmpty) return games;
+
+  return games.where((game) {
+    final haystack =
+        <String?>[
+          game.whitePlayer.name,
+          game.whitePlayer.title,
+          game.whitePlayer.federation,
+          game.blackPlayer.name,
+          game.blackPlayer.title,
+          game.blackPlayer.federation,
+          game.tourSlug,
+          game.roundSlug,
+          game.eco,
+          game.openingName,
+          game.timeControl,
+        ].whereType<String>().join(' ').toLowerCase();
+    return haystack.contains(normalized);
+  }).toList();
+}
+
+class _SmartGamesTable extends ConsumerWidget {
+  const _SmartGamesTable({
+    required this.games,
+    required this.routeTitle,
+    required this.routeGames,
+    required this.selectedGameId,
+    required this.onSelectGame,
+    required this.keyForGame,
+  });
+
+  final List<GamesTourModel> games;
+  final String routeTitle;
+  final List<GamesTourModel> routeGames;
+  final String? selectedGameId;
+  final ValueChanged<String> onSelectGame;
+  final Key Function(String gameId) keyForGame;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Column(
+        children: [
+          const _SmartGamesTableHeader(),
+          for (var i = 0; i < games.length; i++)
+            DesktopGameKeyboardItem(
+              itemKey: keyForGame(games[i].gameId),
+              gameId: games[i].gameId,
+              onSelect: onSelectGame,
+              child: _SmartGamesTableRow(
+                game: games[i],
+                selected: selectedGameId == games[i].gameId,
+                showDivider: i < games.length - 1,
+                onSelect: () => onSelectGame(games[i].gameId),
+                onOpen:
+                    () => _openSmartGame(ref, games[i], routeTitle, routeGames),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SmartGamesTableHeader extends StatelessWidget {
+  const _SmartGamesTableHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 30,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: kDividerColor)),
+      ),
+      child: const Row(
+        children: [
+          SizedBox(width: 68, child: _HeaderText('STATUS')),
+          Expanded(flex: 4, child: _HeaderText('WHITE')),
+          SizedBox(width: 56, child: Center(child: _HeaderText('RESULT'))),
+          Expanded(flex: 4, child: _HeaderText('BLACK')),
+          SizedBox(
+            width: 64,
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: _HeaderText('AVG'),
+            ),
+          ),
+          SizedBox(width: 14),
+          Expanded(flex: 3, child: _HeaderText('EVENT')),
+        ],
+      ),
+    );
+  }
+}
+
+class _HeaderText extends StatelessWidget {
+  const _HeaderText(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(
+        color: kWhiteColor70,
+        fontSize: 10,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 0.5,
+      ),
+    );
+  }
+}
+
+class _SmartGamesTableRow extends StatefulWidget {
+  const _SmartGamesTableRow({
+    required this.game,
+    required this.selected,
+    required this.showDivider,
+    required this.onSelect,
+    required this.onOpen,
+  });
+
+  final GamesTourModel game;
+  final bool selected;
+  final bool showDivider;
+  final VoidCallback onSelect;
+  final VoidCallback onOpen;
+
+  @override
+  State<_SmartGamesTableRow> createState() => _SmartGamesTableRowState();
+}
+
+class _SmartGamesTableRowState extends State<_SmartGamesTableRow> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final game = widget.game;
+    final statusText =
+        game.effectiveGameStatus == GameStatus.ongoing ? 'LIVE' : 'DONE';
+    final statusColor =
+        game.effectiveGameStatus == GameStatus.ongoing
+            ? kPrimaryColor
+            : kWhiteColor70;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onSelect,
+        onDoubleTap: widget.onOpen,
+        child: Container(
+          height: 38,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color:
+                widget.selected
+                    ? kPrimaryColor.withValues(alpha: 0.12)
+                    : (_hovered ? kBlack3Color.withValues(alpha: 0.55) : null),
+            border:
+                widget.showDivider
+                    ? Border(
+                      bottom: BorderSide(
+                        color: kDividerColor.withValues(alpha: 0.75),
+                      ),
+                    )
+                    : null,
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 68,
+                child: Row(
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: statusColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      statusText,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(flex: 4, child: _PlayerCell(player: game.whitePlayer)),
+              SizedBox(
+                width: 56,
+                child: Center(child: _ResultCell(game: game)),
+              ),
+              Expanded(flex: 4, child: _PlayerCell(player: game.blackPlayer)),
+              SizedBox(
+                width: 64,
+                child: Text(
+                  desktopGameAverageRating(game).toString(),
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    color: kWhiteColor70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  game.tourSlug ?? game.openingName ?? '—',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlayerCell extends StatelessWidget {
+  const _PlayerCell({required this.player});
+  final PlayerCard player;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        if (player.title.isNotEmpty) ...[
+          Text(
+            player.title,
+            style: const TextStyle(
+              color: kPrimaryColor,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(width: 6),
+        ],
+        Expanded(
+          child: Text(
+            player.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: kWhiteColor,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          player.rating > 0 ? player.rating.toString() : '—',
+          style: const TextStyle(
+            color: kWhiteColor70,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ResultCell extends StatelessWidget {
+  const _ResultCell({required this.game});
+  final GamesTourModel game;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = game.effectiveGameStatus;
+    final label = switch (status) {
+      GameStatus.whiteWins => '1-0',
+      GameStatus.blackWins => '0-1',
+      GameStatus.draw => '½-½',
+      _ => '*',
+    };
+    return Text(
+      label,
+      style: const TextStyle(
+        color: kWhiteColor,
+        fontSize: 12,
+        fontWeight: FontWeight.w800,
+        fontFeatures: [FontFeature.tabularFigures()],
+      ),
+    );
+  }
 }
 
 class _PaneMessage extends StatelessWidget {

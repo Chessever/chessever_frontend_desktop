@@ -385,17 +385,35 @@ class PremiumGamesNotifier
   Future<List<GamesTourModel>> _fetchLiveGames(
     GameRepository repository,
   ) async {
-    try {
-      final games = await repository.getLiveGames(
-        limit: _pageSize,
-        offset: _offset,
-      );
+    const maxAttempts = 2;
 
-      return games.map((g) => GamesTourModel.fromGame(g)).toList();
-    } catch (e) {
-      debugPrint('[PremiumGames] Error fetching live games: $e');
-      return [];
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        final games = await repository.getLiveGames(
+          limit: _pageSize,
+          offset: _offset,
+        );
+
+        if (games.isNotEmpty || _offset > 0 || attempt == maxAttempts) {
+          return games.map((g) => GamesTourModel.fromGame(g)).toList();
+        }
+
+        debugPrint(
+          '[PremiumGames] Initial live games fetch was empty; retrying',
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 650));
+      } catch (e) {
+        if (_offset == 0 && attempt < maxAttempts) {
+          debugPrint('[PremiumGames] Live games fetch failed; retrying: $e');
+          await Future<void>.delayed(const Duration(milliseconds: 650));
+          continue;
+        }
+        debugPrint('[PremiumGames] Error fetching live games: $e');
+        return [];
+      }
     }
+
+    return [];
   }
 
   /// Fetch games with average rating >= 2500, matching the phone smart
@@ -421,10 +439,7 @@ class PremiumGamesNotifier
     GameRepository repository,
   ) async {
     try {
-      final games = await repository.getClassicalGames(
-        limit: _pageSize,
-        offset: 0,
-      );
+      final games = await repository.getClassicalGames(limit: 200, offset: 0);
       _hasMore = false;
 
       return games.map((g) => GamesTourModel.fromGame(g)).toList();
@@ -476,6 +491,25 @@ class PremiumGamesNotifier
     final filter = _ref.read(premiumGamesFilterProvider(_type));
 
     return _allGames.where((game) {
+      // Smart event collections should never show tomorrow/future games.
+      if (_type == PremiumGamesType.live ||
+          _type == PremiumGamesType.gm ||
+          _type == PremiumGamesType.classical) {
+        final bucketDate = game.bucketDate;
+        if (bucketDate != null) {
+          final now = DateTime.now();
+          final today = DateTime(now.year, now.month, now.day);
+          final day = DateTime(
+            bucketDate.year,
+            bucketDate.month,
+            bucketDate.day,
+          );
+          if (day.isAfter(today)) {
+            return false;
+          }
+        }
+      }
+
       // Date filter
       if (filter.dateRange.startDate != null) {
         final gameDate = game.lastMoveTime;
