@@ -17,6 +17,7 @@ class PlayerOpeningTreeProgress {
     this.processedGames = 0,
     this.skippedGames = 0,
     this.indexedPositions = 0,
+    this.gamesDownloadComplete = false,
     this.totalGames,
     this.priorityColor,
     this.priorityFetchedGames,
@@ -30,6 +31,7 @@ class PlayerOpeningTreeProgress {
   final int processedGames;
   final int skippedGames;
   final int indexedPositions;
+  final bool gamesDownloadComplete;
   final int? totalGames;
   final String? priorityColor;
   final int? priorityFetchedGames;
@@ -45,6 +47,7 @@ class PlayerOpeningTreeProgress {
     int? processedGames,
     int? skippedGames,
     int? indexedPositions,
+    bool? gamesDownloadComplete,
     int? totalGames,
     String? priorityColor,
     int? priorityFetchedGames,
@@ -58,6 +61,8 @@ class PlayerOpeningTreeProgress {
       processedGames: processedGames ?? this.processedGames,
       skippedGames: skippedGames ?? this.skippedGames,
       indexedPositions: indexedPositions ?? this.indexedPositions,
+      gamesDownloadComplete:
+          gamesDownloadComplete ?? this.gamesDownloadComplete,
       totalGames: totalGames ?? this.totalGames,
       priorityColor: priorityColor ?? this.priorityColor,
       priorityFetchedGames: priorityFetchedGames ?? this.priorityFetchedGames,

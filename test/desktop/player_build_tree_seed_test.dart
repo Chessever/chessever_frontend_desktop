@@ -34,6 +34,13 @@ void main() {
           .downloadedGameCount,
       1,
     );
+    expect(
+      container
+          .read(playerOpeningTreeProvider('player-uuid'))
+          .progress
+          .gamesDownloadComplete,
+      isTrue,
+    );
   });
 
   test('retry still reuses backend tree instead of forcing rebuild', () async {

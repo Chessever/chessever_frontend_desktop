@@ -1616,6 +1616,20 @@ class PlayerOpeningTreeBuildController
         if (!hasMore) break;
         pageNumber += 1;
       }
+      if (!mounted || generation != _generation) return;
+      final nextIndex = state.index.copyWithGames(gamesIndex);
+      state = state.copyWith(
+        index: nextIndex,
+        progress: state.progress.copyWith(
+          status: PlayerOpeningTreeStatus.complete,
+          currentPage: pageNumber,
+          fetchedGames: fetched,
+          processedGames: processed,
+          skippedGames: skipped,
+          indexedPositions: nextIndex.positionCount,
+          gamesDownloadComplete: true,
+        ),
+      );
       _log(
         'games complete player=$_playerId fetched=$fetched '
         'processed=$processed skipped=$skipped',
@@ -1626,6 +1640,7 @@ class PlayerOpeningTreeBuildController
       state = state.copyWith(
         progress: state.progress.copyWith(
           status: PlayerOpeningTreeStatus.complete,
+          gamesDownloadComplete: true,
           error: null,
         ),
       );
@@ -1715,6 +1730,7 @@ class PlayerOpeningTreeBuildController
         status: PlayerOpeningTreeStatus.complete,
         indexedPositions: index.positionCount,
         processedGames: index.positionCount,
+        gamesDownloadComplete: false,
         error: null,
       ),
     );
