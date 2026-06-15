@@ -26,6 +26,7 @@ void main() {
     expect(state.index.movesForFen(Chess.initial.fen).single.uci, 'e2e4');
     await _waitForGamesIndexed(container, 'player-uuid');
     expect(repository.playerGamesPages, [0]);
+    expect(repository.playerGamesIncludePgnValues, [true]);
     expect(
       container
           .read(playerOpeningTreeProvider('player-uuid'))
@@ -80,6 +81,7 @@ class _BackendTreeRepository extends GamebaseRepository {
   final statusTreeIds = <String>[];
   final downloadTreeIds = <String>[];
   final playerGamesPages = <int>[];
+  final playerGamesIncludePgnValues = <bool>[];
   String statusValue = 'ready';
 
   @override
@@ -167,8 +169,10 @@ class _BackendTreeRepository extends GamebaseRepository {
     bool? isOnline,
     int pageNumber = 0,
     int pageSize = 100,
+    bool includePgn = false,
   }) async {
     playerGamesPages.add(pageNumber);
+    playerGamesIncludePgnValues.add(includePgn);
     return {
       'data': [
         {

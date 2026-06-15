@@ -781,6 +781,8 @@ class GamebaseRepository {
   ///
   /// [pageNumber] is 0-indexed (unlike globalSearch which is 1-indexed).
   /// [outcome] uses 'win'/'loss'/'draw' (player perspective, not W/B/D).
+  /// [includePgn] requests full PGN payloads when the caller needs to parse
+  /// local continuations; most list views should leave this off.
   Future<Map<String, dynamic>> getPlayerGames({
     required String playerId,
     String? q,
@@ -800,6 +802,7 @@ class GamebaseRepository {
     bool? isOnline,
     int pageNumber = 0,
     int pageSize = 100,
+    bool includePgn = false,
   }) async {
     final queryParams = <String, dynamic>{
       'color': color,
@@ -819,6 +822,7 @@ class GamebaseRepository {
       if (ratingFrom != null) 'ratingFrom': ratingFrom,
       if (ratingTo != null) 'ratingTo': ratingTo,
       if (isOnline != null) 'isOnline': isOnline,
+      if (includePgn) 'includePgn': true,
     };
 
     if (kDebugMode) {
