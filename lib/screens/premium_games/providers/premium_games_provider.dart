@@ -385,17 +385,35 @@ class PremiumGamesNotifier
   Future<List<GamesTourModel>> _fetchLiveGames(
     GameRepository repository,
   ) async {
-    try {
-      final games = await repository.getLiveGames(
-        limit: _pageSize,
-        offset: _offset,
-      );
+    const maxAttempts = 2;
 
-      return games.map((g) => GamesTourModel.fromGame(g)).toList();
-    } catch (e) {
-      debugPrint('[PremiumGames] Error fetching live games: $e');
-      return [];
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        final games = await repository.getLiveGames(
+          limit: _pageSize,
+          offset: _offset,
+        );
+
+        if (games.isNotEmpty || _offset > 0 || attempt == maxAttempts) {
+          return games.map((g) => GamesTourModel.fromGame(g)).toList();
+        }
+
+        debugPrint(
+          '[PremiumGames] Initial live games fetch was empty; retrying',
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 650));
+      } catch (e) {
+        if (_offset == 0 && attempt < maxAttempts) {
+          debugPrint('[PremiumGames] Live games fetch failed; retrying: $e');
+          await Future<void>.delayed(const Duration(milliseconds: 650));
+          continue;
+        }
+        debugPrint('[PremiumGames] Error fetching live games: $e');
+        return [];
+      }
     }
+
+    return [];
   }
 
   /// Fetch games with average rating >= 2500, matching the phone smart
