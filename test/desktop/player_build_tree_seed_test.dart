@@ -30,7 +30,7 @@ void main() {
     expect(state.index.movesForFen(Chess.initial.fen).single.uci, 'e2e4');
     await _waitForGamesIndexed(container, 'player-uuid');
     expect(repository.playerGamesPages, [0]);
-    expect(repository.playerGamesIncludePgnValues, [true]);
+    expect(repository.playerGamesIncludeDataValues, [true]);
     expect(
       container
           .read(playerOpeningTreeProvider('player-uuid'))
@@ -136,7 +136,7 @@ class _BackendTreeRepository extends GamebaseRepository {
   final statusTreeIds = <String>[];
   final downloadTreeIds = <String>[];
   final playerGamesPages = <int>[];
-  final playerGamesIncludePgnValues = <bool>[];
+  final playerGamesIncludeDataValues = <bool>[];
   String statusValue = 'ready';
 
   @override
@@ -224,10 +224,10 @@ class _BackendTreeRepository extends GamebaseRepository {
     bool? isOnline,
     int pageNumber = 0,
     int pageSize = 100,
-    bool includePgn = false,
+    bool includeData = false,
   }) async {
     playerGamesPages.add(pageNumber);
-    playerGamesIncludePgnValues.add(includePgn);
+    playerGamesIncludeDataValues.add(includeData);
     return {
       'data': [
         {
@@ -238,16 +238,21 @@ class _BackendTreeRepository extends GamebaseRepository {
           'blackPlayerId': 'other',
           'white': 'White',
           'black': 'Black',
-          'pgn': '''
-[Event "Test"]
-[Site "Local"]
-[Date "2024.01.01"]
-[White "White"]
-[Black "Black"]
-[Result "1-0"]
-
-1. e4 e5 1-0
-''',
+          'data': {
+            'm': [
+              {'u': 'e2e4'},
+              {'u': 'e7e5'},
+            ],
+            'md': {
+              'Event': 'Test',
+              'Site': 'Local',
+              'Date': '2024.01.01',
+              'White': 'White',
+              'Black': 'Black',
+              'Result': '1-0',
+            },
+            'sf': Chess.initial.fen,
+          },
         },
       ],
       'metadata': {'hasMore': false, 'totalCount': 1},
@@ -283,7 +288,7 @@ class _PriorityTreeRepository extends _BackendTreeRepository {
     bool? isOnline,
     int pageNumber = 0,
     int pageSize = 100,
-    bool includePgn = false,
+    bool includeData = false,
   }) async {
     await _fullDownloadGate.future;
     return super.getPlayerGames(
@@ -305,7 +310,7 @@ class _PriorityTreeRepository extends _BackendTreeRepository {
       isOnline: isOnline,
       pageNumber: pageNumber,
       pageSize: pageSize,
-      includePgn: includePgn,
+      includeData: includeData,
     );
   }
 

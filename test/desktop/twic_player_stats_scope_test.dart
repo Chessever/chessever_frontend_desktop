@@ -108,7 +108,7 @@ class _RecordingGamebaseRepository extends GamebaseRepository {
     bool? isOnline,
     int pageNumber = 0,
     int pageSize = 100,
-    bool includePgn = false,
+    bool includeData = false,
   }) async {
     return const {
       'data': <Map<String, dynamic>>[],

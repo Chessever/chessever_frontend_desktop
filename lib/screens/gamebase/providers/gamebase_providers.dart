@@ -1443,7 +1443,7 @@ class PlayerOpeningTreeBuildController
     : super(PlayerOpeningTreeState(playerId: _playerId));
 
   static const int _maxPly = 40;
-  static const int _pageSize = 100;
+  static const int _pageSize = 1000;
   static const int _hydrateConcurrency = 4;
   static const int _gamesPublishPageInterval = 4;
   static const int _priorityGamesPageSize = 50;
@@ -1653,7 +1653,7 @@ class PlayerOpeningTreeBuildController
               color: 'all',
               pageNumber: pageNumber,
               pageSize: _pageSize,
-              includePgn: true,
+              includeData: true,
             );
         if (!mounted || generation != _generation) return;
 
