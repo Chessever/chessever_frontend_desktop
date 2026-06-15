@@ -24,6 +24,15 @@ void main() {
     final state = container.read(playerOpeningTreeProvider('player-uuid'));
     expect(state.treeId, 'v2:player-uuid:40');
     expect(state.index.movesForFen(Chess.initial.fen).single.uci, 'e2e4');
+    await _waitForGamesIndexed(container, 'player-uuid');
+    expect(repository.playerGamesPages, [0]);
+    expect(
+      container
+          .read(playerOpeningTreeProvider('player-uuid'))
+          .index
+          .downloadedGameCount,
+      1,
+    );
   });
 
   test('retry still reuses backend tree instead of forcing rebuild', () async {
@@ -70,6 +79,7 @@ class _BackendTreeRepository extends GamebaseRepository {
   final buildForceRebuildValues = <bool>[];
   final statusTreeIds = <String>[];
   final downloadTreeIds = <String>[];
+  final playerGamesPages = <int>[];
   String statusValue = 'ready';
 
   @override
@@ -136,6 +146,54 @@ class _BackendTreeRepository extends GamebaseRepository {
       },
     };
   }
+
+  @override
+  Future<Map<String, dynamic>> getPlayerGames({
+    required String playerId,
+    String? q,
+    String color = 'all',
+    String? timeControl,
+    String? outcome,
+    String? eco,
+    String? opening,
+    String? variation,
+    String? event,
+    String? site,
+    String? dateFrom,
+    String? dateTo,
+    String? opponentId,
+    int? ratingFrom,
+    int? ratingTo,
+    bool? isOnline,
+    int pageNumber = 0,
+    int pageSize = 100,
+  }) async {
+    playerGamesPages.add(pageNumber);
+    return {
+      'data': [
+        {
+          'id': 'game-$pageNumber',
+          'date': '2024-01-01',
+          'result': '1-0',
+          'whitePlayerId': playerId,
+          'blackPlayerId': 'other',
+          'white': 'White',
+          'black': 'Black',
+          'pgn': '''
+[Event "Test"]
+[Site "Local"]
+[Date "2024.01.01"]
+[White "White"]
+[Black "Black"]
+[Result "1-0"]
+
+1. e4 e5 1-0
+''',
+        },
+      ],
+      'metadata': {'hasMore': false, 'totalCount': 1},
+    };
+  }
 }
 
 Future<void> _waitForBuildCount(
@@ -162,4 +220,16 @@ Future<void> _waitForTreeComplete(
     await Future<void>.delayed(const Duration(milliseconds: 25));
   }
   fail('tree build did not complete');
+}
+
+Future<void> _waitForGamesIndexed(
+  ProviderContainer container,
+  String playerId,
+) async {
+  for (var i = 0; i < 40; i++) {
+    final state = container.read(playerOpeningTreeProvider(playerId));
+    if (state.index.downloadedGameCount > 0) return;
+    await Future<void>.delayed(const Duration(milliseconds: 25));
+  }
+  fail('tree games did not index');
 }

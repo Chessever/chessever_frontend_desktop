@@ -3,6 +3,7 @@ import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
+import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:dio/dio.dart';
@@ -1397,6 +1398,8 @@ class PlayerOpeningTreeBuildController
     : super(PlayerOpeningTreeState(playerId: _playerId));
 
   static const int _maxPly = 40;
+  static const int _pageSize = 100;
+  static const int _hydrateConcurrency = 4;
   static const Duration _pollInterval = Duration(seconds: 1);
 
   final Ref _ref;
@@ -1502,6 +1505,7 @@ class PlayerOpeningTreeBuildController
             'treeId=$treeId poll=$pollCount',
           );
           _completeFromTreeResponse(treeId, treeResponse);
+          unawaited(_downloadGamesInBackground(generation));
           return;
         }
         _log(
@@ -1535,6 +1539,151 @@ class PlayerOpeningTreeBuildController
         ),
       );
     }
+  }
+
+  Future<void> _downloadGamesInBackground(int generation) async {
+    var fetched = 0;
+    var processed = 0;
+    var skipped = 0;
+    var pageNumber = 0;
+    var gamesIndex = const PlayerOpeningTreeGamesIndex.empty();
+    final seenGameIds = <String>{};
+
+    try {
+      while (mounted && generation == _generation) {
+        final response = await _ref
+            .read(gamebaseRepositoryProvider)
+            .getPlayerGames(
+              playerId: _playerId,
+              color: 'all',
+              pageNumber: pageNumber,
+              pageSize: _pageSize,
+            );
+        if (!mounted || generation != _generation) return;
+
+        final pageRows = _rowsFromPlayerGamesResponse(response);
+        final rows = <Map<String, dynamic>>[];
+        for (final row in pageRows) {
+          final id = row['id']?.toString().trim();
+          if (id == null || id.isEmpty || !seenGameIds.add(id)) continue;
+          rows.add(row);
+        }
+
+        final hydrated = await _hydrateRows(rows, generation);
+        if (!mounted || generation != _generation) return;
+
+        final batch = await buildPlayerOpeningGamesIndexBatchAsync(hydrated);
+        if (!mounted || generation != _generation) return;
+
+        gamesIndex = mergePlayerOpeningGamesIndexes(gamesIndex, batch);
+        fetched += rows.length;
+        processed += hydrated.length;
+        skipped += rows.length - hydrated.length;
+        final nextIndex = state.index.copyWithGames(gamesIndex);
+        state = state.copyWith(
+          index: nextIndex,
+          progress: state.progress.copyWith(
+            status: PlayerOpeningTreeStatus.complete,
+            currentPage: pageNumber,
+            fetchedGames: fetched,
+            processedGames: processed,
+            skippedGames: skipped,
+            indexedPositions: nextIndex.positionCount,
+          ),
+        );
+        _log(
+          'games batch player=$_playerId page=$pageNumber '
+          'rows=${rows.length} hydrated=${hydrated.length} '
+          'downloadedGames=${gamesIndex.gameCount} '
+          'gamePositions=${gamesIndex.positionCount}',
+        );
+
+        final metadata = response['metadata'];
+        final hasMore =
+            metadata is Map
+                ? _readPlayerOpeningTreeHasMore(metadata) ??
+                    pageRows.length >= _pageSize
+                : _readPlayerOpeningTreeHasMore(response) ??
+                    pageRows.length >= _pageSize;
+        if (!hasMore) break;
+        pageNumber += 1;
+      }
+      _log(
+        'games complete player=$_playerId fetched=$fetched '
+        'processed=$processed skipped=$skipped',
+      );
+    } catch (e) {
+      if (!mounted || generation != _generation) return;
+      _log('games background error player=$_playerId error=$e');
+      state = state.copyWith(
+        progress: state.progress.copyWith(
+          status: PlayerOpeningTreeStatus.complete,
+          error: null,
+        ),
+      );
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _hydrateRows(
+    List<Map<String, dynamic>> rows,
+    int generation,
+  ) async {
+    final output = <Map<String, dynamic>>[];
+    for (var i = 0; i < rows.length; i += _hydrateConcurrency) {
+      if (generation != _generation) return output;
+      final chunk = rows.sublist(
+        i,
+        (i + _hydrateConcurrency).clamp(0, rows.length).toInt(),
+      );
+      final hydrated = await Future.wait(
+        chunk.map(_hydrateRow),
+        eagerError: false,
+      );
+      output.addAll(hydrated.whereType<Map<String, dynamic>>());
+    }
+    return output;
+  }
+
+  Future<Map<String, dynamic>?> _hydrateRow(Map<String, dynamic> row) async {
+    final directPgn = row['pgn']?.toString();
+    final data = row['data'];
+    if (pgnHasMoves(directPgn) ||
+        (data is Map &&
+            pgnHasMoves(
+              buildPgnFromGamebaseData(Map<String, dynamic>.from(data)),
+            ))) {
+      return row;
+    }
+
+    final id = row['id']?.toString().trim();
+    if (id == null || id.isEmpty) return null;
+    final full = await _ref.read(gamebaseRepositoryProvider).getGameWithPgn(id);
+    if (full == null) return null;
+
+    final pgn =
+        pgnHasMoves(full.pgn) ? full.pgn : buildPgnFromGamebaseData(full.data);
+    if (!pgnHasMoves(pgn)) return null;
+
+    return <String, dynamic>{
+      ...row,
+      'id': full.id,
+      'date': full.date.toIso8601String(),
+      'result': full.resultDisplay,
+      'timeControl': full.timeControl.name.toUpperCase(),
+      'whitePlayerId': full.whitePlayerId ?? row['whitePlayerId'],
+      'blackPlayerId': full.blackPlayerId ?? row['blackPlayerId'],
+      'white': full.whiteName ?? row['white'] ?? row['whiteName'],
+      'black': full.blackName ?? row['black'] ?? row['blackName'],
+      'whiteElo': full.whiteElo ?? row['whiteElo'],
+      'blackElo': full.blackElo ?? row['blackElo'],
+      'eco': full.eco ?? row['eco'],
+      'opening': full.opening ?? row['opening'],
+      'variation': full.variation ?? row['variation'],
+      'event': full.event ?? row['event'],
+      'site': full.site ?? row['site'],
+      'data': full.data ?? row['data'],
+      'pgn': pgn,
+    };
   }
 
   void _completeFromTreeResponse(
@@ -1582,6 +1731,35 @@ Map<String, dynamic> _responseData(Map<String, dynamic> response) {
   final data = response['data'];
   if (data is Map) return Map<String, dynamic>.from(data);
   return response;
+}
+
+List<Map<String, dynamic>> _rowsFromPlayerGamesResponse(
+  Map<String, dynamic> response,
+) {
+  final data = response['data'];
+  if (data is! List) return const <Map<String, dynamic>>[];
+  return data
+      .whereType<Map>()
+      .map((row) => Map<String, dynamic>.from(row))
+      .where((row) => (row['id']?.toString().trim() ?? '').isNotEmpty)
+      .toList(growable: false);
+}
+
+bool? _readPlayerOpeningTreeHasMore(Map<dynamic, dynamic> values) {
+  for (final key in const <String>['hasMore', 'has_more', 'hasNextPage']) {
+    final parsed = _readNullableBool(values[key]);
+    if (parsed != null) return parsed;
+  }
+  return null;
+}
+
+bool? _readNullableBool(Object? value) {
+  if (value is bool) return value;
+  final raw = value?.toString().trim().toLowerCase();
+  if (raw == null || raw.isEmpty) return null;
+  if (raw == 'true' || raw == '1' || raw == 'yes') return true;
+  if (raw == 'false' || raw == '0' || raw == 'no') return false;
+  return null;
 }
 
 /// Provider for managing the current page index of the opening explorer panels (0: Moves, 1: Notation).

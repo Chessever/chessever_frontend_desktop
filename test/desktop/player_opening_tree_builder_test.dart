@@ -1,4 +1,5 @@
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -57,6 +58,52 @@ void main() {
 
     expect(index.movesForFen('8/8/8/8/8/8/8/8 w - - 0 1'), isEmpty);
   });
+
+  test(
+    'serves games for current position from downloaded games index',
+    () async {
+      final treeIndex = PlayerOpeningTreeIndex.fromSnapshot(
+        PlayerOpeningTreeSnapshot.fromJson(_snapshotJson()),
+      );
+      final gamesIndex = await buildPlayerOpeningGamesIndexBatchAsync([
+        {
+          'id': 'game-1',
+          'date': '2024-01-01',
+          'result': '1-0',
+          'whitePlayerId': 'player-uuid',
+          'blackPlayerId': 'other',
+          'white': 'White',
+          'black': 'Black',
+          'pgn': '''
+[Event "Test"]
+[Site "Local"]
+[Date "2024.01.01"]
+[White "White"]
+[Black "Black"]
+[Result "1-0"]
+
+1. e4 e5 1-0
+''',
+        },
+      ]);
+      final index = treeIndex.copyWithGames(gamesIndex);
+
+      final response = localPlayerTreeGamesResponse(
+        index: index,
+        fen: Chess.initial.fen,
+        uci: 'e2e4',
+        filters: const PlayerOpeningTreeFilterCriteria(playerId: 'player-uuid'),
+        sortBy: GamebaseSortField.date,
+        sortDirection: GamebaseSortDirection.desc,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+
+      expect(response.metadata.totalCount, 1);
+      expect(response.data.single['id'], 'game-1');
+      expect(response.data.single['continuation'], ['e2e4', 'e7e5']);
+    },
+  );
 }
 
 Map<String, dynamic> _snapshotJson() {
