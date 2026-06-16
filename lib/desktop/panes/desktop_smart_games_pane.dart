@@ -423,7 +423,8 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
       sliver: SliverToBoxAdapter(
         child: DesktopDateGroupCard(
           label: label,
-          gameCount: widget.showCounts ? gameCount : 0,
+          gameCount: gameCount,
+          gameCountLabel: widget.showCounts ? null : 'Loading…',
           collapsed: collapsed,
           onToggle: () {
             setState(() {

@@ -12,12 +12,14 @@ class DesktopDateGroupCard extends StatelessWidget {
     super.key,
     required this.label,
     required this.gameCount,
+    this.gameCountLabel,
     this.collapsed = false,
     this.onToggle,
   });
 
   final String label;
   final int gameCount;
+  final String? gameCountLabel;
   final bool collapsed;
   final VoidCallback? onToggle;
 
@@ -92,7 +94,10 @@ class DesktopDateGroupCard extends StatelessWidget {
                           ),
                     ),
                   ),
-                  child: Text(gameCount == 1 ? '1 game' : '$gameCount games'),
+                  child: Text(
+                    gameCountLabel ??
+                        (gameCount == 1 ? '1 game' : '$gameCount games'),
+                  ),
                 ),
                 if (onToggle != null) ...[
                   const SizedBox(width: 8),

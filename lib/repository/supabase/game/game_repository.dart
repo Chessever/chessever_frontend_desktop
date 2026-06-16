@@ -75,6 +75,16 @@ const List<String> _classicalTimeControlValues = [
   'Classical',
 ];
 
+int gameStructuredAverageRating(Games game) {
+  final players = game.players;
+  if (players == null || players.length < 2) return 0;
+
+  final whiteElo = players.first.rating;
+  final blackElo = players[1].rating;
+  if (whiteElo <= 0 || blackElo <= 0) return 0;
+  return (whiteElo + blackElo) ~/ 2;
+}
+
 class GameRepository extends BaseRepository {
   List<int> _parseFideIds(List<String> fideIds) {
     return fideIds.map((id) => int.tryParse(id)).whereType<int>().toList();
@@ -571,7 +581,7 @@ class GameRepository extends BaseRepository {
           final games = await compute(_decodeGamesInIsolate, jsonList);
           collected.addAll(
             games.where(
-              (game) => _gameAverageRating(game) >= minAverageElo,
+              (game) => gameStructuredAverageRating(game) >= minAverageElo,
             ),
           );
         }
@@ -602,16 +612,16 @@ class GameRepository extends BaseRepository {
 
         collected.addAll(
           games.where(
-            (game) => _gameAverageRating(game) >= minAverageElo,
+            (game) => gameStructuredAverageRating(game) >= minAverageElo,
           ),
         );
       }
 
       final result = _deduplicateGames(collected);
       result.sort((a, b) {
-        final eloCompare = _gameAverageRating(
+        final eloCompare = gameStructuredAverageRating(
           b,
-        ).compareTo(_gameAverageRating(a));
+        ).compareTo(gameStructuredAverageRating(a));
         if (eloCompare != 0) return eloCompare;
 
         final aDate = a.lastMoveTime ?? a.gameDay ?? a.dateStart ?? DateTime(0);
@@ -686,17 +696,6 @@ class GameRepository extends BaseRepository {
       return _deduplicateGames(collected).take(limit).toList();
     });
   }
-
-  int _gameAverageRating(Games game) {
-    final players = game.players;
-    if (players == null || players.length < 2) return 0;
-
-    final whiteElo = players.first.rating;
-    final blackElo = players[1].rating;
-    if (whiteElo <= 0 || blackElo <= 0) return 0;
-    return (whiteElo + blackElo) ~/ 2;
-  }
-
 
   bool _isClassicalTimeControl(Games game) {
     final normalized = game.timeControl?.trim().toLowerCase();
