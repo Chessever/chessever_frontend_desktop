@@ -19,6 +19,7 @@ import 'package:chessever/desktop/panes/player_score_card_pane.dart';
 import 'package:chessever/desktop/services/board_pgn_clipboard.dart';
 import 'package:chessever/desktop/services/board_pgn_paste.dart';
 import 'package:chessever/desktop/services/board_tab_pgn_resolver.dart';
+import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/services/local_library_game_updater.dart';
@@ -51,13 +52,12 @@ import 'package:chessever/desktop/widgets/board_actions_popover.dart';
 import 'package:chessever/desktop/services/play/play_from_here.dart';
 import 'package:chessever/desktop/widgets/board_context_menu.dart';
 import 'package:chessever/desktop/widgets/board_share_dialog.dart';
+import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
 import 'package:chessever/desktop/widgets/board_annotation_layer.dart';
 import 'package:chessever/desktop/widgets/board_wheel_navigation.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
-import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
-import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
@@ -155,11 +155,11 @@ bool shouldConfirmBoardTabCloseForLocalNotationEdits({
   required String currentPgn,
   required String? lastAppliedPgn,
 }) {
-  if (!dirtySinceLoad) return false;
-  final current = currentPgn.trim();
-  final applied = lastAppliedPgn?.trim();
-  if (applied == null || applied.isEmpty) return current.isNotEmpty;
-  return current != applied;
+  return shouldConfirmBoardAnalysisDiscard(
+    dirtySinceLoad: dirtySinceLoad,
+    currentPgn: currentPgn,
+    lastAppliedPgn: lastAppliedPgn,
+  );
 }
 
 @visibleForTesting
@@ -2080,12 +2080,12 @@ class _BoardPaneContent extends HookConsumerWidget {
 
     void navigatePreviousGameManually() {
       pauseAutoReplayForManualNavigation();
-      unawaited(navigateActiveEventGame(ref, delta: -1));
+      unawaited(navigateActiveEventGame(ref, context: context, delta: -1));
     }
 
     void navigateNextGameManually() {
       pauseAutoReplayForManualNavigation();
-      unawaited(navigateActiveEventGame(ref, delta: 1));
+      unawaited(navigateActiveEventGame(ref, context: context, delta: 1));
     }
 
     void takebackForVariationAction() {
@@ -2671,19 +2671,10 @@ class _BoardPaneContent extends HookConsumerWidget {
         if (!force && hasLocalNotationEdits()) {
           if (closeConfirmationOpen.value) return;
           closeConfirmationOpen.value = true;
-          final shouldClose = await showDesktopModal<bool>(
+          final shouldClose = await confirmDiscardBoardAnalysis(
             context,
-            title: 'Are you sure?',
-            maxWidth: 360,
-            maxHeight: 220,
-            barrierDismissible: true,
-            builder:
-                (dialogContext) => _BoardCloseConfirmationDialog(
-                  onConfirm: () => Navigator.of(dialogContext).pop(true),
-                  onCancel: () => Navigator.of(dialogContext).pop(false),
-                ),
           ).whenComplete(() => closeConfirmationOpen.value = false);
-          if (shouldClose != true) return;
+          if (!shouldClose) return;
         }
         ref.read(desktopTabsProvider.notifier).close(tabIdToClose);
       }
@@ -4373,87 +4364,6 @@ ChessMovePointer? _siblingCycle(
   final newRow = currentRow + delta;
   if (newRow < 0 || newRow >= entries.length) return null;
   return entries[newRow];
-}
-
-class _BoardCloseConfirmationDialog extends StatefulWidget {
-  const _BoardCloseConfirmationDialog({
-    required this.onConfirm,
-    required this.onCancel,
-  });
-
-  final VoidCallback onConfirm;
-  final VoidCallback onCancel;
-
-  @override
-  State<_BoardCloseConfirmationDialog> createState() =>
-      _BoardCloseConfirmationDialogState();
-}
-
-class _BoardCloseConfirmationDialogState
-    extends State<_BoardCloseConfirmationDialog> {
-  final FocusNode _yesFocusNode = FocusNode(debugLabel: 'confirm close board');
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _yesFocusNode.requestFocus();
-    });
-  }
-
-  @override
-  void dispose() {
-    _yesFocusNode.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return CallbackShortcuts(
-      bindings: {
-        const SingleActivator(LogicalKeyboardKey.escape): widget.onCancel,
-        const SingleActivator(LogicalKeyboardKey.enter): widget.onConfirm,
-        const SingleActivator(LogicalKeyboardKey.numpadEnter): widget.onConfirm,
-      },
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              'This board has a move that is not in the loaded notation. Close this tab and discard it?',
-              style: TextStyle(
-                color: kWhiteColor70,
-                fontSize: 13,
-                height: 1.35,
-              ),
-            ),
-            const SizedBox(height: 18),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                DesktopDialogButton(
-                  label: 'No',
-                  onPress: widget.onCancel,
-                  tone: DesktopDialogButtonTone.secondary,
-                ),
-                const SizedBox(width: 10),
-                Focus(
-                  focusNode: _yesFocusNode,
-                  child: DesktopDialogButton(
-                    label: 'Yes',
-                    onPress: widget.onConfirm,
-                    tone: DesktopDialogButtonTone.primary,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _PrevMoveIntent extends Intent {
