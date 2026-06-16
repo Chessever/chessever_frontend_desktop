@@ -11,6 +11,18 @@ abstract class DesktopContextMenuEntry<T> {
   const DesktopContextMenuEntry();
 }
 
+class DesktopContextMenuCustom<T> extends DesktopContextMenuEntry<T> {
+  const DesktopContextMenuCustom({required this.height, required this.builder});
+
+  final double height;
+  final Widget Function(
+    BuildContext context,
+    ValueChanged<T> onSelect,
+    VoidCallback? onHover,
+  )
+  builder;
+}
+
 class DesktopContextMenuItem<T> extends DesktopContextMenuEntry<T> {
   const DesktopContextMenuItem({
     required this.value,
@@ -324,6 +336,12 @@ class _DesktopContextMenuBox<T> extends StatelessWidget {
           for (var i = 0; i < entries.length; i++)
             if (entries[i] is DesktopContextMenuDivider<T>)
               const _DesktopContextDivider()
+            else if (entries[i] is DesktopContextMenuCustom<T>)
+              (entries[i] as DesktopContextMenuCustom<T>).builder(
+                context,
+                onSelect,
+                onPlainItemHover,
+              )
             else if (entries[i] is DesktopContextMenuItem<T>)
               _DesktopContextMenuRow<T>(
                 item: entries[i] as DesktopContextMenuItem<T>,
@@ -553,7 +571,13 @@ class _DesktopContextDivider extends StatelessWidget {
 double _estimatedMenuHeight<T>(List<DesktopContextMenuEntry<T>> entries) {
   var height = 12.0;
   for (final entry in entries) {
-    height += entry is DesktopContextMenuDivider<T> ? 11 : 40;
+    if (entry is DesktopContextMenuDivider<T>) {
+      height += 11;
+    } else if (entry is DesktopContextMenuCustom<T>) {
+      height += entry.height;
+    } else {
+      height += 40;
+    }
   }
   return height;
 }
@@ -561,7 +585,14 @@ double _estimatedMenuHeight<T>(List<DesktopContextMenuEntry<T>> entries) {
 double _submenuTopFor<T>(List<DesktopContextMenuEntry<T>> entries, int index) {
   var top = 0.0;
   for (var i = 0; i < index; i++) {
-    top += entries[i] is DesktopContextMenuDivider<T> ? 11 : 40;
+    final entry = entries[i];
+    if (entry is DesktopContextMenuDivider<T>) {
+      top += 11;
+    } else if (entry is DesktopContextMenuCustom<T>) {
+      top += entry.height;
+    } else {
+      top += 40;
+    }
   }
   return top;
 }

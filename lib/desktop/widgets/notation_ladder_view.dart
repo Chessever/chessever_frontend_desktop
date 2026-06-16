@@ -597,6 +597,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   }
 }
 
+// ignore: unused_element
 class _NotationAnnotationToolbar extends StatelessWidget {
   const _NotationAnnotationToolbar({
     required this.activePointer,
@@ -613,7 +614,9 @@ class _NotationAnnotationToolbar extends StatelessWidget {
     required this.onTrimContinuation,
   });
 
+  // ignore: unused_field
   static const List<int> _qualityNags = [3, 1, 5, 6, 2, 4, 7];
+  // ignore: unused_field
   static const List<int> _evaluationNags = [
     18,
     16,
@@ -626,6 +629,7 @@ class _NotationAnnotationToolbar extends StatelessWidget {
     19,
     132,
   ];
+  // ignore: unused_field
   static const List<int> _observationNags = [146, 140, 36, 40, 32, 138, 22];
 
   final ChessMovePointer activePointer;
@@ -892,10 +896,219 @@ String _nagMenuLabel(int nag, NagDisplay display) {
     40 => 'With idea',
     132 => 'Counterplay',
     138 => 'Time trouble',
-    140 => 'Novelty',
-    146 => 'Editorial mark',
+    140 => 'With idea',
+    146 => 'Novelty',
     _ => display.symbol,
   };
+}
+
+DesktopContextMenuCustom<Object> _ladderNagPaletteEntry({
+  required Set<int> activeNags,
+  required bool canQualityAnnotate,
+  required bool canToggleNag,
+}) {
+  return DesktopContextMenuCustom<Object>(
+    height: 142,
+    builder:
+        (context, onSelect, onHover) => _LadderNagPalette(
+          activeNags: activeNags,
+          canQualityAnnotate: canQualityAnnotate,
+          canToggleNag: canToggleNag,
+          onSelect: onSelect,
+          onHover: onHover,
+        ),
+  );
+}
+
+class _LadderNagPalette extends StatelessWidget {
+  const _LadderNagPalette({
+    required this.activeNags,
+    required this.canQualityAnnotate,
+    required this.canToggleNag,
+    required this.onSelect,
+    required this.onHover,
+  });
+
+  static const _rows = <List<_PaletteNag>>[
+    [
+      _PaletteNag(3, _LadderNagKind.quality, '!!'),
+      _PaletteNag(1, _LadderNagKind.quality, '!'),
+      _PaletteNag(5, _LadderNagKind.quality, '!?'),
+      _PaletteNag(6, _LadderNagKind.quality, '?!'),
+      _PaletteNag(2, _LadderNagKind.quality, '?'),
+      _PaletteNag(4, _LadderNagKind.quality, '??'),
+    ],
+    [
+      _PaletteNag(18, _LadderNagKind.evaluation, '+-'),
+      _PaletteNag(16, _LadderNagKind.evaluation, '±'),
+      _PaletteNag(14, _LadderNagKind.evaluation, '+='),
+      _PaletteNag(10, _LadderNagKind.evaluation, '='),
+      _PaletteNag(13, _LadderNagKind.evaluation, '∞'),
+      _PaletteNag(15, _LadderNagKind.evaluation, '=+'),
+    ],
+    [
+      _PaletteNag(17, _LadderNagKind.evaluation, '∓'),
+      _PaletteNag(19, _LadderNagKind.evaluation, '-+'),
+      _PaletteNag(40, _LadderNagKind.idea, '↑'),
+      _PaletteNag(36, _LadderNagKind.idea, '→'),
+      _PaletteNag(132, _LadderNagKind.idea, '⇆'),
+      _PaletteNag(32, _LadderNagKind.idea, '⟳'),
+    ],
+    [
+      _PaletteNag(7, _LadderNagKind.quality, '□'),
+      _PaletteNag(146, _LadderNagKind.idea, 'N'),
+      _PaletteNag(140, _LadderNagKind.idea, '∆'),
+    ],
+  ];
+
+  final Set<int> activeNags;
+  final bool canQualityAnnotate;
+  final bool canToggleNag;
+  final ValueChanged<Object> onSelect;
+  final VoidCallback? onHover;
+
+  bool _enabled(_PaletteNag item) {
+    return switch (item.kind) {
+      _LadderNagKind.quality => canQualityAnnotate,
+      _LadderNagKind.evaluation || _LadderNagKind.idea => canToggleNag,
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final row in _rows)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                mainAxisAlignment:
+                    row.length < 6
+                        ? MainAxisAlignment.center
+                        : MainAxisAlignment.spaceBetween,
+                children: [
+                  for (final item in row)
+                    _LadderNagPaletteCell(
+                      item: item,
+                      active: activeNags.contains(item.nag),
+                      enabled: _enabled(item),
+                      onSelect: onSelect,
+                      onHover: onHover,
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PaletteNag {
+  const _PaletteNag(this.nag, this.kind, this.symbol);
+
+  final int nag;
+  final _LadderNagKind kind;
+  final String symbol;
+}
+
+class _LadderNagPaletteCell extends StatefulWidget {
+  const _LadderNagPaletteCell({
+    required this.item,
+    required this.active,
+    required this.enabled,
+    required this.onSelect,
+    required this.onHover,
+  });
+
+  final _PaletteNag item;
+  final bool active;
+  final bool enabled;
+  final ValueChanged<Object> onSelect;
+  final VoidCallback? onHover;
+
+  @override
+  State<_LadderNagPaletteCell> createState() => _LadderNagPaletteCellState();
+}
+
+class _LadderNagPaletteCellState extends State<_LadderNagPaletteCell> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final display = getNagDisplay(widget.item.nag);
+    final enabled = widget.enabled && display != null;
+    final active = widget.active;
+    final foreground =
+        !enabled
+            ? kWhiteColor.withValues(alpha: 0.25)
+            : active
+            ? kWhiteColor
+            : _hovered
+            ? kWhiteColor
+            : display.color;
+    final background =
+        active
+            ? kWhiteColor.withValues(alpha: 0.14)
+            : _hovered && enabled
+            ? kWhiteColor.withValues(alpha: 0.075)
+            : Colors.transparent;
+    final border =
+        active ? kWhiteColor.withValues(alpha: 0.22) : Colors.transparent;
+    final cell = AnimatedContainer(
+      duration: const Duration(milliseconds: 110),
+      curve: Curves.easeOutCubic,
+      width: 34,
+      height: 26,
+      margin: const EdgeInsets.symmetric(horizontal: 1),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: border),
+      ),
+      child: Text(
+        widget.item.symbol,
+        maxLines: 1,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: foreground,
+          fontSize: widget.item.symbol.length > 1 ? 13 : 15,
+          fontWeight: FontWeight.w800,
+          height: 1,
+          letterSpacing: -0.2,
+        ),
+      ),
+    );
+
+    final tooltip =
+        display == null
+            ? widget.item.symbol
+            : _nagMenuLabel(widget.item.nag, display);
+    final wrapped = DesktopTooltip(message: tooltip, child: cell);
+    if (!enabled) return wrapped;
+
+    return ClickCursor(
+      child: MouseRegion(
+        onEnter: (_) {
+          widget.onHover?.call();
+          setState(() => _hovered = true);
+        },
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap:
+              () => widget.onSelect(
+                _LadderNagAction(widget.item.kind, widget.item.nag),
+              ),
+          child: wrapped,
+        ),
+      ),
+    );
+  }
 }
 
 /// Renders one [ChessLine] (mainline OR a variation), indenting every
@@ -2967,21 +3180,6 @@ class _LadderChipState extends State<_LadderChip> {
     final notationState =
         context.findAncestorStateOfType<_NotationLadderViewState>();
 
-    List<DesktopContextMenuEntry<Object>> nagEntries(
-      _LadderNagKind kind,
-      List<int> nags,
-    ) {
-      return [
-        for (final nag in nags)
-          if (getNagDisplay(nag) case final display?)
-            DesktopContextMenuItem<Object>(
-              value: _LadderNagAction(kind, nag),
-              icon: Icons.label_important_outline_rounded,
-              label: _nagMenuLabel(nag, display),
-            ),
-      ];
-    }
-
     final selected = await showDesktopContextMenu<Object>(
       context: context,
       position: globalPos,
@@ -3069,41 +3267,27 @@ class _LadderChipState extends State<_LadderChip> {
         ],
         if (canAnnotate) ...[
           const DesktopContextMenuDivider<Object>(),
-          if (canQualityAnnotate)
-            DesktopContextSubmenu<Object>(
-              icon: Icons.chevron_right_rounded,
-              label: '!, ?, ...',
-              entries: nagEntries(
-                _LadderNagKind.quality,
-                _NotationAnnotationToolbar._qualityNags,
-              ),
+          if (canComment)
+            DesktopContextMenuItem<Object>(
+              value: _LadderAction.editComment,
+              icon: Icons.add_comment_outlined,
+              label:
+                  (widget.commentText ?? '').trim().isEmpty
+                      ? 'Add comment'
+                      : 'Edit comment',
             ),
-          if (canToggleNag)
-            DesktopContextSubmenu<Object>(
-              icon: Icons.chevron_right_rounded,
-              label: '+-, =, ...',
-              entries: nagEntries(
-                _LadderNagKind.evaluation,
-                _NotationAnnotationToolbar._evaluationNags,
-              ),
-            ),
-          if (canToggleNag)
-            DesktopContextSubmenu<Object>(
-              icon: Icons.chevron_right_rounded,
-              label: 'Special annotations',
-              entries: nagEntries(
-                _LadderNagKind.idea,
-                _NotationAnnotationToolbar._observationNags,
-              ),
-            ),
+          _ladderNagPaletteEntry(
+            activeNags: widget.nags.toSet(),
+            canQualityAnnotate: canQualityAnnotate,
+            canToggleNag: canToggleNag,
+          ),
           if (canSetQuality && widget.userHasQualityNag)
             const DesktopContextMenuItem<Object>(
               value: _LadderAction.clearAnnotation,
               icon: Icons.clear_rounded,
               label: 'Clear move symbol',
             ),
-        ],
-        if (canComment) ...[
+        ] else if (canComment) ...[
           const DesktopContextMenuDivider<Object>(),
           DesktopContextMenuItem<Object>(
             value: _LadderAction.editComment,

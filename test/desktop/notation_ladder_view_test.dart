@@ -88,10 +88,12 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('!, ?, ...'), findsOneWidget);
       expect(find.text('Add comment'), findsOneWidget);
       expect(find.text('Promote to mainline'), findsOneWidget);
       expect(find.text('Delete'), findsOneWidget);
+      expect(find.text('!, ?, ...'), findsNothing);
+      expect(find.text('+-'), findsOneWidget);
+      expect(find.text('N'), findsOneWidget);
 
       await tester.tap(find.text('Delete'));
       await tester.pumpAndSettle();
@@ -101,9 +103,7 @@ void main() {
       expect(find.text('Delete All Commentary'), findsOneWidget);
       expect(find.text('Delete Text Commentary'), findsOneWidget);
 
-      await tester.tap(find.text('!, ?, ...'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Good move'));
+      await tester.tap(find.text('!'));
       await tester.pumpAndSettle();
 
       expect(toggledPointer, const [0, 0, 0]);
@@ -540,7 +540,7 @@ void main() {
     expect(clipboardWrites.single, contains('1... c5'));
   });
 
-  testWidgets('right-click move menu opens eval and idea annotation groups', (
+  testWidgets('right-click move menu shows direct annotation palette', (
     tester,
   ) async {
     final qualityCalls = <int?>[];
@@ -559,31 +559,28 @@ void main() {
     final move = find.text('Nf3', findRichText: true);
     await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
     await tester.pumpAndSettle();
-    expect(find.text('!, ?, ...'), findsOneWidget);
-    expect(find.text('+-, =, ...'), findsOneWidget);
-    expect(find.text('Special annotations'), findsOneWidget);
+    expect(find.text('!, ?, ...'), findsNothing);
+    expect(find.text('+-, =, ...'), findsNothing);
+    expect(find.text('Special annotations'), findsNothing);
+    expect(find.text('!!'), findsOneWidget);
+    expect(find.text('+-'), findsOneWidget);
+    expect(find.text('N'), findsOneWidget);
 
-    await tester.tap(find.text('!, ?, ...'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Brilliant'));
+    await tester.tap(find.text('!!'));
     await tester.pumpAndSettle();
     expect(qualityCalls, [3]);
 
     await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('+-, =, ...'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('White winning'));
+    await tester.tap(find.text('+-'));
     await tester.pumpAndSettle();
     expect(toggleCalls, ['2:18']);
 
     await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Special annotations'));
+    await tester.tap(find.text('N'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Novelty'));
-    await tester.pumpAndSettle();
-    expect(toggleCalls, ['2:18', '2:140']);
+    expect(toggleCalls, ['2:18', '2:146']);
   });
 }
 
