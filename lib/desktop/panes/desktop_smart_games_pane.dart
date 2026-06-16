@@ -150,6 +150,7 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                   routeTitle: copy.title,
                   hasMore: state.hasMore,
                   isLoading: state.isLoadingMore,
+                  showCounts: !state.hasMore,
                   onLoadMore: () {
                     ref.read(premiumGamesProvider(type).notifier).loadMore();
                   },
@@ -170,6 +171,7 @@ class _SmartGamesList extends ConsumerStatefulWidget {
     required this.hasMore,
     required this.isLoading,
     required this.onLoadMore,
+    required this.showCounts,
   });
 
   final List<GamesTourModel> games;
@@ -177,6 +179,7 @@ class _SmartGamesList extends ConsumerStatefulWidget {
   final bool hasMore;
   final bool isLoading;
   final VoidCallback onLoadMore;
+  final bool showCounts;
 
   @override
   ConsumerState<_SmartGamesList> createState() => _SmartGamesListState();
@@ -420,7 +423,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
       sliver: SliverToBoxAdapter(
         child: DesktopDateGroupCard(
           label: label,
-          gameCount: gameCount,
+          gameCount: widget.showCounts ? gameCount : 0,
           collapsed: collapsed,
           onToggle: () {
             setState(() {
