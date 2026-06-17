@@ -35,11 +35,35 @@ extension AnnotationColorPalette on AnnotationColor {
 
 @immutable
 class BoardAnnotations {
-  const BoardAnnotations({this.shapes = const <cg.Shape>{}});
+  const BoardAnnotations({
+    this.shapes = const <cg.Shape>{},
+    this.positionShapes = const <String, Set<cg.Shape>>{},
+  });
+
+  /// Legacy/current-position scratch shapes. Kept for undo/reset surfaces.
   final Set<cg.Shape> shapes;
 
-  BoardAnnotations copyWith({Set<cg.Shape>? shapes}) {
-    return BoardAnnotations(shapes: shapes ?? this.shapes);
+  /// User-drawn graphic commentary keyed by normalized FEN position key.
+  /// This makes arrows/circles appear only when that exact position is active.
+  final Map<String, Set<cg.Shape>> positionShapes;
+
+  Set<cg.Shape> shapesForPosition(String positionKey) =>
+      positionShapes[positionKey] ?? const <cg.Shape>{};
+
+  Set<String> get annotatedPositionKeys =>
+      positionShapes.entries
+          .where((entry) => entry.value.isNotEmpty)
+          .map((entry) => entry.key)
+          .toSet();
+
+  BoardAnnotations copyWith({
+    Set<cg.Shape>? shapes,
+    Map<String, Set<cg.Shape>>? positionShapes,
+  }) {
+    return BoardAnnotations(
+      shapes: shapes ?? this.shapes,
+      positionShapes: positionShapes ?? this.positionShapes,
+    );
   }
 }
 
@@ -49,66 +73,112 @@ class BoardAnnotationsNotifier extends StateNotifier<BoardAnnotations> {
   /// Toggles a single-square mark (Circle) of [color] on [square]. If a
   /// matching circle exists, it's removed (so a second right-click in the
   /// same square cleans up after itself).
-  void toggleCircle(Square square, AnnotationColor color) {
+  void toggleCircle(
+    Square square,
+    AnnotationColor color, {
+    String? positionKey,
+  }) {
     final c = color.color;
+    final currentShapes = _currentShapes(positionKey);
     cg.Shape? match;
-    for (final s in state.shapes) {
+    for (final s in currentShapes) {
       if (s is cg.Circle && s.orig == square && s.color == c) {
         match = s;
         break;
       }
     }
     if (match != null) {
-      state = state.copyWith(shapes: {...state.shapes}..remove(match));
+      _setCurrentShapes({...currentShapes}..remove(match), positionKey);
       return;
     }
-    state = state.copyWith(
-      shapes: {...state.shapes, cg.Circle(color: c, orig: square)},
-    );
+    _setCurrentShapes({
+      ...currentShapes,
+      cg.Circle(color: c, orig: square),
+    }, positionKey);
   }
 
   /// Adds (or, when same shape already exists, removes) an arrow.
-  void toggleArrow(Square orig, Square dest, AnnotationColor color) {
+  void toggleArrow(
+    Square orig,
+    Square dest,
+    AnnotationColor color, {
+    String? positionKey,
+  }) {
     if (orig == dest) {
-      toggleCircle(orig, color);
+      toggleCircle(orig, color, positionKey: positionKey);
       return;
     }
     final c = color.color;
+    final currentShapes = _currentShapes(positionKey);
     cg.Shape? match;
-    for (final s in state.shapes) {
+    for (final s in currentShapes) {
       if (s is cg.Arrow && s.orig == orig && s.dest == dest && s.color == c) {
         match = s;
         break;
       }
     }
     if (match != null) {
-      state = state.copyWith(shapes: {...state.shapes}..remove(match));
+      _setCurrentShapes({...currentShapes}..remove(match), positionKey);
       return;
     }
-    state = state.copyWith(
-      shapes: {
-        ...state.shapes,
-        cg.Arrow(color: c, orig: orig, dest: dest),
-      },
-    );
+    _setCurrentShapes({
+      ...currentShapes,
+      cg.Arrow(color: c, orig: orig, dest: dest),
+    }, positionKey);
   }
 
   /// Wipe all user-drawn shapes. Bound to a left-click on the board.
-  void clear() {
-    if (state.shapes.isEmpty) return;
-    state = const BoardAnnotations();
+  void clear({String? positionKey}) {
+    if (positionKey == null || positionKey.isEmpty) {
+      if (state.shapes.isEmpty && state.positionShapes.isEmpty) return;
+      state = const BoardAnnotations();
+      return;
+    }
+    final currentShapes = _currentShapes(positionKey);
+    if (currentShapes.isEmpty) return;
+    _setCurrentShapes(const <cg.Shape>{}, positionKey);
   }
 
   /// Replace the entire shape set with [shapes]. Used by the undo stack
   /// to restore the pre-mutation snapshot without going through toggle
   /// semantics. The caller is expected to pass an immutable copy.
-  void restore(Set<cg.Shape> shapes) {
-    state = BoardAnnotations(shapes: Set<cg.Shape>.unmodifiable(shapes));
+  void restore(Set<cg.Shape> shapes, {String? positionKey}) {
+    _setCurrentShapes(Set<cg.Shape>.unmodifiable(shapes), positionKey);
+  }
+
+  Set<cg.Shape> _currentShapes(String? positionKey) {
+    if (positionKey == null || positionKey.isEmpty) return state.shapes;
+    return state.shapesForPosition(positionKey);
+  }
+
+  void _setCurrentShapes(Set<cg.Shape> shapes, String? positionKey) {
+    final immutable = Set<cg.Shape>.unmodifiable(shapes);
+    if (positionKey == null || positionKey.isEmpty) {
+      state = state.copyWith(shapes: immutable);
+      return;
+    }
+    final nextPositionShapes = Map<String, Set<cg.Shape>>.of(
+      state.positionShapes,
+    );
+    if (immutable.isEmpty) {
+      nextPositionShapes.remove(positionKey);
+    } else {
+      nextPositionShapes[positionKey] = immutable;
+    }
+    state = state.copyWith(
+      shapes: immutable,
+      positionShapes: Map<String, Set<cg.Shape>>.unmodifiable(
+        nextPositionShapes,
+      ),
+    );
   }
 }
 
 final boardAnnotationsProvider = StateNotifierProvider.family<
-    BoardAnnotationsNotifier, BoardAnnotations, String>((ref, tabId) {
+  BoardAnnotationsNotifier,
+  BoardAnnotations,
+  String
+>((ref, tabId) {
   return BoardAnnotationsNotifier();
 });
 

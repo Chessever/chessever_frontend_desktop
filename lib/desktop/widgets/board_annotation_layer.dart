@@ -33,6 +33,7 @@ class BoardAnnotationLayer extends ConsumerStatefulWidget {
     required this.size,
     required this.orientation,
     required this.child,
+    required this.positionKey,
     this.onLeftClickClear,
   });
 
@@ -41,6 +42,11 @@ class BoardAnnotationLayer extends ConsumerStatefulWidget {
   final double size;
   final Side orientation;
   final Widget child;
+
+  /// Normalized FEN key for the currently displayed position. User-drawn
+  /// arrows/circles are stored under this key so they reappear only when
+  /// the same position is active.
+  final String positionKey;
 
   /// Called when the user left-clicks anywhere on the board *and* there
   /// were drawn shapes to clear. Useful if the host wants a haptic /
@@ -133,9 +139,12 @@ class _BoardAnnotationLayerState extends ConsumerState<BoardAnnotationLayer> {
           // selection underneath this Listener.
           final notifier = ref.read(boardAnnotationsProvider(tabId).notifier);
           final hasShapes =
-              ref.read(boardAnnotationsProvider(tabId)).shapes.isNotEmpty;
+              ref
+                  .read(boardAnnotationsProvider(tabId))
+                  .shapesForPosition(widget.positionKey)
+                  .isNotEmpty;
           if (hasShapes) {
-            notifier.clear();
+            notifier.clear(positionKey: widget.positionKey);
             widget.onLeftClickClear?.call();
           }
         }
@@ -172,9 +181,18 @@ class _BoardAnnotationLayerState extends ConsumerState<BoardAnnotationLayer> {
         final shouldCommit = !_plainSecondaryGesture || plainArrowDest;
         if (shouldCommit) {
           if (orig == dest) {
-            notifier.toggleCircle(orig, _activeColor);
+            notifier.toggleCircle(
+              orig,
+              _activeColor,
+              positionKey: widget.positionKey,
+            );
           } else {
-            notifier.toggleArrow(orig, dest, _activeColor);
+            notifier.toggleArrow(
+              orig,
+              dest,
+              _activeColor,
+              positionKey: widget.positionKey,
+            );
           }
         }
         _resetGestureState();

@@ -22,6 +22,43 @@ void main() {
     expect(find.byType(MoveHoverPreview), findsNothing);
   });
 
+  testWidgets('shows a compact icon on moves with saved position arrows', (
+    tester,
+  ) async {
+    final game = _sampleGame();
+    final e4Key = game.mainline.first.fen
+        .split(RegExp(r'\s+'))
+        .take(4)
+        .join(' ');
+
+    await tester.pumpWidget(
+      _host(game: game, onJump: (_) {}, positionArrowKeys: {e4Key}),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.trending_flat_rounded), findsOneWidget);
+  });
+
+  testWidgets('Tr marker jumps to the next occurrence of the same position', (
+    tester,
+  ) async {
+    final jumps = <ChessMovePointer>[];
+
+    await tester.pumpWidget(
+      _host(game: _transpositionMarkerGame(), onJump: jumps.add),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tr'), findsNWidgets(2));
+    await tester.tap(find.text('Tr').first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1));
+
+    expect(jumps, [
+      [1],
+    ]);
+  });
+
   testWidgets(
     'switches to inline notation and keeps variation moves clickable',
     (tester) async {
@@ -786,6 +823,7 @@ Widget _host({
   void Function(ChessMovePointer pointer)? onDeleteVariation,
   ValueNotifier<NotationLayoutMode>? layoutModeController,
   NotationVariationCollapseController? variationCollapseController,
+  Set<String> positionArrowKeys = const <String>{},
 }) {
   final notation = NotationLadderView(
     game: game,
@@ -803,6 +841,7 @@ Widget _host({
     onDeleteVariation: onDeleteVariation,
     layoutModeController: layoutModeController,
     variationCollapseController: variationCollapseController,
+    positionArrowKeys: positionArrowKeys,
     useFigurine: useFigurine,
     pieceAssets: pieceAssets,
   );
@@ -829,6 +868,31 @@ ChessGame _longGame() {
         turn: whiteToMove ? ChessColor.white : ChessColor.black,
       );
     }),
+  );
+}
+
+ChessGame _transpositionMarkerGame() {
+  final e4 = Chess.initial.play(NormalMove.fromUci('e2e4'));
+  return ChessGame(
+    gameId: 'notation-transposition-marker-test',
+    startingFen: Chess.initial.fen,
+    metadata: const <String, dynamic>{},
+    mainline: [
+      ChessMove(
+        num: 1,
+        fen: e4.fen,
+        san: 'e4',
+        uci: 'e2e4',
+        turn: ChessColor.white,
+      ),
+      ChessMove(
+        num: 1,
+        fen: e4.fen,
+        san: 'e5',
+        uci: 'e7e5',
+        turn: ChessColor.black,
+      ),
+    ],
   );
 }
 
