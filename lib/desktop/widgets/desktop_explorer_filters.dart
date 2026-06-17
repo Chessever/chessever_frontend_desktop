@@ -8,6 +8,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/explorer_filter_scope.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
@@ -37,10 +38,16 @@ class DesktopExplorerFilters extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(gamebaseExplorerProvider);
+    final isBuildTreeScope = scopedPlayer != null;
     final filters =
         scopedPlayer == null
             ? state.filters
-            : _forceScopedPlayer(state.filters, scopedPlayer!);
+            : sanitizeBuildTreeExplorerFilters(state.filters, scopedPlayer!);
+    if (isBuildTreeScope && filters != state.filters) {
+      Future.microtask(() {
+        ref.read(gamebaseExplorerProvider.notifier).updateFilters(filters);
+      });
+    }
     final notifier = ref.read(gamebaseExplorerProvider.notifier);
     final hasActiveSettings =
         _hasActiveFilterSettings(filters, scopedPlayer) ||
@@ -74,20 +81,22 @@ class DesktopExplorerFilters extends ConsumerWidget {
                       selected: filters.timeControls,
                       onToggle: notifier.toggleTimeControl,
                     ),
-                    const SizedBox(height: 18),
-                    const _SectionLabel('Level'),
-                    const SizedBox(height: 8),
-                    _TitleChips(
-                      selectedMinRating: filters.minRating,
-                      onToggle: notifier.toggleTitle,
-                    ),
-                    const SizedBox(height: 18),
-                    const _SectionLabel('Result'),
-                    const SizedBox(height: 8),
-                    _ResultChips(
-                      selected: filters.gameResult,
-                      onToggle: notifier.toggleGameResult,
-                    ),
+                    if (!isBuildTreeScope) ...[
+                      const SizedBox(height: 18),
+                      const _SectionLabel('Level'),
+                      const SizedBox(height: 8),
+                      _TitleChips(
+                        selectedMinRating: filters.minRating,
+                        onToggle: notifier.toggleTitle,
+                      ),
+                      const SizedBox(height: 18),
+                      const _SectionLabel('Result'),
+                      const SizedBox(height: 8),
+                      _ResultChips(
+                        selected: filters.gameResult,
+                        onToggle: notifier.toggleGameResult,
+                      ),
+                    ],
                     const SizedBox(height: 18),
                     const _SectionLabel('Format'),
                     const SizedBox(height: 8),
@@ -104,22 +113,24 @@ class DesktopExplorerFilters extends ConsumerWidget {
                         onToggle: notifier.togglePlayerColor,
                       ),
                     ],
-                    const SizedBox(height: 18),
-                    const _SectionLabel('Rating range'),
-                    const SizedBox(height: 8),
-                    _RatingRange(
-                      minRating: filters.minRating,
-                      maxRating: filters.maxRating,
-                      onChanged: notifier.setRatingRange,
-                    ),
-                    const SizedBox(height: 18),
-                    const _SectionLabel('Year range'),
-                    const SizedBox(height: 8),
-                    _YearRange(
-                      yearFrom: filters.yearFrom,
-                      yearTo: filters.yearTo,
-                      onChanged: notifier.setYearRange,
-                    ),
+                    if (!isBuildTreeScope) ...[
+                      const SizedBox(height: 18),
+                      const _SectionLabel('Rating range'),
+                      const SizedBox(height: 8),
+                      _RatingRange(
+                        minRating: filters.minRating,
+                        maxRating: filters.maxRating,
+                        onChanged: notifier.setRatingRange,
+                      ),
+                      const SizedBox(height: 18),
+                      const _SectionLabel('Year range'),
+                      const SizedBox(height: 8),
+                      _YearRange(
+                        yearFrom: filters.yearFrom,
+                        yearTo: filters.yearTo,
+                        onChanged: notifier.setYearRange,
+                      ),
+                    ],
                     const SizedBox(height: 18),
                     const _SectionLabel('Sort games'),
                     const SizedBox(height: 8),
@@ -151,16 +162,6 @@ class DesktopExplorerFilters extends ConsumerWidget {
       ),
     );
   }
-}
-
-GamebaseFilters _forceScopedPlayer(
-  GamebaseFilters filters,
-  GamebasePlayer scopedPlayer,
-) {
-  return filters.copyWith(
-    playerIds: <String>[scopedPlayer.id],
-    selectedPlayers: <GamebasePlayer>[scopedPlayer],
-  );
 }
 
 bool _matchesScopedPlayer(GamebaseFilters filters, GamebasePlayer player) {

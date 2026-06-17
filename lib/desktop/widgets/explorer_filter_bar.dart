@@ -9,6 +9,7 @@ import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dar
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/explorer_filter_availability.dart';
+import 'package:chessever/desktop/widgets/explorer_filter_scope.dart';
 import 'package:chessever/desktop/widgets/explorer_filters_popover.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -56,7 +57,21 @@ class ExplorerFilterBar extends ConsumerWidget {
       gamebaseExplorerProvider.select((s) => s.filters),
     );
     final notifier = ref.read(gamebaseExplorerProvider.notifier);
-    final selectedTitle = gamebasePlayerTitleForMinRating(filters.minRating);
+    final isBuildTreeScope = scopedPlayer != null;
+    final scopedFilters =
+        isBuildTreeScope
+            ? sanitizeBuildTreeExplorerFilters(filters, scopedPlayer!)
+            : filters;
+    if (isBuildTreeScope && scopedFilters != filters) {
+      Future.microtask(() {
+        ref
+            .read(gamebaseExplorerProvider.notifier)
+            .updateFilters(scopedFilters);
+      });
+    }
+    final selectedTitle = gamebasePlayerTitleForMinRating(
+      scopedFilters.minRating,
+    );
     final filtersAvailable = explorerFiltersAvailableForScope(scopedPlayer);
     final treeState =
         scopedPlayer == null
@@ -81,23 +96,27 @@ class ExplorerFilterBar extends ConsumerWidget {
         scrollDirection: Axis.horizontal,
         child: Row(
           children: [
-            _GroupLabel(compact ? 'Lv' : 'Level'),
-            for (final title in GamebasePlayerTitle.values) ...[
-              _FilterChip(
-                label:
-                    compact ? title.label : '${title.label} ${title.subtitle}',
-                active: selectedTitle == title,
-                onTap: () => guardOrRun(() => notifier.toggleTitle(title)),
-              ),
-              const SizedBox(width: 6),
+            if (!isBuildTreeScope) ...[
+              _GroupLabel(compact ? 'Lv' : 'Level'),
+              for (final title in GamebasePlayerTitle.values) ...[
+                _FilterChip(
+                  label:
+                      compact
+                          ? title.label
+                          : '${title.label} ${title.subtitle}',
+                  active: selectedTitle == title,
+                  onTap: () => guardOrRun(() => notifier.toggleTitle(title)),
+                ),
+                const SizedBox(width: 6),
+              ],
+              const _RailDivider(),
             ],
-            const _RailDivider(),
             _GroupLabel(compact ? 'TC' : 'Time'),
             for (final tc in _timeControls) ...[
               _FilterChip(
                 icon: tc.icon,
                 label: compact ? _shortTimeControlLabel(tc.value) : tc.label,
-                active: filters.timeControls.contains(tc.value),
+                active: scopedFilters.timeControls.contains(tc.value),
                 onTap:
                     () =>
                         guardOrRun(() => notifier.toggleTimeControl(tc.value)),
@@ -105,28 +124,30 @@ class ExplorerFilterBar extends ConsumerWidget {
               const SizedBox(width: 6),
             ],
             const _RailDivider(),
-            _GroupLabel(compact ? 'Res' : 'Result'),
-            for (final r in GamebaseGameResult.values) ...[
-              _FilterChip(
-                label: r.displayText,
-                active: filters.gameResult == r,
-                onTap: () => guardOrRun(() => notifier.toggleGameResult(r)),
-              ),
-              const SizedBox(width: 6),
+            if (!isBuildTreeScope) ...[
+              _GroupLabel(compact ? 'Res' : 'Result'),
+              for (final r in GamebaseGameResult.values) ...[
+                _FilterChip(
+                  label: r.displayText,
+                  active: scopedFilters.gameResult == r,
+                  onTap: () => guardOrRun(() => notifier.toggleGameResult(r)),
+                ),
+                const SizedBox(width: 6),
+              ],
+              const _RailDivider(),
             ],
-            const _RailDivider(),
             _GroupLabel(compact ? 'Fmt' : 'Format'),
             _FilterChip(
               icon: Icons.public_off_rounded,
               label: 'OTB',
-              active: filters.isOnline == false,
+              active: scopedFilters.isOnline == false,
               onTap: () => guardOrRun(() => notifier.toggleFormat(false)),
             ),
             const SizedBox(width: 6),
             _FilterChip(
               icon: Icons.public_rounded,
               label: 'Online',
-              active: filters.isOnline == true,
+              active: scopedFilters.isOnline == true,
               onTap: () => guardOrRun(() => notifier.toggleFormat(true)),
             ),
             const _RailDivider(),
@@ -134,7 +155,7 @@ class ExplorerFilterBar extends ConsumerWidget {
             _FilterChip(
               icon: Icons.circle,
               label: 'White',
-              active: filters.playerColor == GamebasePlayerColor.white,
+              active: scopedFilters.playerColor == GamebasePlayerColor.white,
               onTap:
                   () => guardOrRun(
                     () => notifier.togglePlayerColor(GamebasePlayerColor.white),
@@ -144,7 +165,7 @@ class ExplorerFilterBar extends ConsumerWidget {
             _FilterChip(
               icon: Icons.circle_outlined,
               label: 'Black',
-              active: filters.playerColor == GamebasePlayerColor.black,
+              active: scopedFilters.playerColor == GamebasePlayerColor.black,
               onTap:
                   () => guardOrRun(
                     () => notifier.togglePlayerColor(GamebasePlayerColor.black),

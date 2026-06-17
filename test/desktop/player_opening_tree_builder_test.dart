@@ -19,11 +19,11 @@ void main() {
     expect(moves.first.black, 3);
     expect(moves.first.draws, 4);
     expect(moves.first.total, 15);
-    expect(moves.first.gameId, 'sample-d4');
-    expect(moves.first.lastPlayed, DateTime.parse('2026-05-21T00:00:00.000Z'));
+    expect(moves.first.gameId, isNull);
+    expect(moves.first.lastPlayed, DateTime.parse('2026-05-21'));
   });
 
-  test('filters backend buckets locally', () {
+  test('filters supported compact backend buckets locally', () {
     final index = PlayerOpeningTreeIndex.fromSnapshot(
       PlayerOpeningTreeSnapshot.fromJson(_snapshotJson()),
     );
@@ -34,12 +34,11 @@ void main() {
         playerId: 'player-uuid',
         color: 'white',
         timeControl: TimeControl.blitz,
-        result: 'W',
+        result: 'B',
         isOnline: true,
-        yearFrom: 2025,
-        yearTo: 2026,
-        minRating: 2500,
-        maxRating: 2899,
+        yearFrom: 1800,
+        yearTo: 1801,
+        minRating: 3500,
       ),
     );
 
@@ -108,48 +107,44 @@ void main() {
 
 Map<String, dynamic> _snapshotJson() {
   return {
-    'treeId': 'v2:player-uuid:40',
-    'playerId': 'player-uuid',
-    'maxPly': 40,
-    'rootNodeId': 0,
-    'generatedAt': '2026-06-12T00:00:00.000Z',
-    'nodes': [
+    'tid': 'v4:player-uuid:24',
+    'pid': 'player-uuid',
+    'mp': 24,
+    'r': 0,
+    'bd': ['color', 'timeControl', 'isOnline'],
+    'g': '2026-06-12T00:00:00.000Z',
+    'fk': ['rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -'],
+    'n': [
       {
         'id': 0,
-        'fenKey': 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -',
-        'ply': 0,
-        'moves': [
+        'f': 0,
+        'p': 0,
+        'm': [
           {
-            'uci': 'e2e4',
-            'childNodeId': 1,
-            'white': 6,
-            'black': 2,
-            'draws': 2,
-            'total': 10,
-            'lastPlayed': '2026-05-20T00:00:00.000Z',
-            'sampleGameId': 'sample-e4',
-            'filterBuckets': {
-              'color=white|timeControl=BLITZ|isOnline=true|result=W|year=2025|rating=2800':
-                  {'white': 2, 'black': 0, 'draws': 0, 'total': 2},
-              'color=white|timeControl=BLITZ|isOnline=true|result=W|year=2026|rating=2500':
-                  {'white': 1, 'black': 0, 'draws': 0, 'total': 1},
-              'color=black|timeControl=RAPID|isOnline=false|result=B|year=2025|rating=2400':
-                  {'white': 0, 'black': 2, 'draws': 0, 'total': 2},
-            },
+            'u': 'e2e4',
+            'c': 1,
+            'w': 6,
+            'b': 2,
+            'd': 2,
+            't': 10,
+            'lp': '2026-05-20',
+            'fb': [
+              ['w', 'b', 1, 2, 2, 0, 0],
+              ['w', 'b', 1, 1, 1, 0, 0],
+              ['b', 'r', 0, 2, 0, 2, 0],
+            ],
           },
           {
-            'uci': 'd2d4',
-            'childNodeId': 2,
-            'white': 8,
-            'black': 3,
-            'draws': 4,
-            'total': 15,
-            'lastPlayed': '2026-05-21T00:00:00.000Z',
-            'sampleGameId': 'sample-d4',
-            'filterBuckets': {
-              'color=white|timeControl=CLASSICAL|isOnline=false|result=D|year=2024|rating=2600':
-                  {'white': 0, 'black': 0, 'draws': 4, 'total': 4},
-            },
+            'u': 'd2d4',
+            'c': 2,
+            'w': 8,
+            'b': 3,
+            'd': 4,
+            't': 15,
+            'lp': '2026-05-21',
+            'fb': [
+              ['w', 'c', 0, 4, 0, 0, 4],
+            ],
           },
         ],
       },

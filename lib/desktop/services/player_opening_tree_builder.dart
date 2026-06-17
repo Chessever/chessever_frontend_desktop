@@ -327,6 +327,7 @@ class PlayerOpeningTreeSnapshot {
     required this.maxPly,
     required this.rootNodeId,
     required this.generatedAt,
+    required this.fenKeys,
     required this.nodes,
   });
 
@@ -335,20 +336,31 @@ class PlayerOpeningTreeSnapshot {
   final int maxPly;
   final int rootNodeId;
   final DateTime? generatedAt;
+  final List<String> fenKeys;
   final List<PlayerOpeningTreeNode> nodes;
 
   factory PlayerOpeningTreeSnapshot.fromJson(Map<String, dynamic> json) {
+    final fenKeys = List<String>.unmodifiable(
+      (json['fk'] as List? ?? const []).map((key) => key.toString().trim()),
+    );
     return PlayerOpeningTreeSnapshot(
-      treeId: json['treeId']?.toString() ?? '',
-      playerId: json['playerId']?.toString() ?? '',
-      maxPly: _readInt(json['maxPly']),
-      rootNodeId: _readInt(json['rootNodeId']),
-      generatedAt: DateTime.tryParse(json['generatedAt']?.toString() ?? ''),
+      treeId: (json['tid'] ?? json['treeId'])?.toString() ?? '',
+      playerId: (json['pid'] ?? json['playerId'])?.toString() ?? '',
+      maxPly: _readInt(json['mp'] ?? json['maxPly']),
+      rootNodeId: _readInt(json['r'] ?? json['rootNodeId']),
+      generatedAt: DateTime.tryParse(
+        (json['g'] ?? json['generatedAt'])?.toString() ?? '',
+      ),
+      fenKeys: fenKeys,
       nodes: List<PlayerOpeningTreeNode>.unmodifiable(
-        (json['nodes'] as List? ?? const []).whereType<Map>().map(
-          (node) =>
-              PlayerOpeningTreeNode.fromJson(Map<String, dynamic>.from(node)),
-        ),
+        ((json['n'] ?? json['nodes']) as List? ?? const [])
+            .whereType<Map>()
+            .map(
+              (node) => PlayerOpeningTreeNode.fromJson(
+                Map<String, dynamic>.from(node),
+                fenKeys: fenKeys,
+              ),
+            ),
       ),
     );
   }
@@ -368,16 +380,28 @@ class PlayerOpeningTreeNode {
   final int ply;
   final List<PlayerOpeningTreeMove> moves;
 
-  factory PlayerOpeningTreeNode.fromJson(Map<String, dynamic> json) {
+  factory PlayerOpeningTreeNode.fromJson(
+    Map<String, dynamic> json, {
+    List<String> fenKeys = const <String>[],
+  }) {
+    final fenIndex = _readInt(json['f']);
+    final compactFen =
+        fenIndex >= 0 && fenIndex < fenKeys.length ? fenKeys[fenIndex] : '';
     return PlayerOpeningTreeNode(
       id: _readInt(json['id']),
-      fenKey: json['fenKey']?.toString().trim() ?? '',
-      ply: _readInt(json['ply']),
+      fenKey:
+          compactFen.isNotEmpty
+              ? compactFen
+              : json['fenKey']?.toString().trim() ?? '',
+      ply: _readInt(json['p'] ?? json['ply']),
       moves: List<PlayerOpeningTreeMove>.unmodifiable(
-        (json['moves'] as List? ?? const []).whereType<Map>().map(
-          (move) =>
-              PlayerOpeningTreeMove.fromJson(Map<String, dynamic>.from(move)),
-        ),
+        ((json['m'] ?? json['moves']) as List? ?? const [])
+            .whereType<Map>()
+            .map(
+              (move) => PlayerOpeningTreeMove.fromJson(
+                Map<String, dynamic>.from(move),
+              ),
+            ),
       ),
     );
   }
@@ -394,7 +418,7 @@ class PlayerOpeningTreeMove {
     required this.total,
     this.lastPlayed,
     this.sampleGameId,
-    this.filterBuckets = const <String, PlayerOpeningTreeStats>{},
+    this.filterBuckets = const <PlayerOpeningTreeFilterBucket>[],
   });
 
   final String uci;
@@ -405,31 +429,44 @@ class PlayerOpeningTreeMove {
   final int total;
   final DateTime? lastPlayed;
   final String? sampleGameId;
-  final Map<String, PlayerOpeningTreeStats> filterBuckets;
+  final List<PlayerOpeningTreeFilterBucket> filterBuckets;
 
   factory PlayerOpeningTreeMove.fromJson(Map<String, dynamic> json) {
-    final buckets = <String, PlayerOpeningTreeStats>{};
+    final buckets = <PlayerOpeningTreeFilterBucket>[];
     final rawBuckets = json['filterBuckets'];
     if (rawBuckets is Map) {
       for (final entry in rawBuckets.entries) {
         final value = entry.value;
         if (value is! Map) continue;
-        buckets[entry.key.toString()] = PlayerOpeningTreeStats.fromJson(
-          Map<String, dynamic>.from(value),
+        buckets.add(
+          PlayerOpeningTreeFilterBucket.fromLegacyJson(
+            entry.key.toString(),
+            Map<String, dynamic>.from(value),
+          ),
         );
+      }
+    }
+    final compactBuckets = json['fb'];
+    if (compactBuckets is List) {
+      for (final bucket in compactBuckets) {
+        if (bucket is! List) continue;
+        final parsed = PlayerOpeningTreeFilterBucket.fromCompactTuple(bucket);
+        if (parsed != null) buckets.add(parsed);
       }
     }
 
     return PlayerOpeningTreeMove(
-      uci: json['uci']?.toString().trim().toLowerCase() ?? '',
-      childNodeId: _readInt(json['childNodeId']),
-      white: _readInt(json['white']),
-      black: _readInt(json['black']),
-      draws: _readInt(json['draws']),
-      total: _readInt(json['total']),
-      lastPlayed: DateTime.tryParse(json['lastPlayed']?.toString() ?? ''),
-      sampleGameId: json['sampleGameId']?.toString().trim(),
-      filterBuckets: Map<String, PlayerOpeningTreeStats>.unmodifiable(buckets),
+      uci: (json['u'] ?? json['uci'])?.toString().trim().toLowerCase() ?? '',
+      childNodeId: _readInt(json['c'] ?? json['childNodeId']),
+      white: _readInt(json['w'] ?? json['white']),
+      black: _readInt(json['b'] ?? json['black']),
+      draws: _readInt(json['d'] ?? json['draws']),
+      total: _readInt(json['t'] ?? json['total']),
+      lastPlayed: DateTime.tryParse(
+        (json['lp'] ?? json['lastPlayed'])?.toString() ?? '',
+      ),
+      sampleGameId: (json['sg'] ?? json['sampleGameId'])?.toString().trim(),
+      filterBuckets: List<PlayerOpeningTreeFilterBucket>.unmodifiable(buckets),
     );
   }
 
@@ -437,7 +474,7 @@ class PlayerOpeningTreeMove {
     PlayerOpeningTreeFilterCriteria filters =
         const PlayerOpeningTreeFilterCriteria(),
   }) {
-    final stats = filters.hasFilters ? _filteredStats(filters) : null;
+    final stats = filters.hasMoveBucketFilters ? _filteredStats(filters) : null;
     final resolved =
         stats ??
         PlayerOpeningTreeStats(
@@ -462,19 +499,61 @@ class PlayerOpeningTreeMove {
     var black = 0;
     var draws = 0;
     var total = 0;
-    for (final entry in filterBuckets.entries) {
-      final bucket = _parseBucketKey(entry.key);
+    for (final bucket in filterBuckets) {
       if (!_bucketMatches(bucket, f)) continue;
-      white += entry.value.white;
-      black += entry.value.black;
-      draws += entry.value.draws;
-      total += entry.value.total;
+      white += bucket.stats.white;
+      black += bucket.stats.black;
+      draws += bucket.stats.draws;
+      total += bucket.stats.total;
     }
     return PlayerOpeningTreeStats(
       white: white,
       black: black,
       draws: draws,
       total: total,
+    );
+  }
+}
+
+@immutable
+class PlayerOpeningTreeFilterBucket {
+  const PlayerOpeningTreeFilterBucket({
+    required this.color,
+    required this.timeControl,
+    required this.isOnline,
+    required this.stats,
+  });
+
+  final String? color;
+  final String? timeControl;
+  final bool? isOnline;
+  final PlayerOpeningTreeStats stats;
+
+  factory PlayerOpeningTreeFilterBucket.fromLegacyJson(
+    String key,
+    Map<String, dynamic> json,
+  ) {
+    final bucket = _parseBucketKey(key);
+    return PlayerOpeningTreeFilterBucket(
+      color: _normalizeBucketColor(bucket['color']),
+      timeControl: _normalizeBucketTimeControl(bucket['timeControl']),
+      isOnline: _parseBucketBool(bucket['isOnline']),
+      stats: PlayerOpeningTreeStats.fromJson(json),
+    );
+  }
+
+  static PlayerOpeningTreeFilterBucket? fromCompactTuple(List<dynamic> tuple) {
+    if (tuple.length < 7) return null;
+    return PlayerOpeningTreeFilterBucket(
+      color: _normalizeBucketColor(tuple[0]),
+      timeControl: _normalizeBucketTimeControl(tuple[1]),
+      isOnline: _parseBucketBool(tuple[2]),
+      stats: PlayerOpeningTreeStats(
+        total: _readInt(tuple[3]),
+        white: _readInt(tuple[4]),
+        black: _readInt(tuple[5]),
+        draws: _readInt(tuple[6]),
+      ),
     );
   }
 }
@@ -536,6 +615,9 @@ class PlayerOpeningTreeFilterCriteria {
       isOnline != null ||
       yearFrom != null ||
       yearTo != null;
+
+  bool get hasMoveBucketFilters =>
+      timeControl != null || color != null || isOnline != null;
 
   bool matches(Map<String, dynamic> row) {
     final wantedColor = color?.trim().toLowerCase();
@@ -774,37 +856,55 @@ Map<String, String> _parseBucketKey(String key) {
 }
 
 bool _bucketMatches(
-  Map<String, String> bucket,
+  PlayerOpeningTreeFilterBucket bucket,
   PlayerOpeningTreeFilterCriteria f,
 ) {
   final color = f.color?.trim().toLowerCase();
-  if (color != null && color.isNotEmpty && bucket['color'] != color) {
+  if (color != null && color.isNotEmpty && bucket.color != color) {
     return false;
   }
 
-  final timeControl = f.timeControl?.name.toUpperCase();
-  if (timeControl != null && bucket['timeControl'] != timeControl) {
+  final timeControl =
+      f.timeControl == null
+          ? null
+          : _normalizeBucketTimeControl(f.timeControl!.name);
+  if (timeControl != null && bucket.timeControl != timeControl) {
     return false;
   }
 
-  if (f.isOnline != null && bucket['isOnline'] != f.isOnline.toString()) {
+  if (f.isOnline != null && bucket.isOnline != f.isOnline) {
     return false;
   }
-
-  final result = f.result?.trim().toUpperCase();
-  if (result != null && result.isNotEmpty && bucket['result'] != result) {
-    return false;
-  }
-
-  final year = int.tryParse(bucket['year'] ?? '');
-  if (f.yearFrom != null && (year == null || year < f.yearFrom!)) return false;
-  if (f.yearTo != null && (year == null || year > f.yearTo!)) return false;
-
-  final rating = int.tryParse(bucket['rating'] ?? '0') ?? 0;
-  if (f.minRating != null && rating + 99 < f.minRating!) return false;
-  if (f.maxRating != null && rating > f.maxRating!) return false;
 
   return true;
+}
+
+String? _normalizeBucketColor(Object? value) {
+  final raw = value?.toString().trim().toLowerCase();
+  return switch (raw) {
+    'w' || 'white' => 'white',
+    'b' || 'black' => 'black',
+    _ => raw == null || raw.isEmpty ? null : raw,
+  };
+}
+
+String? _normalizeBucketTimeControl(Object? value) {
+  final raw = value?.toString().trim().toLowerCase();
+  return switch (raw) {
+    'c' || 'classical' => 'classical',
+    'r' || 'rapid' => 'rapid',
+    'b' || 'blitz' => 'blitz',
+    _ => raw == null || raw.isEmpty ? null : raw,
+  };
+}
+
+bool? _parseBucketBool(Object? value) {
+  final raw = value?.toString().trim().toLowerCase();
+  return switch (raw) {
+    '1' || 'true' => true,
+    '0' || 'false' => false,
+    _ => null,
+  };
 }
 
 String? _pgnForRow(Map<String, dynamic> row) {

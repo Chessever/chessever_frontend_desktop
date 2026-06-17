@@ -6,6 +6,7 @@ import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_explorer_filters.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/explorer_filter_availability.dart';
+import 'package:chessever/desktop/widgets/explorer_filter_scope.dart';
 import 'package:chessever/screens/gamebase/models/gamebase_player.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -47,7 +48,14 @@ class _ExplorerFiltersPopoverButtonState
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(gamebaseExplorerProvider);
-    final activeCount = _activeFilterCount(state.filters, widget.scopedPlayer);
+    final filters =
+        widget.scopedPlayer == null
+            ? state.filters
+            : sanitizeBuildTreeExplorerFilters(
+              state.filters,
+              widget.scopedPlayer!,
+            );
+    final activeCount = _activeFilterCount(filters, widget.scopedPlayer);
     final hasActive = activeCount > 0;
     final filtersAvailable = explorerFiltersAvailableForScope(
       widget.scopedPlayer,
@@ -173,16 +181,22 @@ int _activeFilterCount(dynamic filters, GamebasePlayer? scopedPlayer) {
     if (tcs.isNotEmpty) count += 1;
   } catch (_) {}
   try {
-    if (filters.gameResult != null) count += 1;
+    if (scopedPlayer == null && filters.gameResult != null) count += 1;
   } catch (_) {}
   try {
     if (filters.playerColor != null) count += 1;
   } catch (_) {}
   try {
-    if (filters.minRating != null || filters.maxRating != null) count += 1;
+    if (scopedPlayer == null &&
+        (filters.minRating != null || filters.maxRating != null)) {
+      count += 1;
+    }
   } catch (_) {}
   try {
-    if (filters.yearFrom != null || filters.yearTo != null) count += 1;
+    if (scopedPlayer == null &&
+        (filters.yearFrom != null || filters.yearTo != null)) {
+      count += 1;
+    }
   } catch (_) {}
   try {
     if (filters.isOnline != null) count += 1;

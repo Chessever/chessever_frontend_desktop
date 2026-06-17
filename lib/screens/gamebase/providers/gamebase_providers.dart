@@ -1442,7 +1442,7 @@ class PlayerOpeningTreeBuildController
   PlayerOpeningTreeBuildController(this._ref, this._playerId)
     : super(PlayerOpeningTreeState(playerId: _playerId));
 
-  static const int _maxPly = 40;
+  static const int _maxPly = 24;
   static const int _pageSize = 1000;
   static const int _hydrateConcurrency = 4;
   static const int _gamesPublishPageInterval = 4;
