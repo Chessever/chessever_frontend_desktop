@@ -75,6 +75,16 @@ const List<String> _classicalTimeControlValues = [
   'Classical',
 ];
 
+int gameStructuredAverageRating(Games game) {
+  final players = game.players;
+  if (players == null || players.length < 2) return 0;
+
+  final whiteElo = players.first.rating;
+  final blackElo = players[1].rating;
+  if (whiteElo <= 0 || blackElo <= 0) return 0;
+  return (whiteElo + blackElo) ~/ 2;
+}
+
 class GameRepository extends BaseRepository {
   List<int> _parseFideIds(List<String> fideIds) {
     return fideIds.map((id) => int.tryParse(id)).whereType<int>().toList();
@@ -526,10 +536,11 @@ class GameRepository extends BaseRepository {
 
       final collected = <Games>[];
 
-      // Start from recent broadcasts/tours, then apply the exact per-game PGN
-      // WhiteElo/BlackElo predicate below. Event strength and denormalized
-      // player_max_rating can be stale or missing on imported rows, so neither
-      // is allowed to decide membership in the GM smart collection.
+      // Start from recent broadcasts/tours, then qualify games using the same
+      // structured player ratings the desktop UI displays. PGN WhiteElo/
+      // BlackElo tags can be missing or lag behind live/imported rows, which
+      // makes obviously qualifying GM games disappear from the desktop smart
+      // collection.
       final broadcastResponse = await supabase
           .from('group_broadcasts')
           .select('id')
@@ -569,7 +580,9 @@ class GameRepository extends BaseRepository {
               (response as List).map((item) => json.encode(item)).toList();
           final games = await compute(_decodeGamesInIsolate, jsonList);
           collected.addAll(
-            games.where((game) => _pgnAverageRating(game.pgn) >= minAverageElo),
+            games.where(
+              (game) => gameStructuredAverageRating(game) >= minAverageElo,
+            ),
           );
         }
       }
@@ -578,7 +591,8 @@ class GameRepository extends BaseRepository {
       var exhausted = false;
 
       // Fallback for rows outside the recent broadcast window. This is only a
-      // candidate source; the PGN average check remains the source of truth.
+      // candidate source; the two-player structured rating check remains the
+      // source of truth.
       while (collected.length < limit && !exhausted) {
         final rawLimit = (limit - collected.length) * 3;
         final response = await supabase
@@ -597,15 +611,17 @@ class GameRepository extends BaseRepository {
         final games = await compute(_decodeGamesInIsolate, jsonList);
 
         collected.addAll(
-          games.where((game) => _pgnAverageRating(game.pgn) >= minAverageElo),
+          games.where(
+            (game) => gameStructuredAverageRating(game) >= minAverageElo,
+          ),
         );
       }
 
       final result = _deduplicateGames(collected);
       result.sort((a, b) {
-        final eloCompare = _pgnAverageRating(
-          b.pgn,
-        ).compareTo(_pgnAverageRating(a.pgn));
+        final eloCompare = gameStructuredAverageRating(
+          b,
+        ).compareTo(gameStructuredAverageRating(a));
         if (eloCompare != 0) return eloCompare;
 
         final aDate = a.lastMoveTime ?? a.gameDay ?? a.dateStart ?? DateTime(0);
@@ -679,23 +695,6 @@ class GameRepository extends BaseRepository {
 
       return _deduplicateGames(collected).take(limit).toList();
     });
-  }
-
-  int _pgnAverageRating(String? pgn) {
-    final whiteElo = _pgnIntTag(pgn, 'WhiteElo');
-    final blackElo = _pgnIntTag(pgn, 'BlackElo');
-    if (whiteElo == null || blackElo == null) return 0;
-    return (whiteElo + blackElo) ~/ 2;
-  }
-
-  int? _pgnIntTag(String? pgn, String tag) {
-    if (pgn == null || pgn.isEmpty) return null;
-    final match = RegExp(
-      r'^\[' + RegExp.escape(tag) + r'\s+"(\d+)"\]',
-      multiLine: true,
-    ).firstMatch(pgn);
-    if (match == null) return null;
-    return int.tryParse(match.group(1)!);
   }
 
   bool _isClassicalTimeControl(Games game) {

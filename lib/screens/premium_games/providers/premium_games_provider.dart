@@ -419,34 +419,70 @@ class PremiumGamesNotifier
   /// Fetch games with average rating >= 2500, matching the phone smart
   /// collection intent instead of the older "one player over 2500" fallback.
   Future<List<GamesTourModel>> _fetchGmGames(GameRepository repository) async {
-    try {
-      final games = await repository.getHighAverageEloGames(
-        minAverageElo: 2500,
-        limit: 200,
-        offset: 0,
-      );
-      _hasMore = false;
+    const maxAttempts = 2;
 
-      return games.map((g) => GamesTourModel.fromGame(g)).toList();
-    } catch (e) {
-      debugPrint('[PremiumGames] Error fetching GM games: $e');
-      return [];
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        final games = await repository.getHighAverageEloGames(
+          minAverageElo: 2500,
+          limit: 200,
+          offset: 0,
+        );
+
+        if (games.isNotEmpty || attempt == maxAttempts) {
+          _hasMore = false;
+          return games.map((g) => GamesTourModel.fromGame(g)).toList();
+        }
+
+        debugPrint('[PremiumGames] Initial GM games fetch was empty; retrying');
+        await Future<void>.delayed(const Duration(milliseconds: 650));
+      } catch (e) {
+        if (attempt < maxAttempts) {
+          debugPrint('[PremiumGames] GM games fetch failed; retrying: $e');
+          await Future<void>.delayed(const Duration(milliseconds: 650));
+          continue;
+        }
+        debugPrint('[PremiumGames] Error fetching GM games: $e');
+        return [];
+      }
     }
+
+    return [];
   }
 
   /// Fetch classical/standard games globally.
   Future<List<GamesTourModel>> _fetchClassicalGames(
     GameRepository repository,
   ) async {
-    try {
-      final games = await repository.getClassicalGames(limit: 200, offset: 0);
-      _hasMore = false;
+    const maxAttempts = 2;
 
-      return games.map((g) => GamesTourModel.fromGame(g)).toList();
-    } catch (e) {
-      debugPrint('[PremiumGames] Error fetching classical games: $e');
-      return [];
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        final games = await repository.getClassicalGames(limit: 200, offset: 0);
+
+        if (games.isNotEmpty || attempt == maxAttempts) {
+          _hasMore = false;
+          return games.map((g) => GamesTourModel.fromGame(g)).toList();
+        }
+
+        debugPrint(
+          '[PremiumGames] Initial classical games fetch was empty; retrying',
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 650));
+      } catch (e) {
+        if (attempt < maxAttempts) {
+          debugPrint(
+            '[PremiumGames] Classical games fetch failed; retrying: $e',
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 650));
+          continue;
+        }
+        debugPrint('[PremiumGames] Error fetching classical games: $e');
+        return [];
+      }
     }
+
+    return [];
   }
 
   void _sortGames() {
