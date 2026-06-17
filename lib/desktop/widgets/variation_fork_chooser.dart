@@ -1,4 +1,5 @@
 import 'package:chessground/chessground.dart' show PieceAssets;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -201,6 +202,7 @@ Future<ChessMovePointer?> showVariationForkChooser({
   required BuildContext context,
   required List<VariationForkOption> options,
   BuildContext? targetContext,
+  ValueListenable<int>? dismissSignal,
 }) {
   final targetRect = notationSideChooserTargetRect(targetContext);
   return showGeneralDialog<ChessMovePointer>(
@@ -212,7 +214,10 @@ Future<ChessMovePointer?> showVariationForkChooser({
     pageBuilder:
         (context, _, __) => _NotationSideChooserFrame(
           targetRect: targetRect,
-          child: _ForkChooserDialog(options: options),
+          child: _ForkChooserDialog(
+            options: options,
+            dismissSignal: dismissSignal,
+          ),
         ),
     transitionBuilder: (context, anim, __, child) {
       // Drive the same opacity + Y-lift + scale as MoveHoverPreview by
@@ -663,9 +668,10 @@ class _GameContinuationOptionRowState
 }
 
 class _ForkChooserDialog extends ConsumerStatefulWidget {
-  const _ForkChooserDialog({required this.options});
+  const _ForkChooserDialog({required this.options, this.dismissSignal});
 
   final List<VariationForkOption> options;
+  final ValueListenable<int>? dismissSignal;
 
   @override
   ConsumerState<_ForkChooserDialog> createState() => _ForkChooserDialogState();
@@ -678,6 +684,7 @@ class _ForkChooserDialogState extends ConsumerState<_ForkChooserDialog> {
   @override
   void initState() {
     super.initState();
+    widget.dismissSignal?.addListener(_handleExternalDismiss);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _focusNode.requestFocus();
@@ -685,9 +692,23 @@ class _ForkChooserDialogState extends ConsumerState<_ForkChooserDialog> {
   }
 
   @override
+  void didUpdateWidget(covariant _ForkChooserDialog oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.dismissSignal == widget.dismissSignal) return;
+    oldWidget.dismissSignal?.removeListener(_handleExternalDismiss);
+    widget.dismissSignal?.addListener(_handleExternalDismiss);
+  }
+
+  @override
   void dispose() {
+    widget.dismissSignal?.removeListener(_handleExternalDismiss);
     _focusNode.dispose();
     super.dispose();
+  }
+
+  void _handleExternalDismiss() {
+    if (!mounted) return;
+    Navigator.of(context).maybePop();
   }
 
   void _pick(int index) {

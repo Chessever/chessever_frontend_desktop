@@ -1292,6 +1292,14 @@ class _BoardPaneContent extends HookConsumerWidget {
       }
     }
 
+    final variationForkDismissSignal = useState(0);
+    final variationForkChooserOpen = useRef(false);
+
+    void dismissVariationForkChooser() {
+      if (!variationForkChooserOpen.value) return;
+      variationForkDismissSignal.value += 1;
+    }
+
     // User-driven forward step. When the next move carries variations the
     // user is asked which continuation to follow via a hover-styled chooser
     // popup; otherwise this is a plain `goNext`. Used by the move-nav
@@ -1299,6 +1307,11 @@ class _BoardPaneContent extends HookConsumerWidget {
     // tab's in-tab step handler. Auto-replay and `goLast` still call the
     // plain `goNext` so background traversal never blocks on a dialog.
     Future<void> goNextInteractive() async {
+      if (variationForkChooserOpen.value) {
+        dismissVariationForkChooser();
+        goNext();
+        return;
+      }
       final currentPointer = pointer.value;
       final next = _nextPointer(chessGame.value, currentPointer);
       if (next == null) return;
@@ -1311,11 +1324,13 @@ class _BoardPaneContent extends HookConsumerWidget {
         goNext();
         return;
       }
+      variationForkChooserOpen.value = true;
       final picked = await showVariationForkChooser(
         context: context,
         options: options,
         targetContext: rightRailAnalysisKey.currentContext,
-      );
+        dismissSignal: variationForkDismissSignal,
+      ).whenComplete(() => variationForkChooserOpen.value = false);
       if (picked == null || !context.mounted) return;
       // Re-validate after the await: the broadcast feed may have shifted
       // the tree, in which case the saved pointer is stale and we fall
@@ -1333,6 +1348,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         return true;
       }
       if (delta < 0) {
+        dismissVariationForkChooser();
         final before = pointer.value;
         goPrev();
         return !_pointersEqual(before, pointer.value);
@@ -1341,6 +1357,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     }
 
     void goNotationLine(NotationVerticalDirection direction) {
+      dismissVariationForkChooser();
       final isInlineNotation =
           notationLayoutController.value == NotationLayoutMode.inline;
       final target =
@@ -2060,11 +2077,13 @@ class _BoardPaneContent extends HookConsumerWidget {
 
     void goFirstManually() {
       pauseAutoReplayForManualNavigation();
+      dismissVariationForkChooser();
       goFirst();
     }
 
     void goPrevManually() {
       pauseAutoReplayForManualNavigation();
+      dismissVariationForkChooser();
       goPrev();
     }
 
@@ -2075,6 +2094,7 @@ class _BoardPaneContent extends HookConsumerWidget {
 
     void goLastManually() {
       pauseAutoReplayForManualNavigation();
+      dismissVariationForkChooser();
       goLast();
     }
 
