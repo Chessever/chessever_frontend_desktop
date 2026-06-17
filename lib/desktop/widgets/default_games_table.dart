@@ -39,6 +39,7 @@ class DefaultGamesTable extends ConsumerStatefulWidget {
     this.onContext,
     this.footer,
     this.rowKeyPrefix = 'default-game-table',
+    this.hiddenColumnIds = const <String>{},
   });
 
   final bool active;
@@ -60,6 +61,7 @@ class DefaultGamesTable extends ConsumerStatefulWidget {
   onContext;
   final Widget? footer;
   final String rowKeyPrefix;
+  final Set<String> hiddenColumnIds;
 
   @override
   ConsumerState<DefaultGamesTable> createState() => _DefaultGamesTableState();
@@ -398,7 +400,7 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
   List<AdaptiveColumn<GamesTourModel>> _buildColumns(
     List<GamesTourModel> rows,
   ) {
-    return [
+    final columns = [
       AdaptiveColumn<GamesTourModel>(
         id: 'number',
         label: '#',
@@ -527,6 +529,12 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
               maxWidth: 160,
             ),
       ),
+    ];
+    final hiddenColumnIds = widget.hiddenColumnIds;
+    if (hiddenColumnIds.isEmpty) return columns;
+    return [
+      for (final column in columns)
+        if (!hiddenColumnIds.contains(column.id)) column,
     ];
   }
 }
