@@ -11,9 +11,13 @@ class _FakeGameStreamRepository extends GameStreamRepository {
   _FakeGameStreamRepository(this.stream);
 
   final Stream<Map<String, dynamic>?> stream;
+  int subscribeToGameUpdatesCount = 0;
 
   @override
-  Stream<Map<String, dynamic>?> subscribeToGameUpdates(String gameId) => stream;
+  Stream<Map<String, dynamic>?> subscribeToGameUpdates(String gameId) {
+    subscribeToGameUpdatesCount++;
+    return stream;
+  }
 }
 
 PlayerCard _player(String name) {
@@ -165,6 +169,36 @@ void main() {
         expect(merged.gameStatus, GameStatus.ongoing);
       },
     );
+
+    test('disabled stream gate returns base game without subscribing', () {
+      final repository = _FakeGameStreamRepository(
+        const Stream<Map<String, dynamic>?>.empty(),
+      );
+
+      final container = ProviderContainer(
+        overrides: [gameStreamRepositoryProvider.overrideWithValue(repository)],
+      );
+      addTearDown(container.dispose);
+
+      container.read(baseGameProvider('game-1').notifier).state = _game(
+        id: 'game-1',
+        status: GameStatus.ongoing,
+        fen: afterE4,
+        lastMove: 'e2e4',
+      );
+
+      final sub = container.listen(
+        scopedLiveGameCardProvider(
+          const LiveGameWatchParams(gameId: 'game-1', streamEnabled: false),
+        ),
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(sub.close);
+
+      expect(sub.read()?.fen, afterE4);
+      expect(repository.subscribeToGameUpdatesCount, 0);
+    });
 
     testWidgets(
       'parent rebuilds cannot overwrite newer streamed clocks at the same ply',

@@ -2229,6 +2229,9 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     });
     final state = ref.watch(forYouEventsProvider);
     final viewMode = ref.watch(gamesListViewModeProvider);
+    final streamingEnabled = ref.watch(
+      desktopTabsProvider.select((state) => state.activeId == widget.tabId),
+    );
 
     if (state.isLoading && state.events.isEmpty) {
       return const _LoadingState();
@@ -2297,11 +2300,13 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                     _navigateToTab(TabKind.countrymen);
                   },
                   onSmartCollectionTap: (type) {
-                    final tabId = ref.read(desktopTabsProvider.notifier).open(
-                      TabKind.smartGames,
-                      title: _smartCollectionTitle(type),
-                      reuseExisting: false,
-                    );
+                    final tabId = ref
+                        .read(desktopTabsProvider.notifier)
+                        .open(
+                          TabKind.smartGames,
+                          title: _smartCollectionTitle(type),
+                          reuseExisting: false,
+                        );
                     ref
                         .read(desktopSmartGamesTypeByTabIdProvider.notifier)
                         .update((types) => {...types, tabId: type});
@@ -2338,6 +2343,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                       _selection?.eventId == event.id ? _selection : null,
                   animatedEventIds: _animatedEventIds,
                   isScrolling: _isScrolling,
+                  streamingEnabled: streamingEnabled,
                   onOpen: () => widget.onOpenTournament(event),
                   onVisibilityChanged:
                       (visible) => _setEventVisibility(event.id, visible),
@@ -2370,6 +2376,7 @@ class _ForYouEventSection extends ConsumerWidget {
     required this.selection,
     required this.animatedEventIds,
     required this.isScrolling,
+    required this.streamingEnabled,
     required this.onOpen,
     required this.onVisibilityChanged,
     required this.onVisibleGameCountChanged,
@@ -2383,6 +2390,7 @@ class _ForYouEventSection extends ConsumerWidget {
   final _ForYouCardSelection? selection;
   final Set<String> animatedEventIds;
   final bool isScrolling;
+  final bool streamingEnabled;
   final VoidCallback onOpen;
   final ValueChanged<bool> onVisibilityChanged;
   final ValueChanged<int> onVisibleGameCountChanged;
@@ -2446,6 +2454,7 @@ class _ForYouEventSection extends ConsumerWidget {
                 snapshotAsync: snapshotAsync,
                 layout: layout,
                 isScrolling: isScrolling,
+                streamingEnabled: streamingEnabled,
                 selectedGameIndex:
                     selection?.isGame == true ? selection!.gameIndex : null,
                 onVisibleGameCountChanged: onVisibleGameCountChanged,
@@ -2672,6 +2681,7 @@ class _GamesStrip extends ConsumerWidget {
     required this.snapshotAsync,
     required this.layout,
     required this.isScrolling,
+    required this.streamingEnabled,
     required this.selectedGameIndex,
     required this.onVisibleGameCountChanged,
   });
@@ -2681,6 +2691,7 @@ class _GamesStrip extends ConsumerWidget {
   final AsyncValue<ForYouEventGamesSnapshot> snapshotAsync;
   final DesktopCardLayout layout;
   final bool isScrolling;
+  final bool streamingEnabled;
   final int? selectedGameIndex;
   final ValueChanged<int> onVisibleGameCountChanged;
 
@@ -2709,7 +2720,8 @@ class _GamesStrip extends ConsumerWidget {
           // (e.g. before the SizedBox propagates) can't render too many.
           final tileMetrics = DesktopGameCardsFlow.metricsFor(layout);
           final rowHeight = _ForYouEventSection._rowHeightFor(layout);
-          final rows = ((rowHeight + tileMetrics.spacing) /
+          final rows =
+              ((rowHeight + tileMetrics.spacing) /
                       (tileMetrics.tileHeight + tileMetrics.spacing))
                   .floor()
                   .clamp(1, 100)
@@ -2717,7 +2729,8 @@ class _GamesStrip extends ConsumerWidget {
           return LayoutBuilder(
             builder: (context, constraints) {
               final maxW = constraints.maxWidth;
-              final cols = ((maxW + tileMetrics.spacing) /
+              final cols =
+                  ((maxW + tileMetrics.spacing) /
                           (tileMetrics.targetWidth + tileMetrics.spacing))
                       .floor()
                       .clamp(tileMetrics.minCols, tileMetrics.maxCols)
@@ -2736,15 +2749,17 @@ class _GamesStrip extends ConsumerWidget {
                 layout: layout,
                 itemCount: games.length,
                 embedded: true,
-                itemBuilder: (context, i) => LiveDesktopGameCard(
-                  game: games[i],
-                  tournamentTitle: tournamentTitle,
-                  layout: layout,
-                  selected: selectedGameIndex == i,
-                  viewSource: ChessboardView.forYou,
-                  liveBatchKey: liveBatchKey,
-                  allowStockfishFallback: !isScrolling,
-                ),
+                itemBuilder:
+                    (context, i) => LiveDesktopGameCard(
+                      game: games[i],
+                      tournamentTitle: tournamentTitle,
+                      layout: layout,
+                      selected: selectedGameIndex == i,
+                      viewSource: ChessboardView.forYou,
+                      liveBatchKey: liveBatchKey,
+                      streamingEnabled: streamingEnabled,
+                      allowStockfishFallback: !isScrolling,
+                    ),
               );
             },
           );
@@ -2782,6 +2797,7 @@ class _GamesStrip extends ConsumerWidget {
                       selected: selectedGameIndex == i,
                       viewSource: ChessboardView.forYou,
                       liveBatchKey: liveBatchKey,
+                      streamingEnabled: streamingEnabled,
                       allowStockfishFallback: !isScrolling,
                     ),
                   ),
@@ -2799,16 +2815,16 @@ class _GamesStrip extends ConsumerWidget {
                 // Match the data-state cap: cols × rows fits the bounded
                 // event row, skeletons render at the same density as the
                 // real cards will.
-                final tileMetrics =
-                    DesktopGameCardsFlow.metricsFor(layout);
-                final rowHeight =
-                    _ForYouEventSection._rowHeightFor(layout);
-                final rows = ((rowHeight + tileMetrics.spacing) /
+                final tileMetrics = DesktopGameCardsFlow.metricsFor(layout);
+                final rowHeight = _ForYouEventSection._rowHeightFor(layout);
+                final rows =
+                    ((rowHeight + tileMetrics.spacing) /
                             (tileMetrics.tileHeight + tileMetrics.spacing))
                         .floor()
                         .clamp(1, 100)
                         .toInt();
-                final cols = ((constraints.maxWidth + tileMetrics.spacing) /
+                final cols =
+                    ((constraints.maxWidth + tileMetrics.spacing) /
                             (tileMetrics.targetWidth + tileMetrics.spacing))
                         .floor()
                         .clamp(tileMetrics.minCols, tileMetrics.maxCols)
@@ -2818,13 +2834,14 @@ class _GamesStrip extends ConsumerWidget {
                   layout: layout,
                   itemCount: count,
                   embedded: true,
-                  itemBuilder: (context, _) => DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: kBlack2Color,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: kDividerColor),
-                    ),
-                  ),
+                  itemBuilder:
+                      (context, _) => DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: kBlack2Color,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: kDividerColor),
+                        ),
+                      ),
                 );
               }
               final strip = DesktopForYouStripLayout.compute(

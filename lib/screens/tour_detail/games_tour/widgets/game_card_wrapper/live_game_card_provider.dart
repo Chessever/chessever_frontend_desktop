@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -32,21 +33,27 @@ final liveGameCardProvider =
 
 @immutable
 class LiveGameWatchParams {
-  const LiveGameWatchParams({required this.gameId, this.batchKey});
+  const LiveGameWatchParams({
+    required this.gameId,
+    this.batchKey,
+    this.streamEnabled = true,
+  });
 
   final String gameId;
   final LiveGamesBatchKey? batchKey;
+  final bool streamEnabled;
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         other is LiveGameWatchParams &&
             other.gameId == gameId &&
-            other.batchKey == batchKey;
+            other.batchKey == batchKey &&
+            other.streamEnabled == streamEnabled;
   }
 
   @override
-  int get hashCode => Object.hash(gameId, batchKey);
+  int get hashCode => Object.hash(gameId, batchKey, streamEnabled);
 }
 
 final scopedLiveGameCardProvider =
@@ -127,6 +134,10 @@ LiveGameUpdate? _watchLiveUpdate(
   LiveGameWatchParams params,
   _LiveGameMergeMode mode,
 ) {
+  if (!params.streamEnabled || !ref.watch(shouldStreamProvider)) {
+    return null;
+  }
+
   final batchKey = params.batchKey;
   if (batchKey != null && batchKey.contains(params.gameId)) {
     final projectedUpdateAsync = ref.watch(
@@ -360,6 +371,7 @@ GamesTourModel watchLiveGame(
   WidgetRef ref,
   GamesTourModel game, {
   LiveGamesBatchKey? batchKey,
+  bool streamEnabled = true,
 }) {
   final current = ref.read(baseGameProvider(game.gameId));
   if (_shouldUseIncomingGame(current, game, allowEqualFreshnessUpdate: false)) {
@@ -372,7 +384,11 @@ GamesTourModel watchLiveGame(
       }
     });
   }
-  final params = LiveGameWatchParams(gameId: game.gameId, batchKey: batchKey);
+  final params = LiveGameWatchParams(
+    gameId: game.gameId,
+    batchKey: batchKey,
+    streamEnabled: streamEnabled,
+  );
   return ref.watch(scopedLiveGameCardProvider(params)) ?? game;
 }
 
@@ -380,9 +396,14 @@ GamesTourModel watchLiveGamePosition(
   WidgetRef ref,
   GamesTourModel game, {
   LiveGamesBatchKey? batchKey,
+  bool streamEnabled = true,
 }) {
   _ensureBaseGame(ref, game);
-  final params = LiveGameWatchParams(gameId: game.gameId, batchKey: batchKey);
+  final params = LiveGameWatchParams(
+    gameId: game.gameId,
+    batchKey: batchKey,
+    streamEnabled: streamEnabled,
+  );
   return ref.watch(liveGamePositionProvider(params)) ?? game;
 }
 
@@ -390,9 +411,14 @@ GamesTourModel watchLiveGameClock(
   WidgetRef ref,
   GamesTourModel game, {
   LiveGamesBatchKey? batchKey,
+  bool streamEnabled = true,
 }) {
   _ensureBaseGame(ref, game);
-  final params = LiveGameWatchParams(gameId: game.gameId, batchKey: batchKey);
+  final params = LiveGameWatchParams(
+    gameId: game.gameId,
+    batchKey: batchKey,
+    streamEnabled: streamEnabled,
+  );
   return ref.watch(liveGameClockProvider(params)) ?? game;
 }
 

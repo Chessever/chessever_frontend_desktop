@@ -11,6 +11,7 @@ import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
@@ -96,7 +97,9 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   }
 
   void _runSearch(String q) {
-    ref.read(tournamentDetailGamesSearchByTabIdProvider(widget.tabId).notifier).state = q;
+    ref
+        .read(tournamentDetailGamesSearchByTabIdProvider(widget.tabId).notifier)
+        .state = q;
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 300), () {
       final notifier = ref.read(gamesTourScreenProvider.notifier);
@@ -112,6 +115,9 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   Widget build(BuildContext context) {
     final grouped = ref.watch(gamesTourGroupedProvider);
     final tournamentTitle = ref.watch(activeTournamentProvider)?.title ?? '';
+    final streamingEnabled = ref.watch(
+      desktopTabsProvider.select((state) => state.activeId == widget.tabId),
+    );
     // Source of truth: the persisted board-settings store. Toggling here
     // (or anywhere else — Settings, Library, etc.) writes to the same
     // record, so every desktop pane stays in sync. See `desktop_game_card.dart`
@@ -210,6 +216,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                           isKnockout: grouped.isKnockoutTournament,
                           roundStartsAtById: roundStartsAtById,
                           roundNameById: roundNameById,
+                          streamingEnabled: streamingEnabled,
                         ),
                     ],
                   ),
@@ -362,6 +369,7 @@ class _RoundSection extends ConsumerWidget {
     required this.isKnockout,
     required this.roundStartsAtById,
     required this.roundNameById,
+    required this.streamingEnabled,
   });
 
   final String scopeId;
@@ -376,6 +384,7 @@ class _RoundSection extends ConsumerWidget {
   final bool isKnockout;
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
+  final bool streamingEnabled;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -414,6 +423,7 @@ class _RoundSection extends ConsumerWidget {
                 layout: layout,
                 roundStartsAtById: roundStartsAtById,
                 roundNameById: roundNameById,
+                streamingEnabled: streamingEnabled,
               )
             else if (layout == DesktopCardLayout.grid)
               _GamesGrid(
@@ -426,6 +436,7 @@ class _RoundSection extends ConsumerWidget {
                 tournamentTitle: tournamentTitle,
                 roundStartsAtById: roundStartsAtById,
                 roundNameById: roundNameById,
+                streamingEnabled: streamingEnabled,
               )
             else
               _GamesList(
@@ -439,6 +450,7 @@ class _RoundSection extends ConsumerWidget {
                 layout: layout,
                 roundStartsAtById: roundStartsAtById,
                 roundNameById: roundNameById,
+                streamingEnabled: streamingEnabled,
               ),
           ],
         ],
@@ -459,6 +471,7 @@ class _GamesList extends ConsumerWidget {
     required this.layout,
     required this.roundStartsAtById,
     required this.roundNameById,
+    required this.streamingEnabled,
   });
   final String scopeId;
   final String? selectedGameId;
@@ -473,6 +486,7 @@ class _GamesList extends ConsumerWidget {
   final DesktopCardLayout layout;
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
+  final bool streamingEnabled;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -494,6 +508,7 @@ class _GamesList extends ConsumerWidget {
             selected: selectedGameId == game.gameId,
             roundStartsAtById: roundStartsAtById,
             roundNameById: roundNameById,
+            streamingEnabled: streamingEnabled,
           ),
         );
       },
@@ -512,6 +527,7 @@ class _GamesGrid extends ConsumerWidget {
     required this.tournamentTitle,
     required this.roundStartsAtById,
     required this.roundNameById,
+    required this.streamingEnabled,
   });
   final String scopeId;
   final String? selectedGameId;
@@ -522,6 +538,7 @@ class _GamesGrid extends ConsumerWidget {
   final String tournamentTitle;
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
+  final bool streamingEnabled;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -556,6 +573,7 @@ class _GamesGrid extends ConsumerWidget {
                   selected: selectedGameId == games[i].gameId,
                   roundStartsAtById: roundStartsAtById,
                   roundNameById: roundNameById,
+                  streamingEnabled: streamingEnabled,
                 ),
               ),
         );
@@ -576,6 +594,7 @@ class _MatchesList extends ConsumerWidget {
     required this.layout,
     required this.roundStartsAtById,
     required this.roundNameById,
+    required this.streamingEnabled,
   });
 
   final String scopeId;
@@ -588,6 +607,7 @@ class _MatchesList extends ConsumerWidget {
   final DesktopCardLayout layout;
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
+  final bool streamingEnabled;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -612,6 +632,7 @@ class _MatchesList extends ConsumerWidget {
               layout: layout,
               roundStartsAtById: roundStartsAtById,
               roundNameById: roundNameById,
+              streamingEnabled: streamingEnabled,
             ),
           ),
       ],
@@ -631,6 +652,7 @@ class _MatchSection extends StatefulWidget {
     required this.layout,
     required this.roundStartsAtById,
     required this.roundNameById,
+    required this.streamingEnabled,
   });
 
   final String scopeId;
@@ -643,6 +665,7 @@ class _MatchSection extends StatefulWidget {
   final DesktopCardLayout layout;
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
+  final bool streamingEnabled;
 
   @override
   State<_MatchSection> createState() => _MatchSectionState();
@@ -675,6 +698,7 @@ class _MatchSectionState extends State<_MatchSection> {
               tournamentTitle: widget.tournamentTitle,
               roundStartsAtById: widget.roundStartsAtById,
               roundNameById: widget.roundNameById,
+              streamingEnabled: widget.streamingEnabled,
             )
           else
             _GamesList(
@@ -688,6 +712,7 @@ class _MatchSectionState extends State<_MatchSection> {
               layout: widget.layout,
               roundStartsAtById: widget.roundStartsAtById,
               roundNameById: widget.roundNameById,
+              streamingEnabled: widget.streamingEnabled,
             ),
         ],
       ],
@@ -1213,6 +1238,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
     this.enableContextMenu = true,
     this.viewSource = ChessboardView.tour,
     this.liveBatchKey,
+    this.streamingEnabled = true,
     this.allowStockfishFallback = true,
     this.federationFallbackForName,
     this.federationFallback,
@@ -1232,6 +1258,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
   final bool enableContextMenu;
   final ChessboardView viewSource;
   final LiveGamesBatchKey? liveBatchKey;
+  final bool streamingEnabled;
 
   /// When false, the eval bar inside this card suppresses Stockfish fallback.
   /// Pass `false` while the host list is actively scrolling so we don't burn
@@ -1253,7 +1280,12 @@ class LiveDesktopGameCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final liveGame = watchLiveGame(ref, game, batchKey: liveBatchKey);
+    final liveGame = watchLiveGame(
+      ref,
+      game,
+      batchKey: liveBatchKey,
+      streamEnabled: streamingEnabled,
+    );
     var data = GameCardData.fromGamesTourModel(liveGame);
     final fallback = federationFallback?.trim();
     final fallbackName = federationFallbackForName?.trim();
@@ -1326,7 +1358,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
       ),
       layout: layout,
       selected: selected,
-      allowStockfishFallback: allowStockfishFallback,
+      allowStockfishFallback: streamingEnabled && allowStockfishFallback,
     );
   }
 }

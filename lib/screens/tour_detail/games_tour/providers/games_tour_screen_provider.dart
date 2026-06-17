@@ -2,6 +2,7 @@ import 'package:chessever/repository/local_storage/tournament/games/games_local_
 import 'package:chessever/providers/event_pin_refresh_provider.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/group_event/model/about_tour_model.dart';
+import 'package:chessever/screens/group_event/model/tour_detail_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/repository/local_storage/tournament/games/pin_games_local_storage.dart';
@@ -20,8 +21,12 @@ final gamesTourScreenProvider = StateNotifierProvider<
   GamesTourScreenProvider,
   AsyncValue<GamesScreenModel>
 >((ref) {
-  // Watch tour details first - this is the primary dependency
-  final tourDetailAsync = ref.watch(tourDetailScreenProvider);
+  // Only the selected tournament identity should recreate this notifier.
+  // Live-tour/status updates are handled elsewhere and should not flash the
+  // Games tab back through loading.
+  final tourDetailAsync = ref.watch(
+    tourDetailScreenProvider.select(_GamesTourDetailSlice.from),
+  );
   // unused: final showFinishedGames = ref.watch(showFinishedGamesProvider);
 
   if (tourDetailAsync.isLoading) {
@@ -35,7 +40,7 @@ final gamesTourScreenProvider = StateNotifierProvider<
     );
   }
 
-  final aboutTourModel = tourDetailAsync.valueOrNull?.aboutTourModel;
+  final aboutTourModel = tourDetailAsync.aboutTourModel;
 
   if (aboutTourModel == null) {
     return GamesTourScreenProvider.loading(ref: ref);
@@ -812,4 +817,38 @@ class GamesTourScreenProvider
     ).firstMatch(roundSlug);
     return int.tryParse(match?.group(1) ?? '0') ?? 0;
   }
+}
+
+class _GamesTourDetailSlice {
+  const _GamesTourDetailSlice({
+    required this.isLoading,
+    required this.error,
+    required this.aboutTourModel,
+  });
+
+  factory _GamesTourDetailSlice.from(AsyncValue<TourDetailViewModel> value) {
+    return _GamesTourDetailSlice(
+      isLoading: value.isLoading,
+      error: value.error,
+      aboutTourModel: value.valueOrNull?.aboutTourModel,
+    );
+  }
+
+  final bool isLoading;
+  final Object? error;
+  final AboutTourModel? aboutTourModel;
+
+  bool get hasError => error != null;
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        other is _GamesTourDetailSlice &&
+            other.isLoading == isLoading &&
+            other.error == error &&
+            other.aboutTourModel == aboutTourModel;
+  }
+
+  @override
+  int get hashCode => Object.hash(isLoading, error, aboutTourModel);
 }

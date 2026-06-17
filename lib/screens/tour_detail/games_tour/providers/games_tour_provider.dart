@@ -62,6 +62,7 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
 
           // Do an immediate check for new games (don't wait 10 seconds)
           Future.delayed(const Duration(seconds: 2), () {
+            if (!mounted) return;
             _checkForNewGames();
           });
         }
@@ -73,18 +74,21 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
     }
   }
 
+  // Per-move updates for visible cards come from Supabase Realtime. This
+  // timer is only a safety net for set-level changes such as new games,
+  // round rollovers, and status changes for off-screen cards.
+  static const Duration _safetyNetInterval = Duration(seconds: 10);
+
   void _startPeriodicRefresh() {
     _stopPeriodicRefresh();
 
-    // Check for new rounds/games every 10 seconds
-    // This handles: new games, status changes, game completions
-    // Realtime updates for visible games are handled by liveGameCardProvider
-    _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
+    _refreshTimer = Timer.periodic(_safetyNetInterval, (_) async {
       await _checkForNewGames();
     });
 
     debugPrint(
-      '🔥 GamesTourNotifier: Started periodic refresh (10s interval) for tour $tourId',
+      '🔥 GamesTourNotifier: Started safety-net refresh '
+      '(${_safetyNetInterval.inSeconds}s interval) for tour $tourId',
     );
   }
 
@@ -97,6 +101,7 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
   }
 
   Future<void> _checkForNewGames() async {
+    if (!mounted) return;
     try {
       final currentGames = state.valueOrNull;
       if (currentGames == null) return;
@@ -106,6 +111,7 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
       final freshGames = await gamesLocalStorageProvider.fetchAndSaveGames(
         tourId,
       );
+      if (!mounted) return;
 
       final currentById = {for (final game in currentGames) game.id: game};
       final freshIds = <String>{};
@@ -129,11 +135,11 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
           continue;
         }
 
-        if (_hasGameChanged(current, fresh)) {
+        if (_hasSafetyNetChange(current, fresh)) {
           hasChanges = true;
         }
 
-        mergedGames.add(_mergeGameSnapshots(current, fresh));
+        mergedGames.add(_mergeSafetyNetSnapshot(current, fresh));
       }
 
       // Check for removed games
@@ -147,35 +153,21 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
         state = AsyncValue.data(mergedGames);
       }
     } catch (error, _) {
+      if (!mounted) return;
       debugPrint('🔥 GamesTourNotifier: Error checking for new games: $error');
     }
   }
 
-  bool _hasGameChanged(Games current, Games fresh) {
-    return current.status != fresh.status ||
-        current.lastMove != fresh.lastMove ||
-        current.fen != fresh.fen ||
-        current.lastMoveTime != fresh.lastMoveTime ||
-        current.lastClockWhite != fresh.lastClockWhite ||
-        current.lastClockBlack != fresh.lastClockBlack;
+  bool _hasSafetyNetChange(Games current, Games fresh) {
+    return (fresh.status != null && current.status != fresh.status) ||
+        current.roundId != fresh.roundId ||
+        current.roundSlug != fresh.roundSlug;
   }
 
-  Games _mergeGameSnapshots(Games current, Games fresh) {
-    final currentMoveTime = current.lastMoveTime;
-    final freshMoveTime = fresh.lastMoveTime;
-    final useFreshMove =
-        currentMoveTime == null ||
-        (freshMoveTime != null && freshMoveTime.isAfter(currentMoveTime));
-
-    return fresh.copyWith(
-      fen: useFreshMove ? fresh.fen : current.fen,
-      lastMove: useFreshMove ? fresh.lastMove : current.lastMove,
-      lastMoveTime: useFreshMove ? freshMoveTime : currentMoveTime,
-      lastClockWhite:
-          useFreshMove ? fresh.lastClockWhite : current.lastClockWhite,
-      lastClockBlack:
-          useFreshMove ? fresh.lastClockBlack : current.lastClockBlack,
-      pgn: useFreshMove ? fresh.pgn : current.pgn,
+  Games _mergeSafetyNetSnapshot(Games current, Games fresh) {
+    return current.copyWith(
+      roundId: fresh.roundId,
+      roundSlug: fresh.roundSlug,
       status: fresh.status ?? current.status,
     );
   }

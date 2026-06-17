@@ -10,6 +10,7 @@ import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/utils/game_date_groups.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_date_group_card.dart';
@@ -447,9 +448,10 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
       return LayoutBuilder(
         builder: (context, constraints) {
           const targetWidth = 280.0;
-          final columns = (constraints.maxWidth / targetWidth)
-              .floor()
-              .clamp(2, 6);
+          final columns = (constraints.maxWidth / targetWidth).floor().clamp(
+            2,
+            6,
+          );
           return DesktopGameKeyboardFocus(
             scopeId: 'favorites-games',
             games: widget.games,
@@ -521,7 +523,11 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
           controller: _scrollController,
           physics: const DesktopScrollPhysics(),
           slivers: [
-            for (var groupIndex = 0; groupIndex < groups.length; groupIndex++) ...[
+            for (
+              var groupIndex = 0;
+              groupIndex < groups.length;
+              groupIndex++
+            ) ...[
               SliverPadding(
                 padding: EdgeInsets.only(
                   top: groupIndex == 0 ? 0 : 16,
@@ -581,7 +587,7 @@ void _openFavoriteGame(
   );
 }
 
-class _FavoriteLiveGameCard extends StatelessWidget {
+class _FavoriteLiveGameCard extends ConsumerWidget {
   const _FavoriteLiveGameCard({
     required this.game,
     required this.layout,
@@ -600,7 +606,10 @@ class _FavoriteLiveGameCard extends StatelessWidget {
   final List<GamesTourModel> allGames;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final streamingEnabled = ref.watch(
+      activeTabKindProvider.select((kind) => kind == TabKind.favorites),
+    );
     return Cue.onMount(
       motion: const CueMotion.smooth(),
       acts: const [Act.fadeIn(), Act.slideY(from: 0.12), Act.scale(from: 0.99)],
@@ -612,6 +621,7 @@ class _FavoriteLiveGameCard extends StatelessWidget {
         layout: layout,
         selected: selected,
         viewSource: ChessboardView.favScorecard,
+        streamingEnabled: streamingEnabled,
       ),
     );
   }

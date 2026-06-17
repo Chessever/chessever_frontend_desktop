@@ -62,15 +62,16 @@ class _TourDetailScreenNotifier
   void setupLiveTourIdListener() {
     ref.listen<AsyncValue<List<String>>>(liveTourIdProvider, (previous, next) {
       next.whenData((newLiveTourIds) {
-        if (listsAreEqual(_currentLiveTourIds, newLiveTourIds)) {
+        final normalizedLiveTourIds = _normalizeLiveTourIds(newLiveTourIds);
+        if (listsAreEqual(_currentLiveTourIds, normalizedLiveTourIds)) {
           return;
         }
 
-        _currentLiveTourIds = List.from(newLiveTourIds);
+        _currentLiveTourIds = normalizedLiveTourIds;
 
         final currentState = state.valueOrNull;
         if (currentState != null) {
-          updateStateWithNewLiveTourIds(currentState, newLiveTourIds);
+          updateStateWithNewLiveTourIds(currentState, normalizedLiveTourIds);
         }
       });
     });
@@ -78,9 +79,11 @@ class _TourDetailScreenNotifier
 
   @override
   bool listsAreEqual(List<String> list1, List<String> list2) {
-    if (list1.length != list2.length) return false;
-    for (int i = 0; i < list1.length; i++) {
-      if (list1[i] != list2[i]) return false;
+    final normalized1 = _normalizeLiveTourIds(list1);
+    final normalized2 = _normalizeLiveTourIds(list2);
+    if (normalized1.length != normalized2.length) return false;
+    for (var i = 0; i < normalized1.length; i++) {
+      if (normalized1[i] != normalized2[i]) return false;
     }
     return true;
   }
@@ -91,18 +94,15 @@ class _TourDetailScreenNotifier
     List<String> newLiveTourIds,
   ) {
     try {
-      // Check if any new tour IDs appeared that we don't have yet
-      final currentTourIds = currentState.tours.map((t) => t.tour.id).toSet();
-      final hasNewTours = newLiveTourIds.any(
-        (id) => !currentTourIds.contains(id),
+      final relevantLiveTourIds = _liveTourIdsForTours(
+        newLiveTourIds,
+        currentState.tours,
       );
 
-      // If new tours appeared, reload everything to fetch them
-      if (hasNewTours) {
-        debugPrint(
-          '🔄 TourDetailScreenNotifier: New tours detected in live_tour_ids! Reloading...',
-        );
-        loadTourDetails();
+      // `live_tour_ids` is global. Ignore IDs from other events, otherwise
+      // every settings tick for another live tournament recreates this event
+      // view and can flash the Games tab back through loading.
+      if (listsAreEqual(currentState.liveTourIds, relevantLiveTourIds)) {
         return;
       }
 
@@ -114,7 +114,7 @@ class _TourDetailScreenNotifier
             // Handle tours with empty dates (common for TCEC, CCC, and some imports)
             if (tour.dates.isEmpty) {
               final newRoundStatus =
-                  newLiveTourIds.contains(tour.id)
+                  relevantLiveTourIds.contains(tour.id)
                       ? RoundStatus.live
                       : RoundStatus.completed;
               return TourModel(tour: tour, roundStatus: newRoundStatus);
@@ -127,7 +127,7 @@ class _TourDetailScreenNotifier
               now,
               startDate,
               endDate,
-              newLiveTourIds,
+              relevantLiveTourIds,
             );
 
             return TourModel(tour: tour, roundStatus: newRoundStatus);
@@ -141,11 +141,11 @@ class _TourDetailScreenNotifier
 
       final selectedTour =
           updatedSelectedTourModel?.tour ??
-          findBestTour(updatedTourModels, newLiveTourIds).tour;
+          findBestTour(updatedTourModels, relevantLiveTourIds).tour;
 
       final updatedViewModel = TourDetailViewModel(
         aboutTourModel: AboutTourModel.fromTour(selectedTour),
-        liveTourIds: newLiveTourIds,
+        liveTourIds: relevantLiveTourIds,
         tours: updatedTourModels,
       );
 
@@ -159,8 +159,10 @@ class _TourDetailScreenNotifier
   Future<void> loadTourDetails() async {
     try {
       final liveTourIdAsync = ref.read(liveTourIdProvider);
-      final liveTourIds = liveTourIdAsync.valueOrNull ?? <String>[];
-      _currentLiveTourIds = List.from(liveTourIds);
+      final liveTourIds = _normalizeLiveTourIds(
+        liveTourIdAsync.valueOrNull ?? <String>[],
+      );
+      _currentLiveTourIds = liveTourIds;
 
       final tours = await ref
           .read(tourLocalStorageProvider)
@@ -170,7 +172,7 @@ class _TourDetailScreenNotifier
         setDataState(
           TourDetailViewModel(
             aboutTourModel: AboutTourModel.empty(),
-            liveTourIds: liveTourIds,
+            liveTourIds: const <String>[],
             tours: [],
           ),
         );
@@ -178,12 +180,13 @@ class _TourDetailScreenNotifier
       }
 
       final tourModels = await processTours(tours, liveTourIds);
+      final relevantLiveTourIds = _liveTourIdsForTours(liveTourIds, tourModels);
 
       if (tourModels.isEmpty) {
         setDataState(
           TourDetailViewModel(
             aboutTourModel: AboutTourModel.empty(),
-            liveTourIds: liveTourIds,
+            liveTourIds: const <String>[],
             tours: [],
           ),
         );
@@ -193,12 +196,12 @@ class _TourDetailScreenNotifier
       final selectedTour = await determineSelectedTour(
         tourModels,
         state.valueOrNull,
-        liveTourIds,
+        relevantLiveTourIds,
       );
       final tourDetailViewModel = createViewModel(
         selectedTour,
         tourModels,
-        liveTourIds,
+        relevantLiveTourIds,
       );
 
       setDataState(tourDetailViewModel);
@@ -225,7 +228,7 @@ class _TourDetailScreenNotifier
       final updatedViewModel = createViewModelFromExisting(
         currentState,
         selectedTourModel.tour,
-        _currentLiveTourIds,
+        _liveTourIdsForTours(_currentLiveTourIds, currentState.tours),
       );
       setDataState(updatedViewModel);
 
@@ -421,6 +424,23 @@ class _TourDetailScreenNotifier
         stackTrace ?? StackTrace.current,
       );
     }
+  }
+
+  List<String> _normalizeLiveTourIds(List<String> ids) {
+    final normalized =
+        ids.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet().toList()
+          ..sort();
+    return List.unmodifiable(normalized);
+  }
+
+  List<String> _liveTourIdsForTours(
+    List<String> liveTourIds,
+    List<TourModel> tours,
+  ) {
+    final tourIds = tours.map((model) => model.tour.id).toSet();
+    return _normalizeLiveTourIds(
+      liveTourIds.where(tourIds.contains).toList(growable: false),
+    );
   }
 
   @override

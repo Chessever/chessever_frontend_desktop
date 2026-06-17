@@ -283,6 +283,11 @@ class _BoardPaneContent extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final activeTabId =
         tabId ?? ref.watch(desktopTabsProvider.select((s) => s.activeId));
+    final isForegroundTab =
+        activeTabId != null &&
+        ref.watch(
+          desktopTabsProvider.select((state) => state.activeId == activeTabId),
+        );
     final restoredSession =
         activeTabId == null
             ? null
@@ -1137,7 +1142,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     // root pane: every broadcast push would rebuild the board, notation, and
     // engine rail. The player headers below watch just the clock fields they
     // need.
-    if (activeGameId != null) {
+    if (isForegroundTab && activeGameId != null) {
       ref.listen<AsyncValue<Map<String, dynamic>?>>(
         gameUpdatesStreamProvider(activeGameId),
         (previous, next) {
@@ -3340,6 +3345,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                               explorerPreview == null ? gameEnding : null,
                           onWheelStep: stepNotationHorizontally,
                           isLiveAtTip: isLiveAtTip,
+                          isForegroundTab: isForegroundTab,
                           activeGameId: activeGameId,
                           boardArgs: boardArgs,
                           sourceGame: boardArgs?.sourceGame,
@@ -4865,6 +4871,7 @@ class _BoardArea extends ConsumerWidget {
     required this.gameEnding,
     required this.onWheelStep,
     required this.isLiveAtTip,
+    required this.isForegroundTab,
     required this.focusMode,
     required this.focusShortcutLabel,
     required this.onFocusModeChanged,
@@ -4935,6 +4942,7 @@ class _BoardArea extends ConsumerWidget {
   /// against wall-clock (live tip) or render a static PGN-baked figure
   /// (any earlier move, or finished game).
   final bool isLiveAtTip;
+  final bool isForegroundTab;
 
   /// `[%cal …]` arrows + `[%csl …]` square circles authored into the
   /// current move's PGN comment. Merged with user-drawn annotations.
@@ -5334,7 +5342,7 @@ class _BoardArea extends ConsumerWidget {
                                 (!topIsWhite && sideToMove == Side.black),
                             clockText: topClock,
                             activeGameId: activeGameId,
-                            useLiveClock: isLiveAtTip,
+                            useLiveClock: isForegroundTab && isLiveAtTip,
                             boardArgs: boardArgs,
                             sourceGame: sourceGame,
                             viewSource: viewSource,
@@ -5362,7 +5370,7 @@ class _BoardArea extends ConsumerWidget {
                                 (!bottomIsWhite && sideToMove == Side.black),
                             clockText: bottomClock,
                             activeGameId: activeGameId,
-                            useLiveClock: isLiveAtTip,
+                            useLiveClock: isForegroundTab && isLiveAtTip,
                             boardArgs: boardArgs,
                             sourceGame: sourceGame,
                             viewSource: viewSource,

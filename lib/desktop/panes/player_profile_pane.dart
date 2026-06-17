@@ -26,6 +26,7 @@ class PlayerProfilePane extends ConsumerWidget {
       key: ValueKey<String>(
         '${args.playerName}|${args.fideId ?? ''}|${args.dataSource.name}',
       ),
+      tabId: tabId,
       args: args,
     );
   }

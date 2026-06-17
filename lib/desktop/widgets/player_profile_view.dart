@@ -86,8 +86,9 @@ import 'package:chessever/widgets/player_initials_avatar.dart';
 /// Mobile responsive helpers (`.h/.w/.sp`) are gone — fixed pixels chosen for
 /// a 1440p desktop viewport.
 class PlayerProfileView extends ConsumerStatefulWidget {
-  const PlayerProfileView({super.key, required this.args});
+  const PlayerProfileView({super.key, required this.tabId, required this.args});
 
+  final String tabId;
   final PlayerProfileArgs args;
 
   @override
@@ -570,6 +571,7 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
                 ),
                 Expanded(
                   child: _RightPane(
+                    tabId: widget.tabId,
                     currentTab: _tab,
                     onSelectTab: _setTab,
                     hasActiveFilter: hasActiveFilter,
@@ -1333,7 +1335,9 @@ class _DataSourceCard extends StatelessWidget {
     final twicTotal =
         showEventCounts ? summary?.totalEvents : summary?.totalGames;
     final twicLabel =
-        twicTotal != null ? 'ChessEver - ${formatCompactCount(twicTotal)}' : 'ChessEver';
+        twicTotal != null
+            ? 'ChessEver - ${formatCompactCount(twicTotal)}'
+            : 'ChessEver';
 
     return Container(
       padding: const EdgeInsets.all(4),
@@ -1558,6 +1562,7 @@ class _BioRow {
 
 class _RightPane extends StatelessWidget {
   const _RightPane({
+    required this.tabId,
     required this.currentTab,
     required this.onSelectTab,
     required this.hasActiveFilter,
@@ -1569,6 +1574,7 @@ class _RightPane extends StatelessWidget {
     required this.gamebasePlayerId,
   });
 
+  final String tabId;
   final _ProfileTab currentTab;
   final ValueChanged<_ProfileTab> onSelectTab;
   final bool hasActiveFilter;
@@ -1601,6 +1607,7 @@ class _RightPane extends StatelessWidget {
                 onShowGames: () => onSelectTab(_ProfileTab.games),
               ),
               _GamesBody(
+                tabId: tabId,
                 activeKey: activeKey,
                 playerName: playerName,
                 dataSource: dataSource,
@@ -2678,12 +2685,14 @@ class _ErrorState extends StatelessWidget {
 
 class _GamesBody extends ConsumerStatefulWidget {
   const _GamesBody({
+    required this.tabId,
     required this.activeKey,
     required this.playerName,
     required this.dataSource,
     required this.isActive,
   });
 
+  final String tabId;
   final PlayerProfileKey activeKey;
   final String playerName;
   final PlayerProfileDataSource dataSource;
@@ -3166,6 +3175,7 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
         ref.watch(countryDropdownProvider).valueOrNull?.countryCode;
 
     return _GroupedGamesList(
+      tabId: widget.tabId,
       autofocus: widget.isActive,
       enabled: widget.isActive,
       sections: sections,
@@ -4378,6 +4388,7 @@ class _PlayerGameEventSection {
 
 class _GroupedGamesList extends ConsumerStatefulWidget {
   const _GroupedGamesList({
+    required this.tabId,
     required this.autofocus,
     required this.enabled,
     required this.sections,
@@ -4395,6 +4406,7 @@ class _GroupedGamesList extends ConsumerStatefulWidget {
     this.footer,
   });
 
+  final String tabId;
   final bool autofocus;
   final bool enabled;
   final List<_PlayerGameEventSection> sections;
@@ -4579,6 +4591,11 @@ class _GroupedGamesListState extends ConsumerState<_GroupedGamesList> {
 
   @override
   Widget build(BuildContext context) {
+    final streamingEnabled =
+        widget.enabled &&
+        ref.watch(
+          desktopTabsProvider.select((state) => state.activeId == widget.tabId),
+        );
     return Focus(
       focusNode: _focusNode,
       autofocus: widget.autofocus,
@@ -4618,6 +4635,7 @@ class _GroupedGamesListState extends ConsumerState<_GroupedGamesList> {
                   onToggleSelection: widget.onToggleSelection,
                   profilePlayerName: widget.profilePlayerName,
                   profileFederationFallback: widget.profileFederationFallback,
+                  streamingEnabled: streamingEnabled,
                 ),
               ),
             );
@@ -4643,6 +4661,7 @@ class _PlayerGamesEventBlock extends StatelessWidget {
     required this.onToggleSelection,
     required this.profilePlayerName,
     required this.profileFederationFallback,
+    required this.streamingEnabled,
   });
 
   final _PlayerGameEventSection section;
@@ -4662,6 +4681,7 @@ class _PlayerGamesEventBlock extends StatelessWidget {
   final ValueChanged<String> onToggleSelection;
   final String profilePlayerName;
   final String? profileFederationFallback;
+  final bool streamingEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -4698,6 +4718,7 @@ class _PlayerGamesEventBlock extends StatelessWidget {
                 onToggleSelection: onToggleSelection,
                 profilePlayerName: profilePlayerName,
                 profileFederationFallback: profileFederationFallback,
+                streamingEnabled: streamingEnabled,
               ),
             );
           },
@@ -4721,6 +4742,7 @@ class _ContextGameCard extends StatelessWidget {
     required this.onToggleSelection,
     required this.profilePlayerName,
     required this.profileFederationFallback,
+    required this.streamingEnabled,
   });
 
   final GamesTourModel game;
@@ -4739,6 +4761,7 @@ class _ContextGameCard extends StatelessWidget {
   final ValueChanged<String> onToggleSelection;
   final String profilePlayerName;
   final String? profileFederationFallback;
+  final bool streamingEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -4787,6 +4810,7 @@ class _ContextGameCard extends StatelessWidget {
                 enableContextMenu: false,
                 federationFallbackForName: profilePlayerName,
                 federationFallback: profileFederationFallback,
+                streamingEnabled: streamingEnabled,
               ),
             ),
           ),

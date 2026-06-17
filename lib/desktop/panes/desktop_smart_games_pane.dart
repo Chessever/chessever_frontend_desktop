@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
 import 'package:chessever/desktop/utils/game_date_groups.dart';
 import 'package:chessever/desktop/widgets/desktop_date_group_card.dart';
@@ -146,6 +147,7 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                   );
                 }
                 return _SmartGamesList(
+                  tabId: widget.tabId,
                   games: visibleGames,
                   routeTitle: copy.title,
                   hasMore: state.hasMore,
@@ -166,6 +168,7 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
 
 class _SmartGamesList extends ConsumerStatefulWidget {
   const _SmartGamesList({
+    required this.tabId,
     required this.games,
     required this.routeTitle,
     required this.hasMore,
@@ -174,6 +177,7 @@ class _SmartGamesList extends ConsumerStatefulWidget {
     required this.showCounts,
   });
 
+  final String tabId;
   final List<GamesTourModel> games;
   final String routeTitle;
   final bool hasMore;
@@ -216,6 +220,9 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
   @override
   Widget build(BuildContext context) {
     final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
+    final streamingEnabled = ref.watch(
+      desktopTabsProvider.select((state) => state.activeId == widget.tabId),
+    );
     final groups = buildDesktopGameDateGroups(
       widget.games,
       includeToday: true,
@@ -288,6 +295,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                                 layout: DesktopCardLayout.grid,
                                 selected: selectedGameId == game.gameId,
                                 viewSource: ChessboardView.tour,
+                                streamingEnabled: streamingEnabled,
                               ),
                             );
                           }, childCount: groups[groupIndex].games.length),
@@ -395,6 +403,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                             layout: layout,
                             selected: selectedGameId == game.gameId,
                             viewSource: ChessboardView.tour,
+                            streamingEnabled: streamingEnabled,
                           ),
                         );
                       },
