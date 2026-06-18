@@ -36,6 +36,25 @@ void main() {
     );
   });
 
+  testWidgets('can hide host-specific metadata columns', (tester) async {
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _wrap(
+        controller: controller,
+        onOpen: (_) {},
+        hiddenColumnIds: const {'round', 'site'},
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('ROUND'), findsNothing);
+    expect(find.text('SITE'), findsNothing);
+    expect(find.text('EVENT'), findsOneWidget);
+    expect(find.text('ECO'), findsOneWidget);
+  });
+
   testWidgets('single click highlights and arrows move highlighted game', (
     tester,
   ) async {
@@ -124,6 +143,7 @@ Widget _wrap({
   Set<String> selectedIds = const <String>{},
   ValueChanged<String>? onToggleSelection,
   ValueChanged<Set<String>>? onReplaceSelection,
+  Set<String> hiddenColumnIds = const <String>{},
 }) {
   return ProviderScope(
     child: MaterialApp(
@@ -140,6 +160,7 @@ Widget _wrap({
             selectedIds: selectedIds,
             onToggleSelection: onToggleSelection,
             onReplaceSelection: onReplaceSelection,
+            hiddenColumnIds: hiddenColumnIds,
             onOpenGame: (game, {required bool inNewTab}) => onOpen(game),
           ),
         ),

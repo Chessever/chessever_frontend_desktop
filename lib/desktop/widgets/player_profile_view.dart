@@ -1333,7 +1333,9 @@ class _DataSourceCard extends StatelessWidget {
     final twicTotal =
         showEventCounts ? summary?.totalEvents : summary?.totalGames;
     final twicLabel =
-        twicTotal != null ? 'ChessEver - ${formatCompactCount(twicTotal)}' : 'ChessEver';
+        twicTotal != null
+            ? 'ChessEver - ${formatCompactCount(twicTotal)}'
+            : 'ChessEver';
 
     return Container(
       padding: const EdgeInsets.all(4),
@@ -4352,6 +4354,7 @@ class _PlayerGamesDatabaseTableState
       onContext: widget.onContext,
       footer: widget.footer,
       rowKeyPrefix: 'player-game-table',
+      hiddenColumnIds: const {'round', 'site'},
     );
   }
 }
