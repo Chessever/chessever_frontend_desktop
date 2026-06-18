@@ -24,6 +24,7 @@ import 'package:chessever/desktop/panes/settings_pane.dart';
 import 'package:chessever/desktop/panes/desktop_smart_games_pane.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart';
 import 'package:chessever/desktop/panes/tournaments_pane.dart';
+import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
 import 'package:chessever/desktop/widgets/paywall/desktop_billing_issue_dialog.dart';
 import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
@@ -34,6 +35,7 @@ import 'package:chessever/desktop/shell/desktop_pane_navigation.dart';
 import 'package:chessever/desktop/shell/desktop_shell_intents.dart';
 import 'package:chessever/desktop/shell/desktop_sidebar.dart';
 import 'package:chessever/desktop/shell/desktop_tab_bar.dart';
+import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/pane_keyboard_scroll.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -103,6 +105,7 @@ class DesktopShell extends HookConsumerWidget {
     final sidebarPreferenceTouched = useRef<bool>(false);
     final tabPageStorageBucket = useMemoized(PageStorageBucket.new);
     final feedbackScreenshotKey = useMemoized(GlobalKey.new);
+    final closeConfirmationOpen = useRef<bool>(false);
 
     useEffect(() {
       var disposed = false;
@@ -278,6 +281,21 @@ class DesktopShell extends HookConsumerWidget {
               }
             },
           );
+        }
+
+        Future<void> closeActiveTabWithUnsavedAnalysisGuard() async {
+          final id = ref.read(desktopTabsProvider).activeId;
+          if (id == null) return;
+          final session = ref.read(boardPaneSessionByTabIdProvider)[id];
+          if (boardSessionHasUnsavedAnalysis(session)) {
+            if (closeConfirmationOpen.value) return;
+            closeConfirmationOpen.value = true;
+            final confirmed = await confirmDiscardBoardAnalysis(
+              context,
+            ).whenComplete(() => closeConfirmationOpen.value = false);
+            if (!context.mounted || !confirmed) return;
+          }
+          ref.read(desktopTabsProvider.notifier).close(id);
         }
 
         Future<void> pastePgnFromClipboard() async {
@@ -541,8 +559,7 @@ class DesktopShell extends HookConsumerWidget {
               ),
               _CloseTabIntent: CallbackAction<_CloseTabIntent>(
                 onInvoke: (_) {
-                  final id = tabsState.activeId;
-                  if (id != null) tabsNotifier.close(id);
+                  unawaited(closeActiveTabWithUnsavedAnalysisGuard());
                   return null;
                 },
               ),

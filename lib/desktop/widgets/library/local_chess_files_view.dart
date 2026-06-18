@@ -45,6 +45,12 @@ class LocalChessFilesView extends HookConsumerWidget {
     final node = source?.nodeForPath(selectedPath);
     final searchController = useTextEditingController();
     final query = useState<String>('');
+    final sort = useState(
+      const _LocalGamesSortConfig(
+        _LocalGamesSortKey.originalOrder,
+        _LocalGamesSortDir.asc,
+      ),
+    );
 
     Future<void> pickFolder() async {
       final opened =
@@ -94,9 +100,13 @@ class LocalChessFilesView extends HookConsumerWidget {
     final databaseTitle = selectedDatabase?.name ?? source.label;
     final filtered = useMemoized(() {
       final q = query.value.trim().toLowerCase();
-      if (q.isEmpty) return allGames;
-      return allGames.where((game) => _matches(game, q)).toList();
-    }, [allGames, query.value]);
+      final base =
+          q.isEmpty
+              ? List<LocalChessGame>.of(allGames)
+              : allGames.where((game) => _matches(game, q)).toList();
+      _sortLocalGames(base, sort.value);
+      return base;
+    }, [allGames, query.value, sort.value]);
 
     void selectLocalPath(String path) {
       ref.read(localChessLibraryProvider.notifier).selectPath(path);
@@ -260,6 +270,8 @@ class LocalChessFilesView extends HookConsumerWidget {
                             database: selectedDatabase,
                             games: filtered,
                             databaseGames: allGames,
+                            sort: sort.value,
+                            onSortChange: (next) => sort.value = next,
                             onRefresh: onRefreshOverride,
                             onSelectPath: onSelectPath,
                           ),
@@ -741,6 +753,8 @@ class _LocalGamesTable extends HookConsumerWidget {
     required this.database,
     required this.games,
     required this.databaseGames,
+    required this.sort,
+    required this.onSortChange,
     required this.onRefresh,
     required this.onSelectPath,
   });
@@ -749,6 +763,8 @@ class _LocalGamesTable extends HookConsumerWidget {
   final LocalChessFileNode? database;
   final List<LocalChessGame> games;
   final List<LocalChessGame> databaseGames;
+  final _LocalGamesSortConfig sort;
+  final ValueChanged<_LocalGamesSortConfig> onSortChange;
   final Future<void> Function()? onRefresh;
   final ValueChanged<String> onSelectPath;
 
@@ -850,11 +866,13 @@ class _LocalGamesTable extends HookConsumerWidget {
 
     bool moveSelection(int delta, {bool range = false}) {
       if (games.isEmpty) return false;
-      final current = selectionExtent.value ??
+      final current =
+          selectionExtent.value ??
           games.indexWhere((game) => game.id == selectedId.value);
-      final next = (current < 0 ? 0 : current + delta)
-          .clamp(0, games.length - 1)
-          .toInt();
+      final next =
+          (current < 0 ? 0 : current + delta)
+              .clamp(0, games.length - 1)
+              .toInt();
       selectIndex(next, range: range);
       return true;
     }
@@ -902,9 +920,12 @@ class _LocalGamesTable extends HookConsumerWidget {
         LogicalKeyboardKey.arrowDown => moveSelection(1, range: shift),
         LogicalKeyboardKey.arrowUp => moveSelection(-1, range: shift),
         LogicalKeyboardKey.home => selectBoundary(0, range: shift),
-        LogicalKeyboardKey.end => selectBoundary(games.length - 1, range: shift),
-        LogicalKeyboardKey.enter || LogicalKeyboardKey.numpadEnter
-            when !shift => openSelectedGame(),
+        LogicalKeyboardKey.end => selectBoundary(
+          games.length - 1,
+          range: shift,
+        ),
+        LogicalKeyboardKey.enter ||
+        LogicalKeyboardKey.numpadEnter when !shift => openSelectedGame(),
         _ => false,
       };
       return handled ? KeyEventResult.handled : KeyEventResult.ignored;
@@ -1065,7 +1086,7 @@ class _LocalGamesTable extends HookConsumerWidget {
           padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
           child: Column(
             children: [
-              const _LocalGamesHeaderRow(),
+              _LocalGamesHeaderRow(sort: sort, onSortChange: onSortChange),
               Expanded(
                 child: Scrollbar(
                   controller: controller,
@@ -1127,6 +1148,118 @@ class _LocalGamesTable extends HookConsumerWidget {
 
 const double _kLocalGameRowHeight = 34;
 
+enum _LocalGamesSortKey {
+  originalOrder,
+  white,
+  whiteElo,
+  black,
+  blackElo,
+  result,
+  eco,
+  opening,
+  event,
+  date,
+}
+
+enum _LocalGamesSortDir { asc, desc }
+
+class _LocalGamesSortConfig {
+  const _LocalGamesSortConfig(this.key, this.dir);
+
+  final _LocalGamesSortKey key;
+  final _LocalGamesSortDir dir;
+}
+
+void _sortLocalGames(List<LocalChessGame> games, _LocalGamesSortConfig sort) {
+  games.sort((a, b) {
+    final primary = _compareLocalGames(a, b, sort);
+    if (primary != 0) return primary;
+    return a.indexInFile.compareTo(b.indexInFile);
+  });
+}
+
+int _compareLocalGames(
+  LocalChessGame a,
+  LocalChessGame b,
+  _LocalGamesSortConfig sort,
+) {
+  final amd = a.game.metadata;
+  final bmd = b.game.metadata;
+  final dir = sort.dir;
+  return switch (sort.key) {
+    _LocalGamesSortKey.originalOrder => _applyLocalSortDir(
+      a.indexInFile.compareTo(b.indexInFile),
+      dir,
+    ),
+    _LocalGamesSortKey.white => _compareLocalText(
+      _playerName(amd, 'White'),
+      _playerName(bmd, 'White'),
+      dir,
+    ),
+    _LocalGamesSortKey.whiteElo => _compareLocalInt(
+      _rating(amd, 'WhiteElo'),
+      _rating(bmd, 'WhiteElo'),
+      dir,
+    ),
+    _LocalGamesSortKey.black => _compareLocalText(
+      _playerName(amd, 'Black'),
+      _playerName(bmd, 'Black'),
+      dir,
+    ),
+    _LocalGamesSortKey.blackElo => _compareLocalInt(
+      _rating(amd, 'BlackElo'),
+      _rating(bmd, 'BlackElo'),
+      dir,
+    ),
+    _LocalGamesSortKey.result => _compareLocalText(
+      _result(amd),
+      _result(bmd),
+      dir,
+    ),
+    _LocalGamesSortKey.eco => _compareLocalText(
+      _meta(amd, 'ECO'),
+      _meta(bmd, 'ECO'),
+      dir,
+    ),
+    _LocalGamesSortKey.opening => _compareLocalText(
+      _opening(amd),
+      _opening(bmd),
+      dir,
+    ),
+    _LocalGamesSortKey.event => _compareLocalText(
+      _event(amd),
+      _event(bmd),
+      dir,
+    ),
+    _LocalGamesSortKey.date => _compareLocalText(_date(amd), _date(bmd), dir),
+  };
+}
+
+int _compareLocalInt(int? a, int? b, _LocalGamesSortDir dir) {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  return _applyLocalSortDir(a.compareTo(b), dir);
+}
+
+int _compareLocalText(String a, String b, _LocalGamesSortDir dir) {
+  final left = a.trim();
+  final right = b.trim();
+  final leftMissing = left.isEmpty || left == '?' || left == '-';
+  final rightMissing = right.isEmpty || right == '?' || right == '-';
+  if (leftMissing && rightMissing) return 0;
+  if (leftMissing) return 1;
+  if (rightMissing) return -1;
+  return _applyLocalSortDir(
+    left.toLowerCase().compareTo(right.toLowerCase()),
+    dir,
+  );
+}
+
+int _applyLocalSortDir(int comparison, _LocalGamesSortDir dir) {
+  return dir == _LocalGamesSortDir.asc ? comparison : -comparison;
+}
+
 Set<String> _clampLocalSelection(Set<String> selectedIds, List<String> rowIds) {
   if (selectedIds.isEmpty) return const <String>{};
   final visible = rowIds.toSet();
@@ -1134,28 +1267,64 @@ Set<String> _clampLocalSelection(Set<String> selectedIds, List<String> rowIds) {
 }
 
 class _LocalGamesHeaderRow extends StatelessWidget {
-  const _LocalGamesHeaderRow();
+  const _LocalGamesHeaderRow({required this.sort, required this.onSortChange});
+
+  final _LocalGamesSortConfig sort;
+  final ValueChanged<_LocalGamesSortConfig> onSortChange;
 
   @override
   Widget build(BuildContext context) {
+    Widget header(
+      String label,
+      _LocalGamesSortKey key, {
+      bool alignEnd = false,
+    }) {
+      return _LocalHeaderCell(
+        label,
+        sortKey: key,
+        sort: sort,
+        alignEnd: alignEnd,
+        onSortChange: onSortChange,
+      );
+    }
+
     return Container(
       height: 27,
       decoration: const BoxDecoration(
         color: kBackgroundColor,
         border: Border(bottom: BorderSide(color: kDividerColor, width: 1)),
       ),
-      child: const Row(
+      child: Row(
         children: [
-          SizedBox(width: 54, child: _LocalHeaderCell('#', alignEnd: true)),
-          Expanded(flex: 22, child: _LocalHeaderCell('WHITE')),
-          SizedBox(width: 64, child: _LocalHeaderCell('ELO W', alignEnd: true)),
-          Expanded(flex: 22, child: _LocalHeaderCell('BLACK')),
-          SizedBox(width: 64, child: _LocalHeaderCell('ELO B', alignEnd: true)),
-          SizedBox(width: 70, child: _LocalHeaderCell('RESULT')),
-          SizedBox(width: 62, child: _LocalHeaderCell('ECO')),
-          Expanded(flex: 18, child: _LocalHeaderCell('OPENING')),
-          Expanded(flex: 16, child: _LocalHeaderCell('EVENT')),
-          SizedBox(width: 92, child: _LocalHeaderCell('DATE')),
+          SizedBox(
+            width: 54,
+            child: header(
+              '#',
+              _LocalGamesSortKey.originalOrder,
+              alignEnd: true,
+            ),
+          ),
+          Expanded(flex: 22, child: header('WHITE', _LocalGamesSortKey.white)),
+          SizedBox(
+            width: 64,
+            child: header('ELO W', _LocalGamesSortKey.whiteElo, alignEnd: true),
+          ),
+          Expanded(flex: 22, child: header('BLACK', _LocalGamesSortKey.black)),
+          SizedBox(
+            width: 64,
+            child: header('ELO B', _LocalGamesSortKey.blackElo, alignEnd: true),
+          ),
+          SizedBox(
+            width: 70,
+            child: header('RESULT', _LocalGamesSortKey.result),
+          ),
+          SizedBox(width: 62, child: header('ECO', _LocalGamesSortKey.eco)),
+          Expanded(
+            flex: 18,
+            child: header('OPENING', _LocalGamesSortKey.opening),
+          ),
+          Expanded(flex: 16, child: header('EVENT', _LocalGamesSortKey.event)),
+          SizedBox(width: 92, child: header('DATE', _LocalGamesSortKey.date)),
         ],
       ),
     );
@@ -1163,25 +1332,71 @@ class _LocalGamesHeaderRow extends StatelessWidget {
 }
 
 class _LocalHeaderCell extends StatelessWidget {
-  const _LocalHeaderCell(this.label, {this.alignEnd = false});
+  const _LocalHeaderCell(
+    this.label, {
+    required this.sortKey,
+    required this.sort,
+    required this.onSortChange,
+    this.alignEnd = false,
+  });
 
   final String label;
+  final _LocalGamesSortKey sortKey;
+  final _LocalGamesSortConfig sort;
+  final ValueChanged<_LocalGamesSortConfig> onSortChange;
   final bool alignEnd;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Align(
-        alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
-        child: Text(
-          label,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: kWhiteColor70,
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0,
+    final active = sort.key == sortKey;
+    final nextDir =
+        active && sort.dir == _LocalGamesSortDir.asc
+            ? _LocalGamesSortDir.desc
+            : _LocalGamesSortDir.asc;
+    final arrow = switch (sort.dir) {
+      _LocalGamesSortDir.asc => Icons.arrow_upward_rounded,
+      _LocalGamesSortDir.desc => Icons.arrow_downward_rounded,
+    };
+
+    return Tooltip(
+      message: 'Sort by $label',
+      waitDuration: const Duration(milliseconds: 450),
+      child: InkWell(
+        hoverColor: kWhiteColor.withValues(alpha: 0.04),
+        splashColor: kWhiteColor.withValues(alpha: 0.06),
+        onTap: () => onSortChange(_LocalGamesSortConfig(sortKey, nextDir)),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Align(
+            alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment:
+                  alignEnd ? MainAxisAlignment.end : MainAxisAlignment.start,
+              children: [
+                Flexible(
+                  child: Text(
+                    label,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: active ? kPrimaryColor : kWhiteColor70,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 3),
+                Icon(
+                  active ? arrow : Icons.unfold_more_rounded,
+                  size: active ? 10 : 11,
+                  color:
+                      active
+                          ? kPrimaryColor
+                          : kWhiteColor.withValues(alpha: 0.35),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1227,7 +1442,10 @@ class _LocalGamesDataRow extends StatelessWidget {
         ),
         child: Row(
           children: [
-            SizedBox(width: 54, child: _LocalNumberCell(value: index + 1)),
+            SizedBox(
+              width: 54,
+              child: _LocalNumberCell(value: game.indexInFile + 1),
+            ),
             Expanded(flex: 22, child: _LocalTextCell(_playerName(md, 'White'))),
             SizedBox(
               width: 64,

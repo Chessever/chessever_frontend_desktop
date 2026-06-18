@@ -4376,6 +4376,7 @@ class _PlayerGamesDatabaseTableState
       onContext: widget.onContext,
       footer: widget.footer,
       rowKeyPrefix: 'player-game-table',
+      hiddenColumnIds: const {'round', 'site'},
     );
   }
 }

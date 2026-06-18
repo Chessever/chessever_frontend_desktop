@@ -8,14 +8,17 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
+import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_update_chip.dart';
 import 'package:chessever/desktop/widgets/desktop_user_profile_button.dart';
@@ -57,6 +60,20 @@ class DesktopTabBar extends ConsumerStatefulWidget {
 
 class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
   GameTabDragPayload? _hoverPayload;
+  bool _closeConfirmationOpen = false;
+
+  Future<void> _closeTabWithUnsavedAnalysisGuard(String tabId) async {
+    final session = ref.read(boardPaneSessionByTabIdProvider)[tabId];
+    if (boardSessionHasUnsavedAnalysis(session)) {
+      if (_closeConfirmationOpen) return;
+      _closeConfirmationOpen = true;
+      final confirmed = await confirmDiscardBoardAnalysis(
+        context,
+      ).whenComplete(() => _closeConfirmationOpen = false);
+      if (!mounted || !confirmed) return;
+    }
+    ref.read(desktopTabsProvider.notifier).close(tabId);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -157,7 +174,11 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                                 onActivate: () => notifier.activate(tab.id),
                                 onClose:
                                     tab.closable
-                                        ? () => notifier.close(tab.id)
+                                        ? () => unawaited(
+                                          _closeTabWithUnsavedAnalysisGuard(
+                                            tab.id,
+                                          ),
+                                        )
                                         : null,
                               ),
                             ),
