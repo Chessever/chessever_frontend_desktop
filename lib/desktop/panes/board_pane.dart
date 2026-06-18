@@ -3400,6 +3400,30 @@ class _BoardPaneContent extends HookConsumerWidget {
                         onFlipBoard: () => flipped.value = !flipped.value,
                         moveLabel: _moveLabel(history, cursor),
                         hasUnseenLiveMove: hasUnseenMoves.value,
+                        firstMoveShortcutLabel: shortcutLabelFor(
+                          BoardActionKey.firstMove,
+                        ),
+                        previousMoveShortcutLabel: shortcutLabelFor(
+                          BoardActionKey.prevMove,
+                        ),
+                        nextMoveShortcutLabel: shortcutLabelFor(
+                          BoardActionKey.nextMove,
+                        ),
+                        lastMoveShortcutLabel: shortcutLabelFor(
+                          BoardActionKey.lastMove,
+                        ),
+                        autoReplayShortcutLabel: shortcutLabelFor(
+                          BoardActionKey.autoReplay,
+                        ),
+                        flipBoardShortcutLabel: shortcutLabelFor(
+                          BoardActionKey.flipBoard,
+                        ),
+                        previousGameShortcutLabel: shortcutLabelFor(
+                          BoardActionKey.prevGame,
+                        ),
+                        nextGameShortcutLabel: shortcutLabelFor(
+                          BoardActionKey.nextGame,
+                        ),
                       ),
                   ],
                 ),
@@ -3478,6 +3502,27 @@ class _BoardPaneContent extends HookConsumerWidget {
                       onLastMove: goLastManually,
                       onPreviousGame: navigatePreviousGameManually,
                       onNextGame: navigateNextGameManually,
+                      openExplorerShortcutLabel: shortcutLabelFor(
+                        BoardActionKey.openExplorer,
+                      ),
+                      firstMoveShortcutLabel: shortcutLabelFor(
+                        BoardActionKey.firstMove,
+                      ),
+                      previousMoveShortcutLabel: shortcutLabelFor(
+                        BoardActionKey.prevMove,
+                      ),
+                      nextMoveShortcutLabel: shortcutLabelFor(
+                        BoardActionKey.nextMove,
+                      ),
+                      lastMoveShortcutLabel: shortcutLabelFor(
+                        BoardActionKey.lastMove,
+                      ),
+                      previousGameShortcutLabel: shortcutLabelFor(
+                        BoardActionKey.prevGame,
+                      ),
+                      nextGameShortcutLabel: shortcutLabelFor(
+                        BoardActionKey.nextGame,
+                      ),
                       trailingActions: boardActionCluster,
                     ),
                     enginePanel: EnginePanel(

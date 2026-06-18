@@ -78,6 +78,13 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.onLastMove,
     this.onPreviousGame,
     this.onNextGame,
+    this.openExplorerShortcutLabel,
+    this.firstMoveShortcutLabel,
+    this.previousMoveShortcutLabel,
+    this.nextMoveShortcutLabel,
+    this.lastMoveShortcutLabel,
+    this.previousGameShortcutLabel,
+    this.nextGameShortcutLabel,
     this.trailingActions,
   });
 
@@ -121,6 +128,14 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   final VoidCallback? onLastMove;
   final VoidCallback? onPreviousGame;
   final VoidCallback? onNextGame;
+
+  final String? openExplorerShortcutLabel;
+  final String? firstMoveShortcutLabel;
+  final String? previousMoveShortcutLabel;
+  final String? nextMoveShortcutLabel;
+  final String? lastMoveShortcutLabel;
+  final String? previousGameShortcutLabel;
+  final String? nextGameShortcutLabel;
 
   /// Optional compact actions shown on the right side of the top tab strip.
   /// Used by the desktop board to keep Save / Play-from-here / Info visible
@@ -530,6 +545,13 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
               onLastMove: widget.onLastMove,
               onPreviousGame: widget.onPreviousGame,
               onNextGame: widget.onNextGame,
+              openExplorerShortcutLabel: widget.openExplorerShortcutLabel,
+              firstMoveShortcutLabel: widget.firstMoveShortcutLabel,
+              previousMoveShortcutLabel: widget.previousMoveShortcutLabel,
+              nextMoveShortcutLabel: widget.nextMoveShortcutLabel,
+              lastMoveShortcutLabel: widget.lastMoveShortcutLabel,
+              previousGameShortcutLabel: widget.previousGameShortcutLabel,
+              nextGameShortcutLabel: widget.nextGameShortcutLabel,
               trailingActions: widget.trailingActions,
             ),
           ],
@@ -626,6 +648,13 @@ class _SegmentBar extends ConsumerWidget {
     this.onLastMove,
     this.onPreviousGame,
     this.onNextGame,
+    this.openExplorerShortcutLabel,
+    this.firstMoveShortcutLabel,
+    this.previousMoveShortcutLabel,
+    this.nextMoveShortcutLabel,
+    this.lastMoveShortcutLabel,
+    this.previousGameShortcutLabel,
+    this.nextGameShortcutLabel,
     this.trailingActions,
   });
 
@@ -640,6 +669,13 @@ class _SegmentBar extends ConsumerWidget {
   final VoidCallback? onLastMove;
   final VoidCallback? onPreviousGame;
   final VoidCallback? onNextGame;
+  final String? openExplorerShortcutLabel;
+  final String? firstMoveShortcutLabel;
+  final String? previousMoveShortcutLabel;
+  final String? nextMoveShortcutLabel;
+  final String? lastMoveShortcutLabel;
+  final String? previousGameShortcutLabel;
+  final String? nextGameShortcutLabel;
   final Widget? trailingActions;
 
   @override
@@ -667,7 +703,10 @@ class _SegmentBar extends ConsumerWidget {
         children: [
           _RailIconButton(
             icon: Icons.menu_book_outlined,
-            tooltip: explorerOpen ? 'Hide Explorer' : 'Open Explorer',
+            tooltip: _tooltipWithShortcut(
+              explorerOpen ? 'Hide Explorer' : 'Open Explorer',
+              openExplorerShortcutLabel,
+            ),
             selected: explorerOpen,
             onTap: onToggleExplorer,
           ),
@@ -709,6 +748,12 @@ class _SegmentBar extends ConsumerWidget {
                     onLastMove: onLastMove,
                     onPreviousGame: onPreviousGame,
                     onNextGame: onNextGame,
+                    firstMoveShortcutLabel: firstMoveShortcutLabel,
+                    previousMoveShortcutLabel: previousMoveShortcutLabel,
+                    nextMoveShortcutLabel: nextMoveShortcutLabel,
+                    lastMoveShortcutLabel: lastMoveShortcutLabel,
+                    previousGameShortcutLabel: previousGameShortcutLabel,
+                    nextGameShortcutLabel: nextGameShortcutLabel,
                   ),
                 ),
               ),
@@ -735,6 +780,12 @@ class _ExplorerNavigationCluster extends StatelessWidget {
     this.onLastMove,
     this.onPreviousGame,
     this.onNextGame,
+    this.firstMoveShortcutLabel,
+    this.previousMoveShortcutLabel,
+    this.nextMoveShortcutLabel,
+    this.lastMoveShortcutLabel,
+    this.previousGameShortcutLabel,
+    this.nextGameShortcutLabel,
   });
 
   final bool canGoBack;
@@ -745,6 +796,12 @@ class _ExplorerNavigationCluster extends StatelessWidget {
   final VoidCallback? onLastMove;
   final VoidCallback? onPreviousGame;
   final VoidCallback? onNextGame;
+  final String? firstMoveShortcutLabel;
+  final String? previousMoveShortcutLabel;
+  final String? nextMoveShortcutLabel;
+  final String? lastMoveShortcutLabel;
+  final String? previousGameShortcutLabel;
+  final String? nextGameShortcutLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -754,7 +811,10 @@ class _ExplorerNavigationCluster extends StatelessWidget {
         if (onPreviousGame != null) ...[
           _RailIconButton(
             icon: Icons.keyboard_double_arrow_left_rounded,
-            tooltip: 'Previous game',
+            tooltip: _tooltipWithShortcut(
+              'Previous game',
+              previousGameShortcutLabel,
+            ),
             onTap: onPreviousGame!,
           ),
           const SizedBox(width: 4),
@@ -762,7 +822,7 @@ class _ExplorerNavigationCluster extends StatelessWidget {
         if (onFirstMove != null) ...[
           _RailIconButton(
             icon: Icons.first_page_rounded,
-            tooltip: 'First move',
+            tooltip: _tooltipWithShortcut('First move', firstMoveShortcutLabel),
             enabled: canGoBack,
             onTap: onFirstMove!,
           ),
@@ -771,7 +831,10 @@ class _ExplorerNavigationCluster extends StatelessWidget {
         if (onPreviousMove != null) ...[
           _RailIconButton(
             icon: Icons.chevron_left_rounded,
-            tooltip: 'Previous move',
+            tooltip: _tooltipWithShortcut(
+              'Previous move',
+              previousMoveShortcutLabel,
+            ),
             enabled: canGoBack,
             onTap: onPreviousMove!,
           ),
@@ -780,7 +843,7 @@ class _ExplorerNavigationCluster extends StatelessWidget {
         if (onNextMove != null) ...[
           _RailIconButton(
             icon: Icons.chevron_right_rounded,
-            tooltip: 'Next move',
+            tooltip: _tooltipWithShortcut('Next move', nextMoveShortcutLabel),
             enabled: canGoForward,
             onTap: onNextMove!,
           ),
@@ -789,7 +852,7 @@ class _ExplorerNavigationCluster extends StatelessWidget {
         if (onLastMove != null) ...[
           _RailIconButton(
             icon: Icons.last_page_rounded,
-            tooltip: 'Last move',
+            tooltip: _tooltipWithShortcut('Last move', lastMoveShortcutLabel),
             enabled: canGoForward,
             onTap: onLastMove!,
           ),
@@ -798,12 +861,18 @@ class _ExplorerNavigationCluster extends StatelessWidget {
         if (onNextGame != null)
           _RailIconButton(
             icon: Icons.keyboard_double_arrow_right_rounded,
-            tooltip: 'Next game',
+            tooltip: _tooltipWithShortcut('Next game', nextGameShortcutLabel),
             onTap: onNextGame!,
           ),
       ],
     );
   }
+}
+
+String _tooltipWithShortcut(String label, String? shortcutLabel) {
+  final shortcut = shortcutLabel?.trim();
+  if (shortcut == null || shortcut.isEmpty) return label;
+  return '$label ($shortcut)';
 }
 
 class _RailIconButton extends StatefulWidget {

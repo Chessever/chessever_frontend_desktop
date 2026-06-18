@@ -1,6 +1,7 @@
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
@@ -140,6 +141,48 @@ void main() {
       find.byIcon(Icons.keyboard_double_arrow_right_rounded),
       findsOneWidget,
     );
+    await _drainStripTestTimers(tester);
+  });
+
+  testWidgets('Explorer strip tooltips include supplied shortcut labels', (
+    tester,
+  ) async {
+    _ignoreExplorerEmptyStateOverflowForTest();
+    final repository = _FakeExplorerRepository();
+
+    await tester.pumpWidget(
+      _harness(
+        repository: repository,
+        canGoBack: true,
+        canGoForward: true,
+        onFirstMove: () {},
+        onPreviousMove: () {},
+        onNextMove: () {},
+        onLastMove: () {},
+        onPreviousGame: () {},
+        onNextGame: () {},
+        openExplorerShortcutLabel: '↵',
+        firstMoveShortcutLabel: 'Home',
+        previousMoveShortcutLabel: '←',
+        nextMoveShortcutLabel: '→',
+        lastMoveShortcutLabel: 'End',
+        previousGameShortcutLabel: 'Ctrl + F10',
+        nextGameShortcutLabel: 'F10',
+        height: 1000,
+      ),
+    );
+    await tester.pump();
+
+    expect(_byDesktopTooltip('Open Explorer (↵)'), findsOneWidget);
+    expect(_byDesktopTooltip('Previous game (Ctrl + F10)'), findsOneWidget);
+    expect(_byDesktopTooltip('First move (Home)'), findsOneWidget);
+    expect(_byDesktopTooltip('Previous move (←)'), findsOneWidget);
+    expect(_byDesktopTooltip('Next move (→)'), findsOneWidget);
+    expect(_byDesktopTooltip('Last move (End)'), findsOneWidget);
+    expect(_byDesktopTooltip('Next game (F10)'), findsOneWidget);
+
+    await _openExplorerFromStripIcon(tester);
+    expect(_byDesktopTooltip('Hide Explorer (↵)'), findsOneWidget);
     await _drainStripTestTimers(tester);
   });
 
@@ -1826,6 +1869,13 @@ Widget _harness({
   VoidCallback? onLastMove,
   VoidCallback? onPreviousGame,
   VoidCallback? onNextGame,
+  String? openExplorerShortcutLabel,
+  String? firstMoveShortcutLabel,
+  String? previousMoveShortcutLabel,
+  String? nextMoveShortcutLabel,
+  String? lastMoveShortcutLabel,
+  String? previousGameShortcutLabel,
+  String? nextGameShortcutLabel,
   int previewLineStep = 0,
   bool previewLineAutoplay = false,
   double width = 760,
@@ -1867,6 +1917,13 @@ Widget _harness({
             onLastMove: onLastMove,
             onPreviousGame: onPreviousGame,
             onNextGame: onNextGame,
+            openExplorerShortcutLabel: openExplorerShortcutLabel,
+            firstMoveShortcutLabel: firstMoveShortcutLabel,
+            previousMoveShortcutLabel: previousMoveShortcutLabel,
+            nextMoveShortcutLabel: nextMoveShortcutLabel,
+            lastMoveShortcutLabel: lastMoveShortcutLabel,
+            previousGameShortcutLabel: previousGameShortcutLabel,
+            nextGameShortcutLabel: nextGameShortcutLabel,
           ),
         ),
       ),
@@ -2341,6 +2398,10 @@ Future<void> _openExplorerTab(WidgetTester tester) async {
   );
   await tester.pumpAndSettle();
 }
+
+Finder _byDesktopTooltip(String message) => find.byWidgetPredicate(
+  (widget) => widget is DesktopTooltip && widget.message == message,
+);
 
 Future<void> _openExplorerFromStripIcon(WidgetTester tester) async {
   await tester.pump();
