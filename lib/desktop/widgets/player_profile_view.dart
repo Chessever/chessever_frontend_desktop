@@ -8,6 +8,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -35,7 +36,10 @@ import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
-    show LiveDesktopGameCard, openTournamentGameTab;
+    show
+        LiveDesktopGameCard,
+        buildTournamentBoardTabArgs,
+        openTournamentGameTab;
 import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/providers/player_backfill_provider.dart';
@@ -1333,7 +1337,9 @@ class _DataSourceCard extends StatelessWidget {
     final twicTotal =
         showEventCounts ? summary?.totalEvents : summary?.totalGames;
     final twicLabel =
-        twicTotal != null ? 'ChessEver - ${formatCompactCount(twicTotal)}' : 'ChessEver';
+        twicTotal != null
+            ? 'ChessEver - ${formatCompactCount(twicTotal)}'
+            : 'ChessEver';
 
     return Container(
       padding: const EdgeInsets.all(4),
@@ -2768,6 +2774,11 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
           icon: Icons.tab_unselected_rounded,
           label: 'Open in background',
         ),
+        const DesktopContextMenuItem(
+          value: _RowAction.openNewWindow,
+          icon: Icons.open_in_browser_rounded,
+          label: 'Open in new window',
+        ),
         if (canSaveToLibrary) ...[
           const DesktopContextMenuDivider(),
           const DesktopContextMenuItem(
@@ -2835,6 +2846,19 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
           focus: false,
           reuseExisting: false,
           viewSource: ChessboardView.playerProfile,
+        );
+      case _RowAction.openNewWindow:
+        await openBoardGameWindow(
+          ref,
+          buildTournamentBoardTabArgs(
+            ref,
+            game,
+            '',
+            routeTitle: routeTitle,
+            routeGames: routeGames,
+            routeGamesContinuation: routeGamesContinuation,
+            viewSource: ChessboardView.playerProfile,
+          ),
         );
       case _RowAction.saveToLibrary:
         await saveDesktopGameToLibrary(
@@ -5156,6 +5180,7 @@ class _FilterButtonState extends State<_FilterButton> {
 enum _RowAction {
   open,
   openBackground,
+  openNewWindow,
   saveToLibrary,
   share,
   copyShareLink,
