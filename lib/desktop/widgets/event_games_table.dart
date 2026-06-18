@@ -8,11 +8,14 @@ import 'package:intl/intl.dart';
 import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
+import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/adaptive_games_table.dart';
+import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
@@ -46,6 +49,8 @@ final _eventUpcomingVisibleProvider = StateProvider.autoDispose
 
 final _gameRailTabProvider = StateProvider.autoDispose
     .family<_GameRailTab?, String>((ref, tabId) => null);
+
+bool _eventGameReplacementConfirmationOpen = false;
 
 @visibleForTesting
 List<String> eventRailRangeSelectionIds({
@@ -267,6 +272,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
       unawaited(
         _openEventGame(
           ref: ref,
+          context: context,
           container: ProviderScope.containerOf(context, listen: false),
           kind: kind,
           game: game,
@@ -1062,7 +1068,11 @@ Future<String?> _resolveEventGameSummaryPgn(
 ///
 /// Used by the board pane's keyboard layer to drive Cmd/Ctrl+↑/↓ without
 /// duplicating the round-grouping or open-game wiring lived in this file.
-Future<void> navigateActiveEventGame(WidgetRef ref, {required int delta}) {
+Future<void> navigateActiveEventGame(
+  WidgetRef ref, {
+  required BuildContext context,
+  required int delta,
+}) {
   if (delta == 0) return Future.value();
 
   final activeTabId = ref.read(desktopTabsProvider).activeId;
@@ -1156,6 +1166,7 @@ Future<void> navigateActiveEventGame(WidgetRef ref, {required int delta}) {
 
   return _openEventGame(
     ref: ref,
+    context: context,
     kind: resolved.kind,
     game: nextGame,
     eventGames:
@@ -1914,8 +1925,38 @@ String _resultForSummary(GameStatus status) => switch (status) {
   _ => '',
 };
 
+Future<bool> _confirmReplaceActiveBoardGameIfNeeded({
+  required WidgetRef ref,
+  required BuildContext? context,
+  required TournamentGameSummary nextGame,
+  required bool inNewTab,
+}) async {
+  if (inNewTab) return true;
+
+  final activeTabId = ref.read(desktopTabsProvider).activeId;
+  if (activeTabId == null) return true;
+
+  final activeArgs = ref.read(boardTabGameArgsByTabIdProvider)[activeTabId];
+  final selectedId = activeArgs?.gameListSelectedId ?? activeArgs?.gameId;
+  // Re-opening the already selected game would rebuild the active Board tab
+  // and can discard local analysis for no user-visible benefit. Treat it as
+  // a no-op unless the caller explicitly asked for a new tab.
+  if (selectedId == nextGame.id) return false;
+
+  final session = ref.read(boardPaneSessionByTabIdProvider)[activeTabId];
+  if (!boardSessionHasUnsavedAnalysis(session)) return true;
+
+  if (context == null || !context.mounted) return false;
+  if (_eventGameReplacementConfirmationOpen) return false;
+  _eventGameReplacementConfirmationOpen = true;
+  return confirmDiscardBoardAnalysis(
+    context,
+  ).whenComplete(() => _eventGameReplacementConfirmationOpen = false);
+}
+
 Future<void> _openEventGame({
   required WidgetRef ref,
+  BuildContext? context,
   ProviderContainer? container,
   required _GameListKind kind,
   required TournamentGameSummary game,
@@ -1924,6 +1965,15 @@ Future<void> _openEventGame({
   required BoardTabGameArgs? activeArgs,
   bool inNewTab = false,
 }) async {
+  if (!await _confirmReplaceActiveBoardGameIfNeeded(
+    ref: ref,
+    context: context,
+    nextGame: game,
+    inNewTab: inNewTab,
+  )) {
+    return;
+  }
+
   if (kind == _GameListKind.database) {
     final pgn = game.pgn?.trim() ?? '';
     final hasPlayableLocalPgn = pgnHasMoves(pgn);
@@ -2573,6 +2623,7 @@ class _EventRoundSection extends ConsumerWidget {
               onOpenGame: (game, {required bool inNewTab}) async {
                 await _openEventGame(
                   ref: ref,
+                  context: context,
                   container: ProviderScope.containerOf(context, listen: false),
                   kind: kind,
                   game: game,
