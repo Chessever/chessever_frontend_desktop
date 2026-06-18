@@ -10,6 +10,7 @@ import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
+import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
@@ -446,7 +447,16 @@ class _TabChip extends ConsumerStatefulWidget {
 }
 
 class _TabChipState extends ConsumerState<_TabChip> {
+  static const double _detachDragThreshold = 72;
+
   bool _hovered = false;
+  Offset? _primaryDragStart;
+  bool _detachTriggered = false;
+
+  Future<void> _moveToNewWindow() async {
+    final container = ProviderScope.containerOf(context, listen: false);
+    await detachDesktopTabToWindow(container, widget.tab.id);
+  }
 
   Future<void> _showContextMenu(Offset globalPos) async {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
@@ -461,6 +471,7 @@ class _TabChipState extends ConsumerState<_TabChip> {
         myIdx < tabsState.tabs.length - 1 &&
         tabsState.tabs.skip(myIdx + 1).any((t) => t.closable);
     final isBoardTab = widget.tab.kind == TabKind.board;
+    final canMoveToWindow = widget.tab.closable;
     final isMuted = ref.read(boardTabSoundMuteProvider).contains(widget.tab.id);
 
     final picked = await showMenu<_TabAction>(
@@ -480,6 +491,14 @@ class _TabChipState extends ConsumerState<_TabChip> {
               icon:
                   isMuted ? Icons.volume_up_rounded : Icons.volume_off_rounded,
               label: isMuted ? 'Unmute tab' : 'Mute tab',
+            ),
+          ),
+        if (canMoveToWindow)
+          const PopupMenuItem<_TabAction>(
+            value: _TabAction.moveToWindow,
+            child: _MenuRow(
+              icon: Icons.open_in_browser_rounded,
+              label: 'Move tab to new window',
             ),
           ),
         if (widget.onClose != null)
@@ -509,6 +528,8 @@ class _TabChipState extends ConsumerState<_TabChip> {
     switch (picked) {
       case _TabAction.toggleMute:
         ref.read(boardTabSoundMuteProvider.notifier).toggle(widget.tab.id);
+      case _TabAction.moveToWindow:
+        await _moveToNewWindow();
       case _TabAction.close:
         widget.onClose?.call();
       case _TabAction.closeOthers:
@@ -584,6 +605,8 @@ class _TabChipState extends ConsumerState<_TabChip> {
             onPointerDown: (event) {
               final btn = event.buttons;
               if (btn & kPrimaryMouseButton != 0) {
+                _primaryDragStart = event.position;
+                _detachTriggered = false;
                 widget.onActivate();
               } else if (btn & kTertiaryButton != 0) {
                 // Middle-click — Chrome closes the tab.
@@ -592,6 +615,23 @@ class _TabChipState extends ConsumerState<_TabChip> {
                 _showContextMenu(event.position);
               }
             },
+            onPointerMove: (event) {
+              if (_detachTriggered ||
+                  (event.buttons & kPrimaryMouseButton) == 0) {
+                return;
+              }
+              final start = _primaryDragStart;
+              if (start == null) return;
+              final delta = event.position - start;
+              if (delta.dy < _detachDragThreshold ||
+                  delta.dy.abs() <= delta.dx.abs()) {
+                return;
+              }
+              _detachTriggered = true;
+              unawaited(_moveToNewWindow());
+            },
+            onPointerUp: (_) => _primaryDragStart = null,
+            onPointerCancel: (_) => _primaryDragStart = null,
             child: SingleMotionBuilder(
               value: lift,
               motion: DesktopMotion.hover,
@@ -1264,7 +1304,7 @@ class _HorizontalSplit extends StatelessWidget {
   }
 }
 
-enum _TabAction { toggleMute, close, closeOthers, closeRight }
+enum _TabAction { toggleMute, moveToWindow, close, closeOthers, closeRight }
 
 class _MenuRow extends StatelessWidget {
   const _MenuRow({required this.icon, required this.label});

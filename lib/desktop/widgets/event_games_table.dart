@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
+import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -1964,6 +1965,7 @@ Future<void> _openEventGame({
   required String tournamentTitle,
   required BoardTabGameArgs? activeArgs,
   bool inNewTab = false,
+  bool inNewWindow = false,
 }) async {
   if (!await _confirmReplaceActiveBoardGameIfNeeded(
     ref: ref,
@@ -2003,6 +2005,11 @@ Future<void> _openEventGame({
       databaseGamesContinuation: activeArgs?.databaseGamesContinuation,
       gameListSelectedId: game.id,
     );
+
+    if (inNewWindow) {
+      await openBoardGameWindow(ref, args);
+      return;
+    }
 
     openBoardGameTab(
       ref,
@@ -2049,6 +2056,11 @@ Future<void> _openEventGame({
       gameListSelectedId: game.id,
     );
 
+    if (inNewWindow) {
+      await openBoardGameWindow(ref, args);
+      return;
+    }
+
     final tabId = openBoardGameTab(
       ref,
       args,
@@ -2070,7 +2082,7 @@ Future<void> _openEventGame({
   }
 
   final pgn = game.pgn?.trim() ?? '';
-  if (!inNewTab) {
+  if (!inNewTab && !inNewWindow) {
     ref.read(tournamentGamesProvider.notifier).markActive(game.id);
   }
 
@@ -2101,6 +2113,11 @@ Future<void> _openEventGame({
     routeGamesContinuation: activeArgs?.routeGamesContinuation,
     gameListSelectedId: game.id,
   );
+
+  if (inNewWindow) {
+    await openBoardGameWindow(ref, args);
+    return;
+  }
 
   openBoardGameTab(
     ref,
@@ -2368,6 +2385,7 @@ class _EventRoundTable extends StatelessWidget {
   final Future<void> Function(
     TournamentGameSummary game, {
     required bool inNewTab,
+    bool inNewWindow,
   })
   onOpenGame;
   final Future<void> Function(TournamentGameSummary game) onInsertGame;
@@ -2497,6 +2515,11 @@ class _EventRoundTable extends StatelessWidget {
               shortcut: 'Ctrl/⌘·Click',
             ),
             DesktopContextMenuItem<_GameRowAction>(
+              value: _GameRowAction.openInNewWindow,
+              icon: Icons.open_in_browser_rounded,
+              label: 'Open game in new window',
+            ),
+            DesktopContextMenuItem<_GameRowAction>(
               value: _GameRowAction.insertGame,
               icon: Icons.call_merge_rounded,
               label: 'Insert game',
@@ -2514,6 +2537,8 @@ class _EventRoundTable extends StatelessWidget {
         switch (action) {
           case _GameRowAction.openInNewTab:
             await onOpenGame(game, inNewTab: true);
+          case _GameRowAction.openInNewWindow:
+            await onOpenGame(game, inNewTab: false, inNewWindow: true);
           case _GameRowAction.insertGame:
             await onInsertGame(game);
           case _GameRowAction.copyPgn:
@@ -2620,7 +2645,11 @@ class _EventRoundSection extends ConsumerWidget {
               showBoardColumn: showBoardColumn,
               onHighlightGame: onHighlightGame,
               onRangeHighlightGame: onRangeHighlightGame,
-              onOpenGame: (game, {required bool inNewTab}) async {
+              onOpenGame: (
+                game, {
+                required bool inNewTab,
+                bool inNewWindow = false,
+              }) async {
                 await _openEventGame(
                   ref: ref,
                   context: context,
@@ -2631,6 +2660,7 @@ class _EventRoundSection extends ConsumerWidget {
                   tournamentTitle: tournamentTitle,
                   activeArgs: activeArgs,
                   inNewTab: inNewTab,
+                  inNewWindow: inNewWindow,
                 );
               },
               onInsertGame:
@@ -2990,7 +3020,7 @@ class _EventRoundStatusChip extends StatelessWidget {
   }
 }
 
-enum _GameRowAction { openInNewTab, insertGame, copyPgn }
+enum _GameRowAction { openInNewTab, openInNewWindow, insertGame, copyPgn }
 
 class _BoardBadge extends StatelessWidget {
   const _BoardBadge({required this.game, required this.selected});

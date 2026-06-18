@@ -11,6 +11,7 @@ import 'package:chessever/repository/library/models/saved_analysis.dart';
 enum LibraryGameAction {
   open,
   openInNewTab,
+  openInNewWindow,
   share,
   copyShareLink,
   copyPgn,
@@ -62,6 +63,11 @@ class LibraryGameContextMenu extends StatelessWidget {
           value: LibraryGameAction.openInNewTab,
           icon: Icons.tab_outlined,
           label: 'Open in new tab',
+        ),
+        const DesktopContextMenuItem(
+          value: LibraryGameAction.openInNewWindow,
+          icon: Icons.open_in_new_rounded,
+          label: 'Open in new window',
         ),
         const DesktopContextMenuDivider(),
         const DesktopContextMenuItem(
