@@ -29,9 +29,11 @@ void main() {
     await gesture.up();
     await tester.pump();
 
-    final shapes =
-        container.read(boardAnnotationsProvider(_defaultTabId)).shapes;
+    final annotations = container.read(boardAnnotationsProvider(_defaultTabId));
+    final shapes = annotations.shapes;
     expect(shapes, hasLength(1));
+    expect(annotations.shapesForPosition('start w KQkq -'), hasLength(1));
+    expect(annotations.shapesForPosition('other w KQkq -'), isEmpty);
     final arrow = shapes.single as cg.Arrow;
     expect(arrow.orig, Square.e2);
     expect(arrow.dest, Square.e4);
@@ -102,6 +104,7 @@ Future<void> _pumpBoard(
                 tabId: _defaultTabId,
                 size: _boardSize,
                 orientation: Side.white,
+                positionKey: 'start w KQkq -',
                 child: ColoredBox(color: Colors.transparent),
               ),
             ),

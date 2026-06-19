@@ -1852,7 +1852,9 @@ class _BoardPaneContent extends HookConsumerWidget {
     }
 
     final hasShapes = ref.watch(
-      boardAnnotationsProvider(editsTabId).select((s) => s.shapes.isNotEmpty),
+      boardAnnotationsProvider(
+        editsTabId,
+      ).select((s) => s.shapes.isNotEmpty || s.positionShapes.isNotEmpty),
     );
     final hasUserNags = ref.watch(
       userMoveNagsProvider.select(
@@ -2162,21 +2164,22 @@ class _BoardPaneContent extends HookConsumerWidget {
     }
 
     void clearGraphicCommentaryAction() {
-      final current = ref.read(boardAnnotationsProvider(editsTabId)).shapes;
-      if (current.isEmpty) {
+      final currentState = ref.read(boardAnnotationsProvider(editsTabId));
+      final current = currentState.shapes;
+      if (current.isEmpty && currentState.positionShapes.isEmpty) {
         showToast('No graphic commentary to delete');
         return;
       }
-      ref
-          .read(boardAnnotationsProvider(editsTabId).notifier)
-          .restore(const <cg.Shape>{});
+      ref.read(boardAnnotationsProvider(editsTabId).notifier).clear();
       dirtySinceLoad.value = true;
       showToast('Graphic commentary deleted');
     }
 
     void clearVariationsAndCommentsAction() {
+      final hasShapesState = ref.read(boardAnnotationsProvider(editsTabId));
       final hasShapes =
-          ref.read(boardAnnotationsProvider(editsTabId)).shapes.isNotEmpty;
+          hasShapesState.shapes.isNotEmpty ||
+          hasShapesState.positionShapes.isNotEmpty;
       final hasNags =
           (ref.read(userMoveNagsProvider)[editsTabId] ?? const {}).isNotEmpty;
       if (!gameHasUserVariations() &&
@@ -2196,9 +2199,7 @@ class _BoardPaneContent extends HookConsumerWidget {
               : _truncateToValidPointer(stripped, pointer.value);
       chessGame.value = stripped;
       pointer.value = nextPointer;
-      ref
-          .read(boardAnnotationsProvider(editsTabId).notifier)
-          .restore(const <cg.Shape>{});
+      ref.read(boardAnnotationsProvider(editsTabId).notifier).clear();
       ref
           .read(userMoveNagsProvider.notifier)
           .restoreTab(editsTabId, const <int, List<int>>{});
@@ -3164,6 +3165,11 @@ class _BoardPaneContent extends HookConsumerWidget {
         pieceAssets: notationPieceAssets,
         layoutModeController: layoutModeController,
         variationCollapseController: notationVariationCollapseController,
+        positionArrowKeys: ref.watch(
+          boardAnnotationsProvider(
+            editsTabId,
+          ).select((s) => s.annotatedPositionKeys),
+        ),
       );
     }
 
@@ -5595,6 +5601,8 @@ class _BoardWithAnnotations extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final annotations = ref.watch(boardAnnotationsProvider(tabId));
+    final positionKey = _fenPositionKey(fen);
+    final positionShapes = annotations.shapesForPosition(positionKey);
     final orientation = flipped ? Side.black : Side.white;
     final pieceAssets = ref.watch(
       boardSettingsProviderNew.select(
@@ -5614,7 +5622,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
     // Merge user-drawn shapes (right-click overlay) with author-baked PGN
     // arrows/circles and live engine PV arrows.
     final mergedShapes = <cg.Shape>[
-      ...annotations.shapes,
+      ...positionShapes,
       ...pgnShapes,
       ...engineShapes,
     ];
@@ -5739,6 +5747,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
             tabId: tabId,
             size: boardSize,
             orientation: orientation,
+            positionKey: positionKey,
             child: DesktopChessBoard(
               key: ValueKey<String>(boardRenderKey),
               size: boardSize,
