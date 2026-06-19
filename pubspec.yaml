@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 14.3.8+157
+version: 14.3.9+158
 
 environment:
   sdk: ^3.7.2
@@ -162,6 +162,7 @@ dependencies:
   # ─────────────────────────────────────────────────────────────────────────
   forui: ^0.16.0                  # desktop-friendly UI primitives (shell, dialogs, dropdowns)
   window_manager: ^0.5.1          # window bounds, min size, hide-before-first-frame
+  desktop_multi_window: ^0.3.0    # board-only secondary desktop windows
   screen_retriever: ^0.2.0        # display work-area bounds for safe window sizing
   hotkey_manager: ^0.2.3          # global hotkeys (when Flutter Shortcuts/Actions aren't enough)
   local_notifier: ^0.1.6          # transient desktop notifications (replaces OneSignal on desktop)

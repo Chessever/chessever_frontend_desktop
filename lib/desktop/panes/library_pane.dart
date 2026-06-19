@@ -17,6 +17,7 @@ import 'package:path/path.dart' as p;
 import 'package:chessever/providers/board_settings_provider_new.dart';
 
 import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
+import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/services/board_tab_pgn_resolver.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
@@ -5100,6 +5101,27 @@ void _openAnalysis(
   );
 }
 
+Future<void> _openAnalysisWindow(
+  WidgetRef ref,
+  SavedAnalysis analysis, {
+  String databaseTitle = '',
+  List<SavedAnalysis> databaseAnalyses = const <SavedAnalysis>[],
+  String? initialFen,
+}) async {
+  final pgn = exportGameToPgn(analysis.chessGame).trim();
+  if (pgn.isEmpty) return;
+  await openBoardGameWindow(
+    ref,
+    _boardArgsForAnalysis(
+      analysis,
+      pgn: pgn,
+      databaseTitle: databaseTitle,
+      databaseAnalyses: databaseAnalyses,
+      initialFen: initialFen,
+    ),
+  );
+}
+
 BoardTabGameArgs _boardArgsForAnalysis(
   SavedAnalysis analysis, {
   required String pgn,
@@ -5239,6 +5261,8 @@ Future<void> _onGameAction({
       _openAnalysis(ref, analysis);
     case LibraryGameAction.openInNewTab:
       _openAnalysis(ref, analysis, focus: false);
+    case LibraryGameAction.openInNewWindow:
+      await _openAnalysisWindow(ref, analysis);
     case LibraryGameAction.share:
       await showSavedAnalysisShareDialog(context: context, analysis: analysis);
     case LibraryGameAction.copyShareLink:
@@ -5989,6 +6013,7 @@ BoardTabGameArgs _buildTwicBoardArgs(
 enum _TwicGameContextAction {
   open,
   openNewTab,
+  openNewWindow,
   openBackground,
   saveToLibrary,
   share,
@@ -6020,6 +6045,11 @@ Future<void> _showTwicGameContextMenu({
         value: _TwicGameContextAction.openNewTab,
         icon: Icons.add_to_photos_outlined,
         label: 'Open in new tab',
+      ),
+      const DesktopContextMenuItem(
+        value: _TwicGameContextAction.openNewWindow,
+        icon: Icons.open_in_new_rounded,
+        label: 'Open in new window',
       ),
       const DesktopContextMenuItem(
         value: _TwicGameContextAction.openBackground,
@@ -6084,6 +6114,8 @@ Future<void> _showTwicGameContextMenu({
         reuseExisting: false,
         replaceActive: false,
       );
+    case _TwicGameContextAction.openNewWindow:
+      await openBoardGameWindow(ref, _buildTwicBoardArgs(ref, game));
     case _TwicGameContextAction.openBackground:
       openBoardGameTab(
         ref,

@@ -6,6 +6,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart'
     show tournamentDetailGamesSearchByTabIdProvider;
+import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -927,6 +928,68 @@ class _MatchHeaderBanner extends StatelessWidget {
 /// currently reading, even if another copy of that game is already open.
 /// Explicit new-tab gestures (Cmd/Ctrl-click, middle-click, tab-strip drop)
 /// pass `replaceActive: false` and `reuseExisting: false`.
+BoardTabGameArgs buildTournamentBoardTabArgs(
+  WidgetRef ref,
+  GamesTourModel game,
+  String tournamentTitle, {
+  List<GamesTourModel> eventGames = const <GamesTourModel>[],
+  String routeTitle = '',
+  List<GamesTourModel> routeGames = const <GamesTourModel>[],
+  BoardTabGamesContinuation? eventGamesContinuation,
+  BoardTabGamesContinuation? routeGamesContinuation,
+  Map<String, DateTime?> roundStartsAtById = const <String, DateTime?>{},
+  Map<String, String> roundNameById = const <String, String>{},
+  ChessboardView viewSource = ChessboardView.tour,
+}) {
+  final pgn = pgnHasMoves(game.pgn) ? game.pgn!.trim() : '';
+  final eventSummaries = _summariesFromModels(
+    eventGames.isEmpty ? <GamesTourModel>[game] : eventGames,
+    fallbackGame: game,
+    roundStartsAtById: roundStartsAtById,
+    roundNameById: roundNameById,
+  );
+  final routeSummaries =
+      routeGames.isEmpty
+          ? const <TournamentGameSummary>[]
+          : _summariesFromModels(
+            routeGames,
+            fallbackGame: game,
+            roundStartsAtById: roundStartsAtById,
+            roundNameById: roundNameById,
+          );
+  final isFavoritesView = viewSource == ChessboardView.favScorecard;
+  final shouldHydrateEventGames =
+      !isFavoritesView &&
+      eventSummaries.length <= 1 &&
+      game.tourId.trim().isNotEmpty;
+  return BoardTabGameArgs(
+    gameId: game.gameId,
+    pgn: pgn,
+    label: '${game.whitePlayer.name} vs ${game.blackPlayer.name}',
+    whiteName: game.whitePlayer.name,
+    blackName: game.blackPlayer.name,
+    whiteFederation: game.whitePlayer.federation,
+    blackFederation: game.blackPlayer.federation,
+    whiteTitle: game.whitePlayer.title,
+    blackTitle: game.blackPlayer.title,
+    whiteRating: game.whitePlayer.rating,
+    blackRating: game.blackPlayer.rating,
+    whiteFideId: game.whitePlayer.fideId,
+    blackFideId: game.blackPlayer.fideId,
+    fenSeed: game.fen,
+    sourceGame: game.copyWith(pgn: pgn.isEmpty ? game.pgn : pgn),
+    viewSource: viewSource,
+    tournamentTitle: tournamentTitle,
+    eventGames: eventSummaries,
+    eventGamesLoading: shouldHydrateEventGames,
+    eventGamesContinuation: eventGamesContinuation,
+    routeTitle: routeTitle,
+    routeGames: routeSummaries,
+    routeGamesContinuation: routeGamesContinuation,
+    gameListSelectedId: game.gameId,
+  );
+}
+
 Future<void> openTournamentGameTab(
   WidgetRef ref,
   GamesTourModel game,
@@ -1366,6 +1429,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
 enum _LiveGameContextAction {
   open,
   openNewTab,
+  openNewWindow,
   openBackground,
   saveToLibrary,
   share,
@@ -1406,6 +1470,11 @@ Future<void> _showLiveGameContextMenu({
         value: _LiveGameContextAction.openNewTab,
         icon: Icons.add_to_photos_outlined,
         label: 'Open in new tab',
+      ),
+      const DesktopContextMenuItem(
+        value: _LiveGameContextAction.openNewWindow,
+        icon: Icons.open_in_new_rounded,
+        label: 'Open in new window',
       ),
       const DesktopContextMenuItem(
         value: _LiveGameContextAction.openBackground,
@@ -1483,6 +1552,23 @@ Future<void> _showLiveGameContextMenu({
         reuseExisting: false,
         replaceActive: false,
         viewSource: viewSource,
+      );
+    case _LiveGameContextAction.openNewWindow:
+      await openBoardGameWindow(
+        ref,
+        buildTournamentBoardTabArgs(
+          ref,
+          game,
+          tournamentTitle,
+          eventGames: eventGames,
+          routeTitle: routeTitle,
+          routeGames: routeGames,
+          eventGamesContinuation: eventGamesContinuation,
+          routeGamesContinuation: routeGamesContinuation,
+          roundStartsAtById: roundStartsAtById,
+          roundNameById: roundNameById,
+          viewSource: viewSource,
+        ),
       );
     case _LiveGameContextAction.openBackground:
       await openTournamentGameTab(

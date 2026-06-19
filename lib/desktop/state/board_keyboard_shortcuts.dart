@@ -734,8 +734,7 @@ Map<BoardActionKey, List<KeyChord>> defaultBoardShortcuts() {
       _alt(LogicalKeyboardKey.f2),
     ],
     BoardActionKey.openExplorer: [
-      _key(LogicalKeyboardKey.enter),
-      _key(LogicalKeyboardKey.numpadEnter),
+      _key(LogicalKeyboardKey.keyO),
       _primary(LogicalKeyboardKey.keyO, shift: true),
     ],
     BoardActionKey.openPositionSetup: [_key(LogicalKeyboardKey.keyS)],
@@ -768,8 +767,8 @@ Map<BoardActionKey, List<KeyChord>> defaultBoardShortcuts() {
     BoardActionKey.rightRailPreviousTable: const [],
     BoardActionKey.rightRailNextTable: const [],
     // Right-rail widgets handle Enter locally when focused. Keeping this
-    // unbound at the global board shortcut layer lets Enter toggle Explorer
-    // from board focus instead of being overwritten by this no-op action.
+    // unbound at the global board shortcut layer leaves activation to the
+    // owning table instead of being overwritten by this no-op action.
     BoardActionKey.rightRailActivateSelection: const [],
     BoardActionKey.closeVariation: [_key(LogicalKeyboardKey.keyM)],
     BoardActionKey.increaseEngineLines: [
@@ -899,9 +898,10 @@ class KeyboardShortcutsNotifier extends AsyncNotifier<BoardShortcutMap> {
       // unbinding survives a relaunch); missing keys fall back to defaults.
       final merged = <BoardActionKey, List<KeyChord>>{};
       for (final action in BoardActionKey.values) {
-        final chords = overrides.containsKey(action)
-            ? overrides[action]!
-            : defaults[action] ?? const <KeyChord>[];
+        final chords =
+            overrides.containsKey(action)
+                ? overrides[action]!
+                : defaults[action] ?? const <KeyChord>[];
         merged[action] = _chordsFor(chords);
       }
       return BoardShortcutMap(merged);
@@ -1023,6 +1023,12 @@ void _upgradeDefaultLikeOverrides(
         defaults[BoardActionKey.saveGameToLibrary]!;
   }
 
+  final openExplorer = overrides[BoardActionKey.openExplorer];
+  if (_sameChords(openExplorer, _oldOpenExplorerDefault)) {
+    overrides[BoardActionKey.openExplorer] =
+        defaults[BoardActionKey.openExplorer]!;
+  }
+
   final firstMove = overrides[BoardActionKey.firstMove];
   if (_sameChords(firstMove, _oldFirstMoveDefault)) {
     overrides[BoardActionKey.firstMove] = defaults[BoardActionKey.firstMove]!;
@@ -1103,4 +1109,15 @@ final _oldSavePgnFileDefault = <KeyChord>[
     crossPlatform: true,
   ),
   KeyChord(keyId: LogicalKeyboardKey.keyS.keyId, ctrl: true),
+];
+
+final _oldOpenExplorerDefault = <KeyChord>[
+  KeyChord(keyId: LogicalKeyboardKey.enter.keyId),
+  KeyChord(keyId: LogicalKeyboardKey.numpadEnter.keyId),
+  KeyChord(
+    keyId: LogicalKeyboardKey.keyO.keyId,
+    meta: true,
+    shift: true,
+    crossPlatform: true,
+  ),
 ];

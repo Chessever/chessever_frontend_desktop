@@ -167,16 +167,14 @@ void main() {
                       Expanded(
                         key: notationKey,
                         child: Builder(
-                          builder:
-                              (notationContext) => TextButton(
-                                onPressed:
-                                    () => showVariationForkChooser(
-                                      context: rootContext,
-                                      options: options,
-                                      targetContext: notationContext,
-                                    ),
-                                child: const Text('open'),
-                              ),
+                          builder: (notationContext) => TextButton(
+                            onPressed: () => showVariationForkChooser(
+                              context: rootContext,
+                              options: options,
+                              targetContext: notationContext,
+                            ),
+                            child: const Text('open'),
+                          ),
                         ),
                       ),
                     ],
@@ -205,6 +203,63 @@ void main() {
       final popupRect = tester.getRect(find.text('Continue with'));
       expect(popupRect.left, greaterThanOrEqualTo(notationRect.left));
       expect(popupRect.right, lessThanOrEqualTo(notationRect.right));
+    });
+
+    testWidgets('dismisses when navigation invalidates the chooser', (
+      tester,
+    ) async {
+      final dismissSignal = ValueNotifier(0);
+      final options = [
+        const VariationForkOption(
+          pointer: [0],
+          label: 'Mainline',
+          san: 'Nf3',
+          previewLine: '1.Nf3 Nf6',
+          isMainline: true,
+          variationOrder: 0,
+        ),
+        const VariationForkOption(
+          pointer: [0, 0, 0],
+          label: 'Variation',
+          san: 'Nc3',
+          previewLine: '1.Nc3 Nf6',
+          isMainline: false,
+          variationOrder: 1,
+        ),
+      ];
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            boardSettingsProviderNew.overrideWith(
+              () => _TestBoardSettingsNotifier(),
+            ),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: Builder(
+                builder: (rootContext) => TextButton(
+                  onPressed: () => showVariationForkChooser(
+                    context: rootContext,
+                    options: options,
+                    dismissSignal: dismissSignal,
+                  ),
+                  child: const Text('open'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(find.text('Continue with'), findsOneWidget);
+
+      dismissSignal.value += 1;
+      await tester.pumpAndSettle();
+
+      expect(find.text('Continue with'), findsNothing);
     });
   });
 }

@@ -984,6 +984,7 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
             tabId: widget.tabId,
             size: size,
             orientation: orientation,
+            positionKey: boardFen,
             child: DesktopChessBoard(
               size: size,
               fen: boardFen,

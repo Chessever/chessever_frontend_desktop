@@ -7,12 +7,17 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:country_picker/country_picker.dart';
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'package:window_manager/window_manager.dart';
 
+import 'package:chessever/desktop/desktop_board_window_app.dart';
 import 'package:chessever/desktop/panes/library_pane.dart';
 import 'package:chessever/desktop/desktop_app.dart';
 import 'package:chessever/desktop/services/billing/desktop_deep_link_listener.dart';
+import 'package:chessever/desktop/services/desktop_board_window_payload.dart';
 import 'package:chessever/desktop/services/desktop_db_init.dart';
 import 'package:chessever/desktop/services/desktop_env.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
@@ -24,9 +29,18 @@ import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
 import 'package:chessever/desktop/services/desktop_window.dart';
 import 'package:chessever/desktop/services/window_state_persistence.dart';
+import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/state/active_player.dart';
+import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
+import 'package:chessever/providers/country_dropdown_provider.dart';
+import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
+import 'package:chessever/screens/countrymen/provider/countrymen_mode_provider.dart';
+import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
+import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
+import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/foreground_task_scheduler.dart';
 
@@ -50,6 +64,24 @@ Future<void> desktopMain({
     return;
   }
 
+  final boardWindowPayload = await _boardWindowPayloadForCurrentEngine(
+    initialArguments,
+  );
+  if (boardWindowPayload != null) {
+    await runZonedGuarded(() => _desktopBoardWindowBoot(boardWindowPayload), (
+      error,
+      stack,
+    ) {
+      print('[desktop] board window fatal error');
+      ErrorReporter.report(
+        error,
+        stackTrace: stack,
+        tag: 'desktop.board_window.fatal',
+      );
+    });
+    return;
+  }
+
   final forwardedToPrimary = await DesktopFileOpenService.instance
       .forwardToPrimaryIfRunning(initialArguments: initialArguments);
   if (forwardedToPrimary) {
@@ -66,6 +98,33 @@ Future<void> desktopMain({
       ErrorReporter.report(error, stackTrace: stack, tag: 'desktop.fatal');
     },
   );
+}
+
+Future<DesktopBoardWindowPayload?> _boardWindowPayloadForCurrentEngine(
+  List<String> initialArguments,
+) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  for (final argument in initialArguments) {
+    final payload = _tryDecodeBoardWindowPayload(argument);
+    if (payload != null) return payload;
+  }
+  try {
+    final controller = await WindowController.fromCurrentEngine();
+    final payload = _tryDecodeBoardWindowPayload(controller.arguments);
+    if (payload != null) return payload;
+  } catch (_) {
+    // The primary window has no multi-window engine arguments.
+  }
+  return null;
+}
+
+DesktopBoardWindowPayload? _tryDecodeBoardWindowPayload(String? source) {
+  if (source == null || source.trim().isEmpty) return null;
+  try {
+    return DesktopBoardWindowPayload.decode(source);
+  } catch (_) {
+    return null;
+  }
 }
 
 const String _releaseEnvProbeFlag = '--verify-release-env';
@@ -331,6 +390,214 @@ Future<void> _desktopBoot({
   runApp(
     UncontrolledProviderScope(container: container, child: const DesktopApp()),
   );
+}
+
+Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
+  print('[desktop] board window startup begin');
+  WidgetsFlutterBinding.ensureInitialized();
+  initializeDesktopDatabaseFactory();
+  await DesktopWindow.initialize();
+  try {
+    await windowManager.setTitle(payload.title);
+  } catch (_) {}
+
+  if (kDebugMode) {
+    await DesktopEnv.loadDebugDotenv();
+  }
+  try {
+    await AppDatabase.instance.database;
+  } catch (e, stack) {
+    print('[desktop] ⚠️ board window sqlite warm-up failed');
+    ErrorReporter.report(
+      e,
+      stackTrace: stack,
+      tag: 'desktop.board_window.db_warmup',
+    );
+  }
+  final supabaseReady = await DesktopSupabaseInit.initialize();
+  print(
+    supabaseReady
+        ? '[desktop] board window supabase init done'
+        : '[desktop] ⚠️ board window supabase unavailable',
+  );
+
+  final container = ProviderContainer(overrides: [desktopSubscriptionOverride]);
+  final boardArgs = payload.args;
+  final tabId =
+      payload.kind == TabKind.board && boardArgs != null
+          ? openBoardGameTabFromContainer(
+            container,
+            boardArgs,
+            reuseExisting: false,
+            focus: true,
+          )
+          : container
+              .read(desktopTabsProvider.notifier)
+              .open(
+                payload.kind,
+                title: payload.title,
+                subtitle: payload.subtitle,
+                reuseExisting: false,
+                focus: true,
+              );
+  _restoreDetachedTabMetadata(container, tabId, payload);
+  runApp(
+    UncontrolledProviderScope(
+      container: container,
+      child: DesktopBoardWindowApp(payload: payload, tabId: tabId),
+    ),
+  );
+}
+
+void _restoreDetachedTabMetadata(
+  ProviderContainer container,
+  String tabId,
+  DesktopBoardWindowPayload payload,
+) {
+  switch (payload.kind) {
+    case TabKind.tournamentDetail:
+      final tournament = _tournamentFromMetadata(payload.metadata);
+      if (tournament == null) return;
+      container.read(tournamentByTabIdProvider.notifier).update((existing) {
+        return <String, GroupEventCardModel>{...existing, tabId: tournament};
+      });
+      container
+          .read(selectedBroadcastModelProvider.notifier)
+          .state = GroupBroadcast(
+        id: tournament.id,
+        createdAt: DateTime.now(),
+        name: tournament.title,
+        search: const <String>[],
+      );
+    case TabKind.playerProfile:
+      final args = _playerProfileArgsFromMetadata(payload.metadata);
+      if (args == null) return;
+      container.read(playerProfileByTabIdProvider.notifier).update((existing) {
+        return <String, PlayerProfileArgs>{...existing, tabId: args};
+      });
+    case TabKind.countrymen:
+      _restoreCountrymenMetadata(container, payload.metadata);
+    default:
+      return;
+  }
+}
+
+void _restoreCountrymenMetadata(
+  ProviderContainer container,
+  Map<String, Object?> json,
+) {
+  final country = _countryFromMetadata(json);
+  if (country != null) {
+    container.read(temporaryCountryProvider.notifier).state = country;
+  }
+  final mode = _countrymenModeFromMetadata(json['countrymenMode']);
+  if (mode != null) {
+    container.read(selectedCountrymenModeProvider.notifier).state = mode;
+  }
+}
+
+GroupEventCardModel? _tournamentFromMetadata(Map<String, Object?> json) {
+  final id = json['id']?.toString().trim() ?? '';
+  final title = json['title']?.toString().trim() ?? '';
+  if (id.isEmpty || title.isEmpty) return null;
+  return GroupEventCardModel(
+    id: id,
+    title: title,
+    dates: json['dates']?.toString() ?? '',
+    maxAvgElo: _int(json['maxAvgElo']),
+    timeUntilStart: json['timeUntilStart']?.toString() ?? '',
+    tourEventCategory: _tourEventCategory(json['tourEventCategory']),
+    timeControl: json['timeControl']?.toString() ?? '',
+    endDate: _date(json['endDate']),
+    startDate: _date(json['startDate']),
+    location: _nullableString(json['location']),
+    searchTerms:
+        json['searchTerms'] is List
+            ? [
+              for (final term in json['searchTerms'] as List)
+                if (term != null) term.toString(),
+            ]
+            : const <String>[],
+    eventSource: _eventSource(json['eventSource']),
+  );
+}
+
+PlayerProfileArgs? _playerProfileArgsFromMetadata(Map<String, Object?> json) {
+  final playerName = json['playerName']?.toString().trim() ?? '';
+  if (playerName.isEmpty) return null;
+  return PlayerProfileArgs(
+    playerName: playerName,
+    fideId: _nullableInt(json['fideId']),
+    title: _nullableString(json['title']),
+    federation: _nullableString(json['federation']),
+    rating: _nullableInt(json['rating']),
+    dataSource: _playerProfileDataSource(json['dataSource']),
+    gamebasePlayerId: _nullableString(json['gamebasePlayerId']),
+  );
+}
+
+Country? _countryFromMetadata(Map<String, Object?> json) {
+  final service = CountryService();
+  final countryCode = _nullableString(json['countryCode']);
+  if (countryCode != null) {
+    final country = service.findByCode(countryCode);
+    if (country != null) return country;
+  }
+  final countryName = _nullableString(json['countryName']);
+  if (countryName != null) {
+    return service.findByName(countryName);
+  }
+  return null;
+}
+
+CountrymenScreenMode? _countrymenModeFromMetadata(Object? value) {
+  final name = value?.toString();
+  for (final mode in CountrymenScreenMode.values) {
+    if (mode.name == name) return mode;
+  }
+  return null;
+}
+
+String? _nullableString(Object? value) {
+  final text = value?.toString().trim();
+  return text == null || text.isEmpty ? null : text;
+}
+
+int _int(Object? value) => _nullableInt(value) ?? 0;
+
+int? _nullableInt(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '');
+}
+
+DateTime? _date(Object? value) {
+  final text = value?.toString();
+  return text == null || text.isEmpty ? null : DateTime.tryParse(text);
+}
+
+TourEventCategory _tourEventCategory(Object? value) {
+  final name = value?.toString();
+  for (final category in TourEventCategory.values) {
+    if (category.name == name) return category;
+  }
+  return TourEventCategory.completed;
+}
+
+EventSource _eventSource(Object? value) {
+  final name = value?.toString();
+  for (final source in EventSource.values) {
+    if (source.name == name) return source;
+  }
+  return EventSource.lichessBroadcast;
+}
+
+PlayerProfileDataSource _playerProfileDataSource(Object? value) {
+  final name = value?.toString();
+  for (final source in PlayerProfileDataSource.values) {
+    if (source.name == name) return source;
+  }
+  return PlayerProfileDataSource.twic;
 }
 
 Future<void> _openLocalChessPaths(

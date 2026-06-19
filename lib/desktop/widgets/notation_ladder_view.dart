@@ -48,6 +48,76 @@ class NotationVariationCollapseController {
   }
 }
 
+typedef _TranspositionIndex = Map<String, List<ChessMovePointer>>;
+
+class _NotationPositionMarkers extends InheritedWidget {
+  const _NotationPositionMarkers({
+    required this.positionArrowKeys,
+    required this.transpositions,
+    required this.onJump,
+    required super.child,
+  });
+
+  final Set<String> positionArrowKeys;
+  final _TranspositionIndex transpositions;
+  final ValueChanged<ChessMovePointer> onJump;
+
+  static _NotationPositionMarkers? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_NotationPositionMarkers>();
+
+  @override
+  bool updateShouldNotify(covariant _NotationPositionMarkers oldWidget) {
+    return positionArrowKeys != oldWidget.positionArrowKeys ||
+        transpositions != oldWidget.transpositions ||
+        onJump != oldWidget.onJump;
+  }
+}
+
+String _notationFenPositionKey(String fen) {
+  final parts = fen.trim().split(RegExp(r'\s+'));
+  if (parts.length < 4) return fen.trim();
+  return parts.take(4).join(' ');
+}
+
+_TranspositionIndex _buildTranspositionIndex(ChessGame game) {
+  final all = <String, List<ChessMovePointer>>{};
+
+  void visit(ChessLine line, ChessMovePointer prefix) {
+    for (var i = 0; i < line.length; i++) {
+      final move = line[i];
+      final pointer = <int>[...prefix, i];
+      final key = _notationFenPositionKey(move.fen);
+      all.putIfAbsent(key, () => <ChessMovePointer>[]).add(pointer);
+      final variations = move.variations;
+      if (variations == null) continue;
+      for (var v = 0; v < variations.length; v++) {
+        visit(variations[v], <int>[...pointer, v]);
+      }
+    }
+  }
+
+  visit(game.mainline, const <int>[]);
+  return Map<String, List<ChessMovePointer>>.unmodifiable({
+    for (final entry in all.entries)
+      if (entry.value.length > 1)
+        entry.key: List<ChessMovePointer>.unmodifiable(entry.value),
+  });
+}
+
+bool _samePointer(ChessMovePointer a, ChessMovePointer b) =>
+    a.length == b.length &&
+    Iterable<int>.generate(a.length).every((i) => a[i] == b[i]);
+
+ChessMovePointer? _nextTranspositionPointer(
+  List<ChessMovePointer>? pointers,
+  ChessMovePointer current,
+) {
+  if (pointers == null || pointers.length < 2) return null;
+  final index = pointers.indexWhere((p) => _samePointer(p, current));
+  if (index < 0) return pointers.first;
+  return pointers[(index + 1) % pointers.length];
+}
+
 @visibleForTesting
 class NotationHeaderMetadata {
   const NotationHeaderMetadata({this.event, this.round, this.date, this.eco});
@@ -122,6 +192,7 @@ class NotationLadderView extends StatefulWidget {
     this.visibleMoveOrderController,
     this.variationCollapseController,
     this.showHeader = true,
+    this.positionArrowKeys = const <String>{},
   });
 
   /// Optional external controller for the ladder/inline toggle. When
@@ -135,6 +206,9 @@ class NotationLadderView extends StatefulWidget {
   /// Whether to show the notation header chrome (title, collapse/expand, help).
   /// Compact previews can hide it while keeping the same move rendering.
   final bool showHeader;
+
+  /// Normalized position keys that have user-drawn arrows/circles.
+  final Set<String> positionArrowKeys;
 
   /// Optional sink for the exact visible move-token traversal order rendered
   /// by this widget after expand/collapse state is applied. Board-level
@@ -482,115 +556,122 @@ class _NotationLadderViewState extends State<NotationLadderView> {
     }
     final displayActivePointer =
         widget.showActiveHighlight ? widget.activePointer : const <int>[];
+    final transpositions = _buildTranspositionIndex(widget.game);
 
-    return CallbackShortcuts(
-      bindings: {
-        const SingleActivator(LogicalKeyboardKey.bracketLeft, control: true):
-            _collapseAllVariations,
-        const SingleActivator(LogicalKeyboardKey.bracketLeft, meta: true):
-            _collapseAllVariations,
-        const SingleActivator(LogicalKeyboardKey.bracketRight, control: true):
-            _expandAllVariations,
-        const SingleActivator(LogicalKeyboardKey.bracketRight, meta: true):
-            _expandAllVariations,
-      },
-      child: Container(
-        color: kBlack2Color,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (widget.showHeader)
-              _Header(
-                metadata: notationHeaderMetadataFromPgn(widget.game.metadata),
+    return _NotationPositionMarkers(
+      positionArrowKeys: widget.positionArrowKeys,
+      transpositions: transpositions,
+      onJump: widget.onJump,
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.bracketLeft, control: true):
+              _collapseAllVariations,
+          const SingleActivator(LogicalKeyboardKey.bracketLeft, meta: true):
+              _collapseAllVariations,
+          const SingleActivator(LogicalKeyboardKey.bracketRight, control: true):
+              _expandAllVariations,
+          const SingleActivator(LogicalKeyboardKey.bracketRight, meta: true):
+              _expandAllVariations,
+        },
+        child: Container(
+          color: kBlack2Color,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (widget.showHeader)
+                _Header(
+                  metadata: notationHeaderMetadataFromPgn(widget.game.metadata),
+                ),
+              Expanded(
+                child:
+                    mainline.isEmpty
+                        ? const _EmptyLadderHint()
+                        : _layoutMode == NotationLayoutMode.inline
+                        ? SingleChildScrollView(
+                          controller: _scroll,
+                          physics: const DesktopScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 18),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              KeyedSubtree(
+                                key: _inlineNotationKey,
+                                child: _InlineNotationBlock(
+                                  line: mainline,
+                                  pointerPrefix: const <int>[],
+                                  depth: 0,
+                                  isMainlineRoot: true,
+                                  startPly: startingPly,
+                                  activePointer: displayActivePointer,
+                                  activeKey: _activeKey,
+                                  onJump: widget.onJump,
+                                  lichessAnnotations: widget.lichessAnnotations,
+                                  userNags: widget.userNags,
+                                  onSetUserQualityNag:
+                                      widget.onSetUserQualityNag,
+                                  onToggleUserNag: widget.onToggleUserNag,
+                                  onToggleMoveNag: widget.onToggleMoveNag,
+                                  onSetMoveComment: widget.onSetMoveComment,
+                                  onPromoteVariation: widget.onPromoteVariation,
+                                  onDeleteVariation: widget.onDeleteVariation,
+                                  onTrimContinuation: widget.onTrimContinuation,
+                                  forcedOpenIds: forcedOpenIds,
+                                  collapsedIds: _collapsed,
+                                  expandedIds: _expanded,
+                                  onToggleCollapsed: _toggleCollapsed,
+                                  autoCollapseDepth: widget.autoCollapseDepth,
+                                  autoCollapseMoveThreshold:
+                                      widget.autoCollapseMoveThreshold,
+                                  useFigurine: widget.useFigurine,
+                                  pieceAssets: widget.pieceAssets,
+                                ),
+                              ),
+                              if (gameResult != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 14),
+                                  child: _GameResultRow(result: gameResult),
+                                ),
+                            ],
+                          ),
+                        )
+                        : SingleChildScrollView(
+                          controller: _scroll,
+                          physics: const DesktopScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: _LineBlock(
+                            line: mainline,
+                            pointerPrefix: const <int>[],
+                            depth: 0,
+                            isMainlineRoot: true,
+                            startPly: startingPly,
+                            activePointer: displayActivePointer,
+                            activeKey: _activeKey,
+                            onJump: widget.onJump,
+                            lichessAnnotations: widget.lichessAnnotations,
+                            userNags: widget.userNags,
+                            onSetUserQualityNag: widget.onSetUserQualityNag,
+                            onToggleUserNag: widget.onToggleUserNag,
+                            onToggleMoveNag: widget.onToggleMoveNag,
+                            onSetMoveComment: widget.onSetMoveComment,
+                            onPromoteVariation: widget.onPromoteVariation,
+                            onDeleteVariation: widget.onDeleteVariation,
+                            onTrimContinuation: widget.onTrimContinuation,
+                            forcedOpenIds: forcedOpenIds,
+                            collapsedIds: _collapsed,
+                            expandedIds: _expanded,
+                            onToggleCollapsed: _toggleCollapsed,
+                            autoCollapseDepth: widget.autoCollapseDepth,
+                            autoCollapseMoveThreshold:
+                                widget.autoCollapseMoveThreshold,
+                            useFigurine: widget.useFigurine,
+                            pieceAssets: widget.pieceAssets,
+                            gameResult: gameResult,
+                          ),
+                        ),
               ),
-            Expanded(
-              child:
-                  mainline.isEmpty
-                      ? const _EmptyLadderHint()
-                      : _layoutMode == NotationLayoutMode.inline
-                      ? SingleChildScrollView(
-                        controller: _scroll,
-                        physics: const DesktopScrollPhysics(),
-                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 18),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            KeyedSubtree(
-                              key: _inlineNotationKey,
-                              child: _InlineNotationBlock(
-                                line: mainline,
-                                pointerPrefix: const <int>[],
-                                depth: 0,
-                                isMainlineRoot: true,
-                                startPly: startingPly,
-                                activePointer: displayActivePointer,
-                                activeKey: _activeKey,
-                                onJump: widget.onJump,
-                                lichessAnnotations: widget.lichessAnnotations,
-                                userNags: widget.userNags,
-                                onSetUserQualityNag: widget.onSetUserQualityNag,
-                                onToggleUserNag: widget.onToggleUserNag,
-                                onToggleMoveNag: widget.onToggleMoveNag,
-                                onSetMoveComment: widget.onSetMoveComment,
-                                onPromoteVariation: widget.onPromoteVariation,
-                                onDeleteVariation: widget.onDeleteVariation,
-                                onTrimContinuation: widget.onTrimContinuation,
-                                forcedOpenIds: forcedOpenIds,
-                                collapsedIds: _collapsed,
-                                expandedIds: _expanded,
-                                onToggleCollapsed: _toggleCollapsed,
-                                autoCollapseDepth: widget.autoCollapseDepth,
-                                autoCollapseMoveThreshold:
-                                    widget.autoCollapseMoveThreshold,
-                                useFigurine: widget.useFigurine,
-                                pieceAssets: widget.pieceAssets,
-                              ),
-                            ),
-                            if (gameResult != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 14),
-                                child: _GameResultRow(result: gameResult),
-                              ),
-                          ],
-                        ),
-                      )
-                      : SingleChildScrollView(
-                        controller: _scroll,
-                        physics: const DesktopScrollPhysics(),
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        child: _LineBlock(
-                          line: mainline,
-                          pointerPrefix: const <int>[],
-                          depth: 0,
-                          isMainlineRoot: true,
-                          startPly: startingPly,
-                          activePointer: displayActivePointer,
-                          activeKey: _activeKey,
-                          onJump: widget.onJump,
-                          lichessAnnotations: widget.lichessAnnotations,
-                          userNags: widget.userNags,
-                          onSetUserQualityNag: widget.onSetUserQualityNag,
-                          onToggleUserNag: widget.onToggleUserNag,
-                          onToggleMoveNag: widget.onToggleMoveNag,
-                          onSetMoveComment: widget.onSetMoveComment,
-                          onPromoteVariation: widget.onPromoteVariation,
-                          onDeleteVariation: widget.onDeleteVariation,
-                          onTrimContinuation: widget.onTrimContinuation,
-                          forcedOpenIds: forcedOpenIds,
-                          collapsedIds: _collapsed,
-                          expandedIds: _expanded,
-                          onToggleCollapsed: _toggleCollapsed,
-                          autoCollapseDepth: widget.autoCollapseDepth,
-                          autoCollapseMoveThreshold:
-                              widget.autoCollapseMoveThreshold,
-                          useFigurine: widget.useFigurine,
-                          pieceAssets: widget.pieceAssets,
-                          gameResult: gameResult,
-                        ),
-                      ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -2290,6 +2371,7 @@ class _InlineMove extends StatelessWidget {
           const SizedBox(width: 2),
         ],
         _LadderChip(
+          pointer: pointer,
           san: move.san,
           fen: move.fen,
           uci: move.uci,
@@ -2776,6 +2858,7 @@ class _PairRow extends StatelessWidget {
                       : whiteMove == null
                       ? const SizedBox.shrink()
                       : _LadderChip(
+                        pointer: whitePointer!,
                         san: whiteMove!.san,
                         fen: whiteMove!.fen,
                         uci: whiteMove!.uci,
@@ -2829,6 +2912,7 @@ class _PairRow extends StatelessWidget {
                   blackMove == null
                       ? const SizedBox.shrink()
                       : _LadderChip(
+                        pointer: blackPointer!,
                         san: blackMove!.san,
                         fen: blackMove!.fen,
                         uci: blackMove!.uci,
@@ -2885,6 +2969,7 @@ class _PairRow extends StatelessWidget {
 
 class _LadderChip extends StatefulWidget {
   const _LadderChip({
+    required this.pointer,
     required this.san,
     required this.fen,
     required this.uci,
@@ -2910,6 +2995,7 @@ class _LadderChip extends StatefulWidget {
     this.mainlineDominant = false,
   });
 
+  final ChessMovePointer pointer;
   final String san;
   final String fen;
   final String uci;
@@ -3262,9 +3348,32 @@ class _LadderChipState extends State<_LadderChip> {
       ),
     );
 
+    final markers = _NotationPositionMarkers.maybeOf(context);
+    final positionKey = _notationFenPositionKey(widget.fen);
+    final hasPositionArrows =
+        markers?.positionArrowKeys.contains(positionKey) ?? false;
+    final transpositionPointers = markers?.transpositions[positionKey];
+    final transpositionTarget = _nextTranspositionPointer(
+      transpositionPointers,
+      widget.pointer,
+    );
+    final transpositionCount = transpositionPointers?.length ?? 0;
+
     final clockText = widget.clockText;
     final children = <Widget>[
       if (widget.compact) sanText else Flexible(child: sanText),
+      if (hasPositionArrows) ...[
+        const SizedBox(width: 4),
+        _PositionArrowBadge(selected: widget.selected),
+      ],
+      if (transpositionTarget != null) ...[
+        const SizedBox(width: 4),
+        _TranspositionBadge(
+          selected: widget.selected,
+          count: transpositionCount,
+          onTap: () => markers?.onJump(transpositionTarget),
+        ),
+      ],
       for (final d in nags) ...[
         const SizedBox(width: 3),
         Text(
@@ -3319,6 +3428,68 @@ class _LadderChipState extends State<_LadderChip> {
       return DesktopTooltip(message: comment, child: chip);
     }
     return chip;
+  }
+}
+
+class _PositionArrowBadge extends StatelessWidget {
+  const _PositionArrowBadge({required this.selected});
+
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? kBackgroundColor : kPrimaryColor;
+    return DesktopTooltip(
+      message: 'Position arrows saved for this position',
+      child: Icon(Icons.trending_flat_rounded, size: 13, color: color),
+    );
+  }
+}
+
+class _TranspositionBadge extends StatelessWidget {
+  const _TranspositionBadge({
+    required this.selected,
+    required this.count,
+    required this.onTap,
+  });
+
+  final bool selected;
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? kBackgroundColor : const Color(0xFFB38CFF);
+    return DesktopTooltip(
+      message:
+          count > 2
+              ? 'Transposition: $count occurrences. Click to cycle.'
+              : 'Transposition: jump to other occurrence',
+      child: ClickCursor(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: selected ? 0.10 : 0.14),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: color.withValues(alpha: 0.55)),
+            ),
+            child: Text(
+              'Tr',
+              style: TextStyle(
+                color: color,
+                fontSize: 9.5,
+                height: 1.0,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.1,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

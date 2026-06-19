@@ -9,6 +9,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -803,6 +804,11 @@ class _DesktopPositionGamesTableState
           shortcut: '⌘·Click',
         ),
         DesktopContextMenuItem<_PositionGameRowAction>(
+          value: _PositionGameRowAction.openInNewWindow,
+          icon: Icons.open_in_browser_rounded,
+          label: 'Open game in new window',
+        ),
+        DesktopContextMenuItem<_PositionGameRowAction>(
           value: _PositionGameRowAction.insertGame,
           icon: Icons.call_merge_rounded,
           label: 'Insert game',
@@ -813,6 +819,8 @@ class _DesktopPositionGamesTableState
     switch (action) {
       case _PositionGameRowAction.openInNewTab:
         _openGame(row, focus: false);
+      case _PositionGameRowAction.openInNewWindow:
+        _openGame(row, inNewWindow: true);
       case _PositionGameRowAction.insertGame:
         await _insertGame(row);
     }
@@ -1002,6 +1010,7 @@ class _DesktopPositionGamesTableState
   void _openGame(
     Map<String, dynamic> row, {
     bool focus = true,
+    bool inNewWindow = false,
     int? continuationStep,
   }) {
     final id = (row['id']?.toString().trim() ?? '');
@@ -1056,6 +1065,11 @@ class _DesktopPositionGamesTableState
       ),
       gameListSelectedId: id,
     );
+    if (inNewWindow) {
+      unawaited(openBoardGameWindow(ref, args));
+      return;
+    }
+
     openBoardGameTab(
       ref,
       args,
@@ -2048,7 +2062,7 @@ class _NotationHoverTokenState extends State<_NotationHoverToken> {
   }
 }
 
-enum _PositionGameRowAction { openInNewTab, insertGame }
+enum _PositionGameRowAction { openInNewTab, openInNewWindow, insertGame }
 
 /// Walk the UCI continuation through dartchess, emitting SAN with the
 /// move-number labels a chess reader expects:
