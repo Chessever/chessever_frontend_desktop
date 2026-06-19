@@ -4,7 +4,11 @@ import 'package:flutter/foundation.dart';
 
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
+import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
+import 'package:chessever/screens/player_profile/provider/player_profile_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
 const String desktopBoardWindowPayloadType = 'board';
 const String desktopTabWindowPayloadType = 'desktop-tab';
@@ -116,8 +120,17 @@ Map<String, Object?> _argsToJson(BoardTabGameArgs args) => <String, Object?>{
   'initialFen': args.initialFen,
   'viewSource': args.viewSource.name,
   'tournamentTitle': args.tournamentTitle,
+  'eventGames': _summariesToJson(args.eventGames),
+  'eventGamesLoading': args.eventGamesLoading,
+  'eventGamesContinuation': _continuationToJson(args.eventGamesContinuation),
   'routeTitle': args.routeTitle,
+  'routeGames': _summariesToJson(args.routeGames),
+  'routeGamesContinuation': _continuationToJson(args.routeGamesContinuation),
   'databaseTitle': args.databaseTitle,
+  'databaseGames': _summariesToJson(args.databaseGames),
+  'databaseGamesContinuation': _continuationToJson(
+    args.databaseGamesContinuation,
+  ),
   'gameListSelectedId': args.gameListSelectedId,
 };
 
@@ -142,9 +155,156 @@ BoardTabGameArgs _argsFromJson(Map<String, Object?> json) {
     initialFen: _nullableString(json['initialFen']),
     viewSource: _viewSource(json['viewSource']),
     tournamentTitle: _string(json['tournamentTitle']),
+    eventGames: _summariesFromJson(json['eventGames']),
+    eventGamesLoading: json['eventGamesLoading'] == true,
+    eventGamesContinuation: _continuationFromJson(
+      json['eventGamesContinuation'],
+    ),
     routeTitle: _string(json['routeTitle']),
+    routeGames: _summariesFromJson(json['routeGames']),
+    routeGamesContinuation: _continuationFromJson(
+      json['routeGamesContinuation'],
+    ),
     databaseTitle: _string(json['databaseTitle']),
+    databaseGames: _summariesFromJson(json['databaseGames']),
+    databaseGamesContinuation: _continuationFromJson(
+      json['databaseGamesContinuation'],
+    ),
     gameListSelectedId: _nullableString(json['gameListSelectedId']),
+  );
+}
+
+List<Object?> _summariesToJson(List<TournamentGameSummary> games) {
+  return [for (final game in games) _summaryToJson(game)];
+}
+
+Map<String, Object?> _summaryToJson(TournamentGameSummary game) {
+  return <String, Object?>{
+    'id': game.id,
+    'name': game.name,
+    'whitePlayer': game.whitePlayer,
+    'blackPlayer': game.blackPlayer,
+    'hasPgn': game.hasPgn,
+    'tourId': game.tourId,
+    'tourSlug': game.tourSlug,
+    'whiteFederation': game.whiteFederation,
+    'blackFederation': game.blackFederation,
+    'whiteTitle': game.whiteTitle,
+    'blackTitle': game.blackTitle,
+    'whiteRating': game.whiteRating,
+    'blackRating': game.blackRating,
+    'whiteFideId': game.whiteFideId,
+    'blackFideId': game.blackFideId,
+    'fen': game.fen,
+    'roundId': game.roundId,
+    'roundSlug': game.roundSlug,
+    'roundLabel': game.roundLabel,
+    'roundName': game.roundName,
+    'boardNumber': game.boardNumber,
+    'status': game.status.name,
+    'openingName': game.openingName,
+    'lastMoveTime': game.lastMoveTime?.toIso8601String(),
+    'startsAt': game.startsAt?.toIso8601String(),
+    'roundStartsAt': game.roundStartsAt?.toIso8601String(),
+    'hasStarted': game.hasStarted,
+    'pgn': game.pgn,
+  };
+}
+
+List<TournamentGameSummary> _summariesFromJson(Object? value) {
+  if (value is! List) return const <TournamentGameSummary>[];
+  return [
+    for (final item in value)
+      if (item is Map) _summaryFromJson(item.cast<String, Object?>()),
+  ];
+}
+
+TournamentGameSummary _summaryFromJson(Map<String, Object?> json) {
+  return TournamentGameSummary(
+    id: _string(json['id']),
+    name: _string(json['name']),
+    whitePlayer: _string(json['whitePlayer']),
+    blackPlayer: _string(json['blackPlayer']),
+    hasPgn: json['hasPgn'] == true,
+    tourId: _string(json['tourId']),
+    tourSlug: _string(json['tourSlug']),
+    whiteFederation: _string(json['whiteFederation']),
+    blackFederation: _string(json['blackFederation']),
+    whiteTitle: _string(json['whiteTitle']),
+    blackTitle: _string(json['blackTitle']),
+    whiteRating: _int(json['whiteRating']),
+    blackRating: _int(json['blackRating']),
+    whiteFideId: _nullableInt(json['whiteFideId']),
+    blackFideId: _nullableInt(json['blackFideId']),
+    fen: _nullableString(json['fen']),
+    roundId: _string(json['roundId']),
+    roundSlug: _string(json['roundSlug']),
+    roundLabel: _string(json['roundLabel']),
+    roundName: _string(json['roundName']),
+    boardNumber: _nullableInt(json['boardNumber']),
+    status: _gameStatus(json['status']),
+    openingName: _nullableString(json['openingName']),
+    lastMoveTime: _date(json['lastMoveTime']),
+    startsAt: _date(json['startsAt']),
+    roundStartsAt: _date(json['roundStartsAt']),
+    hasStarted: json['hasStarted'] == true,
+    pgn: _nullableString(json['pgn']),
+  );
+}
+
+Map<String, Object?>? _continuationToJson(
+  BoardTabGamesContinuation? continuation,
+) {
+  if (continuation == null) return null;
+  return <String, Object?>{
+    'kind': continuation.kind.name,
+    if (continuation.argument is PlayerProfileKey)
+      'playerProfileKey': _playerProfileKeyToJson(
+        continuation.argument! as PlayerProfileKey,
+      ),
+  };
+}
+
+Map<String, Object?> _playerProfileKeyToJson(PlayerProfileKey key) {
+  return <String, Object?>{
+    'fideId': key.fideId,
+    'playerName': key.playerName,
+    'source': key.source.name,
+    'gamebasePlayerId': key.gamebasePlayerId,
+  };
+}
+
+BoardTabGamesContinuation? _continuationFromJson(Object? value) {
+  if (value is! Map) return null;
+  final json = value.cast<String, Object?>();
+  final kindName = json['kind']?.toString();
+  final kind =
+      BoardTabGamesContinuationKind.values
+          .where((kind) => kind.name == kindName)
+          .firstOrNull;
+  if (kind == null) return null;
+  switch (kind) {
+    case BoardTabGamesContinuationKind.favorites:
+      return const BoardTabGamesContinuation.favorites();
+    case BoardTabGamesContinuationKind.countrymen:
+      return const BoardTabGamesContinuation.countrymen();
+    case BoardTabGamesContinuationKind.twicDatabase:
+      return const BoardTabGamesContinuation.twicDatabase();
+    case BoardTabGamesContinuationKind.playerProfile:
+      final keyJson = json['playerProfileKey'];
+      if (keyJson is! Map) return null;
+      return BoardTabGamesContinuation.playerProfile(
+        _playerProfileKeyFromJson(keyJson.cast<String, Object?>()),
+      );
+  }
+}
+
+PlayerProfileKey _playerProfileKeyFromJson(Map<String, Object?> json) {
+  return PlayerProfileKey(
+    fideId: _nullableInt(json['fideId']),
+    playerName: _string(json['playerName']),
+    source: _playerProfileDataSource(json['source']),
+    gamebasePlayerId: _nullableString(json['gamebasePlayerId']),
   );
 }
 
@@ -163,12 +323,33 @@ int? _nullableInt(Object? value) {
   return int.tryParse(value?.toString() ?? '');
 }
 
+DateTime? _date(Object? value) {
+  final text = value?.toString();
+  return text == null || text.isEmpty ? null : DateTime.tryParse(text);
+}
+
 ChessboardView _viewSource(Object? value) {
   final name = value?.toString();
   for (final view in ChessboardView.values) {
     if (view.name == name) return view;
   }
   return ChessboardView.tour;
+}
+
+GameStatus _gameStatus(Object? value) {
+  final name = value?.toString();
+  for (final status in GameStatus.values) {
+    if (status.name == name) return status;
+  }
+  return GameStatus.fromString(name);
+}
+
+PlayerProfileDataSource _playerProfileDataSource(Object? value) {
+  final name = value?.toString();
+  for (final source in PlayerProfileDataSource.values) {
+    if (source.name == name) return source;
+  }
+  return PlayerProfileDataSource.supabase;
 }
 
 TabKind _kind(Object? value) {
