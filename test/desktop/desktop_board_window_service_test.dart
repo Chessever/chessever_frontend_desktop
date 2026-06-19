@@ -1,11 +1,14 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:country_picker/country_picker.dart';
 
 import 'package:chessever/desktop/services/desktop_board_window_payload.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
+import 'package:chessever/screens/countrymen/provider/countrymen_mode_provider.dart';
 
 void main() {
   test('board window payload round-trips serializable board args', () {
@@ -166,6 +169,47 @@ void main() {
       isFalse,
     );
   });
+
+  test(
+    'countrymen tab window payload preserves selected country and mode',
+    () async {
+      late DesktopBoardWindowPayload captured;
+      final container = ProviderContainer(
+        overrides: [
+          desktopBoardWindowServiceProvider.overrideWithValue(
+            DesktopBoardWindowService(
+              createWindow: (payload) async => captured = payload,
+            ),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final india = CountryService().findByCode('IN');
+      expect(india, isNotNull);
+      container.read(temporaryCountryProvider.notifier).state = india;
+      container.read(selectedCountrymenModeProvider.notifier).state =
+          CountrymenScreenMode.events;
+      final tabId = container
+          .read(desktopTabsProvider.notifier)
+          .open(TabKind.countrymen, reuseExisting: false);
+      final tab = container
+          .read(desktopTabsProvider)
+          .tabs
+          .firstWhere((tab) => tab.id == tabId);
+
+      await container
+          .read(desktopBoardWindowServiceProvider)
+          .openDesktopTabWindow(container, tab);
+
+      expect(captured.kind, TabKind.countrymen);
+      expect(captured.metadata['countryCode'], 'IN');
+      expect(captured.metadata['countryName'], india!.name);
+      expect(
+        captured.metadata['countrymenMode'],
+        CountrymenScreenMode.events.name,
+      );
+    },
+  );
 }
 
 BoardTabGameArgs _args({

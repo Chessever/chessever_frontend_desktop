@@ -7,6 +7,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:country_picker/country_picker.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
@@ -33,8 +34,10 @@ import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
+import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
+import 'package:chessever/screens/countrymen/provider/countrymen_mode_provider.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
@@ -472,8 +475,24 @@ void _restoreDetachedTabMetadata(
       container.read(playerProfileByTabIdProvider.notifier).update((existing) {
         return <String, PlayerProfileArgs>{...existing, tabId: args};
       });
+    case TabKind.countrymen:
+      _restoreCountrymenMetadata(container, payload.metadata);
     default:
       return;
+  }
+}
+
+void _restoreCountrymenMetadata(
+  ProviderContainer container,
+  Map<String, Object?> json,
+) {
+  final country = _countryFromMetadata(json);
+  if (country != null) {
+    container.read(temporaryCountryProvider.notifier).state = country;
+  }
+  final mode = _countrymenModeFromMetadata(json['countrymenMode']);
+  if (mode != null) {
+    container.read(selectedCountrymenModeProvider.notifier).state = mode;
   }
 }
 
@@ -515,6 +534,28 @@ PlayerProfileArgs? _playerProfileArgsFromMetadata(Map<String, Object?> json) {
     dataSource: _playerProfileDataSource(json['dataSource']),
     gamebasePlayerId: _nullableString(json['gamebasePlayerId']),
   );
+}
+
+Country? _countryFromMetadata(Map<String, Object?> json) {
+  final service = CountryService();
+  final countryCode = _nullableString(json['countryCode']);
+  if (countryCode != null) {
+    final country = service.findByCode(countryCode);
+    if (country != null) return country;
+  }
+  final countryName = _nullableString(json['countryName']);
+  if (countryName != null) {
+    return service.findByName(countryName);
+  }
+  return null;
+}
+
+CountrymenScreenMode? _countrymenModeFromMetadata(Object? value) {
+  final name = value?.toString();
+  for (final mode in CountrymenScreenMode.values) {
+    if (mode.name == name) return mode;
+  }
+  return null;
 }
 
 String? _nullableString(Object? value) {
