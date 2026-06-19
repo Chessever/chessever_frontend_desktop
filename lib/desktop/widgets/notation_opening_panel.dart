@@ -369,6 +369,20 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
     _go(next);
   }
 
+  void _toggleExplorerVisibility() {
+    final explorerVisible = _buildExplorerPage || _page > 0;
+    if (explorerVisible) {
+      setState(() {
+        _buildExplorerPage = false;
+        _setCurrentPage(0);
+      });
+      _writeStoredPage(0);
+      _focusActivePage();
+    } else {
+      _go(1);
+    }
+  }
+
   KeyEventResult _handleRailKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
@@ -379,13 +393,9 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
       if (event is KeyDownEvent) widget.onPlayEngineMove!.call();
       return KeyEventResult.handled;
     }
-    if (key == LogicalKeyboardKey.enter && !_hasAnyModifierPressed()) {
+    if (key == LogicalKeyboardKey.keyO && !_hasAnyModifierPressed()) {
       if (event is KeyDownEvent) {
-        if ((_buildExplorerPage || _page > 0) && _page > 0) {
-          _go(0);
-        } else {
-          _go(1);
-        }
+        _toggleExplorerVisibility();
       }
       return KeyEventResult.handled;
     }
@@ -524,18 +534,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
             ),
             _SegmentBar(
               explorerOpen: explorerVisible,
-              onToggleExplorer: () {
-                if (explorerVisible) {
-                  setState(() {
-                    _buildExplorerPage = false;
-                    _setCurrentPage(0);
-                  });
-                  _writeStoredPage(0);
-                  _focusActivePage();
-                } else {
-                  _go(1);
-                }
-              },
+              onToggleExplorer: _toggleExplorerVisibility,
               explorerScope: widget.explorerScope,
               canGoBack: widget.canGoBack,
               canGoForward: widget.canGoForward,
