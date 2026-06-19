@@ -35,6 +35,7 @@ import 'package:chessever/screens/favorites/tabs/favorites_players_tab.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
@@ -411,7 +412,13 @@ class _FavoritesGamesList extends ConsumerStatefulWidget {
 }
 
 class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
+  static const Duration _scrollIdleDelay = Duration(milliseconds: 180);
+
   final ScrollController _scrollController = ScrollController();
+  Timer? _scrollIdleTimer;
+  bool _liveCardsPausedForScroll = false;
+
+  String get _liveCardsPauseReason => 'desktop_favorites_scroll';
 
   @override
   void initState() {
@@ -421,6 +428,8 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
 
   @override
   void dispose() {
+    _scrollIdleTimer?.cancel();
+    _setLiveCardsPausedForScroll(false);
     _scrollController
       ..removeListener(_maybeLoadMore)
       ..dispose();
@@ -428,7 +437,11 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
   }
 
   void _maybeLoadMore() {
-    if (!widget.hasMore || widget.isLoading || !_scrollController.hasClients) {
+    if (!_scrollController.hasClients) {
+      return;
+    }
+    _markLiveCardsScrolling();
+    if (!widget.hasMore || widget.isLoading) {
       return;
     }
     final position = _scrollController.position;
@@ -437,10 +450,28 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
     }
   }
 
+  void _markLiveCardsScrolling() {
+    _setLiveCardsPausedForScroll(true);
+    _scrollIdleTimer?.cancel();
+    _scrollIdleTimer = Timer(_scrollIdleDelay, _markLiveCardsIdle);
+  }
+
+  void _markLiveCardsIdle() {
+    if (!mounted) return;
+    _setLiveCardsPausedForScroll(false);
+  }
+
+  void _setLiveCardsPausedForScroll(bool paused) {
+    if (_liveCardsPausedForScroll == paused) return;
+    _liveCardsPausedForScroll = paused;
+    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
+  }
+
   @override
   Widget build(BuildContext context) {
     final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
     final groups = buildDesktopGameDateGroups(widget.games);
+    const cardStreamingEnabled = true;
     if (layout == DesktopCardLayout.grid) {
       // Compute column count first so PageUp/PageDown can stride by a full
       // page (~3 rows of `columns` cards) — `pageStride: 9` was hardcoded to
@@ -498,6 +529,7 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
                             layout: DesktopCardLayout.grid,
                             allGames: widget.games,
                             selected: selectedGameId == game.gameId,
+                            streamEnabled: cardStreamingEnabled,
                           ),
                         );
                       }, childCount: groups[groupIndex].games.length),
@@ -556,6 +588,7 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
                         layout: layout,
                         allGames: widget.games,
                         selected: selectedGameId == game.gameId,
+                        streamEnabled: cardStreamingEnabled,
                       ),
                     );
                   },
@@ -593,11 +626,13 @@ class _FavoriteLiveGameCard extends ConsumerWidget {
     required this.layout,
     required this.allGames,
     this.selected = false,
+    this.streamEnabled = true,
   });
 
   final GamesTourModel game;
   final DesktopCardLayout layout;
   final bool selected;
+  final bool streamEnabled;
 
   /// Full favorites feed at tap time — handed to [LiveDesktopGameCard] so
   /// the resulting board tab's left rail keeps the favorites context (day-
@@ -621,7 +656,8 @@ class _FavoriteLiveGameCard extends ConsumerWidget {
         layout: layout,
         selected: selected,
         viewSource: ChessboardView.favScorecard,
-        streamingEnabled: streamingEnabled,
+        streamingEnabled: streamingEnabled && streamEnabled,
+        allowStockfishFallback: streamEnabled,
       ),
     );
   }

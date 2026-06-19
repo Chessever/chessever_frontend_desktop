@@ -5,7 +5,6 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_explorer_filters.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
-import 'package:chessever/desktop/widgets/explorer_filter_availability.dart';
 import 'package:chessever/desktop/widgets/explorer_filter_scope.dart';
 import 'package:chessever/screens/gamebase/models/gamebase_player.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
@@ -57,9 +56,6 @@ class _ExplorerFiltersPopoverButtonState
             );
     final activeCount = _activeFilterCount(filters, widget.scopedPlayer);
     final hasActive = activeCount > 0;
-    final filtersAvailable = explorerFiltersAvailableForScope(
-      widget.scopedPlayer,
-    );
 
     return FTheme(
       data: FThemes.zinc.dark,
@@ -77,23 +73,14 @@ class _ExplorerFiltersPopoverButtonState
               ),
             ),
         child: DesktopTooltip(
-          message:
-              filtersAvailable
-                  ? (hasActive ? 'Filters · $activeCount active' : 'Filters')
-                  : wholeDatabaseFiltersComingSoonMessage,
+          message: hasActive ? 'Filters · $activeCount active' : 'Filters',
           child: ClickCursor(
             child: MouseRegion(
               onEnter: (_) => setState(() => _hovered = true),
               onExit: (_) => setState(() => _hovered = false),
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: () {
-                  if (!filtersAvailable) {
-                    showWholeDatabaseFiltersComingSoon(context);
-                    return;
-                  }
-                  _controller.toggle();
-                },
+                onTap: _controller.toggle,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 90),
                   padding: const EdgeInsets.symmetric(

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -16,6 +18,7 @@ import 'package:chessever/screens/chessboard/provider/chess_board_screen_provide
 import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 class DesktopSmartGamesPane extends ConsumerStatefulWidget {
@@ -190,8 +193,15 @@ class _SmartGamesList extends ConsumerStatefulWidget {
 }
 
 class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
+  static const Duration _scrollIdleDelay = Duration(milliseconds: 180);
+
   final ScrollController _scrollController = ScrollController();
   final Set<String> _collapsedGroups = <String>{};
+  Timer? _scrollIdleTimer;
+  bool _liveCardsPausedForScroll = false;
+
+  String get _liveCardsPauseReason =>
+      'desktop_smart_games_scroll_${widget.routeTitle}';
 
   @override
   void initState() {
@@ -201,6 +211,8 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
 
   @override
   void dispose() {
+    _scrollIdleTimer?.cancel();
+    _setLiveCardsPausedForScroll(false);
     _scrollController
       ..removeListener(_maybeLoadMore)
       ..dispose();
@@ -208,7 +220,11 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
   }
 
   void _maybeLoadMore() {
-    if (!widget.hasMore || widget.isLoading || !_scrollController.hasClients) {
+    if (!_scrollController.hasClients) {
+      return;
+    }
+    _markLiveCardsScrolling();
+    if (!widget.hasMore || widget.isLoading) {
       return;
     }
     final position = _scrollController.position;
@@ -217,12 +233,30 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
     }
   }
 
+  void _markLiveCardsScrolling() {
+    _setLiveCardsPausedForScroll(true);
+    _scrollIdleTimer?.cancel();
+    _scrollIdleTimer = Timer(_scrollIdleDelay, _markLiveCardsIdle);
+  }
+
+  void _markLiveCardsIdle() {
+    if (!mounted) return;
+    _setLiveCardsPausedForScroll(false);
+  }
+
+  void _setLiveCardsPausedForScroll(bool paused) {
+    if (_liveCardsPausedForScroll == paused) return;
+    _liveCardsPausedForScroll = paused;
+    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
+  }
+
   @override
   Widget build(BuildContext context) {
     final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
     final streamingEnabled = ref.watch(
       desktopTabsProvider.select((state) => state.activeId == widget.tabId),
     );
+    final cardStreamingEnabled = streamingEnabled;
     final groups = buildDesktopGameDateGroups(
       widget.games,
       includeToday: true,
@@ -295,7 +329,8 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                                 layout: DesktopCardLayout.grid,
                                 selected: selectedGameId == game.gameId,
                                 viewSource: ChessboardView.tour,
-                                streamingEnabled: streamingEnabled,
+                                streamingEnabled: cardStreamingEnabled,
+                                allowStockfishFallback: true,
                               ),
                             );
                           }, childCount: groups[groupIndex].games.length),
@@ -403,7 +438,8 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                             layout: layout,
                             selected: selectedGameId == game.gameId,
                             viewSource: ChessboardView.tour,
-                            streamingEnabled: streamingEnabled,
+                            streamingEnabled: cardStreamingEnabled,
+                            allowStockfishFallback: true,
                           ),
                         );
                       },

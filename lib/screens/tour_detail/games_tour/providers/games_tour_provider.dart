@@ -2,10 +2,48 @@ import 'dart:async';
 
 import 'package:chessever/repository/local_storage/tournament/games/games_local_storage.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
+import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 final shouldStreamProvider = StateProvider((ref) => true);
+final liveGameCardsPauseReasonsProvider = StateProvider<Set<String>>(
+  (ref) => const <String>{},
+);
+final liveGameCardsPausedProvider = Provider<bool>(
+  (ref) => ref.watch(liveGameCardsPauseReasonsProvider).isNotEmpty,
+);
+
+void setLiveGameCardsPaused(
+  WidgetRef ref, {
+  required String reason,
+  required bool paused,
+}) {
+  setLiveGameCardsPausedWithNotifier(
+    ref.read(liveGameCardsPauseReasonsProvider.notifier),
+    reason: reason,
+    paused: paused,
+  );
+}
+
+void setLiveGameCardsPausedWithNotifier(
+  StateController<Set<String>> notifier, {
+  required String reason,
+  required bool paused,
+}) {
+  if (reason.isEmpty) return;
+
+  final current = notifier.state;
+  final hasReason = current.contains(reason);
+  if (paused == hasReason) return;
+
+  if (paused) {
+    notifier.state = <String>{...current, reason};
+  } else {
+    notifier.state = <String>{...current}..remove(reason);
+  }
+}
+
 final gamesTourProvider = AutoDisposeStateNotifierProvider.family<
   GamesTourNotifier,
   AsyncValue<List<Games>>,
@@ -46,6 +84,7 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
   final String tourId;
   ProviderSubscription? _shouldStreamListener;
   Timer? _refreshTimer;
+  bool _refreshLoopActive = false;
 
   Future<void> _loadInitialGames() async {
     try {
@@ -59,12 +98,6 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
         final shouldStream = ref.read(shouldStreamProvider);
         if (shouldStream) {
           _startPeriodicRefresh();
-
-          // Do an immediate check for new games (don't wait 10 seconds)
-          Future.delayed(const Duration(seconds: 2), () {
-            if (!mounted) return;
-            _checkForNewGames();
-          });
         }
       }
     } catch (error, stackTrace) {
@@ -74,25 +107,69 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
     }
   }
 
-  // Per-move updates for visible cards come from Supabase Realtime. This
-  // timer is only a safety net for set-level changes such as new games,
-  // round rollovers, and status changes for off-screen cards.
-  static const Duration _safetyNetInterval = Duration(seconds: 10);
+  // Per-MOVE updates for visible games come from batched Supabase Realtime
+  // channels (see liveGameCardProvider / LiveGamesBatchKey), NOT this poll.
+  // This timer is only a slow safety net for set-level changes the per-game
+  // streams don't cover: newly added games, round rollovers, completions that
+  // arrive while a card is off-screen. Keep the selected tour responsive, but
+  // avoid starting a synchronized 10s network loop for every sibling stage in
+  // multi-stage events.
+  static const Duration _primarySafetyNetInterval = Duration(seconds: 10);
+  static const Duration _siblingSafetyNetInterval = Duration(seconds: 45);
+  static const Duration _primaryFirstSafetyNetDelay = Duration(seconds: 2);
+  static const Duration _siblingFirstSafetyNetDelayBase = Duration(seconds: 24);
+
+  bool get _isPrimaryTour {
+    final primaryTourId =
+        ref.read(tourDetailScreenProvider).valueOrNull?.aboutTourModel.id;
+    return primaryTourId == null ||
+        primaryTourId.isEmpty ||
+        primaryTourId == tourId;
+  }
+
+  int get _stableTourJitterSeconds {
+    var hash = 0;
+    for (final codeUnit in tourId.codeUnits) {
+      hash = (hash * 31 + codeUnit) & 0x7fffffff;
+    }
+    return hash % 12;
+  }
+
+  Duration get _safetyNetInterval =>
+      _isPrimaryTour ? _primarySafetyNetInterval : _siblingSafetyNetInterval;
+
+  Duration get _firstSafetyNetDelay =>
+      _isPrimaryTour
+          ? _primaryFirstSafetyNetDelay
+          : _siblingFirstSafetyNetDelayBase +
+              Duration(seconds: _stableTourJitterSeconds);
 
   void _startPeriodicRefresh() {
     _stopPeriodicRefresh();
 
-    _refreshTimer = Timer.periodic(_safetyNetInterval, (_) async {
+    final interval = _safetyNetInterval;
+    final firstDelay = _firstSafetyNetDelay;
+    _refreshLoopActive = true;
+
+    _refreshTimer = Timer(firstDelay, () async {
       await _checkForNewGames();
+      if (!mounted || !_refreshLoopActive) return;
+
+      _refreshTimer = Timer.periodic(interval, (_) async {
+        if (!_refreshLoopActive) return;
+        await _checkForNewGames();
+      });
     });
 
     debugPrint(
       '🔥 GamesTourNotifier: Started safety-net refresh '
-      '(${_safetyNetInterval.inSeconds}s interval) for tour $tourId',
+      '(${interval.inSeconds}s interval, first in ${firstDelay.inSeconds}s) '
+      'for tour $tourId',
     );
   }
 
   void _stopPeriodicRefresh() {
+    _refreshLoopActive = false;
     _refreshTimer?.cancel();
     _refreshTimer = null;
     debugPrint(
@@ -110,6 +187,7 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
       final gamesLocalStorageProvider = ref.read(gamesLocalStorage);
       final freshGames = await gamesLocalStorageProvider.fetchAndSaveGames(
         tourId,
+        forceRefresh: true,
       );
       if (!mounted) return;
 

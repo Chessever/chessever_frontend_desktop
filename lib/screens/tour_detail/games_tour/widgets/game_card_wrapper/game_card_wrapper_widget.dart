@@ -2,6 +2,7 @@ import 'package:chessever/screens/chessboard/widgets/chess_board_from_fen_new.da
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/game_card_wrapper_provider.dart';
@@ -45,6 +46,10 @@ class GameCardWrapperWidget extends ConsumerWidget {
         isChessBoardVisible
             ? watchLiveGamePosition(ref, game, batchKey: liveBatchKey)
             : watchLiveGame(ref, game, batchKey: liveBatchKey);
+    final effectiveAllowStockfishFallback =
+        allowStockfishFallback &&
+        ref.watch(shouldStreamProvider) &&
+        !ref.watch(liveGameCardsPausedProvider);
     final keyValue = 'game_${liveGame.gameId}';
 
     // Build updated games list with the live game data for navigation
@@ -84,7 +89,7 @@ class GameCardWrapperWidget extends ConsumerWidget {
           pinnedIds: gamesData.pinnedGamedIs,
           onPinToggle: handlePinToggle,
           fixedBottomSide: fixedBottomSide,
-          allowStockfishFallback: allowStockfishFallback,
+          allowStockfishFallback: effectiveAllowStockfishFallback,
           liveBatchKey: liveBatchKey,
         )
         : GameCard(
@@ -95,7 +100,7 @@ class GameCardWrapperWidget extends ConsumerWidget {
           ),
           pinnedIds: gamesData.pinnedGamedIs,
           onPinToggle: handlePinToggle,
-          allowStockfishFallback: allowStockfishFallback,
+          allowStockfishFallback: effectiveAllowStockfishFallback,
           onTap:
               () => ref
                   .read(gameCardWrapperProvider)

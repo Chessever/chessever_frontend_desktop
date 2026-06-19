@@ -45,6 +45,7 @@ import 'package:chessever/screens/group_event/providers/live_group_broadcast_id_
 import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
@@ -1674,7 +1675,13 @@ class _CountrymenGames extends ConsumerStatefulWidget {
 }
 
 class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
+  static const Duration _scrollIdleDelay = Duration(milliseconds: 180);
+
   final ScrollController _scrollController = ScrollController();
+  Timer? _scrollIdleTimer;
+  bool _liveCardsPausedForScroll = false;
+
+  String get _liveCardsPauseReason => 'desktop_countrymen_scroll';
 
   @override
   void initState() {
@@ -1684,6 +1691,8 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
 
   @override
   void dispose() {
+    _scrollIdleTimer?.cancel();
+    _setLiveCardsPausedForScroll(false);
     _scrollController
       ..removeListener(_maybeLoadMore)
       ..dispose();
@@ -1691,7 +1700,11 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
   }
 
   void _maybeLoadMore() {
-    if (!widget.hasMore || widget.isLoading || !_scrollController.hasClients) {
+    if (!_scrollController.hasClients) {
+      return;
+    }
+    _markLiveCardsScrolling();
+    if (!widget.hasMore || widget.isLoading) {
       return;
     }
     final position = _scrollController.position;
@@ -1700,12 +1713,30 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
     }
   }
 
+  void _markLiveCardsScrolling() {
+    _setLiveCardsPausedForScroll(true);
+    _scrollIdleTimer?.cancel();
+    _scrollIdleTimer = Timer(_scrollIdleDelay, _markLiveCardsIdle);
+  }
+
+  void _markLiveCardsIdle() {
+    if (!mounted) return;
+    _setLiveCardsPausedForScroll(false);
+  }
+
+  void _setLiveCardsPausedForScroll(bool paused) {
+    if (_liveCardsPausedForScroll == paused) return;
+    _liveCardsPausedForScroll = paused;
+    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
+  }
+
   @override
   Widget build(BuildContext context) {
     final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
     final streamingEnabled = ref.watch(
       activeTabKindProvider.select((kind) => kind == TabKind.countrymen),
     );
+    final cardStreamingEnabled = streamingEnabled;
     final groups = buildDesktopGameDateGroups(widget.games);
     if (layout == DesktopCardLayout.grid) {
       // Compute column count first so PageUp/PageDown can stride by a full
@@ -1799,7 +1830,8 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                                   layout: DesktopCardLayout.grid,
                                   selected: selectedGameId == game.gameId,
                                   viewSource: ChessboardView.countryman,
-                                  streamingEnabled: streamingEnabled,
+                                  streamingEnabled: cardStreamingEnabled,
+                                  allowStockfishFallback: true,
                                 ),
                               ),
                             ),
@@ -1894,7 +1926,8 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                               layout: layout,
                               selected: selectedGameId == game.gameId,
                               viewSource: ChessboardView.countryman,
-                              streamingEnabled: streamingEnabled,
+                              streamingEnabled: cardStreamingEnabled,
+                              allowStockfishFallback: true,
                             ),
                           ),
                         ),

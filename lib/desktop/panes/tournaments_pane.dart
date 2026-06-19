@@ -46,6 +46,7 @@ import 'package:chessever/screens/group_event/widget/filter_popup/group_event_fi
 import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/location_service_provider.dart';
 import 'package:chessever/widgets/event_card/event_image_provider.dart';
@@ -1891,8 +1892,8 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   // off-screen; keep that window small so the cache doesn't quietly own a
   // dozen heavy cards. Compact rows are cheap, so we can keep a wider cache
   // for smoother scrolls.
-  static const double _kCompactCacheExtent = 1500;
-  static const double _kBoardCacheExtent = 600;
+  static const double _kCompactCacheExtent = 900;
+  static const double _kBoardCacheExtent = 360;
 
   final FocusNode _focusNode = FocusNode(
     debugLabel: 'DesktopForYouEventGameCards',
@@ -1904,7 +1905,9 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   final Map<String, bool> _eventVisibility = <String, bool>{};
   Timer? _scrollIdleTimer;
   _ForYouCardSelection? _selection;
-  bool _isScrolling = false;
+  bool _liveCardsPausedForScroll = false;
+
+  String get _liveCardsPauseReason => 'desktop_for_you_scroll_${widget.tabId}';
 
   @override
   void initState() {
@@ -1915,6 +1918,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   @override
   void dispose() {
     _scrollIdleTimer?.cancel();
+    _setLiveCardsPausedForScroll(false);
     _scroll.removeListener(_onScroll);
     _focusNode.dispose();
     _scroll.dispose();
@@ -1932,14 +1936,20 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   }
 
   void _markScrolling() {
-    if (!_isScrolling && mounted) {
-      setState(() => _isScrolling = true);
-    }
+    _setLiveCardsPausedForScroll(true);
     _scrollIdleTimer?.cancel();
-    _scrollIdleTimer = Timer(_kScrollIdleDelay, () {
-      if (!mounted || !_isScrolling) return;
-      setState(() => _isScrolling = false);
-    });
+    _scrollIdleTimer = Timer(_kScrollIdleDelay, _markLiveCardsIdle);
+  }
+
+  void _markLiveCardsIdle() {
+    if (!mounted) return;
+    _setLiveCardsPausedForScroll(false);
+  }
+
+  void _setLiveCardsPausedForScroll(bool paused) {
+    if (_liveCardsPausedForScroll == paused) return;
+    _liveCardsPausedForScroll = paused;
+    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
   }
 
   double _cacheExtentFor(GamesListViewMode mode) {
@@ -2342,7 +2352,6 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                   selection:
                       _selection?.eventId == event.id ? _selection : null,
                   animatedEventIds: _animatedEventIds,
-                  isScrolling: _isScrolling,
                   streamingEnabled: streamingEnabled,
                   onOpen: () => widget.onOpenTournament(event),
                   onVisibilityChanged:
@@ -2375,7 +2384,6 @@ class _ForYouEventSection extends ConsumerWidget {
     required this.isFirst,
     required this.selection,
     required this.animatedEventIds,
-    required this.isScrolling,
     required this.streamingEnabled,
     required this.onOpen,
     required this.onVisibilityChanged,
@@ -2389,7 +2397,6 @@ class _ForYouEventSection extends ConsumerWidget {
   final bool isFirst;
   final _ForYouCardSelection? selection;
   final Set<String> animatedEventIds;
-  final bool isScrolling;
   final bool streamingEnabled;
   final VoidCallback onOpen;
   final ValueChanged<bool> onVisibilityChanged;
@@ -2453,7 +2460,6 @@ class _ForYouEventSection extends ConsumerWidget {
                 tournamentTitle: event.title,
                 snapshotAsync: snapshotAsync,
                 layout: layout,
-                isScrolling: isScrolling,
                 streamingEnabled: streamingEnabled,
                 selectedGameIndex:
                     selection?.isGame == true ? selection!.gameIndex : null,
@@ -2680,7 +2686,6 @@ class _GamesStrip extends ConsumerWidget {
     required this.tournamentTitle,
     required this.snapshotAsync,
     required this.layout,
-    required this.isScrolling,
     required this.streamingEnabled,
     required this.selectedGameIndex,
     required this.onVisibleGameCountChanged,
@@ -2690,13 +2695,14 @@ class _GamesStrip extends ConsumerWidget {
   final String tournamentTitle;
   final AsyncValue<ForYouEventGamesSnapshot> snapshotAsync;
   final DesktopCardLayout layout;
-  final bool isScrolling;
   final bool streamingEnabled;
   final int? selectedGameIndex;
   final ValueChanged<int> onVisibleGameCountChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final cardStreamingEnabled = streamingEnabled;
+
     return snapshotAsync.when(
       skipLoadingOnRefresh: true,
       skipLoadingOnReload: true,
@@ -2757,8 +2763,8 @@ class _GamesStrip extends ConsumerWidget {
                       selected: selectedGameIndex == i,
                       viewSource: ChessboardView.forYou,
                       liveBatchKey: liveBatchKey,
-                      streamingEnabled: streamingEnabled,
-                      allowStockfishFallback: !isScrolling,
+                      streamingEnabled: cardStreamingEnabled,
+                      allowStockfishFallback: true,
                     ),
               );
             },
@@ -2797,8 +2803,8 @@ class _GamesStrip extends ConsumerWidget {
                       selected: selectedGameIndex == i,
                       viewSource: ChessboardView.forYou,
                       liveBatchKey: liveBatchKey,
-                      streamingEnabled: streamingEnabled,
-                      allowStockfishFallback: !isScrolling,
+                      streamingEnabled: cardStreamingEnabled,
+                      allowStockfishFallback: true,
                     ),
                   ),
                 ],

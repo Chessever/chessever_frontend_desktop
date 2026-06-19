@@ -32,6 +32,7 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_vi
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_grouped_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/round_expansion_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
@@ -62,8 +63,19 @@ class TournamentGamesView extends ConsumerStatefulWidget {
 }
 
 class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
+  static const Duration _scrollIdleDelay = Duration(milliseconds: 180);
+
   late final TextEditingController _searchController;
   Timer? _debounce;
+  Timer? _scrollIdleTimer;
+  bool _liveCardsPausedForScroll = false;
+
+  // Captured once. liveGameCardsPaused is global, so a reason recomputed from a
+  // changing widget.tabId could strand a stale reason in the pause set and
+  // freeze every live card app-wide. tabId is fixed per pane today; freeze it
+  // defensively so a future tabId-reusing State can't trip that.
+  late final String _liveCardsPauseReason =
+      'desktop_tournament_games_scroll_${widget.tabId}';
 
   @override
   void initState() {
@@ -94,6 +106,8 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   void dispose() {
     _searchController.dispose();
     _debounce?.cancel();
+    _scrollIdleTimer?.cancel();
+    _setLiveCardsPausedForScroll(false);
     super.dispose();
   }
 
@@ -112,6 +126,46 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     });
   }
 
+  bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification.metrics.axis != Axis.vertical) return false;
+
+    if (notification is ScrollEndNotification) {
+      _scheduleLiveCardsIdle();
+      return false;
+    }
+
+    if (notification is ScrollStartNotification ||
+        notification is ScrollUpdateNotification ||
+        notification is OverscrollNotification ||
+        notification is UserScrollNotification) {
+      _markLiveCardsScrolling();
+    }
+
+    return false;
+  }
+
+  void _markLiveCardsScrolling() {
+    _setLiveCardsPausedForScroll(true);
+    _scrollIdleTimer?.cancel();
+    _scrollIdleTimer = Timer(_scrollIdleDelay, _markLiveCardsIdle);
+  }
+
+  void _scheduleLiveCardsIdle() {
+    _scrollIdleTimer?.cancel();
+    _scrollIdleTimer = Timer(_scrollIdleDelay, _markLiveCardsIdle);
+  }
+
+  void _markLiveCardsIdle() {
+    if (!mounted) return;
+    _setLiveCardsPausedForScroll(false);
+  }
+
+  void _setLiveCardsPausedForScroll(bool paused) {
+    if (_liveCardsPausedForScroll == paused) return;
+    _liveCardsPausedForScroll = paused;
+    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
+  }
+
   @override
   Widget build(BuildContext context) {
     final grouped = ref.watch(gamesTourGroupedProvider);
@@ -119,6 +173,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     final streamingEnabled = ref.watch(
       desktopTabsProvider.select((state) => state.activeId == widget.tabId),
     );
+    final cardStreamingEnabled = streamingEnabled;
     // Source of truth: the persisted board-settings store. Toggling here
     // (or anywhere else — Settings, Library, etc.) writes to the same
     // record, so every desktop pane stays in sync. See `desktop_game_card.dart`
@@ -191,35 +246,43 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                     roundNameById: roundNameById,
                   ),
               builder:
-                  (context, selectedGameId, selectGame, keyForGame) => ListView(
-                    key: PageStorageKey<String>(
-                      'tournament-detail-games:${widget.tabId}',
+                  (
+                    context,
+                    selectedGameId,
+                    selectGame,
+                    keyForGame,
+                  ) => NotificationListener<ScrollNotification>(
+                    onNotification: _handleScrollNotification,
+                    child: ListView(
+                      key: PageStorageKey<String>(
+                        'tournament-detail-games:${widget.tabId}',
+                      ),
+                      physics: const DesktopScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                      children: [
+                        // Match-format tournaments (e.g. "12-game Match" — Carlsen vs
+                        // Nepo) get a single match summary card on top of the rounds.
+                        if (grouped.matchFormatHeader != null)
+                          _MatchHeaderBanner(match: grouped.matchFormatHeader!),
+                        for (final round in grouped.filteredRounds)
+                          _RoundSection(
+                            key: ValueKey('round-${round.id}'),
+                            scopeId: 'tournament:${widget.tournamentId}',
+                            selectedGameId: selectedGameId,
+                            onSelectGame: selectGame,
+                            keyForGame: keyForGame,
+                            round: round,
+                            games: grouped.gamesByRound[round.id] ?? const [],
+                            eventGames: grouped.allGames,
+                            tournamentTitle: tournamentTitle,
+                            layout: layout,
+                            isKnockout: grouped.isKnockoutTournament,
+                            roundStartsAtById: roundStartsAtById,
+                            roundNameById: roundNameById,
+                            streamingEnabled: cardStreamingEnabled,
+                          ),
+                      ],
                     ),
-                    physics: const DesktopScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-                    children: [
-                      // Match-format tournaments (e.g. "12-game Match" — Carlsen vs
-                      // Nepo) get a single match summary card on top of the rounds.
-                      if (grouped.matchFormatHeader != null)
-                        _MatchHeaderBanner(match: grouped.matchFormatHeader!),
-                      for (final round in grouped.filteredRounds)
-                        _RoundSection(
-                          key: ValueKey('round-${round.id}'),
-                          scopeId: 'tournament:${widget.tournamentId}',
-                          selectedGameId: selectedGameId,
-                          onSelectGame: selectGame,
-                          keyForGame: keyForGame,
-                          round: round,
-                          games: grouped.gamesByRound[round.id] ?? const [],
-                          eventGames: grouped.allGames,
-                          tournamentTitle: tournamentTitle,
-                          layout: layout,
-                          isKnockout: grouped.isKnockoutTournament,
-                          roundStartsAtById: roundStartsAtById,
-                          roundNameById: roundNameById,
-                          streamingEnabled: streamingEnabled,
-                        ),
-                    ],
                   ),
             ),
           ),
@@ -1077,6 +1140,15 @@ Future<void> openTournamentGameTab(
     replaceActive: replaceActive,
   );
 
+  unawaited(
+    _refreshOpenedBoardTabWithLatestLiveGame(
+      container: container,
+      gameRepo: gameRepo,
+      tabId: tabId,
+      openedGame: game,
+    ),
+  );
+
   if (shouldHydrateEventGames) {
     unawaited(
       _hydrateTournamentGameTabEventContext(
@@ -1088,6 +1160,56 @@ Future<void> openTournamentGameTab(
         roundStartsAtById: roundStartsAtById,
         roundNameById: roundNameById,
       ),
+    );
+  }
+}
+
+Future<void> _refreshOpenedBoardTabWithLatestLiveGame({
+  required ProviderContainer container,
+  required GameRepository gameRepo,
+  required String tabId,
+  required GamesTourModel openedGame,
+}) async {
+  final gameId = openedGame.gameId.trim();
+  if (gameId.isEmpty || openedGame.effectiveGameStatus.isFinished) return;
+
+  try {
+    final latestRow = await gameRepo.getGameById(gameId);
+    final latestGame = GamesTourModel.fromGame(latestRow);
+
+    container.read(baseGameProvider(gameId).notifier).state = latestGame;
+
+    final latestPgn =
+        pgnHasMoves(latestGame.pgn) ? latestGame.pgn!.trim() : null;
+    final latestFen = latestGame.fen?.trim();
+    final usableLatestFen =
+        latestFen == null || latestFen.isEmpty ? null : latestFen;
+
+    container.read(boardTabGameArgsByTabIdProvider.notifier).update((tabs) {
+      final current = tabs[tabId];
+      if (current == null || current.gameId != gameId) return tabs;
+
+      final shouldUpdatePgn = latestPgn != null && latestPgn != current.pgn;
+      final shouldUpdateFen =
+          usableLatestFen != null && usableLatestFen != current.fenSeed;
+      final shouldUpdateSourceGame = current.sourceGame != latestGame;
+
+      if (!shouldUpdatePgn && !shouldUpdateFen && !shouldUpdateSourceGame) {
+        return tabs;
+      }
+
+      return <String, BoardTabGameArgs>{
+        ...tabs,
+        tabId: current.copyWith(
+          pgn: shouldUpdatePgn ? latestPgn : null,
+          fenSeed: shouldUpdateFen ? usableLatestFen : null,
+          sourceGame: shouldUpdateSourceGame ? latestGame : null,
+        ),
+      };
+    });
+  } catch (error) {
+    debugPrint(
+      '[DesktopBoard] Failed to refresh latest live game seed for $gameId: $error',
     );
   }
 }
@@ -1349,6 +1471,8 @@ class LiveDesktopGameCard extends ConsumerWidget {
       batchKey: liveBatchKey,
       streamEnabled: streamingEnabled,
     );
+    final liveCardsPaused = ref.watch(liveGameCardsPausedProvider);
+    final shouldStream = ref.watch(shouldStreamProvider);
     var data = GameCardData.fromGamesTourModel(liveGame);
     final fallback = federationFallback?.trim();
     final fallbackName = federationFallbackForName?.trim();
@@ -1421,7 +1545,11 @@ class LiveDesktopGameCard extends ConsumerWidget {
       ),
       layout: layout,
       selected: selected,
-      allowStockfishFallback: streamingEnabled && allowStockfishFallback,
+      allowStockfishFallback:
+          streamingEnabled &&
+          allowStockfishFallback &&
+          shouldStream &&
+          !liveCardsPaused,
     );
   }
 }

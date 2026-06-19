@@ -58,6 +58,7 @@ import 'package:chessever/screens/player_profile/tabs/player_events_tab.dart'
     show playerEventCardsProvider;
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -4455,16 +4456,35 @@ class _GroupedGamesList extends ConsumerStatefulWidget {
 }
 
 class _GroupedGamesListState extends ConsumerState<_GroupedGamesList> {
+  static const Duration _scrollIdleDelay = Duration(milliseconds: 180);
+
   late final FocusNode _focusNode = FocusNode(
     debugLabel: 'PlayerProfileEventGameCards',
   );
   final Map<int, GlobalKey> _sectionKeys = <int, GlobalKey>{};
   final Map<String, GlobalKey> _gameKeys = <String, GlobalKey>{};
+  Timer? _scrollIdleTimer;
   EventGameCardFocus? _focus;
+  bool _liveCardsPausedForScroll = false;
+
+  // Captured once (see TournamentGamesView): freeze the pause reason so a
+  // changing widget.tabId can't strand a stale reason in the global pause set.
+  late final String _liveCardsPauseReason =
+      'desktop_player_profile_scroll_${widget.tabId}';
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onScroll);
+  }
 
   @override
   void didUpdateWidget(covariant _GroupedGamesList oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onScroll);
+      widget.controller.addListener(_onScroll);
+    }
     if (!oldWidget.enabled && widget.enabled && widget.autofocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _focusNode.requestFocus();
@@ -4478,8 +4498,33 @@ class _GroupedGamesListState extends ConsumerState<_GroupedGamesList> {
 
   @override
   void dispose() {
+    widget.controller.removeListener(_onScroll);
+    _scrollIdleTimer?.cancel();
+    _setLiveCardsPausedForScroll(false);
     _focusNode.dispose();
     super.dispose();
+  }
+
+  void _onScroll() {
+    if (!widget.controller.hasClients) return;
+    _markLiveCardsScrolling();
+  }
+
+  void _markLiveCardsScrolling() {
+    _setLiveCardsPausedForScroll(true);
+    _scrollIdleTimer?.cancel();
+    _scrollIdleTimer = Timer(_scrollIdleDelay, _markLiveCardsIdle);
+  }
+
+  void _markLiveCardsIdle() {
+    if (!mounted) return;
+    _setLiveCardsPausedForScroll(false);
+  }
+
+  void _setLiveCardsPausedForScroll(bool paused) {
+    if (_liveCardsPausedForScroll == paused) return;
+    _liveCardsPausedForScroll = paused;
+    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
   }
 
   GlobalKey _sectionKey(int index) {
@@ -4619,6 +4664,7 @@ class _GroupedGamesListState extends ConsumerState<_GroupedGamesList> {
         ref.watch(
           desktopTabsProvider.select((state) => state.activeId == widget.tabId),
         );
+    final cardStreamingEnabled = streamingEnabled;
     return Focus(
       focusNode: _focusNode,
       autofocus: widget.autofocus,
@@ -4658,7 +4704,7 @@ class _GroupedGamesListState extends ConsumerState<_GroupedGamesList> {
                   onToggleSelection: widget.onToggleSelection,
                   profilePlayerName: widget.profilePlayerName,
                   profileFederationFallback: widget.profileFederationFallback,
-                  streamingEnabled: streamingEnabled,
+                  streamingEnabled: cardStreamingEnabled,
                 ),
               ),
             );
