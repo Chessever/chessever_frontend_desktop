@@ -1,39 +1,18 @@
-import 'package:chessever/desktop/services/desktop_changelog.dart';
-import 'package:chessever/providers/app_version_provider.dart';
+import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/desktop_feedback_dialog.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:flutter/material.dart';
-import 'package:hooks_riverpod/hooks_riverpod.dart';
 
-final desktopChangelogReleaseProvider =
-    FutureProvider<DesktopChangelogRelease>((ref) async {
-  final version = await ref.watch(appVersionProvider.future);
-  return loadDesktopChangelogRelease(version);
-});
+class DesktopWhatsNewHomePane extends StatelessWidget {
+  const DesktopWhatsNewHomePane({
+    super.key,
+    required this.feedbackScreenshotKey,
+  });
 
-class DesktopWhatsNewHomePane extends ConsumerWidget {
-  const DesktopWhatsNewHomePane({super.key});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final asyncRelease = ref.watch(desktopChangelogReleaseProvider);
-    final version =
-        ref.watch(appVersionProvider).valueOrNull ?? '';
-    final release = asyncRelease.maybeWhen(
-      data: (release) => release,
-      orElse: () => fallbackDesktopChangelogRelease(version),
-    );
-    return _DesktopWhatsNewContent(release: release);
-  }
-}
-
-class _DesktopWhatsNewContent extends StatelessWidget {
-  const _DesktopWhatsNewContent({required this.release});
-
-  final DesktopChangelogRelease release;
+  final GlobalKey feedbackScreenshotKey;
 
   @override
   Widget build(BuildContext context) {
-    final entries = release.visibleEntries;
     return Container(
       color: kBackgroundColor,
       alignment: Alignment.center,
@@ -45,38 +24,28 @@ class _DesktopWhatsNewContent extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                release.resolvedTitle(fallbackVersion: release.version),
-                style: const TextStyle(
+              const Text(
+                'Welcome to ChessEver Desktop Beta',
+                style: TextStyle(
                   color: kWhiteColor,
                   fontSize: 30,
                   fontWeight: FontWeight.w800,
                   letterSpacing: -0.5,
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                release.resolvedSubtitle(),
-                style: const TextStyle(
-                  color: kWhiteColor70,
-                  fontSize: 14,
-                  height: 1.5,
-                ),
-              ),
-              const SizedBox(height: 24),
-              for (var i = 0; i < entries.length; i++) ...[
-                _ChangelogEntryCard(entry: entries[i]),
-                if (i != entries.length - 1) const SizedBox(height: 10),
-              ],
-              const SizedBox(height: 24),
+              const SizedBox(height: 12),
+              _FeedbackIntro(feedbackScreenshotKey: feedbackScreenshotKey),
+              const SizedBox(height: 28),
               const Text(
-                'Open a tab from the sidebar to start.',
+                'Quick start / power tips',
                 style: TextStyle(
-                  color: kLightGreyColor,
-                  fontSize: 12,
-                  height: 1.4,
+                  color: kWhiteColor,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
+              const SizedBox(height: 12),
+              const _PowerTipsList(),
             ],
           ),
         ),
@@ -85,15 +54,118 @@ class _DesktopWhatsNewContent extends StatelessWidget {
   }
 }
 
-class _ChangelogEntryCard extends StatelessWidget {
-  const _ChangelogEntryCard({required this.entry});
+class _FeedbackIntro extends StatelessWidget {
+  const _FeedbackIntro({required this.feedbackScreenshotKey});
 
-  final DesktopChangelogEntry entry;
+  final GlobalKey feedbackScreenshotKey;
+
+  @override
+  Widget build(BuildContext context) {
+    const baseStyle = TextStyle(
+      color: kWhiteColor70,
+      fontSize: 14,
+      height: 1.55,
+    );
+    return Text.rich(
+      TextSpan(
+        style: baseStyle,
+        children: [
+          const TextSpan(
+            text:
+                'ChessEver Desktop is still in beta, and we are improving it quickly. If something feels confusing, slow, missing, or not useful enough, please send us ',
+          ),
+          WidgetSpan(
+            alignment: PlaceholderAlignment.baseline,
+            baseline: TextBaseline.alphabetic,
+            child: CursorAware(
+              mode: CursorMode.hover,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap:
+                    () => DesktopFeedbackDialog.show(
+                      context,
+                      screenshotKey: feedbackScreenshotKey,
+                    ),
+                child: const Text(
+                  'feedback',
+                  style: TextStyle(
+                    color: kPrimaryColor,
+                    fontSize: 14,
+                    height: 1.55,
+                    fontWeight: FontWeight.w800,
+                    decoration: TextDecoration.underline,
+                    decorationColor: kPrimaryColor,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const TextSpan(text: '.'),
+        ],
+      ),
+    );
+  }
+}
+
+class _PowerTipsList extends StatelessWidget {
+  const _PowerTipsList();
+
+  static const _tips = [
+    _PowerTipData(
+      shortcut: 'Drag tab',
+      text:
+          'Drag a game tab out to use it in a separate window — especially useful with two screens.',
+    ),
+    _PowerTipData(
+      shortcut: 'Ctrl/Cmd + click',
+      text: 'Open a game or tab separately, where supported.',
+    ),
+    _PowerTipData(
+      shortcut: 'Ctrl/Cmd + F',
+      text: 'Search — useful when preparing for opponents.',
+    ),
+    _PowerTipData(shortcut: 'Enter', text: 'Open Explorer from the board.'),
+    _PowerTipData(
+      shortcut: '↑ / ↓',
+      text: 'After clicking a game in Explorer, move between games.',
+    ),
+    _PowerTipData(shortcut: '← / →', text: 'Move through the current game.'),
+    _PowerTipData(
+      shortcut: 'Enter',
+      text: 'Insert/open the selected Explorer game.',
+    ),
+    _PowerTipData(
+      shortcut: 'Shift + ↑ / ↓',
+      text: 'Move between Notation, Tree, and Games.',
+    ),
+    _PowerTipData(
+      shortcut: 'Ctrl/Cmd + ↑ / ↓',
+      text: 'Go to the previous/next game.',
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        for (var i = 0; i < _tips.length; i++) ...[
+          _PowerTip(tip: _tips[i]),
+          if (i != _tips.length - 1) const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+}
+
+class _PowerTip extends StatelessWidget {
+  const _PowerTip({required this.tip});
+
+  final _PowerTipData tip;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: kBlack2Color,
         borderRadius: BorderRadius.circular(10),
@@ -102,92 +174,22 @@ class _ChangelogEntryCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _TypeBadge(type: entry.type),
-          const SizedBox(width: 14),
+          _ShortcutPill(shortcut: tip.shortcut),
+          const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        entry.title,
-                        style: const TextStyle(
-                          color: kWhiteColor,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    if (entry.shortcut != null) ...[
-                      const SizedBox(width: 12),
-                      _ShortcutPill(shortcut: entry.shortcut!),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  entry.summary,
-                  style: const TextStyle(
-                    color: kWhiteColor70,
-                    fontSize: 13,
-                    height: 1.45,
-                  ),
-                ),
-              ],
+            child: Text(
+              tip.text,
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 13,
+                height: 1.45,
+              ),
             ),
           ),
         ],
       ),
     );
   }
-}
-
-class _TypeBadge extends StatelessWidget {
-  const _TypeBadge({required this.type});
-
-  final String type;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(minWidth: 88),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: _backgroundColor,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: _borderColor),
-      ),
-      child: Text(
-        type,
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: _textColor,
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.2,
-        ),
-      ),
-    );
-  }
-
-  Color get _textColor {
-    switch (type.toLowerCase()) {
-      case 'new':
-        return const Color(0xFF93C5FD);
-      case 'fixed':
-        return const Color(0xFFFCA5A5);
-      case 'performance':
-        return const Color(0xFF86EFAC);
-      default:
-        return const Color(0xFFC4B5FD);
-    }
-  }
-
-  Color get _backgroundColor => _textColor.withValues(alpha: 0.12);
-
-  Color get _borderColor => _textColor.withValues(alpha: 0.26);
 }
 
 class _ShortcutPill extends StatelessWidget {
@@ -198,6 +200,7 @@ class _ShortcutPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
+      constraints: const BoxConstraints(minWidth: 104),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: kBackgroundColor,
@@ -206,6 +209,7 @@ class _ShortcutPill extends StatelessWidget {
       ),
       child: Text(
         shortcut,
+        textAlign: TextAlign.center,
         style: const TextStyle(
           color: kLightGreyColor,
           fontSize: 11,
@@ -214,4 +218,11 @@ class _ShortcutPill extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PowerTipData {
+  const _PowerTipData({required this.shortcut, required this.text});
+
+  final String shortcut;
+  final String text;
 }
