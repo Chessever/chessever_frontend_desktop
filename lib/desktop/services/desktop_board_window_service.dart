@@ -8,6 +8,9 @@ import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/providers/country_dropdown_provider.dart';
+import 'package:chessever/screens/countrymen/provider/countrymen_combined_games_provider.dart';
+import 'package:chessever/screens/countrymen/provider/countrymen_mode_provider.dart';
 
 class DesktopBoardWindowService {
   const DesktopBoardWindowService({this.createWindow});
@@ -108,6 +111,25 @@ Map<String, Object?> _metadataForTab(
         'rating': args.rating,
         'dataSource': args.dataSource.name,
         'gamebasePlayerId': args.gamebasePlayerId,
+      };
+    case TabKind.countrymen:
+      final effectiveCountry =
+          container.read(effectiveCountryProvider).valueOrNull;
+      final countrymenState =
+          container.exists(countrymenCombinedGamesProvider)
+              ? container.read(countrymenCombinedGamesProvider)
+              : null;
+      final countryCode =
+          effectiveCountry?.countryCode ?? countrymenState?.countryCode;
+      final countryName =
+          effectiveCountry?.name ?? countrymenState?.countryName;
+      final selectedMode = container.read(selectedCountrymenModeProvider);
+      return <String, Object?>{
+        if (countryCode != null && countryCode.trim().isNotEmpty)
+          'countryCode': countryCode,
+        if (countryName != null && countryName.trim().isNotEmpty)
+          'countryName': countryName,
+        'countrymenMode': selectedMode.name,
       };
     default:
       return const <String, Object?>{};
