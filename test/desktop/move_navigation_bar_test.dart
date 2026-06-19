@@ -20,6 +20,10 @@ void main() {
       VoidCallback? onNextGame,
       bool isPlaying = false,
       String? moveLabel,
+      String? previousMoveShortcutLabel,
+      String? nextMoveShortcutLabel,
+      String? autoReplayShortcutLabel,
+      String? flipBoardShortcutLabel,
     }) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -37,6 +41,10 @@ void main() {
               isPlaying: isPlaying,
               onFlipBoard: onFlip ?? () {},
               moveLabel: moveLabel,
+              previousMoveShortcutLabel: previousMoveShortcutLabel,
+              nextMoveShortcutLabel: nextMoveShortcutLabel,
+              autoReplayShortcutLabel: autoReplayShortcutLabel,
+              flipBoardShortcutLabel: flipBoardShortcutLabel,
             ),
           ),
         ),
@@ -53,7 +61,7 @@ void main() {
     ) async {
       var pressed = false;
       await pumpBar(tester, canBack: false, onPrevious: () => pressed = true);
-      await tester.tap(_byDesktopTooltip('Previous move (←)'));
+      await tester.tap(_byDesktopTooltip('Previous move'));
       await tester.pumpAndSettle(const Duration(milliseconds: 400));
       expect(
         pressed,
@@ -67,7 +75,7 @@ void main() {
     ) async {
       var pressed = false;
       await pumpBar(tester, onNext: () => pressed = true);
-      await tester.tap(_byDesktopTooltip('Next move (→)'));
+      await tester.tap(_byDesktopTooltip('Next move'));
       await tester.pumpAndSettle(const Duration(milliseconds: 400));
       expect(pressed, isTrue);
     });
@@ -80,7 +88,7 @@ void main() {
         canForward: false,
         onFlip: () => flipped = true,
       );
-      await tester.tap(_byDesktopTooltip('Flip board (F)'));
+      await tester.tap(_byDesktopTooltip('Flip board'));
       await tester.pumpAndSettle(const Duration(milliseconds: 400));
       expect(flipped, isTrue);
     });
@@ -102,7 +110,7 @@ void main() {
         ),
       );
 
-      expect(_byDesktopTooltip('Flip board (F)'), findsNothing);
+      expect(_byDesktopTooltip('Flip board'), findsNothing);
     });
 
     testWidgets('shows optional previous and next game jump controls', (
@@ -129,11 +137,27 @@ void main() {
       var pressed = false;
       await pumpBar(tester, onPlayPause: () => pressed = true);
 
-      await tester.tap(_byDesktopTooltip('Autoplay (Space)'));
+      await tester.tap(_byDesktopTooltip('Autoplay'));
       await tester.pumpAndSettle(const Duration(milliseconds: 400));
 
       expect(pressed, isTrue);
       expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+    });
+
+    testWidgets('renders supplied shortcut labels in tooltips', (tester) async {
+      await pumpBar(
+        tester,
+        onPlayPause: () {},
+        previousMoveShortcutLabel: '←',
+        nextMoveShortcutLabel: '→',
+        autoReplayShortcutLabel: '*',
+        flipBoardShortcutLabel: 'F',
+      );
+
+      expect(_byDesktopTooltip('Previous move (←)'), findsOneWidget);
+      expect(_byDesktopTooltip('Next move (→)'), findsOneWidget);
+      expect(_byDesktopTooltip('Autoplay (*)'), findsOneWidget);
+      expect(_byDesktopTooltip('Flip board (F)'), findsOneWidget);
     });
   });
 }

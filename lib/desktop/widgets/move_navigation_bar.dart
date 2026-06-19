@@ -32,6 +32,14 @@ class MoveNavigationBar extends StatelessWidget {
     this.isPlaying = false,
     this.moveLabel,
     this.hasUnseenLiveMove = false,
+    this.firstMoveShortcutLabel,
+    this.previousMoveShortcutLabel,
+    this.nextMoveShortcutLabel,
+    this.lastMoveShortcutLabel,
+    this.autoReplayShortcutLabel,
+    this.flipBoardShortcutLabel,
+    this.previousGameShortcutLabel,
+    this.nextGameShortcutLabel,
   });
 
   final bool canGoBack;
@@ -57,6 +65,15 @@ class MoveNavigationBar extends StatelessWidget {
   /// Rendered as an overlay so showing/hiding the dot does not change
   /// the bar's bounds and the board height stays fixed.
   final bool hasUnseenLiveMove;
+
+  final String? firstMoveShortcutLabel;
+  final String? previousMoveShortcutLabel;
+  final String? nextMoveShortcutLabel;
+  final String? lastMoveShortcutLabel;
+  final String? autoReplayShortcutLabel;
+  final String? flipBoardShortcutLabel;
+  final String? previousGameShortcutLabel;
+  final String? nextGameShortcutLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -85,7 +102,10 @@ class MoveNavigationBar extends StatelessWidget {
               if (onPreviousGame != null) ...[
                 _NavButton(
                   icon: Icons.keyboard_double_arrow_left_rounded,
-                  tooltip: 'Previous game',
+                  tooltip: _tooltipWithShortcut(
+                    'Previous game',
+                    previousGameShortcutLabel,
+                  ),
                   enabled: true,
                   onTap: onPreviousGame!,
                   size: _kButtonSize,
@@ -94,7 +114,10 @@ class MoveNavigationBar extends StatelessWidget {
               ],
               _NavButton(
                 icon: Icons.first_page_rounded,
-                tooltip: 'First move (Home)',
+                tooltip: _tooltipWithShortcut(
+                  'First move',
+                  firstMoveShortcutLabel,
+                ),
                 enabled: canGoBack,
                 onTap: onFirst,
                 size: _kButtonSize,
@@ -102,7 +125,10 @@ class MoveNavigationBar extends StatelessWidget {
               const SizedBox(width: 8),
               _NavButton(
                 icon: Icons.chevron_left_rounded,
-                tooltip: 'Previous move (←)',
+                tooltip: _tooltipWithShortcut(
+                  'Previous move',
+                  previousMoveShortcutLabel,
+                ),
                 enabled: canGoBack,
                 onTap: onPrevious,
                 size: _kButtonSize,
@@ -110,12 +136,14 @@ class MoveNavigationBar extends StatelessWidget {
               if (onPlayPause != null) ...[
                 const SizedBox(width: 8),
                 _NavButton(
-                  icon: isPlaying
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded,
-                  tooltip: isPlaying
-                      ? 'Pause autoplay (Space)'
-                      : 'Autoplay (Space)',
+                  icon:
+                      isPlaying
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                  tooltip: _tooltipWithShortcut(
+                    isPlaying ? 'Pause autoplay' : 'Autoplay',
+                    autoReplayShortcutLabel,
+                  ),
                   enabled: canGoForward || isPlaying,
                   onTap: onPlayPause!,
                   size: _kButtonSize,
@@ -125,7 +153,10 @@ class MoveNavigationBar extends StatelessWidget {
                 const SizedBox(width: 8),
               _NavButton(
                 icon: Icons.chevron_right_rounded,
-                tooltip: 'Next move (→)',
+                tooltip: _tooltipWithShortcut(
+                  'Next move',
+                  nextMoveShortcutLabel,
+                ),
                 enabled: canGoForward,
                 onTap: onNext,
                 size: _kButtonSize,
@@ -135,12 +166,16 @@ class MoveNavigationBar extends StatelessWidget {
                 enabled: canGoForward,
                 onTap: onLast,
                 showLiveDot: hasUnseenLiveMove,
+                shortcutLabel: lastMoveShortcutLabel,
               ),
               if (onNextGame != null) ...[
                 const SizedBox(width: 8),
                 _NavButton(
                   icon: Icons.keyboard_double_arrow_right_rounded,
-                  tooltip: 'Next game',
+                  tooltip: _tooltipWithShortcut(
+                    'Next game',
+                    nextGameShortcutLabel,
+                  ),
                   enabled: true,
                   onTap: onNextGame!,
                   size: _kButtonSize,
@@ -152,7 +187,10 @@ class MoveNavigationBar extends StatelessWidget {
                 // wider gap so it doesn't read as another sibling step.
                 _NavButton(
                   icon: Icons.flip_camera_android_rounded,
-                  tooltip: 'Flip board (F)',
+                  tooltip: _tooltipWithShortcut(
+                    'Flip board',
+                    flipBoardShortcutLabel,
+                  ),
                   enabled: true,
                   onTap: onFlipBoard!,
                   size: _kButtonSize,
@@ -177,11 +215,13 @@ class _LastMoveButton extends StatefulWidget {
     required this.enabled,
     required this.onTap,
     required this.showLiveDot,
+    this.shortcutLabel,
   });
 
   final bool enabled;
   final VoidCallback onTap;
   final bool showLiveDot;
+  final String? shortcutLabel;
 
   @override
   State<_LastMoveButton> createState() => _LastMoveButtonState();
@@ -231,9 +271,10 @@ class _LastMoveButtonState extends State<_LastMoveButton>
           Positioned.fill(
             child: _NavButton(
               icon: Icons.last_page_rounded,
-              tooltip: widget.showLiveDot
-                  ? 'New move — jump to live (End)'
-                  : 'Last move (End)',
+              tooltip: _tooltipWithShortcut(
+                widget.showLiveDot ? 'New move — jump to live' : 'Last move',
+                widget.shortcutLabel,
+              ),
               enabled: widget.enabled,
               onTap: widget.onTap,
               size: _kButtonSize,
@@ -305,17 +346,18 @@ class _NavButtonState extends State<_NavButton> {
     final Color border;
 
     // One quiet button language for every control, including Play/Pause.
-    iconColor = disabled
-        ? kLightGreyColor
-        : (_hovered ? kWhiteColor : kWhiteColor70);
-    bg = disabled
-        ? Colors.transparent
-        : (_pressed
-              ? kBlack3Color
-              : (_hovered ? kBlack2Color : Colors.transparent));
-    border = disabled
-        ? Colors.transparent
-        : (_hovered ? kPrimaryColor.withValues(alpha: 0.4) : kDividerColor);
+    iconColor =
+        disabled ? kLightGreyColor : (_hovered ? kWhiteColor : kWhiteColor70);
+    bg =
+        disabled
+            ? Colors.transparent
+            : (_pressed
+                ? kBlack3Color
+                : (_hovered ? kBlack2Color : Colors.transparent));
+    border =
+        disabled
+            ? Colors.transparent
+            : (_hovered ? kPrimaryColor.withValues(alpha: 0.4) : kDividerColor);
 
     return DesktopTooltip(
       message: widget.tooltip,
@@ -323,28 +365,28 @@ class _NavButtonState extends State<_NavButton> {
         enabled: !disabled,
         child: MouseRegion(
           onEnter: (_) => setState(() => _hovered = true),
-          onExit: (_) => setState(() {
-            _hovered = false;
-            _pressed = false;
-          }),
+          onExit:
+              (_) => setState(() {
+                _hovered = false;
+                _pressed = false;
+              }),
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTapDown: disabled ? null : (_) => setState(() => _pressed = true),
             onTapUp: disabled ? null : (_) => setState(() => _pressed = false),
-            onTapCancel: disabled
-                ? null
-                : () => setState(() => _pressed = false),
+            onTapCancel:
+                disabled ? null : () => setState(() => _pressed = false),
             onTap: disabled ? null : widget.onTap,
             child: SingleMotionBuilder(
-              value: disabled
-                  ? 1.0
-                  : (_pressed ? 0.93 : (_hovered ? 1.04 : 1.0)),
+              value:
+                  disabled ? 1.0 : (_pressed ? 0.93 : (_hovered ? 1.04 : 1.0)),
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-              builder: (context, scale, child) => Transform.scale(
-                scale: scale,
-                alignment: Alignment.center,
-                child: child,
-              ),
+              builder:
+                  (context, scale, child) => Transform.scale(
+                    scale: scale,
+                    alignment: Alignment.center,
+                    child: child,
+                  ),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 90),
                 width: widget.size,
@@ -363,4 +405,10 @@ class _NavButtonState extends State<_NavButton> {
       ),
     );
   }
+}
+
+String _tooltipWithShortcut(String label, String? shortcutLabel) {
+  final shortcut = shortcutLabel?.trim();
+  if (shortcut == null || shortcut.isEmpty) return label;
+  return '$label ($shortcut)';
 }
