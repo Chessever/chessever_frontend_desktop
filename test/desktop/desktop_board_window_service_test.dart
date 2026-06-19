@@ -143,7 +143,7 @@ void main() {
     );
   });
 
-  test('non-board tabs detach to a tab-content window', () async {
+  test('non-board tabs do not detach to a tab-content window', () async {
     final opened = <DesktopBoardWindowPayload>[];
     final container = ProviderContainer(
       overrides: [
@@ -161,12 +161,11 @@ void main() {
 
     final detached = await detachDesktopTabToWindow(container, tabId);
 
-    expect(detached, isTrue);
-    expect(opened.single.kind, TabKind.library);
-    expect(opened.single.args, isNull);
+    expect(detached, isFalse);
+    expect(opened, isEmpty);
     expect(
       container.read(desktopTabsProvider).tabs.any((tab) => tab.id == tabId),
-      isFalse,
+      isTrue,
     );
   });
 
