@@ -663,6 +663,8 @@ class DesktopShell extends HookConsumerWidget {
                                         child: _DesktopTabStack(
                                           tabs: tabsState.tabs,
                                           activeId: tabsState.activeId,
+                                          feedbackScreenshotKey:
+                                              feedbackScreenshotKey,
                                         ),
                                       ),
                                     ),
@@ -741,15 +743,22 @@ class _DesktopPgnLoadingOverlay extends StatelessWidget {
 }
 
 class _DesktopTabStack extends StatelessWidget {
-  const _DesktopTabStack({required this.tabs, required this.activeId});
+  const _DesktopTabStack({
+    required this.tabs,
+    required this.activeId,
+    required this.feedbackScreenshotKey,
+  });
 
   final List<DesktopTab> tabs;
   final String? activeId;
+  final GlobalKey feedbackScreenshotKey;
 
   @override
   Widget build(BuildContext context) {
     if (tabs.isEmpty || activeId == null) {
-      return const DesktopWhatsNewHomePane();
+      return DesktopWhatsNewHomePane(
+        feedbackScreenshotKey: feedbackScreenshotKey,
+      );
     }
 
     final activeIndex = tabs.indexWhere((tab) => tab.id == activeId);
