@@ -1453,6 +1453,8 @@ class PlayerOpeningTreeBuildController
   final Ref _ref;
   final String _playerId;
   int _generation = 0;
+  int? _gamesDownloadGeneration;
+  bool _gamesDownloadRequested = false;
   final Set<String> _priorityGameKeys = <String>{};
 
   void start({bool force = false}) {
@@ -1466,6 +1468,8 @@ class PlayerOpeningTreeBuildController
       return;
     }
     final generation = ++_generation;
+    _gamesDownloadGeneration = null;
+    _gamesDownloadRequested = false;
     _priorityGameKeys.clear();
     _log(
       'start player=$_playerId generation=$generation force=$force '
@@ -1482,6 +1486,16 @@ class PlayerOpeningTreeBuildController
 
   void retry() => start(force: true);
 
+  void requestGamesDownload() {
+    if (state.progress.status == PlayerOpeningTreeStatus.idle ||
+        state.progress.status == PlayerOpeningTreeStatus.canceled ||
+        state.progress.status == PlayerOpeningTreeStatus.error) {
+      start();
+    }
+    _gamesDownloadRequested = true;
+    _startGamesDownloadIfReady(_generation);
+  }
+
   void cancel() {
     _generation++;
     state = state.copyWith(
@@ -1494,6 +1508,8 @@ class PlayerOpeningTreeBuildController
 
   void clear() {
     _generation++;
+    _gamesDownloadGeneration = null;
+    _gamesDownloadRequested = false;
     _priorityGameKeys.clear();
     state = PlayerOpeningTreeState(playerId: _playerId);
   }
@@ -1600,7 +1616,7 @@ class PlayerOpeningTreeBuildController
             'treeId=$treeId poll=$pollCount',
           );
           _completeFromTreeResponse(treeId, treeResponse);
-          unawaited(_downloadGamesInBackground(generation));
+          _startGamesDownloadIfReady(generation);
           return;
         }
         _log(
@@ -1634,6 +1650,19 @@ class PlayerOpeningTreeBuildController
         ),
       );
     }
+  }
+
+  void _startGamesDownloadIfReady(int generation) {
+    if (!_gamesDownloadRequested ||
+        !mounted ||
+        generation != _generation ||
+        _gamesDownloadGeneration == generation ||
+        state.progress.status != PlayerOpeningTreeStatus.complete ||
+        state.progress.gamesDownloadComplete) {
+      return;
+    }
+    _gamesDownloadGeneration = generation;
+    unawaited(_downloadGamesInBackground(generation));
   }
 
   Future<void> _downloadGamesInBackground(int generation) async {

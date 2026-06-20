@@ -119,6 +119,7 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
 
   late PlayerProfileDataSource _dataSource;
   String? _gamebasePlayerId;
+  String? _warmedOpeningTreePlayerId;
   _ProfileTab _tab = _ProfileTab.about;
 
   @override
@@ -136,6 +137,7 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
       setState(() {
         _dataSource = _profileInitialDataSource();
         _gamebasePlayerId = _normalize(widget.args.gamebasePlayerId);
+        _warmedOpeningTreePlayerId = null;
         _tab = _ProfileTab.about;
       });
     }
@@ -174,6 +176,17 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
           .valueOrNull
           ?.gamebasePlayerId,
     );
+  }
+
+  void _warmOpeningTreeSnapshot(String? playerId) {
+    final id = _normalize(playerId);
+    if (id == null) return;
+    if (_warmedOpeningTreePlayerId == id) return;
+    _warmedOpeningTreePlayerId = id;
+    Future.microtask(() {
+      if (!mounted) return;
+      ref.read(playerOpeningTreeProvider(id).notifier).start();
+    });
   }
 
   PlayerGender _mapSexToGender(String? sex) {
@@ -514,7 +527,9 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
       blitz: activeProfile?.blitzRating,
     );
 
-    final hasBuildTreeTarget = _resolveGamebasePlayerId() != null;
+    final buildTreePlayerId = _resolveGamebasePlayerId();
+    _warmOpeningTreeSnapshot(buildTreePlayerId);
+    final hasBuildTreeTarget = buildTreePlayerId != null;
 
     return Container(
       color: kBackgroundColor,

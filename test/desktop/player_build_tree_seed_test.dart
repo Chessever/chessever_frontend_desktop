@@ -22,12 +22,19 @@ void main() {
     await _waitForTreeComplete(container, 'player-uuid');
 
     expect(repository.buildForceRebuildValues, [false]);
-    expect(repository.statusTreeIds, ['v2:player-uuid:40']);
-    expect(repository.downloadTreeIds, ['v2:player-uuid:40']);
+    expect(repository.statusTreeIds, ['v2:player-uuid:24']);
+    expect(repository.downloadTreeIds, ['v2:player-uuid:24']);
 
     final state = container.read(playerOpeningTreeProvider('player-uuid'));
-    expect(state.treeId, 'v2:player-uuid:40');
+    expect(state.treeId, 'v2:player-uuid:24');
     expect(state.index.movesForFen(Chess.initial.fen).single.uci, 'e2e4');
+    expect(repository.playerGamesPages, isEmpty);
+    expect(state.index.downloadedGameCount, 0);
+    expect(state.progress.gamesDownloadComplete, isFalse);
+
+    container
+        .read(playerOpeningTreeProvider('player-uuid').notifier)
+        .requestGamesDownload();
     await _waitForGamesIndexed(container, 'player-uuid');
     expect(repository.playerGamesPages, [0]);
     expect(repository.playerGamesIncludeDataValues, [true]);
@@ -79,8 +86,8 @@ void main() {
       container.read(playerOpeningTreeProvider('player-uuid').notifier).start();
       await _waitForTreeComplete(container, 'player-uuid');
 
-      expect(repository.statusTreeIds, ['v2:player-uuid:40']);
-      expect(repository.downloadTreeIds, ['v2:player-uuid:40']);
+      expect(repository.statusTreeIds, ['v2:player-uuid:24']);
+      expect(repository.downloadTreeIds, ['v2:player-uuid:24']);
     },
   );
 
