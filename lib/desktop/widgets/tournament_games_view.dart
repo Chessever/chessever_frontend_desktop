@@ -63,6 +63,8 @@ class TournamentGamesView extends ConsumerStatefulWidget {
 class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   late final TextEditingController _searchController;
   Timer? _debounce;
+  GroupedGamesData? _lastStableGrouped;
+  String? _searchReplayInFlight;
 
   @override
   void initState() {
@@ -113,7 +115,49 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
 
   @override
   Widget build(BuildContext context) {
-    final grouped = ref.watch(gamesTourGroupedProvider);
+    ref.listen<AsyncValue<GamesScreenModel>>(gamesTourScreenProvider, (
+      previous,
+      next,
+    ) {
+      final query =
+          ref
+              .read(tournamentDetailGamesSearchByTabIdProvider(widget.tabId))
+              .trim();
+      if (query.isEmpty) return;
+
+      final model = next.valueOrNull;
+      if (model == null) return;
+      if (model.isSearchMode && model.searchQuery == query) {
+        _searchReplayInFlight = null;
+        return;
+      }
+      if (_searchReplayInFlight == query) return;
+
+      _searchReplayInFlight = query;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ref.read(gamesTourScreenProvider.notifier).searchGamesEnhanced(query);
+      });
+    });
+
+    final watchedGrouped = ref.watch(gamesTourGroupedProvider);
+    final persistedQuery =
+        ref
+            .watch(tournamentDetailGamesSearchByTabIdProvider(widget.tabId))
+            .trim();
+    final screenModel = ref.watch(gamesTourScreenProvider).valueOrNull;
+    final isRestoringSearch =
+        persistedQuery.isNotEmpty &&
+        !(screenModel?.isSearchMode == true &&
+            screenModel?.searchQuery == persistedQuery);
+    final grouped =
+        (watchedGrouped.isLoading || isRestoringSearch) &&
+                _lastStableGrouped != null
+            ? _lastStableGrouped!
+            : watchedGrouped;
+    if (!watchedGrouped.isLoading && !isRestoringSearch) {
+      _lastStableGrouped = watchedGrouped;
+    }
     final tournamentTitle = ref.watch(activeTournamentProvider)?.title ?? '';
     // Source of truth: the persisted board-settings store. Toggling here
     // (or anywhere else — Settings, Library, etc.) writes to the same
@@ -163,7 +207,8 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
             },
           ),
         ),
-        if (grouped.isLoading)
+        if ((watchedGrouped.isLoading || isRestoringSearch) &&
+            _lastStableGrouped == null)
           const Expanded(child: _LoadingState())
         else if (grouped.filteredRounds.isEmpty &&
             grouped.matchFormatHeader == null)
