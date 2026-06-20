@@ -3548,7 +3548,7 @@ class _LadderChipState extends State<_LadderChip> {
       if (widget.compact) sanText else Flexible(child: sanText),
       if (hasPositionArrows) ...[
         const SizedBox(width: 4),
-        _PositionArrowBadge(selected: widget.selected),
+        _BoardMarksBadge(selected: widget.selected),
       ],
       if (transpositionTarget != null) ...[
         const SizedBox(width: 4),
@@ -3615,17 +3615,63 @@ class _LadderChipState extends State<_LadderChip> {
   }
 }
 
-class _PositionArrowBadge extends StatelessWidget {
-  const _PositionArrowBadge({required this.selected});
+class _BoardMarksBadge extends StatelessWidget {
+  const _BoardMarksBadge({required this.selected});
+
+  static const _colors = <Color>[
+    Color(0xFF4EA1FF),
+    Color(0xFF6AD66F),
+    Color(0xFFFFD166),
+    Color(0xFFFF9F43),
+  ];
 
   final bool selected;
 
   @override
   Widget build(BuildContext context) {
-    final color = selected ? kBackgroundColor : kPrimaryColor;
+    final borderColor = selected ? kBackgroundColor : kPrimaryColor;
     return DesktopTooltip(
-      message: 'Position arrows saved for this position',
-      child: Icon(Icons.trending_flat_rounded, size: 13, color: color),
+      message: 'Board marks saved for this position',
+      child: Container(
+        key: const ValueKey('board-marks-badge'),
+        width: 14,
+        height: 14,
+        padding: const EdgeInsets.all(1.5),
+        decoration: BoxDecoration(
+          color:
+              selected
+                  ? kBackgroundColor.withValues(alpha: 0.10)
+                  : kPrimaryColor.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(3),
+          border: Border.all(color: borderColor.withValues(alpha: 0.70)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var row = 0; row < 2; row++) ...[
+              if (row > 0) const SizedBox(height: 1),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (var col = 0; col < 2; col++) ...[
+                    if (col > 0) const SizedBox(width: 1),
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color:
+                            selected
+                                ? kBackgroundColor.withValues(alpha: 0.78)
+                                : _colors[row * 2 + col],
+                        borderRadius: BorderRadius.circular(1),
+                      ),
+                      child: const SizedBox(width: 4, height: 4),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

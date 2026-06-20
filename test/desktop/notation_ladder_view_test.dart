@@ -22,7 +22,7 @@ void main() {
     expect(find.byType(MoveHoverPreview), findsNothing);
   });
 
-  testWidgets('shows a compact icon on moves with saved position arrows', (
+  testWidgets('shows a compact board-marks badge on annotated positions', (
     tester,
   ) async {
     final game = _sampleGame();
@@ -36,7 +36,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byIcon(Icons.trending_flat_rounded), findsOneWidget);
+    expect(find.byKey(const ValueKey('board-marks-badge')), findsOneWidget);
+    expect(find.byIcon(Icons.trending_flat_rounded), findsNothing);
   });
 
   testWidgets('Tr marker jumps to the next occurrence of the same position', (
