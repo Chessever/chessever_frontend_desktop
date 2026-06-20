@@ -128,10 +128,44 @@ extension on _LinkedAccountSource {
   String get addLabel => 'Add $label account';
 }
 
+enum _ImportGameMode { rated, casual }
+
+extension on _ImportGameMode {
+  String get label {
+    switch (this) {
+      case _ImportGameMode.rated:
+        return 'Rated';
+      case _ImportGameMode.casual:
+        return 'Casual';
+    }
+  }
+}
+
+enum _ImportTimeControl { bullet, blitz, rapid, daily }
+
+extension on _ImportTimeControl {
+  String labelFor(_LinkedAccountSource source) {
+    switch (this) {
+      case _ImportTimeControl.bullet:
+        return 'Bullet';
+      case _ImportTimeControl.blitz:
+        return 'Blitz';
+      case _ImportTimeControl.rapid:
+        return 'Rapid';
+      case _ImportTimeControl.daily:
+        return source == _LinkedAccountSource.lichess
+            ? 'Daily / correspondence'
+            : 'Daily';
+    }
+  }
+}
+
 class _LinkedPlayerAccount {
   const _LinkedPlayerAccount({
     required this.source,
     required this.username,
+    required this.gameMode,
+    required this.timeControls,
     this.enabled = true,
     this.gamesCount,
     this.statusLabel,
@@ -139,6 +173,8 @@ class _LinkedPlayerAccount {
 
   final _LinkedAccountSource source;
   final String username;
+  final _ImportGameMode gameMode;
+  final Set<_ImportTimeControl> timeControls;
   final bool enabled;
   final int? gamesCount;
   final String? statusLabel;
@@ -477,22 +513,14 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
   }
 
   Future<void> _addOnlineAccount(_LinkedAccountSource source) async {
-    final username = await showPlayerOnlineAccountDialog(
+    final account = await showPlayerOnlineAccountDialog(
       context: context,
       source: source,
     );
-    if (username == null || !mounted) return;
+    if (account == null || !mounted) return;
 
-    setState(() {
-      _linkedAccounts.add(
-        _LinkedPlayerAccount(
-          source: source,
-          username: username,
-          statusLabel: 'Ready to configure import',
-        ),
-      );
-    });
-    _showToast('${source.label} account added. Configure import filters next.');
+    setState(() => _linkedAccounts.add(account));
+    _showToast('${source.label} account added with import filters.');
   }
 
   void _showToast(String message, {bool error = false}) {
@@ -682,11 +710,11 @@ class _ProfileRatings {
   final int? blitz;
 }
 
-Future<String?> showPlayerOnlineAccountDialog({
+Future<_LinkedPlayerAccount?> showPlayerOnlineAccountDialog({
   required BuildContext context,
   required _LinkedAccountSource source,
 }) {
-  return showGeneralDialog<String>(
+  return showGeneralDialog<_LinkedPlayerAccount>(
     context: context,
     barrierDismissible: true,
     barrierLabel: source.addLabel,
@@ -718,6 +746,8 @@ class _PlayerOnlineAccountDialog extends StatefulWidget {
 
 class _PlayerOnlineAccountDialogState extends State<_PlayerOnlineAccountDialog> {
   final TextEditingController _controller = TextEditingController();
+  final Set<_ImportTimeControl> _selectedTimeControls = {};
+  _ImportGameMode? _gameMode;
   String? _error;
 
   @override
@@ -726,13 +756,39 @@ class _PlayerOnlineAccountDialogState extends State<_PlayerOnlineAccountDialog> 
     super.dispose();
   }
 
+  void _toggleTimeControl(_ImportTimeControl control) {
+    setState(() {
+      if (!_selectedTimeControls.add(control)) {
+        _selectedTimeControls.remove(control);
+      }
+      _error = null;
+    });
+  }
+
   void _submit() {
     final username = _controller.text.trim();
     if (username.isEmpty) {
       setState(() => _error = 'Enter a ${widget.source.label} username.');
       return;
     }
-    Navigator.of(context).pop(username);
+    final gameMode = _gameMode;
+    if (gameMode == null) {
+      setState(() => _error = 'Choose Rated or Casual.');
+      return;
+    }
+    if (_selectedTimeControls.isEmpty) {
+      setState(() => _error = 'Choose at least one time control.');
+      return;
+    }
+    Navigator.of(context).pop(
+      _LinkedPlayerAccount(
+        source: widget.source,
+        username: username,
+        gameMode: gameMode,
+        timeControls: Set.unmodifiable(_selectedTimeControls),
+        statusLabel: 'Filters set',
+      ),
+    );
   }
 
   @override
@@ -741,7 +797,7 @@ class _PlayerOnlineAccountDialogState extends State<_PlayerOnlineAccountDialog> 
       child: Material(
         type: MaterialType.transparency,
         child: Container(
-          width: 390,
+          width: 430,
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
             color: kBlack2Color,
@@ -769,7 +825,7 @@ class _PlayerOnlineAccountDialogState extends State<_PlayerOnlineAccountDialog> 
               ),
               const SizedBox(height: 8),
               const Text(
-                'Accounts stay separate from the ChessEver player name and can be added multiple times.',
+                'Accounts stay separate from the ChessEver player name. Choose only what should be imported.',
                 style: TextStyle(color: kWhiteColor70, fontSize: 12.5, height: 1.35),
               ),
               const SizedBox(height: 14),
@@ -803,6 +859,58 @@ class _PlayerOnlineAccountDialogState extends State<_PlayerOnlineAccountDialog> 
                   ),
                 ),
               ),
+              const SizedBox(height: 14),
+              const Text(
+                'Game type',
+                style: TextStyle(
+                  color: kLightGreyColor,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.7,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  for (final mode in _ImportGameMode.values) ...[
+                    Expanded(
+                      child: _ImportChoiceChip(
+                        label: mode.label,
+                        selected: _gameMode == mode,
+                        onTap: () => setState(() {
+                          _gameMode = mode;
+                          _error = null;
+                        }),
+                      ),
+                    ),
+                    if (mode != _ImportGameMode.values.last)
+                      const SizedBox(width: 8),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Time controls',
+                style: TextStyle(
+                  color: kLightGreyColor,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.7,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final control in _ImportTimeControl.values)
+                    _ImportChoiceChip(
+                      label: control.labelFor(widget.source),
+                      selected: _selectedTimeControls.contains(control),
+                      onTap: () => _toggleTimeControl(control),
+                    ),
+                ],
+              ),
               const SizedBox(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
@@ -820,6 +928,61 @@ class _PlayerOnlineAccountDialogState extends State<_PlayerOnlineAccountDialog> 
                     tone: DesktopDialogButtonTone.primary,
                   ),
                 ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ImportChoiceChip extends StatelessWidget {
+  const _ImportChoiceChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClickCursor(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: selected ? kPrimaryColor.withValues(alpha: 0.16) : kBackgroundColor,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: selected ? kPrimaryColor.withValues(alpha: 0.38) : kDividerColor,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (selected) ...[
+                const Icon(Icons.check, color: kPrimaryColor, size: 13),
+                const SizedBox(width: 5),
+              ],
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: selected ? kWhiteColor : kWhiteColor70,
+                    fontSize: 11,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
               ),
             ],
           ),
@@ -1779,7 +1942,14 @@ class _LinkedAccountRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final count = account.gamesCount;
-    final status = account.statusLabel ?? (account.enabled ? 'Enabled' : 'Disabled');
+    final filters = [
+      account.gameMode.label,
+      account.timeControls
+          .map((control) => control.labelFor(account.source))
+          .join(', '),
+    ].where((part) => part.trim().isNotEmpty).join(' · ');
+    final status =
+        account.statusLabel ?? (account.enabled ? 'Enabled' : 'Disabled');
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
       decoration: BoxDecoration(
@@ -1811,7 +1981,9 @@ class _LinkedAccountRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 1),
                 Text(
-                  count == null ? status : '$status · ${formatCompactCount(count)} games',
+                  count == null
+                      ? '$status · $filters'
+                      : '$status · $filters · ${formatCompactCount(count)} games',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
