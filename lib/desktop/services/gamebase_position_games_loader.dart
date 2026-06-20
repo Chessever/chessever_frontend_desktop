@@ -58,7 +58,9 @@ Future<DesktopPositionGamesPageResult> fetchDesktopPositionGamesPage(
           .read(gamebaseExplorerProvider.notifier)
           .isLocalPlayerTreeEnabledFor(playerId)) {
     final localState = ref.read(playerOpeningTreeProvider(playerId));
-    ref.read(playerOpeningTreeProvider(playerId).notifier).start();
+    ref
+        .read(playerOpeningTreeProvider(playerId).notifier)
+        .requestGamesDownload();
     return DesktopPositionGamesPageResult(
       response: localPlayerTreeGamesResponse(
         index: localState.index,
@@ -278,10 +280,11 @@ TournamentGameSummary gamebasePositionGameSummaryFromRow(
 }
 
 GameStatus gamebaseStatusFromResult(String result) {
-  final normalized = result
-      .replaceAll('½', '1/2')
-      .replaceAll(RegExp(r'[\u2010-\u2015\u2212]'), '-')
-      .trim();
+  final normalized =
+      result
+          .replaceAll('½', '1/2')
+          .replaceAll(RegExp(r'[\u2010-\u2015\u2212]'), '-')
+          .trim();
   switch (normalized) {
     case '1-0':
       return GameStatus.whiteWins;
