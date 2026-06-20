@@ -113,11 +113,43 @@ extension on _ProfileTab {
   }
 }
 
+enum _LinkedAccountSource { chessCom, lichess }
+
+extension on _LinkedAccountSource {
+  String get label {
+    switch (this) {
+      case _LinkedAccountSource.chessCom:
+        return 'Chess.com';
+      case _LinkedAccountSource.lichess:
+        return 'Lichess';
+    }
+  }
+
+  String get addLabel => 'Add $label account';
+}
+
+class _LinkedPlayerAccount {
+  const _LinkedPlayerAccount({
+    required this.source,
+    required this.username,
+    this.enabled = true,
+    this.gamesCount,
+    this.statusLabel,
+  });
+
+  final _LinkedAccountSource source;
+  final String username;
+  final bool enabled;
+  final int? gamesCount;
+  final String? statusLabel;
+}
+
 class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
   static const String _startingFen =
       'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
   late PlayerProfileDataSource _dataSource;
+  final List<_LinkedPlayerAccount> _linkedAccounts = [];
   String? _gamebasePlayerId;
   String? _warmedOpeningTreePlayerId;
   _ProfileTab _tab = _ProfileTab.about;
@@ -444,6 +476,25 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
         .toInt();
   }
 
+  Future<void> _addOnlineAccount(_LinkedAccountSource source) async {
+    final username = await showPlayerOnlineAccountDialog(
+      context: context,
+      source: source,
+    );
+    if (username == null || !mounted) return;
+
+    setState(() {
+      _linkedAccounts.add(
+        _LinkedPlayerAccount(
+          source: source,
+          username: username,
+          statusLabel: 'Ready to configure import',
+        ),
+      );
+    });
+    _showToast('${source.label} account added. Configure import filters next.');
+  }
+
   void _showToast(String message, {bool error = false}) {
     if (!mounted) return;
     showDesktopToast(context, message, error: error);
@@ -570,6 +621,9 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
                   isTwicLoading: isTwicLoading,
                   showEventCounts: showEventCounts,
                   dataSource: _dataSource,
+                  linkedAccounts: List.unmodifiable(_linkedAccounts),
+                  onAddChessCom: () => _addOnlineAccount(_LinkedAccountSource.chessCom),
+                  onAddLichess: () => _addOnlineAccount(_LinkedAccountSource.lichess),
                   federation: effectiveFederation,
                   currentTimeControl: gamesState.filter.timeControl,
                   onSelectTimeControl: (timeControl) {
@@ -626,6 +680,153 @@ class _ProfileRatings {
   final int? classical;
   final int? rapid;
   final int? blitz;
+}
+
+Future<String?> showPlayerOnlineAccountDialog({
+  required BuildContext context,
+  required _LinkedAccountSource source,
+}) {
+  return showGeneralDialog<String>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: source.addLabel,
+    barrierColor: Colors.black.withValues(alpha: 0.58),
+    transitionDuration: const Duration(milliseconds: 160),
+    pageBuilder: (ctx, _, _) => _PlayerOnlineAccountDialog(source: source),
+    transitionBuilder: (ctx, anim, _, child) {
+      final eased = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+      return FadeTransition(
+        opacity: eased,
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.985, end: 1).animate(eased),
+          child: child,
+        ),
+      );
+    },
+  );
+}
+
+class _PlayerOnlineAccountDialog extends StatefulWidget {
+  const _PlayerOnlineAccountDialog({required this.source});
+
+  final _LinkedAccountSource source;
+
+  @override
+  State<_PlayerOnlineAccountDialog> createState() =>
+      _PlayerOnlineAccountDialogState();
+}
+
+class _PlayerOnlineAccountDialogState extends State<_PlayerOnlineAccountDialog> {
+  final TextEditingController _controller = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final username = _controller.text.trim();
+    if (username.isEmpty) {
+      setState(() => _error = 'Enter a ${widget.source.label} username.');
+      return;
+    }
+    Navigator.of(context).pop(username);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Material(
+        type: MaterialType.transparency,
+        child: Container(
+          width: 390,
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: kBlack2Color,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: kDividerColor),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.36),
+                blurRadius: 30,
+                offset: const Offset(0, 18),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                widget.source.addLabel,
+                style: const TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Accounts stay separate from the ChessEver player name and can be added multiple times.',
+                style: TextStyle(color: kWhiteColor70, fontSize: 12.5, height: 1.35),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _controller,
+                autofocus: true,
+                onSubmitted: (_) => _submit(),
+                style: const TextStyle(color: kWhiteColor, fontSize: 13),
+                decoration: InputDecoration(
+                  isDense: true,
+                  labelText: '${widget.source.label} username',
+                  labelStyle: const TextStyle(color: kLightGreyColor),
+                  errorText: _error,
+                  filled: true,
+                  fillColor: kBackgroundColor,
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(9),
+                    borderSide: const BorderSide(color: kDividerColor),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(9),
+                    borderSide: const BorderSide(color: kPrimaryColor),
+                  ),
+                  errorBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(9),
+                    borderSide: const BorderSide(color: Colors.redAccent),
+                  ),
+                  focusedErrorBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(9),
+                    borderSide: const BorderSide(color: Colors.redAccent),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  DesktopDialogButton(
+                    label: 'Cancel',
+                    onPress: () => Navigator.of(context).pop(),
+                    tone: DesktopDialogButtonTone.ghost,
+                  ),
+                  const SizedBox(width: 8),
+                  DesktopDialogButton(
+                    label: 'Add account',
+                    icon: Icons.add,
+                    onPress: _submit,
+                    tone: DesktopDialogButtonTone.primary,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 Future<PlayerBuildTreePreparationSide?> showPlayerBuildTreePreparationDialog({
@@ -1005,6 +1206,9 @@ class _IdentityRail extends StatelessWidget {
     required this.isTwicLoading,
     required this.showEventCounts,
     required this.dataSource,
+    required this.linkedAccounts,
+    required this.onAddChessCom,
+    required this.onAddLichess,
     required this.federation,
     required this.currentTimeControl,
     required this.onSelectTimeControl,
@@ -1019,6 +1223,9 @@ class _IdentityRail extends StatelessWidget {
   final bool isTwicLoading;
   final bool showEventCounts;
   final PlayerProfileDataSource dataSource;
+  final List<_LinkedPlayerAccount> linkedAccounts;
+  final VoidCallback onAddChessCom;
+  final VoidCallback onAddLichess;
   final String? federation;
   final GameTimeControlFilter currentTimeControl;
   final ValueChanged<GameTimeControlFilter> onSelectTimeControl;
@@ -1088,6 +1295,9 @@ class _IdentityRail extends StatelessWidget {
               twicSummaryAsync: twicSummaryAsync,
               isTwicLoading: isTwicLoading,
               showEventCounts: showEventCounts,
+              linkedAccounts: linkedAccounts,
+              onAddChessCom: onAddChessCom,
+              onAddLichess: onAddLichess,
             ),
             const SizedBox(height: 16),
             _BioCard(profile: activeProfile, federation: federation),
@@ -1339,12 +1549,18 @@ class _DataSourceCard extends StatelessWidget {
     required this.twicSummaryAsync,
     required this.isTwicLoading,
     required this.showEventCounts,
+    required this.linkedAccounts,
+    required this.onAddChessCom,
+    required this.onAddLichess,
   });
 
   final PlayerProfileDataSource dataSource;
   final AsyncValue<TwicProfileSummary?> twicSummaryAsync;
   final bool isTwicLoading;
   final bool showEventCounts;
+  final List<_LinkedPlayerAccount> linkedAccounts;
+  final VoidCallback onAddChessCom;
+  final VoidCallback onAddLichess;
 
   @override
   Widget build(BuildContext context) {
@@ -1353,27 +1569,279 @@ class _DataSourceCard extends StatelessWidget {
         showEventCounts ? summary?.totalEvents : summary?.totalGames;
     final twicLabel =
         twicTotal != null
-            ? 'ChessEver - ${formatCompactCount(twicTotal)}'
+            ? 'ChessEver · ${formatCompactCount(twicTotal)}'
             : 'ChessEver';
 
     return Container(
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: kBlack2Color,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: kDividerColor),
       ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SourceSection(
+            title: 'ChessEver',
+            subtitle: twicLabel,
+            active: dataSource == PlayerProfileDataSource.twic,
+            loading: twicSummaryAsync.isLoading || isTwicLoading,
+            children: const [
+              _SourceAccountPlaceholder(
+                text: 'Native ChessEver profile games',
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          _SourceSection(
+            title: 'Chess.com',
+            subtitle: _summaryFor(_LinkedAccountSource.chessCom),
+            active: false,
+            children: _accountRowsFor(_LinkedAccountSource.chessCom),
+            addLabel: _LinkedAccountSource.chessCom.addLabel,
+            onAdd: onAddChessCom,
+          ),
+          const SizedBox(height: 10),
+          _SourceSection(
+            title: 'Lichess',
+            subtitle: _summaryFor(_LinkedAccountSource.lichess),
+            active: false,
+            children: _accountRowsFor(_LinkedAccountSource.lichess),
+            addLabel: _LinkedAccountSource.lichess.addLabel,
+            onAdd: onAddLichess,
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _summaryFor(_LinkedAccountSource source) {
+    final count = linkedAccounts.where((account) => account.source == source).length;
+    if (count == 0) return 'No linked accounts yet';
+    if (count == 1) return '1 linked account';
+    return '$count linked accounts';
+  }
+
+  List<Widget> _accountRowsFor(_LinkedAccountSource source) {
+    final accounts = linkedAccounts.where((account) => account.source == source).toList();
+    if (accounts.isEmpty) {
+      return const [
+        _SourceAccountPlaceholder(text: 'Add one or more accounts for preparation'),
+      ];
+    }
+    return [
+      for (final account in accounts) _LinkedAccountRow(account: account),
+    ];
+  }
+}
+
+class _SourceSection extends StatelessWidget {
+  const _SourceSection({
+    required this.title,
+    required this.subtitle,
+    required this.active,
+    required this.children,
+    this.loading = false,
+    this.addLabel,
+    this.onAdd,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool active;
+  final bool loading;
+  final List<Widget> children;
+  final String? addLabel;
+  final VoidCallback? onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: active ? kPrimaryColor.withValues(alpha: 0.08) : kBlack3Color,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(
+          color: active ? kPrimaryColor.withValues(alpha: 0.26) : kDividerColor,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        if (loading) ...[
+                          const SizedBox(width: 6),
+                          const SizedBox(
+                            width: 10,
+                            height: 10,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.4,
+                              valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: kLightGreyColor,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (onAdd != null && addLabel != null) ...[
+                const SizedBox(width: 8),
+                _SmallSourceAction(label: addLabel!, onTap: onAdd!),
+              ],
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final child in children) ...[
+            child,
+            if (child != children.last) const SizedBox(height: 6),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SmallSourceAction extends StatelessWidget {
+  const _SmallSourceAction({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClickCursor(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          decoration: BoxDecoration(
+            color: kPrimaryColor.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: kPrimaryColor.withValues(alpha: 0.32)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.add, color: kPrimaryColor, size: 13),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LinkedAccountRow extends StatelessWidget {
+  const _LinkedAccountRow({required this.account});
+
+  final _LinkedPlayerAccount account;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = account.gamesCount;
+    final status = account.statusLabel ?? (account.enabled ? 'Enabled' : 'Disabled');
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      decoration: BoxDecoration(
+        color: kBackgroundColor.withValues(alpha: 0.75),
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: kDividerColor.withValues(alpha: 0.8)),
+      ),
       child: Row(
         children: [
+          Icon(
+            account.enabled ? Icons.check_circle_outline : Icons.pause_circle_outline,
+            color: account.enabled ? kPrimaryColor : kLightGreyColor,
+            size: 14,
+          ),
+          const SizedBox(width: 7),
           Expanded(
-            child: _SourceChip(
-              label: twicLabel,
-              isActive: dataSource == PlayerProfileDataSource.twic,
-              loading: twicSummaryAsync.isLoading || isTwicLoading,
-              onTap: null,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  account.username,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  count == null ? status : '$status · ${formatCompactCount(count)} games',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: kLightGreyColor,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SourceAccountPlaceholder extends StatelessWidget {
+  const _SourceAccountPlaceholder({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: const TextStyle(
+        color: kLightGreyColor,
+        fontSize: 10.5,
+        height: 1.25,
       ),
     );
   }
