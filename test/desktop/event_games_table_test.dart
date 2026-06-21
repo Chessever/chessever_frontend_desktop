@@ -101,6 +101,30 @@ void main() {
     );
   });
 
+  test('player event card rail can preserve source game order', () {
+    final sourceOrder = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    final timestampOrder = [8, 5, 3, 1, 10, 9, 7, 6, 4, 2];
+    final rankByRound = <int, int>{
+      for (var i = 0; i < timestampOrder.length; i++)
+        timestampOrder[i]: timestampOrder.length - i,
+    };
+    final games = [
+      for (final round in sourceOrder)
+        _summary(
+          id: 'round-$round',
+          roundLabel: 'Round $round',
+          roundStartsAt: DateTime.utc(2026, 6, 20, rankByRound[round]!),
+        ),
+    ];
+
+    expect(eventRailOrderedIdsForTesting(games, preserveInputOrder: true), [
+      for (final round in sourceOrder) 'round-$round',
+    ]);
+    expect(eventRailOrderedIdsForTesting(games), [
+      for (final round in timestampOrder) 'round-$round',
+    ]);
+  });
+
   test('event rail copy selection can span rounds', () {
     final games = [
       _summary(id: 'round-1-game-1', roundLabel: 'Round 1'),
