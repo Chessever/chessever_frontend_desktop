@@ -124,7 +124,7 @@ class _PowerTipsList extends StatelessWidget {
       shortcut: 'Ctrl/Cmd + F',
       text: 'Search — useful when preparing for opponents.',
     ),
-    _PowerTipData(shortcut: 'Enter', text: 'Open Explorer from the board.'),
+    _PowerTipData(shortcut: 'O', text: 'Open Explorer from the board.'),
     _PowerTipData(
       shortcut: '↑ / ↓',
       text: 'After clicking a game in Explorer, move between games.',
