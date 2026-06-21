@@ -61,7 +61,7 @@ class DesktopBoardWindowService {
           orElse:
               () => const DesktopTab(id: '', kind: TabKind.board, title: ''),
         );
-    if (tab.id.isEmpty || !tab.closable) {
+    if (tab.id.isEmpty || tab.kind != TabKind.board || !tab.closable) {
       return false;
     }
 

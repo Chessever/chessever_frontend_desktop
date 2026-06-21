@@ -455,7 +455,7 @@ class _TabChipState extends ConsumerState<_TabChip> {
 
   Future<void> _moveToNewWindow() async {
     final container = ProviderScope.containerOf(context, listen: false);
-    await detachDesktopTabToWindow(container, widget.tab.id);
+    await detachBoardTabToWindow(container, widget.tab.id);
   }
 
   Future<void> _showContextMenu(Offset globalPos) async {
@@ -471,7 +471,7 @@ class _TabChipState extends ConsumerState<_TabChip> {
         myIdx < tabsState.tabs.length - 1 &&
         tabsState.tabs.skip(myIdx + 1).any((t) => t.closable);
     final isBoardTab = widget.tab.kind == TabKind.board;
-    final canMoveToWindow = widget.tab.closable;
+    final canMoveToWindow = isBoardTab && widget.tab.closable;
     final isMuted = ref.read(boardTabSoundMuteProvider).contains(widget.tab.id);
 
     final picked = await showMenu<_TabAction>(
@@ -617,6 +617,7 @@ class _TabChipState extends ConsumerState<_TabChip> {
             },
             onPointerMove: (event) {
               if (_detachTriggered ||
+                  widget.tab.kind != TabKind.board ||
                   (event.buttons & kPrimaryMouseButton) == 0) {
                 return;
               }

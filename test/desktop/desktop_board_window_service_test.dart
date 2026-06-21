@@ -6,9 +6,11 @@ import 'package:chessever/desktop/services/desktop_board_window_payload.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/countrymen/provider/countrymen_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
 void main() {
   test('board window payload round-trips serializable board args', () {
@@ -20,6 +22,12 @@ void main() {
       initialFen: 'initial-fen',
       viewSource: ChessboardView.favScorecard,
       gameListSelectedId: 'selected-1',
+      eventGames: [_summary('game-1')],
+      routeGames: [_summary('route-1', roundLabel: 'R2')],
+      databaseGames: [_summary('database-1', pgn: '1. d4 d5 *')],
+      eventGamesContinuation: const BoardTabGamesContinuation.favorites(),
+      routeGamesContinuation: const BoardTabGamesContinuation.countrymen(),
+      databaseGamesContinuation: const BoardTabGamesContinuation.twicDatabase(),
     );
 
     final decoded = DesktopBoardWindowPayload.decode(
@@ -41,6 +49,25 @@ void main() {
     expect(decoded.args?.initialFen, 'initial-fen');
     expect(decoded.args?.viewSource, ChessboardView.favScorecard);
     expect(decoded.args?.gameListSelectedId, 'selected-1');
+    expect(decoded.args?.eventGames.single.id, 'game-1');
+    expect(decoded.args?.eventGames.single.whitePlayer, 'Carlsen');
+    expect(decoded.args?.eventGames.single.status, GameStatus.ongoing);
+    expect(decoded.args?.routeGames.single.id, 'route-1');
+    expect(decoded.args?.routeGames.single.roundLabel, 'R2');
+    expect(decoded.args?.databaseGames.single.id, 'database-1');
+    expect(decoded.args?.databaseGames.single.pgn, '1. d4 d5 *');
+    expect(
+      decoded.args?.eventGamesContinuation?.kind,
+      BoardTabGamesContinuationKind.favorites,
+    );
+    expect(
+      decoded.args?.routeGamesContinuation?.kind,
+      BoardTabGamesContinuationKind.countrymen,
+    );
+    expect(
+      decoded.args?.databaseGamesContinuation?.kind,
+      BoardTabGamesContinuationKind.twicDatabase,
+    );
   });
 
   test('tab window payload round-trips non-board route identity', () {
@@ -143,7 +170,7 @@ void main() {
     );
   });
 
-  test('non-board tabs detach to a tab-content window', () async {
+  test('non-board tabs do not detach to a tab-content window', () async {
     final opened = <DesktopBoardWindowPayload>[];
     final container = ProviderContainer(
       overrides: [
@@ -161,12 +188,11 @@ void main() {
 
     final detached = await detachDesktopTabToWindow(container, tabId);
 
-    expect(detached, isTrue);
-    expect(opened.single.kind, TabKind.library);
-    expect(opened.single.args, isNull);
+    expect(detached, isFalse);
+    expect(opened, isEmpty);
     expect(
       container.read(desktopTabsProvider).tabs.any((tab) => tab.id == tabId),
-      isFalse,
+      isTrue,
     );
   });
 
@@ -220,6 +246,12 @@ BoardTabGameArgs _args({
   String? initialFen,
   ChessboardView viewSource = ChessboardView.tour,
   String? gameListSelectedId,
+  List<TournamentGameSummary> eventGames = const <TournamentGameSummary>[],
+  List<TournamentGameSummary> routeGames = const <TournamentGameSummary>[],
+  List<TournamentGameSummary> databaseGames = const <TournamentGameSummary>[],
+  BoardTabGamesContinuation? eventGamesContinuation,
+  BoardTabGamesContinuation? routeGamesContinuation,
+  BoardTabGamesContinuation? databaseGamesContinuation,
 }) {
   return BoardTabGameArgs(
     gameId: gameId,
@@ -240,5 +272,47 @@ BoardTabGameArgs _args({
     initialFen: initialFen,
     viewSource: viewSource,
     gameListSelectedId: gameListSelectedId,
+    eventGames: eventGames,
+    routeGames: routeGames,
+    databaseGames: databaseGames,
+    eventGamesContinuation: eventGamesContinuation,
+    routeGamesContinuation: routeGamesContinuation,
+    databaseGamesContinuation: databaseGamesContinuation,
+  );
+}
+
+TournamentGameSummary _summary(
+  String id, {
+  String roundLabel = 'R1',
+  String? pgn,
+}) {
+  return TournamentGameSummary(
+    id: id,
+    name: 'Carlsen vs Nakamura',
+    whitePlayer: 'Carlsen',
+    blackPlayer: 'Nakamura',
+    hasPgn: pgn != null,
+    tourId: 'tour-1',
+    tourSlug: 'tour-slug',
+    whiteFederation: 'NOR',
+    blackFederation: 'USA',
+    whiteTitle: 'GM',
+    blackTitle: 'GM',
+    whiteRating: 2830,
+    blackRating: 2800,
+    whiteFideId: 1503014,
+    blackFideId: 2016192,
+    fen: 'summary-fen',
+    roundId: 'round-1',
+    roundSlug: 'round-1',
+    roundLabel: roundLabel,
+    boardNumber: 1,
+    status: GameStatus.ongoing,
+    openingName: 'Sicilian Defense',
+    lastMoveTime: DateTime.utc(2026, 6, 19, 12),
+    startsAt: DateTime.utc(2026, 6, 19, 11),
+    roundStartsAt: DateTime.utc(2026, 6, 19, 10),
+    hasStarted: true,
+    pgn: pgn,
   );
 }

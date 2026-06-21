@@ -69,6 +69,8 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   Timer? _debounce;
   Timer? _scrollIdleTimer;
   bool _liveCardsPausedForScroll = false;
+  GroupedGamesData? _lastStableGrouped;
+  String? _searchReplayInFlight;
 
   // Captured once. liveGameCardsPaused is global, so a reason recomputed from a
   // changing widget.tabId could strand a stale reason in the pause set and
@@ -168,7 +170,49 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
 
   @override
   Widget build(BuildContext context) {
-    final grouped = ref.watch(gamesTourGroupedProvider);
+    ref.listen<AsyncValue<GamesScreenModel>>(gamesTourScreenProvider, (
+      previous,
+      next,
+    ) {
+      final query =
+          ref
+              .read(tournamentDetailGamesSearchByTabIdProvider(widget.tabId))
+              .trim();
+      if (query.isEmpty) return;
+
+      final model = next.valueOrNull;
+      if (model == null) return;
+      if (model.isSearchMode && model.searchQuery == query) {
+        _searchReplayInFlight = null;
+        return;
+      }
+      if (_searchReplayInFlight == query) return;
+
+      _searchReplayInFlight = query;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ref.read(gamesTourScreenProvider.notifier).searchGamesEnhanced(query);
+      });
+    });
+
+    final watchedGrouped = ref.watch(gamesTourGroupedProvider);
+    final persistedQuery =
+        ref
+            .watch(tournamentDetailGamesSearchByTabIdProvider(widget.tabId))
+            .trim();
+    final screenModel = ref.watch(gamesTourScreenProvider).valueOrNull;
+    final isRestoringSearch =
+        persistedQuery.isNotEmpty &&
+        !(screenModel?.isSearchMode == true &&
+            screenModel?.searchQuery == persistedQuery);
+    final grouped =
+        (watchedGrouped.isLoading || isRestoringSearch) &&
+                _lastStableGrouped != null
+            ? _lastStableGrouped!
+            : watchedGrouped;
+    if (!watchedGrouped.isLoading && !isRestoringSearch) {
+      _lastStableGrouped = watchedGrouped;
+    }
     final tournamentTitle = ref.watch(activeTournamentProvider)?.title ?? '';
     final streamingEnabled = ref.watch(
       desktopTabsProvider.select((state) => state.activeId == widget.tabId),
@@ -222,7 +266,8 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
             },
           ),
         ),
-        if (grouped.isLoading)
+        if ((watchedGrouped.isLoading || isRestoringSearch) &&
+            _lastStableGrouped == null)
           const Expanded(child: _LoadingState())
         else if (grouped.filteredRounds.isEmpty &&
             grouped.matchFormatHeader == null)
