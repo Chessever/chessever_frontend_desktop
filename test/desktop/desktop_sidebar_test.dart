@@ -2,8 +2,17 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:chessever/desktop/shell/desktop_pane.dart';
 import 'package:chessever/desktop/shell/desktop_sidebar.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 
 void main() {
+  test('empty workspace has no selected sidebar pane', () {
+    expect(sidebarPaneForActiveTabKind(null), isNull);
+  });
+
+  test('board tab selects the Board sidebar pane', () {
+    expect(sidebarPaneForActiveTabKind(TabKind.board), DesktopPane.board);
+  });
+
   test('Board sidebar entry opens the regular board pane', () {
     expect(debugDesktopSidebarPaneForLabel('Board'), DesktopPane.board);
   });

@@ -80,7 +80,9 @@ class DesktopShell extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final tabsState = ref.watch(desktopTabsProvider);
     final tabsNotifier = ref.read(desktopTabsProvider.notifier);
-    final activePane = ref.watch(desktopPaneProvider);
+    final activeSidebarPane = sidebarPaneForActiveTabKind(
+      tabsState.active?.kind,
+    );
     final isLocalPgnLoading = ref.watch(
       localChessLibraryProvider.select((state) => state.isScanning),
     );
@@ -250,7 +252,7 @@ class DesktopShell extends HookConsumerWidget {
         // collapses again). Any other tap navigates and auto-collapses
         // the sidebar so the content pane gets the screen back.
         void handleSidebarSelect(DesktopPane pane, {required bool inNewTab}) {
-          if (!inNewTab && pane == activePane) {
+          if (!inNewTab && pane == activeSidebarPane) {
             toggleSidebar();
             return;
           }
@@ -637,7 +639,7 @@ class DesktopShell extends HookConsumerWidget {
                           children: [
                             if (!boardFocusActive)
                               DesktopSidebar(
-                                current: activePane,
+                                current: activeSidebarPane,
                                 expanded: sidebarExpanded,
                                 autoCollapsed: autoCollapsed,
                                 onToggleExpanded: toggleSidebar,
