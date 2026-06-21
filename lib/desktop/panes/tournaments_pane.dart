@@ -2745,29 +2745,29 @@ class _GamesStrip extends ConsumerWidget {
           });
           return const SizedBox.shrink();
         }
-        if (snapshot.isGroupEvent) {
-          return _TeamGamesStrip(
-            eventId: eventId,
-            tournamentTitle: tournamentTitle,
-            snapshot: snapshot,
-            layout: layout,
-            streamingEnabled: cardStreamingEnabled,
-            selectedGameIndex: selectedGameIndex,
-            onVisibleGameIdsChanged: onVisibleGameIdsChanged,
-          );
-        }
-        if (snapshot.isKnockoutTournament) {
-          return _KnockoutGamesStrip(
-            eventId: eventId,
-            tournamentTitle: tournamentTitle,
-            snapshot: snapshot,
-            layout: layout,
-            streamingEnabled: cardStreamingEnabled,
-            selectedGameIndex: selectedGameIndex,
-            onVisibleGameIdsChanged: onVisibleGameIdsChanged,
-          );
-        }
         if (layout != DesktopCardLayout.grid) {
+          if (snapshot.isGroupEvent) {
+            return _TeamGamesStrip(
+              eventId: eventId,
+              tournamentTitle: tournamentTitle,
+              snapshot: snapshot,
+              layout: layout,
+              streamingEnabled: cardStreamingEnabled,
+              selectedGameIndex: selectedGameIndex,
+              onVisibleGameIdsChanged: onVisibleGameIdsChanged,
+            );
+          }
+          if (snapshot.isKnockoutTournament) {
+            return _KnockoutGamesStrip(
+              eventId: eventId,
+              tournamentTitle: tournamentTitle,
+              snapshot: snapshot,
+              layout: layout,
+              streamingEnabled: cardStreamingEnabled,
+              selectedGameIndex: selectedGameIndex,
+              onVisibleGameIdsChanged: onVisibleGameIdsChanged,
+            );
+          }
           final allGames = snapshot.visibleGames.toList(growable: false);
           // Each event's strip has BOUNDED vertical space — the For You
           // feed gives every event the same hard-coded row height (see
