@@ -16,6 +16,8 @@ class ForYouEventGamesSnapshot {
     required this.tourId,
     required List<GamesTourModel> visibleGames,
     required List<String> pinnedIds,
+    this.isGroupEvent = false,
+    this.isKnockoutTournament = false,
     List<String> manualPinnedIds = const [],
     List<String> autoPinnedIds = const [],
     List<String> unpinnedOverrideIds = const [],
@@ -29,6 +31,8 @@ class ForYouEventGamesSnapshot {
   final String tourId;
   final List<GamesTourModel> visibleGames;
   final List<String> pinnedIds;
+  final bool isGroupEvent;
+  final bool isKnockoutTournament;
   final List<String> manualPinnedIds;
   final List<String> autoPinnedIds;
   final List<String> unpinnedOverrideIds;
@@ -42,6 +46,8 @@ bool areEquivalentForYouSnapshots(
 ) {
   return a.eventId == b.eventId &&
       a.tourId == b.tourId &&
+      a.isGroupEvent == b.isGroupEvent &&
+      a.isKnockoutTournament == b.isKnockoutTournament &&
       _stringListsEqual(a.pinnedIds, b.pinnedIds) &&
       _stringListsEqual(a.manualPinnedIds, b.manualPinnedIds) &&
       _stringListsEqual(a.autoPinnedIds, b.autoPinnedIds) &&
@@ -206,6 +212,8 @@ ForYouEventGamesSnapshot buildForYouEventGamesSnapshot({
     tourId: selectedTour.id,
     visibleGames: orderedVisibleGames,
     pinnedIds: pinnedIds,
+    isGroupEvent: isGroupEvent,
+    isKnockoutTournament: isKnockoutTournament,
     manualPinnedIds: manualPinnedIds,
     autoPinnedIds: autoPinnedIds,
     unpinnedOverrideIds: unpinnedOverrideIds,

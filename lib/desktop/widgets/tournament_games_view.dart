@@ -20,6 +20,7 @@ import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
+import 'package:chessever/desktop/widgets/desktop_team_match_grouping.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
@@ -34,6 +35,7 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_vi
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_grouped_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_mode_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/round_expansion_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
@@ -201,6 +203,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
             .watch(tournamentDetailGamesSearchByTabIdProvider(widget.tabId))
             .trim();
     final screenModel = ref.watch(gamesTourScreenProvider).valueOrNull;
+    final gamesTourMode = ref.watch(gamesTourScreenModeProvider).valueOrNull;
     final isRestoringSearch =
         persistedQuery.isNotEmpty &&
         !(screenModel?.isSearchMode == true &&
@@ -214,6 +217,9 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
       _lastStableGrouped = watchedGrouped;
     }
     final tournamentTitle = ref.watch(activeTournamentProvider)?.title ?? '';
+    final isTeamEvent =
+        gamesTourMode == GamesTourScreenMode.groupEvent &&
+        !grouped.isKnockoutTournament;
     final streamingEnabled = ref.watch(
       desktopTabsProvider.select((state) => state.activeId == widget.tabId),
     );
@@ -322,6 +328,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                             tournamentTitle: tournamentTitle,
                             layout: layout,
                             isKnockout: grouped.isKnockoutTournament,
+                            isTeamEvent: isTeamEvent,
                             roundStartsAtById: roundStartsAtById,
                             roundNameById: roundNameById,
                             streamingEnabled: cardStreamingEnabled,
@@ -476,6 +483,7 @@ class _RoundSection extends ConsumerWidget {
     required this.tournamentTitle,
     required this.layout,
     required this.isKnockout,
+    required this.isTeamEvent,
     required this.roundStartsAtById,
     required this.roundNameById,
     required this.streamingEnabled,
@@ -491,6 +499,7 @@ class _RoundSection extends ConsumerWidget {
   final String tournamentTitle;
   final DesktopCardLayout layout;
   final bool isKnockout;
+  final bool isTeamEvent;
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
   final bool streamingEnabled;
@@ -503,6 +512,7 @@ class _RoundSection extends ConsumerWidget {
     // match cards (Carlsen vs Nepo: Game 1 / Game 2 / Tiebreak).
     final showMatches =
         isKnockout && KnockoutMatchDetector.isKnockoutMatchFormat(games);
+    final showTeamMatches = isTeamEvent && games.isNotEmpty;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -520,7 +530,21 @@ class _RoundSection extends ConsumerWidget {
           ),
           if (expanded) ...[
             const SizedBox(height: 8),
-            if (showMatches)
+            if (showTeamMatches)
+              _TeamMatchesList(
+                scopeId: scopeId,
+                selectedGameId: selectedGameId,
+                onSelectGame: onSelectGame,
+                keyForGame: keyForGame,
+                games: games,
+                eventGames: eventGames,
+                tournamentTitle: tournamentTitle,
+                layout: layout,
+                roundStartsAtById: roundStartsAtById,
+                roundNameById: roundNameById,
+                streamingEnabled: streamingEnabled,
+              )
+            else if (showMatches)
               _MatchesList(
                 scopeId: scopeId,
                 selectedGameId: selectedGameId,
@@ -687,6 +711,257 @@ class _GamesGrid extends ConsumerWidget {
               ),
         );
       },
+    );
+  }
+}
+
+class _TeamMatchesList extends StatelessWidget {
+  const _TeamMatchesList({
+    required this.scopeId,
+    required this.selectedGameId,
+    required this.onSelectGame,
+    required this.keyForGame,
+    required this.games,
+    required this.eventGames,
+    required this.tournamentTitle,
+    required this.layout,
+    required this.roundStartsAtById,
+    required this.roundNameById,
+    required this.streamingEnabled,
+  });
+
+  final String scopeId;
+  final String? selectedGameId;
+  final ValueChanged<String> onSelectGame;
+  final Key Function(String gameId) keyForGame;
+  final List<GamesTourModel> games;
+  final List<GamesTourModel> eventGames;
+  final String tournamentTitle;
+  final DesktopCardLayout layout;
+  final Map<String, DateTime?> roundStartsAtById;
+  final Map<String, String> roundNameById;
+  final bool streamingEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = buildDesktopTeamMatchGroups(games);
+    if (groups.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final group in groups)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _TeamMatchSection(
+              scopeId: scopeId,
+              selectedGameId: selectedGameId,
+              onSelectGame: onSelectGame,
+              keyForGame: keyForGame,
+              group: group,
+              eventGames: eventGames,
+              tournamentTitle: tournamentTitle,
+              layout: layout,
+              roundStartsAtById: roundStartsAtById,
+              roundNameById: roundNameById,
+              streamingEnabled: streamingEnabled,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _TeamMatchSection extends StatelessWidget {
+  const _TeamMatchSection({
+    required this.scopeId,
+    required this.selectedGameId,
+    required this.onSelectGame,
+    required this.keyForGame,
+    required this.group,
+    required this.eventGames,
+    required this.tournamentTitle,
+    required this.layout,
+    required this.roundStartsAtById,
+    required this.roundNameById,
+    required this.streamingEnabled,
+  });
+
+  final String scopeId;
+  final String? selectedGameId;
+  final ValueChanged<String> onSelectGame;
+  final Key Function(String gameId) keyForGame;
+  final DesktopTeamMatchGroup group;
+  final List<GamesTourModel> eventGames;
+  final String tournamentTitle;
+  final DesktopCardLayout layout;
+  final Map<String, DateTime?> roundStartsAtById;
+  final Map<String, String> roundNameById;
+  final bool streamingEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final games = group.gameModels;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _TeamMatchHeader(group: group),
+        const SizedBox(height: 8),
+        if (layout == DesktopCardLayout.grid)
+          _GamesGrid(
+            scopeId: scopeId,
+            selectedGameId: selectedGameId,
+            onSelectGame: onSelectGame,
+            keyForGame: keyForGame,
+            games: games,
+            eventGames: eventGames,
+            tournamentTitle: tournamentTitle,
+            roundStartsAtById: roundStartsAtById,
+            roundNameById: roundNameById,
+            streamingEnabled: streamingEnabled,
+          )
+        else
+          _GamesList(
+            scopeId: scopeId,
+            selectedGameId: selectedGameId,
+            onSelectGame: onSelectGame,
+            keyForGame: keyForGame,
+            games: games,
+            eventGames: eventGames,
+            tournamentTitle: tournamentTitle,
+            layout: layout,
+            roundStartsAtById: roundStartsAtById,
+            roundNameById: roundNameById,
+            streamingEnabled: streamingEnabled,
+          ),
+      ],
+    );
+  }
+}
+
+class _TeamMatchHeader extends StatelessWidget {
+  const _TeamMatchHeader({required this.group});
+
+  final DesktopTeamMatchGroup group;
+
+  @override
+  Widget build(BuildContext context) {
+    final score = group.score;
+    final leftScore = formatDesktopTeamMatchScore(score.left);
+    final rightScore = formatDesktopTeamMatchScore(score.right);
+    final leftColor =
+        score.isDraw
+            ? kWhiteColor
+            : score.left > score.right
+            ? kPrimaryColor
+            : kRedColor;
+    final rightColor =
+        score.isDraw
+            ? kWhiteColor
+            : score.right > score.left
+            ? kPrimaryColor
+            : kRedColor;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: kPrimaryColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: kPrimaryColor.withValues(alpha: 0.35)),
+            ),
+            child: const Text(
+              'TEAM',
+              style: TextStyle(
+                color: kPrimaryColor,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.7,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              group.leftTeam,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kWhiteColor,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          _TeamScoreText(label: leftScore, color: leftColor),
+          const SizedBox(width: 10),
+          const Text(
+            'VS',
+            style: TextStyle(
+              color: kLightGreyColor,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.7,
+            ),
+          ),
+          const SizedBox(width: 10),
+          _TeamScoreText(label: rightScore, color: rightColor),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              group.rightTeam,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.end,
+              style: const TextStyle(
+                color: kWhiteColor,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            '${group.games.length} board${group.games.length == 1 ? '' : 's'}',
+            style: const TextStyle(color: kLightGreyColor, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TeamScoreText extends StatelessWidget {
+  const _TeamScoreText({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 34,
+      child: Text(
+        label,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: color,
+          fontSize: 15,
+          fontWeight: FontWeight.w800,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
     );
   }
 }

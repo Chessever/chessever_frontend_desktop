@@ -23,6 +23,7 @@ import 'package:chessever/desktop/widgets/desktop_collection_cards.dart';
 import 'package:chessever/desktop/widgets/desktop_for_you_strip_layout.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
+import 'package:chessever/desktop/widgets/desktop_team_match_grouping.dart';
 import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
@@ -47,6 +48,7 @@ import 'package:chessever/screens/premium_games/providers/premium_games_provider
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/location_service_provider.dart';
 import 'package:chessever/widgets/event_card/event_image_provider.dart';
@@ -1901,7 +1903,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   final ScrollController _scroll = ScrollController();
   final Set<String> _animatedEventIds = <String>{};
   final Map<String, GlobalKey> _eventKeys = <String, GlobalKey>{};
-  final Map<String, int> _visibleGameCounts = <String, int>{};
+  final Map<String, List<String>> _visibleGameIds = <String, List<String>>{};
   final Map<String, bool> _eventVisibility = <String, bool>{};
   Timer? _scrollIdleTimer;
   _ForYouCardSelection? _selection;
@@ -1983,40 +1985,56 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     });
   }
 
-  void _setVisibleGameCount(String eventId, int count) {
+  void _setVisibleGameIds(String eventId, List<String> gameIds) {
     if (!mounted) return;
-    if (_visibleGameCounts[eventId] == count) return;
+    final previous = _visibleGameIds[eventId] ?? const <String>[];
+    if (previous.length == gameIds.length) {
+      var unchanged = true;
+      for (var i = 0; i < previous.length; i++) {
+        if (previous[i] != gameIds[i]) {
+          unchanged = false;
+          break;
+        }
+      }
+      if (unchanged) return;
+    }
     setState(() {
-      _visibleGameCounts[eventId] = count;
+      _visibleGameIds[eventId] = List<String>.unmodifiable(gameIds);
       final selection = _selection;
       if (selection?.eventId == eventId && selection!.isGame) {
-        if (count <= 0) {
+        if (gameIds.isEmpty) {
           _selection = _ForYouCardSelection(
             eventId: eventId,
             column: EventGameCardFocusColumn.event,
           );
-        } else if (selection.gameIndex >= count) {
+        } else if (selection.gameIndex >= gameIds.length) {
           _selection = _ForYouCardSelection(
             eventId: eventId,
             column: EventGameCardFocusColumn.game,
-            gameIndex: count - 1,
+            gameIndex: gameIds.length - 1,
           );
         }
       }
     });
   }
 
-  int _gameCountFor(GroupEventCardModel event) {
-    final reported = _visibleGameCounts[event.id];
+  List<String> _gameIdsFor(GroupEventCardModel event) {
+    final reported = _visibleGameIds[event.id];
     final snapshot =
         ref.read(forYouEventSnapshotProvider(event.id)).valueOrNull;
-    final snapshotCount = snapshot?.visibleGames.length ?? 0;
-    if (reported == null) return snapshotCount;
-    // The rendered strip reports how many game cards fit after layout, but that
-    // callback can briefly lag behind provider updates or keep a stale zero from
-    // a prior loading/empty pass. If a snapshot already has games, let Right
-    // Arrow enter the first board card instead of appearing dead.
-    return reported > 0 ? reported : snapshotCount;
+    final snapshotIds =
+        snapshot?.visibleGames.map((game) => game.gameId).toList() ??
+        const <String>[];
+    if (reported == null) return snapshotIds;
+    // The rendered strip reports exactly which game cards fit after layout,
+    // but that callback can briefly lag behind provider updates or keep a stale
+    // empty pass. If a snapshot already has games, let Right Arrow enter the
+    // first board card instead of appearing dead.
+    return reported.isNotEmpty ? reported : snapshotIds;
+  }
+
+  int _gameCountFor(GroupEventCardModel event) {
+    return _gameIdsFor(event).length;
   }
 
   int _eventPageStrideFor(DesktopCardLayout layout) {
@@ -2174,9 +2192,16 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     final snapshot =
         ref.read(forYouEventSnapshotProvider(event.id)).valueOrNull;
     if (snapshot == null) return;
-    final count = _gameCountFor(event);
-    if (count <= 0) return;
-    final games = snapshot.visibleGames.take(count).toList(growable: false);
+    final gameIds = _gameIdsFor(event);
+    if (gameIds.isEmpty) return;
+    final gamesById = {
+      for (final game in snapshot.visibleGames) game.gameId: game,
+    };
+    final games = [
+      for (final gameId in gameIds)
+        if (gamesById[gameId] != null) gamesById[gameId]!,
+    ];
+    if (games.isEmpty) return;
     final gameIndex = _clampIndex(selection.gameIndex, 0, games.length - 1);
     openTournamentGameTab(
       ref,
@@ -2356,8 +2381,8 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                   onOpen: () => widget.onOpenTournament(event),
                   onVisibilityChanged:
                       (visible) => _setEventVisibility(event.id, visible),
-                  onVisibleGameCountChanged:
-                      (count) => _setVisibleGameCount(event.id, count),
+                  onVisibleGameIdsChanged:
+                      (gameIds) => _setVisibleGameIds(event.id, gameIds),
                 ),
               );
             },
@@ -2387,7 +2412,7 @@ class _ForYouEventSection extends ConsumerWidget {
     required this.streamingEnabled,
     required this.onOpen,
     required this.onVisibilityChanged,
-    required this.onVisibleGameCountChanged,
+    required this.onVisibleGameIdsChanged,
   });
 
   static const double eventCardWidth = 280;
@@ -2400,7 +2425,7 @@ class _ForYouEventSection extends ConsumerWidget {
   final bool streamingEnabled;
   final VoidCallback onOpen;
   final ValueChanged<bool> onVisibilityChanged;
-  final ValueChanged<int> onVisibleGameCountChanged;
+  final ValueChanged<List<String>> onVisibleGameIdsChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -2470,7 +2495,7 @@ class _ForYouEventSection extends ConsumerWidget {
                 streamingEnabled: streamingEnabled,
                 selectedGameIndex:
                     selection?.isGame == true ? selection!.gameIndex : null,
-                onVisibleGameCountChanged: onVisibleGameCountChanged,
+                onVisibleGameIdsChanged: onVisibleGameIdsChanged,
               ),
             ),
           ],
@@ -2695,7 +2720,7 @@ class _GamesStrip extends ConsumerWidget {
     required this.layout,
     required this.streamingEnabled,
     required this.selectedGameIndex,
-    required this.onVisibleGameCountChanged,
+    required this.onVisibleGameIdsChanged,
   });
 
   final String eventId;
@@ -2704,7 +2729,7 @@ class _GamesStrip extends ConsumerWidget {
   final DesktopCardLayout layout;
   final bool streamingEnabled;
   final int? selectedGameIndex;
-  final ValueChanged<int> onVisibleGameCountChanged;
+  final ValueChanged<List<String>> onVisibleGameIdsChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -2716,9 +2741,31 @@ class _GamesStrip extends ConsumerWidget {
       data: (snapshot) {
         if (snapshot.visibleGames.isEmpty) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            onVisibleGameCountChanged(0);
+            onVisibleGameIdsChanged(const <String>[]);
           });
           return const SizedBox.shrink();
+        }
+        if (snapshot.isGroupEvent) {
+          return _TeamGamesStrip(
+            eventId: eventId,
+            tournamentTitle: tournamentTitle,
+            snapshot: snapshot,
+            layout: layout,
+            streamingEnabled: cardStreamingEnabled,
+            selectedGameIndex: selectedGameIndex,
+            onVisibleGameIdsChanged: onVisibleGameIdsChanged,
+          );
+        }
+        if (snapshot.isKnockoutTournament) {
+          return _KnockoutGamesStrip(
+            eventId: eventId,
+            tournamentTitle: tournamentTitle,
+            snapshot: snapshot,
+            layout: layout,
+            streamingEnabled: cardStreamingEnabled,
+            selectedGameIndex: selectedGameIndex,
+            onVisibleGameIdsChanged: onVisibleGameIdsChanged,
+          );
         }
         if (layout != DesktopCardLayout.grid) {
           final allGames = snapshot.visibleGames.toList(growable: false);
@@ -2756,7 +2803,9 @@ class _GamesStrip extends ConsumerWidget {
                 games: games,
               );
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                onVisibleGameCountChanged(games.length);
+                onVisibleGameIdsChanged(
+                  games.map((game) => game.gameId).toList(growable: false),
+                );
               });
               return DesktopGameCardsFlow(
                 layout: layout,
@@ -2765,6 +2814,7 @@ class _GamesStrip extends ConsumerWidget {
                 itemBuilder:
                     (context, i) => LiveDesktopGameCard(
                       game: games[i],
+                      eventGames: snapshot.visibleGames,
                       tournamentTitle: tournamentTitle,
                       layout: layout,
                       selected: selectedGameIndex == i,
@@ -2788,7 +2838,9 @@ class _GamesStrip extends ConsumerWidget {
                 .take(strip.visibleCount)
                 .toList(growable: false);
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              onVisibleGameCountChanged(games.length);
+              onVisibleGameIdsChanged(
+                games.map((game) => game.gameId).toList(growable: false),
+              );
             });
             final liveBatchKey = _desktopForYouLiveBatchKey(
               eventId: eventId,
@@ -2805,6 +2857,7 @@ class _GamesStrip extends ConsumerWidget {
                     width: strip.cardWidth,
                     child: LiveDesktopGameCard(
                       game: games[i],
+                      eventGames: snapshot.visibleGames,
                       tournamentTitle: tournamentTitle,
                       layout: DesktopCardLayout.grid,
                       selected: selectedGameIndex == i,
@@ -2894,6 +2947,541 @@ class _GamesStrip extends ConsumerWidget {
               ),
             ),
           ),
+    );
+  }
+}
+
+const double _kForYouGroupGap = 10;
+const double _kForYouGroupMinWidth = 284;
+const double _kForYouGroupMaxWidth = 420;
+const double _kForYouGroupHeaderHeight = 54;
+const double _kForYouGroupHeaderGap = 8;
+
+int _forYouGroupPanelCount(double maxWidth, int groupCount) {
+  if (groupCount <= 0) return 0;
+  if (!maxWidth.isFinite || maxWidth <= 0) return 1;
+  return ((maxWidth + _kForYouGroupGap) /
+          (_kForYouGroupMinWidth + _kForYouGroupGap))
+      .floor()
+      .clamp(1, groupCount)
+      .toInt();
+}
+
+double _forYouGroupPanelWidth(double maxWidth, int panelCount) {
+  if (!maxWidth.isFinite || maxWidth <= 0 || panelCount <= 0) {
+    return _kForYouGroupMinWidth;
+  }
+  final available = maxWidth - (_kForYouGroupGap * (panelCount - 1));
+  return (available / panelCount).clamp(
+    _kForYouGroupMinWidth,
+    _kForYouGroupMaxWidth,
+  );
+}
+
+int _forYouGamesPerGroupPanel(double maxHeight, DesktopCardLayout layout) {
+  final rowHeight =
+      maxHeight.isFinite
+          ? maxHeight
+          : _ForYouEventSection._rowHeightFor(layout);
+  final metrics = DesktopGameCardsFlow.metricsFor(DesktopCardLayout.compact);
+  final available =
+      rowHeight - _kForYouGroupHeaderHeight - _kForYouGroupHeaderGap;
+  return ((available + metrics.spacing) /
+          (metrics.tileHeight + metrics.spacing))
+      .floor()
+      .clamp(1, 3)
+      .toInt();
+}
+
+class _TeamGamesStrip extends StatelessWidget {
+  const _TeamGamesStrip({
+    required this.eventId,
+    required this.tournamentTitle,
+    required this.snapshot,
+    required this.layout,
+    required this.streamingEnabled,
+    required this.selectedGameIndex,
+    required this.onVisibleGameIdsChanged,
+  });
+
+  final String eventId;
+  final String tournamentTitle;
+  final ForYouEventGamesSnapshot snapshot;
+  final DesktopCardLayout layout;
+  final bool streamingEnabled;
+  final int? selectedGameIndex;
+  final ValueChanged<List<String>> onVisibleGameIdsChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = buildDesktopTeamMatchGroups(snapshot.visibleGames);
+    if (groups.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        onVisibleGameIdsChanged(const <String>[]);
+      });
+      return const SizedBox.shrink();
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final panelCount = _forYouGroupPanelCount(
+          constraints.maxWidth,
+          groups.length,
+        );
+        final gamesPerPanel = _forYouGamesPerGroupPanel(
+          constraints.maxHeight,
+          layout,
+        );
+        final displayedGroups = groups.take(panelCount).toList(growable: false);
+        final displayedGameIds = <String>[];
+        final panelGames = <DesktopTeamMatchGroup, List<GamesTourModel>>{};
+        for (final group in displayedGroups) {
+          final games = group.gameModels
+              .take(gamesPerPanel)
+              .toList(growable: false);
+          panelGames[group] = games;
+          displayedGameIds.addAll(games.map((game) => game.gameId));
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          onVisibleGameIdsChanged(List<String>.unmodifiable(displayedGameIds));
+        });
+        final selectedGameId =
+            selectedGameIndex != null &&
+                    selectedGameIndex! >= 0 &&
+                    selectedGameIndex! < displayedGameIds.length
+                ? displayedGameIds[selectedGameIndex!]
+                : null;
+        final liveBatchKey = _desktopForYouLiveBatchKey(
+          eventId: eventId,
+          tourId: snapshot.tourId,
+          games: [
+            for (final gameId in displayedGameIds)
+              snapshot.visibleGames.firstWhere((game) => game.gameId == gameId),
+          ],
+        );
+        final panelWidth = _forYouGroupPanelWidth(
+          constraints.maxWidth,
+          displayedGroups.length,
+        );
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < displayedGroups.length; i++) ...[
+              if (i > 0) const SizedBox(width: _kForYouGroupGap),
+              SizedBox(
+                width: panelWidth,
+                child: _ForYouTeamMatchPanel(
+                  group: displayedGroups[i],
+                  games: panelGames[displayedGroups[i]] ?? const [],
+                  selectedGameId: selectedGameId,
+                  tournamentTitle: tournamentTitle,
+                  eventGames: snapshot.visibleGames,
+                  liveBatchKey: liveBatchKey,
+                  streamingEnabled: streamingEnabled,
+                ),
+              ),
+            ],
+            const Spacer(),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _KnockoutGamesStrip extends StatelessWidget {
+  const _KnockoutGamesStrip({
+    required this.eventId,
+    required this.tournamentTitle,
+    required this.snapshot,
+    required this.layout,
+    required this.streamingEnabled,
+    required this.selectedGameIndex,
+    required this.onVisibleGameIdsChanged,
+  });
+
+  final String eventId;
+  final String tournamentTitle;
+  final ForYouEventGamesSnapshot snapshot;
+  final DesktopCardLayout layout;
+  final bool streamingEnabled;
+  final int? selectedGameIndex;
+  final ValueChanged<List<String>> onVisibleGameIdsChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final groupedByMatch = KnockoutMatchDetector.groupByMatches(
+      snapshot.visibleGames,
+    );
+    final headers = [
+      for (final entry in groupedByMatch.entries)
+        KnockoutMatchDetector.createMatchHeader(entry.key, entry.value),
+    ];
+    if (headers.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        onVisibleGameIdsChanged(const <String>[]);
+      });
+      return const SizedBox.shrink();
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final panelCount = _forYouGroupPanelCount(
+          constraints.maxWidth,
+          headers.length,
+        );
+        final gamesPerPanel = _forYouGamesPerGroupPanel(
+          constraints.maxHeight,
+          layout,
+        );
+        final displayedHeaders = headers
+            .take(panelCount)
+            .toList(growable: false);
+        final displayedGameIds = <String>[];
+        final panelGames = <MatchHeaderModel, List<GamesTourModel>>{};
+        for (final header in displayedHeaders) {
+          final games = header.games
+              .take(gamesPerPanel)
+              .toList(growable: false);
+          panelGames[header] = games;
+          displayedGameIds.addAll(games.map((game) => game.gameId));
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          onVisibleGameIdsChanged(List<String>.unmodifiable(displayedGameIds));
+        });
+        final selectedGameId =
+            selectedGameIndex != null &&
+                    selectedGameIndex! >= 0 &&
+                    selectedGameIndex! < displayedGameIds.length
+                ? displayedGameIds[selectedGameIndex!]
+                : null;
+        final liveBatchKey = _desktopForYouLiveBatchKey(
+          eventId: eventId,
+          tourId: snapshot.tourId,
+          games: [
+            for (final gameId in displayedGameIds)
+              snapshot.visibleGames.firstWhere((game) => game.gameId == gameId),
+          ],
+        );
+        final panelWidth = _forYouGroupPanelWidth(
+          constraints.maxWidth,
+          displayedHeaders.length,
+        );
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < displayedHeaders.length; i++) ...[
+              if (i > 0) const SizedBox(width: _kForYouGroupGap),
+              SizedBox(
+                width: panelWidth,
+                child: _ForYouKnockoutMatchPanel(
+                  header: displayedHeaders[i],
+                  games: panelGames[displayedHeaders[i]] ?? const [],
+                  selectedGameId: selectedGameId,
+                  tournamentTitle: tournamentTitle,
+                  eventGames: snapshot.visibleGames,
+                  liveBatchKey: liveBatchKey,
+                  streamingEnabled: streamingEnabled,
+                ),
+              ),
+            ],
+            const Spacer(),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ForYouTeamMatchPanel extends StatelessWidget {
+  const _ForYouTeamMatchPanel({
+    required this.group,
+    required this.games,
+    required this.selectedGameId,
+    required this.tournamentTitle,
+    required this.eventGames,
+    required this.liveBatchKey,
+    required this.streamingEnabled,
+  });
+
+  final DesktopTeamMatchGroup group;
+  final List<GamesTourModel> games;
+  final String? selectedGameId;
+  final String tournamentTitle;
+  final List<GamesTourModel> eventGames;
+  final LiveGamesBatchKey liveBatchKey;
+  final bool streamingEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ForYouGroupedPanelFrame(
+      header: _ForYouTeamMatchHeader(group: group),
+      games: games,
+      selectedGameId: selectedGameId,
+      tournamentTitle: tournamentTitle,
+      eventGames: eventGames,
+      liveBatchKey: liveBatchKey,
+      streamingEnabled: streamingEnabled,
+    );
+  }
+}
+
+class _ForYouKnockoutMatchPanel extends StatelessWidget {
+  const _ForYouKnockoutMatchPanel({
+    required this.header,
+    required this.games,
+    required this.selectedGameId,
+    required this.tournamentTitle,
+    required this.eventGames,
+    required this.liveBatchKey,
+    required this.streamingEnabled,
+  });
+
+  final MatchHeaderModel header;
+  final List<GamesTourModel> games;
+  final String? selectedGameId;
+  final String tournamentTitle;
+  final List<GamesTourModel> eventGames;
+  final LiveGamesBatchKey liveBatchKey;
+  final bool streamingEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ForYouGroupedPanelFrame(
+      header: _ForYouKnockoutMatchHeader(header: header),
+      games: games,
+      selectedGameId: selectedGameId,
+      tournamentTitle: tournamentTitle,
+      eventGames: eventGames,
+      liveBatchKey: liveBatchKey,
+      streamingEnabled: streamingEnabled,
+    );
+  }
+}
+
+class _ForYouGroupedPanelFrame extends StatelessWidget {
+  const _ForYouGroupedPanelFrame({
+    required this.header,
+    required this.games,
+    required this.selectedGameId,
+    required this.tournamentTitle,
+    required this.eventGames,
+    required this.liveBatchKey,
+    required this.streamingEnabled,
+  });
+
+  final Widget header;
+  final List<GamesTourModel> games;
+  final String? selectedGameId;
+  final String tournamentTitle;
+  final List<GamesTourModel> eventGames;
+  final LiveGamesBatchKey liveBatchKey;
+  final bool streamingEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final metrics = DesktopGameCardsFlow.metricsFor(DesktopCardLayout.compact);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(height: _kForYouGroupHeaderHeight, child: header),
+            const SizedBox(height: _kForYouGroupHeaderGap),
+            for (var i = 0; i < games.length; i++) ...[
+              if (i > 0) SizedBox(height: metrics.spacing),
+              SizedBox(
+                height: metrics.tileHeight,
+                child: LiveDesktopGameCard(
+                  game: games[i],
+                  eventGames: eventGames,
+                  tournamentTitle: tournamentTitle,
+                  layout: DesktopCardLayout.compact,
+                  selected: selectedGameId == games[i].gameId,
+                  viewSource: ChessboardView.forYou,
+                  liveBatchKey: liveBatchKey,
+                  streamingEnabled: streamingEnabled,
+                  allowStockfishFallback: true,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ForYouTeamMatchHeader extends StatelessWidget {
+  const _ForYouTeamMatchHeader({required this.group});
+
+  final DesktopTeamMatchGroup group;
+
+  @override
+  Widget build(BuildContext context) {
+    final score = group.score;
+    final leftColor =
+        score.isDraw
+            ? kWhiteColor
+            : score.left > score.right
+            ? kPrimaryColor
+            : kRedColor;
+    final rightColor =
+        score.isDraw
+            ? kWhiteColor
+            : score.right > score.left
+            ? kPrimaryColor
+            : kRedColor;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: kBackgroundColor,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Row(
+        children: [
+          Expanded(child: _ForYouTeamName(group.leftTeam, TextAlign.start)),
+          _ForYouScorePill(
+            label: formatDesktopTeamMatchScore(score.left),
+            color: leftColor,
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 7),
+            child: Text(
+              'VS',
+              style: TextStyle(
+                color: kLightGreyColor,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.7,
+              ),
+            ),
+          ),
+          _ForYouScorePill(
+            label: formatDesktopTeamMatchScore(score.right),
+            color: rightColor,
+          ),
+          Expanded(child: _ForYouTeamName(group.rightTeam, TextAlign.end)),
+        ],
+      ),
+    );
+  }
+}
+
+class _ForYouKnockoutMatchHeader extends StatelessWidget {
+  const _ForYouKnockoutMatchHeader({required this.header});
+
+  final MatchHeaderModel header;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: kBackgroundColor,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+            decoration: BoxDecoration(
+              color: kPrimaryColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: kPrimaryColor.withValues(alpha: 0.35)),
+            ),
+            child: const Text(
+              'MATCH',
+              style: TextStyle(
+                color: kPrimaryColor,
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.6,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              header.matchTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kWhiteColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            header.scoreDisplay,
+            style: const TextStyle(
+              color: kWhiteColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ForYouTeamName extends StatelessWidget {
+  const _ForYouTeamName(this.name, this.textAlign);
+
+  final String name;
+  final TextAlign textAlign;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      name,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      textAlign: textAlign,
+      style: const TextStyle(
+        color: kWhiteColor,
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+        height: 1.1,
+      ),
+    );
+  }
+}
+
+class _ForYouScorePill extends StatelessWidget {
+  const _ForYouScorePill({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 26,
+      child: Text(
+        label,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: color,
+          fontSize: 13,
+          fontWeight: FontWeight.w800,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
     );
   }
 }
