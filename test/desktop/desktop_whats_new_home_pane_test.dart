@@ -14,6 +14,8 @@ void main() {
         ),
       );
 
+      expect(find.text('Ctrl/Cmd + right-click'), findsOneWidget);
+      expect(find.text('Open the board/game context menu.'), findsOneWidget);
       expect(find.text('O'), findsOneWidget);
       expect(find.text('Open Explorer from the board.'), findsOneWidget);
       expect(find.text('Enter'), findsOneWidget);
