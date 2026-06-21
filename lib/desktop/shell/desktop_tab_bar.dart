@@ -1367,7 +1367,7 @@ class _CloseButtonState extends State<_CloseButton> {
             onTapCancel:
                 widget.visible ? () => setState(() => _pressed = false) : null,
             child: SingleMotionBuilder(
-              value: _pressed ? 0.85 : (_hovered ? 1.08 : 1.0),
+              value: _pressed ? 0.97 : (_hovered ? 1.02 : 1.0),
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
               builder:
                   (context, scale, child) =>

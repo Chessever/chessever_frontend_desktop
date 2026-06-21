@@ -1,5 +1,9 @@
+import 'dart:math' as math;
+
+import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/match_expansion_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/round_expansion_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/game_card_wrapper_provider.dart';
@@ -52,6 +56,9 @@ class GamesListView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     // Expansion states for rounds and matches
     // In search mode, override expansion to show everything
+    final shouldStream = ref.watch(shouldStreamProvider);
+    final streamEnabled = shouldStream;
+    final allowStockfishFallback = streamEnabled;
     final matchExpansionState =
         isSearchMode
             ? <String, bool>{} // Empty map means all expanded by default
@@ -74,6 +81,10 @@ class GamesListView extends ConsumerWidget {
       isKnockoutTournament,
       matchGroupsByRound,
     );
+
+    // Realtime fan-in: every visible round shares chunked Supabase channels
+    // instead of creating one realtime channel per card.
+    final liveBatchKeyByGameId = _buildLiveBatchKeys(gamesByRound);
 
     final itemCount = _computeItemCount(
       gamesListViewMode,
@@ -213,6 +224,9 @@ class GamesListView extends ConsumerWidget {
                             lookup,
                             orderedGamesList,
                             matchGroupsByRound,
+                            liveBatchKeyByGameId,
+                            allowStockfishFallback,
+                            streamEnabled,
                           )
                           : _buildCardRow(
                             context,
@@ -220,6 +234,9 @@ class GamesListView extends ConsumerWidget {
                             lookup,
                             orderedGamesList,
                             matchGroupsByRound,
+                            liveBatchKeyByGameId,
+                            allowStockfishFallback,
+                            streamEnabled,
                           ),
                 );
                 // TABLET: Wrap with SizedBox to provide bounded width
@@ -268,6 +285,9 @@ class GamesListView extends ConsumerWidget {
     _GameRowData item,
     List<GamesTourModel> orderedGamesList,
     Map<String, Map<String, List<GamesTourModel>>> matchGroupsByRound,
+    Map<String, LiveGamesBatchKey> liveBatchKeyByGameId,
+    bool allowStockfishFallback,
+    bool streamEnabled,
   ) {
     final game1Widget = _buildGridGame(
       context,
@@ -277,6 +297,9 @@ class GamesListView extends ConsumerWidget {
       orderedGamesList,
       matchGroupsByRound,
       item.fixedBottomSide1,
+      liveBatchKeyByGameId,
+      allowStockfishFallback,
+      streamEnabled,
     );
 
     final game2Widget =
@@ -289,6 +312,9 @@ class GamesListView extends ConsumerWidget {
               orderedGamesList,
               matchGroupsByRound,
               item.fixedBottomSide2,
+              liveBatchKeyByGameId,
+              allowStockfishFallback,
+              streamEnabled,
             )
             : null;
 
@@ -321,10 +347,14 @@ class GamesListView extends ConsumerWidget {
     List<GamesTourModel> orderedGamesList,
     Map<String, Map<String, List<GamesTourModel>>> matchGroupsByRound,
     Side? fixedBottomSide,
+    Map<String, LiveGamesBatchKey> liveBatchKeyByGameId,
+    bool allowStockfishFallback,
+    bool streamEnabled,
   ) {
     return GridGameCardWrapperWidget(
       key: ValueKey('game_${game.gameId}'),
       game: game,
+      liveBatchKey: liveBatchKeyByGameId[game.gameId],
       orderedGames: orderedGamesList,
       gameIndex: globalIndex,
       onChangedWithLiveGames:
@@ -351,6 +381,8 @@ class GamesListView extends ConsumerWidget {
               ),
       pinnedIds: gamesData.pinnedGamedIs,
       fixedBottomSide: fixedBottomSide,
+      allowStockfishFallback: allowStockfishFallback,
+      streamEnabled: streamEnabled,
       onPinToggle:
           (_) async => await ref
               .read(gamesTourScreenProvider.notifier)
@@ -364,6 +396,9 @@ class GamesListView extends ConsumerWidget {
     _GameRowData item,
     List<GamesTourModel> orderedGamesList,
     Map<String, Map<String, List<GamesTourModel>>> matchGroupsByRound,
+    Map<String, LiveGamesBatchKey> liveBatchKeyByGameId,
+    bool allowStockfishFallback,
+    bool streamEnabled,
   ) {
     // Create modified gamesData with correct orderedGames for multi-stage knockouts
     final modifiedGamesData = GamesScreenModel(
@@ -373,10 +408,13 @@ class GamesListView extends ConsumerWidget {
 
     return GameCardWrapperWidget(
       game: item.game1,
+      liveBatchKey: liveBatchKeyByGameId[item.game1.gameId],
       gamesData: modifiedGamesData,
       gameIndex: item.globalIndex1,
       isChessBoardVisible: gamesListViewMode == GamesListViewMode.chessBoard,
       fixedBottomSide: item.fixedBottomSide1,
+      allowStockfishFallback: allowStockfishFallback,
+      streamEnabled: streamEnabled,
       onReturnFromChessboard: (returnedIndex) {
         final latestMatchExpansion = ref.read(matchExpansionProvider);
         final latestRoundExpansion = ref.read(roundExpansionProvider);
@@ -424,6 +462,36 @@ class GamesListView extends ConsumerWidget {
       );
     }
   }
+}
+
+/// Max games per batched realtime channel. This keeps Supabase `in` filters
+/// bounded while avoiding one realtime channel per visible card.
+const int _kLiveBatchChunkSize = 25;
+
+Map<String, LiveGamesBatchKey> _buildLiveBatchKeys(
+  Map<String, List<GamesTourModel>> gamesByRound,
+) {
+  final result = <String, LiveGamesBatchKey>{};
+  for (final entry in gamesByRound.entries) {
+    final roundId = entry.key;
+    final games = entry.value;
+    if (games.isEmpty) continue;
+
+    final chunkCount = (games.length / _kLiveBatchChunkSize).ceil();
+    for (var chunk = 0; chunk < chunkCount; chunk++) {
+      final start = chunk * _kLiveBatchChunkSize;
+      final end = math.min(start + _kLiveBatchChunkSize, games.length);
+      final chunkGames = games.sublist(start, end);
+      final key = LiveGamesBatchKey(
+        scopeId: 'tour_round:$roundId:$chunk',
+        gameIds: chunkGames.map((game) => game.gameId),
+      );
+      for (final game in chunkGames) {
+        result[game.gameId] = key;
+      }
+    }
+  }
+  return result;
 }
 
 int _computeItemCount(

@@ -682,7 +682,7 @@ class _SettingsLinkRowState extends State<_SettingsLinkRow> {
 
   @override
   Widget build(BuildContext context) {
-    final nudgeX = _pressed ? -1.5 : (_hovered ? 4.0 : 0.0);
+    final nudgeX = _pressed ? -0.75 : (_hovered ? 1.5 : 0.0);
     return ClickCursor(
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
@@ -1132,7 +1132,8 @@ class _PrimaryButtonState extends State<_PrimaryButton> {
           onTapUp: disabled ? null : (_) => setState(() => _pressed = false),
           onTapCancel: disabled ? null : () => setState(() => _pressed = false),
           child: SingleMotionBuilder(
-            value: disabled ? 1.0 : (_pressed ? 0.96 : (_hovered ? 1.02 : 1.0)),
+            value:
+                disabled ? 1.0 : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0)),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
@@ -1202,7 +1203,8 @@ class _SecondaryButtonState extends State<_SecondaryButton> {
           onTapUp: disabled ? null : (_) => setState(() => _pressed = false),
           onTapCancel: disabled ? null : () => setState(() => _pressed = false),
           child: SingleMotionBuilder(
-            value: disabled ? 1.0 : (_pressed ? 0.96 : (_hovered ? 1.02 : 1.0)),
+            value:
+                disabled ? 1.0 : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0)),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>

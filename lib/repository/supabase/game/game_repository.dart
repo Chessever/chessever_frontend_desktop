@@ -75,6 +75,9 @@ const List<String> _classicalTimeControlValues = [
   'Classical',
 ];
 
+const int _currentSmartGamesFetchCap = 6000;
+const int _currentSmartGamesPageSize = 1000;
+
 int gameStructuredAverageRating(Games game) {
   final players = game.players;
   if (players == null || players.length < 2) return 0;
@@ -630,6 +633,143 @@ class GameRepository extends BaseRepository {
       });
 
       return result.take(limit).toList();
+    });
+  }
+
+  /// Get smart collection games scoped to events in `group_broadcasts_current`.
+  ///
+  /// Desktop smart collections are persistent, preconfigured smart events. They
+  /// must not drift into past broadcasts, so this resolves the current view
+  /// first, then loads started games from the matching tours.
+  Future<List<Games>> getCurrentSmartEventGames({
+    bool liveOnly = false,
+    int? minEventAverageElo,
+    int? minGameAverageElo,
+    List<String>? eventTimeControls,
+    int limit = _currentSmartGamesFetchCap,
+    int offset = 0,
+  }) async {
+    return handleApiCall(() async {
+      dynamic eventQuery = supabase
+          .from('group_broadcasts_current')
+          .select('id,max_avg_elo,time_control,date_closest_round,date_start');
+
+      if (minEventAverageElo != null) {
+        eventQuery = eventQuery.gte('max_avg_elo', minEventAverageElo);
+      }
+
+      if (eventTimeControls != null && eventTimeControls.isNotEmpty) {
+        eventQuery = eventQuery.inFilter('time_control', eventTimeControls);
+      }
+
+      final eventResponse = await eventQuery
+          .order('max_avg_elo', ascending: false, nullsFirst: false)
+          .order('date_closest_round', ascending: true, nullsFirst: false)
+          .limit(500);
+
+      final eventIds =
+          (eventResponse as List)
+              .map((row) => row['id'] as String?)
+              .whereType<String>()
+              .where((id) => id.isNotEmpty)
+              .toList(growable: false);
+
+      if (eventIds.isEmpty) return <Games>[];
+
+      final tourIds = <String>[];
+      for (final chunk in _chunks(eventIds, 40)) {
+        final tourResponse = await supabase
+            .from('tours')
+            .select('id')
+            .inFilter('group_broadcast_id', chunk);
+        tourIds.addAll(
+          (tourResponse as List)
+              .map((row) => row['id'] as String?)
+              .whereType<String>()
+              .where((id) => id.isNotEmpty),
+        );
+      }
+
+      if (tourIds.isEmpty) return <Games>[];
+
+      final selectColumns =
+          '$_gameListSelectColumns,\nrounds!games_round_id_fkey!inner(starts_at)';
+      final nowIso = DateTime.now().toUtc().toIso8601String();
+      final jsonList = <String>[];
+      var pageOffset = 0;
+      var remaining = _currentSmartGamesFetchCap;
+
+      while (remaining > 0) {
+        final pageSize =
+            remaining > _currentSmartGamesPageSize
+                ? _currentSmartGamesPageSize
+                : remaining;
+
+        dynamic gamesQuery = supabase
+            .from('games')
+            .select(selectColumns)
+            .inFilter('tour_id', tourIds)
+            .or(
+              'starts_at.is.null,starts_at.lte.$nowIso',
+              referencedTable: 'rounds',
+            );
+
+        if (liveOnly) {
+          gamesQuery = gamesQuery.inFilter('status', ['*', 'ongoing']);
+        }
+
+        if (minGameAverageElo != null) {
+          gamesQuery = gamesQuery.gte('player_max_rating', minGameAverageElo);
+        }
+
+        final response = await gamesQuery
+            .order('last_move_time', ascending: false, nullsFirst: false)
+            .order('game_day', ascending: false, nullsFirst: false)
+            .order('date_start', ascending: false, nullsFirst: false)
+            .order('player_max_rating', ascending: false, nullsFirst: false)
+            .range(pageOffset, pageOffset + pageSize - 1);
+
+        final responseList = response as List;
+        jsonList.addAll(responseList.map((item) => json.encode(item)));
+
+        if (responseList.length < pageSize) break;
+        pageOffset += responseList.length;
+        remaining -= responseList.length;
+      }
+
+      var games = await compute(_decodeGamesInIsolate, jsonList);
+
+      if (eventTimeControls != null && eventTimeControls.isNotEmpty) {
+        final normalizedEventTimeControls =
+            eventTimeControls
+                .map((value) => value.trim().toLowerCase())
+                .where((value) => value.isNotEmpty)
+                .toSet();
+        games =
+            games
+                .where(
+                  (game) => normalizedEventTimeControls.contains(
+                    game.timeControl?.trim().toLowerCase(),
+                  ),
+                )
+                .toList();
+      }
+
+      if (minGameAverageElo != null) {
+        games =
+            games
+                .where(
+                  (game) =>
+                      gameStructuredAverageRating(game) >= minGameAverageElo,
+                )
+                .toList();
+      }
+
+      final result = _deduplicateGames(games);
+      result.sort(_compareCurrentSmartGames);
+
+      if (offset <= 0) return result.take(limit).toList();
+      return result.skip(offset).take(limit).toList();
     });
   }
 
@@ -1621,6 +1761,47 @@ List<Games> _decodeGamesInIsolate(List<String> gameJsonList) {
 List<Games> _deduplicateGames(List<Games> games) {
   final seen = <String>{};
   return games.where((game) => seen.add(game.id)).toList();
+}
+
+int _compareCurrentSmartGames(Games a, Games b) {
+  final aDay = _currentSmartGameDay(a);
+  final bDay = _currentSmartGameDay(b);
+  final byDay = bDay.compareTo(aDay);
+  if (byDay != 0) return byDay;
+
+  final byAverageElo = gameStructuredAverageRating(
+    b,
+  ).compareTo(gameStructuredAverageRating(a));
+  if (byAverageElo != 0) return byAverageElo;
+
+  final byTopElo = _currentSmartGameTopElo(
+    b,
+  ).compareTo(_currentSmartGameTopElo(a));
+  if (byTopElo != 0) return byTopElo;
+
+  final aBoard = a.boardNr;
+  final bBoard = b.boardNr;
+  if (aBoard != null && bBoard != null) return aBoard.compareTo(bBoard);
+  if (aBoard != null) return -1;
+  if (bBoard != null) return 1;
+
+  return a.id.compareTo(b.id);
+}
+
+DateTime _currentSmartGameDay(Games game) {
+  final raw = game.lastMoveTime ?? game.gameDay ?? game.dateStart ?? DateTime(0);
+  final local = raw.toLocal();
+  return DateTime(local.year, local.month, local.day);
+}
+
+int _currentSmartGameTopElo(Games game) {
+  final players = game.players;
+  if (players == null || players.isEmpty) return 0;
+  return players.fold<int>(
+    0,
+    (maxRating, player) =>
+        player.rating > maxRating ? player.rating : maxRating,
+  );
 }
 
 Iterable<List<T>> _chunks<T>(List<T> items, int size) sync* {

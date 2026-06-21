@@ -272,7 +272,7 @@ class _SidebarHeaderButtonState extends State<_SidebarHeaderButton> {
           onTapUp: (_) => setState(() => _pressed = false),
           onTapCancel: () => setState(() => _pressed = false),
           child: SingleMotionBuilder(
-            value: _pressed ? 0.94 : (_hovered ? 1.04 : 1.0),
+            value: _pressed ? 0.97 : (_hovered ? 1.012 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>

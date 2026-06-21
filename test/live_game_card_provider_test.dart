@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -204,6 +205,111 @@ void main() {
       expect(sub.read()?.fen, afterE4);
       expect(repository.subscribeToGameUpdatesCount, 0);
     });
+
+    test('paused live cards still consume realtime row updates', () async {
+      final controller = StreamController<Map<String, dynamic>?>();
+      addTearDown(controller.close);
+      final repository = _FakeGameStreamRepository(controller.stream);
+
+      final container = ProviderContainer(
+        overrides: [gameStreamRepositoryProvider.overrideWithValue(repository)],
+      );
+      addTearDown(container.dispose);
+
+      container.read(baseGameProvider('game-1').notifier).state = _game(
+        id: 'game-1',
+        status: GameStatus.ongoing,
+        fen: afterE4,
+        pgn: '[Event "Test"]\n\n1. e4 *',
+        lastMove: 'e2e4',
+        lastMoveTime: DateTime.utc(2026, 5, 26, 12),
+        whiteClockSeconds: 180,
+        blackClockSeconds: 180,
+      );
+      container.read(liveGameCardsPauseReasonsProvider.notifier).state = {
+        'desktop_scroll',
+      };
+
+      final sub = container.listen(
+        scopedLiveGameCardProvider(const LiveGameWatchParams(gameId: 'game-1')),
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(sub.close);
+
+      controller.add({
+        'fen': afterE4E5,
+        'pgn': pgnAfterE4E5,
+        'last_move': 'e7e5',
+        'last_move_time': '2026-05-26T12:03:00Z',
+        'last_clock_white': 170,
+        'last_clock_black': 160,
+        'status': '*',
+      });
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(repository.subscribeToGameUpdatesCount, 1);
+      expect(sub.read()?.fen, afterE4E5);
+      expect(sub.read()?.lastMove, 'e7e5');
+      expect(sub.read()?.whiteClockSeconds, 170);
+      expect(sub.read()?.blackClockSeconds, 160);
+    });
+
+    test(
+      'clock projection keeps position and move timestamp in sync',
+      () async {
+        final controller = StreamController<Map<String, dynamic>?>();
+        addTearDown(controller.close);
+
+        final container = ProviderContainer(
+          overrides: [
+            gameStreamRepositoryProvider.overrideWithValue(
+              _FakeGameStreamRepository(controller.stream),
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        container.read(baseGameProvider('game-1').notifier).state = _game(
+          id: 'game-1',
+          status: GameStatus.ongoing,
+          fen: afterE4,
+          pgn: '[Event "Test"]\n\n1. e4 *',
+          lastMove: 'e2e4',
+          lastMoveTime: DateTime.utc(2026, 5, 26, 12),
+          whiteClockSeconds: 180,
+          blackClockSeconds: 180,
+        );
+
+        final sub = container.listen(
+          liveGameClockProvider(const LiveGameWatchParams(gameId: 'game-1')),
+          (_, __) {},
+          fireImmediately: true,
+        );
+        addTearDown(sub.close);
+
+        controller.add({
+          'fen': afterE4E5,
+          'pgn': pgnAfterE4E5,
+          'last_move': 'e7e5',
+          'last_move_time': '2026-05-26T12:03:00Z',
+          'last_clock_white': 170,
+          'last_clock_black': 160,
+          'status': '*',
+        });
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+
+        final liveGame = sub.read();
+        expect(liveGame?.fen, afterE4E5);
+        expect(liveGame?.pgn, pgnAfterE4E5);
+        expect(liveGame?.lastMove, 'e7e5');
+        expect(liveGame?.lastMoveTime, DateTime.utc(2026, 5, 26, 12, 3));
+        expect(liveGame?.whiteClockSeconds, 170);
+        expect(liveGame?.blackClockSeconds, 160);
+      },
+    );
 
     testWidgets(
       'parent rebuilds cannot overwrite newer streamed clocks at the same ply',

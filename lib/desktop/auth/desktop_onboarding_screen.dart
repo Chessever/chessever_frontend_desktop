@@ -1885,7 +1885,7 @@ class _OnboardingIconButtonState extends State<_OnboardingIconButton> {
   @override
   Widget build(BuildContext context) {
     final disabled = widget.onPress == null;
-    final scale = disabled ? 1.0 : (_pressed ? 0.94 : (_hovered ? 1.04 : 1.0));
+    final scale = disabled ? 1.0 : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0));
 
     return SingleMotionBuilder(
       value: scale,

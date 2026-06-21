@@ -203,9 +203,32 @@ class PremiumGamesNotifier
   bool _isFetching = false;
   int _offset = 0;
   static const int _pageSize = 30;
+  static const int _smartEventFetchCap = 6000;
+  static const Duration _smartEventRefreshInterval = Duration(minutes: 1);
+  Timer? _smartEventRefreshTimer;
 
   Future<void> _initialize() async {
     await loadGames();
+    _startSmartEventRefreshTimer();
+  }
+
+  bool get _isCurrentSmartEventType {
+    return _type == PremiumGamesType.live ||
+        _type == PremiumGamesType.gm ||
+        _type == PremiumGamesType.classical;
+  }
+
+  void _startSmartEventRefreshTimer() {
+    if (!_isCurrentSmartEventType || _smartEventRefreshTimer != null) return;
+    _smartEventRefreshTimer = Timer.periodic(_smartEventRefreshInterval, (_) {
+      unawaited(loadGames(showLoading: false));
+    });
+  }
+
+  @override
+  void dispose() {
+    _smartEventRefreshTimer?.cancel();
+    super.dispose();
   }
 
   /// Load initial games with current filter.
@@ -389,12 +412,13 @@ class PremiumGamesNotifier
 
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        final games = await repository.getLiveGames(
-          limit: _pageSize,
-          offset: _offset,
+        final games = await repository.getCurrentSmartEventGames(
+          liveOnly: true,
+          limit: _smartEventFetchCap,
         );
 
-        if (games.isNotEmpty || _offset > 0 || attempt == maxAttempts) {
+        if (games.isNotEmpty || attempt == maxAttempts) {
+          _hasMore = false;
           return games.map((g) => GamesTourModel.fromGame(g)).toList();
         }
 
@@ -423,10 +447,10 @@ class PremiumGamesNotifier
 
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        final games = await repository.getHighAverageEloGames(
-          minAverageElo: 2500,
-          limit: 200,
-          offset: 0,
+        final games = await repository.getCurrentSmartEventGames(
+          minEventAverageElo: 2500,
+          minGameAverageElo: 2500,
+          limit: _smartEventFetchCap,
         );
 
         if (games.isNotEmpty || attempt == maxAttempts) {
@@ -458,7 +482,15 @@ class PremiumGamesNotifier
 
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        final games = await repository.getClassicalGames(limit: 200, offset: 0);
+        final games = await repository.getCurrentSmartEventGames(
+          eventTimeControls: const [
+            'standard',
+            'classical',
+            'Standard',
+            'Classical',
+          ],
+          limit: _smartEventFetchCap,
+        );
 
         if (games.isNotEmpty || attempt == maxAttempts) {
           _hasMore = false;
@@ -487,7 +519,19 @@ class PremiumGamesNotifier
 
   void _sortGames() {
     _allGames.sort((a, b) {
-      if (_type == PremiumGamesType.countrymen ||
+      if (_isCurrentSmartEventType) {
+        final aDay = _smartGameDay(a);
+        final bDay = _smartGameDay(b);
+        final dayCompare = bDay.compareTo(aDay);
+        if (dayCompare != 0) return dayCompare;
+
+        final eloCompare = _avgElo(b).compareTo(_avgElo(a));
+        if (eloCompare != 0) return eloCompare;
+
+        return (b.lastMoveTime ?? DateTime(0)).compareTo(
+          a.lastMoveTime ?? DateTime(0),
+        );
+      } else if (_type == PremiumGamesType.countrymen ||
           _type == PremiumGamesType.gm) {
         // For Countrymen: Primary is avgElo DESC, Secondary is lastMoveTime DESC
         final aElo = _avgElo(a);
@@ -520,6 +564,12 @@ class PremiumGamesNotifier
     if (white == 0) return black;
     if (black == 0) return white;
     return (white + black) ~/ 2;
+  }
+
+  DateTime _smartGameDay(GamesTourModel game) {
+    final raw = game.lastMoveTime ?? game.bucketDate ?? DateTime(0);
+    final local = raw.toLocal();
+    return DateTime(local.year, local.month, local.day);
   }
 
   /// Get filtered games based on current filter.

@@ -1015,8 +1015,8 @@ class _FavoriteStarButtonState extends State<_FavoriteStarButton> {
           onTapUp: (_) => setState(() => _pressed = false),
           onTapCancel: () => setState(() => _pressed = false),
           child: SingleMotionBuilder(
-            value: _pressed ? 0.85 : (_hovered ? 1.1 : 1.0),
-            motion: _pressed ? DesktopMotion.tap : DesktopMotion.arrival,
+            value: _pressed ? 0.97 : (_hovered ? 1.02 : 1.0),
+            motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
                     Transform.scale(scale: scale, child: child),

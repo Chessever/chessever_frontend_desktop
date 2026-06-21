@@ -22,6 +22,7 @@ class GameCardWrapperWidget extends ConsumerWidget {
   final ChessboardView viewSource;
   final Side? fixedBottomSide;
   final bool allowStockfishFallback;
+  final bool streamEnabled;
   final LiveGamesBatchKey? liveBatchKey;
 
   const GameCardWrapperWidget({
@@ -35,6 +36,7 @@ class GameCardWrapperWidget extends ConsumerWidget {
     this.viewSource = ChessboardView.tour,
     this.fixedBottomSide,
     this.allowStockfishFallback = true,
+    this.streamEnabled = true,
     this.liveBatchKey,
   });
 
@@ -44,12 +46,23 @@ class GameCardWrapperWidget extends ConsumerWidget {
     // Use gameId as the stable key to prevent provider recreation
     final liveGame =
         isChessBoardVisible
-            ? watchLiveGamePosition(ref, game, batchKey: liveBatchKey)
-            : watchLiveGame(ref, game, batchKey: liveBatchKey);
+            ? watchLiveGamePosition(
+              ref,
+              game,
+              batchKey: liveBatchKey,
+              streamEnabled: streamEnabled,
+            )
+            : watchLiveGame(
+              ref,
+              game,
+              batchKey: liveBatchKey,
+              streamEnabled: streamEnabled,
+            );
     final effectiveAllowStockfishFallback =
+        streamEnabled &&
         allowStockfishFallback &&
-        ref.watch(shouldStreamProvider) &&
-        !ref.watch(liveGameCardsPausedProvider);
+        !ref.watch(liveGameCardsPausedProvider) &&
+        ref.watch(shouldStreamProvider);
     final keyValue = 'game_${liveGame.gameId}';
 
     // Build updated games list with the live game data for navigation

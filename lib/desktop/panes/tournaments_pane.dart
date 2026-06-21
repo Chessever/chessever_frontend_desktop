@@ -2404,7 +2404,12 @@ class _ForYouEventSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final snapshotAsync = ref.watch(forYouEventSnapshotProvider(event.id));
+    // Desktop tabs stay mounted in PersistentIndexedStack. The shared
+    // forYouEventSnapshotProvider opens a finish-refresh Realtime stream that
+    // is useful on mobile, but it would keep running behind inactive desktop
+    // routes. Let the visible card strip own the single active-tab-gated batch
+    // stream instead.
+    final snapshotAsync = ref.watch(eventGamesProvider(event.id));
     final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
 
     final shouldHide = snapshotAsync.maybeWhen(

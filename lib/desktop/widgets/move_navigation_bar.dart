@@ -379,7 +379,7 @@ class _NavButtonState extends State<_NavButton> {
             onTap: disabled ? null : widget.onTap,
             child: SingleMotionBuilder(
               value:
-                  disabled ? 1.0 : (_pressed ? 0.93 : (_hovered ? 1.04 : 1.0)),
+                  disabled ? 1.0 : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0)),
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
               builder:
                   (context, scale, child) => Transform.scale(

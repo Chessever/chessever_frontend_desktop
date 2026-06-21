@@ -1366,8 +1366,8 @@ class _StarToggleState extends State<_StarToggle> {
             behavior: HitTestBehavior.opaque,
             onTap: widget.onTap,
             child: SingleMotionBuilder(
-              value: _pressed ? 0.85 : (_hovered ? 1.1 : 1.0),
-              motion: _pressed ? DesktopMotion.tap : DesktopMotion.arrival,
+              value: _pressed ? 0.97 : (_hovered ? 1.02 : 1.0),
+              motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
               builder:
                   (context, scale, child) =>
                       Transform.scale(scale: scale, child: child),

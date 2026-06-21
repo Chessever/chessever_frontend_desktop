@@ -353,7 +353,7 @@ class _MonthPillState extends State<_MonthPill> {
           onTapCancel: () => setState(() => _pressed = false),
           behavior: HitTestBehavior.opaque,
           child: SingleMotionBuilder(
-            value: _pressed ? 0.94 : (_hovered ? 1.05 : 1.0),
+            value: _pressed ? 0.97 : (_hovered ? 1.012 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder: (context, scale, child) =>
                 Transform.scale(scale: scale, child: child),
@@ -703,7 +703,7 @@ class _DayCellState extends State<_DayCell> {
           onTapCancel: () => setState(() => _pressed = false),
           behavior: HitTestBehavior.opaque,
           child: SingleMotionBuilder(
-            value: _pressed ? 0.92 : (_hovered ? 1.04 : 1.0),
+            value: _pressed ? 0.97 : (_hovered ? 1.012 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder: (context, scale, child) =>
                 Transform.scale(scale: scale, child: child),
