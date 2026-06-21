@@ -40,9 +40,7 @@ void main() {
     expect(arrow.color, AnnotationColor.green.color);
   });
 
-  testWidgets('plain secondary tap stays available for the context menu', (
-    tester,
-  ) async {
+  testWidgets('plain secondary tap toggles a green circle', (tester) async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
     await _pumpBoard(tester, container);
@@ -53,13 +51,39 @@ void main() {
     );
     await tester.pump();
 
-    expect(
-      container.read(boardAnnotationsProvider(_defaultTabId)).shapes,
-      isEmpty,
-    );
+    final shapes =
+        container.read(boardAnnotationsProvider(_defaultTabId)).shapes;
+    expect(shapes, hasLength(1));
+    final circle = shapes.single as cg.Circle;
+    expect(circle.orig, Square.e2);
+    expect(circle.color, AnnotationColor.green.color);
   });
 
-  testWidgets('modifier secondary tap toggles a colored circle', (
+  testWidgets('shift secondary tap toggles a colored circle', (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await _pumpBoard(tester, container);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    try {
+      await tester.tapAt(
+        _squareOffset(tester, Square.e2),
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pump();
+    } finally {
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    }
+
+    final shapes =
+        container.read(boardAnnotationsProvider(_defaultTabId)).shapes;
+    expect(shapes, hasLength(1));
+    final circle = shapes.single as cg.Circle;
+    expect(circle.orig, Square.e2);
+    expect(circle.color, AnnotationColor.red.color);
+  });
+
+  testWidgets('ctrl secondary tap stays reserved for the board context menu', (
     tester,
   ) async {
     final container = ProviderContainer();
@@ -77,12 +101,10 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     }
 
-    final shapes =
-        container.read(boardAnnotationsProvider(_defaultTabId)).shapes;
-    expect(shapes, hasLength(1));
-    final circle = shapes.single as cg.Circle;
-    expect(circle.orig, Square.e2);
-    expect(circle.color, AnnotationColor.yellow.color);
+    expect(
+      container.read(boardAnnotationsProvider(_defaultTabId)).shapes,
+      isEmpty,
+    );
   });
 }
 

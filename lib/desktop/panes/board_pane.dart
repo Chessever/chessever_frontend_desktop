@@ -3285,17 +3285,13 @@ class _BoardPaneContent extends HookConsumerWidget {
                     Expanded(
                       child: GestureDetector(
                         onSecondaryTapUp: (details) {
-                          // Modifier+Right is reserved for drawing circles /
-                          // colour variants on the board annotation layer.
-                          // Plain right-drag draws arrows; plain right-click
-                          // still opens this context menu.
+                          // Plain right-click / right-drag belongs to the
+                          // annotation layer (circle / arrow), matching common
+                          // chess-board behaviour. Keep the lower-frequency
+                          // board context menu behind Ctrl/Cmd + right-click.
                           final pressed =
                               HardwareKeyboard.instance.logicalKeysPressed;
-                          final annotationModifierHeld =
-                              pressed.contains(LogicalKeyboardKey.shiftLeft) ||
-                              pressed.contains(LogicalKeyboardKey.shiftRight) ||
-                              pressed.contains(LogicalKeyboardKey.altLeft) ||
-                              pressed.contains(LogicalKeyboardKey.altRight) ||
+                          final contextMenuModifierHeld =
                               pressed.contains(
                                 LogicalKeyboardKey.controlLeft,
                               ) ||
@@ -3304,7 +3300,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                               ) ||
                               pressed.contains(LogicalKeyboardKey.metaLeft) ||
                               pressed.contains(LogicalKeyboardKey.metaRight);
-                          if (annotationModifierHeld) return;
+                          if (!contextMenuModifierHeld) return;
                           showBoardContextMenu(
                             ref,
                             context,
