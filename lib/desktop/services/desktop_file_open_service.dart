@@ -27,6 +27,7 @@ class DesktopFileOpenService {
   Future<bool> forwardToPrimaryIfRunning({
     List<String> initialArguments = const <String>[],
   }) async {
+    if (!kReleaseMode) return false;
     if (initialArguments.contains(_newInstanceFlag)) return false;
 
     final paths = chessPathsFromArguments(initialArguments);
@@ -182,9 +183,10 @@ class DesktopFileOpenService {
     if (trimmed.isEmpty || trimmed.startsWith('--')) return null;
 
     final maybeUri = Uri.tryParse(trimmed);
-    final path = maybeUri != null && maybeUri.scheme == 'file'
-        ? maybeUri.toFilePath(windows: Platform.isWindows)
-        : trimmed;
+    final path =
+        maybeUri != null && maybeUri.scheme == 'file'
+            ? maybeUri.toFilePath(windows: Platform.isWindows)
+            : trimmed;
 
     if (Directory(path).existsSync() ||
         (looksLikeLocalChessFile(path) && File(path).existsSync())) {
