@@ -75,6 +75,21 @@ List<String> eventRailRangeSelectionIds({
   return [for (var i = start; i <= end; i++) orderedGames[i].id];
 }
 
+@visibleForTesting
+List<String> eventRailOrderedIdsForTesting(
+  List<TournamentGameSummary> games, {
+  bool preserveInputOrder = false,
+}) {
+  return _buildRoundGroups(
+        games,
+        groupByRound: true,
+        preserveInputOrder: preserveInputOrder,
+      )
+      .expand((group) => group.games)
+      .map((game) => game.id)
+      .toList(growable: false);
+}
+
 /// Board-pane companion table for the event that produced the active game.
 ///
 /// The source of truth is the active Board tab's [BoardTabGameArgs]. The
@@ -646,6 +661,9 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
     if (resolved == null || resolved.games.isEmpty) {
       return const SizedBox.shrink();
     }
+    final preserveEventInputOrder =
+        resolved.kind == _GameListKind.event &&
+        effectiveArgs?.viewSource == ChessboardView.playerProfile;
 
     final allRoundGroups =
         resolved.kind == _GameListKind.favorites
@@ -653,6 +671,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
             : _buildRoundGroups(
               resolved.games,
               groupByRound: resolved.kind == _GameListKind.event,
+              preserveInputOrder: preserveEventInputOrder,
             );
     final showUpcoming =
         resolved.kind == _GameListKind.event &&
@@ -664,7 +683,11 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
     final upcomingGroups =
         upcomingGames.isEmpty
             ? const <_EventRoundGroup>[]
-            : _buildRoundGroups(upcomingGames, groupByRound: true);
+            : _buildRoundGroups(
+              upcomingGames,
+              groupByRound: true,
+              preserveInputOrder: preserveEventInputOrder,
+            );
     final roundGroups =
         resolved.kind == _GameListKind.event && !showUpcoming
             ? _buildRoundGroups(
@@ -672,6 +695,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
                   .where((game) => !_isUpcomingGameForRail(game))
                   .toList(growable: false),
               groupByRound: true,
+              preserveInputOrder: preserveEventInputOrder,
             )
             : allRoundGroups;
     final showBoardColumn = resolved.kind == _GameListKind.event;
@@ -1103,6 +1127,9 @@ Future<void> navigateActiveEventGame(
     _normalizeRailTab(ref.read(_gameRailTabProvider(activeTabId)), rail),
   );
   if (resolved == null || resolved.games.isEmpty) return Future.value();
+  final preserveEventInputOrder =
+      resolved.kind == _GameListKind.event &&
+      activeArgs?.viewSource == ChessboardView.playerProfile;
 
   final groupsForOrdering =
       resolved.kind == _GameListKind.favorites
@@ -1115,6 +1142,7 @@ Future<void> navigateActiveEventGame(
                     .toList(growable: false)
                 : resolved.games,
             groupByRound: resolved.kind == _GameListKind.event,
+            preserveInputOrder: preserveEventInputOrder,
           );
   final orderedGames = groupsForOrdering
       .expand((round) => round.games)
@@ -1160,6 +1188,7 @@ Future<void> navigateActiveEventGame(
           : _buildRoundGroups(
             resolved.games,
             groupByRound: resolved.kind == _GameListKind.event,
+            preserveInputOrder: preserveEventInputOrder,
           );
   final contextGames = allGroupsForContext
       .expand((round) => round.games)
@@ -1474,6 +1503,7 @@ class _EventRoundGroup {
 List<_EventRoundGroup> _buildRoundGroups(
   List<TournamentGameSummary> games, {
   required bool groupByRound,
+  bool preserveInputOrder = false,
 }) {
   if (!groupByRound) {
     return [
@@ -1496,8 +1526,10 @@ List<_EventRoundGroup> _buildRoundGroups(
 
   final groups =
       byRound.entries.map((entry) {
-        final roundGames = List<TournamentGameSummary>.from(entry.value)
-          ..sort(_compareEventGamesInRound);
+        final roundGames = List<TournamentGameSummary>.from(entry.value);
+        if (!preserveInputOrder) {
+          roundGames.sort(_compareEventGamesInRound);
+        }
         final first = roundGames.first;
         return _EventRoundGroup(
           id: entry.key,
@@ -1507,6 +1539,8 @@ List<_EventRoundGroup> _buildRoundGroups(
           games: roundGames,
         );
       }).toList();
+
+  if (preserveInputOrder) return groups;
 
   // Deterministic reverse chronological order. The mobile `sortRoundsForDisplay`
   // rotates a "focus" round to the top based on `DateTime.now()` and
