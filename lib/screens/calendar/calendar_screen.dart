@@ -679,6 +679,8 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
         width: 16.sp,
         height: 16.sp,
         fit: BoxFit.contain,
+        cacheWidth: (16.sp * MediaQuery.devicePixelRatioOf(context)).round(),
+        cacheHeight: (16.sp * MediaQuery.devicePixelRatioOf(context)).round(),
       );
     }
 

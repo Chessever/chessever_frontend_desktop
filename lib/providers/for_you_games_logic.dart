@@ -16,6 +16,8 @@ class ForYouEventGamesSnapshot {
     required this.tourId,
     required List<GamesTourModel> visibleGames,
     required List<String> pinnedIds,
+    this.isGroupEvent = false,
+    this.isKnockoutTournament = false,
     List<String> manualPinnedIds = const [],
     List<String> autoPinnedIds = const [],
     List<String> unpinnedOverrideIds = const [],
@@ -29,6 +31,8 @@ class ForYouEventGamesSnapshot {
   final String tourId;
   final List<GamesTourModel> visibleGames;
   final List<String> pinnedIds;
+  final bool isGroupEvent;
+  final bool isKnockoutTournament;
   final List<String> manualPinnedIds;
   final List<String> autoPinnedIds;
   final List<String> unpinnedOverrideIds;
@@ -42,6 +46,8 @@ bool areEquivalentForYouSnapshots(
 ) {
   return a.eventId == b.eventId &&
       a.tourId == b.tourId &&
+      a.isGroupEvent == b.isGroupEvent &&
+      a.isKnockoutTournament == b.isKnockoutTournament &&
       _stringListsEqual(a.pinnedIds, b.pinnedIds) &&
       _stringListsEqual(a.manualPinnedIds, b.manualPinnedIds) &&
       _stringListsEqual(a.autoPinnedIds, b.autoPinnedIds) &&
@@ -101,7 +107,8 @@ bool _gamesEqual(GamesTourModel a, GamesTourModel b) {
       a.lastMoveTime == b.lastMoveTime &&
       a.eco == b.eco &&
       a.openingName == b.openingName &&
-      a.timeControl == b.timeControl;
+      a.timeControl == b.timeControl &&
+      a.isOnline == b.isOnline;
 }
 
 bool _playerCardsEqual(PlayerCard a, PlayerCard b) {
@@ -205,6 +212,8 @@ ForYouEventGamesSnapshot buildForYouEventGamesSnapshot({
     tourId: selectedTour.id,
     visibleGames: orderedVisibleGames,
     pinnedIds: pinnedIds,
+    isGroupEvent: isGroupEvent,
+    isKnockoutTournament: isKnockoutTournament,
     manualPinnedIds: manualPinnedIds,
     autoPinnedIds: autoPinnedIds,
     unpinnedOverrideIds: unpinnedOverrideIds,
@@ -253,37 +262,33 @@ List<GamesTourModel> sortGameModelsForGamesTab({
     if (aPinned && !bPinned) return -1;
     if (!aPinned && bPinned) return 1;
 
-    if (aPinned && bPinned) {
-      final aIndex = pinnedIds.indexOf(a.gameId);
-      final bIndex = pinnedIds.indexOf(b.gameId);
-      if (aIndex != bIndex) {
-        return aIndex.compareTo(bIndex);
-      }
-    }
-
-    final roundA = _extractRoundNumber(a.roundSlug);
-    final roundB = _extractRoundNumber(b.roundSlug);
-    if (roundA != roundB) {
-      return roundB.compareTo(roundA);
-    }
-
-    final gameA = _extractGameNumber(a.roundSlug);
-    final gameB = _extractGameNumber(b.roundSlug);
-    if (gameA != gameB) {
-      return gameB.compareTo(gameA);
-    }
-
-    final aBoard = a.boardNr;
-    final bBoard = b.boardNr;
-    if (aBoard != null && bBoard != null) {
-      return aBoard.compareTo(bBoard);
-    }
-    if (aBoard != null) return -1;
-    if (bBoard != null) return 1;
-    return 0;
+    return _compareGameModelsByDisplayOrder(a, b);
   });
 
   return sortedGames;
+}
+
+int _compareGameModelsByDisplayOrder(GamesTourModel a, GamesTourModel b) {
+  final roundA = _extractRoundNumber(a.roundSlug);
+  final roundB = _extractRoundNumber(b.roundSlug);
+  if (roundA != roundB) {
+    return roundB.compareTo(roundA);
+  }
+
+  final gameA = _extractGameNumber(a.roundSlug);
+  final gameB = _extractGameNumber(b.roundSlug);
+  if (gameA != gameB) {
+    return gameB.compareTo(gameA);
+  }
+
+  final aBoard = a.boardNr;
+  final bBoard = b.boardNr;
+  if (aBoard != null && bBoard != null) {
+    return aBoard.compareTo(bBoard);
+  }
+  if (aBoard != null) return -1;
+  if (bBoard != null) return 1;
+  return 0;
 }
 
 List<String> mergePinnedIds({
@@ -806,10 +811,9 @@ List<GamesTourModel> _pinOnlySort(
   sorted.sort((a, b) {
     final aPinned = pinnedIds.contains(a.gameId);
     final bPinned = pinnedIds.contains(b.gameId);
-    if (aPinned == bPinned) {
-      return 0;
-    }
-    return aPinned ? -1 : 1;
+    if (aPinned && !bPinned) return -1;
+    if (!aPinned && bPinned) return 1;
+    return _compareGameModelsByDisplayOrder(a, b);
   });
   return sorted;
 }

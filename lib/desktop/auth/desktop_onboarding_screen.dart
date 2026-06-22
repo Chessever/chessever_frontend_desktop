@@ -329,6 +329,9 @@ class _OnboardingRail extends StatelessWidget {
               height: 44,
               fit: BoxFit.cover,
               filterQuality: FilterQuality.high,
+              cacheWidth: (44 * MediaQuery.devicePixelRatioOf(context)).round(),
+              cacheHeight:
+                  (44 * MediaQuery.devicePixelRatioOf(context)).round(),
             ),
           ),
           const SizedBox(height: 18),
@@ -1837,6 +1840,7 @@ class _OnboardingButtonState extends State<_OnboardingButton> {
           child: Transform.scale(
             scale: scale,
             alignment: Alignment.center,
+            filterQuality: FilterQuality.medium,
             child: child,
           ),
         );
@@ -1885,7 +1889,7 @@ class _OnboardingIconButtonState extends State<_OnboardingIconButton> {
   @override
   Widget build(BuildContext context) {
     final disabled = widget.onPress == null;
-    final scale = disabled ? 1.0 : (_pressed ? 0.94 : (_hovered ? 1.04 : 1.0));
+    final scale = disabled ? 1.0 : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0));
 
     return SingleMotionBuilder(
       value: scale,
@@ -1894,6 +1898,7 @@ class _OnboardingIconButtonState extends State<_OnboardingIconButton> {
           (context, value, child) => Transform.scale(
             scale: value,
             alignment: Alignment.center,
+            filterQuality: FilterQuality.medium,
             child: child,
           ),
       child: FButton.icon(

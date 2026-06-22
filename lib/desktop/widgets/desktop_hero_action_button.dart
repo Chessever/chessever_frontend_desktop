@@ -72,6 +72,9 @@ class _DesktopHeroActionButtonState extends State<DesktopHeroActionButton> {
               (context, value, child) => Transform.scale(
                 scale: value,
                 alignment: Alignment.center,
+                // Bitmap-scale so Impeller keeps the label steady through the
+                // press/hover scale instead of re-shaping glyphs (flutter#149652).
+                filterQuality: FilterQuality.medium,
                 child: child,
               ),
           child: button,

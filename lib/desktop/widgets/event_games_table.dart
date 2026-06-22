@@ -2269,7 +2269,7 @@ class _UpcomingRoundsToggleState extends State<_UpcomingRoundsToggle> {
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
               builder:
                   (context, scale, child) =>
-                      Transform.scale(scale: scale, child: child),
+                      Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 120),
                 padding: const EdgeInsets.symmetric(
@@ -2904,7 +2904,7 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 100),
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),

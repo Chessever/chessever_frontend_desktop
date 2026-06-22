@@ -118,7 +118,7 @@ class EventFavoriteCard extends ConsumerWidget {
                             ),
                             SizedBox(width: 8.w),
                           ],
-                          _buildTimeControlIcon(timeControl),
+                          _buildTimeControlIcon(context, timeControl),
                           SizedBox(width: 4.w),
                           Text(
                             timeControl,
@@ -261,7 +261,7 @@ class EventFavoriteCard extends ConsumerWidget {
     );
   }
 
-  Widget _buildTimeControlIcon(String timeControl) {
+  Widget _buildTimeControlIcon(BuildContext context, String timeControl) {
     final lowerTimeControl = timeControl.toLowerCase();
     String? assetPath;
 
@@ -286,6 +286,8 @@ class EventFavoriteCard extends ConsumerWidget {
       width: 14.ic,
       height: 14.ic,
       fit: BoxFit.contain,
+      cacheWidth: (14.ic * MediaQuery.devicePixelRatioOf(context)).round(),
+      cacheHeight: (14.ic * MediaQuery.devicePixelRatioOf(context)).round(),
     );
   }
 }

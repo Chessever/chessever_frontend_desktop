@@ -1412,8 +1412,11 @@ class _RatingTileState extends State<_RatingTile> {
             value: _pressed ? 0.97 : (_hover ? 1.015 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
@@ -1431,7 +1434,15 @@ class _RatingTileState extends State<_RatingTile> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Image.asset(widget.asset, width: 18, height: 18),
+                  Image.asset(
+                    widget.asset,
+                    width: 18,
+                    height: 18,
+                    cacheWidth:
+                        (18 * MediaQuery.devicePixelRatioOf(context)).round(),
+                    cacheHeight:
+                        (18 * MediaQuery.devicePixelRatioOf(context)).round(),
+                  ),
                   const SizedBox(height: 6),
                   Text(
                     widget.label,

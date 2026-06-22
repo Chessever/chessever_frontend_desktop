@@ -23,6 +23,8 @@ import 'package:chessever/desktop/widgets/desktop_collection_cards.dart';
 import 'package:chessever/desktop/widgets/desktop_for_you_strip_layout.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
+import 'package:chessever/desktop/widgets/desktop_team_match_grouping.dart';
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
@@ -46,6 +48,8 @@ import 'package:chessever/screens/group_event/widget/filter_popup/group_event_fi
 import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/location_service_provider.dart';
 import 'package:chessever/widgets/event_card/event_image_provider.dart';
@@ -883,86 +887,156 @@ class _EventPosterCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = _categoryColor(event.tourEventCategory);
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          _DesktopEventVisual(event: event, borderRadius: BorderRadius.zero),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: kBlackColor.withValues(alpha: 0.5),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: kBlack2Color,
+          border: Border.all(color: kWhiteColor.withValues(alpha: 0.06)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              flex: 6,
+              child: _EventCardMedia(event: event, padding: 12),
+            ),
+            _EventPosterInfoPanel(event: event),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EventCardMedia extends StatelessWidget {
+  const _EventCardMedia({required this.event, required this.padding});
+
+  final GroupEventCardModel event;
+  final double padding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _DesktopEventVisual(event: event, borderRadius: BorderRadius.zero),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                kBlackColor.withValues(alpha: 0.56),
+                kBlackColor.withValues(alpha: 0.08),
+                kBlackColor.withValues(alpha: 0.18),
+              ],
+              stops: const [0, 0.58, 1],
             ),
           ),
-          Positioned(
-            left: 12,
-            top: 12,
-            right: 12,
-            child: Row(
+        ),
+        // Only the favorite icon sits on the photo — an icon reads on any
+        // artwork. The status badge + time control were unreadable overlaid on
+        // the image, so they move to the solid info panel below.
+        Positioned(
+          top: padding,
+          right: padding,
+          child: DesktopEventFavoriteIconButton(event: event, compact: true),
+        ),
+      ],
+    );
+  }
+}
+
+class _EventPosterInfoPanel extends StatelessWidget {
+  const _EventPosterInfoPanel({required this.event});
+
+  final GroupEventCardModel event;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _categoryColor(event.tourEventCategory);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        border: Border(
+          top: BorderSide(color: kWhiteColor.withValues(alpha: 0.08)),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 13),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Status + time control, on the solid panel where they read (were
+            // unreadable overlaid on the poster image).
+            Row(
               children: [
                 _StatusBadge(category: event.tourEventCategory),
-                const SizedBox(width: 8),
+                if (event.timeControl.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      event.timeControl,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: kWhiteColor70,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 9),
+            Text(
+              event.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kWhiteColor,
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+                height: 1.18,
+                letterSpacing: 0,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
                 Expanded(
                   child: Text(
-                    event.timeControl,
+                    _eventMetaLine(event),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: kWhiteColor70,
                       fontSize: 11,
+                      height: 1.2,
+                    ),
+                  ),
+                ),
+                if (event.maxAvgElo > 0) ...[
+                  const SizedBox(width: 10),
+                  Text(
+                    'Avg ${event.maxAvgElo}',
+                    style: const TextStyle(
+                      color: kWhiteColor70,
+                      fontSize: 11,
                       fontWeight: FontWeight.w700,
+                      fontFeatures: [FontFeature.tabularFigures()],
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                DesktopEventFavoriteIconButton(event: event, compact: true),
+                ],
+                const SizedBox(width: 10),
+                Icon(Icons.open_in_new_rounded, size: 14, color: color),
               ],
             ),
-          ),
-          Positioned(
-            left: 14,
-            right: 14,
-            bottom: 14,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  event.title,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: kWhiteColor,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    height: 1.18,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _eventMetaLine(event),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: kWhiteColor70,
-                          fontSize: 11,
-                          height: 1.2,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Icon(Icons.open_in_new_rounded, size: 14, color: color),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -987,20 +1061,27 @@ class _DesktopEventVisual extends ConsumerWidget {
               event.location,
             );
             if (event.eventSource == EventSource.communityEvent) {
-              return _EventFallbackVisual(countryCode: fallbackCountry);
+              return _EventFallbackVisual(
+                event: event,
+                countryCode: fallbackCountry,
+              );
             }
 
-            final width =
+            final dpr = MediaQuery.devicePixelRatioOf(context);
+            final logicalWidth =
                 constraints.maxWidth.isFinite
                     ? constraints.maxWidth
                     : (constraints.maxHeight.isFinite
                         ? constraints.maxHeight * 1.6
                         : 360.0);
+            final logicalHeight =
+                constraints.maxHeight.isFinite
+                    ? constraints.maxHeight
+                    : (logicalWidth / 1.6);
             final cacheWidth =
-                (width * MediaQuery.devicePixelRatioOf(context))
-                    .round()
-                    .clamp(160, 1800)
-                    .toInt();
+                (logicalWidth * dpr).round().clamp(96, 900).toInt();
+            final cacheHeight =
+                (logicalHeight * dpr).round().clamp(64, 640).toInt();
             final image = ref.watch(eventImageProvider(event.id));
 
             return image.when(
@@ -1011,76 +1092,31 @@ class _DesktopEventVisual extends ConsumerWidget {
                     imageUrl: data.imageUrl!,
                     fit: BoxFit.cover,
                     memCacheWidth: cacheWidth,
+                    memCacheHeight: cacheHeight,
                     fadeInDuration: const Duration(milliseconds: 180),
                     fadeOutDuration: const Duration(milliseconds: 120),
                     placeholder: (_, __) => const _EventImageSkeleton(),
                     errorWidget:
-                        (_, __, ___) =>
-                            _EventFallbackVisual(countryCode: countryCode),
+                        (_, __, ___) => _EventFallbackVisual(
+                          event: event,
+                          countryCode: countryCode,
+                        ),
                   );
                 }
-                return _EventFallbackVisual(countryCode: countryCode);
+                return _EventFallbackVisual(
+                  event: event,
+                  countryCode: countryCode,
+                );
               },
               loading: () => const _EventImageSkeleton(),
               error:
-                  (_, __) => _EventFallbackVisual(countryCode: fallbackCountry),
+                  (_, __) => _EventFallbackVisual(
+                    event: event,
+                    countryCode: fallbackCountry,
+                  ),
             );
           },
         ),
-      ),
-    );
-  }
-}
-
-class _EventThumbnailVisual extends StatelessWidget {
-  const _EventThumbnailVisual({
-    required this.event,
-    required this.statusColor,
-    required this.selected,
-  });
-
-  final GroupEventCardModel event;
-  final Color statusColor;
-  final bool selected;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 76,
-      height: 58,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          _DesktopEventVisual(
-            event: event,
-            borderRadius: BorderRadius.circular(7),
-          ),
-          Positioned(
-            left: 0,
-            top: 0,
-            bottom: 0,
-            child: Container(
-              width: 4,
-              decoration: BoxDecoration(
-                color: statusColor,
-                borderRadius: const BorderRadius.horizontal(
-                  left: Radius.circular(7),
-                ),
-              ),
-            ),
-          ),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(7),
-              border: Border.all(
-                color:
-                    selected
-                        ? statusColor.withValues(alpha: 0.34)
-                        : kWhiteColor.withValues(alpha: 0.08),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1096,12 +1132,15 @@ class _EventImageSkeleton extends StatelessWidget {
 }
 
 class _EventFallbackVisual extends StatelessWidget {
-  const _EventFallbackVisual({required this.countryCode});
+  const _EventFallbackVisual({required this.event, required this.countryCode});
 
+  final GroupEventCardModel event;
   final String? countryCode;
 
   @override
   Widget build(BuildContext context) {
+    final accent = _eventFallbackAccent(event);
+    final secondary = _eventFallbackSecondary(event);
     final code = countryCode;
     if (code != null && code.isNotEmpty) {
       return Stack(
@@ -1120,25 +1159,140 @@ class _EventFallbackVisual extends StatelessWidget {
               color: kBlackColor.withValues(alpha: 0.18),
             ),
           ),
+          Positioned(
+            left: 10,
+            bottom: 10,
+            child: _EventFallbackInitialBadge(event: event, accent: accent),
+          ),
         ],
       );
     }
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        const DecoratedBox(decoration: BoxDecoration(color: Color(0xFF1B2024))),
-        const LogoPatternFallback(),
-        Center(
-          child: Icon(
-            Icons.emoji_events_rounded,
-            size: 28,
-            color: kWhiteColor.withValues(alpha: 0.62),
-          ),
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color.lerp(accent, kBlackColor, 0.58)!,
+            Color.lerp(secondary, kBlackColor, 0.48)!,
+          ],
         ),
-      ],
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Opacity(
+            opacity: 0.16,
+            child: ColoredBox(
+              color: accent,
+              child: const LogoPatternFallback(),
+            ),
+          ),
+          Positioned(
+            right: -34,
+            top: -36,
+            child: Transform.rotate(
+              angle: -0.18,
+              child: Container(
+                width: 108,
+                height: 210,
+                decoration: BoxDecoration(
+                  color: secondary.withValues(alpha: 0.22),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: kWhiteColor.withValues(alpha: 0.06),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 12,
+            bottom: 12,
+            child: _EventFallbackInitialBadge(event: event, accent: accent),
+          ),
+        ],
+      ),
     );
   }
+}
+
+class _EventFallbackInitialBadge extends StatelessWidget {
+  const _EventFallbackInitialBadge({required this.event, required this.accent});
+
+  final GroupEventCardModel event;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 42,
+      height: 42,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: kBlackColor.withValues(alpha: 0.62),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: accent.withValues(alpha: 0.72)),
+      ),
+      child: Text(
+        _eventInitials(event.title),
+        style: const TextStyle(
+          color: kWhiteColor,
+          fontSize: 14,
+          height: 1,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
+const List<Color> _eventFallbackPalette = [
+  Color(0xFF355A46),
+  Color(0xFF40506F),
+  Color(0xFF694A3D),
+  Color(0xFF5D4D74),
+  Color(0xFF35616A),
+  Color(0xFF686139),
+  Color(0xFF6A3F4B),
+  Color(0xFF3E6654),
+];
+
+Color _eventFallbackAccent(GroupEventCardModel event) {
+  final hash = _stableEventHash(event);
+  final base = _eventFallbackPalette[hash % _eventFallbackPalette.length];
+  return Color.lerp(base, _categoryColor(event.tourEventCategory), 0.22)!;
+}
+
+Color _eventFallbackSecondary(GroupEventCardModel event) {
+  final hash = _stableEventHash(event) + 3;
+  return _eventFallbackPalette[hash % _eventFallbackPalette.length];
+}
+
+int _stableEventHash(GroupEventCardModel event) {
+  var hash = 0;
+  final source = '${event.id}:${event.title}';
+  for (final unit in source.codeUnits) {
+    hash = (hash * 31 + unit) & 0x7fffffff;
+  }
+  return hash;
+}
+
+String _eventInitials(String title) {
+  final matches = RegExp(r'[A-Za-z0-9]+').allMatches(title);
+  final parts = [
+    for (final match in matches)
+      if ((match.group(0) ?? '').isNotEmpty) match.group(0)!,
+  ];
+  if (parts.isEmpty) return 'EV';
+  if (parts.length == 1) {
+    return parts.first
+        .substring(0, parts.first.length.clamp(1, 2))
+        .toUpperCase();
+  }
+  return '${parts.first[0]}${parts[1][0]}'.toUpperCase();
 }
 
 String? _countryCodeFromLocation(WidgetRef ref, String? location) {
@@ -1243,11 +1397,32 @@ class _DesktopEventFilterButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isActive = activeCount > 0;
-    return FButton(
-      style: isActive ? FButtonStyle.primary() : FButtonStyle.outline(),
-      prefix: const Icon(Icons.tune_rounded, size: 14),
-      onPress: onPressed,
-      child: Text(isActive ? 'Filters $activeCount' : 'Filters'),
+    return DesktopTooltip(
+      message: isActive ? '$activeCount active event filters' : 'Event filters',
+      // Render as a one-segment sibling of the DesktopSegmentedTabs beside it:
+      // the identical 38px dark-zinc forui pill (surface, radius, divider
+      // border) wrapping a segment-styled FButton, reusing the tabs' own
+      // segment style. So Filters belongs to the same forui chrome instead of
+      // reading as a stray, differently-shaped button.
+      child: FTheme(
+        data: FThemes.zinc.dark,
+        child: Container(
+          height: 38,
+          padding: const EdgeInsets.all(3),
+          decoration: BoxDecoration(
+            color: kBlack2Color,
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(color: kDividerColor),
+          ),
+          child: FButton(
+            style: desktopSegmentButtonStyle(selected: isActive),
+            mainAxisSize: MainAxisSize.min,
+            onPress: onPressed,
+            prefix: const Icon(Icons.tune_rounded),
+            child: Text(isActive ? 'Filters · $activeCount' : 'Filters'),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1277,18 +1452,53 @@ class _DesktopEventFilterDialog extends ConsumerWidget {
     return FDialog(
       animation: animation,
       direction: Axis.horizontal,
-      title: const Text('Event filters'),
+      title: Row(
+        children: [
+          const Expanded(child: Text('Event filters')),
+          FButton.icon(
+            style: FButtonStyle.ghost(),
+            onPress: () => Navigator.of(context).maybePop(),
+            child: const Icon(Icons.close_rounded, size: 16),
+          ),
+        ],
+      ),
       body: SizedBox(
         width: 360,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              initialCategory == ge.GroupEventCategory.forYou
-                  ? 'For You feed'
-                  : 'Current and Past events',
-              style: const TextStyle(color: kLightGreyColor, fontSize: 12),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: kBlack3Color,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: kDividerColor),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.travel_explore_rounded,
+                      size: 16,
+                      color: kWhiteColor70,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        initialCategory == ge.GroupEventCategory.forYou
+                            ? 'For You feed'
+                            : 'Current and Past events',
+                        style: const TextStyle(
+                          color: kWhiteColor70,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 16),
             const _DesktopFilterSectionLabel('Format'),
@@ -1429,8 +1639,13 @@ class _DesktopFilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Same forui pill as the segmented tabs + Filters button: selected reads
+    // as a primary tint, not a heavy outline/solid FButton. Keeps the dialog
+    // consistent with the rest of the desktop chrome. No check-icon prefix —
+    // it shifted width on toggle; the tint already signals selection.
     return FButton(
-      style: selected ? FButtonStyle.primary() : FButtonStyle.outline(),
+      style: desktopSegmentButtonStyle(selected: selected, wrap: true),
+      mainAxisSize: MainAxisSize.min,
       onPress: onPressed,
       child: Text(label),
     );
@@ -1586,13 +1801,13 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
             behavior: HitTestBehavior.opaque,
             onTap: widget.onTap,
             child: MotionCard(
-              borderRadius: 8,
+              borderRadius: 10,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 130),
-                padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+                clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
                   color: highlight ? kBlack3Color : kBlack2Color,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                     color:
                         widget.selected
@@ -1603,102 +1818,206 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
                   ),
                 ),
                 child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _EventThumbnailVisual(
+                    _TournamentTileMedia(
                       event: t,
                       statusColor: categoryColor,
                       selected: widget.selected,
                     ),
-                    const SizedBox(width: 12),
                     Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Row(
-                            children: [
-                              _StatusBadge(category: t.tourEventCategory),
-                              const SizedBox(width: 8),
-                              if (t.timeControl.isNotEmpty)
-                                Flexible(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 11, 12, 11),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Category badge, moved off the photo onto the
+                                // solid body where its colours read.
+                                _StatusBadge(category: t.tourEventCategory),
+                                const SizedBox(width: 8),
+                                Expanded(
                                   child: Text(
-                                    t.timeControl,
-                                    maxLines: 1,
+                                    t.title,
+                                    maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
-                                      color: kLightGreyColor,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
+                                      color: kWhiteColor,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w800,
+                                      height: 1.17,
+                                      letterSpacing: 0,
                                     ),
                                   ),
                                 ),
-                            ],
-                          ),
-                          const SizedBox(height: 7),
-                          Text(
-                            t.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: kWhiteColor,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  _eventMetaLine(t),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: kLightGreyColor,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ),
-                              if (t.maxAvgElo > 0) ...[
-                                const SizedBox(width: 10),
-                                Text(
-                                  '${t.maxAvgElo}',
-                                  style: const TextStyle(
-                                    color: kWhiteColor70,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
-                                    fontFeatures: [
-                                      FontFeature.tabularFigures(),
-                                    ],
-                                  ),
+                                const SizedBox(width: 8),
+                                DesktopEventFavoriteIconButton(
+                                  event: t,
+                                  compact: true,
                                 ),
                               ],
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    DesktopEventFavoriteIconButton(event: t, compact: true),
-                    if (widget.loading) ...[
-                      const SizedBox(width: 10),
-                      const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.6,
-                          valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                            ),
+                            const Spacer(),
+                            Text(
+                              _eventMetaLine(t),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: kLightGreyColor,
+                                fontSize: 11,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                if (t.timeControl.isNotEmpty)
+                                  Flexible(
+                                    child: _TournamentTilePill(
+                                      label: t.timeControl,
+                                      icon: Icons.schedule_rounded,
+                                    ),
+                                  ),
+                                if (t.maxAvgElo > 0) ...[
+                                  const SizedBox(width: 8),
+                                  _TournamentTilePill(
+                                    label: 'Avg ${t.maxAvgElo}',
+                                    icon: Icons.leaderboard_rounded,
+                                  ),
+                                ],
+                                const Spacer(),
+                                if (widget.loading)
+                                  const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 1.6,
+                                      valueColor: AlwaysStoppedAnimation(
+                                        kPrimaryColor,
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  Icon(
+                                    Icons.open_in_new_rounded,
+                                    size: 14,
+                                    color: categoryColor,
+                                  ),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
-                    ],
+                    ),
                   ],
                 ),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _TournamentTileMedia extends StatelessWidget {
+  const _TournamentTileMedia({
+    required this.event,
+    required this.statusColor,
+    required this.selected,
+  });
+
+  final GroupEventCardModel event;
+  final Color statusColor;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 122,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          _DesktopEventVisual(event: event, borderRadius: BorderRadius.zero),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  kBlackColor.withValues(alpha: 0.46),
+                  kBlackColor.withValues(alpha: 0.04),
+                  kBlackColor.withValues(alpha: 0.18),
+                ],
+                stops: const [0, 0.56, 1],
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: Container(width: 4, color: statusColor),
+          ),
+          // Category badge removed from the photo — it was unreadable against
+          // the artwork. The 4px status-colour bar keeps the at-a-glance
+          // category hint here; the labelled badge now sits on the solid body.
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border(
+                  right: BorderSide(
+                    color:
+                        selected
+                            ? statusColor.withValues(alpha: 0.32)
+                            : kWhiteColor.withValues(alpha: 0.08),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TournamentTilePill extends StatelessWidget {
+  const _TournamentTilePill({required this.label, required this.icon});
+
+  final String label;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 7),
+      decoration: BoxDecoration(
+        color: kBackgroundColor,
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: kWhiteColor70),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1891,8 +2210,8 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   // off-screen; keep that window small so the cache doesn't quietly own a
   // dozen heavy cards. Compact rows are cheap, so we can keep a wider cache
   // for smoother scrolls.
-  static const double _kCompactCacheExtent = 1500;
-  static const double _kBoardCacheExtent = 600;
+  static const double _kCompactCacheExtent = 900;
+  static const double _kBoardCacheExtent = 360;
 
   final FocusNode _focusNode = FocusNode(
     debugLabel: 'DesktopForYouEventGameCards',
@@ -1900,11 +2219,13 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   final ScrollController _scroll = ScrollController();
   final Set<String> _animatedEventIds = <String>{};
   final Map<String, GlobalKey> _eventKeys = <String, GlobalKey>{};
-  final Map<String, int> _visibleGameCounts = <String, int>{};
+  final Map<String, List<String>> _visibleGameIds = <String, List<String>>{};
   final Map<String, bool> _eventVisibility = <String, bool>{};
   Timer? _scrollIdleTimer;
   _ForYouCardSelection? _selection;
-  bool _isScrolling = false;
+  bool _liveCardsPausedForScroll = false;
+
+  String get _liveCardsPauseReason => 'desktop_for_you_scroll_${widget.tabId}';
 
   @override
   void initState() {
@@ -1915,6 +2236,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   @override
   void dispose() {
     _scrollIdleTimer?.cancel();
+    _setLiveCardsPausedForScroll(false);
     _scroll.removeListener(_onScroll);
     _focusNode.dispose();
     _scroll.dispose();
@@ -1932,14 +2254,20 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   }
 
   void _markScrolling() {
-    if (!_isScrolling && mounted) {
-      setState(() => _isScrolling = true);
-    }
+    _setLiveCardsPausedForScroll(true);
     _scrollIdleTimer?.cancel();
-    _scrollIdleTimer = Timer(_kScrollIdleDelay, () {
-      if (!mounted || !_isScrolling) return;
-      setState(() => _isScrolling = false);
-    });
+    _scrollIdleTimer = Timer(_kScrollIdleDelay, _markLiveCardsIdle);
+  }
+
+  void _markLiveCardsIdle() {
+    if (!mounted) return;
+    _setLiveCardsPausedForScroll(false);
+  }
+
+  void _setLiveCardsPausedForScroll(bool paused) {
+    if (_liveCardsPausedForScroll == paused) return;
+    _liveCardsPausedForScroll = paused;
+    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
   }
 
   double _cacheExtentFor(GamesListViewMode mode) {
@@ -1973,40 +2301,56 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     });
   }
 
-  void _setVisibleGameCount(String eventId, int count) {
+  void _setVisibleGameIds(String eventId, List<String> gameIds) {
     if (!mounted) return;
-    if (_visibleGameCounts[eventId] == count) return;
+    final previous = _visibleGameIds[eventId] ?? const <String>[];
+    if (previous.length == gameIds.length) {
+      var unchanged = true;
+      for (var i = 0; i < previous.length; i++) {
+        if (previous[i] != gameIds[i]) {
+          unchanged = false;
+          break;
+        }
+      }
+      if (unchanged) return;
+    }
     setState(() {
-      _visibleGameCounts[eventId] = count;
+      _visibleGameIds[eventId] = List<String>.unmodifiable(gameIds);
       final selection = _selection;
       if (selection?.eventId == eventId && selection!.isGame) {
-        if (count <= 0) {
+        if (gameIds.isEmpty) {
           _selection = _ForYouCardSelection(
             eventId: eventId,
             column: EventGameCardFocusColumn.event,
           );
-        } else if (selection.gameIndex >= count) {
+        } else if (selection.gameIndex >= gameIds.length) {
           _selection = _ForYouCardSelection(
             eventId: eventId,
             column: EventGameCardFocusColumn.game,
-            gameIndex: count - 1,
+            gameIndex: gameIds.length - 1,
           );
         }
       }
     });
   }
 
-  int _gameCountFor(GroupEventCardModel event) {
-    final reported = _visibleGameCounts[event.id];
+  List<String> _gameIdsFor(GroupEventCardModel event) {
+    final reported = _visibleGameIds[event.id];
     final snapshot =
         ref.read(forYouEventSnapshotProvider(event.id)).valueOrNull;
-    final snapshotCount = snapshot?.visibleGames.length ?? 0;
-    if (reported == null) return snapshotCount;
-    // The rendered strip reports how many game cards fit after layout, but that
-    // callback can briefly lag behind provider updates or keep a stale zero from
-    // a prior loading/empty pass. If a snapshot already has games, let Right
-    // Arrow enter the first board card instead of appearing dead.
-    return reported > 0 ? reported : snapshotCount;
+    final snapshotIds =
+        snapshot?.visibleGames.map((game) => game.gameId).toList() ??
+        const <String>[];
+    if (reported == null) return snapshotIds;
+    // The rendered strip reports exactly which game cards fit after layout,
+    // but that callback can briefly lag behind provider updates or keep a stale
+    // empty pass. If a snapshot already has games, let Right Arrow enter the
+    // first board card instead of appearing dead.
+    return reported.isNotEmpty ? reported : snapshotIds;
+  }
+
+  int _gameCountFor(GroupEventCardModel event) {
+    return _gameIdsFor(event).length;
   }
 
   int _eventPageStrideFor(DesktopCardLayout layout) {
@@ -2164,9 +2508,16 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     final snapshot =
         ref.read(forYouEventSnapshotProvider(event.id)).valueOrNull;
     if (snapshot == null) return;
-    final count = _gameCountFor(event);
-    if (count <= 0) return;
-    final games = snapshot.visibleGames.take(count).toList(growable: false);
+    final gameIds = _gameIdsFor(event);
+    if (gameIds.isEmpty) return;
+    final gamesById = {
+      for (final game in snapshot.visibleGames) game.gameId: game,
+    };
+    final games = [
+      for (final gameId in gameIds)
+        if (gamesById[gameId] != null) gamesById[gameId]!,
+    ];
+    if (games.isEmpty) return;
     final gameIndex = _clampIndex(selection.gameIndex, 0, games.length - 1);
     openTournamentGameTab(
       ref,
@@ -2229,6 +2580,9 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     });
     final state = ref.watch(forYouEventsProvider);
     final viewMode = ref.watch(gamesListViewModeProvider);
+    final streamingEnabled = ref.watch(
+      desktopTabsProvider.select((state) => state.activeId == widget.tabId),
+    );
 
     if (state.isLoading && state.events.isEmpty) {
       return const _LoadingState();
@@ -2297,11 +2651,13 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                     _navigateToTab(TabKind.countrymen);
                   },
                   onSmartCollectionTap: (type) {
-                    final tabId = ref.read(desktopTabsProvider.notifier).open(
-                      TabKind.smartGames,
-                      title: _smartCollectionTitle(type),
-                      reuseExisting: false,
-                    );
+                    final tabId = ref
+                        .read(desktopTabsProvider.notifier)
+                        .open(
+                          TabKind.smartGames,
+                          title: _smartCollectionTitle(type),
+                          reuseExisting: false,
+                        );
                     ref
                         .read(desktopSmartGamesTypeByTabIdProvider.notifier)
                         .update((types) => {...types, tabId: type});
@@ -2337,12 +2693,12 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                   selection:
                       _selection?.eventId == event.id ? _selection : null,
                   animatedEventIds: _animatedEventIds,
-                  isScrolling: _isScrolling,
+                  streamingEnabled: streamingEnabled,
                   onOpen: () => widget.onOpenTournament(event),
                   onVisibilityChanged:
                       (visible) => _setEventVisibility(event.id, visible),
-                  onVisibleGameCountChanged:
-                      (count) => _setVisibleGameCount(event.id, count),
+                  onVisibleGameIdsChanged:
+                      (gameIds) => _setVisibleGameIds(event.id, gameIds),
                 ),
               );
             },
@@ -2369,10 +2725,10 @@ class _ForYouEventSection extends ConsumerWidget {
     required this.isFirst,
     required this.selection,
     required this.animatedEventIds,
-    required this.isScrolling,
+    required this.streamingEnabled,
     required this.onOpen,
     required this.onVisibilityChanged,
-    required this.onVisibleGameCountChanged,
+    required this.onVisibleGameIdsChanged,
   });
 
   static const double eventCardWidth = 280;
@@ -2382,14 +2738,21 @@ class _ForYouEventSection extends ConsumerWidget {
   final bool isFirst;
   final _ForYouCardSelection? selection;
   final Set<String> animatedEventIds;
-  final bool isScrolling;
+  final bool streamingEnabled;
   final VoidCallback onOpen;
   final ValueChanged<bool> onVisibilityChanged;
-  final ValueChanged<int> onVisibleGameCountChanged;
+  final ValueChanged<List<String>> onVisibleGameIdsChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final snapshotAsync = ref.watch(forYouEventSnapshotProvider(event.id));
+    // Desktop tabs stay mounted in PersistentIndexedStack. The shared
+    // snapshot refresher is needed for the active feed so stale finished cards
+    // are replaced, but inactive desktop routes must not keep Realtime streams.
+    final snapshotAsync = ref.watch(
+      streamingEnabled
+          ? forYouEventSnapshotProvider(event.id)
+          : eventGamesProvider(event.id),
+    );
     final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
 
     final shouldHide = snapshotAsync.maybeWhen(
@@ -2445,10 +2808,10 @@ class _ForYouEventSection extends ConsumerWidget {
                 tournamentTitle: event.title,
                 snapshotAsync: snapshotAsync,
                 layout: layout,
-                isScrolling: isScrolling,
+                streamingEnabled: streamingEnabled,
                 selectedGameIndex:
                     selection?.isGame == true ? selection!.gameIndex : null,
-                onVisibleGameCountChanged: onVisibleGameCountChanged,
+                onVisibleGameIdsChanged: onVisibleGameIdsChanged,
               ),
             ),
           ],
@@ -2497,6 +2860,7 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
   Widget build(BuildContext context) {
     final event = widget.event;
     final highlighted = widget.selected || _hovered;
+    final categoryColor = _categoryColor(event.tourEventCategory);
     return DesktopEventContextMenu(
       event: event,
       onOpen: widget.onOpen,
@@ -2508,17 +2872,17 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
             behavior: HitTestBehavior.opaque,
             onTap: widget.onOpen,
             child: MotionCard(
-              borderRadius: 9,
+              borderRadius: 10,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 130),
                 clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
                   color: highlighted ? kBlack3Color : kBlack2Color,
-                  borderRadius: BorderRadius.circular(9),
+                  borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                     color:
                         widget.selected
-                            ? kPrimaryColor.withValues(alpha: 0.42)
+                            ? categoryColor.withValues(alpha: 0.42)
                             : _hovered
                             ? kWhiteColor.withValues(alpha: 0.12)
                             : kDividerColor,
@@ -2529,134 +2893,171 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
                       widget.selected
                           ? [
                             BoxShadow(
-                              color: kPrimaryColor.withValues(alpha: 0.08),
+                              color: categoryColor.withValues(alpha: 0.08),
                               blurRadius: 12,
                               offset: const Offset(0, 6),
                             ),
                           ]
                           : null,
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      height: 82,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          _DesktopEventVisual(
-                            event: event,
-                            borderRadius: BorderRadius.zero,
-                          ),
-                          DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: kBlackColor.withValues(alpha: 0.4),
-                            ),
-                          ),
-                          Positioned(
-                            left: 10,
-                            top: 10,
-                            right: 10,
-                            child: Row(
-                              children: [
-                                _StatusBadge(category: event.tourEventCategory),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    event.timeControl,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: kWhiteColor70,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                DesktopEventFavoriteIconButton(
-                                  event: event,
-                                  compact: true,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              event.title,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: kWhiteColor,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                                height: 1.16,
-                                letterSpacing: 0,
-                              ),
-                            ),
-                            const Spacer(),
-                            Text(
-                              _eventMetaLine(event),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: kLightGreyColor,
-                                fontSize: 11,
-                                height: 1.35,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            Row(
-                              children: [
-                                if (event.maxAvgElo > 0)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: kBackgroundColor,
-                                      borderRadius: BorderRadius.circular(5),
-                                      border: Border.all(color: kDividerColor),
-                                    ),
-                                    child: Text(
-                                      'Avg ${event.maxAvgElo}',
-                                      style: const TextStyle(
-                                        color: kWhiteColor70,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700,
-                                        fontFeatures: [
-                                          FontFeature.tabularFigures(),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                const Spacer(),
-                                Icon(
-                                  Icons.open_in_new_rounded,
-                                  size: 15,
-                                  color: kWhiteColor70,
-                                ),
-                              ],
-                            ),
-                          ],
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final roomy = constraints.maxHeight >= 260;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _ForYouEventHeroImage(
+                          event: event,
+                          statusColor: categoryColor,
+                          selected: widget.selected,
+                          height: roomy ? 104 : 82,
                         ),
-                      ),
-                    ),
-                  ],
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 12, 14, 14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Status + favorite, moved off the photo onto
+                                // the solid body where their colours read.
+                                Row(
+                                  children: [
+                                    _StatusBadge(
+                                      category: event.tourEventCategory,
+                                    ),
+                                    const Spacer(),
+                                    DesktopEventFavoriteIconButton(
+                                      event: event,
+                                      compact: true,
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  event.title,
+                                  maxLines: roomy ? 3 : 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: kWhiteColor,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w800,
+                                    height: 1.16,
+                                    letterSpacing: 0,
+                                  ),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  _eventMetaLine(event),
+                                  maxLines: roomy ? 2 : 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: kLightGreyColor,
+                                    fontSize: 11,
+                                    height: 1.25,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Row(
+                                  children: [
+                                    if (event.timeControl.isNotEmpty)
+                                      Flexible(
+                                        child: _TournamentTilePill(
+                                          label: event.timeControl,
+                                          icon: Icons.schedule_rounded,
+                                        ),
+                                      ),
+                                    if (event.maxAvgElo > 0) ...[
+                                      const SizedBox(width: 8),
+                                      _TournamentTilePill(
+                                        label: 'Avg ${event.maxAvgElo}',
+                                        icon: Icons.leaderboard_rounded,
+                                      ),
+                                    ],
+                                    const Spacer(),
+                                    Icon(
+                                      Icons.open_in_new_rounded,
+                                      size: 14,
+                                      color: categoryColor,
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ForYouEventHeroImage extends StatelessWidget {
+  const _ForYouEventHeroImage({
+    required this.event,
+    required this.statusColor,
+    required this.selected,
+    required this.height,
+  });
+
+  final GroupEventCardModel event;
+  final Color statusColor;
+  final bool selected;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: height,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          _DesktopEventVisual(event: event, borderRadius: BorderRadius.zero),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  kBlackColor.withValues(alpha: 0.54),
+                  kBlackColor.withValues(alpha: 0.1),
+                  kBlackColor.withValues(alpha: 0.2),
+                ],
+                stops: const [0, 0.58, 1],
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: Container(width: 4, color: statusColor),
+          ),
+          // No text/controls overlaid on the photo — they were unreadable
+          // against varying artwork. The status badge, time control and
+          // favorite now live on the solid card body below, where contrast is
+          // guaranteed. The image stays clean.
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color:
+                        selected
+                            ? statusColor.withValues(alpha: 0.3)
+                            : kWhiteColor.withValues(alpha: 0.08),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2671,32 +3072,56 @@ class _GamesStrip extends ConsumerWidget {
     required this.tournamentTitle,
     required this.snapshotAsync,
     required this.layout,
-    required this.isScrolling,
+    required this.streamingEnabled,
     required this.selectedGameIndex,
-    required this.onVisibleGameCountChanged,
+    required this.onVisibleGameIdsChanged,
   });
 
   final String eventId;
   final String tournamentTitle;
   final AsyncValue<ForYouEventGamesSnapshot> snapshotAsync;
   final DesktopCardLayout layout;
-  final bool isScrolling;
+  final bool streamingEnabled;
   final int? selectedGameIndex;
-  final ValueChanged<int> onVisibleGameCountChanged;
+  final ValueChanged<List<String>> onVisibleGameIdsChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final cardStreamingEnabled = streamingEnabled;
+
     return snapshotAsync.when(
       skipLoadingOnRefresh: true,
       skipLoadingOnReload: true,
       data: (snapshot) {
         if (snapshot.visibleGames.isEmpty) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            onVisibleGameCountChanged(0);
+            onVisibleGameIdsChanged(const <String>[]);
           });
           return const SizedBox.shrink();
         }
         if (layout != DesktopCardLayout.grid) {
+          if (snapshot.isGroupEvent) {
+            return _TeamGamesStrip(
+              eventId: eventId,
+              tournamentTitle: tournamentTitle,
+              snapshot: snapshot,
+              layout: layout,
+              streamingEnabled: cardStreamingEnabled,
+              selectedGameIndex: selectedGameIndex,
+              onVisibleGameIdsChanged: onVisibleGameIdsChanged,
+            );
+          }
+          if (snapshot.isKnockoutTournament) {
+            return _KnockoutGamesStrip(
+              eventId: eventId,
+              tournamentTitle: tournamentTitle,
+              snapshot: snapshot,
+              layout: layout,
+              streamingEnabled: cardStreamingEnabled,
+              selectedGameIndex: selectedGameIndex,
+              onVisibleGameIdsChanged: onVisibleGameIdsChanged,
+            );
+          }
           final allGames = snapshot.visibleGames.toList(growable: false);
           // Each event's strip has BOUNDED vertical space — the For You
           // feed gives every event the same hard-coded row height (see
@@ -2709,7 +3134,8 @@ class _GamesStrip extends ConsumerWidget {
           // (e.g. before the SizedBox propagates) can't render too many.
           final tileMetrics = DesktopGameCardsFlow.metricsFor(layout);
           final rowHeight = _ForYouEventSection._rowHeightFor(layout);
-          final rows = ((rowHeight + tileMetrics.spacing) /
+          final rows =
+              ((rowHeight + tileMetrics.spacing) /
                       (tileMetrics.tileHeight + tileMetrics.spacing))
                   .floor()
                   .clamp(1, 100)
@@ -2717,7 +3143,8 @@ class _GamesStrip extends ConsumerWidget {
           return LayoutBuilder(
             builder: (context, constraints) {
               final maxW = constraints.maxWidth;
-              final cols = ((maxW + tileMetrics.spacing) /
+              final cols =
+                  ((maxW + tileMetrics.spacing) /
                           (tileMetrics.targetWidth + tileMetrics.spacing))
                       .floor()
                       .clamp(tileMetrics.minCols, tileMetrics.maxCols)
@@ -2730,21 +3157,26 @@ class _GamesStrip extends ConsumerWidget {
                 games: games,
               );
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                onVisibleGameCountChanged(games.length);
+                onVisibleGameIdsChanged(
+                  games.map((game) => game.gameId).toList(growable: false),
+                );
               });
               return DesktopGameCardsFlow(
                 layout: layout,
                 itemCount: games.length,
                 embedded: true,
-                itemBuilder: (context, i) => LiveDesktopGameCard(
-                  game: games[i],
-                  tournamentTitle: tournamentTitle,
-                  layout: layout,
-                  selected: selectedGameIndex == i,
-                  viewSource: ChessboardView.forYou,
-                  liveBatchKey: liveBatchKey,
-                  allowStockfishFallback: !isScrolling,
-                ),
+                itemBuilder:
+                    (context, i) => LiveDesktopGameCard(
+                      game: games[i],
+                      eventGames: snapshot.visibleGames,
+                      tournamentTitle: tournamentTitle,
+                      layout: layout,
+                      selected: selectedGameIndex == i,
+                      viewSource: ChessboardView.forYou,
+                      liveBatchKey: liveBatchKey,
+                      streamingEnabled: cardStreamingEnabled,
+                      allowStockfishFallback: true,
+                    ),
               );
             },
           );
@@ -2760,7 +3192,9 @@ class _GamesStrip extends ConsumerWidget {
                 .take(strip.visibleCount)
                 .toList(growable: false);
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              onVisibleGameCountChanged(games.length);
+              onVisibleGameIdsChanged(
+                games.map((game) => game.gameId).toList(growable: false),
+              );
             });
             final liveBatchKey = _desktopForYouLiveBatchKey(
               eventId: eventId,
@@ -2777,12 +3211,14 @@ class _GamesStrip extends ConsumerWidget {
                     width: strip.cardWidth,
                     child: LiveDesktopGameCard(
                       game: games[i],
+                      eventGames: snapshot.visibleGames,
                       tournamentTitle: tournamentTitle,
                       layout: DesktopCardLayout.grid,
                       selected: selectedGameIndex == i,
                       viewSource: ChessboardView.forYou,
                       liveBatchKey: liveBatchKey,
-                      allowStockfishFallback: !isScrolling,
+                      streamingEnabled: cardStreamingEnabled,
+                      allowStockfishFallback: true,
                     ),
                   ),
                 ],
@@ -2799,16 +3235,16 @@ class _GamesStrip extends ConsumerWidget {
                 // Match the data-state cap: cols × rows fits the bounded
                 // event row, skeletons render at the same density as the
                 // real cards will.
-                final tileMetrics =
-                    DesktopGameCardsFlow.metricsFor(layout);
-                final rowHeight =
-                    _ForYouEventSection._rowHeightFor(layout);
-                final rows = ((rowHeight + tileMetrics.spacing) /
+                final tileMetrics = DesktopGameCardsFlow.metricsFor(layout);
+                final rowHeight = _ForYouEventSection._rowHeightFor(layout);
+                final rows =
+                    ((rowHeight + tileMetrics.spacing) /
                             (tileMetrics.tileHeight + tileMetrics.spacing))
                         .floor()
                         .clamp(1, 100)
                         .toInt();
-                final cols = ((constraints.maxWidth + tileMetrics.spacing) /
+                final cols =
+                    ((constraints.maxWidth + tileMetrics.spacing) /
                             (tileMetrics.targetWidth + tileMetrics.spacing))
                         .floor()
                         .clamp(tileMetrics.minCols, tileMetrics.maxCols)
@@ -2818,13 +3254,14 @@ class _GamesStrip extends ConsumerWidget {
                   layout: layout,
                   itemCount: count,
                   embedded: true,
-                  itemBuilder: (context, _) => DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: kBlack2Color,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: kDividerColor),
-                    ),
-                  ),
+                  itemBuilder:
+                      (context, _) => DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: kBlack2Color,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: kDividerColor),
+                        ),
+                      ),
                 );
               }
               final strip = DesktopForYouStripLayout.compute(
@@ -2864,6 +3301,541 @@ class _GamesStrip extends ConsumerWidget {
               ),
             ),
           ),
+    );
+  }
+}
+
+const double _kForYouGroupGap = 10;
+const double _kForYouGroupMinWidth = 284;
+const double _kForYouGroupMaxWidth = 420;
+const double _kForYouGroupHeaderHeight = 54;
+const double _kForYouGroupHeaderGap = 8;
+
+int _forYouGroupPanelCount(double maxWidth, int groupCount) {
+  if (groupCount <= 0) return 0;
+  if (!maxWidth.isFinite || maxWidth <= 0) return 1;
+  return ((maxWidth + _kForYouGroupGap) /
+          (_kForYouGroupMinWidth + _kForYouGroupGap))
+      .floor()
+      .clamp(1, groupCount)
+      .toInt();
+}
+
+double _forYouGroupPanelWidth(double maxWidth, int panelCount) {
+  if (!maxWidth.isFinite || maxWidth <= 0 || panelCount <= 0) {
+    return _kForYouGroupMinWidth;
+  }
+  final available = maxWidth - (_kForYouGroupGap * (panelCount - 1));
+  return (available / panelCount).clamp(
+    _kForYouGroupMinWidth,
+    _kForYouGroupMaxWidth,
+  );
+}
+
+int _forYouGamesPerGroupPanel(double maxHeight, DesktopCardLayout layout) {
+  final rowHeight =
+      maxHeight.isFinite
+          ? maxHeight
+          : _ForYouEventSection._rowHeightFor(layout);
+  final metrics = DesktopGameCardsFlow.metricsFor(DesktopCardLayout.compact);
+  final available =
+      rowHeight - _kForYouGroupHeaderHeight - _kForYouGroupHeaderGap;
+  return ((available + metrics.spacing) /
+          (metrics.tileHeight + metrics.spacing))
+      .floor()
+      .clamp(1, 3)
+      .toInt();
+}
+
+class _TeamGamesStrip extends StatelessWidget {
+  const _TeamGamesStrip({
+    required this.eventId,
+    required this.tournamentTitle,
+    required this.snapshot,
+    required this.layout,
+    required this.streamingEnabled,
+    required this.selectedGameIndex,
+    required this.onVisibleGameIdsChanged,
+  });
+
+  final String eventId;
+  final String tournamentTitle;
+  final ForYouEventGamesSnapshot snapshot;
+  final DesktopCardLayout layout;
+  final bool streamingEnabled;
+  final int? selectedGameIndex;
+  final ValueChanged<List<String>> onVisibleGameIdsChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = buildDesktopTeamMatchGroups(snapshot.visibleGames);
+    if (groups.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        onVisibleGameIdsChanged(const <String>[]);
+      });
+      return const SizedBox.shrink();
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final panelCount = _forYouGroupPanelCount(
+          constraints.maxWidth,
+          groups.length,
+        );
+        final gamesPerPanel = _forYouGamesPerGroupPanel(
+          constraints.maxHeight,
+          layout,
+        );
+        final displayedGroups = groups.take(panelCount).toList(growable: false);
+        final displayedGameIds = <String>[];
+        final panelGames = <DesktopTeamMatchGroup, List<GamesTourModel>>{};
+        for (final group in displayedGroups) {
+          final games = group.gameModels
+              .take(gamesPerPanel)
+              .toList(growable: false);
+          panelGames[group] = games;
+          displayedGameIds.addAll(games.map((game) => game.gameId));
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          onVisibleGameIdsChanged(List<String>.unmodifiable(displayedGameIds));
+        });
+        final selectedGameId =
+            selectedGameIndex != null &&
+                    selectedGameIndex! >= 0 &&
+                    selectedGameIndex! < displayedGameIds.length
+                ? displayedGameIds[selectedGameIndex!]
+                : null;
+        final liveBatchKey = _desktopForYouLiveBatchKey(
+          eventId: eventId,
+          tourId: snapshot.tourId,
+          games: [
+            for (final gameId in displayedGameIds)
+              snapshot.visibleGames.firstWhere((game) => game.gameId == gameId),
+          ],
+        );
+        final panelWidth = _forYouGroupPanelWidth(
+          constraints.maxWidth,
+          displayedGroups.length,
+        );
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < displayedGroups.length; i++) ...[
+              if (i > 0) const SizedBox(width: _kForYouGroupGap),
+              SizedBox(
+                width: panelWidth,
+                child: _ForYouTeamMatchPanel(
+                  group: displayedGroups[i],
+                  games: panelGames[displayedGroups[i]] ?? const [],
+                  selectedGameId: selectedGameId,
+                  tournamentTitle: tournamentTitle,
+                  eventGames: snapshot.visibleGames,
+                  liveBatchKey: liveBatchKey,
+                  streamingEnabled: streamingEnabled,
+                ),
+              ),
+            ],
+            const Spacer(),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _KnockoutGamesStrip extends StatelessWidget {
+  const _KnockoutGamesStrip({
+    required this.eventId,
+    required this.tournamentTitle,
+    required this.snapshot,
+    required this.layout,
+    required this.streamingEnabled,
+    required this.selectedGameIndex,
+    required this.onVisibleGameIdsChanged,
+  });
+
+  final String eventId;
+  final String tournamentTitle;
+  final ForYouEventGamesSnapshot snapshot;
+  final DesktopCardLayout layout;
+  final bool streamingEnabled;
+  final int? selectedGameIndex;
+  final ValueChanged<List<String>> onVisibleGameIdsChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final groupedByMatch = KnockoutMatchDetector.groupByMatches(
+      snapshot.visibleGames,
+    );
+    final headers = [
+      for (final entry in groupedByMatch.entries)
+        KnockoutMatchDetector.createMatchHeader(entry.key, entry.value),
+    ];
+    if (headers.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        onVisibleGameIdsChanged(const <String>[]);
+      });
+      return const SizedBox.shrink();
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final panelCount = _forYouGroupPanelCount(
+          constraints.maxWidth,
+          headers.length,
+        );
+        final gamesPerPanel = _forYouGamesPerGroupPanel(
+          constraints.maxHeight,
+          layout,
+        );
+        final displayedHeaders = headers
+            .take(panelCount)
+            .toList(growable: false);
+        final displayedGameIds = <String>[];
+        final panelGames = <MatchHeaderModel, List<GamesTourModel>>{};
+        for (final header in displayedHeaders) {
+          final games = header.games
+              .take(gamesPerPanel)
+              .toList(growable: false);
+          panelGames[header] = games;
+          displayedGameIds.addAll(games.map((game) => game.gameId));
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          onVisibleGameIdsChanged(List<String>.unmodifiable(displayedGameIds));
+        });
+        final selectedGameId =
+            selectedGameIndex != null &&
+                    selectedGameIndex! >= 0 &&
+                    selectedGameIndex! < displayedGameIds.length
+                ? displayedGameIds[selectedGameIndex!]
+                : null;
+        final liveBatchKey = _desktopForYouLiveBatchKey(
+          eventId: eventId,
+          tourId: snapshot.tourId,
+          games: [
+            for (final gameId in displayedGameIds)
+              snapshot.visibleGames.firstWhere((game) => game.gameId == gameId),
+          ],
+        );
+        final panelWidth = _forYouGroupPanelWidth(
+          constraints.maxWidth,
+          displayedHeaders.length,
+        );
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < displayedHeaders.length; i++) ...[
+              if (i > 0) const SizedBox(width: _kForYouGroupGap),
+              SizedBox(
+                width: panelWidth,
+                child: _ForYouKnockoutMatchPanel(
+                  header: displayedHeaders[i],
+                  games: panelGames[displayedHeaders[i]] ?? const [],
+                  selectedGameId: selectedGameId,
+                  tournamentTitle: tournamentTitle,
+                  eventGames: snapshot.visibleGames,
+                  liveBatchKey: liveBatchKey,
+                  streamingEnabled: streamingEnabled,
+                ),
+              ),
+            ],
+            const Spacer(),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ForYouTeamMatchPanel extends StatelessWidget {
+  const _ForYouTeamMatchPanel({
+    required this.group,
+    required this.games,
+    required this.selectedGameId,
+    required this.tournamentTitle,
+    required this.eventGames,
+    required this.liveBatchKey,
+    required this.streamingEnabled,
+  });
+
+  final DesktopTeamMatchGroup group;
+  final List<GamesTourModel> games;
+  final String? selectedGameId;
+  final String tournamentTitle;
+  final List<GamesTourModel> eventGames;
+  final LiveGamesBatchKey liveBatchKey;
+  final bool streamingEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ForYouGroupedPanelFrame(
+      header: _ForYouTeamMatchHeader(group: group),
+      games: games,
+      selectedGameId: selectedGameId,
+      tournamentTitle: tournamentTitle,
+      eventGames: eventGames,
+      liveBatchKey: liveBatchKey,
+      streamingEnabled: streamingEnabled,
+    );
+  }
+}
+
+class _ForYouKnockoutMatchPanel extends StatelessWidget {
+  const _ForYouKnockoutMatchPanel({
+    required this.header,
+    required this.games,
+    required this.selectedGameId,
+    required this.tournamentTitle,
+    required this.eventGames,
+    required this.liveBatchKey,
+    required this.streamingEnabled,
+  });
+
+  final MatchHeaderModel header;
+  final List<GamesTourModel> games;
+  final String? selectedGameId;
+  final String tournamentTitle;
+  final List<GamesTourModel> eventGames;
+  final LiveGamesBatchKey liveBatchKey;
+  final bool streamingEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ForYouGroupedPanelFrame(
+      header: _ForYouKnockoutMatchHeader(header: header),
+      games: games,
+      selectedGameId: selectedGameId,
+      tournamentTitle: tournamentTitle,
+      eventGames: eventGames,
+      liveBatchKey: liveBatchKey,
+      streamingEnabled: streamingEnabled,
+    );
+  }
+}
+
+class _ForYouGroupedPanelFrame extends StatelessWidget {
+  const _ForYouGroupedPanelFrame({
+    required this.header,
+    required this.games,
+    required this.selectedGameId,
+    required this.tournamentTitle,
+    required this.eventGames,
+    required this.liveBatchKey,
+    required this.streamingEnabled,
+  });
+
+  final Widget header;
+  final List<GamesTourModel> games;
+  final String? selectedGameId;
+  final String tournamentTitle;
+  final List<GamesTourModel> eventGames;
+  final LiveGamesBatchKey liveBatchKey;
+  final bool streamingEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final metrics = DesktopGameCardsFlow.metricsFor(DesktopCardLayout.compact);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(height: _kForYouGroupHeaderHeight, child: header),
+            const SizedBox(height: _kForYouGroupHeaderGap),
+            for (var i = 0; i < games.length; i++) ...[
+              if (i > 0) SizedBox(height: metrics.spacing),
+              SizedBox(
+                height: metrics.tileHeight,
+                child: LiveDesktopGameCard(
+                  game: games[i],
+                  eventGames: eventGames,
+                  tournamentTitle: tournamentTitle,
+                  layout: DesktopCardLayout.compact,
+                  selected: selectedGameId == games[i].gameId,
+                  viewSource: ChessboardView.forYou,
+                  liveBatchKey: liveBatchKey,
+                  streamingEnabled: streamingEnabled,
+                  allowStockfishFallback: true,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ForYouTeamMatchHeader extends StatelessWidget {
+  const _ForYouTeamMatchHeader({required this.group});
+
+  final DesktopTeamMatchGroup group;
+
+  @override
+  Widget build(BuildContext context) {
+    final score = group.score;
+    final leftColor =
+        score.isDraw
+            ? kWhiteColor
+            : score.left > score.right
+            ? kPrimaryColor
+            : kRedColor;
+    final rightColor =
+        score.isDraw
+            ? kWhiteColor
+            : score.right > score.left
+            ? kPrimaryColor
+            : kRedColor;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: kBackgroundColor,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Row(
+        children: [
+          Expanded(child: _ForYouTeamName(group.leftTeam, TextAlign.start)),
+          _ForYouScorePill(
+            label: formatDesktopTeamMatchScore(score.left),
+            color: leftColor,
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 7),
+            child: Text(
+              'VS',
+              style: TextStyle(
+                color: kLightGreyColor,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.7,
+              ),
+            ),
+          ),
+          _ForYouScorePill(
+            label: formatDesktopTeamMatchScore(score.right),
+            color: rightColor,
+          ),
+          Expanded(child: _ForYouTeamName(group.rightTeam, TextAlign.end)),
+        ],
+      ),
+    );
+  }
+}
+
+class _ForYouKnockoutMatchHeader extends StatelessWidget {
+  const _ForYouKnockoutMatchHeader({required this.header});
+
+  final MatchHeaderModel header;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: kBackgroundColor,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+            decoration: BoxDecoration(
+              color: kPrimaryColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: kPrimaryColor.withValues(alpha: 0.35)),
+            ),
+            child: const Text(
+              'MATCH',
+              style: TextStyle(
+                color: kPrimaryColor,
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.6,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              header.matchTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kWhiteColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            header.scoreDisplay,
+            style: const TextStyle(
+              color: kWhiteColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ForYouTeamName extends StatelessWidget {
+  const _ForYouTeamName(this.name, this.textAlign);
+
+  final String name;
+  final TextAlign textAlign;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      name,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      textAlign: textAlign,
+      style: const TextStyle(
+        color: kWhiteColor,
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+        height: 1.1,
+      ),
+    );
+  }
+}
+
+class _ForYouScorePill extends StatelessWidget {
+  const _ForYouScorePill({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 26,
+      child: Text(
+        label,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: color,
+          fontSize: 13,
+          fontWeight: FontWeight.w800,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
     );
   }
 }

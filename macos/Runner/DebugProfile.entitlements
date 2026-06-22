@@ -23,14 +23,16 @@
 	<!-- Bind 127.0.0.1 for the OAuth loopback flow -->
 	<key>com.apple.security.network.server</key>
 	<true/>
-	<!-- Associated domains let macOS deliver chessever.com universal links
-		 (for example /broadcast/<slug>/<id>) to the desktop app when the
-		 website's apple-app-site-association file includes this bundle/team. -->
-	<key>com.apple.developer.associated-domains</key>
-	<array>
-		<string>applinks:chessever.com</string>
-		<string>applinks:www.chessever.com</string>
-	</array>
+	<!-- Associated domains (universal links) are intentionally NOT requested in
+		 the Debug entitlements. `flutter run -d macos` signs Debug with Xcode's
+		 automatic "Mac Team Provisioning Profile", which does not carry the
+		 associated-domains entitlement, so requesting it here fails codesign with
+		 "Provisioning profile ... doesn't include the Associated Domains capability".
+		 Universal-link handoff is a production concern handled by the Release build
+		 (manual "Chessever Desktop Direct Distribution" profile) — see
+		 Release.entitlements, which keeps applinks:chessever.com. Local debug runs
+		 don't need it (custom-scheme chessever:// links and the OAuth loopback still
+		 work). Re-add here only if you give local debug a profile with the capability. -->
 	<key>com.apple.developer.applesignin</key>
 	<array>
 		<string>Default</string>

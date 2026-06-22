@@ -58,7 +58,16 @@ class AppDatabase {
       _initCompleter!.complete(db);
       return db;
     } catch (e) {
-      _initCompleter!.completeError(e);
+      // On the first-call path the awaiter receives this error via `rethrow`
+      // below — it never listens to the completer's future. Completing the
+      // completer with an error therefore leaves an orphaned rejected future
+      // whose error escapes to the zone as an unhandled `[desktop.fatal]`
+      // (seen when a cold-start init blows the timeout, even though `restore()`
+      // and the warm-up already catch the rethrown error). Mark it handled;
+      // any concurrent caller awaiting the completer still gets the error.
+      final pendingInit = _initCompleter!;
+      pendingInit.completeError(e);
+      pendingInit.future.ignore();
       _initCompleter = null;
       rethrow;
     }

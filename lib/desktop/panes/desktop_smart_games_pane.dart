@@ -1,12 +1,18 @@
-import 'package:flutter/material.dart';
-import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:forui/forui.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:skeletonizer/skeletonizer.dart';
+
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
+import 'package:chessever/desktop/utils/desktop_smart_game_sections.dart';
 import 'package:chessever/desktop/utils/game_date_groups.dart';
-import 'package:chessever/desktop/widgets/desktop_date_group_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
@@ -15,6 +21,7 @@ import 'package:chessever/screens/chessboard/provider/chess_board_screen_provide
 import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 class DesktopSmartGamesPane extends ConsumerStatefulWidget {
@@ -87,12 +94,15 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                     ],
                   ),
                 ),
-                IconButton(
-                  tooltip: 'Refresh',
-                  onPressed: () {
-                    ref.read(premiumGamesProvider(type).notifier).refresh();
-                  },
-                  icon: const Icon(Icons.refresh_rounded, color: kWhiteColor),
+                DesktopTooltip(
+                  message: 'Refresh',
+                  child: FButton.icon(
+                    style: FButtonStyle.ghost(),
+                    onPress: () {
+                      ref.read(premiumGamesProvider(type).notifier).refresh();
+                    },
+                    child: const Icon(Icons.refresh_rounded),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 const GameViewModeToggle(),
@@ -113,12 +123,7 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
           ),
           Expanded(
             child: gamesAsync.when(
-              loading:
-                  () => const _PaneMessage(
-                    icon: Icons.hourglass_empty_rounded,
-                    title: 'Loading games',
-                    message: 'Building the collection…',
-                  ),
+              loading: () => const _SmartGamesLoadingSkeleton(),
               error:
                   (error, stack) => _PaneMessage(
                     icon: Icons.error_outline_rounded,
@@ -146,6 +151,8 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                   );
                 }
                 return _SmartGamesList(
+                  tabId: widget.tabId,
+                  type: type,
                   games: visibleGames,
                   routeTitle: copy.title,
                   hasMore: state.hasMore,
@@ -166,6 +173,8 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
 
 class _SmartGamesList extends ConsumerStatefulWidget {
   const _SmartGamesList({
+    required this.tabId,
+    required this.type,
     required this.games,
     required this.routeTitle,
     required this.hasMore,
@@ -174,6 +183,8 @@ class _SmartGamesList extends ConsumerStatefulWidget {
     required this.showCounts,
   });
 
+  final String tabId;
+  final PremiumGamesType type;
   final List<GamesTourModel> games;
   final String routeTitle;
   final bool hasMore;
@@ -186,8 +197,15 @@ class _SmartGamesList extends ConsumerStatefulWidget {
 }
 
 class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
+  static const Duration _scrollIdleDelay = Duration(milliseconds: 180);
+
   final ScrollController _scrollController = ScrollController();
   final Set<String> _collapsedGroups = <String>{};
+  Timer? _scrollIdleTimer;
+  bool _liveCardsPausedForScroll = false;
+
+  String get _liveCardsPauseReason =>
+      'desktop_smart_games_scroll_${widget.routeTitle}';
 
   @override
   void initState() {
@@ -197,6 +215,8 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
 
   @override
   void dispose() {
+    _scrollIdleTimer?.cancel();
+    _setLiveCardsPausedForScroll(false);
     _scrollController
       ..removeListener(_maybeLoadMore)
       ..dispose();
@@ -204,7 +224,11 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
   }
 
   void _maybeLoadMore() {
-    if (!widget.hasMore || widget.isLoading || !_scrollController.hasClients) {
+    if (!_scrollController.hasClients) {
+      return;
+    }
+    _markLiveCardsScrolling();
+    if (!widget.hasMore || widget.isLoading) {
       return;
     }
     final position = _scrollController.position;
@@ -213,22 +237,50 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
     }
   }
 
+  void _markLiveCardsScrolling() {
+    _setLiveCardsPausedForScroll(true);
+    _scrollIdleTimer?.cancel();
+    _scrollIdleTimer = Timer(_scrollIdleDelay, _markLiveCardsIdle);
+  }
+
+  void _markLiveCardsIdle() {
+    if (!mounted) return;
+    _setLiveCardsPausedForScroll(false);
+  }
+
+  void _setLiveCardsPausedForScroll(bool paused) {
+    if (_liveCardsPausedForScroll == paused) return;
+    _liveCardsPausedForScroll = paused;
+    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
+  }
+
   @override
   Widget build(BuildContext context) {
     final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
-    final groups = buildDesktopGameDateGroups(
+    final streamingEnabled = ref.watch(
+      desktopTabsProvider.select((state) => state.activeId == widget.tabId),
+    );
+    final cardStreamingEnabled = streamingEnabled;
+    final sections = buildDesktopSmartGameSections(
       widget.games,
-      includeToday: true,
-      excludeFuture: true,
+      type: widget.type,
     );
     final groupedGames = <GamesTourModel>[
-      for (final group in groups) ...group.games,
+      for (final section in sections) ...section.games,
     ];
     final keyboardGames = <GamesTourModel>[
-      for (final group in groups)
-        if (!_collapsedGroups.contains(group.key)) ...group.games,
+      for (final section in sections)
+        if (!_collapsedGroups.contains(section.key)) ...section.games,
     ];
-    final scopeId = 'smart-games-${widget.routeTitle.toLowerCase()}';
+    final scopeId = 'smart-games-${widget.type.name}';
+
+    if (sections.isEmpty) {
+      return const _PaneMessage(
+        icon: Icons.grid_off_rounded,
+        title: 'No games found',
+        message: 'No current games match this smart collection.',
+      );
+    }
 
     if (layout == DesktopCardLayout.grid) {
       return LayoutBuilder(
@@ -252,17 +304,12 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                 physics: const DesktopScrollPhysics(),
                 slivers: [
                   for (
-                    var groupIndex = 0;
-                    groupIndex < groups.length;
-                    groupIndex++
+                    var sectionIndex = 0;
+                    sectionIndex < sections.length;
+                    sectionIndex++
                   ) ...[
-                    _dateHeader(
-                      groups[groupIndex].key,
-                      groups[groupIndex].label,
-                      groups[groupIndex].games.length,
-                      groupIndex,
-                    ),
-                    if (!_collapsedGroups.contains(groups[groupIndex].key))
+                    _sectionHeader(sections[sectionIndex], sectionIndex),
+                    if (!_collapsedGroups.contains(sections[sectionIndex].key))
                       SliverPadding(
                         padding: const EdgeInsets.symmetric(horizontal: 24),
                         sliver: SliverGrid(
@@ -274,23 +321,24 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                                 childAspectRatio: 0.95,
                               ),
                           delegate: SliverChildBuilderDelegate((context, i) {
-                            final game = groups[groupIndex].games[i];
+                            final game = sections[sectionIndex].games[i];
                             return DesktopGameKeyboardItem(
                               itemKey: keyForGame(game.gameId),
                               gameId: game.gameId,
                               onSelect: selectGame,
                               child: LiveDesktopGameCard(
                                 game: game,
-                                tournamentTitle:
-                                    game.tourSlug ?? widget.routeTitle,
+                                tournamentTitle: sections[sectionIndex].title,
                                 routeTitle: widget.routeTitle,
                                 routeGames: groupedGames,
                                 layout: DesktopCardLayout.grid,
                                 selected: selectedGameId == game.gameId,
                                 viewSource: ChessboardView.tour,
+                                streamingEnabled: cardStreamingEnabled,
+                                allowStockfishFallback: true,
                               ),
                             );
-                          }, childCount: groups[groupIndex].games.length),
+                          }, childCount: sections[sectionIndex].games.length),
                         ),
                       ),
                   ],
@@ -317,22 +365,17 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
             physics: const DesktopScrollPhysics(),
             slivers: [
               for (
-                var groupIndex = 0;
-                groupIndex < groups.length;
-                groupIndex++
+                var sectionIndex = 0;
+                sectionIndex < sections.length;
+                sectionIndex++
               ) ...[
-                _dateHeader(
-                  groups[groupIndex].key,
-                  groups[groupIndex].label,
-                  groups[groupIndex].games.length,
-                  groupIndex,
-                ),
-                if (!_collapsedGroups.contains(groups[groupIndex].key))
+                _sectionHeader(sections[sectionIndex], sectionIndex),
+                if (!_collapsedGroups.contains(sections[sectionIndex].key))
                   SliverPadding(
                     padding: const EdgeInsets.symmetric(horizontal: 24),
                     sliver: SliverToBoxAdapter(
                       child: _SmartGamesTable(
-                        games: groups[groupIndex].games,
+                        games: sections[sectionIndex].games,
                         routeTitle: widget.routeTitle,
                         routeGames: groupedGames,
                         selectedGameId: selectedGameId,
@@ -363,38 +406,35 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
           physics: const DesktopScrollPhysics(),
           slivers: [
             for (
-              var groupIndex = 0;
-              groupIndex < groups.length;
-              groupIndex++
+              var sectionIndex = 0;
+              sectionIndex < sections.length;
+              sectionIndex++
             ) ...[
-              _dateHeader(
-                groups[groupIndex].key,
-                groups[groupIndex].label,
-                groups[groupIndex].games.length,
-                groupIndex,
-              ),
-              if (!_collapsedGroups.contains(groups[groupIndex].key))
+              _sectionHeader(sections[sectionIndex], sectionIndex),
+              if (!_collapsedGroups.contains(sections[sectionIndex].key))
                 SliverPadding(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
                   sliver: SliverToBoxAdapter(
                     child: DesktopGameCardsFlow(
                       layout: layout,
                       embedded: true,
-                      itemCount: groups[groupIndex].games.length,
+                      itemCount: sections[sectionIndex].games.length,
                       itemBuilder: (context, i) {
-                        final game = groups[groupIndex].games[i];
+                        final game = sections[sectionIndex].games[i];
                         return DesktopGameKeyboardItem(
                           itemKey: keyForGame(game.gameId),
                           gameId: game.gameId,
                           onSelect: selectGame,
                           child: LiveDesktopGameCard(
                             game: game,
-                            tournamentTitle: game.tourSlug ?? widget.routeTitle,
+                            tournamentTitle: sections[sectionIndex].title,
                             routeTitle: widget.routeTitle,
                             routeGames: groupedGames,
                             layout: layout,
                             selected: selectedGameId == game.gameId,
                             viewSource: ChessboardView.tour,
+                            streamingEnabled: cardStreamingEnabled,
+                            allowStockfishFallback: true,
                           ),
                         );
                       },
@@ -411,32 +451,198 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
     );
   }
 
-  SliverPadding _dateHeader(
-    String groupKey,
-    String label,
-    int gameCount,
-    int groupIndex,
+  SliverPadding _sectionHeader(
+    DesktopSmartGameSection section,
+    int sectionIndex,
   ) {
-    final collapsed = _collapsedGroups.contains(groupKey);
+    final collapsed = _collapsedGroups.contains(section.key);
     return SliverPadding(
-      padding: EdgeInsets.fromLTRB(24, groupIndex == 0 ? 4 : 16, 24, 8),
+      padding: EdgeInsets.fromLTRB(24, sectionIndex == 0 ? 4 : 16, 24, 8),
       sliver: SliverToBoxAdapter(
-        child: DesktopDateGroupCard(
-          label: label,
-          gameCount: gameCount,
+        child: _SmartEventSectionCard(
+          section: section,
           gameCountLabel: widget.showCounts ? null : 'Loading…',
           collapsed: collapsed,
           onToggle: () {
             setState(() {
               if (collapsed) {
-                _collapsedGroups.remove(groupKey);
+                _collapsedGroups.remove(section.key);
               } else {
-                _collapsedGroups.add(groupKey);
+                _collapsedGroups.add(section.key);
               }
             });
           },
         ),
       ),
+    );
+  }
+}
+
+class _SmartEventSectionCard extends StatelessWidget {
+  const _SmartEventSectionCard({
+    required this.section,
+    required this.collapsed,
+    required this.onToggle,
+    this.gameCountLabel,
+  });
+
+  final DesktopSmartGameSection section;
+  final bool collapsed;
+  final VoidCallback onToggle;
+  final String? gameCountLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final meta = <String>[
+      section.dateLabel,
+      if (section.timeControlLabel != null) section.timeControlLabel!,
+      if (section.eventAverageRating > 0) 'Avg ${section.eventAverageRating}',
+    ];
+
+    return FTheme(
+      data: FThemes.zinc.dark,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onToggle,
+        child: Semantics(
+          button: true,
+          toggled: !collapsed,
+          label: section.title,
+          child: FCard.raw(
+            style:
+                (style) => style.copyWith(
+                  decoration: BoxDecoration(
+                    color: kBlack2Color,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color:
+                          section.hasLiveGames
+                              ? kPrimaryColor.withValues(alpha: 0.32)
+                              : kDividerColor,
+                    ),
+                  ),
+                ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+              child: Row(
+                children: [
+                  Container(
+                    width: 3,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color:
+                          section.hasLiveGames ? kPrimaryColor : kWhiteColor70,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Icon(
+                    section.hasLiveGames
+                        ? Icons.radio_button_checked_rounded
+                        : Icons.event_note_rounded,
+                    size: 16,
+                    color: section.hasLiveGames ? kPrimaryColor : kWhiteColor70,
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          section.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          meta.join('  •  '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: kWhiteColor.withValues(alpha: 0.58),
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  if (section.liveCount > 0) ...[
+                    _SmartHeaderBadge(
+                      label:
+                          section.liveCount == 1
+                              ? '1 live'
+                              : '${section.liveCount} live',
+                      accent: kPrimaryColor,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  _SmartHeaderBadge(
+                    label:
+                        gameCountLabel ??
+                        (section.gameCount == 1
+                            ? '1 game'
+                            : '${section.gameCount} games'),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    collapsed
+                        ? Icons.keyboard_arrow_right_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    size: 18,
+                    color: kWhiteColor70,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SmartHeaderBadge extends StatelessWidget {
+  const _SmartHeaderBadge({required this.label, this.accent});
+
+  final String label;
+  final Color? accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = accent ?? kWhiteColor70;
+    return FBadge(
+      style: FBadgeStyle.outline(
+        (style) => style.copyWith(
+          decoration: BoxDecoration(
+            color: (accent ?? kBlack3Color).withValues(
+              alpha: accent == null ? 1 : 0.12,
+            ),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: accent?.withValues(alpha: 0.42) ?? kDividerColor,
+            ),
+          ),
+          contentStyle:
+              (content) => content.copyWith(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                labelTextStyle: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+        ),
+      ),
+      child: Text(label),
     );
   }
 }
@@ -473,6 +679,8 @@ List<GamesTourModel> filterDesktopSmartGames(
           game.blackPlayer.name,
           game.blackPlayer.title,
           game.blackPlayer.federation,
+          game.eventName,
+          game.tourName,
           game.tourSlug,
           game.roundSlug,
           game.eco,
@@ -687,7 +895,7 @@ class _SmartGamesTableRowState extends State<_SmartGamesTableRow> {
               Expanded(
                 flex: 3,
                 child: Text(
-                  game.tourSlug ?? game.openingName ?? '—',
+                  _smartGameEventLabel(game),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: kWhiteColor70, fontSize: 12),
@@ -745,6 +953,19 @@ class _PlayerCell extends StatelessWidget {
       ],
     );
   }
+}
+
+String _smartGameEventLabel(GamesTourModel game) {
+  for (final value in [
+    game.eventName,
+    game.tourName,
+    game.tourSlug,
+    game.openingName,
+  ]) {
+    final trimmed = value?.trim();
+    if (trimmed != null && trimmed.isNotEmpty) return trimmed;
+  }
+  return '—';
 }
 
 class _ResultCell extends StatelessWidget {
@@ -820,20 +1041,193 @@ class _PaneMessage extends StatelessWidget {
   }
 }
 
+class _SmartGamesLoadingSkeleton extends StatelessWidget {
+  const _SmartGamesLoadingSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const targetWidth = 280.0;
+        final columns =
+            (constraints.maxWidth / targetWidth).floor().clamp(2, 6).toInt();
+
+        return Skeletonizer(
+          ignorePointers: true,
+          effect: const ShimmerEffect(
+            baseColor: kBlackColor,
+            highlightColor: kDarkGreyColor,
+          ),
+          child: CustomScrollView(
+            physics: const DesktopScrollPhysics(),
+            slivers: [
+              const SliverPadding(
+                padding: EdgeInsets.fromLTRB(24, 4, 24, 8),
+                sliver: SliverToBoxAdapter(
+                  child: _SmartSkeletonSectionHeader(),
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                sliver: SliverGrid(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns,
+                    mainAxisSpacing: 8,
+                    crossAxisSpacing: 8,
+                    childAspectRatio: 0.95,
+                  ),
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) => const _SmartSkeletonGameCard(),
+                    childCount: columns * 2,
+                  ),
+                ),
+              ),
+              const SliverPadding(
+                padding: EdgeInsets.fromLTRB(24, 16, 24, 8),
+                sliver: SliverToBoxAdapter(
+                  child: _SmartSkeletonSectionHeader(),
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                sliver: SliverGrid(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns,
+                    mainAxisSpacing: 8,
+                    crossAxisSpacing: 8,
+                    childAspectRatio: 0.95,
+                  ),
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) => const _SmartSkeletonGameCard(),
+                    childCount: columns,
+                  ),
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 24)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SmartSkeletonSectionHeader extends StatelessWidget {
+  const _SmartSkeletonSectionHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        child: Row(
+          children: [
+            Bone(width: 3, height: 30, uniRadius: 2),
+            SizedBox(width: 10),
+            Bone.circle(size: 16),
+            SizedBox(width: 9),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Bone(width: 220, height: 14, uniRadius: 4),
+                  SizedBox(height: 7),
+                  Bone(width: 150, height: 10, uniRadius: 4),
+                ],
+              ),
+            ),
+            SizedBox(width: 12),
+            Bone(width: 62, height: 22, uniRadius: 999),
+            SizedBox(width: 8),
+            Bone.circle(size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SmartSkeletonGameCard extends StatelessWidget {
+  const _SmartSkeletonGameCard({this.compact = false});
+
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(compact ? 10 : 12),
+        child: Column(
+          children: [
+            const Row(
+              children: [
+                Bone.circle(size: 8),
+                SizedBox(width: 8),
+                Expanded(child: Bone(height: 13, uniRadius: 4)),
+                SizedBox(width: 8),
+                Bone(width: 38, height: 14, uniRadius: 4),
+              ],
+            ),
+            SizedBox(height: compact ? 10 : 12),
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: const Bone(
+                  width: double.infinity,
+                  height: double.infinity,
+                ),
+              ),
+            ),
+            SizedBox(height: compact ? 10 : 12),
+            const Row(
+              children: [
+                Bone.circle(size: 8),
+                SizedBox(width: 8),
+                Expanded(child: Bone(height: 13, uniRadius: 4)),
+                SizedBox(width: 8),
+                Bone(width: 48, height: 18, uniRadius: 4),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _InlineLoader extends StatelessWidget {
   const _InlineLoader();
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 18),
-      child: Center(
+    return Skeletonizer(
+      ignorePointers: true,
+      effect: const ShimmerEffect(
+        baseColor: kBlackColor,
+        highlightColor: kDarkGreyColor,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 14, 24, 20),
         child: SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: kPrimaryColor,
+          height: 88,
+          child: Row(
+            children: const [
+              Expanded(child: _SmartSkeletonGameCard(compact: true)),
+              SizedBox(width: 8),
+              Expanded(child: _SmartSkeletonGameCard(compact: true)),
+              SizedBox(width: 8),
+              Expanded(child: _SmartSkeletonGameCard(compact: true)),
+            ],
           ),
         ),
       ),

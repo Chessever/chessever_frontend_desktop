@@ -254,10 +254,12 @@ class _PlayerSearchCard extends ConsumerWidget {
                           ClipRRect(
                             borderRadius: BorderRadius.circular(2.br),
                             child: CountryFlag.fromCountryCode(
-countryCode,
-  theme: ImageTheme(width: isCompact ? 14.sp : 16.sp,
-                              height: isCompact ? 10.sp : 12.sp,),
-),
+                              countryCode,
+                              theme: ImageTheme(
+                                width: isCompact ? 14.sp : 16.sp,
+                                height: isCompact ? 10.sp : 12.sp,
+                              ),
+                            ),
                           ),
                           SizedBox(width: 5.sp),
                         ],
@@ -332,10 +334,9 @@ class _FlagBackground extends StatelessWidget {
         child: FittedBox(
           fit: BoxFit.cover,
           child: CountryFlag.fromCountryCode(
-countryCode,
-  theme: ImageTheme(width: 300,
-            height: 200,),
-),
+            countryCode,
+            theme: ImageTheme(width: 300, height: 200),
+          ),
         ),
       ),
     );
@@ -388,7 +389,10 @@ class _PlayerPhotoOverlay extends ConsumerWidget {
               child: CachedNetworkImage(
                 imageUrl: photoUrl,
                 fit: BoxFit.cover,
-                memCacheWidth: (200 * MediaQuery.devicePixelRatioOf(context)).toInt(),
+                memCacheWidth:
+                    (200 * MediaQuery.devicePixelRatioOf(context)).toInt(),
+                memCacheHeight:
+                    (250 * MediaQuery.devicePixelRatioOf(context)).toInt(),
                 placeholder: (_, __) => _buildPlaceholder(),
                 errorWidget: (_, __, ___) => _buildPlaceholder(),
               ),

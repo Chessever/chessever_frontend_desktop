@@ -183,7 +183,13 @@ sign_one() {
 
 STOCKFISH="$APP/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets/assets/engine/macos/stockfish"
 [ -e "$STOCKFISH" ] && sign_one "$STOCKFISH"
-sign_one "$APP/Contents/Frameworks/App.framework"
+if [ -d "$APP/Contents/Frameworks" ]; then
+  find "$APP/Contents/Frameworks" -type d -name "*.framework" -prune -print |
+    sort |
+    while IFS= read -r framework; do
+      sign_one "$framework"
+    done
+fi
 
 /usr/bin/codesign --force --options runtime --timestamp \
   --entitlements "$REPO_ROOT/macos/Runner/Release.entitlements" \

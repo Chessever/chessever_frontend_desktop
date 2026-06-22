@@ -77,6 +77,8 @@ class GamesTourModel {
   final String? roundSlug;
   final String tourId;
   final String? tourSlug;
+  final String? tourName;
+  final String? eventName;
   final DateTime? lastMoveTime;
   final DateTime? dateStart;
   final DateTime? gameDay;
@@ -103,6 +105,8 @@ class GamesTourModel {
     this.roundSlug,
     required this.tourId, // Make required
     this.tourSlug,
+    this.tourName,
+    this.eventName,
     this.lastMove,
     this.fen,
     this.pgn,
@@ -147,6 +151,8 @@ class GamesTourModel {
     String? roundSlug,
     String? tourId,
     String? tourSlug,
+    String? tourName,
+    String? eventName,
     DateTime? lastMoveTime,
     DateTime? dateStart,
     DateTime? gameDay,
@@ -178,6 +184,8 @@ class GamesTourModel {
       roundSlug: roundSlug ?? this.roundSlug,
       tourId: tourId ?? this.tourId,
       tourSlug: tourSlug ?? this.tourSlug,
+      tourName: tourName ?? this.tourName,
+      eventName: eventName ?? this.eventName,
       lastMoveTime: lastMoveTime ?? this.lastMoveTime,
       dateStart: dateStart ?? this.dateStart,
       gameDay: gameDay ?? this.gameDay,
@@ -243,18 +251,18 @@ class GamesTourModel {
 
         whiteTimeDisplay =
             (game.lastClockWhite != null && game.lastClockWhite! > 0)
-            ? _formatTimeFromSeconds(game.lastClockWhite!)
-            : (white.clock > 0
-                  ? _formatTime(white.clock)
-                  : (pgnClocks.whiteSeconds != null
+                ? _formatTimeFromSeconds(game.lastClockWhite!)
+                : (white.clock > 0
+                    ? _formatTime(white.clock)
+                    : (pgnClocks.whiteSeconds != null
                         ? _formatTimeFromSeconds(pgnClocks.whiteSeconds!)
                         : '--:--'));
         blackTimeDisplay =
             (game.lastClockBlack != null && game.lastClockBlack! > 0)
-            ? _formatTimeFromSeconds(game.lastClockBlack!)
-            : (black.clock > 0
-                  ? _formatTime(black.clock)
-                  : (pgnClocks.blackSeconds != null
+                ? _formatTimeFromSeconds(game.lastClockBlack!)
+                : (black.clock > 0
+                    ? _formatTime(black.clock)
+                    : (pgnClocks.blackSeconds != null
                         ? _formatTimeFromSeconds(pgnClocks.blackSeconds!)
                         : '--:--'));
       } else {
@@ -307,6 +315,8 @@ class GamesTourModel {
         roundSlug: game.roundSlug, // Include roundSlug for display
         tourId: game.tourId, // Include tourId in model
         tourSlug: game.tourSlug, // Include tourSlug for display
+        tourName: game.tourName,
+        eventName: game.eventName,
         fen: game.fen?.isNotEmpty == true ? game.fen : null,
         pgn: game.pgn?.isNotEmpty == true ? game.pgn : null,
         lastMove: game.lastMove?.isNotEmpty == true ? game.lastMove : null,
@@ -587,6 +597,8 @@ class GamesTourModel {
         other.roundSlug == roundSlug &&
         other.tourId == tourId &&
         other.tourSlug == tourSlug &&
+        other.tourName == tourName &&
+        other.eventName == eventName &&
         other.eco == eco &&
         other.openingName == openingName &&
         other.timeControl == timeControl &&
@@ -619,6 +631,8 @@ class GamesTourModel {
       roundSlug,
       tourId,
       tourSlug,
+      tourName,
+      eventName,
       eco,
       openingName,
       timeControl,
@@ -754,10 +768,15 @@ enum GameStatus {
       case '0.5-0.5':
         return GameStatus.draw;
       case '*':
+      case 'ongoing':
+      case 'live':
         return GameStatus.ongoing;
       default:
         // Support Gamebase API result codes (W/B/D)
         switch (upper) {
+          case 'ONGOING':
+          case 'LIVE':
+            return GameStatus.ongoing;
           case 'W':
             return GameStatus.whiteWins;
           case 'B':

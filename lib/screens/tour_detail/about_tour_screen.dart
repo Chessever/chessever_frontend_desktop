@@ -200,10 +200,12 @@ class _AboutTourScreenState extends ConsumerState<AboutTourScreen> {
                           flag:
                               countryCode.isNotEmpty
                                   ? CountryFlag.fromCountryCode(
-countryCode,
-  theme: ImageTheme(width: 16.w,
-                                    height: 12.h,),
-)
+                                    countryCode,
+                                    theme: ImageTheme(
+                                      width: 16.w,
+                                      height: 12.h,
+                                    ),
+                                  )
                                   : null,
                           description: aboutModel.location,
                         ),
@@ -251,6 +253,8 @@ countryCode,
             (MediaQuery.sizeOf(context).width *
                     MediaQuery.devicePixelRatioOf(context))
                 .toInt(),
+        memCacheHeight:
+            (240.h * MediaQuery.devicePixelRatioOf(context)).toInt(),
         fadeInDuration: const Duration(milliseconds: 300),
         fadeOutDuration: const Duration(milliseconds: 200),
         alignment: Alignment.topCenter,
@@ -269,8 +273,10 @@ countryCode,
       alignment: Alignment.center,
       child: Image.asset(
         PngAsset.premiumIcon,
+        width: 100.h,
         height: 100.h,
         fit: BoxFit.contain,
+        cacheWidth: (100 * MediaQuery.devicePixelRatioOf(context)).toInt(),
         cacheHeight: (100 * MediaQuery.devicePixelRatioOf(context)).toInt(),
       ),
     );

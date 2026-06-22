@@ -100,12 +100,20 @@ DesktopPane? paneForTabKind(TabKind kind) {
   }
 }
 
+/// Sidebar highlight derived from the foreground tab.
+///
+/// Returns null when the workspace is empty so the welcome/home pane does not
+/// incorrectly keep Board highlighted after the last tab is closed.
+DesktopPane? sidebarPaneForActiveTabKind(TabKind? kind) {
+  if (kind == null) return null;
+  return paneForTabKind(kind) ?? DesktopPane.board;
+}
+
 /// Active pane derived from the foreground tab. Read-only — to *change* the
 /// active pane, open or activate a tab via `desktopTabsProvider.notifier`.
 /// Returns `DesktopPane.board` as a stable fallback when the foreground tab
-/// is one of the kinds the sidebar doesn't represent.
+/// is one of the kinds the sidebar doesn't represent or the workspace is empty.
 final desktopPaneProvider = Provider<DesktopPane>((ref) {
-  final kind = ref.watch(activeTabKindProvider);
-  if (kind == null) return DesktopPane.board;
-  return paneForTabKind(kind) ?? DesktopPane.board;
+  return sidebarPaneForActiveTabKind(ref.watch(activeTabKindProvider)) ??
+      DesktopPane.board;
 });

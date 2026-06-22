@@ -142,7 +142,15 @@ class _PlayerAvatarSectionState extends State<PlayerAvatarSection> {
         children: [
           Row(
             children: [
-              Image.asset(icon, width: 18.w, height: 18.h),
+              Image.asset(
+                icon,
+                width: 18.w,
+                height: 18.h,
+                cacheWidth:
+                    (18.w * MediaQuery.devicePixelRatioOf(context)).round(),
+                cacheHeight:
+                    (18.h * MediaQuery.devicePixelRatioOf(context)).round(),
+              ),
               SizedBox(width: 8.w),
               Text(
                 label,

@@ -132,7 +132,7 @@ class AnalysisBoardState {
   const AnalysisBoardState({
     this.lastMove,
     this.promotionMove,
-    this.validMoves = const IMap.empty(),
+    this.validMoves = const <Square, Set<Square>>{},
     this.positionHistory = const [],
     this.moveSans = const [],
     this.allMoves = const [],

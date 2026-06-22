@@ -980,6 +980,7 @@ class _CollapsedRailState extends State<_CollapsedRail> {
                 opacity: eased,
                 child: Transform.scale(
                   scale: 0.86 + (0.14 * eased),
+                  filterQuality: FilterQuality.medium,
                   child: child,
                 ),
               );

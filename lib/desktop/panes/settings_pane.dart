@@ -7,11 +7,11 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'package:chessever/desktop/services/auth/desktop_auth_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
+import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -438,11 +438,9 @@ class _SubscriptionSection extends HookConsumerWidget {
       error.value = null;
       loading.value = true;
       try {
-        final uri = Uri.https('chessever.com', '/account');
-        final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+        final ok = await launchDesktopWebUrl(desktopAccountWebUri());
         if (!ok) {
-          error.value =
-              'Could not open chessever.com/account in your browser.';
+          error.value = 'Could not open chessever.com/account in your browser.';
         }
       } catch (e) {
         error.value = e.toString();
@@ -682,7 +680,7 @@ class _SettingsLinkRowState extends State<_SettingsLinkRow> {
 
   @override
   Widget build(BuildContext context) {
-    final nudgeX = _pressed ? -1.5 : (_hovered ? 4.0 : 0.0);
+    final nudgeX = _pressed ? -0.75 : (_hovered ? 1.5 : 0.0);
     return ClickCursor(
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
@@ -1132,11 +1130,12 @@ class _PrimaryButtonState extends State<_PrimaryButton> {
           onTapUp: disabled ? null : (_) => setState(() => _pressed = false),
           onTapCancel: disabled ? null : () => setState(() => _pressed = false),
           child: SingleMotionBuilder(
-            value: disabled ? 1.0 : (_pressed ? 0.96 : (_hovered ? 1.02 : 1.0)),
+            value:
+                disabled ? 1.0 : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0)),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
@@ -1202,11 +1201,12 @@ class _SecondaryButtonState extends State<_SecondaryButton> {
           onTapUp: disabled ? null : (_) => setState(() => _pressed = false),
           onTapCancel: disabled ? null : () => setState(() => _pressed = false),
           child: SingleMotionBuilder(
-            value: disabled ? 1.0 : (_pressed ? 0.96 : (_hovered ? 1.02 : 1.0)),
+            value:
+                disabled ? 1.0 : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0)),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(

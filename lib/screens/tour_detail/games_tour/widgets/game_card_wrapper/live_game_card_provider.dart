@@ -3,15 +3,15 @@ import 'dart:async';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 /// Stores the base game model for each game, keyed by gameId.
-/// Non-auto-dispose so it persists across provider rebuilds.
-final baseGameProvider = StateProvider.family<GamesTourModel?, String>(
-  (ref, gameId) => null,
-);
+/// Auto-disposes once no visible card/provider is observing the game.
+final baseGameProvider = StateProvider.autoDispose
+    .family<GamesTourModel?, String>((ref, gameId) => null);
 
 /// Provider that combines the base game model with real-time updates from the stream.
 /// This is used by game cards to show live updates without entering the game screen.
@@ -32,21 +32,27 @@ final liveGameCardProvider =
 
 @immutable
 class LiveGameWatchParams {
-  const LiveGameWatchParams({required this.gameId, this.batchKey});
+  const LiveGameWatchParams({
+    required this.gameId,
+    this.batchKey,
+    this.streamEnabled = true,
+  });
 
   final String gameId;
   final LiveGamesBatchKey? batchKey;
+  final bool streamEnabled;
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         other is LiveGameWatchParams &&
             other.gameId == gameId &&
-            other.batchKey == batchKey;
+            other.batchKey == batchKey &&
+            other.streamEnabled == streamEnabled;
   }
 
   @override
-  int get hashCode => Object.hash(gameId, batchKey);
+  int get hashCode => Object.hash(gameId, batchKey, streamEnabled);
 }
 
 final scopedLiveGameCardProvider =
@@ -127,6 +133,10 @@ LiveGameUpdate? _watchLiveUpdate(
   LiveGameWatchParams params,
   _LiveGameMergeMode mode,
 ) {
+  if (!params.streamEnabled || !ref.watch(shouldStreamProvider)) {
+    return null;
+  }
+
   final batchKey = params.batchKey;
   if (batchKey != null && batchKey.contains(params.gameId)) {
     final projectedUpdateAsync = ref.watch(
@@ -175,6 +185,13 @@ class _ProjectedBaseGame {
         ],
         _LiveGameMergeMode.clock => <Object?>[
           game.gameId,
+          // Clock countdown depends on the live position, side-to-move, and
+          // move timestamp. Keep this projection aligned with mobile so player
+          // rows do not tick against a stale active side.
+          game.pgn,
+          game.fen,
+          game.lastMove,
+          game.lastMoveTime,
           game.whiteClockCentiseconds,
           game.blackClockCentiseconds,
           game.whiteClockSeconds,
@@ -231,6 +248,10 @@ class _ProjectedLiveGameUpdate {
         ],
         _LiveGameMergeMode.clock => <Object?>[
           update.gameId,
+          update.pgn,
+          update.fen,
+          update.lastMove,
+          update.lastMoveTime,
           update.lastClockWhite,
           update.lastClockBlack,
           update.status,
@@ -281,13 +302,29 @@ GamesTourModel mergeLiveGameUpdateWithBase({
   );
 }
 
+/// Whether [incoming] should replace the stored base-game snapshot for a game,
+/// using the same freshness arbitration the live card merge applies before it
+/// writes back to [baseGameProvider].
+///
+/// Desktop board surfaces share [baseGameProvider] with live cards. Two of them
+/// used to write it *unconditionally*: the board's realtime row sync and the
+/// open-tab `getGameById()` refresh. Both can carry a snapshot that is staler
+/// than realtime already delivered (a one-shot REST read lags the stream; a
+/// second channel can arrive out of order), so an unguarded write regressed the
+/// card and the board to a stale position/clock. Routing those writes through
+/// this predicate keeps the shared snapshot monotonically fresh.
+bool shouldReplaceBaseGame(GamesTourModel? current, GamesTourModel incoming) =>
+    _shouldUseIncomingGame(current, incoming, allowEqualFreshnessUpdate: true);
+
 GamesTourModel _mergeLiveUpdate({
   required GamesTourModel baseGame,
   required LiveGameUpdate update,
   required _LiveGameMergeMode mode,
 }) {
   final includePosition =
-      mode == _LiveGameMergeMode.full || mode == _LiveGameMergeMode.position;
+      mode == _LiveGameMergeMode.full ||
+      mode == _LiveGameMergeMode.position ||
+      mode == _LiveGameMergeMode.clock;
   final includeClock =
       mode == _LiveGameMergeMode.full || mode == _LiveGameMergeMode.clock;
 
@@ -360,6 +397,7 @@ GamesTourModel watchLiveGame(
   WidgetRef ref,
   GamesTourModel game, {
   LiveGamesBatchKey? batchKey,
+  bool streamEnabled = true,
 }) {
   final current = ref.read(baseGameProvider(game.gameId));
   if (_shouldUseIncomingGame(current, game, allowEqualFreshnessUpdate: false)) {
@@ -372,7 +410,11 @@ GamesTourModel watchLiveGame(
       }
     });
   }
-  final params = LiveGameWatchParams(gameId: game.gameId, batchKey: batchKey);
+  final params = LiveGameWatchParams(
+    gameId: game.gameId,
+    batchKey: batchKey,
+    streamEnabled: streamEnabled,
+  );
   return ref.watch(scopedLiveGameCardProvider(params)) ?? game;
 }
 
@@ -380,9 +422,14 @@ GamesTourModel watchLiveGamePosition(
   WidgetRef ref,
   GamesTourModel game, {
   LiveGamesBatchKey? batchKey,
+  bool streamEnabled = true,
 }) {
   _ensureBaseGame(ref, game);
-  final params = LiveGameWatchParams(gameId: game.gameId, batchKey: batchKey);
+  final params = LiveGameWatchParams(
+    gameId: game.gameId,
+    batchKey: batchKey,
+    streamEnabled: streamEnabled,
+  );
   return ref.watch(liveGamePositionProvider(params)) ?? game;
 }
 
@@ -390,9 +437,14 @@ GamesTourModel watchLiveGameClock(
   WidgetRef ref,
   GamesTourModel game, {
   LiveGamesBatchKey? batchKey,
+  bool streamEnabled = true,
 }) {
   _ensureBaseGame(ref, game);
-  final params = LiveGameWatchParams(gameId: game.gameId, batchKey: batchKey);
+  final params = LiveGameWatchParams(
+    gameId: game.gameId,
+    batchKey: batchKey,
+    streamEnabled: streamEnabled,
+  );
   return ref.watch(liveGameClockProvider(params)) ?? game;
 }
 
@@ -451,6 +503,29 @@ bool _shouldUseIncomingGame(
     return true;
   }
 
+  if (current.gameStatus == GameStatus.ongoing &&
+      incoming.gameStatus != GameStatus.ongoing) {
+    return true;
+  }
+  if (current.gameStatus != GameStatus.ongoing &&
+      incoming.gameStatus == GameStatus.ongoing) {
+    return false;
+  }
+
+  if ((current.lastMove?.isNotEmpty ?? false) &&
+      (incoming.lastMove == null || incoming.lastMove!.isEmpty)) {
+    return false;
+  }
+
+  if (!_hasPositionFieldChanges(current, incoming)) {
+    // Position is identical. Only let live-field (clock/status) changes through
+    // when the caller is storing back fresh stream data
+    // (allowEqualFreshnessUpdate:true). A parent re-seed (allowEqual:false) must
+    // NOT overwrite newer streamed clocks at the same ply with its staler
+    // snapshot — that regresses the freshness invariant the unit test guards.
+    return allowEqualFreshnessUpdate && _hasLiveFieldChanges(current, incoming);
+  }
+
   final currentPly = _knownPly(current);
   final incomingPly = _knownPly(incoming);
   if (currentPly != null && incomingPly != null) {
@@ -462,21 +537,14 @@ bool _shouldUseIncomingGame(
     return true;
   }
 
-  if ((current.lastMove?.isNotEmpty ?? false) &&
-      (incoming.lastMove == null || incoming.lastMove!.isEmpty)) {
-    return false;
-  }
-
-  if (current.gameStatus == GameStatus.ongoing &&
-      incoming.gameStatus != GameStatus.ongoing) {
-    return true;
-  }
-  if (current.gameStatus != GameStatus.ongoing &&
-      incoming.gameStatus == GameStatus.ongoing) {
-    return false;
-  }
-
   return allowEqualFreshnessUpdate;
+}
+
+bool _hasPositionFieldChanges(GamesTourModel current, GamesTourModel incoming) {
+  return current.pgn != incoming.pgn ||
+      current.fen != incoming.fen ||
+      current.lastMove != incoming.lastMove ||
+      current.lastMoveTime != incoming.lastMoveTime;
 }
 
 bool _hasLiveFieldChanges(GamesTourModel current, GamesTourModel incoming) {

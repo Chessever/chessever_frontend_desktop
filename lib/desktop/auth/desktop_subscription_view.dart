@@ -4,12 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:forui/forui.dart' as forui;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
 import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
+import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_button.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
@@ -241,13 +241,9 @@ class _DesktopSubscriptionViewState
       _notice = null;
     });
     try {
-      final uri = Uri.https('chessever.com', '/pricing', {
-        'source': 'desktop_app',
-        'return_to': 'desktop',
-        'action': 'checkout',
-        'interval': _interval,
-      });
-      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      final ok = await launchDesktopWebUrl(
+        desktopPricingWebUri(interval: _interval),
+      );
       if (!ok) throw StateError('Could not open browser.');
       if (!mounted) return;
       // Drive `_waitingForCheckout` off the entitlement watcher's lifecycle

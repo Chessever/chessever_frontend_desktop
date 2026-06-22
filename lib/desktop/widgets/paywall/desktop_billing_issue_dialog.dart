@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 
+import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
@@ -25,7 +25,7 @@ const _kSnoozeDuration = Duration(hours: 24);
 /// be opened from the desktop app directly because it needs an http(s)
 /// return_url, which a chessever:// deep link can't satisfy (same reasoning
 /// as the Settings pane's manage-subscription flow).
-final Uri _kAccountUrl = Uri.https('chessever.com', '/account');
+final Uri _kAccountUrl = desktopAccountWebUri(action: 'fix_payment');
 
 /// Show the desktop billing-issue dialog. Returns `true` when the user
 /// took the fix-payment action, `false` otherwise.
@@ -194,9 +194,7 @@ class _BillingIssueBody extends StatelessWidget {
               fillWidth: true,
               onPress: () {
                 Navigator.of(context).pop(true);
-                unawaited(
-                  launchUrl(_kAccountUrl, mode: LaunchMode.externalApplication),
-                );
+                unawaited(launchDesktopWebUrl(_kAccountUrl));
               },
             ),
             const SizedBox(height: 8),

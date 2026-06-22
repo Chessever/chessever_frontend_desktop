@@ -18,6 +18,8 @@ PODS:
     - FlutterMacOS
   - desktop_drop (0.0.1):
     - FlutterMacOS
+  - desktop_multi_window (0.0.1):
+    - FlutterMacOS
   - desktop_updater (0.0.1):
     - FlutterMacOS
   - device_info_plus (0.0.1):
@@ -120,6 +122,7 @@ DEPENDENCIES:
   - app_settings (from `Flutter/ephemeral/.symlinks/plugins/app_settings/macos`)
   - cryptography_flutter_plus (from `Flutter/ephemeral/.symlinks/plugins/cryptography_flutter_plus/macos`)
   - desktop_drop (from `Flutter/ephemeral/.symlinks/plugins/desktop_drop/macos`)
+  - desktop_multi_window (from `Flutter/ephemeral/.symlinks/plugins/desktop_multi_window/macos`)
   - desktop_updater (from `Flutter/ephemeral/.symlinks/plugins/desktop_updater/macos`)
   - device_info_plus (from `Flutter/ephemeral/.symlinks/plugins/device_info_plus/macos`)
   - file_picker (from `Flutter/ephemeral/.symlinks/plugins/file_picker/macos`)
@@ -170,6 +173,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/cryptography_flutter_plus/macos
   desktop_drop:
     :path: Flutter/ephemeral/.symlinks/plugins/desktop_drop/macos
+  desktop_multi_window:
+    :path: Flutter/ephemeral/.symlinks/plugins/desktop_multi_window/macos
   desktop_updater:
     :path: Flutter/ephemeral/.symlinks/plugins/desktop_updater/macos
   device_info_plus:
@@ -223,6 +228,7 @@ SPEC CHECKSUMS:
   CocoaAsyncSocket: 065fd1e645c7abab64f7a6a2007a48038fdc6a99
   cryptography_flutter_plus: 7c6e0d0f08664499a2c5402aa7cbcca07f2a7130
   desktop_drop: 248706031734554504f939cab1ad4c5fbc9c9c72
+  desktop_multi_window: 93667594ccc4b88d91a97972fd3b1b89667fa80a
   desktop_updater: 982886a70a8098539a3877716baf80218124c4d0
   device_info_plus: 4fb280989f669696856f8b129e4a5e3cd6c48f76
   file_picker: 7584aae6fa07a041af2b36a2655122d42f578c1a
@@ -231,7 +237,7 @@ SPEC CHECKSUMS:
   FirebaseCore: efb3893e5b94f32b86e331e3bd6dadf18b66568e
   FirebaseCoreInternal: 9afa45b1159304c963da48addb78275ef701c6b4
   flutter_onnxruntime: 07103445f6b566bf12df4ceae61ef7b901d3e6ec
-  flutter_soloud: 4a7acd4c038bbcd58d290d47294d3b01c8beac7f
+  flutter_soloud: 7c7fe8f2067868981037aa9928c9abba59de4383
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
   google_sign_in_ios: 00dfa94252eb10278b64828c81bcb7158a81a53a
   GoogleSignIn: fcee2257188d5eda57a5e2b6a715550ffff9206d

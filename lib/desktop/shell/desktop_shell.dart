@@ -80,7 +80,9 @@ class DesktopShell extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final tabsState = ref.watch(desktopTabsProvider);
     final tabsNotifier = ref.read(desktopTabsProvider.notifier);
-    final activePane = ref.watch(desktopPaneProvider);
+    final activeSidebarPane = sidebarPaneForActiveTabKind(
+      tabsState.active?.kind,
+    );
     final isLocalPgnLoading = ref.watch(
       localChessLibraryProvider.select((state) => state.isScanning),
     );
@@ -244,23 +246,20 @@ class DesktopShell extends HookConsumerWidget {
           setSidebarExpanded(!sidebarExpanded);
         }
 
-        // Sidebar tap from the rail. The top-bar/sidebar button owns the
-        // user's explicit expanded/collapsed preference on desktop widths, so
-        // selecting panes must not undo a sidebar that the user manually
-        // opened. On compact widths we still collapse after navigation because
-        // the rail behaves like a temporary drawer.
+        // Sidebar tap from the rail. Clicking the icon for the current pane
+        // toggles expansion. Other pane selections should not undo the user's
+        // manual desktop-width preference; compact widths still collapse after
+        // navigation because the rail behaves like a temporary drawer.
         void handleSidebarSelect(DesktopPane pane, {required bool inNewTab}) {
-          if (!inNewTab && pane == activePane) {
-            if (!sidebarExpanded) {
-              setSidebarExpanded(true);
-            }
+          if (!inNewTab && pane == activeSidebarPane) {
+            toggleSidebar();
             return;
           }
           openPane(pane, inNewTab: inNewTab);
           if (shouldCollapseDesktopSidebarAfterPaneSelection(
             autoCollapsed: autoCollapsed,
             sidebarExpanded: sidebarExpanded,
-            selectedCurrentPane: pane == activePane,
+            selectedCurrentPane: pane == activeSidebarPane,
             inNewTab: inNewTab,
           )) {
             setSidebarExpanded(false);
@@ -644,7 +643,7 @@ class DesktopShell extends HookConsumerWidget {
                           children: [
                             if (!boardFocusActive)
                               DesktopSidebar(
-                                current: activePane,
+                                current: activeSidebarPane,
                                 expanded: sidebarExpanded,
                                 autoCollapsed: autoCollapsed,
                                 onToggleExpanded: toggleSidebar,

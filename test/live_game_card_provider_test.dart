@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
+import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,9 +13,18 @@ class _FakeGameStreamRepository extends GameStreamRepository {
   _FakeGameStreamRepository(this.stream);
 
   final Stream<Map<String, dynamic>?> stream;
+  int subscribeToGameUpdatesCount = 0;
 
+  // `subscribeToLiveGameUpdate` is the repository's stream primitive;
+  // `subscribeToGameUpdates` is derived from it. Override the primitive so the
+  // fake controller stream flows through both paths, mirroring production.
   @override
-  Stream<Map<String, dynamic>?> subscribeToGameUpdates(String gameId) => stream;
+  Stream<LiveGameUpdate?> subscribeToLiveGameUpdate(String gameId) {
+    subscribeToGameUpdatesCount++;
+    return stream.map(
+      (row) => row == null ? null : LiveGameUpdate.fromLegacyMap(gameId, row),
+    );
+  }
 }
 
 PlayerCard _player(String name) {
@@ -166,6 +177,141 @@ void main() {
       },
     );
 
+    test('disabled stream gate returns base game without subscribing', () {
+      final repository = _FakeGameStreamRepository(
+        const Stream<Map<String, dynamic>?>.empty(),
+      );
+
+      final container = ProviderContainer(
+        overrides: [gameStreamRepositoryProvider.overrideWithValue(repository)],
+      );
+      addTearDown(container.dispose);
+
+      container.read(baseGameProvider('game-1').notifier).state = _game(
+        id: 'game-1',
+        status: GameStatus.ongoing,
+        fen: afterE4,
+        lastMove: 'e2e4',
+      );
+
+      final sub = container.listen(
+        scopedLiveGameCardProvider(
+          const LiveGameWatchParams(gameId: 'game-1', streamEnabled: false),
+        ),
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(sub.close);
+
+      expect(sub.read()?.fen, afterE4);
+      expect(repository.subscribeToGameUpdatesCount, 0);
+    });
+
+    test('paused live cards still consume realtime row updates', () async {
+      final controller = StreamController<Map<String, dynamic>?>();
+      addTearDown(controller.close);
+      final repository = _FakeGameStreamRepository(controller.stream);
+
+      final container = ProviderContainer(
+        overrides: [gameStreamRepositoryProvider.overrideWithValue(repository)],
+      );
+      addTearDown(container.dispose);
+
+      container.read(baseGameProvider('game-1').notifier).state = _game(
+        id: 'game-1',
+        status: GameStatus.ongoing,
+        fen: afterE4,
+        pgn: '[Event "Test"]\n\n1. e4 *',
+        lastMove: 'e2e4',
+        lastMoveTime: DateTime.utc(2026, 5, 26, 12),
+        whiteClockSeconds: 180,
+        blackClockSeconds: 180,
+      );
+      container.read(liveGameCardsPauseReasonsProvider.notifier).state = {
+        'desktop_scroll',
+      };
+
+      final sub = container.listen(
+        scopedLiveGameCardProvider(const LiveGameWatchParams(gameId: 'game-1')),
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(sub.close);
+
+      controller.add({
+        'fen': afterE4E5,
+        'pgn': pgnAfterE4E5,
+        'last_move': 'e7e5',
+        'last_move_time': '2026-05-26T12:03:00Z',
+        'last_clock_white': 170,
+        'last_clock_black': 160,
+        'status': '*',
+      });
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(repository.subscribeToGameUpdatesCount, 1);
+      expect(sub.read()?.fen, afterE4E5);
+      expect(sub.read()?.lastMove, 'e7e5');
+      expect(sub.read()?.whiteClockSeconds, 170);
+      expect(sub.read()?.blackClockSeconds, 160);
+    });
+
+    test(
+      'clock projection keeps position and move timestamp in sync',
+      () async {
+        final controller = StreamController<Map<String, dynamic>?>();
+        addTearDown(controller.close);
+
+        final container = ProviderContainer(
+          overrides: [
+            gameStreamRepositoryProvider.overrideWithValue(
+              _FakeGameStreamRepository(controller.stream),
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        container.read(baseGameProvider('game-1').notifier).state = _game(
+          id: 'game-1',
+          status: GameStatus.ongoing,
+          fen: afterE4,
+          pgn: '[Event "Test"]\n\n1. e4 *',
+          lastMove: 'e2e4',
+          lastMoveTime: DateTime.utc(2026, 5, 26, 12),
+          whiteClockSeconds: 180,
+          blackClockSeconds: 180,
+        );
+
+        final sub = container.listen(
+          liveGameClockProvider(const LiveGameWatchParams(gameId: 'game-1')),
+          (_, __) {},
+          fireImmediately: true,
+        );
+        addTearDown(sub.close);
+
+        controller.add({
+          'fen': afterE4E5,
+          'pgn': pgnAfterE4E5,
+          'last_move': 'e7e5',
+          'last_move_time': '2026-05-26T12:03:00Z',
+          'last_clock_white': 170,
+          'last_clock_black': 160,
+          'status': '*',
+        });
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+
+        final liveGame = sub.read();
+        expect(liveGame?.fen, afterE4E5);
+        expect(liveGame?.pgn, pgnAfterE4E5);
+        expect(liveGame?.lastMove, 'e7e5');
+        expect(liveGame?.lastMoveTime, DateTime.utc(2026, 5, 26, 12, 3));
+        expect(liveGame?.whiteClockSeconds, 170);
+        expect(liveGame?.blackClockSeconds, 160);
+      },
+    );
+
     testWidgets(
       'parent rebuilds cannot overwrite newer streamed clocks at the same ply',
       (tester) async {
@@ -239,5 +385,81 @@ void main() {
         );
       },
     );
+  });
+
+  group('shouldReplaceBaseGame', () {
+    const fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+    final t0 = DateTime.utc(2026, 5, 26, 12);
+    final t1 = DateTime.utc(2026, 5, 26, 12, 3);
+
+    GamesTourModel at(DateTime time, {int white = 180}) => _game(
+      id: 'game-1',
+      status: GameStatus.ongoing,
+      fen: fen,
+      pgn: '[Event "Test"]\n\n1. e4 *',
+      lastMove: 'e2e4',
+      lastMoveTime: time,
+      whiteClockSeconds: white,
+      blackClockSeconds: 180,
+    );
+
+    test('seeds when nothing is stored yet', () {
+      expect(shouldReplaceBaseGame(null, at(t0)), isTrue);
+    });
+
+    test('rejects an identical snapshot', () {
+      final g = at(t0);
+      expect(shouldReplaceBaseGame(g, g), isFalse);
+    });
+
+    test('rejects a staler REST read (older move time)', () {
+      // getGameById() lagging the realtime stream must not clobber the board.
+      expect(shouldReplaceBaseGame(at(t1), at(t0)), isFalse);
+    });
+
+    test('accepts a fresher snapshot (newer move time)', () {
+      expect(shouldReplaceBaseGame(at(t0), at(t1)), isTrue);
+    });
+
+    test('accepts newer clocks at the same ply', () {
+      expect(
+        shouldReplaceBaseGame(at(t0, white: 120), at(t0, white: 100)),
+        isTrue,
+      );
+    });
+  });
+
+  group('gameUpdatesStreamProvider', () {
+    test('board and card surfaces share one realtime channel per game', () async {
+      // Single-subscription stream: if the board (legacy-map) and card (typed)
+      // surfaces each opened their own subscription, the second `.map().listen`
+      // on this stream would throw — so this both asserts the count and would
+      // fail loudly on any re-subscription.
+      final controller = StreamController<Map<String, dynamic>?>();
+      addTearDown(controller.close);
+      final repository = _FakeGameStreamRepository(controller.stream);
+
+      final container = ProviderContainer(
+        overrides: [gameStreamRepositoryProvider.overrideWithValue(repository)],
+      );
+      addTearDown(container.dispose);
+
+      final cardSub = container.listen(
+        liveGameUpdateStreamProvider('game-1'),
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(cardSub.close);
+      final boardSub = container.listen(
+        gameUpdatesStreamProvider('game-1'),
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(boardSub.close);
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(repository.subscribeToGameUpdatesCount, 1);
+    });
   });
 }

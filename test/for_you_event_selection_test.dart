@@ -629,6 +629,8 @@ void main() {
         'match-a-2',
         'match-c-1',
       ]);
+      expect(snapshot.isGroupEvent, true);
+      expect(snapshot.isKnockoutTournament, false);
     });
 
     test('group event keeps matchup grouping when team name contains vs', () {
@@ -706,6 +708,8 @@ void main() {
         'match-1-board-2',
         'other-match',
       ]);
+      expect(snapshot.isGroupEvent, true);
+      expect(snapshot.isKnockoutTournament, false);
     });
 
     test('multi-stage knockout includes sibling stages in Games-tab order', () {
@@ -806,6 +810,8 @@ void main() {
         's1-g1',
         's1-g2',
       ]);
+      expect(snapshot.isGroupEvent, false);
+      expect(snapshot.isKnockoutTournament, true);
     });
 
     test('multi-stage knockout keeps sibling-stage pins in snapshot', () {

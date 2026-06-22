@@ -1,3 +1,4 @@
+import 'package:chessever/repository/supabase/tour/tour.dart';
 import 'package:chessever/repository/supabase/tour/tour_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -6,8 +7,15 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 class EventImageData {
   final String? imageUrl;
   final String? fallbackCountryCode;
+  final String? location;
+  final int playerCount;
 
-  const EventImageData({this.imageUrl, this.fallbackCountryCode});
+  const EventImageData({
+    this.imageUrl,
+    this.fallbackCountryCode,
+    this.location,
+    this.playerCount = 0,
+  });
 
   bool get hasImage => imageUrl != null && imageUrl!.isNotEmpty;
 
@@ -31,21 +39,31 @@ final eventImageProvider = FutureProvider.autoDispose
         }
 
         final tour = tours.first;
+        final location = _firstLocation(tours);
+        final playerCount = _uniquePlayerCount(tours);
 
         // If tour has an image, return it
         if (tour.image != null && tour.image!.isNotEmpty) {
-          return EventImageData(imageUrl: tour.image);
+          return EventImageData(
+            imageUrl: tour.image,
+            location: location,
+            playerCount: playerCount,
+          );
         }
 
         // No image - try to get country from location or player federations
-        String? countryCode = extractCountryFromLocation(tour.info.location);
+        String? countryCode = extractCountryFromLocation(location);
 
         // If no location, try to find dominant player federation
         if (countryCode == null && tour.players.isNotEmpty) {
           countryCode = _getDominantFederation(tour.players);
         }
 
-        return EventImageData(fallbackCountryCode: countryCode);
+        return EventImageData(
+          fallbackCountryCode: countryCode,
+          location: location,
+          playerCount: playerCount,
+        );
       } catch (e) {
         debugPrint(
           '[EventImageProvider] Error fetching image for $groupBroadcastId: $e',
@@ -53,6 +71,40 @@ final eventImageProvider = FutureProvider.autoDispose
         return const EventImageData();
       }
     });
+
+String? _firstLocation(List<Tour> tours) {
+  for (final tour in tours) {
+    final location = tour.info.location?.trim();
+    if (location != null && location.isNotEmpty) {
+      return location.replaceFirst(RegExp(r'\.$'), '');
+    }
+  }
+  return null;
+}
+
+int _uniquePlayerCount(List<Tour> tours) {
+  final ids = <String>{};
+  var anonymousCount = 0;
+
+  for (final tour in tours) {
+    for (final player in tour.players) {
+      final fideId = player.fideId;
+      if (fideId != null) {
+        ids.add('fide:$fideId');
+        continue;
+      }
+
+      final name = player.name.trim().toLowerCase();
+      if (name.isNotEmpty) {
+        ids.add('name:$name');
+      } else {
+        anonymousCount++;
+      }
+    }
+  }
+
+  return ids.length + anonymousCount;
+}
 
 /// Extracts a 2-letter country code from location string
 String? extractCountryFromLocation(String? location) {

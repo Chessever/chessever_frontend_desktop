@@ -94,6 +94,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                           cacheWidth:
                               (340 * MediaQuery.devicePixelRatioOf(context))
                                   .toInt(),
+                          cacheHeight:
+                              (180 * MediaQuery.devicePixelRatioOf(context))
+                                  .toInt(),
                         ),
                       ),
                     ),
@@ -145,6 +148,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                         cacheWidth:
                             (300 * MediaQuery.devicePixelRatioOf(context))
                                 .toInt(),
+                        cacheHeight:
+                            (160 * MediaQuery.devicePixelRatioOf(context))
+                                .toInt(),
                       ),
                     ),
                   ],
@@ -194,6 +200,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                       width: 295,
                       cacheWidth:
                           (295 * MediaQuery.devicePixelRatioOf(context))
+                              .toInt(),
+                      cacheHeight:
+                          (156 * MediaQuery.devicePixelRatioOf(context))
                               .toInt(),
                     ),
                   ),

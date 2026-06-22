@@ -899,13 +899,14 @@ class _BoardThemePickerCard extends StatelessWidget {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       constraints: ResponsiveHelper.bottomSheetConstraints,
-      builder: (context) => _BoardThemeGallerySheet(
-        currentIndex: currentIndex,
-        onThemeSelected: (index) {
-          onThemeSelected(index);
-          Navigator.pop(context);
-        },
-      ),
+      builder:
+          (context) => _BoardThemeGallerySheet(
+            currentIndex: currentIndex,
+            onThemeSelected: (index) {
+              onThemeSelected(index);
+              Navigator.pop(context);
+            },
+          ),
     );
   }
 }
@@ -1284,8 +1285,13 @@ class _PieceSetPickerCard extends StatelessWidget {
                           child: Padding(
                             padding: EdgeInsets.all(4.sp),
                             child: Image(
-                              image:
-                                  currentPieceSet.assets[PieceKind.whiteKing]!,
+                              image: ResizeImage.resizeIfNeeded(
+                                (48 * MediaQuery.devicePixelRatioOf(context))
+                                    .round(),
+                                (48 * MediaQuery.devicePixelRatioOf(context))
+                                    .round(),
+                                currentPieceSet.assets[PieceKind.whiteKing]!,
+                              ),
                               fit: BoxFit.contain,
                             ),
                           ),
@@ -1294,8 +1300,13 @@ class _PieceSetPickerCard extends StatelessWidget {
                           child: Padding(
                             padding: EdgeInsets.all(4.sp),
                             child: Image(
-                              image:
-                                  currentPieceSet.assets[PieceKind.blackQueen]!,
+                              image: ResizeImage.resizeIfNeeded(
+                                (48 * MediaQuery.devicePixelRatioOf(context))
+                                    .round(),
+                                (48 * MediaQuery.devicePixelRatioOf(context))
+                                    .round(),
+                                currentPieceSet.assets[PieceKind.blackQueen]!,
+                              ),
                               fit: BoxFit.contain,
                             ),
                           ),
@@ -1352,13 +1363,14 @@ class _PieceSetPickerCard extends StatelessWidget {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       constraints: ResponsiveHelper.bottomSheetConstraints,
-      builder: (context) => _PieceSetGallerySheet(
-        currentIndex: currentIndex,
-        onPieceSetSelected: (index) {
-          onPieceSetSelected(index);
-          Navigator.pop(context);
-        },
-      ),
+      builder:
+          (context) => _PieceSetGallerySheet(
+            currentIndex: currentIndex,
+            onPieceSetSelected: (index) {
+              onPieceSetSelected(index);
+              Navigator.pop(context);
+            },
+          ),
     );
   }
 }
@@ -1541,7 +1553,11 @@ class _PieceSetGridItem extends StatelessWidget {
                     Expanded(
                       flex: 3,
                       child: Image(
-                        image: pieceSet.assets[PieceKind.whiteKing]!,
+                        image: ResizeImage.resizeIfNeeded(
+                          (72 * MediaQuery.devicePixelRatioOf(context)).round(),
+                          (72 * MediaQuery.devicePixelRatioOf(context)).round(),
+                          pieceSet.assets[PieceKind.whiteKing]!,
+                        ),
                         fit: BoxFit.contain,
                       ),
                     ),
@@ -1553,13 +1569,25 @@ class _PieceSetGridItem extends StatelessWidget {
                         children: [
                           Expanded(
                             child: Image(
-                              image: pieceSet.assets[PieceKind.blackQueen]!,
+                              image: ResizeImage.resizeIfNeeded(
+                                (48 * MediaQuery.devicePixelRatioOf(context))
+                                    .round(),
+                                (48 * MediaQuery.devicePixelRatioOf(context))
+                                    .round(),
+                                pieceSet.assets[PieceKind.blackQueen]!,
+                              ),
                               fit: BoxFit.contain,
                             ),
                           ),
                           Expanded(
                             child: Image(
-                              image: pieceSet.assets[PieceKind.whiteKnight]!,
+                              image: ResizeImage.resizeIfNeeded(
+                                (48 * MediaQuery.devicePixelRatioOf(context))
+                                    .round(),
+                                (48 * MediaQuery.devicePixelRatioOf(context))
+                                    .round(),
+                                pieceSet.assets[PieceKind.whiteKnight]!,
+                              ),
                               fit: BoxFit.contain,
                             ),
                           ),

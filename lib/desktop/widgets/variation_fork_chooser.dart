@@ -368,7 +368,7 @@ class _ForkChooserMotion extends StatelessWidget {
           opacity: t.clamp(0, 1),
           child: Transform.translate(
             offset: Offset(0, (1 - t) * 6),
-            child: Transform.scale(scale: scale, child: child),
+            child: Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
           ),
         );
       },
@@ -585,7 +585,7 @@ class _GameContinuationOptionRowState
       motion: DesktopMotion.hover,
       builder: (context, t, child) {
         final scale = 0.985 + 0.015 * t;
-        return Transform.scale(scale: scale, child: child);
+        return Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child);
       },
       child: ClickCursor(
         child: MouseRegion(
@@ -946,7 +946,7 @@ class _ForkOptionRowState extends State<_ForkOptionRow> {
       motion: DesktopMotion.hover,
       builder: (context, t, child) {
         final scale = 0.99 + 0.01 * t;
-        return Transform.scale(scale: scale, child: child);
+        return Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child);
       },
       child: ClickCursor(
         child: MouseRegion(

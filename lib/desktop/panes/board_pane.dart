@@ -283,6 +283,11 @@ class _BoardPaneContent extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final activeTabId =
         tabId ?? ref.watch(desktopTabsProvider.select((s) => s.activeId));
+    final isForegroundTab =
+        activeTabId != null &&
+        ref.watch(
+          desktopTabsProvider.select((state) => state.activeId == activeTabId),
+        );
     final restoredSession =
         activeTabId == null
             ? null
@@ -348,6 +353,16 @@ class _BoardPaneContent extends HookConsumerWidget {
     );
     final boardTabPgnHydrationToken = useRef<int>(0);
     final boardSessionWriteToken = useRef<int>(0);
+    // Bumped whenever a PGN apply replaces the tree or jumps the position by
+    // more than a single tip move (open hydrate, the live-seed refresh in
+    // `_refreshOpenedBoardTabWithLatestLiveGame`, a fuller broadcast PGN, a
+    // multi-move catch-up). Folded into `boardRenderKey` so the board remounts
+    // and the new position is an instant cut. Without this, chessground's
+    // `didUpdateWidget` diff-animates every piece from the stale snapshot to
+    // the fresh position on tap — the "pieces slide around for a sub-second"
+    // bug. A plain +1 tip append (a single live move while watching) does NOT
+    // bump it, so that one-move slide still plays.
+    final boardCutEpoch = useRef<int>(0);
     final dirtySinceLoad = useState<bool>(
       restoredSession?.dirtySinceLoad ?? false,
     );
@@ -516,14 +531,8 @@ class _BoardPaneContent extends HookConsumerWidget {
             : (latestPgnImport == null
                 ? legacyActiveGameId
                 : latestPgnImport.gameId);
-    final boardRenderKey = _boardRenderKey(
-      activeTabId: activeTabId,
-      activeGameId: activeGameId,
-      boardArgs: boardArgs,
-      latestPgnImport: latestPgnImport,
-      lastAppliedGameId: lastAppliedGameId.value,
-      lastAppliedPgn: lastAppliedPgn.value,
-    );
+    final boardRenderKey =
+        '${_boardRenderKey(activeTabId: activeTabId, activeGameId: activeGameId, boardArgs: boardArgs, latestPgnImport: latestPgnImport, lastAppliedGameId: lastAppliedGameId.value, lastAppliedPgn: lastAppliedPgn.value)}:cut${boardCutEpoch.value}';
 
     useEffect(
       () {
@@ -703,6 +712,21 @@ class _BoardPaneContent extends HookConsumerWidget {
                 ? oldPointer
                 : <int>[game.mainline.length - 1];
       }
+
+      // Remount the board (instant cut) unless this apply is a single live
+      // move appended at the tip. Opening a card seeds from the cached card
+      // snapshot, then the live-seed refresh re-applies the fresh PGN here;
+      // both land under the same `loaded` render-key, so without a remount
+      // chessground slides every piece across the gap. A +1 tip append keeps
+      // the same key so the single-move animation still plays.
+      final isPlainTipAppend =
+          oldMainlineLen > 0 &&
+          game.mainline.length == oldMainlineLen + 1 &&
+          wasAtMainlineTip;
+      if (!isPlainTipAppend) {
+        boardCutEpoch.value++;
+      }
+
       pointer.value = newPointer;
 
       // SFX for the new move landed at the live tip — only fires when
@@ -858,7 +882,13 @@ class _BoardPaneContent extends HookConsumerWidget {
               );
 
       if (mergedGame != null) {
-        ref.read(baseGameProvider(gameId).notifier).state = mergedGame;
+        // Share one coherent snapshot with live cards, but never regress it:
+        // a card stream (a separate Supabase channel) can deliver a fresher row
+        // than this board sync, so gate the write on the same freshness rule.
+        final currentBase = ref.read(baseGameProvider(gameId));
+        if (shouldReplaceBaseGame(currentBase, mergedGame)) {
+          ref.read(baseGameProvider(gameId).notifier).state = mergedGame;
+        }
       }
 
       final updatePgn = update.pgn?.trim();
@@ -1137,7 +1167,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     // root pane: every broadcast push would rebuild the board, notation, and
     // engine rail. The player headers below watch just the clock fields they
     // need.
-    if (activeGameId != null) {
+    if (isForegroundTab && activeGameId != null) {
       ref.listen<AsyncValue<Map<String, dynamic>?>>(
         gameUpdatesStreamProvider(activeGameId),
         (previous, next) {
@@ -3357,6 +3387,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                               explorerPreview == null ? gameEnding : null,
                           onWheelStep: stepNotationHorizontally,
                           isLiveAtTip: isLiveAtTip,
+                          isForegroundTab: isForegroundTab,
                           activeGameId: activeGameId,
                           boardArgs: boardArgs,
                           sourceGame: boardArgs?.sourceGame,
@@ -4846,6 +4877,7 @@ class _BoardArea extends ConsumerWidget {
     required this.gameEnding,
     required this.onWheelStep,
     required this.isLiveAtTip,
+    required this.isForegroundTab,
     required this.focusMode,
     required this.focusShortcutLabel,
     required this.onFocusModeChanged,
@@ -4916,6 +4948,7 @@ class _BoardArea extends ConsumerWidget {
   /// against wall-clock (live tip) or render a static PGN-baked figure
   /// (any earlier move, or finished game).
   final bool isLiveAtTip;
+  final bool isForegroundTab;
 
   /// `[%cal …]` arrows + `[%csl …]` square circles authored into the
   /// current move's PGN comment. Merged with user-drawn annotations.
@@ -5315,7 +5348,7 @@ class _BoardArea extends ConsumerWidget {
                                 (!topIsWhite && sideToMove == Side.black),
                             clockText: topClock,
                             activeGameId: activeGameId,
-                            useLiveClock: isLiveAtTip,
+                            useLiveClock: isForegroundTab && isLiveAtTip,
                             boardArgs: boardArgs,
                             sourceGame: sourceGame,
                             viewSource: viewSource,
@@ -5343,7 +5376,7 @@ class _BoardArea extends ConsumerWidget {
                                 (!bottomIsWhite && sideToMove == Side.black),
                             clockText: bottomClock,
                             activeGameId: activeGameId,
-                            useLiveClock: isLiveAtTip,
+                            useLiveClock: isForegroundTab && isLiveAtTip,
                             boardArgs: boardArgs,
                             sourceGame: sourceGame,
                             viewSource: viewSource,
@@ -6430,7 +6463,7 @@ class _LiveClockSnapshot {
 /// imposed (the previous 26 px floor clipped the 13 px text inside the
 /// 32 px header row); padding is tight enough that the badge fits
 /// comfortably inside [_BoardArea.headerHeight] with room to spare.
-class _PlayerClock extends ConsumerWidget {
+class _PlayerClock extends StatelessWidget {
   const _PlayerClock({
     required this.text,
     required this.isToMove,
@@ -6456,9 +6489,17 @@ class _PlayerClock extends ConsumerWidget {
   final bool liveCountdownActive;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final displayText = _resolveDisplayText(ref);
-    if (displayText.isEmpty) return const SizedBox.shrink();
+  Widget build(BuildContext context) {
+    // The static fallback string also decides whether the badge renders at
+    // all (an empty PGN clock with no live snapshot hides it).
+    final hasLive = liveClockSeconds != null || liveLastMoveTime != null;
+    final fallbackText =
+        hasLive
+            ? formatClockDisplayFromSeconds(liveClockSeconds ?? 0)
+            : formatPgnClockForDisplay(text);
+    if (fallbackText.isEmpty) return const SizedBox.shrink();
+
+    final countdownActive = liveCountdownActive && liveLastMoveTime != null;
 
     return SingleMotionBuilder(
       value: isToMove ? 1.0 : 0.0,
@@ -6503,37 +6544,63 @@ class _PlayerClock extends ConsumerWidget {
           // springs when the side-to-move flips; only the digits stay
           // calm. (#461 feedback: "Clock movement in the live game
           // should be like a normal one.")
-          child: Text(
-            displayText,
-            maxLines: 1,
-            softWrap: false,
-            overflow: TextOverflow.visible,
+          child: _ClockText(
+            countdownActive: countdownActive,
+            liveClockSeconds: liveClockSeconds,
+            liveLastMoveTime: liveLastMoveTime,
+            fallbackText: fallbackText,
             style: textStyle,
           ),
         );
       },
     );
   }
+}
 
-  /// Compute the formatted string the badge should render at this
-  /// frame. Live snapshots win over PGN — when both are absent we
-  /// return an empty string and the caller hides the badge.
-  String _resolveDisplayText(WidgetRef ref) {
-    final useLive = liveClockSeconds != null || liveLastMoveTime != null;
-    if (useLive) {
-      final base = liveClockSeconds ?? 0;
-      if (!liveCountdownActive || liveLastMoveTime == null) {
-        return formatClockDisplayFromSeconds(base);
-      }
+/// The ticking digits of a live clock badge. Isolated as its own
+/// [ConsumerWidget] so that the 1 Hz [dateTimeProvider] tick rebuilds only
+/// this leaf `Text` — the surrounding badge decoration (spring colour,
+/// border, shadow) in [_PlayerClock] no longer rebuilds every second, it
+/// only animates when the side-to-move flips. When the clock is not actively
+/// counting down this widget never watches the tick at all.
+class _ClockText extends ConsumerWidget {
+  const _ClockText({
+    required this.countdownActive,
+    required this.liveClockSeconds,
+    required this.liveLastMoveTime,
+    required this.fallbackText,
+    required this.style,
+  });
+
+  final bool countdownActive;
+  final int? liveClockSeconds;
+  final DateTime? liveLastMoveTime;
+  final String fallbackText;
+  final TextStyle style;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    var display = fallbackText;
+    if (countdownActive) {
       final now = ref.watch(
         dateTimeProvider.select((async) => async.valueOrNull),
       );
-      if (now == null) return formatClockDisplayFromSeconds(base);
-      final elapsed = now.difference(liveLastMoveTime!).inSeconds.abs();
-      final remaining = base - elapsed;
-      return formatClockDisplayFromSeconds(remaining < 0 ? 0 : remaining);
+      final base = liveClockSeconds ?? 0;
+      if (now == null) {
+        display = formatClockDisplayFromSeconds(base);
+      } else {
+        final elapsed = now.difference(liveLastMoveTime!).inSeconds.abs();
+        final remaining = base - elapsed;
+        display = formatClockDisplayFromSeconds(remaining < 0 ? 0 : remaining);
+      }
     }
-    return formatPgnClockForDisplay(text);
+    return Text(
+      display,
+      maxLines: 1,
+      softWrap: false,
+      overflow: TextOverflow.visible,
+      style: style,
+    );
   }
 }
 
@@ -6930,7 +6997,11 @@ class _BoardBadge extends StatelessWidget {
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOutBack,
           builder:
-              (context, scale, c) => Transform.scale(scale: scale, child: c),
+              (context, scale, c) => Transform.scale(
+                scale: scale,
+                filterQuality: FilterQuality.medium,
+                child: c,
+              ),
           child: Container(
             width: badgeSize,
             height: badgeSize,
@@ -7015,7 +7086,18 @@ class _FallenKingOverlayState extends State<_FallenKingOverlay> {
                         alignment: Alignment.center,
                         child: child,
                       ),
-                  child: Image(image: widget.pieceImage, fit: BoxFit.contain),
+                  child: Image(
+                    image: ResizeImage.resizeIfNeeded(
+                      (widget.squareSize *
+                              MediaQuery.devicePixelRatioOf(context))
+                          .round(),
+                      (widget.squareSize *
+                              MediaQuery.devicePixelRatioOf(context))
+                          .round(),
+                      widget.pieceImage,
+                    ),
+                    fit: BoxFit.contain,
+                  ),
                 ),
               ),
             ],
@@ -7076,6 +7158,7 @@ class _AnimatedPeaceIconState extends State<_AnimatedPeaceIcon> {
               (context, scale, child) => Transform.scale(
                 scale: scale,
                 alignment: Alignment.topRight,
+                filterQuality: FilterQuality.medium,
                 child: child,
               ),
           child: Container(

@@ -10,6 +10,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
+import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -859,9 +860,7 @@ class _DesktopPositionGamesTableState
   }
 
   void _showErrorToast(String message) {
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: kRedColor),
-    );
+    showDesktopToast(context, message, error: true);
   }
 
   String _sourceLabelFromRow(Map<String, dynamic> row) {

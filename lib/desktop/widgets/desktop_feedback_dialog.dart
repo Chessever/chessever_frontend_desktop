@@ -5,11 +5,13 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:forui/forui.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
+import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/services/telegram_notification_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -118,14 +120,14 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
 
       final telegramSent = await TelegramNotificationService.instance
           .sendFeedbackNotification(
-        rating: 0,
-        feedback: feedback,
-        source: 'desktop_report_issue',
-        userId: userId,
-        appVersion: '${packageInfo.version} (${packageInfo.buildNumber})',
-        platform: Platform.operatingSystem,
-        screenshotBytes: screenshotBytes,
-      );
+            rating: 0,
+            feedback: feedback,
+            source: 'desktop_report_issue',
+            userId: userId,
+            appVersion: '${packageInfo.version} (${packageInfo.buildNumber})',
+            platform: Platform.operatingSystem,
+            screenshotBytes: screenshotBytes,
+          );
 
       if (!mounted) return;
       if (!telegramSent) {
@@ -136,14 +138,11 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
         });
         return;
       }
+      // Toast before popping so the still-mounted dialog context can resolve
+      // the app-root FToaster; the toast lives at app level and outlives the
+      // dialog's dismissal.
+      showDesktopToast(context, 'Thanks — your report was sent.');
       Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Thanks — your report was sent.'),
-          backgroundColor: kBlack2Color.withValues(alpha: 0.95),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -230,6 +229,14 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
                   _previewBytes!,
                   fit: BoxFit.contain,
                   width: double.infinity,
+                  cacheWidth:
+                      (MediaQuery.sizeOf(context).width *
+                              MediaQuery.devicePixelRatioOf(context))
+                          .round()
+                          .clamp(240, 1200)
+                          .toInt(),
+                  cacheHeight:
+                      (220 * MediaQuery.devicePixelRatioOf(context)).round(),
                 ),
               ),
             ),
@@ -298,11 +305,7 @@ class _ScreenshotOption extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Checkbox(
-            value: selected,
-            onChanged: (value) => onChanged(value ?? false),
-            activeColor: kPrimaryColor,
-          ),
+          FCheckbox(value: selected, onChange: onChanged),
           const SizedBox(width: 8),
           const Expanded(
             child: Column(

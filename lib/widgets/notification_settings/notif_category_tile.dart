@@ -256,6 +256,12 @@ class _TcCard extends StatelessWidget {
                           assetPath,
                           width: 20.sp,
                           height: 20.sp,
+                          cacheWidth:
+                              (20.sp * MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
+                          cacheHeight:
+                              (20.sp * MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
                         ),
                       ),
                       Positioned(

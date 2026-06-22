@@ -18,6 +18,12 @@ class NetworkImageWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cacheWidth =
+        (MediaQuery.sizeOf(context).width *
+                MediaQuery.devicePixelRatioOf(context))
+            .round()
+            .clamp(160, 900)
+            .toInt();
     final cacheHeight =
         (height * MediaQuery.devicePixelRatioOf(context)).toInt();
 
@@ -28,6 +34,7 @@ class NetworkImageWidget extends StatelessWidget {
         height: height,
         width: double.infinity,
         fit: BoxFit.contain,
+        memCacheWidth: cacheWidth,
         memCacheHeight: cacheHeight,
         imageBuilder: (context, imageProvider) {
           return Container(
@@ -57,6 +64,7 @@ class NetworkImageWidget extends StatelessWidget {
                   height: height,
                   width: double.infinity,
                   fit: BoxFit.cover,
+                  cacheWidth: cacheWidth,
                   cacheHeight: cacheHeight,
                 ),
               ),

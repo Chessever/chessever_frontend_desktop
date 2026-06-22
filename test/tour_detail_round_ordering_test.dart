@@ -1,4 +1,6 @@
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_app_bar_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_stage_id.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/round_ordering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -376,6 +378,96 @@ void main() {
       );
 
       expect(selected?.id, 'r12');
+    });
+  });
+
+  group('selectRoundIdAfterLiveRoundsChanged', () {
+    test('switches from a valid stale selection to the live round', () {
+      final now = DateTime(2026, 6, 21, 11);
+      final rounds = [
+        _round(
+          id: 'future-final',
+          name: 'Finals | Game 1',
+          startsAt: now.add(const Duration(hours: 1)),
+          status: RoundStatus.upcoming,
+        ),
+        _round(
+          id: 'live-semi',
+          name: 'Semi Final 1 & Duels for 5th place | Game 2',
+          startsAt: now.subtract(const Duration(minutes: 15)),
+          status: RoundStatus.live,
+        ),
+        _round(
+          id: 'old-semi',
+          name: 'Semi Final 1 & Duels for 5th place | Game 1',
+          startsAt: now.subtract(const Duration(minutes: 45)),
+          status: RoundStatus.completed,
+        ),
+      ];
+
+      final selected = selectRoundIdAfterLiveRoundsChanged(
+        models: rounds,
+        currentSelectedId: 'old-semi',
+        stickySelection: (id: 'old-semi', userSelected: false),
+        hasGames: (roundId) => roundId != 'future-final',
+        resolveDate: (round) => round.startsAt,
+      );
+
+      expect(selected, 'live-semi');
+    });
+
+    test('preserves a valid user-selected sticky round', () {
+      final now = DateTime(2026, 6, 21, 11);
+      final rounds = [
+        _round(
+          id: 'live-semi',
+          name: 'Semi Final 1 & Duels for 5th place | Game 2',
+          startsAt: now.subtract(const Duration(minutes: 15)),
+          status: RoundStatus.live,
+        ),
+        _round(
+          id: 'old-semi',
+          name: 'Semi Final 1 & Duels for 5th place | Game 1',
+          startsAt: now.subtract(const Duration(minutes: 45)),
+          status: RoundStatus.completed,
+        ),
+      ];
+
+      final selected = selectRoundIdAfterLiveRoundsChanged(
+        models: rounds,
+        currentSelectedId: 'old-semi',
+        stickySelection: (id: 'old-semi', userSelected: true),
+        hasGames: (_) => true,
+        resolveDate: (round) => round.startsAt,
+      );
+
+      expect(selected, 'old-semi');
+    });
+  });
+
+  group('roundSlugDerivedKnockoutStageId', () {
+    test(
+      'maps FIDE team knockout round slug to the app-bar synthetic stage id',
+      () {
+        final id = roundSlugDerivedKnockoutStageId(
+          tourId: 'AbN0a0LQ',
+          roundSlug: 'semi-final-1-duels-for-5th-place-game-2',
+        );
+
+        expect(
+          id,
+          'knockout-stage-AbN0a0LQ-semi-final-1-duels-for-5th-place-game-2',
+        );
+      },
+    );
+
+    test('maps legacy double-dash stage slugs to the stage id', () {
+      final id = roundSlugDerivedKnockoutStageId(
+        tourId: 'tour-1',
+        roundSlug: 'quarter-finals--game-1',
+      );
+
+      expect(id, 'knockout-stage-tour-1-quarter-finals');
     });
   });
 }

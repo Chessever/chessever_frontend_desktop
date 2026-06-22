@@ -18,14 +18,8 @@ final MotionConverter<_Dock> _dockConverter = MotionConverter.custom(
   denormalize: (List<double> v) => _Dock(v[0], v[1], v[2]),
 );
 
-/// Snappy motion used while the cursor steers a card by proximity — short
-/// enough to track the pointer, damped enough not to jitter.
-const Motion _kProximityMotion = CupertinoMotion.snappy(
-  duration: Duration(milliseconds: 140),
-);
-
 /// Provides the global cursor position to descendant [MotionCard]s so they
-/// react to the cursor's *nearness* (macOS-Dock-style magnify with falloff)
+/// react to the cursor's *nearness* (a calm lift with distance falloff)
 /// rather than binary hover. Mount once around a region of cards; a
 /// [MotionCard] with no ancestor scope falls back to plain on/off hover.
 ///
@@ -81,15 +75,15 @@ class _CursorProximityInherited extends InheritedWidget {
       cursor != oldWidget.cursor;
 }
 
-/// Spring-driven "dock" interaction for desktop cards: scale + lift + spring
+/// Spring-driven interaction for desktop cards: scale + lift + spring
 /// shadow.
 ///
 /// Under a [CursorProximityScope] the card magnifies by the cursor's
 /// *nearness* — multiple neighbours react at once with a smooth distance
-/// falloff (`t = (1 - dist/radius)²`), like the macOS Dock. Without a scope
-/// it falls back to binary hover. Press always depresses and settles. All
-/// three properties travel as one velocity-preserving motor spring, so an
-/// interrupted transition never snaps.
+/// falloff (`t = (1 - dist/radius)²`). Without a scope it falls back to binary
+/// hover. Press always depresses and settles. All three properties travel as
+/// one velocity-preserving motor spring, so an interrupted transition never
+/// snaps.
 ///
 /// Non-event-eating like [PressableScale]: installs a [MouseRegion] (hover /
 /// fallback) and a translucent [Listener] (press) only, so the wrapped card
@@ -100,10 +94,10 @@ class MotionCard extends StatefulWidget {
     required this.child,
     this.enabled = true,
     this.borderRadius = 12,
-    this.hoverScale = 1.06,
-    this.pressScale = 0.95,
-    this.hoverLift = 14.0,
-    this.proximityRadius = 260.0,
+    this.hoverScale = 1.022,
+    this.pressScale = 0.97,
+    this.hoverLift = 7.0,
+    this.proximityRadius = 150.0,
     this.shadowColor,
     this.onTap,
   });
@@ -146,7 +140,7 @@ class _MotionCardState extends State<MotionCard> {
   _Dock _dockFor(double t) {
     if (!widget.enabled) return const _Dock(1, 0, 0);
     if (_pressed) {
-      return _Dock(widget.pressScale, widget.hoverLift * 0.35, 0.6);
+      return _Dock(widget.pressScale, 0, 0.18);
     }
     final scale = 1 + (widget.hoverScale - 1) * t;
     return _Dock(scale, widget.hoverLift * t, t);
@@ -160,7 +154,7 @@ class _MotionCardState extends State<MotionCard> {
     final center = box.localToGlobal(box.size.center(Offset.zero));
     final distance = (cursorGlobal - center).distance;
     final linear = (1 - distance / widget.proximityRadius).clamp(0.0, 1.0);
-    return linear * linear; // ease-in falloff: calm at the edges, punchy near
+    return linear * linear; // ease-in falloff: quiet at the edges
   }
 
   Widget _dockBox(BuildContext context, _Dock d, Widget? child) {
@@ -169,17 +163,38 @@ class _MotionCardState extends State<MotionCard> {
       offset: Offset(0, -d.lift),
       child: Transform.scale(
         scale: d.scale,
+        // Rasterize the card (text + shadow) once and scale the BITMAP, rather
+        // than letting Impeller re-shape glyphs at every fractional scale step.
+        // That per-frame glyph reshaping is the hover "shimmer/titreme"
+        // (flutter#149652, an Impeller text-transform rounding bug). Forcing a
+        // non-null filterQuality switches Transform to the bitmap path → the
+        // text stays rock-steady while the card zooms. At a ~2% hover scale the
+        // bilinear softening is imperceptible.
+        filterQuality: FilterQuality.medium,
         child: DecoratedBox(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(widget.borderRadius),
+            // Layered depth (make-interfaces-feel-better #3): a tight near-black
+            // contact shadow grounds the tile while a soft, wide tinted bloom
+            // sells the lift. Both scale with the spring's elevation so depth
+            // grows fluidly with hover/proximity instead of popping in.
             boxShadow:
                 d.elevation <= 0.001
                     ? null
                     : <BoxShadow>[
                       BoxShadow(
-                        color: shadowColor.withValues(alpha: 0.32 * d.elevation),
-                        blurRadius: 28 * d.elevation,
-                        offset: Offset(0, 14 * d.elevation),
+                        color: const Color(0xFF000000).withValues(
+                          alpha: 0.22 * d.elevation,
+                        ),
+                        blurRadius: 10 * d.elevation,
+                        offset: Offset(0, 4 * d.elevation),
+                      ),
+                      BoxShadow(
+                        color: shadowColor.withValues(
+                          alpha: 0.18 * d.elevation,
+                        ),
+                        blurRadius: 26 * d.elevation,
+                        offset: Offset(0, 12 * d.elevation),
                       ),
                     ],
           ),
@@ -205,7 +220,8 @@ class _MotionCardState extends State<MotionCard> {
           final c = cursor.value;
           final t = (_pressed || c == null) ? 0.0 : _proximityIntensity(c);
           return MotionBuilder<_Dock>(
-            motion: _pressed ? DesktopMotion.tap : _kProximityMotion,
+            motion:
+                _pressed ? DesktopMotion.cardPress : DesktopMotion.cardProximity,
             value: _dockFor(t),
             converter: _dockConverter,
             builder: _dockBox,
@@ -216,7 +232,7 @@ class _MotionCardState extends State<MotionCard> {
     } else {
       // Binary fallback: hover on/off via the card's own MouseRegion.
       motion = MotionBuilder<_Dock>(
-        motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
+        motion: _pressed ? DesktopMotion.cardPress : DesktopMotion.cardHover,
         value: _dockFor(_hovered ? 1.0 : 0.0),
         converter: _dockConverter,
         builder: _dockBox,

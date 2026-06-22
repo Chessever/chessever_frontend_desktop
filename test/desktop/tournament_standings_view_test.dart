@@ -29,7 +29,10 @@ void main() {
             body: SizedBox(
               width: 720,
               height: 480,
-              child: TournamentStandingsView(tournamentId: 'event-1'),
+              child: TournamentStandingsView(
+                tabId: 'test-tab',
+                tournamentId: 'event-1',
+              ),
             ),
           ),
         ),

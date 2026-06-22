@@ -1,3 +1,5 @@
+// ignore_for_file: avoid_print, empty_catches, unused_element
+
 import 'package:collection/collection.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
@@ -12,6 +14,7 @@ import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_de
 import 'package:chessever/screens/tour_detail/games_tour/widgets/games_tour_content_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tournament_state_provider.dart';
 import 'package:flutter/animation.dart';
+import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/repository/supabase/round/round_repository.dart';
 import 'package:chessever/repository/supabase/round/round.dart';
@@ -30,8 +33,11 @@ final gamesAppBarProvider = StateNotifierProvider<
   _GamesAppBarNotifier,
   AsyncValue<GamesAppBarViewModel>
 >((ref) {
-  final tourAsync = ref.watch(tourDetailScreenProvider);
-  final tourId = tourAsync.value?.aboutTourModel.id;
+  final tourId = ref.watch(
+    tourDetailScreenProvider.select(
+      (tourAsync) => tourAsync.valueOrNull?.aboutTourModel.id,
+    ),
+  );
 
   return _GamesAppBarNotifier(ref: ref, tourId: tourId);
 });
@@ -643,13 +649,20 @@ class _GamesAppBarNotifier
     return -1; // not found
   }
 
-  Future<void> _load() async {
+  Future<void> _load({
+    bool showLoading = true,
+    bool scrollSelection = true,
+  }) async {
     if (tourId == null) {
-      state = const AsyncValue.loading();
+      if (showLoading) {
+        state = const AsyncValue.loading();
+      }
       return;
     }
 
-    state = const AsyncValue.loading();
+    if (showLoading) {
+      state = const AsyncValue.loading();
+    }
     try {
       final repo = ref.read(roundRepositoryProvider);
       final rounds = await repo.getRoundsByTourId(tourId!);
@@ -683,7 +696,11 @@ class _GamesAppBarNotifier
 
       _sortRounds(processedModels);
 
-      await _applySelectionFrom(processedModels, tourId!);
+      await _applySelectionFrom(
+        processedModels,
+        tourId!,
+        scrollSelection: scrollSelection,
+      );
     } catch (e, st) {
       state = AsyncValue.error(e, st);
     }
@@ -1246,20 +1263,28 @@ class _GamesAppBarNotifier
         (game) => !knownRoundIds.contains(game.roundId),
       );
       if (hasNewGameBackedRound) {
-        await _load();
-        return;
+        await _load(showLoading: false, scrollSelection: false);
       }
-
-      await _applySelectionFrom(
-        List<GamesAppBarModel>.from(current.gamesAppBarModels),
-        tourId!,
-      );
     });
   }
 
   /// Recompute statuses on live-rounds change, update selection only if the user
   /// hasn’t made a sticky pick.
+  ///
+  /// **Transient-empty guard:** `settings` is in the realtime publication, so
+  /// reconnect snapshots and momentary empty re-emits can arrive. Treating
+  /// empty-after-non-empty as "no rounds are live" would flip every live
+  /// round out and back. Drop empty-after-non-empty unless backend
+  /// corroborates emptiness on a subsequent emission.
+  /// See docs/superpowers/specs/2026-05-29-realtime-live-games-implementation-plan.md
+  /// change #3.
   void _onLiveRoundsChanged(List<String> newLive) {
+    if (newLive.isEmpty && _liveRounds.isNotEmpty) {
+      return;
+    }
+    if (setEquals(_liveRounds.toSet(), newLive.toSet())) {
+      return;
+    }
     _liveRounds = List.unmodifiable(newLive);
 
     final current = state.valueOrNull;
@@ -1284,62 +1309,33 @@ class _GamesAppBarNotifier
     _sortRounds(updated);
 
     final sticky = ref.read(userSelectedRoundProvider);
-    final stickyId = sticky?.id;
     final counts = _buildRoundGameCounts();
-    final hasStickyValid =
+    final nextSelected = selectRoundIdAfterLiveRoundsChanged(
+      models: updated,
+      currentSelectedId: current.selectedId,
+      stickySelection: sticky,
+      hasGames: (roundId) => _hasGames(roundId, counts),
+      resolveDate: _roundEventDateTime,
+    );
+    final selectedIsSticky =
         sticky?.userSelected == true &&
-        stickyId != null &&
-        updated.any((m) => m.id == stickyId) &&
-        _hasGames(stickyId, counts);
-
-    if (hasStickyValid) {
-      state = AsyncValue.data(
-        GamesAppBarViewModel(
-          gamesAppBarModels: updated,
-          selectedId: stickyId,
-          userSelectedId: true,
-        ),
-      );
-      _scrollToRound(stickyId);
-      return;
-    }
-    final currentSelected = current.selectedId;
-    final currentStillValid =
-        currentSelected.isNotEmpty &&
-        updated.any((m) => m.id == currentSelected) &&
-        _hasGames(currentSelected, counts);
-
-    if (currentStillValid) {
-      state = AsyncValue.data(
-        GamesAppBarViewModel(
-          gamesAppBarModels: updated,
-          selectedId: currentSelected,
-          userSelectedId: false,
-        ),
-      );
-      _scrollToRound(currentSelected);
-      return;
-    }
-
-    final autoModel = _selectAutoRound(updated, counts);
-    final nextSelected = autoModel?.id ?? '';
+        sticky?.id == nextSelected &&
+        nextSelected.isNotEmpty;
 
     state = AsyncValue.data(
       GamesAppBarViewModel(
         gamesAppBarModels: updated,
         selectedId: nextSelected,
-        userSelectedId: false,
+        userSelectedId: selectedIsSticky,
       ),
     );
-    if (nextSelected.isNotEmpty) {
-      _scrollToRound(nextSelected);
-    }
   }
 
   Future<void> _applySelectionFrom(
     List<GamesAppBarModel> models,
-    String tourId,
-  ) async {
+    String tourId, {
+    bool scrollSelection = true,
+  }) async {
     // 1) Respect sticky user selection if still present
     final sticky = ref.read(userSelectedRoundProvider);
     final stickyId = sticky?.id;
@@ -1355,7 +1351,9 @@ class _GamesAppBarNotifier
           userSelectedId: true,
         ),
       );
-      _scrollToRound(stickyId);
+      if (scrollSelection) {
+        _scrollToRound(stickyId);
+      }
       return;
     }
 
@@ -1369,7 +1367,9 @@ class _GamesAppBarNotifier
           userSelectedId: false,
         ),
       );
-      _scrollToRound(liveModel.id);
+      if (scrollSelection) {
+        _scrollToRound(liveModel.id);
+      }
       return;
     }
 
@@ -1390,7 +1390,9 @@ class _GamesAppBarNotifier
             userSelectedId: false,
           ),
         );
-        _scrollToRound(preconfiguredFocus.id);
+        if (scrollSelection) {
+          _scrollToRound(preconfiguredFocus.id);
+        }
         return;
       }
     }
@@ -1429,7 +1431,9 @@ class _GamesAppBarNotifier
           userSelectedId: false,
         ),
       );
-      _scrollToRound(latestByActivityModel.id);
+      if (scrollSelection) {
+        _scrollToRound(latestByActivityModel.id);
+      }
       return;
     }
 
@@ -1444,9 +1448,78 @@ class _GamesAppBarNotifier
       ),
     );
     if (fallbackId.isNotEmpty) {
-      _scrollToRound(fallbackId);
+      if (scrollSelection) {
+        _scrollToRound(fallbackId);
+      }
     }
   }
+}
+
+@visibleForTesting
+String selectRoundIdAfterLiveRoundsChanged({
+  required List<GamesAppBarModel> models,
+  required String currentSelectedId,
+  required ({String id, bool userSelected})? stickySelection,
+  required bool Function(String roundId) hasGames,
+  required RoundDateResolver resolveDate,
+}) {
+  final stickyId = stickySelection?.id;
+  if (stickySelection?.userSelected == true &&
+      stickyId != null &&
+      models.any((m) => m.id == stickyId) &&
+      hasGames(stickyId)) {
+    return stickyId;
+  }
+
+  final liveRounds =
+      models
+          .where((m) => m.roundStatus == RoundStatus.live && hasGames(m.id))
+          .toList()
+        ..sort((a, b) => _compareResolvedDate(a, b, false, resolveDate));
+  if (liveRounds.isNotEmpty) {
+    return liveRounds.first.id;
+  }
+
+  final currentStillValid =
+      currentSelectedId.isNotEmpty &&
+      models.any((m) => m.id == currentSelectedId) &&
+      hasGames(currentSelectedId);
+  if (currentStillValid) {
+    return currentSelectedId;
+  }
+
+  final autoModel = pickPreferredRoundForSelection(
+    models,
+    resolveDate: resolveDate,
+    hasGames: (model) => hasGames(model.id),
+  );
+  return autoModel?.id ?? '';
+}
+
+int _compareResolvedDate(
+  GamesAppBarModel a,
+  GamesAppBarModel b,
+  bool ascending,
+  RoundDateResolver resolveDate,
+) {
+  final aStart = resolveDate(a);
+  final bStart = resolveDate(b);
+
+  int compare;
+  if (aStart == null && bStart == null) {
+    compare = a.name.compareTo(b.name);
+  } else if (aStart == null) {
+    compare = 1;
+  } else if (bStart == null) {
+    compare = -1;
+  } else {
+    compare = aStart.compareTo(bStart);
+    if (compare == 0) {
+      compare = a.name.compareTo(b.name);
+    }
+  }
+
+  return ascending ? compare : -compare;
 }
 
 DateTime? _resolveStageStartDate({

@@ -2,6 +2,7 @@ import 'package:chessever/screens/chessboard/widgets/chess_board_from_fen_new.da
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/game_card_wrapper_provider.dart';
@@ -21,6 +22,7 @@ class GameCardWrapperWidget extends ConsumerWidget {
   final ChessboardView viewSource;
   final Side? fixedBottomSide;
   final bool allowStockfishFallback;
+  final bool streamEnabled;
   final LiveGamesBatchKey? liveBatchKey;
 
   const GameCardWrapperWidget({
@@ -34,6 +36,7 @@ class GameCardWrapperWidget extends ConsumerWidget {
     this.viewSource = ChessboardView.tour,
     this.fixedBottomSide,
     this.allowStockfishFallback = true,
+    this.streamEnabled = true,
     this.liveBatchKey,
   });
 
@@ -43,8 +46,23 @@ class GameCardWrapperWidget extends ConsumerWidget {
     // Use gameId as the stable key to prevent provider recreation
     final liveGame =
         isChessBoardVisible
-            ? watchLiveGamePosition(ref, game, batchKey: liveBatchKey)
-            : watchLiveGame(ref, game, batchKey: liveBatchKey);
+            ? watchLiveGamePosition(
+              ref,
+              game,
+              batchKey: liveBatchKey,
+              streamEnabled: streamEnabled,
+            )
+            : watchLiveGame(
+              ref,
+              game,
+              batchKey: liveBatchKey,
+              streamEnabled: streamEnabled,
+            );
+    final effectiveAllowStockfishFallback =
+        streamEnabled &&
+        allowStockfishFallback &&
+        !ref.watch(liveGameCardsPausedProvider) &&
+        ref.watch(shouldStreamProvider);
     final keyValue = 'game_${liveGame.gameId}';
 
     // Build updated games list with the live game data for navigation
@@ -84,7 +102,7 @@ class GameCardWrapperWidget extends ConsumerWidget {
           pinnedIds: gamesData.pinnedGamedIs,
           onPinToggle: handlePinToggle,
           fixedBottomSide: fixedBottomSide,
-          allowStockfishFallback: allowStockfishFallback,
+          allowStockfishFallback: effectiveAllowStockfishFallback,
           liveBatchKey: liveBatchKey,
         )
         : GameCard(
@@ -95,7 +113,7 @@ class GameCardWrapperWidget extends ConsumerWidget {
           ),
           pinnedIds: gamesData.pinnedGamedIs,
           onPinToggle: handlePinToggle,
-          allowStockfishFallback: allowStockfishFallback,
+          allowStockfishFallback: effectiveAllowStockfishFallback,
           onTap:
               () => ref
                   .read(gameCardWrapperProvider)

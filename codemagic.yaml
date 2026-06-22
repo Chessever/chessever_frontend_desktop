@@ -1,4 +1,99 @@
 workflows:
+  macos-desktop-master:
+    name: macOS Desktop (Flutter master)
+    # Test-only build against Flutter master channel. macOS only.
+    # No signing, no notarization, NO publish step — produces a zipped
+    # ad-hoc-signed .app artifact you download and run yourself.
+    instance_type: mac_mini_m4
+    max_build_duration: 120
+    environment:
+      flutter: master
+      xcode: latest
+      cocoapods: default
+      groups:
+        - chessever-desktop-release
+    scripts:
+      - name: Verify build environment
+        script: |
+          set -euo pipefail
+          # Only the dart-define vars the app needs at runtime. No signing /
+          # publisher / ASC vars — this workflow never signs or publishes.
+          required=(
+            SUPABASE_URL
+            SUPABASE_ANON_KEY
+            GOOGLE_DESKTOP_CLIENT_ID
+            GOOGLE_DESKTOP_CLIENT_SECRET
+            SENTRY_FLUTTER
+          )
+          missing=0
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "$name is required"
+              missing=1
+            fi
+          done
+          exit "$missing"
+      - name: Show Flutter version
+        script: |
+          flutter --version
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+      - name: Install CocoaPods dependencies
+        script: |
+          find . -name "Podfile" -execdir pod install \;
+      - name: Build macOS release (unsigned, ad-hoc)
+        script: |
+          set -euo pipefail
+          DART_DEFINES=(
+            --dart-define=SUPABASE_URL="$SUPABASE_URL"
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+            --dart-define=GOOGLE_DESKTOP_CLIENT_ID="$GOOGLE_DESKTOP_CLIENT_ID"
+            --dart-define=GOOGLE_DESKTOP_CLIENT_SECRET="$GOOGLE_DESKTOP_CLIENT_SECRET"
+            --dart-define=SENTRY_FLUTTER="$SENTRY_FLUTTER"
+          )
+          if [ -n "${GOOGLE_WEB_CLIENT_ID:-}" ]; then
+            DART_DEFINES+=(--dart-define=GOOGLE_WEB_CLIENT_ID="$GOOGLE_WEB_CLIENT_ID")
+          fi
+          if [ -n "${BILLING_API_BASE:-}" ]; then
+            DART_DEFINES+=(--dart-define=BILLING_API_BASE="$BILLING_API_BASE")
+          fi
+          if [ -n "${GAMEBASE_PROXY_BASE:-}" ]; then
+            DART_DEFINES+=(--dart-define=GAMEBASE_PROXY_BASE="$GAMEBASE_PROXY_BASE")
+          fi
+          # Runner.xcodeproj pins manual Developer ID signing
+          # ('Chessever Desktop Direct Distribution'). This is an unsigned
+          # test build, so override signing off via Flutter's FLUTTER_XCODE_*
+          # passthrough (these become xcodebuild command-line settings, which
+          # outrank the pinned pbxproj values).
+          export FLUTTER_XCODE_CODE_SIGNING_ALLOWED=NO
+          export FLUTTER_XCODE_CODE_SIGNING_REQUIRED=NO
+          export FLUTTER_XCODE_CODE_SIGN_IDENTITY=-
+          export FLUTTER_XCODE_CODE_SIGN_STYLE=Automatic
+          export FLUTTER_XCODE_PROVISIONING_PROFILE_SPECIFIER=
+          export FLUTTER_XCODE_DEVELOPMENT_TEAM=
+          flutter config --enable-macos-desktop
+          # Capture full build output to a downloadable artifact (Codemagic
+          # logs aren't exposed via API). Preserve flutter's exit code.
+          set +e
+          flutter build macos --release "${DART_DEFINES[@]}" 2>&1 | tee flutter_build.log
+          code=${PIPESTATUS[0]}
+          echo "=== flutter build macos exit=$code ===" | tee -a flutter_build.log
+          exit "$code"
+      - name: Zip the .app
+        script: |
+          set -euo pipefail
+          APP_DIR="build/macos/Build/Products/Release"
+          APP_NAME="$(ls "$APP_DIR" | grep '\.app$' | head -n 1)"
+          [ -n "$APP_NAME" ] || { echo "no .app produced"; exit 1; }
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$APP_DIR/$APP_NAME" "$APP_DIR/${APP_NAME%.app}-master.zip"
+    artifacts:
+      - flutter_build.log
+      - build/macos/Build/Products/Release/*.zip
+      - build/macos/Build/Products/Release/*.app
+      - /tmp/xcodebuild_logs/*.log
+
   macos-desktop-release:
     name: macOS Desktop Release
     instance_type: mac_mini_m4

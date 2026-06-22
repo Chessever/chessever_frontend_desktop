@@ -36,7 +36,7 @@ class DesktopSidebar extends StatelessWidget {
     this.autoCollapsed = false,
   });
 
-  final DesktopPane current;
+  final DesktopPane? current;
 
   /// Sidebar tap handler. `inNewTab` is `true` when the user holds
   /// Cmd / Ctrl while clicking — Chrome convention for "open in a new
@@ -272,11 +272,11 @@ class _SidebarHeaderButtonState extends State<_SidebarHeaderButton> {
           onTapUp: (_) => setState(() => _pressed = false),
           onTapCancel: () => setState(() => _pressed = false),
           child: SingleMotionBuilder(
-            value: _pressed ? 0.94 : (_hovered ? 1.04 : 1.0),
+            value: _pressed ? 0.97 : (_hovered ? 1.012 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               decoration: BoxDecoration(

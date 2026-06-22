@@ -1,7 +1,5 @@
 import 'package:chessever/utils/responsive_helper.dart';
-import 'package:chessever/utils/svg_asset.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/svg.dart';
 import '../utils/app_typography.dart';
 
 class CountrymanCard extends StatelessWidget {
@@ -108,6 +106,8 @@ Widget getCountryFlag(String countryCode) {
         'https://flagcdn.com/w20/no.png',
         width: 20.w,
         height: 14.h,
+        cacheWidth: 40,
+        cacheHeight: 28,
         errorBuilder:
             (context, error, stackTrace) =>
                 Text('🇳🇴', style: TextStyle(fontSize: 16.sp)),
@@ -117,6 +117,8 @@ Widget getCountryFlag(String countryCode) {
         'https://flagcdn.com/w20/us.png',
         width: 20.w,
         height: 14.h,
+        cacheWidth: 40,
+        cacheHeight: 28,
         errorBuilder:
             (context, error, stackTrace) =>
                 Text('🇺🇸', style: TextStyle(fontSize: 16.sp)),
@@ -126,6 +128,8 @@ Widget getCountryFlag(String countryCode) {
         'https://flagcdn.com/w20/in.png',
         width: 20.w,
         height: 14.h,
+        cacheWidth: 40,
+        cacheHeight: 28,
         errorBuilder:
             (context, error, stackTrace) =>
                 Text('🇮🇳', style: TextStyle(fontSize: 16.sp)),
@@ -135,6 +139,8 @@ Widget getCountryFlag(String countryCode) {
         'https://flagcdn.com/w20/uz.png',
         width: 20.w,
         height: 14.h,
+        cacheWidth: 40,
+        cacheHeight: 28,
         errorBuilder:
             (context, error, stackTrace) =>
                 Text('🇺🇿', style: TextStyle(fontSize: 16.sp)),

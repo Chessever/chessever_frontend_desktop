@@ -83,7 +83,7 @@ class DesktopSegmentedTabs<T> extends StatelessWidget {
     final isSelected = tab.value == selected;
     final icon = tab.icon;
     return FButton(
-      style: _segmentStyle(selected: isSelected, wrap: wrap),
+      style: desktopSegmentButtonStyle(selected: isSelected, wrap: wrap),
       mainAxisSize:
           (expand && !wrap) ? MainAxisSize.max : MainAxisSize.min,
       onPress: () => onChanged(tab.value),
@@ -93,7 +93,7 @@ class DesktopSegmentedTabs<T> extends StatelessWidget {
   }
 }
 
-FBaseButtonStyle Function(FButtonStyle style) _segmentStyle({
+FBaseButtonStyle Function(FButtonStyle style) desktopSegmentButtonStyle({
   required bool selected,
   bool wrap = false,
 }) {

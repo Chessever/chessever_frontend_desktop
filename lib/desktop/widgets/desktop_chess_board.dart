@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:chessground/chessground.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:fast_immutable_collections/fast_immutable_collections.dart';
@@ -68,6 +70,100 @@ class DesktopChessBoard extends ConsumerStatefulWidget {
 class _DesktopChessBoardState extends ConsumerState<DesktopChessBoard> {
   int _gestureResetEpoch = 0;
 
+  // chessground 10 drives the interactive board through a controller instead
+  // of rebuilding the widget with a new `fen` each frame. We own it: created
+  // in initState from the current props, advanced in didUpdateWidget, disposed
+  // below. A game switch / reseed remounts this whole widget (board_pane hands
+  // us a fresh key), so those get a brand-new controller — an instant cut, not
+  // an animated diff. Same-key fen changes (a played move, one-step nav) flow
+  // through updatePosition() and animate the single-move slide.
+  late ChessboardController _controller;
+
+  // Memoize the FEN→pieces parse. build() runs on every parent repaint
+  // (per-second clock tick, eval updates, hover affordance) but the parsed
+  // position only changes when the FEN string itself does. readFen() walks
+  // the board and allocates a fresh Pieces map each call, so caching keeps
+  // those between-move frames allocation-free.
+  String? _piecesFen;
+  late Pieces _pieces;
+
+  Pieces _piecesForFen(String fen) {
+    if (_piecesFen != fen) {
+      _piecesFen = fen;
+      _pieces = readFen(fen);
+    }
+    return _pieces;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = ChessboardController(game: _gameData());
+    if (widget.premove != null) {
+      _controller.premove = widget.premove;
+    }
+    // v10 owns the premove on the controller. The play board keeps its own
+    // premove queue, so bridge user-initiated premove changes back out.
+    _controller.premoveNotifier.addListener(_handleControllerPremove);
+  }
+
+  void _handleControllerPremove() {
+    final next = _controller.premove;
+    // Only forward changes the user made on the board — not the ones we just
+    // pushed in from widget.premove — so the queue↔controller sync can't loop.
+    if (next != widget.premove) {
+      widget.onSetPremove?.call(next);
+    }
+  }
+
+  @override
+  void didUpdateWidget(DesktopChessBoard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.premove != oldWidget.premove &&
+        widget.premove != _controller.premove) {
+      _controller.premove = widget.premove;
+    }
+    // Only push the controller when the position or game state actually
+    // changes. Same-fen repaints (clock ticks, hover affordance, eval updates)
+    // are skipped so the board layer stays still. updatePosition() animates
+    // when the fen differs and no-ops the animation when it doesn't.
+    if (oldWidget.fen != widget.fen ||
+        oldWidget.lastMove != widget.lastMove ||
+        oldWidget.playerSide != widget.playerSide ||
+        oldWidget.sideToMove != widget.sideToMove ||
+        oldWidget.isCheck != widget.isCheck) {
+      _controller.updatePosition(_gameData());
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.premoveNotifier.removeListener(_handleControllerPremove);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  GameData _gameData() => GameData(
+    fen: widget.fen,
+    playerSide: widget.playerSide,
+    sideToMove: widget.sideToMove,
+    validMoves: widget.validMoves,
+    lastMove: widget.lastMove,
+    kingSquareInCheck: _kingSquareInCheck(),
+  );
+
+  // v10 wants the king's square (not a bool) to paint the in-check ring. Read
+  // it off the already-parsed pieces map so we don't re-walk the FEN.
+  Square? _kingSquareInCheck() {
+    if (!widget.isCheck) return null;
+    for (final entry in _piecesForFen(widget.fen).entries) {
+      if (entry.value.role == Role.king && entry.value.color == widget.sideToMove) {
+        return entry.key;
+      }
+    }
+    return null;
+  }
+
   void _cancelActivePieceGesture() {
     if (!mounted) return;
     setState(() {
@@ -77,67 +173,68 @@ class _DesktopChessBoardState extends ConsumerState<DesktopChessBoard> {
 
   @override
   Widget build(BuildContext context) {
-    // Build per-square highlights for the from / to of `lastMove` using
-    // the same blue-grey palette mobile uses (kLastMoveHighlightLight /
-    // DarkSquare). We deliberately do NOT pass `lastMove:` to the inner
-    // Chessboard — that would tell chessground to paint its built-in
-    // greenish highlight, which doesn't match the brand. Squarehighlights
-    // are the canonical mobile path; we mirror it.
-    final mergedHighlights = _mergedHighlights(
-      widget.squareHighlights,
-      widget.lastMove,
-    );
     // Pull the user-selected board theme + piece set from the same store
     // the Board Settings page writes to. One change in Settings re-skins
     // every desktop board on screen.
     final settings =
         ref.watch(boardSettingsProviderNew).valueOrNull ??
         const BoardSettingsNew();
-    return DesktopBoardHoverAffordance(
-      size: widget.size,
-      pieces: readFen(widget.fen),
-      orientation: widget.orientation,
-      canGrabPiece: _canGrabPiece,
-      onCancelActivePieceGesture: _cancelActivePieceGesture,
-      child: Chessboard(
-        key: ValueKey<int>(_gestureResetEpoch),
+    return RepaintBoundary(
+      // Isolate the board layer: a parent repaint (1 Hz clock tick, eval bar
+      // fill animation, sibling hover) must not re-rasterize the chessground
+      // scene. Only a real fen/shape/highlight change repaints the board.
+      child: DesktopBoardHoverAffordance(
         size: widget.size,
-        settings: ChessboardSettings(
-          enableCoordinates: true,
-          animationDuration: const Duration(milliseconds: 180),
-          dragFeedbackScale: 1.05,
-          dragTargetKind: DragTargetKind.square,
-          // Desktop has both fine pointer (mouse) and clicks; allow both.
-          pieceShiftMethod: PieceShiftMethod.either,
-          // Premoves are speculative; queueing a pawn premove to the last
-          // rank without a role would drain to an illegal move and flush the
-          // whole queue. Default to queen (chess.com behavior); user can
-          // tweak after the move plays.
-          autoQueenPromotionOnPremove: true,
-          pieceOrientationBehavior: PieceOrientationBehavior.facingUser,
-          colorScheme: settings.colorScheme,
-          pieceAssets: settings.pieceAssets,
-        ),
+        pieces: _piecesForFen(widget.fen),
         orientation: widget.orientation,
-        fen: widget.fen,
-        // Pass `null` so chessground skips its own greenish highlight.
-        // Our blue-grey overlays in `mergedHighlights` are the canonical
-        // last-move indicator.
-        lastMove: null,
-        shapes: widget.shapes,
-        squareHighlights: mergedHighlights,
-        game: GameData(
-          playerSide: widget.playerSide,
-          validMoves: widget.validMoves,
-          sideToMove: widget.sideToMove,
-          isCheck: widget.isCheck,
-          promotionMove: widget.promotionMove,
-          premovable: widget.onSetPremove == null
-              ? null
-              : (premove: widget.premove, onSetPremove: widget.onSetPremove!),
-          onMove: widget.onMove,
-          onPromotionSelection: (role) =>
-              widget.onPromotionSelection?.call(role),
+        canGrabPiece: _canGrabPiece,
+        onCancelActivePieceGesture: _cancelActivePieceGesture,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Chessboard(
+              key: ValueKey<int>(_gestureResetEpoch),
+              size: widget.size,
+              controller: _controller,
+              settings: ChessboardSettings(
+                enableCoordinates: true,
+                animationDuration: const Duration(milliseconds: 180),
+                dragFeedbackScale: 1.05,
+                dragTargetKind: DragTargetKind.square,
+                // Desktop has both fine pointer (mouse) and clicks; allow both.
+                pieceShiftMethod: PieceShiftMethod.either,
+                // Premoves are speculative; queueing a pawn premove to the last
+                // rank without a role would drain to an illegal move and flush
+                // the whole queue. Default to queen (chess.com behavior).
+                autoQueenPromotionOnPremove: true,
+                // Premoves only make sense on the live play board, which opts
+                // in by wiring onSetPremove. The analysis board leaves it off.
+                enablePremoves: widget.onSetPremove != null,
+                pieceOrientationBehavior: PieceOrientationBehavior.facingUser,
+                // v10 paints the last-move highlight from GameData.lastMove via
+                // the color scheme (under the pieces). Recolour it to the brand
+                // blue-grey so we keep the desktop look that 9.x faked with
+                // squareHighlights — no separate overlay needed.
+                colorScheme: _brandLastMove(settings.colorScheme),
+                pieceAssets: settings.pieceAssets,
+              ),
+              orientation: widget.orientation,
+              // Promotion is handled inside the board in v10: it raises its own
+              // selector and calls onMove once with the promotion role already
+              // set, so we no longer stage promotionMove/onPromotionSelection.
+              onMove: widget.onMove,
+              shapes: widget.shapes.unlockView,
+            ),
+            // The interactive board dropped squareHighlights in v10. Caller
+            // highlights (end-game king markers, the play board's premove
+            // heat map) are painted as a soft overlay above the pieces.
+            if (widget.squareHighlights.isNotEmpty)
+              _SquareHighlightOverlay(
+                size: widget.size,
+                orientation: widget.orientation,
+                highlights: widget.squareHighlights,
+              ),
+          ],
         ),
       ),
     );
@@ -213,14 +310,16 @@ class _DesktopBoardHoverAffordanceState
 
     final hoverPiece = _pieceAt(_hoveredSquare);
     final canGrab = _canGrab(hoverPiece);
-    final cueSquare = _primaryDownOnPiece
-        ? _pressedSquare
-        : (canGrab ? _hoveredSquare : null);
-    final cursor = _primaryDownOnPiece
-        ? SystemMouseCursors.grabbing
-        : canGrab
-        ? SystemMouseCursors.grab
-        : MouseCursor.defer;
+    final cueSquare =
+        _primaryDownOnPiece
+            ? _pressedSquare
+            : (canGrab ? _hoveredSquare : null);
+    final cursor =
+        _primaryDownOnPiece
+            ? SystemMouseCursors.grabbing
+            : canGrab
+            ? SystemMouseCursors.grab
+            : MouseCursor.defer;
 
     return SizedBox.square(
       dimension: widget.size,
@@ -369,6 +468,7 @@ class _HoverSquareCue extends StatelessWidget {
             final t = value.clamp(0.0, 1.0);
             return Transform.scale(
               scale: 0.88 + (0.12 * t),
+              filterQuality: FilterQuality.medium,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: kPrimaryColor.withValues(alpha: 0.08 * t),
@@ -387,29 +487,77 @@ class _HoverSquareCue extends StatelessWidget {
   }
 }
 
-/// Whether a square is light-coloured (a1 dark, parity-based — same
-/// formula mobile uses).
-bool _isLightSquare(Square square) => (square.file + square.rank) % 2 == 1;
+/// Rebuild [base] with the brand blue-grey last-move highlight. v10 paints the
+/// last move from the color scheme (under the pieces), and [ChessboardColorScheme]
+/// has no copyWith, so thread every field through and override only `lastMove`.
+/// This keeps the desktop look that 9.x faked with squareHighlights.
+ChessboardColorScheme _brandLastMove(ChessboardColorScheme base) {
+  return ChessboardColorScheme(
+    lightSquare: base.lightSquare,
+    darkSquare: base.darkSquare,
+    background: base.background,
+    whiteCoordBackground: base.whiteCoordBackground,
+    blackCoordBackground: base.blackCoordBackground,
+    lastMove: const HighlightDetails(solidColor: kLastMoveHighlightLightSquare),
+    selected: base.selected,
+    validMoves: base.validMoves,
+    validPremoves: base.validPremoves,
+  );
+}
 
-/// Merge caller-supplied highlights (loser-king red / draw-king mint)
-/// with last-move blue-grey overlays. Caller-supplied wins on conflict
-/// so the end-game red on the loser's king is preserved even when the
-/// king's destination square is also the last-move square.
-IMap<Square, SquareHighlight> _mergedHighlights(
-  IMap<Square, SquareHighlight> caller,
-  Move? lastMove,
-) {
-  if (lastMove == null) return caller;
-  final out = <Square, SquareHighlight>{};
-  for (final square in lastMove.squares) {
-    final color = _isLightSquare(square)
-        ? kLastMoveHighlightLightSquare
-        : kLastMoveHighlightDarkSquare;
-    out[square] = SquareHighlight(details: HighlightDetails(solidColor: color));
+/// Soft translucent fills for caller-supplied square highlights — end-game
+/// king markers (loser red / draw mint) and the play board's premove heat map.
+/// The interactive board no longer paints squareHighlights itself, so we
+/// overlay them above the pieces. Each fill keeps its own alpha (so the heat
+/// map's gradient survives) but is capped so a piece sitting on the square is
+/// never fully hidden; the opaque loser-king is redrawn on top by board_pane's
+/// _FallenKingOverlay anyway.
+class _SquareHighlightOverlay extends StatelessWidget {
+  const _SquareHighlightOverlay({
+    required this.size,
+    required this.orientation,
+    required this.highlights,
+  });
+
+  final double size;
+  final Side orientation;
+  final IMap<Square, SquareHighlight> highlights;
+
+  @override
+  Widget build(BuildContext context) {
+    final squareSize = size / 8;
+    return IgnorePointer(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          for (final entry in highlights.entries)
+            if (entry.value.details.solidColor != null)
+              Positioned(
+                left:
+                    (orientation == Side.black
+                        ? 7 - entry.key.file
+                        : entry.key.file) *
+                    squareSize,
+                top:
+                    (orientation == Side.black
+                        ? entry.key.rank
+                        : 7 - entry.key.rank) *
+                    squareSize,
+                width: squareSize,
+                height: squareSize,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: entry.value.details.solidColor!.withValues(
+                      alpha: math.min(
+                        entry.value.details.solidColor!.a,
+                        0.6,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+        ],
+      ),
+    );
   }
-  // Caller's overlays (end-game etc.) take precedence.
-  for (final entry in caller.entries) {
-    out[entry.key] = entry.value;
-  }
-  return out.lock;
 }

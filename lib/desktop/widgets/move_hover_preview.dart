@@ -1,6 +1,5 @@
 import 'package:chessground/chessground.dart';
 import 'package:dartchess/dartchess.dart';
-import 'package:fast_immutable_collections/fast_immutable_collections.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
@@ -469,7 +468,7 @@ class _AnimatedHoverCardState extends ConsumerState<_AnimatedHoverCard> {
             opacity: t.clamp(0, 1),
             child: Transform.translate(
               offset: Offset(0, (1 - t) * 6),
-              child: Transform.scale(scale: scale, child: child),
+              child: Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             ),
           );
         },
@@ -523,7 +522,7 @@ class _PopupCard extends StatelessWidget {
         child: SizedBox(
           width: size,
           height: size,
-          child: Chessboard.fixed(
+          child: StaticChessboard(
             size: size,
             orientation: orientation,
             fen: fen,
@@ -531,16 +530,18 @@ class _PopupCard extends StatelessWidget {
             // via squareHighlights and skip chessground's built-in green.
             lastMove: null,
             squareHighlights: _lastMoveHighlights(lastMove),
-            settings: ChessboardSettings(
-              enableCoordinates: false,
-              colorScheme: settings.colorScheme,
-              pieceAssets: settings.pieceAssets,
-              // Non-zero only when we have a pre-move FEN to slide from —
-              // otherwise we'd animate phantom diffs when the popup first
-              // mounts on a token we cannot rewind.
-              animationDuration: animate
-                  ? const Duration(milliseconds: 280)
-                  : Duration.zero,
+            settings: StaticChessboardSettings.fromBoardSettings(
+              ChessboardSettings(
+                enableCoordinates: false,
+                colorScheme: settings.colorScheme,
+                pieceAssets: settings.pieceAssets,
+                // Non-zero only when we have a pre-move FEN to slide from —
+                // otherwise we'd animate phantom diffs when the popup first
+                // mounts on a token we cannot rewind.
+                animationDuration: animate
+                    ? const Duration(milliseconds: 280)
+                    : Duration.zero,
+              ),
             ),
           ),
         ),
@@ -584,8 +585,8 @@ String? _reverseToPreMoveFen(String postFen, Move move) {
   }
 }
 
-IMap<Square, SquareHighlight> _lastMoveHighlights(Move? lastMove) {
-  if (lastMove == null) return const IMapConst<Square, SquareHighlight>({});
+Map<Square, SquareHighlight> _lastMoveHighlights(Move? lastMove) {
+  if (lastMove == null) return const <Square, SquareHighlight>{};
   final out = <Square, SquareHighlight>{};
   for (final square in lastMove.squares) {
     final isLight = (square.file + square.rank) % 2 == 1;
@@ -594,5 +595,5 @@ IMap<Square, SquareHighlight> _lastMoveHighlights(Move? lastMove) {
         : kLastMoveHighlightDarkSquare;
     out[square] = SquareHighlight(details: HighlightDetails(solidColor: color));
   }
-  return out.lock;
+  return out;
 }

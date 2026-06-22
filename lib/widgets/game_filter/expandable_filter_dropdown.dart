@@ -111,6 +111,12 @@ class _ExpandableFilterDropdownState<T>
                       width: 16.sp,
                       height: 16.sp,
                       color: _isExpanded ? kBlackColor : null,
+                      cacheWidth:
+                          (16.sp * MediaQuery.devicePixelRatioOf(context))
+                              .round(),
+                      cacheHeight:
+                          (16.sp * MediaQuery.devicePixelRatioOf(context))
+                              .round(),
                     ),
                     SizedBox(width: 8.w),
                   ],
@@ -198,7 +204,15 @@ class _ExpandableFilterDropdownState<T>
           children: [
             // Asset image icon (preferred)
             if (hasAssetIcon) ...[
-              Image.asset(assetPath, width: 16.sp, height: 16.sp),
+              Image.asset(
+                assetPath,
+                width: 16.sp,
+                height: 16.sp,
+                cacheWidth:
+                    (16.sp * MediaQuery.devicePixelRatioOf(context)).round(),
+                cacheHeight:
+                    (16.sp * MediaQuery.devicePixelRatioOf(context)).round(),
+              ),
               SizedBox(width: 8.w),
             ] else if (hasIcon && iconData != null) ...[
               // Fallback to IconData

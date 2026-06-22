@@ -139,82 +139,87 @@ class _DesktopEvalBarState extends State<DesktopEvalBar> {
 
   @override
   Widget build(BuildContext context) {
-    return SingleMotionBuilder(
-      value: _whiteRatioTarget,
-      motion: const CupertinoMotion.smooth(),
-      builder: (context, animatedRatio, _) {
-        final whiteRatio = animatedRatio.clamp(0.0, 1.0).toDouble();
-        final blackRatio = 1.0 - whiteRatio;
-        final whiteHeight = whiteRatio * widget.height;
-        final blackHeight = blackRatio * widget.height;
-        final topHeight = widget.isFlipped ? whiteHeight : blackHeight;
-        final bottomHeight = widget.isFlipped ? blackHeight : whiteHeight;
-        final topColor = widget.isFlipped ? kWhiteColor : kPopUpColor;
-        final bottomColor = widget.isFlipped ? kPopUpColor : kWhiteColor;
+    return RepaintBoundary(
+      // The fill spring animates continuously while the engine streams evals;
+      // isolate its layer so each frame repaints only the bar, not the board
+      // rail and notation beside it.
+      child: SingleMotionBuilder(
+        value: _whiteRatioTarget,
+        motion: const CupertinoMotion.smooth(),
+        builder: (context, animatedRatio, _) {
+          final whiteRatio = animatedRatio.clamp(0.0, 1.0).toDouble();
+          final blackRatio = 1.0 - whiteRatio;
+          final whiteHeight = whiteRatio * widget.height;
+          final blackHeight = blackRatio * widget.height;
+          final topHeight = widget.isFlipped ? whiteHeight : blackHeight;
+          final bottomHeight = widget.isFlipped ? blackHeight : whiteHeight;
+          final topColor = widget.isFlipped ? kWhiteColor : kPopUpColor;
+          final bottomColor = widget.isFlipped ? kPopUpColor : kWhiteColor;
 
-        // Fixed-px badge — 18 px tall, large enough to read on a desktop
-        // screen but small enough to not dominate a 22 px-wide bar.
-        const badgeHeight = 18.0;
-        final badgeTop = (topHeight - badgeHeight / 2).clamp(
-          0.0,
-          widget.height - badgeHeight,
-        );
+          // Fixed-px badge — 18 px tall, large enough to read on a desktop
+          // screen but small enough to not dominate a 22 px-wide bar.
+          const badgeHeight = 18.0;
+          final badgeTop = (topHeight - badgeHeight / 2).clamp(
+            0.0,
+            widget.height - badgeHeight,
+          );
 
-        return SizedBox(
-          width: widget.width,
-          height: widget.height,
-          child: Stack(
-            children: [
-              Align(
-                alignment: Alignment.topCenter,
-                child: Container(
-                  width: widget.width,
-                  height: topHeight,
-                  color: topColor,
+          return SizedBox(
+            width: widget.width,
+            height: widget.height,
+            child: Stack(
+              children: [
+                Align(
+                  alignment: Alignment.topCenter,
+                  child: Container(
+                    width: widget.width,
+                    height: topHeight,
+                    color: topColor,
+                  ),
                 ),
-              ),
-              Align(
-                alignment: Alignment.bottomCenter,
-                child: Container(
-                  width: widget.width,
-                  height: bottomHeight,
-                  color: bottomColor,
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Container(
+                    width: widget.width,
+                    height: bottomHeight,
+                    color: bottomColor,
+                  ),
                 ),
-              ),
-              Positioned(
-                left: 0,
-                right: 0,
-                top: badgeTop,
-                child: Container(
-                  width: widget.width,
-                  height: badgeHeight,
-                  alignment: Alignment.center,
-                  color: kPrimaryColor,
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: Text(
-                        _displayText(),
-                        maxLines: 1,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: kBackgroundColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.2,
-                          fontFeatures: [FontFeature.tabularFigures()],
-                          height: 1.0,
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: badgeTop,
+                  child: Container(
+                    width: widget.width,
+                    height: badgeHeight,
+                    alignment: Alignment.center,
+                    color: kPrimaryColor,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Text(
+                          _displayText(),
+                          maxLines: 1,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: kBackgroundColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.2,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                            height: 1.0,
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ],
-          ),
-        );
-      },
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 }

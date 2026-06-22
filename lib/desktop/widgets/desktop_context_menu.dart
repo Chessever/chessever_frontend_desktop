@@ -200,6 +200,7 @@ class _DesktopContextMenuOverlayState<T>
                     child: Transform.scale(
                       scale: scale,
                       alignment: Alignment.topLeft,
+                      filterQuality: FilterQuality.medium,
                       child: child,
                     ),
                   ),

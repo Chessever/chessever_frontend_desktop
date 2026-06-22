@@ -6,6 +6,8 @@ class Games {
   final String roundSlug;
   final String tourId;
   final String tourSlug;
+  final String? tourName;
+  final String? eventName;
   final String? name;
   final String? fen;
   final List<Player>? players;
@@ -32,6 +34,8 @@ class Games {
     required this.roundSlug,
     required this.tourId,
     required this.tourSlug,
+    this.tourName,
+    this.eventName,
     this.name,
     this.fen,
     this.players,
@@ -58,6 +62,8 @@ class Games {
     String? roundSlug,
     String? tourId,
     String? tourSlug,
+    String? tourName,
+    String? eventName,
     String? name,
     String? fen,
     List<Player>? players,
@@ -83,6 +89,8 @@ class Games {
       roundSlug: roundSlug ?? this.roundSlug,
       tourId: tourId ?? this.tourId,
       tourSlug: tourSlug ?? this.tourSlug,
+      tourName: tourName ?? this.tourName,
+      eventName: eventName ?? this.eventName,
       name: name ?? this.name,
       fen: fen ?? this.fen,
       players: players ?? this.players,
@@ -109,21 +117,31 @@ class Games {
       // Extract data from nested tours.group_broadcasts join
       String? timeControl;
       int? avgElo;
+      int? eventMaxAvgElo;
+      String? tourName;
+      String? eventName;
       final tours = json['tours'];
       if (tours is Map<String, dynamic>) {
-        avgElo = tours['avg_elo'] != null
-            ? (tours['avg_elo'] as num).toInt()
-            : null;
+        tourName = tours['name'] as String?;
+        avgElo =
+            tours['avg_elo'] != null ? (tours['avg_elo'] as num).toInt() : null;
         final groupBroadcasts = tours['group_broadcasts'];
         if (groupBroadcasts is Map<String, dynamic>) {
+          eventName = groupBroadcasts['name'] as String?;
+          eventMaxAvgElo =
+              groupBroadcasts['max_avg_elo'] != null
+                  ? (groupBroadcasts['max_avg_elo'] as num).toInt()
+                  : null;
           timeControl = groupBroadcasts['time_control'] as String?;
         }
       }
       // Also check direct fields (for backwards compatibility)
       timeControl ??= json['time_control'] as String?;
-      avgElo ??= json['avg_elo'] != null
-          ? (json['avg_elo'] as num).toInt()
-          : null;
+      tourName ??= json['tour_name'] as String?;
+      eventName ??= json['event_name'] as String?;
+      avgElo ??=
+          json['avg_elo'] != null ? (json['avg_elo'] as num).toInt() : null;
+      avgElo ??= eventMaxAvgElo;
 
       return Games(
         id: json['id'] as String,
@@ -131,42 +149,52 @@ class Games {
         roundSlug: json['round_slug'] as String,
         tourId: json['tour_id'] as String,
         tourSlug: json['tour_slug'] as String,
+        tourName: tourName,
+        eventName: eventName,
         name: json['name'] as String?,
         fen: json['fen'] as String?,
-        players: json['players'] != null
-            ? (json['players'] as List)
-                  .map(
-                    (player) => Player.fromJson(player as Map<String, dynamic>),
-                  )
-                  .toList()
-            : null,
+        players:
+            json['players'] != null
+                ? (json['players'] as List)
+                    .map(
+                      (player) =>
+                          Player.fromJson(player as Map<String, dynamic>),
+                    )
+                    .toList()
+                : null,
         lastMove: json['last_move'] as String?,
-        thinkTime: json['think_time'] != null
-            ? (json['think_time'] as num).toInt()
-            : null,
+        thinkTime:
+            json['think_time'] != null
+                ? (json['think_time'] as num).toInt()
+                : null,
         status: json['status'] as String?,
         pgn: json['pgn'] as String?,
-        search: json['search'] != null
-            ? (json['search'] as List).map((e) => e as String).toList()
-            : null,
-        boardNr: json['board_nr'] != null
-            ? (json['board_nr'] as num).toInt()
-            : null,
-        lastMoveTime: json['last_move_time'] != null
-            ? DateTime.parse(json['last_move_time'] as String)
-            : null,
-        gameDay: json['game_day'] != null
-            ? DateTime.parse(json['game_day'] as String)
-            : null,
-        lastClockWhite: json['last_clock_white'] != null
-            ? (json['last_clock_white'] as num).toInt()
-            : null,
-        lastClockBlack: json['last_clock_black'] != null
-            ? (json['last_clock_black'] as num).toInt()
-            : null,
-        dateStart: json['date_start'] != null
-            ? DateTime.parse(json['date_start'] as String)
-            : null,
+        search:
+            json['search'] != null
+                ? (json['search'] as List).map((e) => e as String).toList()
+                : null,
+        boardNr:
+            json['board_nr'] != null ? (json['board_nr'] as num).toInt() : null,
+        lastMoveTime:
+            json['last_move_time'] != null
+                ? DateTime.parse(json['last_move_time'] as String)
+                : null,
+        gameDay:
+            json['game_day'] != null
+                ? DateTime.parse(json['game_day'] as String)
+                : null,
+        lastClockWhite:
+            json['last_clock_white'] != null
+                ? (json['last_clock_white'] as num).toInt()
+                : null,
+        lastClockBlack:
+            json['last_clock_black'] != null
+                ? (json['last_clock_black'] as num).toInt()
+                : null,
+        dateStart:
+            json['date_start'] != null
+                ? DateTime.parse(json['date_start'] as String)
+                : null,
         eco: json['eco'] as String?,
         openingName: json['opening_name'] as String?,
         timeControl: timeControl,
@@ -184,6 +212,8 @@ class Games {
       'round_slug': roundSlug,
       'tour_id': tourId,
       'tour_slug': tourSlug,
+      if (tourName != null) 'tour_name': tourName,
+      if (eventName != null) 'event_name': eventName,
       if (name != null) 'name': name,
       if (fen != null) 'fen': fen,
       if (players != null) 'players': players!.map((p) => p.toJson()).toList(),
@@ -204,6 +234,7 @@ class Games {
       if (eco != null) 'eco': eco,
       if (openingName != null) 'opening_name': openingName,
       if (timeControl != null) 'time_control': timeControl,
+      if (avgElo != null) 'avg_elo': avgElo,
     };
   }
 }
@@ -384,12 +415,14 @@ class SearchPlayer {
       id: json['id']?.toString() ?? '',
       name: json['name']?.toString() ?? '',
       title: json['title']?.toString(),
-      rating: json['rating'] != null
-          ? int.tryParse(json['rating'].toString())
-          : null,
-      fideId: json['fideId'] != null
-          ? int.tryParse(json['fideId'].toString())
-          : null,
+      rating:
+          json['rating'] != null
+              ? int.tryParse(json['rating'].toString())
+              : null,
+      fideId:
+          json['fideId'] != null
+              ? int.tryParse(json['fideId'].toString())
+              : null,
       fed: json['fed']?.toString(),
       tournamentId: tournamentId,
       tournamentName: tournamentName,

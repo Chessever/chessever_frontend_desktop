@@ -58,6 +58,7 @@ import 'package:chessever/screens/player_profile/tabs/player_events_tab.dart'
     show playerEventCardsProvider;
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -90,8 +91,9 @@ import 'package:chessever/widgets/player_initials_avatar.dart';
 /// Mobile responsive helpers (`.h/.w/.sp`) are gone — fixed pixels chosen for
 /// a 1440p desktop viewport.
 class PlayerProfileView extends ConsumerStatefulWidget {
-  const PlayerProfileView({super.key, required this.args});
+  const PlayerProfileView({super.key, required this.tabId, required this.args});
 
+  final String tabId;
   final PlayerProfileArgs args;
 
   @override
@@ -589,6 +591,7 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
                 ),
                 Expanded(
                   child: _RightPane(
+                    tabId: widget.tabId,
                     currentTab: _tab,
                     onSelectTab: _setTab,
                     hasActiveFilter: hasActiveFilter,
@@ -918,7 +921,17 @@ class _Header extends StatelessWidget {
               children: [
                 if (showFlag) ...[
                   federation?.toUpperCase() == 'FID'
-                      ? Image.asset(PngAsset.fideLogo, height: 16, width: 22)
+                      ? Image.asset(
+                        PngAsset.fideLogo,
+                        height: 16,
+                        width: 22,
+                        cacheWidth:
+                            (22 * MediaQuery.devicePixelRatioOf(context))
+                                .round(),
+                        cacheHeight:
+                            (16 * MediaQuery.devicePixelRatioOf(context))
+                                .round(),
+                      )
                       : FederationFlag(
                         federation: countryCode,
                         height: 16,
@@ -1230,8 +1243,11 @@ class _RatingTileState extends State<_RatingTile> {
               value: _hover ? 1.015 : 1.0,
               motion: DesktopMotion.hover,
               builder:
-                  (context, scale, child) =>
-                      Transform.scale(scale: scale, child: child),
+                  (context, scale, child) => Transform.scale(
+                    scale: scale,
+                    filterQuality: FilterQuality.medium,
+                    child: child,
+                  ),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 160),
                 curve: Curves.easeOut,
@@ -1281,7 +1297,17 @@ class _RatingTileState extends State<_RatingTile> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Image.asset(widget.asset, width: 14, height: 14),
+                        Image.asset(
+                          widget.asset,
+                          width: 14,
+                          height: 14,
+                          cacheWidth:
+                              (14 * MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
+                          cacheHeight:
+                              (14 * MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
+                        ),
                         const SizedBox(width: 6),
                         Text(
                           widget.label.toUpperCase(),
@@ -1425,8 +1451,11 @@ class _SourceChipState extends State<_SourceChip> {
             value: enabled ? (_pressed ? 0.95 : (_hover ? 1.02 : 1.0)) : 1.0,
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -1579,6 +1608,7 @@ class _BioRow {
 
 class _RightPane extends StatelessWidget {
   const _RightPane({
+    required this.tabId,
     required this.currentTab,
     required this.onSelectTab,
     required this.hasActiveFilter,
@@ -1590,6 +1620,7 @@ class _RightPane extends StatelessWidget {
     required this.gamebasePlayerId,
   });
 
+  final String tabId;
   final _ProfileTab currentTab;
   final ValueChanged<_ProfileTab> onSelectTab;
   final bool hasActiveFilter;
@@ -1622,6 +1653,7 @@ class _RightPane extends StatelessWidget {
                 onShowGames: () => onSelectTab(_ProfileTab.games),
               ),
               _GamesBody(
+                tabId: tabId,
                 activeKey: activeKey,
                 playerName: playerName,
                 dataSource: dataSource,
@@ -1967,8 +1999,11 @@ class _BrowseGamesCtaState extends State<_BrowseGamesCta> {
             value: _pressed ? 0.985 : (glow ? 1.004 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 140),
               padding: const EdgeInsets.fromLTRB(18, 14, 16, 14),
@@ -2699,12 +2734,14 @@ class _ErrorState extends StatelessWidget {
 
 class _GamesBody extends ConsumerStatefulWidget {
   const _GamesBody({
+    required this.tabId,
     required this.activeKey,
     required this.playerName,
     required this.dataSource,
     required this.isActive,
   });
 
+  final String tabId;
   final PlayerProfileKey activeKey;
   final String playerName;
   final PlayerProfileDataSource dataSource;
@@ -3205,6 +3242,7 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
         ref.watch(countryDropdownProvider).valueOrNull?.countryCode;
 
     return _GroupedGamesList(
+      tabId: widget.tabId,
       autofocus: widget.isActive,
       enabled: widget.isActive,
       sections: sections,
@@ -4418,6 +4456,7 @@ class _PlayerGameEventSection {
 
 class _GroupedGamesList extends ConsumerStatefulWidget {
   const _GroupedGamesList({
+    required this.tabId,
     required this.autofocus,
     required this.enabled,
     required this.sections,
@@ -4435,6 +4474,7 @@ class _GroupedGamesList extends ConsumerStatefulWidget {
     this.footer,
   });
 
+  final String tabId;
   final bool autofocus;
   final bool enabled;
   final List<_PlayerGameEventSection> sections;
@@ -4460,16 +4500,35 @@ class _GroupedGamesList extends ConsumerStatefulWidget {
 }
 
 class _GroupedGamesListState extends ConsumerState<_GroupedGamesList> {
+  static const Duration _scrollIdleDelay = Duration(milliseconds: 180);
+
   late final FocusNode _focusNode = FocusNode(
     debugLabel: 'PlayerProfileEventGameCards',
   );
   final Map<int, GlobalKey> _sectionKeys = <int, GlobalKey>{};
   final Map<String, GlobalKey> _gameKeys = <String, GlobalKey>{};
+  Timer? _scrollIdleTimer;
   EventGameCardFocus? _focus;
+  bool _liveCardsPausedForScroll = false;
+
+  // Captured once (see TournamentGamesView): freeze the pause reason so a
+  // changing widget.tabId can't strand a stale reason in the global pause set.
+  late final String _liveCardsPauseReason =
+      'desktop_player_profile_scroll_${widget.tabId}';
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onScroll);
+  }
 
   @override
   void didUpdateWidget(covariant _GroupedGamesList oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onScroll);
+      widget.controller.addListener(_onScroll);
+    }
     if (!oldWidget.enabled && widget.enabled && widget.autofocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _focusNode.requestFocus();
@@ -4483,8 +4542,33 @@ class _GroupedGamesListState extends ConsumerState<_GroupedGamesList> {
 
   @override
   void dispose() {
+    widget.controller.removeListener(_onScroll);
+    _scrollIdleTimer?.cancel();
+    _setLiveCardsPausedForScroll(false);
     _focusNode.dispose();
     super.dispose();
+  }
+
+  void _onScroll() {
+    if (!widget.controller.hasClients) return;
+    _markLiveCardsScrolling();
+  }
+
+  void _markLiveCardsScrolling() {
+    _setLiveCardsPausedForScroll(true);
+    _scrollIdleTimer?.cancel();
+    _scrollIdleTimer = Timer(_scrollIdleDelay, _markLiveCardsIdle);
+  }
+
+  void _markLiveCardsIdle() {
+    if (!mounted) return;
+    _setLiveCardsPausedForScroll(false);
+  }
+
+  void _setLiveCardsPausedForScroll(bool paused) {
+    if (_liveCardsPausedForScroll == paused) return;
+    _liveCardsPausedForScroll = paused;
+    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
   }
 
   GlobalKey _sectionKey(int index) {
@@ -4619,6 +4703,12 @@ class _GroupedGamesListState extends ConsumerState<_GroupedGamesList> {
 
   @override
   Widget build(BuildContext context) {
+    final streamingEnabled =
+        widget.enabled &&
+        ref.watch(
+          desktopTabsProvider.select((state) => state.activeId == widget.tabId),
+        );
+    final cardStreamingEnabled = streamingEnabled;
     return Focus(
       focusNode: _focusNode,
       autofocus: widget.autofocus,
@@ -4658,6 +4748,7 @@ class _GroupedGamesListState extends ConsumerState<_GroupedGamesList> {
                   onToggleSelection: widget.onToggleSelection,
                   profilePlayerName: widget.profilePlayerName,
                   profileFederationFallback: widget.profileFederationFallback,
+                  streamingEnabled: cardStreamingEnabled,
                 ),
               ),
             );
@@ -4683,6 +4774,7 @@ class _PlayerGamesEventBlock extends StatelessWidget {
     required this.onToggleSelection,
     required this.profilePlayerName,
     required this.profileFederationFallback,
+    required this.streamingEnabled,
   });
 
   final _PlayerGameEventSection section;
@@ -4702,6 +4794,7 @@ class _PlayerGamesEventBlock extends StatelessWidget {
   final ValueChanged<String> onToggleSelection;
   final String profilePlayerName;
   final String? profileFederationFallback;
+  final bool streamingEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -4738,6 +4831,7 @@ class _PlayerGamesEventBlock extends StatelessWidget {
                 onToggleSelection: onToggleSelection,
                 profilePlayerName: profilePlayerName,
                 profileFederationFallback: profileFederationFallback,
+                streamingEnabled: streamingEnabled,
               ),
             );
           },
@@ -4761,6 +4855,7 @@ class _ContextGameCard extends StatelessWidget {
     required this.onToggleSelection,
     required this.profilePlayerName,
     required this.profileFederationFallback,
+    required this.streamingEnabled,
   });
 
   final GamesTourModel game;
@@ -4779,6 +4874,7 @@ class _ContextGameCard extends StatelessWidget {
   final ValueChanged<String> onToggleSelection;
   final String profilePlayerName;
   final String? profileFederationFallback;
+  final bool streamingEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -4827,6 +4923,7 @@ class _ContextGameCard extends StatelessWidget {
                 enableContextMenu: false,
                 federationFallbackForName: profilePlayerName,
                 federationFallback: profileFederationFallback,
+                streamingEnabled: streamingEnabled,
               ),
             ),
           ),
@@ -4933,8 +5030,11 @@ class _PlayerGamesEventHeaderState
             value: _pressed ? 0.992 : (_hover && canOpen ? 1.003 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
@@ -5458,8 +5558,11 @@ class _EventRowState extends State<_EventRow> {
             value: _pressed ? 0.985 : (_hover ? 1.005 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),

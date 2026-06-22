@@ -1702,19 +1702,23 @@ class _ShareCard extends ConsumerWidget {
                   );
                 }
 
-                // Build chessboard with square highlights
-                final chessboard = Chessboard(
+                // Build chessboard with square highlights. v10: a non-
+                // interactive board (was `game: null`) is StaticChessboard,
+                // whose squareHighlights is a plain Map.
+                final chessboard = StaticChessboard(
                   size: boardSize,
                   fen: displayFen,
                   orientation: boardOrientation,
                   lastMove: lastMove,
-                  game: null,
-                  settings: boardSettings,
+                  settings: StaticChessboardSettings.fromBoardSettings(
+                    boardSettings,
+                  ),
                   squareHighlights:
-                      showGameEndingEffect
-                          ? (gameEndingData?.squareHighlights ??
-                              const IMap.empty())
-                          : const IMap.empty(),
+                      (showGameEndingEffect
+                              ? (gameEndingData?.squareHighlights ??
+                                  const IMapConst<Square, SquareHighlight>({}))
+                              : const IMapConst<Square, SquareHighlight>({}))
+                          .unlockView,
                 );
 
                 // Build board widget with overlays if game ended
@@ -2070,12 +2074,34 @@ class _ShareFallenKingOverlayState extends State<_ShareFallenKingOverlay> {
                         child: child,
                       );
                     },
-                    child: Image(image: widget.pieceImage, fit: BoxFit.contain),
+                    child: Image(
+                      image: ResizeImage.resizeIfNeeded(
+                        (widget.squareSize *
+                                MediaQuery.devicePixelRatioOf(context))
+                            .round(),
+                        (widget.squareSize *
+                                MediaQuery.devicePixelRatioOf(context))
+                            .round(),
+                        widget.pieceImage,
+                      ),
+                      fit: BoxFit.contain,
+                    ),
                   )
                   : Transform.rotate(
                     angle: -math.pi / 4, // -45 degrees (static)
                     alignment: Alignment.center,
-                    child: Image(image: widget.pieceImage, fit: BoxFit.contain),
+                    child: Image(
+                      image: ResizeImage.resizeIfNeeded(
+                        (widget.squareSize *
+                                MediaQuery.devicePixelRatioOf(context))
+                            .round(),
+                        (widget.squareSize *
+                                MediaQuery.devicePixelRatioOf(context))
+                            .round(),
+                        widget.pieceImage,
+                      ),
+                      fit: BoxFit.contain,
+                    ),
                   ),
         ),
       ),

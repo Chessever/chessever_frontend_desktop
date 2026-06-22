@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:chessever/desktop/services/desktop_deep_link_router.dart';
+import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 
 void main() {
   group('parseDesktopBroadcastDeepLink', () {
@@ -110,5 +111,45 @@ void main() {
       'https://chessever.com/broadcast/slug/group_event_123',
       'https://chessever.com/games/5Hkz1dp9?tour=open&round=round-5',
     ]);
+  });
+
+  test('isDesktopRoutableWebDeepLink only allows in-app web routes', () {
+    expect(
+      isDesktopRoutableWebDeepLink(
+        Uri.parse('https://chessever.com/broadcast/slug/4TdB92Cj'),
+      ),
+      isTrue,
+    );
+    expect(
+      isDesktopRoutableWebDeepLink(
+        Uri.parse('https://chessever.com/games/5Hkz1dp9'),
+      ),
+      isTrue,
+    );
+    expect(
+      isDesktopRoutableWebDeepLink(Uri.parse('https://chessever.com/account')),
+      isFalse,
+    );
+  });
+
+  group('desktopBrowserSafeUri', () {
+    test('keeps app-associated account pages in the browser', () {
+      final uri = desktopBrowserSafeUri(
+        Uri.parse(
+          'https://chessever.com/account?source=desktop_app&action=manage_subscription',
+        ),
+      );
+
+      expect(uri.scheme, 'http');
+      expect(uri.host, 'chessever.com');
+      expect(uri.path, '/account');
+      expect(uri.queryParameters['action'], 'manage_subscription');
+    });
+
+    test('does not rewrite non-ChessEver links', () {
+      final uri = Uri.parse('https://checkout.stripe.com/c/pay/session');
+
+      expect(desktopBrowserSafeUri(uri), uri);
+    });
   });
 }

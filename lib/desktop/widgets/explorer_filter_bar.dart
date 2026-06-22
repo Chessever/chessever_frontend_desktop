@@ -8,7 +8,6 @@ import 'package:chessever/screens/gamebase/models/gamebase_player.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
-import 'package:chessever/desktop/widgets/explorer_filter_availability.dart';
 import 'package:chessever/desktop/widgets/explorer_filter_scope.dart';
 import 'package:chessever/desktop/widgets/explorer_filters_popover.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -29,8 +28,9 @@ class ExplorerFilterBar extends ConsumerWidget {
   /// narrow rails (the icon stays). Level brackets always stay as text.
   final bool compact;
 
-  /// Non-null only for bounded Explorer scopes such as player Build Tree.
-  /// Whole Database Explorer intentionally disables filters for now.
+  /// Non-null only for bounded Explorer scopes such as player Build Tree,
+  /// where the scoped player is pinned into the popover's player filter.
+  /// Whole Database Explorer leaves it null and filters freely.
   final GamebasePlayer? scopedPlayer;
 
   static const _timeControls = <_TimeControlChip>[
@@ -72,18 +72,10 @@ class ExplorerFilterBar extends ConsumerWidget {
     final selectedTitle = gamebasePlayerTitleForMinRating(
       scopedFilters.minRating,
     );
-    final filtersAvailable = explorerFiltersAvailableForScope(scopedPlayer);
     final treeState =
         scopedPlayer == null
             ? null
             : ref.watch(playerOpeningTreeProvider(scopedPlayer!.id));
-    void guardOrRun(VoidCallback action) {
-      if (!filtersAvailable) {
-        showWholeDatabaseFiltersComingSoon(context);
-        return;
-      }
-      action();
-    }
 
     return Container(
       height: 42,
@@ -105,7 +97,7 @@ class ExplorerFilterBar extends ConsumerWidget {
                           ? title.label
                           : '${title.label} ${title.subtitle}',
                   active: selectedTitle == title,
-                  onTap: () => guardOrRun(() => notifier.toggleTitle(title)),
+                  onTap: () => notifier.toggleTitle(title),
                 ),
                 const SizedBox(width: 6),
               ],
@@ -117,9 +109,7 @@ class ExplorerFilterBar extends ConsumerWidget {
                 icon: tc.icon,
                 label: compact ? _shortTimeControlLabel(tc.value) : tc.label,
                 active: scopedFilters.timeControls.contains(tc.value),
-                onTap:
-                    () =>
-                        guardOrRun(() => notifier.toggleTimeControl(tc.value)),
+                onTap: () => notifier.toggleTimeControl(tc.value),
               ),
               const SizedBox(width: 6),
             ],
@@ -130,7 +120,7 @@ class ExplorerFilterBar extends ConsumerWidget {
                 _FilterChip(
                   label: r.displayText,
                   active: scopedFilters.gameResult == r,
-                  onTap: () => guardOrRun(() => notifier.toggleGameResult(r)),
+                  onTap: () => notifier.toggleGameResult(r),
                 ),
                 const SizedBox(width: 6),
               ],
@@ -141,14 +131,14 @@ class ExplorerFilterBar extends ConsumerWidget {
               icon: Icons.public_off_rounded,
               label: 'OTB',
               active: scopedFilters.isOnline == false,
-              onTap: () => guardOrRun(() => notifier.toggleFormat(false)),
+              onTap: () => notifier.toggleFormat(false),
             ),
             const SizedBox(width: 6),
             _FilterChip(
               icon: Icons.public_rounded,
               label: 'Online',
               active: scopedFilters.isOnline == true,
-              onTap: () => guardOrRun(() => notifier.toggleFormat(true)),
+              onTap: () => notifier.toggleFormat(true),
             ),
             const _RailDivider(),
             _GroupLabel(compact ? 'Side' : 'Color'),
@@ -157,9 +147,7 @@ class ExplorerFilterBar extends ConsumerWidget {
               label: 'White',
               active: scopedFilters.playerColor == GamebasePlayerColor.white,
               onTap:
-                  () => guardOrRun(
-                    () => notifier.togglePlayerColor(GamebasePlayerColor.white),
-                  ),
+                  () => notifier.togglePlayerColor(GamebasePlayerColor.white),
             ),
             const SizedBox(width: 6),
             _FilterChip(
@@ -167,9 +155,7 @@ class ExplorerFilterBar extends ConsumerWidget {
               label: 'Black',
               active: scopedFilters.playerColor == GamebasePlayerColor.black,
               onTap:
-                  () => guardOrRun(
-                    () => notifier.togglePlayerColor(GamebasePlayerColor.black),
-                  ),
+                  () => notifier.togglePlayerColor(GamebasePlayerColor.black),
             ),
             const _RailDivider(),
             ExplorerFiltersPopoverButton(
@@ -217,19 +203,19 @@ class PlayerOpeningTreeProgressChip extends StatelessWidget {
     final status = progress.status;
     final isError = status == PlayerOpeningTreeStatus.error;
     final isComplete = status == PlayerOpeningTreeStatus.complete;
-    final isFetchingGames = isComplete && !progress.gamesDownloadComplete;
+    final fetchedLabel = _priorityFetchedLabel(progress);
     final label =
         isError
             ? 'Tree failed'
-            : isFetchingGames
-            ? _fetchingGamesLabel(progress)
             : isComplete
-            ? 'Tree ready · ${_fmt(progress.indexedPositions)} positions'
-            : 'Building player tree';
+            ? 'Tree complete · ${_fmt(progress.processedGames)} games'
+            : '$fetchedLabel'
+                ' · building ${_fmt(progress.processedGames)}'
+                ' · ${_fmt(progress.indexedPositions)} positions';
     final color =
         isError
             ? kRedColor
-            : isComplete && !isFetchingGames
+            : isComplete
             ? kGreenColor
             : kPrimaryColor;
 
@@ -249,7 +235,7 @@ class PlayerOpeningTreeProgressChip extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (status == PlayerOpeningTreeStatus.building || isFetchingGames)
+              if (status == PlayerOpeningTreeStatus.building)
                 SizedBox(
                   width: 10,
                   height: 10,
@@ -284,11 +270,18 @@ class PlayerOpeningTreeProgressChip extends StatelessWidget {
   }
 }
 
-String _fetchingGamesLabel(PlayerOpeningTreeProgress progress) {
-  if (progress.fetchedGames > 0) {
-    return 'Fetching games · ${_fmt(progress.processedGames)} indexed';
+String _priorityFetchedLabel(PlayerOpeningTreeProgress progress) {
+  final priorityFetched = progress.priorityFetchedGames;
+  final priorityTotal = progress.priorityTotalGames;
+  final color = progress.priorityColor;
+  if (priorityFetched != null && color != null && color.isNotEmpty) {
+    final colorLabel = color.toLowerCase();
+    if (priorityTotal != null) {
+      return 'Fetched $colorLabel ${_fmt(priorityFetched)}/${_fmt(priorityTotal)}';
+    }
+    return 'Fetched $colorLabel ${_fmt(priorityFetched)}';
   }
-  return 'Fetching games';
+  return 'Fetched ${_fmt(progress.fetchedGames)}';
 }
 
 String _fmt(int value) {

@@ -56,11 +56,7 @@ class DesktopPremiumRequiredScreen extends ConsumerWidget {
             ),
           ),
           if (email != null)
-            Positioned(
-              top: 18,
-              right: 22,
-              child: _AccountChip(email: email),
-            ),
+            Positioned(top: 18, right: 22, child: _AccountChip(email: email)),
         ],
       ),
     );
@@ -125,6 +121,8 @@ class _BrandPitch extends StatelessWidget {
             height: 64,
             fit: BoxFit.cover,
             filterQuality: FilterQuality.high,
+            cacheWidth: (64 * MediaQuery.devicePixelRatioOf(context)).round(),
+            cacheHeight: (64 * MediaQuery.devicePixelRatioOf(context)).round(),
           ),
         ),
         const SizedBox(height: 32),

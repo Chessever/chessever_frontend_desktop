@@ -12,6 +12,7 @@ import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
@@ -19,6 +20,7 @@ import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
+import 'package:chessever/desktop/widgets/desktop_team_match_grouping.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
@@ -31,7 +33,9 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_vi
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_grouped_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_mode_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/round_expansion_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
@@ -61,10 +65,21 @@ class TournamentGamesView extends ConsumerStatefulWidget {
 }
 
 class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
+  static const Duration _scrollIdleDelay = Duration(milliseconds: 180);
+
   late final TextEditingController _searchController;
   Timer? _debounce;
+  Timer? _scrollIdleTimer;
+  bool _liveCardsPausedForScroll = false;
   GroupedGamesData? _lastStableGrouped;
   String? _searchReplayInFlight;
+
+  // Captured once. liveGameCardsPaused is global, so a reason recomputed from a
+  // changing widget.tabId could strand a stale reason in the pause set and
+  // freeze every live card app-wide. tabId is fixed per pane today; freeze it
+  // defensively so a future tabId-reusing State can't trip that.
+  late final String _liveCardsPauseReason =
+      'desktop_tournament_games_scroll_${widget.tabId}';
 
   @override
   void initState() {
@@ -95,6 +110,8 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   void dispose() {
     _searchController.dispose();
     _debounce?.cancel();
+    _scrollIdleTimer?.cancel();
+    _setLiveCardsPausedForScroll(false);
     super.dispose();
   }
 
@@ -111,6 +128,46 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
         notifier.searchGamesEnhanced(q.trim());
       }
     });
+  }
+
+  bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification.metrics.axis != Axis.vertical) return false;
+
+    if (notification is ScrollEndNotification) {
+      _scheduleLiveCardsIdle();
+      return false;
+    }
+
+    if (notification is ScrollStartNotification ||
+        notification is ScrollUpdateNotification ||
+        notification is OverscrollNotification ||
+        notification is UserScrollNotification) {
+      _markLiveCardsScrolling();
+    }
+
+    return false;
+  }
+
+  void _markLiveCardsScrolling() {
+    _setLiveCardsPausedForScroll(true);
+    _scrollIdleTimer?.cancel();
+    _scrollIdleTimer = Timer(_scrollIdleDelay, _markLiveCardsIdle);
+  }
+
+  void _scheduleLiveCardsIdle() {
+    _scrollIdleTimer?.cancel();
+    _scrollIdleTimer = Timer(_scrollIdleDelay, _markLiveCardsIdle);
+  }
+
+  void _markLiveCardsIdle() {
+    if (!mounted) return;
+    _setLiveCardsPausedForScroll(false);
+  }
+
+  void _setLiveCardsPausedForScroll(bool paused) {
+    if (_liveCardsPausedForScroll == paused) return;
+    _liveCardsPausedForScroll = paused;
+    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
   }
 
   @override
@@ -146,6 +203,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
             .watch(tournamentDetailGamesSearchByTabIdProvider(widget.tabId))
             .trim();
     final screenModel = ref.watch(gamesTourScreenProvider).valueOrNull;
+    final gamesTourMode = ref.watch(gamesTourScreenModeProvider).valueOrNull;
     final isRestoringSearch =
         persistedQuery.isNotEmpty &&
         !(screenModel?.isSearchMode == true &&
@@ -159,6 +217,13 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
       _lastStableGrouped = watchedGrouped;
     }
     final tournamentTitle = ref.watch(activeTournamentProvider)?.title ?? '';
+    final isTeamEvent =
+        gamesTourMode == GamesTourScreenMode.groupEvent &&
+        !grouped.isKnockoutTournament;
+    final streamingEnabled = ref.watch(
+      desktopTabsProvider.select((state) => state.activeId == widget.tabId),
+    );
+    final cardStreamingEnabled = streamingEnabled;
     // Source of truth: the persisted board-settings store. Toggling here
     // (or anywhere else — Settings, Library, etc.) writes to the same
     // record, so every desktop pane stays in sync. See `desktop_game_card.dart`
@@ -232,34 +297,44 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                     roundNameById: roundNameById,
                   ),
               builder:
-                  (context, selectedGameId, selectGame, keyForGame) => ListView(
-                    key: PageStorageKey<String>(
-                      'tournament-detail-games:${widget.tabId}',
+                  (
+                    context,
+                    selectedGameId,
+                    selectGame,
+                    keyForGame,
+                  ) => NotificationListener<ScrollNotification>(
+                    onNotification: _handleScrollNotification,
+                    child: ListView(
+                      key: PageStorageKey<String>(
+                        'tournament-detail-games:${widget.tabId}',
+                      ),
+                      physics: const DesktopScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                      children: [
+                        // Match-format tournaments (e.g. "12-game Match" — Carlsen vs
+                        // Nepo) get a single match summary card on top of the rounds.
+                        if (grouped.matchFormatHeader != null)
+                          _MatchHeaderBanner(match: grouped.matchFormatHeader!),
+                        for (final round in grouped.filteredRounds)
+                          _RoundSection(
+                            key: ValueKey('round-${round.id}'),
+                            scopeId: 'tournament:${widget.tournamentId}',
+                            selectedGameId: selectedGameId,
+                            onSelectGame: selectGame,
+                            keyForGame: keyForGame,
+                            round: round,
+                            games: grouped.gamesByRound[round.id] ?? const [],
+                            eventGames: grouped.allGames,
+                            tournamentTitle: tournamentTitle,
+                            layout: layout,
+                            isKnockout: grouped.isKnockoutTournament,
+                            isTeamEvent: isTeamEvent,
+                            roundStartsAtById: roundStartsAtById,
+                            roundNameById: roundNameById,
+                            streamingEnabled: cardStreamingEnabled,
+                          ),
+                      ],
                     ),
-                    physics: const DesktopScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-                    children: [
-                      // Match-format tournaments (e.g. "12-game Match" — Carlsen vs
-                      // Nepo) get a single match summary card on top of the rounds.
-                      if (grouped.matchFormatHeader != null)
-                        _MatchHeaderBanner(match: grouped.matchFormatHeader!),
-                      for (final round in grouped.filteredRounds)
-                        _RoundSection(
-                          key: ValueKey('round-${round.id}'),
-                          scopeId: 'tournament:${widget.tournamentId}',
-                          selectedGameId: selectedGameId,
-                          onSelectGame: selectGame,
-                          keyForGame: keyForGame,
-                          round: round,
-                          games: grouped.gamesByRound[round.id] ?? const [],
-                          eventGames: grouped.allGames,
-                          tournamentTitle: tournamentTitle,
-                          layout: layout,
-                          isKnockout: grouped.isKnockoutTournament,
-                          roundStartsAtById: roundStartsAtById,
-                          roundNameById: roundNameById,
-                        ),
-                    ],
                   ),
             ),
           ),
@@ -408,8 +483,10 @@ class _RoundSection extends ConsumerWidget {
     required this.tournamentTitle,
     required this.layout,
     required this.isKnockout,
+    required this.isTeamEvent,
     required this.roundStartsAtById,
     required this.roundNameById,
+    required this.streamingEnabled,
   });
 
   final String scopeId;
@@ -422,8 +499,10 @@ class _RoundSection extends ConsumerWidget {
   final String tournamentTitle;
   final DesktopCardLayout layout;
   final bool isKnockout;
+  final bool isTeamEvent;
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
+  final bool streamingEnabled;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -433,6 +512,7 @@ class _RoundSection extends ConsumerWidget {
     // match cards (Carlsen vs Nepo: Game 1 / Game 2 / Tiebreak).
     final showMatches =
         isKnockout && KnockoutMatchDetector.isKnockoutMatchFormat(games);
+    final showTeamMatches = isTeamEvent && games.isNotEmpty;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -450,7 +530,21 @@ class _RoundSection extends ConsumerWidget {
           ),
           if (expanded) ...[
             const SizedBox(height: 8),
-            if (showMatches)
+            if (showTeamMatches)
+              _TeamMatchesList(
+                scopeId: scopeId,
+                selectedGameId: selectedGameId,
+                onSelectGame: onSelectGame,
+                keyForGame: keyForGame,
+                games: games,
+                eventGames: eventGames,
+                tournamentTitle: tournamentTitle,
+                layout: layout,
+                roundStartsAtById: roundStartsAtById,
+                roundNameById: roundNameById,
+                streamingEnabled: streamingEnabled,
+              )
+            else if (showMatches)
               _MatchesList(
                 scopeId: scopeId,
                 selectedGameId: selectedGameId,
@@ -462,6 +556,7 @@ class _RoundSection extends ConsumerWidget {
                 layout: layout,
                 roundStartsAtById: roundStartsAtById,
                 roundNameById: roundNameById,
+                streamingEnabled: streamingEnabled,
               )
             else if (layout == DesktopCardLayout.grid)
               _GamesGrid(
@@ -474,6 +569,7 @@ class _RoundSection extends ConsumerWidget {
                 tournamentTitle: tournamentTitle,
                 roundStartsAtById: roundStartsAtById,
                 roundNameById: roundNameById,
+                streamingEnabled: streamingEnabled,
               )
             else
               _GamesList(
@@ -487,6 +583,7 @@ class _RoundSection extends ConsumerWidget {
                 layout: layout,
                 roundStartsAtById: roundStartsAtById,
                 roundNameById: roundNameById,
+                streamingEnabled: streamingEnabled,
               ),
           ],
         ],
@@ -507,6 +604,7 @@ class _GamesList extends ConsumerWidget {
     required this.layout,
     required this.roundStartsAtById,
     required this.roundNameById,
+    required this.streamingEnabled,
   });
   final String scopeId;
   final String? selectedGameId;
@@ -521,6 +619,7 @@ class _GamesList extends ConsumerWidget {
   final DesktopCardLayout layout;
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
+  final bool streamingEnabled;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -542,6 +641,7 @@ class _GamesList extends ConsumerWidget {
             selected: selectedGameId == game.gameId,
             roundStartsAtById: roundStartsAtById,
             roundNameById: roundNameById,
+            streamingEnabled: streamingEnabled,
           ),
         );
       },
@@ -560,6 +660,7 @@ class _GamesGrid extends ConsumerWidget {
     required this.tournamentTitle,
     required this.roundStartsAtById,
     required this.roundNameById,
+    required this.streamingEnabled,
   });
   final String scopeId;
   final String? selectedGameId;
@@ -570,6 +671,7 @@ class _GamesGrid extends ConsumerWidget {
   final String tournamentTitle;
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
+  final bool streamingEnabled;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -604,10 +706,262 @@ class _GamesGrid extends ConsumerWidget {
                   selected: selectedGameId == games[i].gameId,
                   roundStartsAtById: roundStartsAtById,
                   roundNameById: roundNameById,
+                  streamingEnabled: streamingEnabled,
                 ),
               ),
         );
       },
+    );
+  }
+}
+
+class _TeamMatchesList extends StatelessWidget {
+  const _TeamMatchesList({
+    required this.scopeId,
+    required this.selectedGameId,
+    required this.onSelectGame,
+    required this.keyForGame,
+    required this.games,
+    required this.eventGames,
+    required this.tournamentTitle,
+    required this.layout,
+    required this.roundStartsAtById,
+    required this.roundNameById,
+    required this.streamingEnabled,
+  });
+
+  final String scopeId;
+  final String? selectedGameId;
+  final ValueChanged<String> onSelectGame;
+  final Key Function(String gameId) keyForGame;
+  final List<GamesTourModel> games;
+  final List<GamesTourModel> eventGames;
+  final String tournamentTitle;
+  final DesktopCardLayout layout;
+  final Map<String, DateTime?> roundStartsAtById;
+  final Map<String, String> roundNameById;
+  final bool streamingEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = buildDesktopTeamMatchGroups(games);
+    if (groups.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final group in groups)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _TeamMatchSection(
+              scopeId: scopeId,
+              selectedGameId: selectedGameId,
+              onSelectGame: onSelectGame,
+              keyForGame: keyForGame,
+              group: group,
+              eventGames: eventGames,
+              tournamentTitle: tournamentTitle,
+              layout: layout,
+              roundStartsAtById: roundStartsAtById,
+              roundNameById: roundNameById,
+              streamingEnabled: streamingEnabled,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _TeamMatchSection extends StatelessWidget {
+  const _TeamMatchSection({
+    required this.scopeId,
+    required this.selectedGameId,
+    required this.onSelectGame,
+    required this.keyForGame,
+    required this.group,
+    required this.eventGames,
+    required this.tournamentTitle,
+    required this.layout,
+    required this.roundStartsAtById,
+    required this.roundNameById,
+    required this.streamingEnabled,
+  });
+
+  final String scopeId;
+  final String? selectedGameId;
+  final ValueChanged<String> onSelectGame;
+  final Key Function(String gameId) keyForGame;
+  final DesktopTeamMatchGroup group;
+  final List<GamesTourModel> eventGames;
+  final String tournamentTitle;
+  final DesktopCardLayout layout;
+  final Map<String, DateTime?> roundStartsAtById;
+  final Map<String, String> roundNameById;
+  final bool streamingEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final games = group.gameModels;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _TeamMatchHeader(group: group),
+        const SizedBox(height: 8),
+        if (layout == DesktopCardLayout.grid)
+          _GamesGrid(
+            scopeId: scopeId,
+            selectedGameId: selectedGameId,
+            onSelectGame: onSelectGame,
+            keyForGame: keyForGame,
+            games: games,
+            eventGames: eventGames,
+            tournamentTitle: tournamentTitle,
+            roundStartsAtById: roundStartsAtById,
+            roundNameById: roundNameById,
+            streamingEnabled: streamingEnabled,
+          )
+        else
+          _GamesList(
+            scopeId: scopeId,
+            selectedGameId: selectedGameId,
+            onSelectGame: onSelectGame,
+            keyForGame: keyForGame,
+            games: games,
+            eventGames: eventGames,
+            tournamentTitle: tournamentTitle,
+            layout: layout,
+            roundStartsAtById: roundStartsAtById,
+            roundNameById: roundNameById,
+            streamingEnabled: streamingEnabled,
+          ),
+      ],
+    );
+  }
+}
+
+class _TeamMatchHeader extends StatelessWidget {
+  const _TeamMatchHeader({required this.group});
+
+  final DesktopTeamMatchGroup group;
+
+  @override
+  Widget build(BuildContext context) {
+    final score = group.score;
+    final leftScore = formatDesktopTeamMatchScore(score.left);
+    final rightScore = formatDesktopTeamMatchScore(score.right);
+    final leftColor =
+        score.isDraw
+            ? kWhiteColor
+            : score.left > score.right
+            ? kPrimaryColor
+            : kRedColor;
+    final rightColor =
+        score.isDraw
+            ? kWhiteColor
+            : score.right > score.left
+            ? kPrimaryColor
+            : kRedColor;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: kPrimaryColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: kPrimaryColor.withValues(alpha: 0.35)),
+            ),
+            child: const Text(
+              'TEAM',
+              style: TextStyle(
+                color: kPrimaryColor,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.7,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              group.leftTeam,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kWhiteColor,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          _TeamScoreText(label: leftScore, color: leftColor),
+          const SizedBox(width: 10),
+          const Text(
+            'VS',
+            style: TextStyle(
+              color: kLightGreyColor,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.7,
+            ),
+          ),
+          const SizedBox(width: 10),
+          _TeamScoreText(label: rightScore, color: rightColor),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              group.rightTeam,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.end,
+              style: const TextStyle(
+                color: kWhiteColor,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            '${group.games.length} board${group.games.length == 1 ? '' : 's'}',
+            style: const TextStyle(color: kLightGreyColor, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TeamScoreText extends StatelessWidget {
+  const _TeamScoreText({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 34,
+      child: Text(
+        label,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: color,
+          fontSize: 15,
+          fontWeight: FontWeight.w800,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
     );
   }
 }
@@ -624,6 +978,7 @@ class _MatchesList extends ConsumerWidget {
     required this.layout,
     required this.roundStartsAtById,
     required this.roundNameById,
+    required this.streamingEnabled,
   });
 
   final String scopeId;
@@ -636,6 +991,7 @@ class _MatchesList extends ConsumerWidget {
   final DesktopCardLayout layout;
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
+  final bool streamingEnabled;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -660,6 +1016,7 @@ class _MatchesList extends ConsumerWidget {
               layout: layout,
               roundStartsAtById: roundStartsAtById,
               roundNameById: roundNameById,
+              streamingEnabled: streamingEnabled,
             ),
           ),
       ],
@@ -679,6 +1036,7 @@ class _MatchSection extends StatefulWidget {
     required this.layout,
     required this.roundStartsAtById,
     required this.roundNameById,
+    required this.streamingEnabled,
   });
 
   final String scopeId;
@@ -691,6 +1049,7 @@ class _MatchSection extends StatefulWidget {
   final DesktopCardLayout layout;
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
+  final bool streamingEnabled;
 
   @override
   State<_MatchSection> createState() => _MatchSectionState();
@@ -723,6 +1082,7 @@ class _MatchSectionState extends State<_MatchSection> {
               tournamentTitle: widget.tournamentTitle,
               roundStartsAtById: widget.roundStartsAtById,
               roundNameById: widget.roundNameById,
+              streamingEnabled: widget.streamingEnabled,
             )
           else
             _GamesList(
@@ -736,6 +1096,7 @@ class _MatchSectionState extends State<_MatchSection> {
               layout: widget.layout,
               roundStartsAtById: widget.roundStartsAtById,
               roundNameById: widget.roundNameById,
+              streamingEnabled: widget.streamingEnabled,
             ),
         ],
       ],
@@ -1099,6 +1460,15 @@ Future<void> openTournamentGameTab(
     replaceActive: replaceActive,
   );
 
+  unawaited(
+    _refreshOpenedBoardTabWithLatestLiveGame(
+      container: container,
+      gameRepo: gameRepo,
+      tabId: tabId,
+      openedGame: game,
+    ),
+  );
+
   if (shouldHydrateEventGames) {
     unawaited(
       _hydrateTournamentGameTabEventContext(
@@ -1110,6 +1480,68 @@ Future<void> openTournamentGameTab(
         roundStartsAtById: roundStartsAtById,
         roundNameById: roundNameById,
       ),
+    );
+  }
+}
+
+Future<void> _refreshOpenedBoardTabWithLatestLiveGame({
+  required ProviderContainer container,
+  required GameRepository gameRepo,
+  required String tabId,
+  required GamesTourModel openedGame,
+}) async {
+  final gameId = openedGame.gameId.trim();
+  if (gameId.isEmpty || openedGame.effectiveGameStatus.isFinished) return;
+
+  try {
+    final latestRow = await gameRepo.getGameById(gameId);
+    final fetched = GamesTourModel.fromGame(latestRow);
+
+    // A live card may already hold a newer realtime snapshot than this one-shot
+    // REST read (the stream can be ahead of the games table). Seed the board
+    // from whichever is fresher so we neither show a stale position/clock nor
+    // clobber fresher realtime data already in flight on another channel.
+    final currentBase = container.read(baseGameProvider(gameId));
+    final latestGame =
+        shouldReplaceBaseGame(currentBase, fetched)
+            ? fetched
+            : (currentBase ?? fetched);
+
+    if (currentBase != latestGame) {
+      container.read(baseGameProvider(gameId).notifier).state = latestGame;
+    }
+
+    final latestPgn =
+        pgnHasMoves(latestGame.pgn) ? latestGame.pgn!.trim() : null;
+    final latestFen = latestGame.fen?.trim();
+    final usableLatestFen =
+        latestFen == null || latestFen.isEmpty ? null : latestFen;
+
+    container.read(boardTabGameArgsByTabIdProvider.notifier).update((tabs) {
+      final current = tabs[tabId];
+      if (current == null || current.gameId != gameId) return tabs;
+
+      final shouldUpdatePgn = latestPgn != null && latestPgn != current.pgn;
+      final shouldUpdateFen =
+          usableLatestFen != null && usableLatestFen != current.fenSeed;
+      final shouldUpdateSourceGame = current.sourceGame != latestGame;
+
+      if (!shouldUpdatePgn && !shouldUpdateFen && !shouldUpdateSourceGame) {
+        return tabs;
+      }
+
+      return <String, BoardTabGameArgs>{
+        ...tabs,
+        tabId: current.copyWith(
+          pgn: shouldUpdatePgn ? latestPgn : null,
+          fenSeed: shouldUpdateFen ? usableLatestFen : null,
+          sourceGame: shouldUpdateSourceGame ? latestGame : null,
+        ),
+      };
+    });
+  } catch (error) {
+    debugPrint(
+      '[DesktopBoard] Failed to refresh latest live game seed for $gameId: $error',
     );
   }
 }
@@ -1323,6 +1755,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
     this.enableContextMenu = true,
     this.viewSource = ChessboardView.tour,
     this.liveBatchKey,
+    this.streamingEnabled = true,
     this.allowStockfishFallback = true,
     this.federationFallbackForName,
     this.federationFallback,
@@ -1342,6 +1775,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
   final bool enableContextMenu;
   final ChessboardView viewSource;
   final LiveGamesBatchKey? liveBatchKey;
+  final bool streamingEnabled;
 
   /// When false, the eval bar inside this card suppresses Stockfish fallback.
   /// Pass `false` while the host list is actively scrolling so we don't burn
@@ -1363,7 +1797,14 @@ class LiveDesktopGameCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final liveGame = watchLiveGame(ref, game, batchKey: liveBatchKey);
+    final liveGame = watchLiveGame(
+      ref,
+      game,
+      batchKey: liveBatchKey,
+      streamEnabled: streamingEnabled,
+    );
+    final liveCardsPaused = ref.watch(liveGameCardsPausedProvider);
+    final shouldStream = ref.watch(shouldStreamProvider);
     var data = GameCardData.fromGamesTourModel(liveGame);
     final fallback = federationFallback?.trim();
     final fallbackName = federationFallbackForName?.trim();
@@ -1436,7 +1877,11 @@ class LiveDesktopGameCard extends ConsumerWidget {
       ),
       layout: layout,
       selected: selected,
-      allowStockfishFallback: allowStockfishFallback,
+      allowStockfishFallback:
+          streamingEnabled &&
+          allowStockfishFallback &&
+          shouldStream &&
+          !liveCardsPaused,
     );
   }
 }

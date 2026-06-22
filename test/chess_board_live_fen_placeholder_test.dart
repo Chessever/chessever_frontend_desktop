@@ -41,9 +41,15 @@ class _FakeGameStreamRepository extends GameStreamRepository {
 
   final Stream<Map<String, dynamic>?> _updates;
 
+  // `subscribeToLiveGameUpdate` is the repository's stream primitive;
+  // `subscribeToGameUpdates` and the desktop providers all derive from it.
+  // Override the primitive so the fake controller stream flows through every
+  // path, mirroring production.
   @override
-  Stream<Map<String, dynamic>?> subscribeToGameUpdates(String gameId) =>
-      _updates;
+  Stream<LiveGameUpdate?> subscribeToLiveGameUpdate(String gameId) =>
+      _updates.map(
+        (row) => row == null ? null : LiveGameUpdate.fromLegacyMap(gameId, row),
+      );
 
   @override
   Stream<String?> subscribeToPgn(String gameId) => const Stream.empty();

@@ -1,6 +1,7 @@
 import 'package:chessever/screens/chessboard/widgets/chess_board_from_fen_new.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
@@ -20,6 +21,7 @@ class GridGameCardWrapperWidget extends ConsumerWidget {
   final void Function(GamesTourModel game) onPinToggle;
   final Side? fixedBottomSide;
   final bool allowStockfishFallback;
+  final bool streamEnabled;
   final LiveGamesBatchKey? liveBatchKey;
 
   const GridGameCardWrapperWidget({
@@ -32,6 +34,7 @@ class GridGameCardWrapperWidget extends ConsumerWidget {
     required this.onPinToggle,
     this.fixedBottomSide,
     this.allowStockfishFallback = true,
+    this.streamEnabled = true,
     this.liveBatchKey,
   });
 
@@ -39,7 +42,17 @@ class GridGameCardWrapperWidget extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     // Watch live game updates for ongoing games
     // Use gameId as the stable key to prevent provider recreation
-    final liveGame = watchLiveGamePosition(ref, game, batchKey: liveBatchKey);
+    final liveGame = watchLiveGamePosition(
+      ref,
+      game,
+      batchKey: liveBatchKey,
+      streamEnabled: streamEnabled,
+    );
+    final effectiveAllowStockfishFallback =
+        streamEnabled &&
+        allowStockfishFallback &&
+        !ref.watch(liveGameCardsPausedProvider) &&
+        ref.watch(shouldStreamProvider);
 
     // Build updated games list with the live game data
     List<GamesTourModel> getUpdatedGamesList() {
@@ -57,7 +70,7 @@ class GridGameCardWrapperWidget extends ConsumerWidget {
       pinnedIds: pinnedIds,
       onPinToggle: onPinToggle,
       fixedBottomSide: fixedBottomSide,
-      allowStockfishFallback: allowStockfishFallback,
+      allowStockfishFallback: effectiveAllowStockfishFallback,
       liveBatchKey: liveBatchKey,
     );
   }

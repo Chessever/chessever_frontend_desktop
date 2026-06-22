@@ -285,17 +285,18 @@ class _HeroHeader extends StatelessWidget {
             (MediaQuery.sizeOf(context).width *
                     MediaQuery.devicePixelRatioOf(context))
                 .toInt(),
+        memCacheHeight: (230 * MediaQuery.devicePixelRatioOf(context)).toInt(),
         fadeInDuration: const Duration(milliseconds: 300),
         fadeOutDuration: const Duration(milliseconds: 200),
         alignment: Alignment.topCenter,
-        placeholder: (_, __) => _buildPlaceholder(),
-        errorWidget: (_, __, ___) => _buildPlaceholder(),
+        placeholder: (_, __) => _buildPlaceholder(context),
+        errorWidget: (_, __, ___) => _buildPlaceholder(context),
       );
     }
-    return _buildPlaceholder();
+    return _buildPlaceholder(context);
   }
 
-  Widget _buildPlaceholder() {
+  Widget _buildPlaceholder(BuildContext context) {
     if (event.countryCode != null && event.countryCode!.isNotEmpty) {
       return Container(
         color: kLightBlack,
@@ -315,8 +316,11 @@ class _HeroHeader extends StatelessWidget {
       alignment: Alignment.center,
       child: Image.asset(
         PngAsset.premiumIcon,
+        width: 100,
         height: 100,
         fit: BoxFit.contain,
+        cacheWidth: (100 * MediaQuery.devicePixelRatioOf(context)).toInt(),
+        cacheHeight: (100 * MediaQuery.devicePixelRatioOf(context)).toInt(),
       ),
     );
   }

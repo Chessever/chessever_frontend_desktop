@@ -30,6 +30,7 @@ import 'package:chessever/desktop/widgets/tournament_games_view.dart'
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/providers/event_favorite_players_provider.dart';
 import 'package:chessever/providers/favorite_events_provider.dart';
 import 'package:chessever/providers/favorite_players_provider.dart';
@@ -44,6 +45,7 @@ import 'package:chessever/screens/group_event/providers/live_group_broadcast_id_
 import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
@@ -1013,11 +1015,11 @@ class _FavoriteStarButtonState extends State<_FavoriteStarButton> {
           onTapUp: (_) => setState(() => _pressed = false),
           onTapCancel: () => setState(() => _pressed = false),
           child: SingleMotionBuilder(
-            value: _pressed ? 0.85 : (_hovered ? 1.1 : 1.0),
-            motion: _pressed ? DesktopMotion.tap : DesktopMotion.arrival,
+            value: _pressed ? 0.97 : (_hovered ? 1.02 : 1.0),
+            motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: Padding(
               padding: const EdgeInsets.all(6),
               child: Icon(
@@ -1294,7 +1296,6 @@ class _CountrymenHero extends StatelessWidget {
             motion: const CueMotion.bouncy(),
             acts: [
               const Act.fadeIn(),
-              const Act.scale(from: 0.82),
               const Act.slideY(from: 0.18),
             ],
             child: _FlagBadge(countryCode: code, hasCountry: hasCountry),
@@ -1595,7 +1596,7 @@ class _StatChipState extends State<_StatChip> {
           Cue.onChange(
             value: widget.value,
             motion: const CueMotion.bouncy(),
-            acts: [const Act.scale(from: 0.7), const Act.fadeIn(from: 0.4)],
+            acts: [const Act.fadeIn(from: 0.4)],
             child: Text(
               '${widget.value}',
               key: ValueKey('chip-${widget.label}-${widget.value}'),
@@ -1673,7 +1674,13 @@ class _CountrymenGames extends ConsumerStatefulWidget {
 }
 
 class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
+  static const Duration _scrollIdleDelay = Duration(milliseconds: 180);
+
   final ScrollController _scrollController = ScrollController();
+  Timer? _scrollIdleTimer;
+  bool _liveCardsPausedForScroll = false;
+
+  String get _liveCardsPauseReason => 'desktop_countrymen_scroll';
 
   @override
   void initState() {
@@ -1683,6 +1690,8 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
 
   @override
   void dispose() {
+    _scrollIdleTimer?.cancel();
+    _setLiveCardsPausedForScroll(false);
     _scrollController
       ..removeListener(_maybeLoadMore)
       ..dispose();
@@ -1690,7 +1699,11 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
   }
 
   void _maybeLoadMore() {
-    if (!widget.hasMore || widget.isLoading || !_scrollController.hasClients) {
+    if (!_scrollController.hasClients) {
+      return;
+    }
+    _markLiveCardsScrolling();
+    if (!widget.hasMore || widget.isLoading) {
       return;
     }
     final position = _scrollController.position;
@@ -1699,9 +1712,30 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
     }
   }
 
+  void _markLiveCardsScrolling() {
+    _setLiveCardsPausedForScroll(true);
+    _scrollIdleTimer?.cancel();
+    _scrollIdleTimer = Timer(_scrollIdleDelay, _markLiveCardsIdle);
+  }
+
+  void _markLiveCardsIdle() {
+    if (!mounted) return;
+    _setLiveCardsPausedForScroll(false);
+  }
+
+  void _setLiveCardsPausedForScroll(bool paused) {
+    if (_liveCardsPausedForScroll == paused) return;
+    _liveCardsPausedForScroll = paused;
+    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
+  }
+
   @override
   Widget build(BuildContext context) {
     final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
+    final streamingEnabled = ref.watch(
+      activeTabKindProvider.select((kind) => kind == TabKind.countrymen),
+    );
+    final cardStreamingEnabled = streamingEnabled;
     final groups = buildDesktopGameDateGroups(widget.games);
     if (layout == DesktopCardLayout.grid) {
       // Compute column count first so PageUp/PageDown can stride by a full
@@ -1710,9 +1744,10 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
       return LayoutBuilder(
         builder: (context, constraints) {
           const targetWidth = 280.0;
-          final columns = (constraints.maxWidth / targetWidth)
-              .floor()
-              .clamp(2, 6);
+          final columns = (constraints.maxWidth / targetWidth).floor().clamp(
+            2,
+            6,
+          );
           return DesktopGameKeyboardFocus(
             scopeId: 'countrymen-games',
             games: widget.games,
@@ -1726,95 +1761,95 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                 ),
             builder: (context, selectedGameId, selectGame, keyForGame) {
               return CustomScrollView(
-                  controller: _scrollController,
-                  physics: const DesktopScrollPhysics(),
-                  slivers: [
-                    for (
-                      var groupIndex = 0;
-                      groupIndex < groups.length;
-                      groupIndex++
-                    ) ...[
-                      SliverPadding(
-                        padding: EdgeInsets.fromLTRB(
-                          24,
-                          groupIndex == 0 ? 4 : 16,
-                          24,
-                          8,
-                        ),
-                        sliver: SliverToBoxAdapter(
-                          child: DesktopDateGroupCard(
-                            label: groups[groupIndex].label,
-                            gameCount: groups[groupIndex].games.length,
-                          ),
+                controller: _scrollController,
+                physics: const DesktopScrollPhysics(),
+                slivers: [
+                  for (
+                    var groupIndex = 0;
+                    groupIndex < groups.length;
+                    groupIndex++
+                  ) ...[
+                    SliverPadding(
+                      padding: EdgeInsets.fromLTRB(
+                        24,
+                        groupIndex == 0 ? 4 : 16,
+                        24,
+                        8,
+                      ),
+                      sliver: SliverToBoxAdapter(
+                        child: DesktopDateGroupCard(
+                          label: groups[groupIndex].label,
+                          gameCount: groups[groupIndex].games.length,
                         ),
                       ),
-                      SliverPadding(
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
-                        sliver: SliverGrid(
-                          gridDelegate:
-                              SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: columns,
-                                mainAxisSpacing: 8,
-                                crossAxisSpacing: 8,
-                                childAspectRatio: 0.95,
-                              ),
-                          delegate: SliverChildBuilderDelegate((context, i) {
-                            final flatIndex =
-                                groups
-                                    .take(groupIndex)
-                                    .fold<int>(
-                                      0,
-                                      (sum, group) => sum + group.games.length,
-                                    ) +
-                                i;
-                            final delay = Duration(
-                              milliseconds: (flatIndex.clamp(0, 12)) * 32,
-                            );
-                            final game = groups[groupIndex].games[i];
-                            return DesktopGameKeyboardItem(
-                              itemKey: keyForGame(game.gameId),
-                              gameId: game.gameId,
-                              onSelect: selectGame,
-                              child: Cue.onMount(
-                                motion: const CueMotion.smooth(),
-                                child: Actor(
-                                  delay: delay,
-                                  acts: const [
-                                    Act.fadeIn(),
-                                    Act.slideY(from: 0.18),
-                                    Act.scale(from: 0.985),
-                                  ],
-                                  child: LiveDesktopGameCard(
-                                    game: game,
-                                    tournamentTitle:
-                                        game.tourSlug ?? 'Countrymen',
-                                    routeTitle: widget.routeTitle,
-                                    routeGames: widget.games,
-                                    routeGamesContinuation:
-                                        const BoardTabGamesContinuation.countrymen(),
-                                    layout: DesktopCardLayout.grid,
-                                    selected: selectedGameId == game.gameId,
-                                    viewSource: ChessboardView.countryman,
-                                  ),
+                    ),
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      sliver: SliverGrid(
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          mainAxisSpacing: 8,
+                          crossAxisSpacing: 8,
+                          childAspectRatio: 0.95,
+                        ),
+                        delegate: SliverChildBuilderDelegate((context, i) {
+                          final flatIndex =
+                              groups
+                                  .take(groupIndex)
+                                  .fold<int>(
+                                    0,
+                                    (sum, group) => sum + group.games.length,
+                                  ) +
+                              i;
+                          final delay = Duration(
+                            milliseconds: (flatIndex.clamp(0, 12)) * 32,
+                          );
+                          final game = groups[groupIndex].games[i];
+                          return DesktopGameKeyboardItem(
+                            itemKey: keyForGame(game.gameId),
+                            gameId: game.gameId,
+                            onSelect: selectGame,
+                            child: Cue.onMount(
+                              motion: const CueMotion.smooth(),
+                              child: Actor(
+                                delay: delay,
+                                acts: const [
+                                  Act.fadeIn(),
+                                  Act.slideY(from: 0.18),
+                                ],
+                                child: LiveDesktopGameCard(
+                                  game: game,
+                                  tournamentTitle:
+                                      game.tourSlug ?? 'Countrymen',
+                                  routeTitle: widget.routeTitle,
+                                  routeGames: widget.games,
+                                  routeGamesContinuation:
+                                      const BoardTabGamesContinuation.countrymen(),
+                                  layout: DesktopCardLayout.grid,
+                                  selected: selectedGameId == game.gameId,
+                                  viewSource: ChessboardView.countryman,
+                                  streamingEnabled: cardStreamingEnabled,
+                                  allowStockfishFallback: true,
                                 ),
                               ),
-                            );
-                          }, childCount: groups[groupIndex].games.length),
-                        ),
+                            ),
+                          );
+                        }, childCount: groups[groupIndex].games.length),
                       ),
-                    ],
-                    if (widget.isLoading)
-                      const SliverPadding(
-                        padding: EdgeInsets.symmetric(horizontal: 24),
-                        sliver: SliverToBoxAdapter(child: _InlineLoader()),
-                      ),
-                    const SliverToBoxAdapter(child: SizedBox(height: 24)),
+                    ),
                   ],
-                );
-              },
-            );
-          },
-        );
+                  if (widget.isLoading)
+                    const SliverPadding(
+                      padding: EdgeInsets.symmetric(horizontal: 24),
+                      sliver: SliverToBoxAdapter(child: _InlineLoader()),
+                    ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 24)),
+                ],
+              );
+            },
+          );
+        },
+      );
     }
     return DesktopGameKeyboardFocus(
       scopeId: 'countrymen-games',
@@ -1827,7 +1862,11 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
           controller: _scrollController,
           physics: const DesktopScrollPhysics(),
           slivers: [
-            for (var groupIndex = 0; groupIndex < groups.length; groupIndex++) ...[
+            for (
+              var groupIndex = 0;
+              groupIndex < groups.length;
+              groupIndex++
+            ) ...[
               SliverPadding(
                 padding: EdgeInsets.fromLTRB(
                   24,
@@ -1873,7 +1912,6 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                             acts: const [
                               Act.fadeIn(),
                               Act.slideY(from: 0.18),
-                              Act.scale(from: 0.985),
                             ],
                             child: LiveDesktopGameCard(
                               game: game,
@@ -1885,6 +1923,8 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                               layout: layout,
                               selected: selectedGameId == game.gameId,
                               viewSource: ChessboardView.countryman,
+                              streamingEnabled: cardStreamingEnabled,
+                              allowStockfishFallback: true,
                             ),
                           ),
                         ),
@@ -1932,7 +1972,7 @@ class _Loading extends StatelessWidget {
     return Center(
       child: Cue.onMount(
         motion: const CueMotion.smooth(),
-        acts: const [Act.fadeIn(), Act.scale(from: 0.9)],
+        acts: const [Act.fadeIn()],
         child: const SizedBox(
           width: 22,
           height: 22,
@@ -1983,7 +2023,7 @@ class _Empty extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Actor(
-                acts: const [Act.fadeIn(), Act.scale(from: 0.7)],
+                acts: const [Act.fadeIn()],
                 child: Container(
                   width: 56,
                   height: 56,
