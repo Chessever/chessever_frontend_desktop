@@ -15,7 +15,8 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 ///  - bare right-click       → [green]
 ///  - shift+right-click      → [red]
 ///  - alt/option+right-click → [blue]
-///  - ctrl/meta+right-click  → [yellow]
+///
+/// Ctrl / Cmd + right-click is reserved for the board context menu.
 enum AnnotationColor { green, red, blue, yellow }
 
 extension AnnotationColorPalette on AnnotationColor {

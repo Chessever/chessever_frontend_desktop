@@ -10,18 +10,18 @@ import 'package:chessever/desktop/state/board_annotations.dart';
 /// converts them into circles / arrows on
 /// [boardAnnotationsProvider].
 ///
-/// Plain right-click is reserved for the board's context menu (handled by the
-/// GestureDetector around `_BoardArea`), but plain right-drag draws a green
-/// arrow. Holding Shift / Alt / Ctrl / Cmd opts into annotation mode
-/// immediately, so modifier right-clicks can still plant circles.
+/// Plain right-click / right-drag stays in annotation mode to match common
+/// chess-board muscle memory: click a square for a circle, drag to another
+/// square for an arrow. Ctrl / Cmd + right-click is reserved for the board
+/// context menu (handled by the GestureDetector around `_BoardArea`).
 ///
 /// Behaviour:
-///  - Plain right-click                  → board context menu
-///  - Plain right-click + drag           → finalize a green arrow A → B
-///  - Modifier + right-click a square    → toggle a circle on that square
-///  - Modifier + right-click + drag      → finalize an arrow A → B
-///  - Shift / Alt / Ctrl-Cmd modifiers   → red / blue / yellow variants
-///  - Plain left-click on the board      → wipe all shapes
+///  - Plain right-click a square          → toggle a green circle
+///  - Plain right-click + drag            → finalize a green arrow A → B
+///  - Shift / Alt + right-click a square  → toggle a colour-variant circle
+///  - Shift / Alt + right-click + drag    → finalize a colour-variant arrow
+///  - Ctrl / Cmd + right-click            → board context menu
+///  - Plain left-click on the board       → wipe all shapes
 ///
 /// The overlay sits *on top* of the board widget but is transparent and
 /// only intercepts events when its gate conditions are met; left-click
@@ -81,13 +81,17 @@ class _BoardAnnotationLayerState extends ConsumerState<BoardAnnotationLayer> {
     return Square.fromCoords(File(ox), Rank(oy));
   }
 
-  bool _hasAnnotationModifierHeld() {
+  bool _hasColorModifierHeld() {
     final pressed = HardwareKeyboard.instance.logicalKeysPressed;
     return pressed.contains(LogicalKeyboardKey.shiftLeft) ||
         pressed.contains(LogicalKeyboardKey.shiftRight) ||
         pressed.contains(LogicalKeyboardKey.altLeft) ||
-        pressed.contains(LogicalKeyboardKey.altRight) ||
-        pressed.contains(LogicalKeyboardKey.controlLeft) ||
+        pressed.contains(LogicalKeyboardKey.altRight);
+  }
+
+  bool _hasBoardContextMenuModifierHeld() {
+    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+    return pressed.contains(LogicalKeyboardKey.controlLeft) ||
         pressed.contains(LogicalKeyboardKey.controlRight) ||
         pressed.contains(LogicalKeyboardKey.metaLeft) ||
         pressed.contains(LogicalKeyboardKey.metaRight);
@@ -101,11 +105,7 @@ class _BoardAnnotationLayerState extends ConsumerState<BoardAnnotationLayer> {
     final alt =
         pressed.contains(LogicalKeyboardKey.altLeft) ||
         pressed.contains(LogicalKeyboardKey.altRight);
-    final ctrl =
-        pressed.contains(LogicalKeyboardKey.controlLeft) ||
-        pressed.contains(LogicalKeyboardKey.controlRight) ||
-        pressed.contains(LogicalKeyboardKey.metaLeft) ||
-        pressed.contains(LogicalKeyboardKey.metaRight);
+    final ctrl = false;
     return pickAnnotationColor(shift: shift, alt: alt, ctrl: ctrl);
   }
 
@@ -121,9 +121,10 @@ class _BoardAnnotationLayerState extends ConsumerState<BoardAnnotationLayer> {
         if (box == null) return;
         final local = box.globalToLocal(event.position);
         if (event.buttons & kSecondaryMouseButton != 0) {
+          if (_hasBoardContextMenuModifierHeld()) return;
           final sq = _squareAt(local);
           if (sq == null) return;
-          final hasModifier = _hasAnnotationModifierHeld();
+          final hasModifier = _hasColorModifierHeld();
           setState(() {
             _origSquare = sq;
             _hoverSquare = sq;
@@ -176,9 +177,7 @@ class _BoardAnnotationLayerState extends ConsumerState<BoardAnnotationLayer> {
         final notifier = ref.read(boardAnnotationsProvider(tabId).notifier);
         final orig = _origSquare!;
         final dest = _hoverSquare ?? orig;
-        final plainArrowDest =
-            _plainSecondaryGesture && _hoverSquare != null && dest != orig;
-        final shouldCommit = !_plainSecondaryGesture || plainArrowDest;
+        final shouldCommit = _hoverSquare != null;
         if (shouldCommit) {
           if (orig == dest) {
             notifier.toggleCircle(
