@@ -18,12 +18,6 @@ final MotionConverter<_Dock> _dockConverter = MotionConverter.custom(
   denormalize: (List<double> v) => _Dock(v[0], v[1], v[2]),
 );
 
-/// Soft motion used while the cursor steers a card by proximity. The target
-/// stays responsive, but avoids the attention-grabbing snap of a dock effect.
-const Motion _kProximityMotion = CupertinoMotion.smooth(
-  duration: Duration(milliseconds: 180),
-);
-
 /// Provides the global cursor position to descendant [MotionCard]s so they
 /// react to the cursor's *nearness* (a calm lift with distance falloff)
 /// rather than binary hover. Mount once around a region of cards; a
@@ -100,9 +94,9 @@ class MotionCard extends StatefulWidget {
     required this.child,
     this.enabled = true,
     this.borderRadius = 12,
-    this.hoverScale = 1.012,
-    this.pressScale = 0.985,
-    this.hoverLift = 3.0,
+    this.hoverScale = 1.022,
+    this.pressScale = 0.97,
+    this.hoverLift = 7.0,
     this.proximityRadius = 150.0,
     this.shadowColor,
     this.onTap,
@@ -169,19 +163,38 @@ class _MotionCardState extends State<MotionCard> {
       offset: Offset(0, -d.lift),
       child: Transform.scale(
         scale: d.scale,
+        // Rasterize the card (text + shadow) once and scale the BITMAP, rather
+        // than letting Impeller re-shape glyphs at every fractional scale step.
+        // That per-frame glyph reshaping is the hover "shimmer/titreme"
+        // (flutter#149652, an Impeller text-transform rounding bug). Forcing a
+        // non-null filterQuality switches Transform to the bitmap path → the
+        // text stays rock-steady while the card zooms. At a ~2% hover scale the
+        // bilinear softening is imperceptible.
+        filterQuality: FilterQuality.medium,
         child: DecoratedBox(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(widget.borderRadius),
+            // Layered depth (make-interfaces-feel-better #3): a tight near-black
+            // contact shadow grounds the tile while a soft, wide tinted bloom
+            // sells the lift. Both scale with the spring's elevation so depth
+            // grows fluidly with hover/proximity instead of popping in.
             boxShadow:
                 d.elevation <= 0.001
                     ? null
                     : <BoxShadow>[
                       BoxShadow(
-                        color: shadowColor.withValues(
-                          alpha: 0.16 * d.elevation,
+                        color: const Color(0xFF000000).withValues(
+                          alpha: 0.22 * d.elevation,
                         ),
-                        blurRadius: 14 * d.elevation,
-                        offset: Offset(0, 6 * d.elevation),
+                        blurRadius: 10 * d.elevation,
+                        offset: Offset(0, 4 * d.elevation),
+                      ),
+                      BoxShadow(
+                        color: shadowColor.withValues(
+                          alpha: 0.18 * d.elevation,
+                        ),
+                        blurRadius: 26 * d.elevation,
+                        offset: Offset(0, 12 * d.elevation),
                       ),
                     ],
           ),
@@ -207,7 +220,8 @@ class _MotionCardState extends State<MotionCard> {
           final c = cursor.value;
           final t = (_pressed || c == null) ? 0.0 : _proximityIntensity(c);
           return MotionBuilder<_Dock>(
-            motion: _pressed ? DesktopMotion.tap : _kProximityMotion,
+            motion:
+                _pressed ? DesktopMotion.cardPress : DesktopMotion.cardProximity,
             value: _dockFor(t),
             converter: _dockConverter,
             builder: _dockBox,
@@ -218,7 +232,7 @@ class _MotionCardState extends State<MotionCard> {
     } else {
       // Binary fallback: hover on/off via the card's own MouseRegion.
       motion = MotionBuilder<_Dock>(
-        motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
+        motion: _pressed ? DesktopMotion.cardPress : DesktopMotion.cardHover,
         value: _dockFor(_hovered ? 1.0 : 0.0),
         converter: _dockConverter,
         builder: _dockBox,

@@ -167,6 +167,18 @@ class PremiumGamesState {
   }
 }
 
+class _PremiumGamesFetch {
+  const _PremiumGamesFetch({
+    required this.games,
+    required this.hasMore,
+    required this.nextOffset,
+  });
+
+  final List<GamesTourModel> games;
+  final bool hasMore;
+  final int nextOffset;
+}
+
 // ============================================================================
 // PROVIDER
 // ============================================================================
@@ -203,7 +215,6 @@ class PremiumGamesNotifier
   bool _isFetching = false;
   int _offset = 0;
   static const int _pageSize = 30;
-  static const int _smartEventFetchCap = 6000;
   static const Duration _smartEventRefreshInterval = Duration(minutes: 1);
   Timer? _smartEventRefreshTimer;
 
@@ -297,43 +308,42 @@ class PremiumGamesNotifier
   /// Fetch games from repository based on type.
   Future<void> _fetchGames() async {
     final repository = _ref.read(gameRepositoryProvider);
-    List<GamesTourModel> newGames = [];
+    late final _PremiumGamesFetch fetched;
 
     switch (_type) {
       case PremiumGamesType.favorites:
-        newGames = await _fetchFavoriteGames(repository);
+        fetched = await _fetchFavoriteGames(repository);
         break;
       case PremiumGamesType.countrymen:
-        newGames = await _fetchCountrymenGames(repository);
+        fetched = await _fetchCountrymenGames(repository);
         break;
       case PremiumGamesType.live:
-        newGames = await _fetchLiveGames(repository);
+        fetched = await _fetchLiveGames(repository);
         break;
       case PremiumGamesType.gm:
-        newGames = await _fetchGmGames(repository);
+        fetched = await _fetchGmGames(repository);
         break;
       case PremiumGamesType.classical:
-        newGames = await _fetchClassicalGames(repository);
+        fetched = await _fetchClassicalGames(repository);
         break;
     }
 
-    if (newGames.isEmpty) {
-      _hasMore = false;
-    } else {
-      _allGames.addAll(newGames);
-      _offset += newGames.length;
+    _hasMore = fetched.hasMore;
+    _offset = fetched.nextOffset;
 
+    if (fetched.games.isNotEmpty) {
+      _allGames.addAll(fetched.games);
       // Sort all games by datetime DESC, then avgElo DESC
       _sortGames();
     }
 
     debugPrint(
-      '[PremiumGames] Fetched ${newGames.length} games, total: ${_allGames.length}',
+      '[PremiumGames] Fetched ${fetched.games.length} games, total: ${_allGames.length}, hasMore: $_hasMore',
     );
   }
 
   /// Fetch games for favorite players.
-  Future<List<GamesTourModel>> _fetchFavoriteGames(
+  Future<_PremiumGamesFetch> _fetchFavoriteGames(
     GameRepository repository,
   ) async {
     final favoritesAsync = _ref.read(favoritePlayersProviderNew);
@@ -341,7 +351,7 @@ class PremiumGamesNotifier
 
     if (favorites.isEmpty) {
       debugPrint('[PremiumGames] No favorite players');
-      return [];
+      return _emptyFetch();
     }
 
     // Get FIDE IDs from favorites
@@ -353,7 +363,7 @@ class PremiumGamesNotifier
 
     if (fideIds.isEmpty) {
       debugPrint('[PremiumGames] No FIDE IDs for favorites');
-      return [];
+      return _emptyFetch();
     }
 
     debugPrint(
@@ -367,15 +377,19 @@ class PremiumGamesNotifier
         offset: _offset,
       );
 
-      return games.map((g) => GamesTourModel.fromGame(g)).toList();
+      return _PremiumGamesFetch(
+        games: games.map((g) => GamesTourModel.fromGame(g)).toList(),
+        hasMore: games.length >= _pageSize,
+        nextOffset: _offset + games.length,
+      );
     } catch (e) {
       debugPrint('[PremiumGames] Error fetching favorite games: $e');
-      return [];
+      return _emptyFetch();
     }
   }
 
   /// Fetch games for countrymen.
-  Future<List<GamesTourModel>> _fetchCountrymenGames(
+  Future<_PremiumGamesFetch> _fetchCountrymenGames(
     GameRepository repository,
   ) async {
     final countryState = _ref.read(countryDropdownProvider);
@@ -383,7 +397,7 @@ class PremiumGamesNotifier
 
     if (country == null || country.countryCode.isEmpty) {
       debugPrint('[PremiumGames] No country selected');
-      return [];
+      return _emptyFetch();
     }
 
     debugPrint(
@@ -397,124 +411,94 @@ class PremiumGamesNotifier
         offset: _offset,
       );
 
-      return games.map((g) => GamesTourModel.fromGame(g)).toList();
+      return _PremiumGamesFetch(
+        games: games.map((g) => GamesTourModel.fromGame(g)).toList(),
+        hasMore: games.length >= _pageSize,
+        nextOffset: _offset + games.length,
+      );
     } catch (e) {
       debugPrint('[PremiumGames] Error fetching countryman games: $e');
-      return [];
+      return _emptyFetch();
     }
   }
 
   /// Fetch all live games globally.
-  Future<List<GamesTourModel>> _fetchLiveGames(
-    GameRepository repository,
-  ) async {
-    const maxAttempts = 2;
-
-    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        final games = await repository.getCurrentSmartEventGames(
-          liveOnly: true,
-          limit: _smartEventFetchCap,
-        );
-
-        if (games.isNotEmpty || attempt == maxAttempts) {
-          _hasMore = false;
-          return games.map((g) => GamesTourModel.fromGame(g)).toList();
-        }
-
-        debugPrint(
-          '[PremiumGames] Initial live games fetch was empty; retrying',
-        );
-        await Future<void>.delayed(const Duration(milliseconds: 650));
-      } catch (e) {
-        if (_offset == 0 && attempt < maxAttempts) {
-          debugPrint('[PremiumGames] Live games fetch failed; retrying: $e');
-          await Future<void>.delayed(const Duration(milliseconds: 650));
-          continue;
-        }
-        debugPrint('[PremiumGames] Error fetching live games: $e');
-        return [];
-      }
-    }
-
-    return [];
+  Future<_PremiumGamesFetch> _fetchLiveGames(GameRepository repository) async {
+    return _fetchCurrentSmartEventGames(repository, liveOnly: true);
   }
 
   /// Fetch games with average rating >= 2500, matching the phone smart
   /// collection intent instead of the older "one player over 2500" fallback.
-  Future<List<GamesTourModel>> _fetchGmGames(GameRepository repository) async {
-    const maxAttempts = 2;
-
-    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        final games = await repository.getCurrentSmartEventGames(
-          minEventAverageElo: 2500,
-          minGameAverageElo: 2500,
-          limit: _smartEventFetchCap,
-        );
-
-        if (games.isNotEmpty || attempt == maxAttempts) {
-          _hasMore = false;
-          return games.map((g) => GamesTourModel.fromGame(g)).toList();
-        }
-
-        debugPrint('[PremiumGames] Initial GM games fetch was empty; retrying');
-        await Future<void>.delayed(const Duration(milliseconds: 650));
-      } catch (e) {
-        if (attempt < maxAttempts) {
-          debugPrint('[PremiumGames] GM games fetch failed; retrying: $e');
-          await Future<void>.delayed(const Duration(milliseconds: 650));
-          continue;
-        }
-        debugPrint('[PremiumGames] Error fetching GM games: $e');
-        return [];
-      }
-    }
-
-    return [];
+  Future<_PremiumGamesFetch> _fetchGmGames(GameRepository repository) async {
+    return _fetchCurrentSmartEventGames(
+      repository,
+      minEventAverageElo: 2500,
+      minGameAverageElo: 2500,
+    );
   }
 
   /// Fetch classical/standard games globally.
-  Future<List<GamesTourModel>> _fetchClassicalGames(
+  Future<_PremiumGamesFetch> _fetchClassicalGames(
     GameRepository repository,
   ) async {
-    const maxAttempts = 2;
+    return _fetchCurrentSmartEventGames(
+      repository,
+      eventTimeControls: const [
+        'standard',
+        'classical',
+        'Standard',
+        'Classical',
+      ],
+    );
+  }
 
-    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        final games = await repository.getCurrentSmartEventGames(
-          eventTimeControls: const [
-            'standard',
-            'classical',
-            'Standard',
-            'Classical',
-          ],
-          limit: _smartEventFetchCap,
+  Future<_PremiumGamesFetch> _fetchCurrentSmartEventGames(
+    GameRepository repository, {
+    bool liveOnly = false,
+    int? minEventAverageElo,
+    int? minGameAverageElo,
+    List<String>? eventTimeControls,
+  }) async {
+    const maxEmptyPages = 2;
+    final games = <GamesTourModel>[];
+    var hasMore = false;
+    var nextOffset = _offset;
+    var pageCount = 0;
+
+    try {
+      do {
+        final page = await repository.getCurrentSmartEventGamesPage(
+          liveOnly: liveOnly,
+          minEventAverageElo: minEventAverageElo,
+          minGameAverageElo: minGameAverageElo,
+          eventTimeControls: eventTimeControls,
+          limit: _pageSize,
+          offset: nextOffset,
         );
 
-        if (games.isNotEmpty || attempt == maxAttempts) {
-          _hasMore = false;
-          return games.map((g) => GamesTourModel.fromGame(g)).toList();
-        }
+        games.addAll(page.games.map((game) => GamesTourModel.fromGame(game)));
+        hasMore = page.hasMore;
+        nextOffset = page.nextOffset;
+        pageCount++;
+      } while (games.isEmpty && hasMore && pageCount < maxEmptyPages);
 
-        debugPrint(
-          '[PremiumGames] Initial classical games fetch was empty; retrying',
-        );
-        await Future<void>.delayed(const Duration(milliseconds: 650));
-      } catch (e) {
-        if (attempt < maxAttempts) {
-          debugPrint(
-            '[PremiumGames] Classical games fetch failed; retrying: $e',
-          );
-          await Future<void>.delayed(const Duration(milliseconds: 650));
-          continue;
-        }
-        debugPrint('[PremiumGames] Error fetching classical games: $e');
-        return [];
-      }
+      return _PremiumGamesFetch(
+        games: games,
+        hasMore: hasMore,
+        nextOffset: nextOffset,
+      );
+    } catch (e) {
+      debugPrint('[PremiumGames] Error fetching smart event games: $e');
+      return _emptyFetch();
     }
+  }
 
-    return [];
+  _PremiumGamesFetch _emptyFetch() {
+    return _PremiumGamesFetch(
+      games: const <GamesTourModel>[],
+      hasMore: false,
+      nextOffset: _offset,
+    );
   }
 
   void _sortGames() {
@@ -577,6 +561,10 @@ class PremiumGamesNotifier
     final filter = _ref.read(premiumGamesFilterProvider(_type));
 
     return _allGames.where((game) {
+      if (_type == PremiumGamesType.live && !isPremiumLiveGame(game)) {
+        return false;
+      }
+
       // Smart event collections should never show tomorrow/future games.
       if (_type == PremiumGamesType.live ||
           _type == PremiumGamesType.gm ||
@@ -649,4 +637,17 @@ class PremiumGamesNotifier
   Future<void> refresh() async {
     await loadGames(showLoading: false);
   }
+}
+
+@visibleForTesting
+bool isPremiumLiveGame(GamesTourModel game) {
+  if (!game.hasStarted || game.effectiveGameStatus != GameStatus.ongoing) {
+    return false;
+  }
+
+  final whiteClock = game.whiteClockSeconds;
+  final blackClock = game.blackClockSeconds;
+  if (whiteClock == null || blackClock == null) return false;
+
+  return whiteClock > 0 && blackClock > 0;
 }

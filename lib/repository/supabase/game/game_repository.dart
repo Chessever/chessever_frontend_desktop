@@ -63,8 +63,13 @@ const String _gameListSelectColumns = '''
           eco,
           opening_name,
           tours!games_tour_id_fkey(
+            name,
             avg_elo,
-            group_broadcasts!tours_group_broadcast_id_fkey(time_control)
+            group_broadcasts!tours_group_broadcast_id_fkey(
+              name,
+              max_avg_elo,
+              time_control
+            )
           )
         ''';
 
@@ -75,8 +80,31 @@ const List<String> _classicalTimeControlValues = [
   'Classical',
 ];
 
-const int _currentSmartGamesFetchCap = 6000;
 const int _currentSmartGamesPageSize = 1000;
+const Duration _currentSmartLiveMaxAge = Duration(hours: 8);
+const Duration _currentSmartEventScopeCacheTtl = Duration(minutes: 1);
+
+class CurrentSmartEventGamesPage {
+  const CurrentSmartEventGamesPage({
+    required this.games,
+    required this.hasMore,
+    required this.nextOffset,
+  });
+
+  final List<Games> games;
+  final bool hasMore;
+  final int nextOffset;
+}
+
+class _CurrentSmartEventScopeCache {
+  const _CurrentSmartEventScopeCache({
+    required this.tourIds,
+    required this.expiresAt,
+  });
+
+  final List<String> tourIds;
+  final DateTime expiresAt;
+}
 
 int gameStructuredAverageRating(Games game) {
   final players = game.players;
@@ -89,6 +117,9 @@ int gameStructuredAverageRating(Games game) {
 }
 
 class GameRepository extends BaseRepository {
+  final Map<String, _CurrentSmartEventScopeCache> _currentSmartEventScopeCache =
+      <String, _CurrentSmartEventScopeCache>{};
+
   List<int> _parseFideIds(List<String> fideIds) {
     return fideIds.map((id) => int.tryParse(id)).whereType<int>().toList();
   }
@@ -636,6 +667,79 @@ class GameRepository extends BaseRepository {
     });
   }
 
+  Future<List<String>> _getCurrentSmartEventTourIds({
+    int? minEventAverageElo,
+    List<String>? eventTimeControls,
+  }) async {
+    final normalizedTimeControls =
+        (eventTimeControls ?? const <String>[])
+            .map((value) => value.trim().toLowerCase())
+            .where((value) => value.isNotEmpty)
+            .toList()
+          ..sort();
+    final cacheKey =
+        '${minEventAverageElo ?? ''}|'
+        '${normalizedTimeControls.join(',')}';
+    final now = DateTime.now().toUtc();
+    final cached = _currentSmartEventScopeCache[cacheKey];
+
+    if (cached != null && now.isBefore(cached.expiresAt)) {
+      return cached.tourIds;
+    }
+
+    dynamic eventQuery = supabase
+        .from('group_broadcasts_current')
+        .select('id,max_avg_elo,time_control,date_closest_round,date_start');
+
+    if (minEventAverageElo != null) {
+      eventQuery = eventQuery.gte('max_avg_elo', minEventAverageElo);
+    }
+
+    if (eventTimeControls != null && eventTimeControls.isNotEmpty) {
+      eventQuery = eventQuery.inFilter('time_control', eventTimeControls);
+    }
+
+    final eventResponse = await eventQuery
+        .order('max_avg_elo', ascending: false, nullsFirst: false)
+        .order('date_closest_round', ascending: true, nullsFirst: false)
+        .limit(500);
+
+    final eventIds = (eventResponse as List)
+        .map((row) => row['id'] as String?)
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+
+    if (eventIds.isEmpty) {
+      _currentSmartEventScopeCache[cacheKey] = _CurrentSmartEventScopeCache(
+        tourIds: const <String>[],
+        expiresAt: now.add(_currentSmartEventScopeCacheTtl),
+      );
+      return const <String>[];
+    }
+
+    final tourIds = <String>[];
+    for (final chunk in _chunks(eventIds, 40)) {
+      final tourResponse = await supabase
+          .from('tours')
+          .select('id')
+          .inFilter('group_broadcast_id', chunk);
+      tourIds.addAll(
+        (tourResponse as List)
+            .map((row) => row['id'] as String?)
+            .whereType<String>()
+            .where((id) => id.isNotEmpty),
+      );
+    }
+
+    final scopedTourIds = List<String>.unmodifiable(tourIds);
+    _currentSmartEventScopeCache[cacheKey] = _CurrentSmartEventScopeCache(
+      tourIds: scopedTourIds,
+      expiresAt: now.add(_currentSmartEventScopeCacheTtl),
+    );
+    return scopedTourIds;
+  }
+
   /// Get smart collection games scoped to events in `group_broadcasts_current`.
   ///
   /// Desktop smart collections are persistent, preconfigured smart events. They
@@ -646,97 +750,90 @@ class GameRepository extends BaseRepository {
     int? minEventAverageElo,
     int? minGameAverageElo,
     List<String>? eventTimeControls,
-    int limit = _currentSmartGamesFetchCap,
+    int limit = _currentSmartGamesPageSize,
+    int offset = 0,
+  }) async {
+    final page = await getCurrentSmartEventGamesPage(
+      liveOnly: liveOnly,
+      minEventAverageElo: minEventAverageElo,
+      minGameAverageElo: minGameAverageElo,
+      eventTimeControls: eventTimeControls,
+      limit: limit,
+      offset: offset,
+    );
+    return page.games;
+  }
+
+  Future<CurrentSmartEventGamesPage> getCurrentSmartEventGamesPage({
+    bool liveOnly = false,
+    int? minEventAverageElo,
+    int? minGameAverageElo,
+    List<String>? eventTimeControls,
+    int limit = _currentSmartGamesPageSize,
     int offset = 0,
   }) async {
     return handleApiCall(() async {
-      dynamic eventQuery = supabase
-          .from('group_broadcasts_current')
-          .select('id,max_avg_elo,time_control,date_closest_round,date_start');
+      final safeLimit = limit.clamp(1, _currentSmartGamesPageSize).toInt();
+      final safeOffset = offset < 0 ? 0 : offset;
 
-      if (minEventAverageElo != null) {
-        eventQuery = eventQuery.gte('max_avg_elo', minEventAverageElo);
-      }
-
-      if (eventTimeControls != null && eventTimeControls.isNotEmpty) {
-        eventQuery = eventQuery.inFilter('time_control', eventTimeControls);
-      }
-
-      final eventResponse = await eventQuery
-          .order('max_avg_elo', ascending: false, nullsFirst: false)
-          .order('date_closest_round', ascending: true, nullsFirst: false)
-          .limit(500);
-
-      final eventIds =
-          (eventResponse as List)
-              .map((row) => row['id'] as String?)
-              .whereType<String>()
-              .where((id) => id.isNotEmpty)
-              .toList(growable: false);
-
-      if (eventIds.isEmpty) return <Games>[];
-
-      final tourIds = <String>[];
-      for (final chunk in _chunks(eventIds, 40)) {
-        final tourResponse = await supabase
-            .from('tours')
-            .select('id')
-            .inFilter('group_broadcast_id', chunk);
-        tourIds.addAll(
-          (tourResponse as List)
-              .map((row) => row['id'] as String?)
-              .whereType<String>()
-              .where((id) => id.isNotEmpty),
+      final tourIds = await _getCurrentSmartEventTourIds(
+        minEventAverageElo: minEventAverageElo,
+        eventTimeControls: eventTimeControls,
+      );
+      if (tourIds.isEmpty) {
+        return CurrentSmartEventGamesPage(
+          games: const <Games>[],
+          hasMore: false,
+          nextOffset: safeOffset,
         );
       }
 
-      if (tourIds.isEmpty) return <Games>[];
-
       final selectColumns =
           '$_gameListSelectColumns,\nrounds!games_round_id_fkey!inner(starts_at)';
-      final nowIso = DateTime.now().toUtc().toIso8601String();
-      final jsonList = <String>[];
-      var pageOffset = 0;
-      var remaining = _currentSmartGamesFetchCap;
+      final now = DateTime.now().toUtc();
+      final nowIso = now.toIso8601String();
+      final liveCutoffIso =
+          now.subtract(_currentSmartLiveMaxAge).toIso8601String();
 
-      while (remaining > 0) {
-        final pageSize =
-            remaining > _currentSmartGamesPageSize
-                ? _currentSmartGamesPageSize
-                : remaining;
+      dynamic gamesQuery = supabase
+          .from('games')
+          .select(selectColumns)
+          .inFilter('tour_id', tourIds)
+          .or(
+            'starts_at.is.null,starts_at.lte.$nowIso',
+            referencedTable: 'rounds',
+          );
 
-        dynamic gamesQuery = supabase
-            .from('games')
-            .select(selectColumns)
-            .inFilter('tour_id', tourIds)
-            .or(
-              'starts_at.is.null,starts_at.lte.$nowIso',
-              referencedTable: 'rounds',
-            );
-
-        if (liveOnly) {
-          gamesQuery = gamesQuery.inFilter('status', ['*', 'ongoing']);
-        }
-
-        if (minGameAverageElo != null) {
-          gamesQuery = gamesQuery.gte('player_max_rating', minGameAverageElo);
-        }
-
-        final response = await gamesQuery
-            .order('last_move_time', ascending: false, nullsFirst: false)
-            .order('game_day', ascending: false, nullsFirst: false)
-            .order('date_start', ascending: false, nullsFirst: false)
-            .order('player_max_rating', ascending: false, nullsFirst: false)
-            .range(pageOffset, pageOffset + pageSize - 1);
-
-        final responseList = response as List;
-        jsonList.addAll(responseList.map((item) => json.encode(item)));
-
-        if (responseList.length < pageSize) break;
-        pageOffset += responseList.length;
-        remaining -= responseList.length;
+      if (liveOnly) {
+        gamesQuery = gamesQuery
+            .inFilter('status', ['*', 'ongoing', 'live'])
+            .not('last_move', 'is', null)
+            .not('last_move_time', 'is', null)
+            .not('last_clock_white', 'is', null)
+            .not('last_clock_black', 'is', null)
+            .gt('last_clock_white', 0)
+            .gt('last_clock_black', 0)
+            .gte('last_move_time', liveCutoffIso);
       }
 
+      if (minGameAverageElo != null) {
+        gamesQuery = gamesQuery.gte('player_max_rating', minGameAverageElo);
+      }
+
+      final response = await gamesQuery
+          .order('last_move_time', ascending: false, nullsFirst: false)
+          .order('game_day', ascending: false, nullsFirst: false)
+          .order('date_start', ascending: false, nullsFirst: false)
+          .order('player_max_rating', ascending: false, nullsFirst: false)
+          .range(safeOffset, safeOffset + safeLimit);
+
+      final responseList = response as List;
+      final hasMore = responseList.length > safeLimit;
+      final pageRows =
+          hasMore
+              ? responseList.take(safeLimit).toList(growable: false)
+              : responseList;
+      final jsonList = pageRows.map((item) => json.encode(item)).toList();
       var games = await compute(_decodeGamesInIsolate, jsonList);
 
       if (eventTimeControls != null && eventTimeControls.isNotEmpty) {
@@ -768,8 +865,11 @@ class GameRepository extends BaseRepository {
       final result = _deduplicateGames(games);
       result.sort(_compareCurrentSmartGames);
 
-      if (offset <= 0) return result.take(limit).toList();
-      return result.skip(offset).take(limit).toList();
+      return CurrentSmartEventGamesPage(
+        games: result,
+        hasMore: hasMore,
+        nextOffset: safeOffset + pageRows.length,
+      );
     });
   }
 
@@ -1789,7 +1889,8 @@ int _compareCurrentSmartGames(Games a, Games b) {
 }
 
 DateTime _currentSmartGameDay(Games game) {
-  final raw = game.lastMoveTime ?? game.gameDay ?? game.dateStart ?? DateTime(0);
+  final raw =
+      game.lastMoveTime ?? game.gameDay ?? game.dateStart ?? DateTime(0);
   final local = raw.toLocal();
   return DateTime(local.year, local.month, local.day);
 }

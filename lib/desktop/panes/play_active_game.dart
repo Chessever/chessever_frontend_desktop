@@ -790,6 +790,7 @@ class _PostGameBadgeState extends State<_PostGameBadge> {
           child: Transform.scale(
             scale: scale,
             alignment: Alignment.center,
+            filterQuality: FilterQuality.medium,
             child: child,
           ),
         );
@@ -855,6 +856,7 @@ class _EloDeltaPillState extends State<_EloDeltaPill> {
           child: Transform.scale(
             scale: scale,
             alignment: Alignment.centerLeft,
+            filterQuality: FilterQuality.medium,
             child: child,
           ),
         );

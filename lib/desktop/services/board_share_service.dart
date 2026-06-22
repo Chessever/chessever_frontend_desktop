@@ -113,9 +113,9 @@ class BoardShareService {
 
     for (int i = 0; i < frames.length; i++) {
       final frame = frames[i];
-      final board = cg.Chessboard.fixed(
+      final board = cg.StaticChessboard(
         size: boardSize,
-        settings: boardSettings.copyWith(animationDuration: Duration.zero),
+        settings: cg.StaticChessboardSettings.fromBoardSettings(boardSettings.copyWith(animationDuration: Duration.zero)),
         orientation: Side.white,
         fen: frame.fen,
         lastMove: frame.lastMove,
@@ -233,9 +233,9 @@ class BoardShareCard extends StatelessWidget {
                 ),
               ),
             ),
-          cg.Chessboard.fixed(
+          cg.StaticChessboard(
             size: boardSize,
-            settings: boardSettings.copyWith(animationDuration: Duration.zero),
+            settings: cg.StaticChessboardSettings.fromBoardSettings(boardSettings.copyWith(animationDuration: Duration.zero)),
             orientation: Side.white,
             fen: fen,
             lastMove: lastMove,

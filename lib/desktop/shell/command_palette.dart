@@ -680,7 +680,7 @@ class _PlayerRow extends StatelessWidget {
           motion: DesktopMotion.hover,
           builder:
               (context, scale, child) =>
-                  Transform.scale(scale: scale, child: child),
+                  Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -805,7 +805,7 @@ class _TournamentRow extends StatelessWidget {
           motion: DesktopMotion.hover,
           builder:
               (context, scale, child) =>
-                  Transform.scale(scale: scale, child: child),
+                  Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -1062,7 +1062,7 @@ class _PaletteRow extends StatelessWidget {
           motion: DesktopMotion.hover,
           builder:
               (context, scale, child) =>
-                  Transform.scale(scale: scale, child: child),
+                  Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),

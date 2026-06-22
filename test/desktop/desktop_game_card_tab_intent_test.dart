@@ -1,3 +1,4 @@
+import 'package:dartchess/dartchess.dart' show Side;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,7 +7,11 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
+import 'package:chessever/providers/board_settings_provider_new.dart';
+import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/date_time_provider.dart';
 
 void main() {
   testWidgets('Command-click opens a draggable game card in a background tab', (
@@ -17,6 +22,7 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
+        overrides: _cardProviderOverrides(),
         child: MaterialApp(
           home: Scaffold(
             body: DesktopGameCard(
@@ -52,6 +58,7 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
+        overrides: _cardProviderOverrides(),
         child: MaterialApp(
           home: Scaffold(
             body: DesktopGameCard(
@@ -81,7 +88,8 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      const ProviderScope(
+      ProviderScope(
+        overrides: _cardProviderOverrides(),
         child: MaterialApp(
           home: Scaffold(
             body: DesktopGameCard(
@@ -103,7 +111,8 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      const ProviderScope(
+      ProviderScope(
+        overrides: _cardProviderOverrides(),
         child: MaterialApp(
           home: Scaffold(
             body: SizedBox(
@@ -128,7 +137,8 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      const ProviderScope(
+      ProviderScope(
+        overrides: _cardProviderOverrides(),
         child: MaterialApp(
           home: Scaffold(
             body: SizedBox(
@@ -151,11 +161,44 @@ void main() {
     expect(find.text('23:45'), findsOneWidget);
   });
 
+  testWidgets('running live clock uses the primary color', (tester) async {
+    final data = _startedLiveDataWithClocks.copyWithRunningClock(
+      activePlayer: Side.white,
+      lastMoveTime: DateTime.now(),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _cardProviderOverrides(clockNow: data.lastMoveTime),
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 320,
+              height: 360,
+              child: DesktopGameCard(
+                data: data,
+                layout: DesktopCardLayout.grid,
+                onTap: _noop,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final activeClock = tester.widget<Text>(find.text('12:34'));
+    final inactiveClock = tester.widget<Text>(find.text('23:45'));
+
+    expect(activeClock.style?.color, kPrimaryColor);
+    expect(inactiveClock.style?.color, kWhiteColor70);
+  });
+
   testWidgets('finished compact card keeps normal game-view result text', (
     tester,
   ) async {
     await tester.pumpWidget(
-      const ProviderScope(
+      ProviderScope(
+        overrides: _cardProviderOverrides(),
         child: MaterialApp(
           home: Scaffold(
             body: DesktopGameCard(
@@ -173,6 +216,15 @@ void main() {
 }
 
 void _noop() {}
+
+List<Override> _cardProviderOverrides({DateTime? clockNow}) {
+  return [
+    boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
+    engineSettingsProviderNew.overrideWith(_TestEngineSettingsNotifier.new),
+    if (clockNow != null)
+      dateTimeProvider.overrideWith((ref) => Stream.value(clockNow)),
+  ];
+}
 
 const _data = GameCardData(
   id: 'game-1',
@@ -239,3 +291,56 @@ const _finishedData = GameCardData(
   status: GameStatus.whiteWins,
   hasStarted: true,
 );
+
+extension on GameCardData {
+  GameCardData copyWithRunningClock({
+    required Side activePlayer,
+    required DateTime lastMoveTime,
+  }) {
+    return GameCardData(
+      id: id,
+      title: title,
+      whiteName: whiteName,
+      blackName: blackName,
+      whiteFederation: whiteFederation,
+      blackFederation: blackFederation,
+      whiteTitle: whiteTitle,
+      blackTitle: blackTitle,
+      whiteRating: whiteRating,
+      blackRating: blackRating,
+      whiteFideId: whiteFideId,
+      blackFideId: blackFideId,
+      fen: fen,
+      status: status,
+      hasStarted: hasStarted,
+      lastMove: lastMove,
+      openingName: openingName,
+      subtitle: subtitle,
+      whiteClockSeconds: whiteClockSeconds,
+      blackClockSeconds: blackClockSeconds,
+      whiteClockCentiseconds: whiteClockCentiseconds,
+      blackClockCentiseconds: blackClockCentiseconds,
+      lastMoveTime: lastMoveTime,
+      activePlayer: activePlayer,
+      canResolveRemoteFen: canResolveRemoteFen,
+    );
+  }
+}
+
+class _TestBoardSettingsNotifier extends BoardSettingsNotifierNew {
+  @override
+  Future<BoardSettingsNew> build() async {
+    const settings = BoardSettingsNew();
+    state = const AsyncValue.data(settings);
+    return settings;
+  }
+}
+
+class _TestEngineSettingsNotifier extends EngineSettingsNotifierNew {
+  @override
+  Future<EngineSettings> build() async {
+    const settings = EngineSettings();
+    state = const AsyncValue.data(settings);
+    return settings;
+  }
+}

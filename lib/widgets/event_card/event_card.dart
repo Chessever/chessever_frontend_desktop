@@ -99,107 +99,94 @@ class EventCard extends ConsumerWidget {
     );
   }
 
-  /// Tablet grid layout: Image as background with text overlay
+  /// Tablet grid layout: photo-led card with a solid information panel.
+  /// Text used to sit directly over the image, which made bright tournament
+  /// photos and flags compete with the title/meta. Keeping copy on a stable
+  /// surface makes the card readable regardless of the event artwork.
   Widget _buildTabletGridCard(BuildContext context, WidgetRef ref) {
-    return Container(
-      decoration: BoxDecoration(
-        color: kBlack2Color,
-        borderRadius: BorderRadius.circular(12.br),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // Background image
-          _TabletEventBackground(
-            event: tourEventCardModel,
-            heroTagSuffix: heroTagSuffix,
+    final eventInfo = _eventInfo(ref);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final hasBoundedHeight =
+            constraints.hasBoundedHeight && constraints.maxHeight.isFinite;
+        final card = Container(
+          decoration: BoxDecoration(
+            color: kBlack2Color,
+            borderRadius: BorderRadius.circular(12.br),
+            border: Border.all(color: kWhiteColor.withValues(alpha: 0.05)),
           ),
-          // Gradient overlay for text readability
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.transparent,
-                    Colors.black.withValues(alpha: 0.3),
-                    Colors.black.withValues(alpha: 0.85),
-                  ],
-                  stops: const [0.0, 0.4, 1.0],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                ),
-              ),
-            ),
-          ),
-          // Content overlay
-          Positioned(
-            left: 12.sp,
-            right: 12.sp,
-            bottom: 12.sp,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  tourEventCardModel.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTypography.textSmMedium.copyWith(
-                    color: kWhiteColor,
-                    fontSize: 15.sp,
-                    height: 1.3,
-                    shadows: [
-                      Shadow(
-                        color: Colors.black.withValues(alpha: 0.5),
-                        blurRadius: 4,
-                      ),
-                    ],
-                  ),
-                ),
-                SizedBox(height: 6.h),
-                // Event details row
-                Row(
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
                   children: [
-                    Expanded(
-                      child: _MetaLine(
-                        dates: _compactDates(tourEventCardModel),
-                        timeControlSpan: _timeControlSpan(
-                          AppTypography.textXsMedium.copyWith(
-                            color: kWhiteColor.withValues(alpha: 0.9),
+                    _TabletEventBackground(
+                      event: tourEventCardModel,
+                      heroTagSuffix: heroTagSuffix,
+                    ),
+                    Positioned.fill(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.black.withValues(alpha: 0.22),
+                              Colors.transparent,
+                            ],
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
                           ),
                         ),
-                        showLocation: false,
-                        location: null,
-                        showElo: tourEventCardModel.maxAvgElo > 0,
-                        elo: tourEventCardModel.maxAvgElo,
-                        onLight: true,
                       ),
                     ),
-                    // Star icon
-                    _StarWidget(
-                      tourEventCardModel: tourEventCardModel,
-                      showHeartIndicator: showHeartIndicator,
-                      favoritePlayersSource: favoritePlayersSource,
+                    Positioned(
+                      top: 10.sp,
+                      right: 10.sp,
+                      child: _TabletMediaControlSurface(
+                        child: _StarWidget(
+                          tourEventCardModel: tourEventCardModel,
+                          showHeartIndicator: showHeartIndicator,
+                          favoritePlayersSource: favoritePlayersSource,
+                        ),
+                      ),
                     ),
                   ],
                 ),
-                _NextRoundLine(
-                  eventId: tourEventCardModel.id,
-                  category: tourEventCardModel.tourEventCategory,
-                  onLight: true,
+              ),
+              _TabletEventInfoPanel(
+                title: tourEventCardModel.title,
+                dates: _compactDates(tourEventCardModel),
+                timeControlSpan: _timeControlSpan(
+                  AppTypography.textXsMedium.copyWith(color: kWhiteColor70),
                 ),
-              ],
-            ),
+                location: eventInfo.location,
+                elo: tourEventCardModel.maxAvgElo,
+                playerCount: eventInfo.playerCount,
+                eventId: tourEventCardModel.id,
+                category: tourEventCardModel.tourEventCategory,
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+
+        if (hasBoundedHeight) {
+          return card;
+        }
+
+        return SizedBox(
+          height: ResponsiveHelper.isLandscape ? 210.h : 240.h,
+          child: card,
+        );
+      },
     );
   }
 
   /// Phone layout: Horizontal row with image on left
   Widget _buildPhoneCard(BuildContext context, WidgetRef ref) {
     final imageHeight = _EventImage.phoneImageHeight(context);
+    final eventInfo = _eventInfo(ref);
 
     return Container(
       decoration: BoxDecoration(
@@ -246,17 +233,9 @@ class EventCard extends ConsumerWidget {
                     timeControlSpan: _timeControlSpan(
                       AppTypography.textXsMedium.copyWith(color: kWhiteColor70),
                     ),
-                    showLocation:
-                        tourEventCardModel.eventSource ==
-                            EventSource.communityEvent &&
-                        tourEventCardModel.location != null &&
-                        tourEventCardModel.location!.isNotEmpty,
-                    location: tourEventCardModel.location,
-                    showElo:
-                        tourEventCardModel.eventSource !=
-                            EventSource.communityEvent &&
-                        tourEventCardModel.maxAvgElo > 0,
+                    location: eventInfo.location,
                     elo: tourEventCardModel.maxAvgElo,
+                    playerCount: eventInfo.playerCount,
                   ),
                   _NextRoundLine(
                     eventId: tourEventCardModel.id,
@@ -284,6 +263,25 @@ class EventCard extends ConsumerWidget {
       return TimeUtils.formatDateRange(model.startDate, model.endDate);
     }
     return model.dates;
+  }
+
+  _EventInfo _eventInfo(WidgetRef ref) {
+    if (tourEventCardModel.eventSource == EventSource.communityEvent) {
+      return _EventInfo(location: _cleanLocation(tourEventCardModel.location));
+    }
+
+    final imageData = ref.watch(eventImageProvider(tourEventCardModel.id));
+    final value = imageData.valueOrNull;
+    return _EventInfo(
+      location: _cleanLocation(value?.location),
+      playerCount: value?.playerCount ?? 0,
+    );
+  }
+
+  String? _cleanLocation(String? location) {
+    final trimmed = location?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    return trimmed.replaceFirst(RegExp(r'\.$'), '');
   }
 
   /// Inline time-control glyph for the [_MetaLine] [Text.rich] — lets the
@@ -319,6 +317,118 @@ class EventCard extends ConsumerWidget {
   }
 }
 
+class _EventInfo {
+  const _EventInfo({this.location, this.playerCount = 0});
+
+  final String? location;
+  final int playerCount;
+}
+
+class _TabletMediaControlSurface extends StatelessWidget {
+  const _TabletMediaControlSurface({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(10.br);
+    return ClipRRect(
+      borderRadius: radius,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: kBlackColor.withValues(alpha: 0.68),
+          borderRadius: radius,
+          border: Border.all(color: kWhiteColor.withValues(alpha: 0.16)),
+          boxShadow: [
+            BoxShadow(
+              color: kBlackColor.withValues(alpha: 0.28),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: 34.sp, minHeight: 34.sp),
+            child: Center(child: child),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TabletEventInfoPanel extends StatelessWidget {
+  const _TabletEventInfoPanel({
+    required this.title,
+    required this.dates,
+    required this.timeControlSpan,
+    required this.location,
+    required this.elo,
+    required this.playerCount,
+    required this.eventId,
+    required this.category,
+  });
+
+  final String title;
+  final String dates;
+  final InlineSpan timeControlSpan;
+  final String? location;
+  final int elo;
+  final int playerCount;
+  final String eventId;
+  final TourEventCategory category;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        border: Border(
+          top: BorderSide(color: kWhiteColor.withValues(alpha: 0.08)),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: kBlackColor.withValues(alpha: 0.16),
+            blurRadius: 18,
+            offset: const Offset(0, -8),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(12.sp, 10.sp, 12.sp, 11.sp),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: AppTypography.textSmMedium.copyWith(
+                color: kWhiteColor,
+                fontSize: 15.sp,
+                height: 1.22,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            SizedBox(height: 4.h),
+            _MetaLine(
+              dates: dates,
+              timeControlSpan: timeControlSpan,
+              location: location,
+              elo: elo,
+              playerCount: playerCount,
+            ),
+            _NextRoundLine(eventId: eventId, category: category),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Single-line meta row (dates · time-control · location/ELO). Using
 /// [Text.rich] with inline widget spans lets the whole line ellipsize at the
 /// end instead of wrapping and breaking the 4-line card budget.
@@ -326,37 +436,21 @@ class _MetaLine extends StatelessWidget {
   const _MetaLine({
     required this.dates,
     required this.timeControlSpan,
-    required this.showLocation,
     required this.location,
-    required this.showElo,
     required this.elo,
-    this.onLight = false,
+    required this.playerCount,
   });
 
   final String dates;
   final InlineSpan timeControlSpan;
-  final bool showLocation;
   final String? location;
-  final bool showElo;
   final int elo;
-  final bool onLight;
+  final int playerCount;
 
   @override
   Widget build(BuildContext context) {
-    final baseColor =
-        onLight ? kWhiteColor.withValues(alpha: 0.9) : kWhiteColor70;
-    final style = AppTypography.textXsMedium.copyWith(
-      color: baseColor,
-      shadows:
-          onLight
-              ? [
-                Shadow(
-                  color: Colors.black.withValues(alpha: 0.5),
-                  blurRadius: 3,
-                ),
-              ]
-              : null,
-    );
+    const baseColor = kWhiteColor70;
+    final style = AppTypography.textXsMedium.copyWith(color: baseColor);
 
     final spans = <InlineSpan>[];
     if (dates.isNotEmpty) {
@@ -364,7 +458,11 @@ class _MetaLine extends StatelessWidget {
       spans.add(_dotSpan(baseColor));
     }
     spans.add(timeControlSpan);
-    if (showLocation) {
+    if (elo > 0) {
+      spans.add(_dotSpan(baseColor));
+      spans.add(TextSpan(text: 'Ø $elo'));
+    }
+    if (location != null && location!.isNotEmpty) {
       spans.add(_dotSpan(baseColor));
       spans.add(
         WidgetSpan(
@@ -378,9 +476,16 @@ class _MetaLine extends StatelessWidget {
       );
       spans.add(WidgetSpan(child: SizedBox(width: 2.w)));
       spans.add(TextSpan(text: location!));
-    } else if (showElo) {
+    } else if (elo <= 0 && playerCount > 0) {
       spans.add(_dotSpan(baseColor));
-      spans.add(TextSpan(text: 'Ø $elo'));
+      spans.add(
+        WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: Icon(Icons.groups_2_outlined, size: 12.sp, color: baseColor),
+        ),
+      );
+      spans.add(WidgetSpan(child: SizedBox(width: 2.w)));
+      spans.add(TextSpan(text: '$playerCount players'));
     }
 
     return Text.rich(
@@ -737,9 +842,7 @@ class _TabletEventBackground extends ConsumerWidget {
 /// "LIVE" label shown on the third line of the card while an event is
 /// actively running — replaces the next-round countdown for live events.
 class _LiveLabel extends StatelessWidget {
-  const _LiveLabel({required this.onLight});
-
-  final bool onLight;
+  const _LiveLabel();
 
   @override
   Widget build(BuildContext context) {
@@ -752,15 +855,6 @@ class _LiveLabel extends StatelessWidget {
           fontSize: 11.sp,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.6,
-          shadows:
-              onLight
-                  ? [
-                    Shadow(
-                      color: Colors.black.withValues(alpha: 0.5),
-                      blurRadius: 3,
-                    ),
-                  ]
-                  : null,
         ),
       ),
     );
@@ -971,18 +1065,10 @@ final _eventCountdownTickProvider = StreamProvider.autoDispose<DateTime>((ref) {
 /// round. Hidden for completed events, community/calendar events, and when no
 /// round has a known future `starts_at`.
 class _NextRoundLine extends ConsumerWidget {
-  const _NextRoundLine({
-    required this.eventId,
-    required this.category,
-    this.onLight = false,
-  });
+  const _NextRoundLine({required this.eventId, required this.category});
 
   final String eventId;
   final TourEventCategory category;
-
-  /// True when rendering over the tablet image background (bumps contrast
-  /// with a soft shadow and higher-alpha text).
-  final bool onLight;
 
   static const Duration _countdownThreshold = Duration(hours: 24);
 
@@ -996,7 +1082,7 @@ class _NextRoundLine extends ConsumerWidget {
     }
 
     if (category == TourEventCategory.live) {
-      return _LiveLabel(onLight: onLight);
+      return const _LiveLabel();
     }
 
     final nextRoundAsync = ref.watch(eventNextRoundProvider(eventId));
@@ -1033,22 +1119,10 @@ class _NextRoundLine extends ConsumerWidget {
     final roundName = (nextRound?.name ?? 'Round 1').trim();
     final showName = roundName.isNotEmpty;
 
-    final baseColor =
-        onLight ? kWhiteColor.withValues(alpha: 0.9) : kWhiteColor70;
-
     final textStyle = AppTypography.textXxsMedium.copyWith(
-      color: baseColor,
+      color: kWhiteColor70,
       fontSize: 11.sp,
       letterSpacing: 0.1,
-      shadows:
-          onLight
-              ? [
-                Shadow(
-                  color: Colors.black.withValues(alpha: 0.5),
-                  blurRadius: 3,
-                ),
-              ]
-              : null,
     );
 
     return Padding(

@@ -343,7 +343,7 @@ class _PlayerTileState extends State<_PlayerTile> {
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 140),
               curve: Curves.easeOut,
@@ -485,7 +485,7 @@ class _FavoriteToggleState extends State<_FavoriteToggle> {
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: Container(
               width: 30,
               height: 30,

@@ -385,6 +385,7 @@ class _NavButtonState extends State<_NavButton> {
                   (context, scale, child) => Transform.scale(
                     scale: scale,
                     alignment: Alignment.center,
+                    filterQuality: FilterQuality.medium,
                     child: child,
                   ),
               child: AnimatedContainer(

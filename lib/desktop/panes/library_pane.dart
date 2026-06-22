@@ -4,7 +4,6 @@ import 'dart:math' as math;
 import 'package:chessground/chessground.dart' as cg;
 import 'package:collection/collection.dart';
 import 'package:dartchess/dartchess.dart';
-import 'package:fast_immutable_collections/fast_immutable_collections.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8953,19 +8952,19 @@ class _LibraryPreviewBoard extends StatelessWidget {
         return Center(
           child: SizedBox.square(
             dimension: side,
-            child: cg.Chessboard.fixed(
+            child: cg.StaticChessboard(
               key: ValueKey<String>(
                 'library-preview-board:$fen:${lastMoveUci ?? ''}:$orientation',
               ),
               size: side,
               fen: fen,
               orientation: orientation,
-              settings: cg.ChessboardSettings(
+              settings: cg.StaticChessboardSettings.fromBoardSettings(cg.ChessboardSettings(
                 enableCoordinates: false,
                 colorScheme: settings.colorScheme,
                 pieceAssets: settings.pieceAssets,
-              ),
-              shapes: const ISet<cg.Shape>.empty(),
+              )),
+              shapes: const <cg.Shape>{},
               lastMove: _uciToLastMove(lastMoveUci ?? ''),
             ),
           ),

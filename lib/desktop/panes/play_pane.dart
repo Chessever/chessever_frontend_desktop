@@ -265,6 +265,7 @@ class _AchievementClaimOverlayState extends State<_AchievementClaimOverlay>
                       offset: Offset(0, (1 - t) * 34),
                       child: Transform.scale(
                         scale: 0.86 + t * 0.14,
+                        filterQuality: FilterQuality.medium,
                         child: child,
                       ),
                     ),

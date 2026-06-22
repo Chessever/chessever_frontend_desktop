@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
+import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
@@ -384,5 +385,81 @@ void main() {
         );
       },
     );
+  });
+
+  group('shouldReplaceBaseGame', () {
+    const fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+    final t0 = DateTime.utc(2026, 5, 26, 12);
+    final t1 = DateTime.utc(2026, 5, 26, 12, 3);
+
+    GamesTourModel at(DateTime time, {int white = 180}) => _game(
+      id: 'game-1',
+      status: GameStatus.ongoing,
+      fen: fen,
+      pgn: '[Event "Test"]\n\n1. e4 *',
+      lastMove: 'e2e4',
+      lastMoveTime: time,
+      whiteClockSeconds: white,
+      blackClockSeconds: 180,
+    );
+
+    test('seeds when nothing is stored yet', () {
+      expect(shouldReplaceBaseGame(null, at(t0)), isTrue);
+    });
+
+    test('rejects an identical snapshot', () {
+      final g = at(t0);
+      expect(shouldReplaceBaseGame(g, g), isFalse);
+    });
+
+    test('rejects a staler REST read (older move time)', () {
+      // getGameById() lagging the realtime stream must not clobber the board.
+      expect(shouldReplaceBaseGame(at(t1), at(t0)), isFalse);
+    });
+
+    test('accepts a fresher snapshot (newer move time)', () {
+      expect(shouldReplaceBaseGame(at(t0), at(t1)), isTrue);
+    });
+
+    test('accepts newer clocks at the same ply', () {
+      expect(
+        shouldReplaceBaseGame(at(t0, white: 120), at(t0, white: 100)),
+        isTrue,
+      );
+    });
+  });
+
+  group('gameUpdatesStreamProvider', () {
+    test('board and card surfaces share one realtime channel per game', () async {
+      // Single-subscription stream: if the board (legacy-map) and card (typed)
+      // surfaces each opened their own subscription, the second `.map().listen`
+      // on this stream would throw — so this both asserts the count and would
+      // fail loudly on any re-subscription.
+      final controller = StreamController<Map<String, dynamic>?>();
+      addTearDown(controller.close);
+      final repository = _FakeGameStreamRepository(controller.stream);
+
+      final container = ProviderContainer(
+        overrides: [gameStreamRepositoryProvider.overrideWithValue(repository)],
+      );
+      addTearDown(container.dispose);
+
+      final cardSub = container.listen(
+        liveGameUpdateStreamProvider('game-1'),
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(cardSub.close);
+      final boardSub = container.listen(
+        gameUpdatesStreamProvider('game-1'),
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(boardSub.close);
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(repository.subscribeToGameUpdatesCount, 1);
+    });
   });
 }

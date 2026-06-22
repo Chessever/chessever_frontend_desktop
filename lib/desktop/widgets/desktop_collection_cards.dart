@@ -28,12 +28,12 @@ class DesktopCollectionCards extends StatelessWidget {
   final VoidCallback onCountrymenTap;
   final ValueChanged<PremiumGamesType> onSmartCollectionTap;
 
-  // A "shelf" of two fixed-width tiles, left-aligned. Not stretched 50/50
-  // across the feed — that visual reads as "tablet" rather than "desktop".
-  // The trailing Spacer absorbs whatever horizontal room is left.
+  // A "shelf" of fixed-width tiles, left-aligned. Keeping these at their
+  // natural width avoids the top row becoming a full-width dashboard band.
   static const double _collectionCardWidth = 260;
   static const double _smartCardWidth = 170;
   static const double _cardHeight = 140;
+  static const double _gap = 14;
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +53,7 @@ class DesktopCollectionCards extends StatelessWidget {
                 onTap: onFavoritesTap,
               ),
             ),
-            const SizedBox(width: 14),
+            const SizedBox(width: _gap),
             SizedBox(
               width: _collectionCardWidth,
               height: _cardHeight,
@@ -64,7 +64,7 @@ class DesktopCollectionCards extends StatelessWidget {
                 onTap: onCountrymenTap,
               ),
             ),
-            const SizedBox(width: 14),
+            const SizedBox(width: _gap),
             _SmartCollectionCard(
               width: _smartCardWidth,
               height: _cardHeight,
@@ -74,7 +74,7 @@ class DesktopCollectionCards extends StatelessWidget {
               colors: const [Color(0xFF0EA5E9), Color(0xFF14B8A6)],
               onTap: () => onSmartCollectionTap(PremiumGamesType.live),
             ),
-            const SizedBox(width: 14),
+            const SizedBox(width: _gap),
             _SmartCollectionCard(
               width: _smartCardWidth,
               height: _cardHeight,
@@ -84,7 +84,7 @@ class DesktopCollectionCards extends StatelessWidget {
               colors: const [Color(0xFFF59E0B), Color(0xFFB45309)],
               onTap: () => onSmartCollectionTap(PremiumGamesType.gm),
             ),
-            const SizedBox(width: 14),
+            const SizedBox(width: _gap),
             _SmartCollectionCard(
               width: _smartCardWidth,
               height: _cardHeight,
@@ -153,9 +153,10 @@ class _SmartCollectionCardState extends State<_SmartCollectionCard> {
                     colors: widget.colors,
                   ),
                   border: Border.all(
-                    color: _hovered
-                        ? kWhiteColor.withValues(alpha: 0.45)
-                        : kWhiteColor.withValues(alpha: 0.18),
+                    color:
+                        _hovered
+                            ? kWhiteColor.withValues(alpha: 0.45)
+                            : kWhiteColor.withValues(alpha: 0.18),
                   ),
                 ),
                 child: Stack(
@@ -248,9 +249,10 @@ class _CollectionCardState extends State<_CollectionCard> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: _hovered
-                      ? kPrimaryColor.withValues(alpha: 0.45)
-                      : kWhiteColor.withValues(alpha: 0.18),
+                  color:
+                      _hovered
+                          ? kPrimaryColor.withValues(alpha: 0.45)
+                          : kWhiteColor.withValues(alpha: 0.18),
                 ),
                 // no selection concept here; hover/press shadow now owned by MotionCard
               ),

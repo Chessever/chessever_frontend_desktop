@@ -276,7 +276,7 @@ class _SidebarHeaderButtonState extends State<_SidebarHeaderButton> {
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               decoration: BoxDecoration(

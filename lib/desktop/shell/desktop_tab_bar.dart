@@ -143,6 +143,7 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                                 ),
                                 child: Transform.scale(
                                   scale: 1 + 0.03 * t,
+                                  filterQuality: FilterQuality.medium,
                                   child: child,
                                 ),
                               );
@@ -1371,7 +1372,7 @@ class _CloseButtonState extends State<_CloseButton> {
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
               builder:
                   (context, scale, child) =>
-                      Transform.scale(scale: scale, child: child),
+                      Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
               child: Container(
                 width: 22,
                 height: 22,

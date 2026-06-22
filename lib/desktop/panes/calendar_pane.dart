@@ -5,6 +5,7 @@ import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
+import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
@@ -183,9 +184,7 @@ class _CalendarPaneState extends ConsumerState<CalendarPane> {
 
         if (!mounted) return;
         if (match == null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Event details not found')),
-          );
+          showDesktopToast(context, 'Event details not found', error: true);
           return;
         }
 
@@ -208,9 +207,7 @@ class _CalendarPaneState extends ConsumerState<CalendarPane> {
       }
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Unable to open event')));
+      showDesktopToast(context, 'Unable to open event', error: true);
     }
   }
 
@@ -356,7 +353,7 @@ class _MonthPillState extends State<_MonthPill> {
             value: _pressed ? 0.97 : (_hovered ? 1.012 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder: (context, scale, child) =>
-                Transform.scale(scale: scale, child: child),
+                Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 80),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -706,7 +703,7 @@ class _DayCellState extends State<_DayCell> {
             value: _pressed ? 0.97 : (_hovered ? 1.012 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder: (context, scale, child) =>
-                Transform.scale(scale: scale, child: child),
+                Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 80),
               decoration: BoxDecoration(

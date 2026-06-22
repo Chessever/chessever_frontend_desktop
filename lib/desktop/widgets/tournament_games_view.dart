@@ -1495,9 +1495,21 @@ Future<void> _refreshOpenedBoardTabWithLatestLiveGame({
 
   try {
     final latestRow = await gameRepo.getGameById(gameId);
-    final latestGame = GamesTourModel.fromGame(latestRow);
+    final fetched = GamesTourModel.fromGame(latestRow);
 
-    container.read(baseGameProvider(gameId).notifier).state = latestGame;
+    // A live card may already hold a newer realtime snapshot than this one-shot
+    // REST read (the stream can be ahead of the games table). Seed the board
+    // from whichever is fresher so we neither show a stale position/clock nor
+    // clobber fresher realtime data already in flight on another channel.
+    final currentBase = container.read(baseGameProvider(gameId));
+    final latestGame =
+        shouldReplaceBaseGame(currentBase, fetched)
+            ? fetched
+            : (currentBase ?? fetched);
+
+    if (currentBase != latestGame) {
+      container.read(baseGameProvider(gameId).notifier).state = latestGame;
+    }
 
     final latestPgn =
         pgnHasMoves(latestGame.pgn) ? latestGame.pgn!.trim() : null;

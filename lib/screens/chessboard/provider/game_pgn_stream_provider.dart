@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -19,7 +21,22 @@ final gameUpdatesStreamProvider = AutoDisposeStreamProvider.family<
   Map<String, dynamic>?,
   String
 >((ref, gameId) {
-  return ref.read(gameStreamRepositoryProvider).subscribeToGameUpdates(gameId);
+  // Board surfaces consume this legacy-Map view; live cards consume the typed
+  // [liveGameUpdateStreamProvider]. Re-emit that SAME provider here so the board
+  // and its card share ONE Supabase Realtime channel per game (Riverpod dedups
+  // the family instance) instead of opening a second independent subscription
+  // that could deliver the same row a beat apart — the source of the open board
+  // and its card briefly disagreeing. The upstream provider already
+  // `.distinct()`s identical rows.
+  final controller = StreamController<Map<String, dynamic>?>();
+  ref.onDispose(controller.close);
+  ref.listen<AsyncValue<LiveGameUpdate?>>(
+    liveGameUpdateStreamProvider(gameId),
+    (_, next) =>
+        next.whenData((update) => controller.add(update?.toLegacyMap())),
+    fireImmediately: true,
+  );
+  return controller.stream;
 });
 
 final liveGameUpdateStreamProvider =

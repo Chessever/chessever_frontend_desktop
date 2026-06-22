@@ -70,6 +70,10 @@ class _PressableScaleState extends State<PressableScale> {
           builder: (context, scale, child) => Transform.scale(
             scale: scale,
             alignment: Alignment.center,
+            // Rasterize the child and scale the BITMAP so Impeller doesn't
+            // re-shape glyphs every frame (the press/hover "titreme",
+            // flutter#149652). Keeps text/colours steady through the scale.
+            filterQuality: FilterQuality.medium,
             child: child,
           ),
           child: widget.child,

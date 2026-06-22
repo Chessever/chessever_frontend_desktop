@@ -647,7 +647,7 @@ class _FavoriteLiveGameCard extends ConsumerWidget {
     );
     return Cue.onMount(
       motion: const CueMotion.smooth(),
-      acts: const [Act.fadeIn(), Act.slideY(from: 0.12), Act.scale(from: 0.99)],
+      acts: const [Act.fadeIn(), Act.slideY(from: 0.12)],
       child: LiveDesktopGameCard(
         game: game,
         tournamentTitle: 'Favorites',
@@ -1370,7 +1370,7 @@ class _StarToggleState extends State<_StarToggle> {
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
               builder:
                   (context, scale, child) =>
-                      Transform.scale(scale: scale, child: child),
+                      Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
               child: Padding(
                 padding: const EdgeInsets.all(6),
                 child: Icon(

@@ -1019,7 +1019,7 @@ class _FavoriteStarButtonState extends State<_FavoriteStarButton> {
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: Padding(
               padding: const EdgeInsets.all(6),
               child: Icon(
@@ -1296,7 +1296,6 @@ class _CountrymenHero extends StatelessWidget {
             motion: const CueMotion.bouncy(),
             acts: [
               const Act.fadeIn(),
-              const Act.scale(from: 0.82),
               const Act.slideY(from: 0.18),
             ],
             child: _FlagBadge(countryCode: code, hasCountry: hasCountry),
@@ -1597,7 +1596,7 @@ class _StatChipState extends State<_StatChip> {
           Cue.onChange(
             value: widget.value,
             motion: const CueMotion.bouncy(),
-            acts: [const Act.scale(from: 0.7), const Act.fadeIn(from: 0.4)],
+            acts: [const Act.fadeIn(from: 0.4)],
             child: Text(
               '${widget.value}',
               key: ValueKey('chip-${widget.label}-${widget.value}'),
@@ -1817,7 +1816,6 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                                 acts: const [
                                   Act.fadeIn(),
                                   Act.slideY(from: 0.18),
-                                  Act.scale(from: 0.985),
                                 ],
                                 child: LiveDesktopGameCard(
                                   game: game,
@@ -1914,7 +1912,6 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                             acts: const [
                               Act.fadeIn(),
                               Act.slideY(from: 0.18),
-                              Act.scale(from: 0.985),
                             ],
                             child: LiveDesktopGameCard(
                               game: game,
@@ -1975,7 +1972,7 @@ class _Loading extends StatelessWidget {
     return Center(
       child: Cue.onMount(
         motion: const CueMotion.smooth(),
-        acts: const [Act.fadeIn(), Act.scale(from: 0.9)],
+        acts: const [Act.fadeIn()],
         child: const SizedBox(
           width: 22,
           height: 22,
@@ -2026,7 +2023,7 @@ class _Empty extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Actor(
-                acts: const [Act.fadeIn(), Act.scale(from: 0.7)],
+                acts: const [Act.fadeIn()],
                 child: Container(
                   width: 56,
                   height: 56,

@@ -1837,6 +1837,7 @@ class _OnboardingButtonState extends State<_OnboardingButton> {
           child: Transform.scale(
             scale: scale,
             alignment: Alignment.center,
+            filterQuality: FilterQuality.medium,
             child: child,
           ),
         );
@@ -1894,6 +1895,7 @@ class _OnboardingIconButtonState extends State<_OnboardingIconButton> {
           (context, value, child) => Transform.scale(
             scale: value,
             alignment: Alignment.center,
+            filterQuality: FilterQuality.medium,
             child: child,
           ),
       child: FButton.icon(

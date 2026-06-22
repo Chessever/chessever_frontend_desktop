@@ -1137,7 +1137,7 @@ class _PrimaryButtonState extends State<_PrimaryButton> {
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
@@ -1208,7 +1208,7 @@ class _SecondaryButtonState extends State<_SecondaryButton> {
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(

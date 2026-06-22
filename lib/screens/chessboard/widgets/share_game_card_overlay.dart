@@ -1702,19 +1702,23 @@ class _ShareCard extends ConsumerWidget {
                   );
                 }
 
-                // Build chessboard with square highlights
-                final chessboard = Chessboard(
+                // Build chessboard with square highlights. v10: a non-
+                // interactive board (was `game: null`) is StaticChessboard,
+                // whose squareHighlights is a plain Map.
+                final chessboard = StaticChessboard(
                   size: boardSize,
                   fen: displayFen,
                   orientation: boardOrientation,
                   lastMove: lastMove,
-                  game: null,
-                  settings: boardSettings,
+                  settings: StaticChessboardSettings.fromBoardSettings(
+                    boardSettings,
+                  ),
                   squareHighlights:
-                      showGameEndingEffect
-                          ? (gameEndingData?.squareHighlights ??
-                              const IMap.empty())
-                          : const IMap.empty(),
+                      (showGameEndingEffect
+                              ? (gameEndingData?.squareHighlights ??
+                                  const IMapConst<Square, SquareHighlight>({}))
+                              : const IMapConst<Square, SquareHighlight>({}))
+                          .unlockView,
                 );
 
                 // Build board widget with overlays if game ended

@@ -1234,7 +1234,7 @@ class _RatingTileState extends State<_RatingTile> {
               motion: DesktopMotion.hover,
               builder:
                   (context, scale, child) =>
-                      Transform.scale(scale: scale, child: child),
+                      Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 160),
                 curve: Curves.easeOut,
@@ -1429,7 +1429,7 @@ class _SourceChipState extends State<_SourceChip> {
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -1974,7 +1974,7 @@ class _BrowseGamesCtaState extends State<_BrowseGamesCta> {
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 140),
               padding: const EdgeInsets.fromLTRB(18, 14, 16, 14),
@@ -5002,7 +5002,7 @@ class _PlayerGamesEventHeaderState
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
@@ -5527,7 +5527,7 @@ class _EventRowState extends State<_EventRow> {
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),

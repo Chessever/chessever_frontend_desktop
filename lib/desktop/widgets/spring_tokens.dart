@@ -39,6 +39,36 @@ class DesktopMotion {
     duration: Duration(milliseconds: 240),
   );
 
+  /// Desktop card hover dock — a smooth, critically-damped glide.
+  ///
+  /// bounce: 0 (no overshoot). The earlier positive bounce read as a faint
+  /// settle-wobble; with the bitmap scale fix in [MotionCard], a critically-
+  /// damped settle is the calmest, smoothest motion — and matches the
+  /// make-interfaces-feel-better rule (spring bounce = 0). It does NOT read as
+  /// stiff: the magnitude (hoverScale + hoverLift in [MotionCard]) carries the
+  /// "alive" lift, and motor still preserves velocity so an interrupted
+  /// hover-out reverses from wherever the spring is. Slightly shorter than the
+  /// old bouncy spring so the glide stays immediate without the overshoot.
+  static const Motion cardHover = CupertinoMotion(
+    duration: Duration(milliseconds: 320),
+    bounce: 0,
+  );
+
+  /// Proximity-magnify tracking for a card under a CursorProximityScope.
+  /// bounce: 0 — the target re-aims on every cursor move, so any bounce would
+  /// oscillate as it chases the cursor. Smooth, responsive, no wobble.
+  static const Motion cardProximity = CupertinoMotion(
+    duration: Duration(milliseconds: 240),
+    bounce: 0,
+  );
+
+  /// Press / release on a card. Quick critically-damped depress + settle —
+  /// bounce: 0 so the release glides back cleanly, never wobbles or springs.
+  static const Motion cardPress = CupertinoMotion(
+    duration: Duration(milliseconds: 220),
+    bounce: 0,
+  );
+
   /// Selection state changes on tabs, sidebar items, score-card rows.
   ///
   /// Calls for a touch of bounce — the affordance is "this is now

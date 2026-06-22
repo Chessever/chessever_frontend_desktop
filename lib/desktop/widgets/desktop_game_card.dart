@@ -1,13 +1,12 @@
 import 'dart:math' as math;
 
-import 'package:chessground/chessground.dart' as cg;
 import 'package:dartchess/dartchess.dart';
-import 'package:fast_immutable_collections/fast_immutable_collections.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/desktop_endgame_board_overlay.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
@@ -111,11 +110,18 @@ class DesktopGameCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final showBoardEvalBar =
-        ref.watch(boardSettingsProviderNew).valueOrNull?.showEvaluationBar ??
-        true;
-    final showEngineGauge = shouldShowGameCardEvalBarFromSettings(
-      ref.watch(engineSettingsProviderNew),
+    // Scope each watch to the single derived bool the card needs so unrelated
+    // settings churn (board colour, piece set, engine depth/time) doesn't
+    // rebuild every live card in the grid.
+    final showBoardEvalBar = ref.watch(
+      boardSettingsProviderNew.select(
+        (s) => s.valueOrNull?.showEvaluationBar ?? true,
+      ),
+    );
+    final showEngineGauge = ref.watch(
+      engineSettingsProviderNew.select(
+        (s) => shouldShowGameCardEvalBarFromSettings(s),
+      ),
     );
     final showEvaluationBar = showBoardEvalBar && showEngineGauge;
     final Widget card;
@@ -1209,16 +1215,14 @@ class _BoardPreview extends ConsumerWidget {
         // any extra vertical space stays balanced.
         final side = constraints.biggest.shortestSide;
         return Center(
-          child: cg.Chessboard.fixed(
+          // Finished games get the toppled-king / dove endgame treatment;
+          // ongoing games fall through to a plain board inside this widget.
+          child: DesktopEndgameBoard(
             size: side,
             fen: resolvedFen,
             orientation: flipped ? Side.black : Side.white,
-            settings: cg.ChessboardSettings(
-              enableCoordinates: false,
-              colorScheme: settings.colorScheme,
-              pieceAssets: settings.pieceAssets,
-            ),
-            shapes: const ISet<cg.Shape>.empty(),
+            status: data.status,
+            settings: settings,
             lastMove: _uciToMove(data.lastMove ?? ''),
           ),
         );
@@ -1410,7 +1414,7 @@ class _ClockPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const fg = kWhiteColor70;
+    final fg = isActive ? kPrimaryColor : kWhiteColor70;
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 5 : 7,
@@ -1419,11 +1423,12 @@ class _ClockPill extends StatelessWidget {
       decoration: BoxDecoration(
         color:
             isActive
-                ? kWhiteColor.withValues(alpha: 0.06)
+                ? kPrimaryColor.withValues(alpha: 0.08)
                 : kBlack3Color.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(4),
         border: Border.all(
-          color: isActive ? kWhiteColor.withValues(alpha: 0.16) : kDividerColor,
+          color:
+              isActive ? kPrimaryColor.withValues(alpha: 0.42) : kDividerColor,
           width: 0.7,
         ),
       ),
@@ -1509,25 +1514,30 @@ class _PulseState extends State<_Pulse> with SingleTickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _c,
-      builder: (context, _) {
-        final t = Curves.easeInOut.transform(_c.value);
-        return Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(
-            color: widget.color,
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: widget.color.withValues(alpha: 0.18 + 0.18 * t),
-                blurRadius: 4 + 2 * t,
-              ),
-            ],
-          ),
-        );
-      },
+    // Isolate the 1.4 s repeating glow on its own layer: with many live cards
+    // on screen, the per-frame shadow repaint stays an 8×8 px raster instead
+    // of dirtying the card around it.
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, _) {
+          final t = Curves.easeInOut.transform(_c.value);
+          return Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: widget.color,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: widget.color.withValues(alpha: 0.18 + 0.18 * t),
+                  blurRadius: 4 + 2 * t,
+                ),
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 }

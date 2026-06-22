@@ -58,6 +58,24 @@ import 'package:chessever/utils/foreground_task_scheduler.dart';
 Future<void> desktopMain({
   List<String> initialArguments = const <String>[],
 }) async {
+  // Run the WHOLE entrypoint inside one error zone. The Flutter binding is
+  // first initialized in here (via _boardWindowPayloadForCurrentEngine ->
+  // ensureInitialized) and every runApp below also runs in here, so the
+  // binding-init zone and the runApp zone match. Initializing the binding in
+  // the root zone first (as we used to) and calling runApp inside a nested
+  // runZonedGuarded later is exactly what triggered Flutter's "Zone mismatch"
+  // assertion at startup. One zone also means a release-mode crash on any
+  // path — board window, primary boot — gets logged before the OS kills us.
+  await runZonedGuarded(
+    () => _desktopEntrypoint(initialArguments),
+    (error, stack) {
+      print('[desktop] fatal error (details sent to Sentry)');
+      ErrorReporter.report(error, stackTrace: stack, tag: 'desktop.fatal');
+    },
+  );
+}
+
+Future<void> _desktopEntrypoint(List<String> initialArguments) async {
   final releaseEnvProbe = _releaseEnvProbeArgument(initialArguments);
   if (releaseEnvProbe != null) {
     await _runReleaseEnvProbe(releaseEnvProbe);
@@ -68,17 +86,7 @@ Future<void> desktopMain({
     initialArguments,
   );
   if (boardWindowPayload != null) {
-    await runZonedGuarded(() => _desktopBoardWindowBoot(boardWindowPayload), (
-      error,
-      stack,
-    ) {
-      print('[desktop] board window fatal error');
-      ErrorReporter.report(
-        error,
-        stackTrace: stack,
-        tag: 'desktop.board_window.fatal',
-      );
-    });
+    await _desktopBoardWindowBoot(boardWindowPayload);
     return;
   }
 
@@ -89,15 +97,7 @@ Future<void> desktopMain({
     exit(0);
   }
 
-  // Wrap everything so a release-mode crash gets logged before the OS kills
-  // the process. Without this, errors after `runApp` would silently exit.
-  await runZonedGuarded(
-    () => _desktopMainWithSentry(initialArguments: initialArguments),
-    (error, stack) {
-      print('[desktop] fatal error (details sent to Sentry)');
-      ErrorReporter.report(error, stackTrace: stack, tag: 'desktop.fatal');
-    },
-  );
+  await _desktopMainWithSentry(initialArguments: initialArguments);
 }
 
 Future<DesktopBoardWindowPayload?> _boardWindowPayloadForCurrentEngine(
@@ -390,6 +390,27 @@ Future<void> _desktopBoot({
   runApp(
     UncontrolledProviderScope(container: container, child: const DesktopApp()),
   );
+
+  // Profile-only frame instrumentation. Surfaces any frame that blew the
+  // 120 fps budget (8.3 ms), split into UI-thread build time vs raster-thread
+  // time so we can tell *which* thread is the bottleneck before optimizing.
+  // Compiled out of release builds.
+  if (kProfileMode) {
+    WidgetsBinding.instance.addTimingsCallback((timings) {
+      for (final timing in timings) {
+        final buildMs = timing.buildDuration.inMicroseconds / 1000.0;
+        final rasterMs = timing.rasterDuration.inMicroseconds / 1000.0;
+        final totalMs = buildMs + rasterMs;
+        if (totalMs > 8.3) {
+          print(
+            '[frame] ${totalMs.toStringAsFixed(1)}ms '
+            '(build ${buildMs.toStringAsFixed(1)} + raster ${rasterMs.toStringAsFixed(1)})'
+            '${totalMs > 16.6 ? '  <<DROPPED BELOW 60FPS' : ''}',
+          );
+        }
+      }
+    });
+  }
 }
 
 Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {

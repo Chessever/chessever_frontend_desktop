@@ -5,11 +5,13 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:forui/forui.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
+import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/services/telegram_notification_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -136,14 +138,11 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
         });
         return;
       }
+      // Toast before popping so the still-mounted dialog context can resolve
+      // the app-root FToaster; the toast lives at app level and outlives the
+      // dialog's dismissal.
+      showDesktopToast(context, 'Thanks — your report was sent.');
       Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Thanks — your report was sent.'),
-          backgroundColor: kBlack2Color.withValues(alpha: 0.95),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -298,11 +297,7 @@ class _ScreenshotOption extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Checkbox(
-            value: selected,
-            onChanged: (value) => onChanged(value ?? false),
-            activeColor: kPrimaryColor,
-          ),
+          FCheckbox(value: selected, onChange: onChanged),
           const SizedBox(width: 8),
           const Expanded(
             child: Column(

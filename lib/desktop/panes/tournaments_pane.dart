@@ -24,6 +24,7 @@ import 'package:chessever/desktop/widgets/desktop_for_you_strip_layout.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_team_match_grouping.dart';
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
@@ -886,86 +887,156 @@ class _EventPosterCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = _categoryColor(event.tourEventCategory);
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          _DesktopEventVisual(event: event, borderRadius: BorderRadius.zero),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: kBlackColor.withValues(alpha: 0.5),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: kBlack2Color,
+          border: Border.all(color: kWhiteColor.withValues(alpha: 0.06)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              flex: 6,
+              child: _EventCardMedia(event: event, padding: 12),
+            ),
+            _EventPosterInfoPanel(event: event),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EventCardMedia extends StatelessWidget {
+  const _EventCardMedia({required this.event, required this.padding});
+
+  final GroupEventCardModel event;
+  final double padding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _DesktopEventVisual(event: event, borderRadius: BorderRadius.zero),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                kBlackColor.withValues(alpha: 0.56),
+                kBlackColor.withValues(alpha: 0.08),
+                kBlackColor.withValues(alpha: 0.18),
+              ],
+              stops: const [0, 0.58, 1],
             ),
           ),
-          Positioned(
-            left: 12,
-            top: 12,
-            right: 12,
-            child: Row(
+        ),
+        // Only the favorite icon sits on the photo — an icon reads on any
+        // artwork. The status badge + time control were unreadable overlaid on
+        // the image, so they move to the solid info panel below.
+        Positioned(
+          top: padding,
+          right: padding,
+          child: DesktopEventFavoriteIconButton(event: event, compact: true),
+        ),
+      ],
+    );
+  }
+}
+
+class _EventPosterInfoPanel extends StatelessWidget {
+  const _EventPosterInfoPanel({required this.event});
+
+  final GroupEventCardModel event;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _categoryColor(event.tourEventCategory);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        border: Border(
+          top: BorderSide(color: kWhiteColor.withValues(alpha: 0.08)),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 13),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Status + time control, on the solid panel where they read (were
+            // unreadable overlaid on the poster image).
+            Row(
               children: [
                 _StatusBadge(category: event.tourEventCategory),
-                const SizedBox(width: 8),
+                if (event.timeControl.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      event.timeControl,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: kWhiteColor70,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 9),
+            Text(
+              event.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kWhiteColor,
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+                height: 1.18,
+                letterSpacing: 0,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
                 Expanded(
                   child: Text(
-                    event.timeControl,
+                    _eventMetaLine(event),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: kWhiteColor70,
                       fontSize: 11,
+                      height: 1.2,
+                    ),
+                  ),
+                ),
+                if (event.maxAvgElo > 0) ...[
+                  const SizedBox(width: 10),
+                  Text(
+                    'Avg ${event.maxAvgElo}',
+                    style: const TextStyle(
+                      color: kWhiteColor70,
+                      fontSize: 11,
                       fontWeight: FontWeight.w700,
+                      fontFeatures: [FontFeature.tabularFigures()],
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                DesktopEventFavoriteIconButton(event: event, compact: true),
+                ],
+                const SizedBox(width: 10),
+                Icon(Icons.open_in_new_rounded, size: 14, color: color),
               ],
             ),
-          ),
-          Positioned(
-            left: 14,
-            right: 14,
-            bottom: 14,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  event.title,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: kWhiteColor,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    height: 1.18,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _eventMetaLine(event),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: kWhiteColor70,
-                          fontSize: 11,
-                          height: 1.2,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Icon(Icons.open_in_new_rounded, size: 14, color: color),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -990,7 +1061,10 @@ class _DesktopEventVisual extends ConsumerWidget {
               event.location,
             );
             if (event.eventSource == EventSource.communityEvent) {
-              return _EventFallbackVisual(countryCode: fallbackCountry);
+              return _EventFallbackVisual(
+                event: event,
+                countryCode: fallbackCountry,
+              );
             }
 
             final width =
@@ -1018,72 +1092,26 @@ class _DesktopEventVisual extends ConsumerWidget {
                     fadeOutDuration: const Duration(milliseconds: 120),
                     placeholder: (_, __) => const _EventImageSkeleton(),
                     errorWidget:
-                        (_, __, ___) =>
-                            _EventFallbackVisual(countryCode: countryCode),
+                        (_, __, ___) => _EventFallbackVisual(
+                          event: event,
+                          countryCode: countryCode,
+                        ),
                   );
                 }
-                return _EventFallbackVisual(countryCode: countryCode);
+                return _EventFallbackVisual(
+                  event: event,
+                  countryCode: countryCode,
+                );
               },
               loading: () => const _EventImageSkeleton(),
               error:
-                  (_, __) => _EventFallbackVisual(countryCode: fallbackCountry),
+                  (_, __) => _EventFallbackVisual(
+                    event: event,
+                    countryCode: fallbackCountry,
+                  ),
             );
           },
         ),
-      ),
-    );
-  }
-}
-
-class _EventThumbnailVisual extends StatelessWidget {
-  const _EventThumbnailVisual({
-    required this.event,
-    required this.statusColor,
-    required this.selected,
-  });
-
-  final GroupEventCardModel event;
-  final Color statusColor;
-  final bool selected;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 76,
-      height: 58,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          _DesktopEventVisual(
-            event: event,
-            borderRadius: BorderRadius.circular(7),
-          ),
-          Positioned(
-            left: 0,
-            top: 0,
-            bottom: 0,
-            child: Container(
-              width: 4,
-              decoration: BoxDecoration(
-                color: statusColor,
-                borderRadius: const BorderRadius.horizontal(
-                  left: Radius.circular(7),
-                ),
-              ),
-            ),
-          ),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(7),
-              border: Border.all(
-                color:
-                    selected
-                        ? statusColor.withValues(alpha: 0.34)
-                        : kWhiteColor.withValues(alpha: 0.08),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1099,12 +1127,15 @@ class _EventImageSkeleton extends StatelessWidget {
 }
 
 class _EventFallbackVisual extends StatelessWidget {
-  const _EventFallbackVisual({required this.countryCode});
+  const _EventFallbackVisual({required this.event, required this.countryCode});
 
+  final GroupEventCardModel event;
   final String? countryCode;
 
   @override
   Widget build(BuildContext context) {
+    final accent = _eventFallbackAccent(event);
+    final secondary = _eventFallbackSecondary(event);
     final code = countryCode;
     if (code != null && code.isNotEmpty) {
       return Stack(
@@ -1123,25 +1154,140 @@ class _EventFallbackVisual extends StatelessWidget {
               color: kBlackColor.withValues(alpha: 0.18),
             ),
           ),
+          Positioned(
+            left: 10,
+            bottom: 10,
+            child: _EventFallbackInitialBadge(event: event, accent: accent),
+          ),
         ],
       );
     }
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        const DecoratedBox(decoration: BoxDecoration(color: Color(0xFF1B2024))),
-        const LogoPatternFallback(),
-        Center(
-          child: Icon(
-            Icons.emoji_events_rounded,
-            size: 28,
-            color: kWhiteColor.withValues(alpha: 0.62),
-          ),
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color.lerp(accent, kBlackColor, 0.58)!,
+            Color.lerp(secondary, kBlackColor, 0.48)!,
+          ],
         ),
-      ],
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Opacity(
+            opacity: 0.16,
+            child: ColoredBox(
+              color: accent,
+              child: const LogoPatternFallback(),
+            ),
+          ),
+          Positioned(
+            right: -34,
+            top: -36,
+            child: Transform.rotate(
+              angle: -0.18,
+              child: Container(
+                width: 108,
+                height: 210,
+                decoration: BoxDecoration(
+                  color: secondary.withValues(alpha: 0.22),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: kWhiteColor.withValues(alpha: 0.06),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 12,
+            bottom: 12,
+            child: _EventFallbackInitialBadge(event: event, accent: accent),
+          ),
+        ],
+      ),
     );
   }
+}
+
+class _EventFallbackInitialBadge extends StatelessWidget {
+  const _EventFallbackInitialBadge({required this.event, required this.accent});
+
+  final GroupEventCardModel event;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 42,
+      height: 42,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: kBlackColor.withValues(alpha: 0.62),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: accent.withValues(alpha: 0.72)),
+      ),
+      child: Text(
+        _eventInitials(event.title),
+        style: const TextStyle(
+          color: kWhiteColor,
+          fontSize: 14,
+          height: 1,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
+const List<Color> _eventFallbackPalette = [
+  Color(0xFF355A46),
+  Color(0xFF40506F),
+  Color(0xFF694A3D),
+  Color(0xFF5D4D74),
+  Color(0xFF35616A),
+  Color(0xFF686139),
+  Color(0xFF6A3F4B),
+  Color(0xFF3E6654),
+];
+
+Color _eventFallbackAccent(GroupEventCardModel event) {
+  final hash = _stableEventHash(event);
+  final base = _eventFallbackPalette[hash % _eventFallbackPalette.length];
+  return Color.lerp(base, _categoryColor(event.tourEventCategory), 0.22)!;
+}
+
+Color _eventFallbackSecondary(GroupEventCardModel event) {
+  final hash = _stableEventHash(event) + 3;
+  return _eventFallbackPalette[hash % _eventFallbackPalette.length];
+}
+
+int _stableEventHash(GroupEventCardModel event) {
+  var hash = 0;
+  final source = '${event.id}:${event.title}';
+  for (final unit in source.codeUnits) {
+    hash = (hash * 31 + unit) & 0x7fffffff;
+  }
+  return hash;
+}
+
+String _eventInitials(String title) {
+  final matches = RegExp(r'[A-Za-z0-9]+').allMatches(title);
+  final parts = [
+    for (final match in matches)
+      if ((match.group(0) ?? '').isNotEmpty) match.group(0)!,
+  ];
+  if (parts.isEmpty) return 'EV';
+  if (parts.length == 1) {
+    return parts.first
+        .substring(0, parts.first.length.clamp(1, 2))
+        .toUpperCase();
+  }
+  return '${parts.first[0]}${parts[1][0]}'.toUpperCase();
 }
 
 String? _countryCodeFromLocation(WidgetRef ref, String? location) {
@@ -1246,11 +1392,32 @@ class _DesktopEventFilterButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isActive = activeCount > 0;
-    return FButton(
-      style: isActive ? FButtonStyle.primary() : FButtonStyle.outline(),
-      prefix: const Icon(Icons.tune_rounded, size: 14),
-      onPress: onPressed,
-      child: Text(isActive ? 'Filters $activeCount' : 'Filters'),
+    return DesktopTooltip(
+      message: isActive ? '$activeCount active event filters' : 'Event filters',
+      // Render as a one-segment sibling of the DesktopSegmentedTabs beside it:
+      // the identical 38px dark-zinc forui pill (surface, radius, divider
+      // border) wrapping a segment-styled FButton, reusing the tabs' own
+      // segment style. So Filters belongs to the same forui chrome instead of
+      // reading as a stray, differently-shaped button.
+      child: FTheme(
+        data: FThemes.zinc.dark,
+        child: Container(
+          height: 38,
+          padding: const EdgeInsets.all(3),
+          decoration: BoxDecoration(
+            color: kBlack2Color,
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(color: kDividerColor),
+          ),
+          child: FButton(
+            style: desktopSegmentButtonStyle(selected: isActive),
+            mainAxisSize: MainAxisSize.min,
+            onPress: onPressed,
+            prefix: const Icon(Icons.tune_rounded),
+            child: Text(isActive ? 'Filters · $activeCount' : 'Filters'),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1280,18 +1447,53 @@ class _DesktopEventFilterDialog extends ConsumerWidget {
     return FDialog(
       animation: animation,
       direction: Axis.horizontal,
-      title: const Text('Event filters'),
+      title: Row(
+        children: [
+          const Expanded(child: Text('Event filters')),
+          FButton.icon(
+            style: FButtonStyle.ghost(),
+            onPress: () => Navigator.of(context).maybePop(),
+            child: const Icon(Icons.close_rounded, size: 16),
+          ),
+        ],
+      ),
       body: SizedBox(
         width: 360,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              initialCategory == ge.GroupEventCategory.forYou
-                  ? 'For You feed'
-                  : 'Current and Past events',
-              style: const TextStyle(color: kLightGreyColor, fontSize: 12),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: kBlack3Color,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: kDividerColor),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.travel_explore_rounded,
+                      size: 16,
+                      color: kWhiteColor70,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        initialCategory == ge.GroupEventCategory.forYou
+                            ? 'For You feed'
+                            : 'Current and Past events',
+                        style: const TextStyle(
+                          color: kWhiteColor70,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 16),
             const _DesktopFilterSectionLabel('Format'),
@@ -1432,8 +1634,13 @@ class _DesktopFilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Same forui pill as the segmented tabs + Filters button: selected reads
+    // as a primary tint, not a heavy outline/solid FButton. Keeps the dialog
+    // consistent with the rest of the desktop chrome. No check-icon prefix —
+    // it shifted width on toggle; the tint already signals selection.
     return FButton(
-      style: selected ? FButtonStyle.primary() : FButtonStyle.outline(),
+      style: desktopSegmentButtonStyle(selected: selected, wrap: true),
+      mainAxisSize: MainAxisSize.min,
       onPress: onPressed,
       child: Text(label),
     );
@@ -1589,13 +1796,13 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
             behavior: HitTestBehavior.opaque,
             onTap: widget.onTap,
             child: MotionCard(
-              borderRadius: 8,
+              borderRadius: 10,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 130),
-                padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+                clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
                   color: highlight ? kBlack3Color : kBlack2Color,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                     color:
                         widget.selected
@@ -1606,102 +1813,206 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
                   ),
                 ),
                 child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _EventThumbnailVisual(
+                    _TournamentTileMedia(
                       event: t,
                       statusColor: categoryColor,
                       selected: widget.selected,
                     ),
-                    const SizedBox(width: 12),
                     Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Row(
-                            children: [
-                              _StatusBadge(category: t.tourEventCategory),
-                              const SizedBox(width: 8),
-                              if (t.timeControl.isNotEmpty)
-                                Flexible(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 11, 12, 11),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Category badge, moved off the photo onto the
+                                // solid body where its colours read.
+                                _StatusBadge(category: t.tourEventCategory),
+                                const SizedBox(width: 8),
+                                Expanded(
                                   child: Text(
-                                    t.timeControl,
-                                    maxLines: 1,
+                                    t.title,
+                                    maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
-                                      color: kLightGreyColor,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
+                                      color: kWhiteColor,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w800,
+                                      height: 1.17,
+                                      letterSpacing: 0,
                                     ),
                                   ),
                                 ),
-                            ],
-                          ),
-                          const SizedBox(height: 7),
-                          Text(
-                            t.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: kWhiteColor,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  _eventMetaLine(t),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: kLightGreyColor,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ),
-                              if (t.maxAvgElo > 0) ...[
-                                const SizedBox(width: 10),
-                                Text(
-                                  '${t.maxAvgElo}',
-                                  style: const TextStyle(
-                                    color: kWhiteColor70,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
-                                    fontFeatures: [
-                                      FontFeature.tabularFigures(),
-                                    ],
-                                  ),
+                                const SizedBox(width: 8),
+                                DesktopEventFavoriteIconButton(
+                                  event: t,
+                                  compact: true,
                                 ),
                               ],
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    DesktopEventFavoriteIconButton(event: t, compact: true),
-                    if (widget.loading) ...[
-                      const SizedBox(width: 10),
-                      const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.6,
-                          valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                            ),
+                            const Spacer(),
+                            Text(
+                              _eventMetaLine(t),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: kLightGreyColor,
+                                fontSize: 11,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                if (t.timeControl.isNotEmpty)
+                                  Flexible(
+                                    child: _TournamentTilePill(
+                                      label: t.timeControl,
+                                      icon: Icons.schedule_rounded,
+                                    ),
+                                  ),
+                                if (t.maxAvgElo > 0) ...[
+                                  const SizedBox(width: 8),
+                                  _TournamentTilePill(
+                                    label: 'Avg ${t.maxAvgElo}',
+                                    icon: Icons.leaderboard_rounded,
+                                  ),
+                                ],
+                                const Spacer(),
+                                if (widget.loading)
+                                  const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 1.6,
+                                      valueColor: AlwaysStoppedAnimation(
+                                        kPrimaryColor,
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  Icon(
+                                    Icons.open_in_new_rounded,
+                                    size: 14,
+                                    color: categoryColor,
+                                  ),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
-                    ],
+                    ),
                   ],
                 ),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _TournamentTileMedia extends StatelessWidget {
+  const _TournamentTileMedia({
+    required this.event,
+    required this.statusColor,
+    required this.selected,
+  });
+
+  final GroupEventCardModel event;
+  final Color statusColor;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 122,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          _DesktopEventVisual(event: event, borderRadius: BorderRadius.zero),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  kBlackColor.withValues(alpha: 0.46),
+                  kBlackColor.withValues(alpha: 0.04),
+                  kBlackColor.withValues(alpha: 0.18),
+                ],
+                stops: const [0, 0.56, 1],
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: Container(width: 4, color: statusColor),
+          ),
+          // Category badge removed from the photo — it was unreadable against
+          // the artwork. The 4px status-colour bar keeps the at-a-glance
+          // category hint here; the labelled badge now sits on the solid body.
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border(
+                  right: BorderSide(
+                    color:
+                        selected
+                            ? statusColor.withValues(alpha: 0.32)
+                            : kWhiteColor.withValues(alpha: 0.08),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TournamentTilePill extends StatelessWidget {
+  const _TournamentTilePill({required this.label, required this.icon});
+
+  final String label;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 7),
+      decoration: BoxDecoration(
+        color: kBackgroundColor,
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: kWhiteColor70),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2544,6 +2855,7 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
   Widget build(BuildContext context) {
     final event = widget.event;
     final highlighted = widget.selected || _hovered;
+    final categoryColor = _categoryColor(event.tourEventCategory);
     return DesktopEventContextMenu(
       event: event,
       onOpen: widget.onOpen,
@@ -2555,17 +2867,17 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
             behavior: HitTestBehavior.opaque,
             onTap: widget.onOpen,
             child: MotionCard(
-              borderRadius: 9,
+              borderRadius: 10,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 130),
                 clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
                   color: highlighted ? kBlack3Color : kBlack2Color,
-                  borderRadius: BorderRadius.circular(9),
+                  borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                     color:
                         widget.selected
-                            ? kPrimaryColor.withValues(alpha: 0.42)
+                            ? categoryColor.withValues(alpha: 0.42)
                             : _hovered
                             ? kWhiteColor.withValues(alpha: 0.12)
                             : kDividerColor,
@@ -2576,134 +2888,171 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
                       widget.selected
                           ? [
                             BoxShadow(
-                              color: kPrimaryColor.withValues(alpha: 0.08),
+                              color: categoryColor.withValues(alpha: 0.08),
                               blurRadius: 12,
                               offset: const Offset(0, 6),
                             ),
                           ]
                           : null,
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      height: 82,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          _DesktopEventVisual(
-                            event: event,
-                            borderRadius: BorderRadius.zero,
-                          ),
-                          DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: kBlackColor.withValues(alpha: 0.4),
-                            ),
-                          ),
-                          Positioned(
-                            left: 10,
-                            top: 10,
-                            right: 10,
-                            child: Row(
-                              children: [
-                                _StatusBadge(category: event.tourEventCategory),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    event.timeControl,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: kWhiteColor70,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                DesktopEventFavoriteIconButton(
-                                  event: event,
-                                  compact: true,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              event.title,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: kWhiteColor,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                                height: 1.16,
-                                letterSpacing: 0,
-                              ),
-                            ),
-                            const Spacer(),
-                            Text(
-                              _eventMetaLine(event),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: kLightGreyColor,
-                                fontSize: 11,
-                                height: 1.35,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            Row(
-                              children: [
-                                if (event.maxAvgElo > 0)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: kBackgroundColor,
-                                      borderRadius: BorderRadius.circular(5),
-                                      border: Border.all(color: kDividerColor),
-                                    ),
-                                    child: Text(
-                                      'Avg ${event.maxAvgElo}',
-                                      style: const TextStyle(
-                                        color: kWhiteColor70,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700,
-                                        fontFeatures: [
-                                          FontFeature.tabularFigures(),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                const Spacer(),
-                                Icon(
-                                  Icons.open_in_new_rounded,
-                                  size: 15,
-                                  color: kWhiteColor70,
-                                ),
-                              ],
-                            ),
-                          ],
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final roomy = constraints.maxHeight >= 260;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _ForYouEventHeroImage(
+                          event: event,
+                          statusColor: categoryColor,
+                          selected: widget.selected,
+                          height: roomy ? 104 : 82,
                         ),
-                      ),
-                    ),
-                  ],
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 12, 14, 14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Status + favorite, moved off the photo onto
+                                // the solid body where their colours read.
+                                Row(
+                                  children: [
+                                    _StatusBadge(
+                                      category: event.tourEventCategory,
+                                    ),
+                                    const Spacer(),
+                                    DesktopEventFavoriteIconButton(
+                                      event: event,
+                                      compact: true,
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  event.title,
+                                  maxLines: roomy ? 3 : 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: kWhiteColor,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w800,
+                                    height: 1.16,
+                                    letterSpacing: 0,
+                                  ),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  _eventMetaLine(event),
+                                  maxLines: roomy ? 2 : 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: kLightGreyColor,
+                                    fontSize: 11,
+                                    height: 1.25,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Row(
+                                  children: [
+                                    if (event.timeControl.isNotEmpty)
+                                      Flexible(
+                                        child: _TournamentTilePill(
+                                          label: event.timeControl,
+                                          icon: Icons.schedule_rounded,
+                                        ),
+                                      ),
+                                    if (event.maxAvgElo > 0) ...[
+                                      const SizedBox(width: 8),
+                                      _TournamentTilePill(
+                                        label: 'Avg ${event.maxAvgElo}',
+                                        icon: Icons.leaderboard_rounded,
+                                      ),
+                                    ],
+                                    const Spacer(),
+                                    Icon(
+                                      Icons.open_in_new_rounded,
+                                      size: 14,
+                                      color: categoryColor,
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ForYouEventHeroImage extends StatelessWidget {
+  const _ForYouEventHeroImage({
+    required this.event,
+    required this.statusColor,
+    required this.selected,
+    required this.height,
+  });
+
+  final GroupEventCardModel event;
+  final Color statusColor;
+  final bool selected;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: height,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          _DesktopEventVisual(event: event, borderRadius: BorderRadius.zero),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  kBlackColor.withValues(alpha: 0.54),
+                  kBlackColor.withValues(alpha: 0.1),
+                  kBlackColor.withValues(alpha: 0.2),
+                ],
+                stops: const [0, 0.58, 1],
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: Container(width: 4, color: statusColor),
+          ),
+          // No text/controls overlaid on the photo — they were unreadable
+          // against varying artwork. The status badge, time control and
+          // favorite now live on the solid card body below, where contrast is
+          // guaranteed. The image stays clean.
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color:
+                        selected
+                            ? statusColor.withValues(alpha: 0.3)
+                            : kWhiteColor.withValues(alpha: 0.08),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

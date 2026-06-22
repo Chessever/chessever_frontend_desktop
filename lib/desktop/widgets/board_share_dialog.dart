@@ -346,16 +346,16 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: cg.Chessboard.fixed(
+                    child: cg.StaticChessboard(
                       size: 240,
-                      settings: cg.ChessboardSettings(
+                      settings: cg.StaticChessboardSettings.fromBoardSettings(cg.ChessboardSettings(
                         enableCoordinates: true,
                         animationDuration: Duration.zero,
                         colorScheme: settings.colorScheme,
                         pieceAssets: settings.pieceAssets,
                         borderRadius: BorderRadius.zero,
                         boxShadow: const [],
-                      ),
+                      )),
                       orientation: Side.white,
                       fen: widget.position.fen,
                       lastMove: widget.lastMove,

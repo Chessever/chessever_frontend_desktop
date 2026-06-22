@@ -173,7 +173,7 @@ class _AuthButtonState extends State<_AuthButton> {
           motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
           builder:
               (context, value, child) =>
-                  Transform.scale(scale: value, child: child),
+                  Transform.scale(scale: value, filterQuality: FilterQuality.medium, child: child),
           child: FButton(
             style: _welcomeAuthButtonStyle(primary: widget.primary),
             onPress: widget.disabled ? null : widget.onTap,

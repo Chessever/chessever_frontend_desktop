@@ -754,6 +754,53 @@ class _GamebaseChessBoardState extends ConsumerState<_GamebaseChessBoard> {
   // which skipped its built-in piece-translation animation. Keep the key
   // stable; chessground clears its own selection on the next board tap.
 
+  // chessground 10 drives the interactive board through a controller.
+  late ChessboardController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = ChessboardController(game: _gameData());
+  }
+
+  @override
+  void didUpdateWidget(_GamebaseChessBoard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.fen != widget.fen) {
+      _controller.updatePosition(_gameData());
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  // GameData snapshot from the current FEN. An unparseable FEN yields a
+  // non-interactive (PlayerSide.none) board, mirroring the static branch.
+  GameData _gameData() {
+    Chess? position;
+    try {
+      position = Chess.fromSetup(Setup.parseFen(widget.fen));
+    } catch (_) {
+      position = null;
+    }
+    return GameData(
+      fen: widget.fen,
+      playerSide: position == null
+          ? PlayerSide.none
+          : (position.turn == Side.white ? PlayerSide.white : PlayerSide.black),
+      sideToMove: position?.turn ?? Side.white,
+      validMoves: position == null
+          ? const <Square, Set<Square>>{}
+          : makeLegalMoves(position),
+      kingSquareInCheck: (position != null && position.isCheck)
+          ? position.board.kingOf(position.turn)
+          : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final boardSettingsAsync = ref.watch(boardSettingsProviderNew);
@@ -785,18 +832,21 @@ class _GamebaseChessBoardState extends ConsumerState<_GamebaseChessBoard> {
         borderRadius: BorderRadius.circular(4.br),
         child:
             position == null
-                ? Chessboard.fixed(
+                ? StaticChessboard(
                   size: widget.boardSize,
-                  settings: ChessboardSettings(
-                    enableCoordinates: true,
-                    colorScheme: boardSettings.colorScheme,
-                    pieceAssets: boardSettings.pieceAssets,
+                  settings: StaticChessboardSettings.fromBoardSettings(
+                    ChessboardSettings(
+                      enableCoordinates: true,
+                      colorScheme: boardSettings.colorScheme,
+                      pieceAssets: boardSettings.pieceAssets,
+                    ),
                   ),
                   orientation: widget.isFlipped ? Side.black : Side.white,
                   fen: widget.fen,
                 )
                 : Chessboard(
                   size: widget.boardSize,
+                  controller: _controller,
                   settings: ChessboardSettings(
                     enableCoordinates: true,
                     animationDuration: const Duration(milliseconds: 200),
@@ -806,40 +856,26 @@ class _GamebaseChessBoardState extends ConsumerState<_GamebaseChessBoard> {
                     autoQueenPromotionOnPremove: false,
                   ),
                   orientation: widget.isFlipped ? Side.black : Side.white,
-                  fen: widget.fen,
-                  game: GameData(
-                    playerSide:
-                        position.turn == Side.white
-                            ? PlayerSide.white
-                            : PlayerSide.black,
-                    validMoves: makeLegalMoves(position),
-                    sideToMove: position.turn,
-                    isCheck: position.isCheck,
-                    promotionMove: null,
-                    onMove: (Move move, {bool? viaDragAndDrop}) async {
-                      // Playing this move would land past the free-tier
-                      // boundary — surface the paywall instead of advancing
-                      // and then blurring the panel. Chessground snaps the
-                      // piece back when state doesn't change.
-                      if (!kDebugMode &&
-                          !ref.read(subscriptionProvider).isSubscribed) {
-                        final currentMoveNumber =
-                            ref
-                                .read(gamebaseExplorerProvider)
-                                .currentMoveNumber;
-                        if (currentMoveNumber >= kFreeExplorerMoveNumberLimit) {
-                          if (!context.mounted) return;
-                          final unlocked = await requirePremiumGuard(
-                            context,
-                            ref,
-                          );
-                          if (!unlocked) return;
-                        }
+                  // v10: position rides on _controller; promotion is handled
+                  // inside the board and onMove fires once with the resolved
+                  // move (promotion role already set).
+                  onMove: (Move move, {bool? viaDragAndDrop}) async {
+                    // Playing this move would land past the free-tier
+                    // boundary — surface the paywall instead of advancing
+                    // and then blurring the panel. Chessground snaps the
+                    // piece back when state doesn't change.
+                    if (!kDebugMode &&
+                        !ref.read(subscriptionProvider).isSubscribed) {
+                      final currentMoveNumber =
+                          ref.read(gamebaseExplorerProvider).currentMoveNumber;
+                      if (currentMoveNumber >= kFreeExplorerMoveNumberLimit) {
+                        if (!context.mounted) return;
+                        final unlocked = await requirePremiumGuard(context, ref);
+                        if (!unlocked) return;
                       }
-                      notifier.makeMove(move.uci);
-                    },
-                    onPromotionSelection: (_) {},
-                  ),
+                    }
+                    notifier.makeMove(move.uci);
+                  },
                 ),
       ),
     );

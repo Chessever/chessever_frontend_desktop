@@ -216,7 +216,7 @@ class _ClearButtonState extends State<_ClearButton> {
             value: _pressed ? 0.97 : (_hovered ? 1.02 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder: (context, scale, child) =>
-                Transform.scale(scale: scale, child: child),
+                Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: Container(
               width: 18,
               height: 18,

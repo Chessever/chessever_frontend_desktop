@@ -1160,15 +1160,15 @@ class _ChessBoardWidget extends ConsumerWidget {
           ],
         ),
         child: AbsorbPointer(
-          child: Chessboard.fixed(
+          child: StaticChessboard(
             size: boardSize,
-            settings: ChessboardSettings(
+            settings: StaticChessboardSettings.fromBoardSettings(ChessboardSettings(
               enableCoordinates: showCoordinates,
               // Use theme colors from settings with our custom app colors
               colorScheme: boardSettings.colorScheme,
               // Use piece set from settings
               pieceAssets: boardSettings.pieceAssets,
-            ),
+            )),
             orientation: orientation,
             fen: displayFen,
             lastMove: lastMove,

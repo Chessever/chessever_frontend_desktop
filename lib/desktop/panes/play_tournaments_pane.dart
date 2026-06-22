@@ -4,7 +4,6 @@ import 'dart:math';
 import 'package:country_flags/country_flags.dart';
 import 'package:chessground/chessground.dart' as cg;
 import 'package:dartchess/dartchess.dart' hide File;
-import 'package:fast_immutable_collections/fast_immutable_collections.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
@@ -1329,7 +1328,7 @@ class _FocusedGameViewState extends ConsumerState<_FocusedGameView> {
                       orientation: humanSide ?? Side.white,
                       playerSide: cg.PlayerSide.none,
                       sideToMove: position.turn,
-                      validMoves: const IMapConst<Square, ISet<Square>>({}),
+                      validMoves: const <Square, Set<Square>>{},
                       lastMove: _parseLastMove(game.lastMoveUci),
                       isCheck: position.isCheck,
                       onMove: (_, {viaDragAndDrop}) {},

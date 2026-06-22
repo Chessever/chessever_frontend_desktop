@@ -395,7 +395,7 @@ class _SegmentTabState extends State<_SegmentTab> {
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: Stack(
               children: [
                 Padding(

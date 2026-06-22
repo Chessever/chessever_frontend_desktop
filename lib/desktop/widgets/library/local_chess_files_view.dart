@@ -1358,9 +1358,9 @@ class _LocalHeaderCell extends StatelessWidget {
       _LocalGamesSortDir.desc => Icons.arrow_downward_rounded,
     };
 
-    return Tooltip(
+    return DesktopTooltip(
       message: 'Sort by $label',
-      waitDuration: const Duration(milliseconds: 450),
+      hoverEnterDuration: const Duration(milliseconds: 450),
       child: InkWell(
         hoverColor: kWhiteColor.withValues(alpha: 0.04),
         splashColor: kWhiteColor.withValues(alpha: 0.06),

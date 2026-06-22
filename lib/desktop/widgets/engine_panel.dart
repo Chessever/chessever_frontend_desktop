@@ -489,7 +489,7 @@ class _PvLineState extends State<_PvLine> {
             motion: DesktopMotion.hover,
             builder:
                 (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
+                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
             child: preview,
           ),
         ),
@@ -649,7 +649,7 @@ class _EngineQuickToggleState extends ConsumerState<_EngineQuickToggle> {
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
               builder:
                   (context, scale, child) =>
-                      Transform.scale(scale: scale, child: child),
+                      Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 110),
                 width: 28,

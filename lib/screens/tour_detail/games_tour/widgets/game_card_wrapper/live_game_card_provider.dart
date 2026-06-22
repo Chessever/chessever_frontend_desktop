@@ -302,6 +302,20 @@ GamesTourModel mergeLiveGameUpdateWithBase({
   );
 }
 
+/// Whether [incoming] should replace the stored base-game snapshot for a game,
+/// using the same freshness arbitration the live card merge applies before it
+/// writes back to [baseGameProvider].
+///
+/// Desktop board surfaces share [baseGameProvider] with live cards. Two of them
+/// used to write it *unconditionally*: the board's realtime row sync and the
+/// open-tab `getGameById()` refresh. Both can carry a snapshot that is staler
+/// than realtime already delivered (a one-shot REST read lags the stream; a
+/// second channel can arrive out of order), so an unguarded write regressed the
+/// card and the board to a stale position/clock. Routing those writes through
+/// this predicate keeps the shared snapshot monotonically fresh.
+bool shouldReplaceBaseGame(GamesTourModel? current, GamesTourModel incoming) =>
+    _shouldUseIncomingGame(current, incoming, allowEqualFreshnessUpdate: true);
+
 GamesTourModel _mergeLiveUpdate({
   required GamesTourModel baseGame,
   required LiveGameUpdate update,
