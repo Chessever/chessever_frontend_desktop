@@ -465,7 +465,14 @@ class _HeadlineBanner extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Image.asset(_assetFor(tc), width: 28, height: 28),
+            Image.asset(
+              _assetFor(tc),
+              width: 28,
+              height: 28,
+              cacheWidth: (28 * MediaQuery.devicePixelRatioOf(context)).round(),
+              cacheHeight:
+                  (28 * MediaQuery.devicePixelRatioOf(context)).round(),
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -587,7 +594,15 @@ class _RatingTile extends StatelessWidget {
           children: [
             Row(
               children: [
-                Image.asset(_assetFor(tc), width: 14, height: 14),
+                Image.asset(
+                  _assetFor(tc),
+                  width: 14,
+                  height: 14,
+                  cacheWidth:
+                      (14 * MediaQuery.devicePixelRatioOf(context)).round(),
+                  cacheHeight:
+                      (14 * MediaQuery.devicePixelRatioOf(context)).round(),
+                ),
                 const SizedBox(width: 6),
                 Text(
                   tc.displayName.toUpperCase(),
@@ -1060,7 +1075,15 @@ class _MiniRatingCard extends ConsumerWidget {
           children: [
             Row(
               children: [
-                Image.asset(_assetFor(tc), width: 16, height: 16),
+                Image.asset(
+                  _assetFor(tc),
+                  width: 16,
+                  height: 16,
+                  cacheWidth:
+                      (16 * MediaQuery.devicePixelRatioOf(context)).round(),
+                  cacheHeight:
+                      (16 * MediaQuery.devicePixelRatioOf(context)).round(),
+                ),
                 const SizedBox(width: 6),
                 Text(
                   tc.displayName.toUpperCase(),
@@ -1160,7 +1183,15 @@ class _RatingsBodyState extends ConsumerState<_RatingsBody> {
               children: [
                 Row(
                   children: [
-                    Image.asset(_assetFor(tc), width: 22, height: 22),
+                    Image.asset(
+                      _assetFor(tc),
+                      width: 22,
+                      height: 22,
+                      cacheWidth:
+                          (22 * MediaQuery.devicePixelRatioOf(context)).round(),
+                      cacheHeight:
+                          (22 * MediaQuery.devicePixelRatioOf(context)).round(),
+                    ),
                     const SizedBox(width: 8),
                     Text(
                       '${tc.displayName} rating',
@@ -1279,7 +1310,15 @@ class _TcChip extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Image.asset(_assetFor(tc), width: 14, height: 14),
+              Image.asset(
+                _assetFor(tc),
+                width: 14,
+                height: 14,
+                cacheWidth:
+                    (14 * MediaQuery.devicePixelRatioOf(context)).round(),
+                cacheHeight:
+                    (14 * MediaQuery.devicePixelRatioOf(context)).round(),
+              ),
               const SizedBox(width: 8),
               Text(
                 tc.displayName,
@@ -1388,7 +1427,13 @@ class _BreakdownRow extends StatelessWidget {
     final accent = _accentFor(tc);
     return Row(
       children: [
-        Image.asset(_assetFor(tc), width: 16, height: 16),
+        Image.asset(
+          _assetFor(tc),
+          width: 16,
+          height: 16,
+          cacheWidth: (16 * MediaQuery.devicePixelRatioOf(context)).round(),
+          cacheHeight: (16 * MediaQuery.devicePixelRatioOf(context)).round(),
+        ),
         const SizedBox(width: 10),
         SizedBox(
           width: 80,

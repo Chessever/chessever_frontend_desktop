@@ -212,12 +212,15 @@ class ScoreCardScreen extends ConsumerWidget {
     }
 
     final effectivePlayerRating = playerRatingOverride ?? playerRating;
-    double ratingDiff =
-        (opponentRating - effectivePlayerRating).clamp(-400.0, 400.0);
+    double ratingDiff = (opponentRating - effectivePlayerRating).clamp(
+      -400.0,
+      400.0,
+    );
     double expectedScore = 1 / (1 + math.pow(10, ratingDiff / 400.0));
     final playerTitle =
         isWhite ? game.whitePlayer.title : game.blackPlayer.title;
-    final int kFactor = fideK ??
+    final int kFactor =
+        fideK ??
         _heuristicKFactor(
           effectivePlayerRating,
           title: playerTitle,
@@ -540,9 +543,8 @@ class ScoreCardScreen extends ConsumerWidget {
           if (playerRating > 0) {
             final tc = game.timeControl;
             final fideK = tc != null ? playerRatings?.getK(tc) : null;
-            final fidePlayerRating = tc != null
-                ? playerRatings?.getRating(tc)?.toDouble()
-                : null;
+            final fidePlayerRating =
+                tc != null ? playerRatings?.getRating(tc)?.toDouble() : null;
             final ratingChange = _calculateFideRatingChange(
               playerRating,
               opponentRating,
@@ -793,9 +795,10 @@ class ScoreCardScreen extends ConsumerWidget {
                         final tc = game.timeControl;
                         final fideK =
                             tc != null ? playerRatings?.getK(tc) : null;
-                        final fidePlayerRating = tc != null
-                            ? playerRatings?.getRating(tc)?.toDouble()
-                            : null;
+                        final fidePlayerRating =
+                            tc != null
+                                ? playerRatings?.getRating(tc)?.toDouble()
+                                : null;
                         ratingChange = _calculateFideRatingChange(
                           playerRating,
                           opponentRating,
@@ -1415,7 +1418,15 @@ class _RatingDisplay extends ConsumerWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Image.asset(assetPath, width: iconSize, height: iconSize),
+            Image.asset(
+              assetPath,
+              width: iconSize,
+              height: iconSize,
+              cacheWidth:
+                  (iconSize * MediaQuery.devicePixelRatioOf(context)).round(),
+              cacheHeight:
+                  (iconSize * MediaQuery.devicePixelRatioOf(context)).round(),
+            ),
             SizedBox(height: elementSpacing),
             Text(
               label,

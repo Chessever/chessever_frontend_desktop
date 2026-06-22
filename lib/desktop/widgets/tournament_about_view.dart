@@ -262,9 +262,7 @@ class _AboutContentState extends ConsumerState<_AboutContent> {
     );
     if ((current - offset).abs() < 0.5) return;
     ref
-        .read(
-          tournamentDetailAboutScrollByTabIdProvider(widget.tabId).notifier,
-        )
+        .read(tournamentDetailAboutScrollByTabIdProvider(widget.tabId).notifier)
         .state = offset;
   }
 
@@ -341,14 +339,39 @@ class _HeroImage extends StatelessWidget {
               loading
                   ? const _HeroFallback()
                   : (about.hasImage
-                      ? CachedNetworkImage(
-                        imageUrl: about.imageUrl,
-                        fit: BoxFit.cover,
-                        alignment: Alignment.topCenter,
-                        fadeInDuration: const Duration(milliseconds: 220),
-                        fadeOutDuration: const Duration(milliseconds: 120),
-                        placeholder: (_, __) => const _HeroFallback(),
-                        errorWidget: (_, __, ___) => const _HeroFallback(),
+                      ? LayoutBuilder(
+                        builder: (context, constraints) {
+                          final dpr = MediaQuery.devicePixelRatioOf(context);
+                          final logicalWidth =
+                              constraints.maxWidth.isFinite
+                                  ? constraints.maxWidth
+                                  : MediaQuery.sizeOf(context).width;
+                          final logicalHeight =
+                              constraints.maxHeight.isFinite
+                                  ? constraints.maxHeight
+                                  : logicalWidth / 3.1;
+                          final cacheWidth =
+                              (logicalWidth * dpr)
+                                  .round()
+                                  .clamp(240, 1200)
+                                  .toInt();
+                          final cacheHeight =
+                              (logicalHeight * dpr)
+                                  .round()
+                                  .clamp(120, 480)
+                                  .toInt();
+                          return CachedNetworkImage(
+                            imageUrl: about.imageUrl,
+                            fit: BoxFit.cover,
+                            alignment: Alignment.topCenter,
+                            memCacheWidth: cacheWidth,
+                            memCacheHeight: cacheHeight,
+                            fadeInDuration: const Duration(milliseconds: 220),
+                            fadeOutDuration: const Duration(milliseconds: 120),
+                            placeholder: (_, __) => const _HeroFallback(),
+                            errorWidget: (_, __, ___) => const _HeroFallback(),
+                          );
+                        },
                       )
                       : const _HeroFallback()),
         ),

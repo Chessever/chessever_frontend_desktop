@@ -120,14 +120,14 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
 
       final telegramSent = await TelegramNotificationService.instance
           .sendFeedbackNotification(
-        rating: 0,
-        feedback: feedback,
-        source: 'desktop_report_issue',
-        userId: userId,
-        appVersion: '${packageInfo.version} (${packageInfo.buildNumber})',
-        platform: Platform.operatingSystem,
-        screenshotBytes: screenshotBytes,
-      );
+            rating: 0,
+            feedback: feedback,
+            source: 'desktop_report_issue',
+            userId: userId,
+            appVersion: '${packageInfo.version} (${packageInfo.buildNumber})',
+            platform: Platform.operatingSystem,
+            screenshotBytes: screenshotBytes,
+          );
 
       if (!mounted) return;
       if (!telegramSent) {
@@ -229,6 +229,14 @@ class _DesktopFeedbackDialogState extends State<DesktopFeedbackDialog> {
                   _previewBytes!,
                   fit: BoxFit.contain,
                   width: double.infinity,
+                  cacheWidth:
+                      (MediaQuery.sizeOf(context).width *
+                              MediaQuery.devicePixelRatioOf(context))
+                          .round()
+                          .clamp(240, 1200)
+                          .toInt(),
+                  cacheHeight:
+                      (220 * MediaQuery.devicePixelRatioOf(context)).round(),
                 ),
               ),
             ),

@@ -852,17 +852,39 @@ class _PieceSetTileState extends State<_PieceSetTile> {
                             children: [
                               Expanded(
                                 child: Image(
-                                  image:
-                                      widget.pieceSet.assets[PieceKind
-                                          .whiteKing]!,
+                                  image: ResizeImage.resizeIfNeeded(
+                                    (48 *
+                                            MediaQuery.devicePixelRatioOf(
+                                              context,
+                                            ))
+                                        .round(),
+                                    (48 *
+                                            MediaQuery.devicePixelRatioOf(
+                                              context,
+                                            ))
+                                        .round(),
+                                    widget.pieceSet.assets[PieceKind
+                                        .whiteKing]!,
+                                  ),
                                   fit: BoxFit.contain,
                                 ),
                               ),
                               Expanded(
                                 child: Image(
-                                  image:
-                                      widget.pieceSet.assets[PieceKind
-                                          .blackQueen]!,
+                                  image: ResizeImage.resizeIfNeeded(
+                                    (48 *
+                                            MediaQuery.devicePixelRatioOf(
+                                              context,
+                                            ))
+                                        .round(),
+                                    (48 *
+                                            MediaQuery.devicePixelRatioOf(
+                                              context,
+                                            ))
+                                        .round(),
+                                    widget.pieceSet.assets[PieceKind
+                                        .blackQueen]!,
+                                  ),
                                   fit: BoxFit.contain,
                                 ),
                               ),

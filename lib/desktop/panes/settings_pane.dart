@@ -7,11 +7,11 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'package:chessever/desktop/services/auth/desktop_auth_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
+import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -438,11 +438,9 @@ class _SubscriptionSection extends HookConsumerWidget {
       error.value = null;
       loading.value = true;
       try {
-        final uri = Uri.https('chessever.com', '/account');
-        final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+        final ok = await launchDesktopWebUrl(desktopAccountWebUri());
         if (!ok) {
-          error.value =
-              'Could not open chessever.com/account in your browser.';
+          error.value = 'Could not open chessever.com/account in your browser.';
         }
       } catch (e) {
         error.value = e.toString();

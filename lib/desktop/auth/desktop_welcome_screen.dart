@@ -69,6 +69,12 @@ class DesktopWelcomeScreen extends HookConsumerWidget {
                       height: 128,
                       fit: BoxFit.cover,
                       filterQuality: FilterQuality.high,
+                      cacheWidth:
+                          (128 * MediaQuery.devicePixelRatioOf(context))
+                              .round(),
+                      cacheHeight:
+                          (128 * MediaQuery.devicePixelRatioOf(context))
+                              .round(),
                     ),
                   ),
                 ),
@@ -172,8 +178,11 @@ class _AuthButtonState extends State<_AuthButton> {
           value: scale,
           motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
           builder:
-              (context, value, child) =>
-                  Transform.scale(scale: value, filterQuality: FilterQuality.medium, child: child),
+              (context, value, child) => Transform.scale(
+                scale: value,
+                filterQuality: FilterQuality.medium,
+                child: child,
+              ),
           child: FButton(
             style: _welcomeAuthButtonStyle(primary: widget.primary),
             onPress: widget.disabled ? null : widget.onTap,

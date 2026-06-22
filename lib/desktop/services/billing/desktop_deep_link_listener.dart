@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart';
 
+import 'package:chessever/desktop/services/desktop_deep_link_router.dart';
+import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
+
 /// Listens for desktop deep links and dispatches them to a callback.
 ///
 /// Used by the billing flow (`chessever://billing/success?...`) and by
@@ -58,6 +61,10 @@ class DesktopDeepLinkListener {
         (uri.host == 'chessever.com' || uri.host == 'www.chessever.com');
     if (!isChesseverScheme && !isChesseverWebLink) return;
     if (kDebugMode) debugPrint('[deeplink] received $uri');
+    if (isChesseverWebLink && !isDesktopRoutableWebDeepLink(uri)) {
+      unawaited(launchDesktopWebUrl(uri));
+      return;
+    }
     _handler?.call(uri);
   }
 }

@@ -2074,12 +2074,34 @@ class _ShareFallenKingOverlayState extends State<_ShareFallenKingOverlay> {
                         child: child,
                       );
                     },
-                    child: Image(image: widget.pieceImage, fit: BoxFit.contain),
+                    child: Image(
+                      image: ResizeImage.resizeIfNeeded(
+                        (widget.squareSize *
+                                MediaQuery.devicePixelRatioOf(context))
+                            .round(),
+                        (widget.squareSize *
+                                MediaQuery.devicePixelRatioOf(context))
+                            .round(),
+                        widget.pieceImage,
+                      ),
+                      fit: BoxFit.contain,
+                    ),
                   )
                   : Transform.rotate(
                     angle: -math.pi / 4, // -45 degrees (static)
                     alignment: Alignment.center,
-                    child: Image(image: widget.pieceImage, fit: BoxFit.contain),
+                    child: Image(
+                      image: ResizeImage.resizeIfNeeded(
+                        (widget.squareSize *
+                                MediaQuery.devicePixelRatioOf(context))
+                            .round(),
+                        (widget.squareSize *
+                                MediaQuery.devicePixelRatioOf(context))
+                            .round(),
+                        widget.pieceImage,
+                      ),
+                      fit: BoxFit.contain,
+                    ),
                   ),
         ),
       ),

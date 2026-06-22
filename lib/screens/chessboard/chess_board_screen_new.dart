@@ -6512,15 +6512,17 @@ class _AnalysisBoardState extends ConsumerState<_AnalysisBoard> {
       // A pending selection-clear flicks the board non-interactive for a
       // frame; v10's board drops its tap-selection when it stops being
       // interactive, which is how we clear it without re-keying the widget.
-      playerSide: _clearBoardSelectionForFrame
-          ? PlayerSide.none
-          : (sideToMove == Side.white ? PlayerSide.white : PlayerSide.black),
+      playerSide:
+          _clearBoardSelectionForFrame
+              ? PlayerSide.none
+              : (sideToMove == Side.white
+                  ? PlayerSide.white
+                  : PlayerSide.black),
       sideToMove: sideToMove,
       validMoves: analysisState.validMoves,
       lastMove: analysisState.lastMove,
-      kingSquareInCheck: position.isCheck
-          ? position.board.kingOf(sideToMove)
-          : null,
+      kingSquareInCheck:
+          position.isCheck ? position.board.kingOf(sideToMove) : null,
     );
   }
 
@@ -7320,7 +7322,18 @@ class _FallenKingOverlayState extends State<_FallenKingOverlay> {
                       child: child,
                     );
                   },
-                  child: Image(image: widget.pieceImage, fit: BoxFit.contain),
+                  child: Image(
+                    image: ResizeImage.resizeIfNeeded(
+                      (widget.squareSize *
+                              MediaQuery.devicePixelRatioOf(context))
+                          .round(),
+                      (widget.squareSize *
+                              MediaQuery.devicePixelRatioOf(context))
+                          .round(),
+                      widget.pieceImage,
+                    ),
+                    fit: BoxFit.contain,
+                  ),
                 ),
               ),
             ],
@@ -14236,6 +14249,8 @@ class _EventInfoSheet extends ConsumerWidget {
                     (MediaQuery.sizeOf(context).width *
                             MediaQuery.devicePixelRatioOf(context))
                         .toInt(),
+                memCacheHeight:
+                    (140.h * MediaQuery.devicePixelRatioOf(context)).toInt(),
                 alignment: Alignment.topCenter,
                 placeholder:
                     (_, __) => Container(

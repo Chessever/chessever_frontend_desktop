@@ -30,6 +30,10 @@ class TournamentGroupHeader extends StatelessWidget {
                 width: 56.w,
                 height: 56.h,
                 fit: BoxFit.cover,
+                cacheWidth:
+                    (56.w * MediaQuery.devicePixelRatioOf(context)).toInt(),
+                cacheHeight:
+                    (56.h * MediaQuery.devicePixelRatioOf(context)).toInt(),
                 errorBuilder:
                     (context, error, stackTrace) => _buildPlaceholderImage(),
                 loadingBuilder: (context, child, loadingProgress) {

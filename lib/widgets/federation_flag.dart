@@ -34,7 +34,7 @@ class FederationFlag extends StatelessWidget {
     final normalized = raw.toUpperCase();
 
     if (raw.isEmpty) {
-      return _fideFallback();
+      return _fideFallback(context);
     }
 
     final lowerRaw = raw.toLowerCase();
@@ -42,7 +42,7 @@ class FederationFlag extends StatelessWidget {
     // Lichess emits literal "FIDE" (or "FID"/"?") when PGN carries no real
     // federation. Render the FIDE logo as the fallback flag for those players.
     if (normalized == 'FID' || normalized == 'FIDE' || normalized == '?') {
-      return _fideFallback();
+      return _fideFallback(context);
     }
 
     // Handle UK subdivisions (England, Scotland, Wales) with their own flags.
@@ -66,14 +66,13 @@ class FederationFlag extends StatelessWidget {
     }
 
     if (iso2 == null || iso2.length != 2) {
-      return _fideFallback();
+      return _fideFallback(context);
     }
 
     final child = CountryFlag.fromCountryCode(
-iso2,
-  theme: ImageTheme(width: width,
-      height: height,),
-);
+      iso2,
+      theme: ImageTheme(width: width, height: height),
+    );
 
     final radius = borderRadius ?? BorderRadius.circular(3);
     return ClipRRect(borderRadius: radius, child: child);
@@ -96,8 +95,9 @@ iso2,
 
   Widget _empty() => SizedBox(width: width, height: height);
 
-  Widget _fideFallback() {
+  Widget _fideFallback(BuildContext context) {
     final radius = borderRadius ?? BorderRadius.circular(3);
+    final dpr = MediaQuery.devicePixelRatioOf(context);
     return ClipRRect(
       borderRadius: radius,
       child: Image.asset(
@@ -105,6 +105,8 @@ iso2,
         width: width,
         height: height,
         fit: BoxFit.contain,
+        cacheWidth: width == null ? null : (width! * dpr).round(),
+        cacheHeight: height == null ? null : (height! * dpr).round(),
       ),
     );
   }

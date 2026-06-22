@@ -1162,13 +1162,15 @@ class _ChessBoardWidget extends ConsumerWidget {
         child: AbsorbPointer(
           child: StaticChessboard(
             size: boardSize,
-            settings: StaticChessboardSettings.fromBoardSettings(ChessboardSettings(
-              enableCoordinates: showCoordinates,
-              // Use theme colors from settings with our custom app colors
-              colorScheme: boardSettings.colorScheme,
-              // Use piece set from settings
-              pieceAssets: boardSettings.pieceAssets,
-            )),
+            settings: StaticChessboardSettings.fromBoardSettings(
+              ChessboardSettings(
+                enableCoordinates: showCoordinates,
+                // Use theme colors from settings with our custom app colors
+                colorScheme: boardSettings.colorScheme,
+                // Use piece set from settings
+                pieceAssets: boardSettings.pieceAssets,
+              ),
+            ),
             orientation: orientation,
             fen: displayFen,
             lastMove: lastMove,
@@ -1385,7 +1387,16 @@ class _SmallFallenKingOverlayState extends State<_SmallFallenKingOverlay>
                 child: child,
               );
             },
-            child: Image(image: widget.pieceImage, fit: BoxFit.contain),
+            child: Image(
+              image: ResizeImage.resizeIfNeeded(
+                (widget.squareSize * MediaQuery.devicePixelRatioOf(context))
+                    .round(),
+                (widget.squareSize * MediaQuery.devicePixelRatioOf(context))
+                    .round(),
+                widget.pieceImage,
+              ),
+              fit: BoxFit.contain,
+            ),
           ),
         ),
       ),

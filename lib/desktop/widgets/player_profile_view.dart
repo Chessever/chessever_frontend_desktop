@@ -921,7 +921,17 @@ class _Header extends StatelessWidget {
               children: [
                 if (showFlag) ...[
                   federation?.toUpperCase() == 'FID'
-                      ? Image.asset(PngAsset.fideLogo, height: 16, width: 22)
+                      ? Image.asset(
+                        PngAsset.fideLogo,
+                        height: 16,
+                        width: 22,
+                        cacheWidth:
+                            (22 * MediaQuery.devicePixelRatioOf(context))
+                                .round(),
+                        cacheHeight:
+                            (16 * MediaQuery.devicePixelRatioOf(context))
+                                .round(),
+                      )
                       : FederationFlag(
                         federation: countryCode,
                         height: 16,
@@ -1233,8 +1243,11 @@ class _RatingTileState extends State<_RatingTile> {
               value: _hover ? 1.015 : 1.0,
               motion: DesktopMotion.hover,
               builder:
-                  (context, scale, child) =>
-                      Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                  (context, scale, child) => Transform.scale(
+                    scale: scale,
+                    filterQuality: FilterQuality.medium,
+                    child: child,
+                  ),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 160),
                 curve: Curves.easeOut,
@@ -1284,7 +1297,17 @@ class _RatingTileState extends State<_RatingTile> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Image.asset(widget.asset, width: 14, height: 14),
+                        Image.asset(
+                          widget.asset,
+                          width: 14,
+                          height: 14,
+                          cacheWidth:
+                              (14 * MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
+                          cacheHeight:
+                              (14 * MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
+                        ),
                         const SizedBox(width: 6),
                         Text(
                           widget.label.toUpperCase(),
@@ -1428,8 +1451,11 @@ class _SourceChipState extends State<_SourceChip> {
             value: enabled ? (_pressed ? 0.95 : (_hover ? 1.02 : 1.0)) : 1.0,
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -1973,8 +1999,11 @@ class _BrowseGamesCtaState extends State<_BrowseGamesCta> {
             value: _pressed ? 0.985 : (glow ? 1.004 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 140),
               padding: const EdgeInsets.fromLTRB(18, 14, 16, 14),
@@ -5001,8 +5030,11 @@ class _PlayerGamesEventHeaderState
             value: _pressed ? 0.992 : (_hover && canOpen ? 1.003 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
@@ -5526,8 +5558,11 @@ class _EventRowState extends State<_EventRow> {
             value: _pressed ? 0.985 : (_hover ? 1.005 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),

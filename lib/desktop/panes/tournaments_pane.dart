@@ -1067,17 +1067,21 @@ class _DesktopEventVisual extends ConsumerWidget {
               );
             }
 
-            final width =
+            final dpr = MediaQuery.devicePixelRatioOf(context);
+            final logicalWidth =
                 constraints.maxWidth.isFinite
                     ? constraints.maxWidth
                     : (constraints.maxHeight.isFinite
                         ? constraints.maxHeight * 1.6
                         : 360.0);
+            final logicalHeight =
+                constraints.maxHeight.isFinite
+                    ? constraints.maxHeight
+                    : (logicalWidth / 1.6);
             final cacheWidth =
-                (width * MediaQuery.devicePixelRatioOf(context))
-                    .round()
-                    .clamp(160, 1800)
-                    .toInt();
+                (logicalWidth * dpr).round().clamp(96, 900).toInt();
+            final cacheHeight =
+                (logicalHeight * dpr).round().clamp(64, 640).toInt();
             final image = ref.watch(eventImageProvider(event.id));
 
             return image.when(
@@ -1088,6 +1092,7 @@ class _DesktopEventVisual extends ConsumerWidget {
                     imageUrl: data.imageUrl!,
                     fit: BoxFit.cover,
                     memCacheWidth: cacheWidth,
+                    memCacheHeight: cacheHeight,
                     fadeInDuration: const Duration(milliseconds: 180),
                     fadeOutDuration: const Duration(milliseconds: 120),
                     placeholder: (_, __) => const _EventImageSkeleton(),

@@ -237,7 +237,10 @@ class _PaywallContent extends HookConsumerWidget {
           Center(
             child: Image.asset(
               'assets/pngs/new_app_logo.webp',
+              width: 80.h,
               height: 80.h,
+              cacheWidth:
+                  (80.h * MediaQuery.devicePixelRatioOf(context)).round(),
               cacheHeight:
                   (80 * MediaQuery.devicePixelRatioOf(context)).toInt(),
             ),

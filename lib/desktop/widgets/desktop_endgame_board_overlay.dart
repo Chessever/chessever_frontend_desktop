@@ -91,11 +91,13 @@ class DesktopEndgameBoard extends StatelessWidget {
       size: size,
       fen: displayFen,
       orientation: orientation,
-      settings: cg.StaticChessboardSettings.fromBoardSettings(cg.ChessboardSettings(
-        enableCoordinates: false,
-        colorScheme: settings.colorScheme,
-        pieceAssets: settings.pieceAssets,
-      )),
+      settings: cg.StaticChessboardSettings.fromBoardSettings(
+        cg.ChessboardSettings(
+          enableCoordinates: false,
+          colorScheme: settings.colorScheme,
+          pieceAssets: settings.pieceAssets,
+        ),
+      ),
       shapes: const <cg.Shape>{},
       lastMove: lastMove,
     );
@@ -251,7 +253,16 @@ class _FallenKing extends StatelessWidget {
                 child: child,
               );
             },
-            child: Center(child: Image(image: image, fit: BoxFit.contain)),
+            child: Center(
+              child: Image(
+                image: ResizeImage.resizeIfNeeded(
+                  (squareSize * MediaQuery.devicePixelRatioOf(context)).round(),
+                  (squareSize * MediaQuery.devicePixelRatioOf(context)).round(),
+                  image,
+                ),
+                fit: BoxFit.contain,
+              ),
+            ),
           ),
         ),
       ),

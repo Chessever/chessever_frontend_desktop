@@ -139,7 +139,17 @@ class LibraryGameCard extends ConsumerWidget {
                 child: Row(
                   children: [
                     // Left: time control icon + event name
-                    Image.asset(timeControlIcon, width: 14.sp, height: 14.sp),
+                    Image.asset(
+                      timeControlIcon,
+                      width: 14.sp,
+                      height: 14.sp,
+                      cacheWidth:
+                          (14.sp * MediaQuery.devicePixelRatioOf(context))
+                              .round(),
+                      cacheHeight:
+                          (14.sp * MediaQuery.devicePixelRatioOf(context))
+                              .round(),
+                    ),
                     SizedBox(width: 4.w),
                     Expanded(
                       child: Text(

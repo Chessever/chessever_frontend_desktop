@@ -967,7 +967,15 @@ class _UserAvatarVisual extends HookWidget {
                   avatarUrl != null
                       ? Image.network(
                         avatarUrl!,
+                        width: 110.w,
+                        height: 110.h,
                         fit: BoxFit.cover,
+                        cacheWidth:
+                            (110.w * MediaQuery.devicePixelRatioOf(context))
+                                .toInt(),
+                        cacheHeight:
+                            (110.h * MediaQuery.devicePixelRatioOf(context))
+                                .toInt(),
                         errorBuilder: (_, __, ___) => _buildInitials(),
                       )
                       : _buildInitials(),

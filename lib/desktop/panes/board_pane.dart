@@ -532,14 +532,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                 ? legacyActiveGameId
                 : latestPgnImport.gameId);
     final boardRenderKey =
-        '${_boardRenderKey(
-          activeTabId: activeTabId,
-          activeGameId: activeGameId,
-          boardArgs: boardArgs,
-          latestPgnImport: latestPgnImport,
-          lastAppliedGameId: lastAppliedGameId.value,
-          lastAppliedPgn: lastAppliedPgn.value,
-        )}:cut${boardCutEpoch.value}';
+        '${_boardRenderKey(activeTabId: activeTabId, activeGameId: activeGameId, boardArgs: boardArgs, latestPgnImport: latestPgnImport, lastAppliedGameId: lastAppliedGameId.value, lastAppliedPgn: lastAppliedPgn.value)}:cut${boardCutEpoch.value}';
 
     useEffect(
       () {
@@ -7004,7 +6997,11 @@ class _BoardBadge extends StatelessWidget {
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOutBack,
           builder:
-              (context, scale, c) => Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: c),
+              (context, scale, c) => Transform.scale(
+                scale: scale,
+                filterQuality: FilterQuality.medium,
+                child: c,
+              ),
           child: Container(
             width: badgeSize,
             height: badgeSize,
@@ -7089,7 +7086,18 @@ class _FallenKingOverlayState extends State<_FallenKingOverlay> {
                         alignment: Alignment.center,
                         child: child,
                       ),
-                  child: Image(image: widget.pieceImage, fit: BoxFit.contain),
+                  child: Image(
+                    image: ResizeImage.resizeIfNeeded(
+                      (widget.squareSize *
+                              MediaQuery.devicePixelRatioOf(context))
+                          .round(),
+                      (widget.squareSize *
+                              MediaQuery.devicePixelRatioOf(context))
+                          .round(),
+                      widget.pieceImage,
+                    ),
+                    fit: BoxFit.contain,
+                  ),
                 ),
               ),
             ],

@@ -144,6 +144,8 @@ class DesktopUserAvatar extends HookConsumerWidget {
                 fit: BoxFit.cover,
                 memCacheWidth:
                     (size * MediaQuery.devicePixelRatioOf(context)).round(),
+                memCacheHeight:
+                    (size * MediaQuery.devicePixelRatioOf(context)).round(),
                 placeholder:
                     (_, _) => _Initials(initials: initials, size: size),
                 errorWidget:

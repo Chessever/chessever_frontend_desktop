@@ -45,6 +45,10 @@ class RoundSelector extends StatelessWidget {
               'assets/svgs/round_selector.png',
               width: 20.w,
               height: 20.h,
+              cacheWidth:
+                  (20.w * MediaQuery.devicePixelRatioOf(context)).round(),
+              cacheHeight:
+                  (20.h * MediaQuery.devicePixelRatioOf(context)).round(),
             ),
           ],
         ),

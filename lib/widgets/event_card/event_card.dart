@@ -159,6 +159,7 @@ class EventCard extends ConsumerWidget {
                 title: tourEventCardModel.title,
                 dates: _compactDates(tourEventCardModel),
                 timeControlSpan: _timeControlSpan(
+                  context,
                   AppTypography.textXsMedium.copyWith(color: kWhiteColor70),
                 ),
                 location: eventInfo.location,
@@ -231,6 +232,7 @@ class EventCard extends ConsumerWidget {
                   _MetaLine(
                     dates: _compactDates(tourEventCardModel),
                     timeControlSpan: _timeControlSpan(
+                      context,
                       AppTypography.textXsMedium.copyWith(color: kWhiteColor70),
                     ),
                     location: eventInfo.location,
@@ -286,7 +288,7 @@ class EventCard extends ConsumerWidget {
 
   /// Inline time-control glyph for the [_MetaLine] [Text.rich] — lets the
   /// icon participate in ellipsizing so meta always fits one line.
-  InlineSpan _timeControlSpan(TextStyle fallbackStyle) {
+  InlineSpan _timeControlSpan(BuildContext context, TextStyle fallbackStyle) {
     final timeControl = tourEventCardModel.timeControl.toLowerCase();
     String? assetPath;
     if (timeControl.contains('blitz')) {
@@ -312,6 +314,8 @@ class EventCard extends ConsumerWidget {
         width: 14.sp,
         height: 14.sp,
         fit: BoxFit.contain,
+        cacheWidth: (14.sp * MediaQuery.devicePixelRatioOf(context)).round(),
+        cacheHeight: (14.sp * MediaQuery.devicePixelRatioOf(context)).round(),
       ),
     );
   }
@@ -554,6 +558,8 @@ class _EventImage extends ConsumerWidget {
     final imageHeight = phoneImageHeight(context);
     final cacheWidth =
         (imageWidth * MediaQuery.devicePixelRatioOf(context)).toInt();
+    final cacheHeight =
+        (imageHeight * MediaQuery.devicePixelRatioOf(context)).toInt();
 
     final image = SizedBox(
       width: imageWidth,
@@ -571,6 +577,7 @@ class _EventImage extends ConsumerWidget {
                 imageUrl: imageData.imageUrl!,
                 fit: BoxFit.cover,
                 memCacheWidth: cacheWidth,
+                memCacheHeight: cacheHeight,
                 fadeInDuration: const Duration(milliseconds: 300),
                 fadeOutDuration: const Duration(milliseconds: 200),
                 placeholder:
@@ -755,29 +762,43 @@ class _TabletEventBackground extends ConsumerWidget {
 
     final imageAsync = ref.watch(eventImageProvider(event.id));
 
-    return imageAsync.when(
-      data: (imageData) {
-        if (imageData.hasImage) {
-          final cacheWidth =
-              (MediaQuery.sizeOf(context).width *
-                      MediaQuery.devicePixelRatioOf(context))
-                  .toInt();
-          return CachedNetworkImage(
-            imageUrl: imageData.imageUrl!,
-            fit: BoxFit.cover,
-            memCacheWidth: cacheWidth,
-            fadeInDuration: const Duration(milliseconds: 300),
-            fadeOutDuration: const Duration(milliseconds: 200),
-            placeholder: (context, url) => _buildLoadingBackground(),
-            errorWidget:
-                (context, url, error) =>
-                    _buildFlagBackground(imageData.fallbackCountryCode),
-          );
-        }
-        return _buildFlagBackground(imageData.fallbackCountryCode);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final dpr = MediaQuery.devicePixelRatioOf(context);
+        final logicalWidth =
+            constraints.maxWidth.isFinite
+                ? constraints.maxWidth
+                : MediaQuery.sizeOf(context).width;
+        final logicalHeight =
+            constraints.maxHeight.isFinite
+                ? constraints.maxHeight
+                : logicalWidth * 0.56;
+        final cacheWidth = (logicalWidth * dpr).round().clamp(160, 900).toInt();
+        final cacheHeight =
+            (logicalHeight * dpr).round().clamp(120, 640).toInt();
+
+        return imageAsync.when(
+          data: (imageData) {
+            if (imageData.hasImage) {
+              return CachedNetworkImage(
+                imageUrl: imageData.imageUrl!,
+                fit: BoxFit.cover,
+                memCacheWidth: cacheWidth,
+                memCacheHeight: cacheHeight,
+                fadeInDuration: const Duration(milliseconds: 300),
+                fadeOutDuration: const Duration(milliseconds: 200),
+                placeholder: (context, url) => _buildLoadingBackground(),
+                errorWidget:
+                    (context, url, error) =>
+                        _buildFlagBackground(imageData.fallbackCountryCode),
+              );
+            }
+            return _buildFlagBackground(imageData.fallbackCountryCode);
+          },
+          loading: () => _buildLoadingBackground(),
+          error: (_, __) => const LogoPatternFallback(),
+        );
       },
-      loading: () => _buildLoadingBackground(),
-      error: (_, __) => const LogoPatternFallback(),
     );
   }
 

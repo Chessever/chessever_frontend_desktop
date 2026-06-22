@@ -329,6 +329,9 @@ class _OnboardingRail extends StatelessWidget {
               height: 44,
               fit: BoxFit.cover,
               filterQuality: FilterQuality.high,
+              cacheWidth: (44 * MediaQuery.devicePixelRatioOf(context)).round(),
+              cacheHeight:
+                  (44 * MediaQuery.devicePixelRatioOf(context)).round(),
             ),
           ),
           const SizedBox(height: 18),

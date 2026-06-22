@@ -24,6 +24,11 @@ class LogoPatternFallback extends StatelessWidget {
   Widget build(BuildContext context) {
     final divisor = logoSize / 32.0;
     final scale = divisor > 0 && divisor.isFinite ? 4.0 / divisor : 4.0;
+    final cacheExtent =
+        (logoSize * MediaQuery.devicePixelRatioOf(context))
+            .round()
+            .clamp(16, 160)
+            .toInt();
 
     final pattern = Container(
       decoration: BoxDecoration(
@@ -47,7 +52,11 @@ class LogoPatternFallback extends StatelessWidget {
               decoration: BoxDecoration(
                 borderRadius: borderRadius,
                 image: DecorationImage(
-                  image: const AssetImage(PngAsset.premium2Icon),
+                  image: ResizeImage.resizeIfNeeded(
+                    cacheExtent,
+                    cacheExtent,
+                    const AssetImage(PngAsset.premium2Icon),
+                  ),
                   repeat: ImageRepeat.repeat,
                   scale: scale,
                 ),

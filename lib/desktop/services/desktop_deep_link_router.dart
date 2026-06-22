@@ -133,6 +133,13 @@ List<Uri> desktopDeepLinkUrisFromArguments(Iterable<String> arguments) {
   return uris;
 }
 
+/// True when [uri] is a web link the desktop app can route internally.
+bool isDesktopRoutableWebDeepLink(Uri uri) {
+  if (!_isChesseverWebUri(uri)) return false;
+  return parseDesktopBroadcastDeepLink(uri) != null ||
+      parseDesktopGameDeepLink(uri) != null;
+}
+
 class DesktopDeepLinkRouter {
   DesktopDeepLinkRouter._();
   static final DesktopDeepLinkRouter instance = DesktopDeepLinkRouter._();
