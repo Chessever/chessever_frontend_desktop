@@ -36,7 +36,7 @@ class DesktopSidebar extends StatelessWidget {
     this.autoCollapsed = false,
   });
 
-  final DesktopPane current;
+  final DesktopPane? current;
 
   /// Sidebar tap handler. `inNewTab` is `true` when the user holds
   /// Cmd / Ctrl while clicking — Chrome convention for "open in a new
