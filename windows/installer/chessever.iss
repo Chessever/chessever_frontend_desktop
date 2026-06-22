@@ -83,7 +83,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "associatechessfiles"; Description: "Associate PGN, FEN, EPD, and CBH database files with ChessEver"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
+Name: "associatechessfiles"; Description: "Associate PGN files with ChessEver"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 
 [Files]
 ; Recursively pull in every file Flutter put in the Release directory —
@@ -103,19 +103,22 @@ Root: HKCU; Subkey: "Software\Classes\chessever"; ValueType: string; ValueName: 
 Root: HKCU; Subkey: "Software\Classes\chessever\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
 Root: HKCU; Subkey: "Software\Classes\chessever\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
 
-; Optional file associations for local chess files. The runner forwards "%1"
-; to Dart as an entrypoint argument, where DesktopFileOpenService opens the
-; path in the Library's local browser without importing it into SQLite.
-Root: HKCU; Subkey: "Software\Classes\Chessever.ChessFile"; ValueType: string; ValueName: ""; ValueData: "ChessEver chess file"; Flags: uninsdeletekey; Tasks: associatechessfiles
+; Optional PGN file association. The runner forwards "%1" to Dart as an
+; entrypoint argument, where DesktopFileOpenService opens the path in the
+; Library's local browser without importing it into SQLite.
+Root: HKCU; Subkey: "Software\Classes\Chessever.ChessFile"; ValueType: string; ValueName: ""; ValueData: "ChessEver PGN file"; Flags: uninsdeletekey; Tasks: associatechessfiles
 Root: HKCU; Subkey: "Software\Classes\Chessever.ChessFile\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"; Tasks: associatechessfiles
 Root: HKCU; Subkey: "Software\Classes\Chessever.ChessFile\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associatechessfiles
 Root: HKCU; Subkey: "Software\Classes\.pgn\OpenWithProgids"; ValueType: string; ValueName: "Chessever.ChessFile"; ValueData: ""; Flags: uninsdeletevalue; Tasks: associatechessfiles
-Root: HKCU; Subkey: "Software\Classes\.gz\OpenWithProgids"; ValueType: string; ValueName: "Chessever.ChessFile"; ValueData: ""; Flags: uninsdeletevalue; Tasks: associatechessfiles
-Root: HKCU; Subkey: "Software\Classes\.fen\OpenWithProgids"; ValueType: string; ValueName: "Chessever.ChessFile"; ValueData: ""; Flags: uninsdeletevalue; Tasks: associatechessfiles
-Root: HKCU; Subkey: "Software\Classes\.epd\OpenWithProgids"; ValueType: string; ValueName: "Chessever.ChessFile"; ValueData: ""; Flags: uninsdeletevalue; Tasks: associatechessfiles
-Root: HKCU; Subkey: "Software\Classes\.cbh\OpenWithProgids"; ValueType: string; ValueName: "Chessever.ChessFile"; ValueData: ""; Flags: uninsdeletevalue; Tasks: associatechessfiles
-Root: HKCU; Subkey: "Software\Classes\.cbv\OpenWithProgids"; ValueType: string; ValueName: "Chessever.ChessFile"; ValueData: ""; Flags: uninsdeletevalue; Tasks: associatechessfiles
-Root: HKCU; Subkey: "Software\Classes\.cbf\OpenWithProgids"; ValueType: string; ValueName: "Chessever.ChessFile"; ValueData: ""; Flags: uninsdeletevalue; Tasks: associatechessfiles
+
+; Clean up previously advertised associations for formats ChessEver does not
+; currently support as file-open targets.
+Root: HKCU; Subkey: "Software\Classes\.gz\OpenWithProgids"; ValueType: none; ValueName: "Chessever.ChessFile"; Flags: deletevalue
+Root: HKCU; Subkey: "Software\Classes\.fen\OpenWithProgids"; ValueType: none; ValueName: "Chessever.ChessFile"; Flags: deletevalue
+Root: HKCU; Subkey: "Software\Classes\.epd\OpenWithProgids"; ValueType: none; ValueName: "Chessever.ChessFile"; Flags: deletevalue
+Root: HKCU; Subkey: "Software\Classes\.cbh\OpenWithProgids"; ValueType: none; ValueName: "Chessever.ChessFile"; Flags: deletevalue
+Root: HKCU; Subkey: "Software\Classes\.cbv\OpenWithProgids"; ValueType: none; ValueName: "Chessever.ChessFile"; Flags: deletevalue
+Root: HKCU; Subkey: "Software\Classes\.cbf\OpenWithProgids"; ValueType: none; ValueName: "Chessever.ChessFile"; Flags: deletevalue
 
 [Run]
 ; First-time install only (skipifsilent omits this for /VERYSILENT
