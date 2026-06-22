@@ -246,18 +246,22 @@ class DesktopShell extends HookConsumerWidget {
           setSidebarExpanded(!sidebarExpanded);
         }
 
-        // Sidebar tap from the rail. Clicking the icon for the *current*
-        // pane toggles sidebar expansion (so a collapsed rail can be
-        // expanded by tapping its highlighted item, and re-tapping
-        // collapses again). Any other tap navigates and auto-collapses
-        // the sidebar so the content pane gets the screen back.
+        // Sidebar tap from the rail. Clicking the icon for the current pane
+        // toggles expansion. Other pane selections should not undo the user's
+        // manual desktop-width preference; compact widths still collapse after
+        // navigation because the rail behaves like a temporary drawer.
         void handleSidebarSelect(DesktopPane pane, {required bool inNewTab}) {
           if (!inNewTab && pane == activeSidebarPane) {
             toggleSidebar();
             return;
           }
           openPane(pane, inNewTab: inNewTab);
-          if (sidebarExpanded) {
+          if (shouldCollapseDesktopSidebarAfterPaneSelection(
+            autoCollapsed: autoCollapsed,
+            sidebarExpanded: sidebarExpanded,
+            selectedCurrentPane: pane == activeSidebarPane,
+            inNewTab: inNewTab,
+          )) {
             setSidebarExpanded(false);
           }
         }
@@ -849,6 +853,19 @@ Widget resolveDesktopTabContent(DesktopTab? tab) {
     case TabKind.play:
       return PlayPane(tabId: tab.id);
   }
+}
+
+@visibleForTesting
+bool shouldCollapseDesktopSidebarAfterPaneSelection({
+  required bool autoCollapsed,
+  required bool sidebarExpanded,
+  required bool selectedCurrentPane,
+  required bool inNewTab,
+}) {
+  if (!autoCollapsed || !sidebarExpanded || selectedCurrentPane || inNewTab) {
+    return false;
+  }
+  return true;
 }
 
 @visibleForTesting

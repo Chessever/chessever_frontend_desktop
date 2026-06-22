@@ -197,6 +197,7 @@ dev_dependencies:
 
 dependency_overrides:
   app_links: ^6.4.1
+  meta: 1.17.0
   desktop_updater:
     path: third_party/desktop_updater
 
