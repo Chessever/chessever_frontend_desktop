@@ -3941,22 +3941,33 @@ class _NumberRangeFields extends StatefulWidget {
 class _NumberRangeFieldsState extends State<_NumberRangeFields> {
   late final TextEditingController _startController;
   late final TextEditingController _endController;
+  late final FocusNode _startFocusNode;
+  late final FocusNode _endFocusNode;
 
   @override
   void initState() {
     super.initState();
     _startController = TextEditingController(text: widget.start.toString());
     _endController = TextEditingController(text: widget.end.toString());
+    _startFocusNode = FocusNode();
+    _endFocusNode = FocusNode();
+    _startFocusNode.addListener(_handleStartFocusChanged);
+    _endFocusNode.addListener(_handleEndFocusChanged);
   }
 
   @override
   void didUpdateWidget(covariant _NumberRangeFields oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _syncController(_startController, widget.start);
-    _syncController(_endController, widget.end);
+    _syncController(_startController, widget.start, _startFocusNode);
+    _syncController(_endController, widget.end, _endFocusNode);
   }
 
-  void _syncController(TextEditingController controller, int value) {
+  void _syncController(
+    TextEditingController controller,
+    int value,
+    FocusNode focusNode,
+  ) {
+    if (focusNode.hasFocus) return;
     final next = value.toString();
     if (controller.text != next) {
       controller.value = TextEditingValue(
@@ -3968,9 +3979,21 @@ class _NumberRangeFieldsState extends State<_NumberRangeFields> {
 
   @override
   void dispose() {
+    _startFocusNode.removeListener(_handleStartFocusChanged);
+    _endFocusNode.removeListener(_handleEndFocusChanged);
+    _startFocusNode.dispose();
+    _endFocusNode.dispose();
     _startController.dispose();
     _endController.dispose();
     super.dispose();
+  }
+
+  void _handleStartFocusChanged() {
+    if (!_startFocusNode.hasFocus) _commit();
+  }
+
+  void _handleEndFocusChanged() {
+    if (!_endFocusNode.hasFocus) _commit();
   }
 
   void _commit() {
@@ -3983,6 +4006,8 @@ class _NumberRangeFieldsState extends State<_NumberRangeFields> {
       start = end;
       end = tmp;
     }
+    _startController.text = start.toString();
+    _endController.text = end.toString();
     widget.onChanged(start, end);
   }
 
@@ -4004,20 +4029,22 @@ class _NumberRangeFieldsState extends State<_NumberRangeFields> {
             Expanded(
               child: FTextField(
                 controller: _startController,
+                focusNode: _startFocusNode,
                 hint: widget.startHint,
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                onChange: (_) => _commit(),
+                onSubmit: (_) => _commit(),
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
               child: FTextField(
                 controller: _endController,
+                focusNode: _endFocusNode,
                 hint: widget.endHint,
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                onChange: (_) => _commit(),
+                onSubmit: (_) => _commit(),
               ),
             ),
           ],

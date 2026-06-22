@@ -1998,8 +1998,17 @@ class PlayerProfileGamesState {
     var games = allGames;
 
     if (playerKey.source == PlayerProfileDataSource.twic) {
-      // TWIC games are strictly server-side filtered, paginated exactly as returned from the API.
-      return games;
+      // TWIC loads pages with server-side filters, but we still re-apply the
+      // loaded-page filters locally. This keeps absolute game-result chips
+      // (1-0 / ½-½ / 0-1) responsive even when the player-games endpoint can
+      // only express player-perspective outcomes or ignores a filter param.
+      if (!playerProfileHasStructuredFilters(filter)) return games;
+      return GameFilterHelper.applyFilter(
+        games,
+        playerProfileEffectiveFilter(filter),
+        targetFideId: playerKey.fideId,
+        playerNameQuery: playerKey.hasFideId ? null : playerKey.playerName,
+      );
     }
 
     // Player profile only surfaces games with at least one move played
