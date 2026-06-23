@@ -258,7 +258,11 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
     );
   }
 
-  Future<void> refreshGames() async {
+  Future<void> refreshGames({bool forceRefresh = false}) async {
+    if (forceRefresh && state.valueOrNull != null) {
+      await _checkForNewGames();
+      return;
+    }
     await _loadInitialGames();
   }
 
