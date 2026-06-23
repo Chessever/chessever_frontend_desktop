@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/utils/board_customization_utils.dart';
+import 'package:chessever/utils/chessground_image_cache.dart';
 import 'package:chessground/chessground.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -163,13 +164,30 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
 
   Future<BoardSettingsNew> _loadSettings() async {
     try {
+      const defaults = BoardSettingsNew();
+      await _preloadPieceSet(defaults.pieceSet, 'default');
+
       // Board/UI preferences are device-local. Do not fetch them from
       // Supabase, otherwise desktop and phone overwrite each other.
-      return await _getCachedSettings();
+      final settings = await _getCachedSettings();
+      if (settings.pieceSet != defaults.pieceSet) {
+        await _preloadPieceSet(settings.pieceSet, 'saved');
+        ChessgroundImageCache.evictPieceSetAfterNextFrame(defaults.pieceSet);
+      }
+      return settings;
     } catch (e, st) {
       debugPrint('[BoardSettings] Error loading local settings: $e');
       debugPrint('[BoardSettings] Stack: $st');
       return const BoardSettingsNew();
+    }
+  }
+
+  Future<void> _preloadPieceSet(PieceSet pieceSet, String label) async {
+    try {
+      await ChessgroundImageCache.preloadPieceSet(pieceSet);
+    } catch (e, st) {
+      debugPrint('[BoardSettings] Error preloading $label piece set: $e');
+      debugPrint('[BoardSettings] Stack: $st');
     }
   }
 
@@ -244,12 +262,19 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
   Future<void> setPieceSetIndex(int index) async {
     final clamped = index.clamp(0, PieceSet.values.length - 1);
     final currentState = state.valueOrNull ?? const BoardSettingsNew();
+    if (currentState.pieceStyleIndex == clamped) {
+      await _preloadPieceSet(currentState.pieceSet, 'current');
+      return;
+    }
+
     final newSettings = currentState.copyWith(pieceStyleIndex: clamped);
     debugPrint(
       '♟️ BoardSettings: Piece set changed to index=$clamped (${PieceSet.values[clamped].label})',
     );
+    await _preloadPieceSet(newSettings.pieceSet, 'selected');
     state = AsyncValue.data(newSettings);
     await _persist(newSettings);
+    ChessgroundImageCache.evictPieceSetAfterNextFrame(currentState.pieceSet);
   }
 
   /// Set games list view mode index (0=gamesCard, 1=chessBoardGrid, 2=chessBoard)
@@ -369,9 +394,12 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
       final boardColorIndex =
           map['boardColorIndex'] as int? ?? defaults.boardColorIndex;
       final hasBoardThemeIndex = map.containsKey('boardThemeIndex');
-      int boardThemeIndex = hasBoardThemeIndex
-          ? map['boardThemeIndex'] as int? ?? defaults.boardThemeIndex
-          : (map.containsKey('boardColorIndex') ? 0 : defaults.boardThemeIndex);
+      int boardThemeIndex =
+          hasBoardThemeIndex
+              ? map['boardThemeIndex'] as int? ?? defaults.boardThemeIndex
+              : (map.containsKey('boardColorIndex')
+                  ? 0
+                  : defaults.boardThemeIndex);
 
       // Migration: If boardThemeIndex is 0 (default) but boardColorIndex is set,
       // migrate old color to new theme

@@ -1954,15 +1954,8 @@ class _TournamentTileMedia extends StatelessWidget {
               ),
             ),
           ),
-          Positioned(
-            left: 0,
-            top: 0,
-            bottom: 0,
-            child: Container(width: 4, color: statusColor),
-          ),
           // Category badge removed from the photo — it was unreadable against
-          // the artwork. The 4px status-colour bar keeps the at-a-glance
-          // category hint here; the labelled badge now sits on the solid body.
+          // the artwork. The labelled badge now sits on the solid body.
           Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -2629,11 +2622,11 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
             itemCount: itemCount,
             // ignore: deprecated_member_use
             cacheExtent: _cacheExtentFor(viewMode),
-            // Each For You row owns up to 4 live game cards, each with its own
-            // realtime stream + chessboard preview. AutomaticKeepAlive forces
-            // those subscriptions to stay live for off-screen rows the viewport
-            // has already left behind. Disable it so the cache window is the
-            // only thing keeping nearby rows hot.
+            // Each For You row owns real chessboard previews plus a bounded
+            // live batch for the cards that fit the row. AutomaticKeepAlive
+            // forces those subscriptions to stay live for off-screen rows the
+            // viewport has already left behind. Disable it so the cache window
+            // is the only thing keeping nearby rows hot.
             addAutomaticKeepAlives: false,
             itemBuilder: (context, index) {
               if (index == 0) {
@@ -2745,14 +2738,19 @@ class _ForYouEventSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Desktop tabs stay mounted in PersistentIndexedStack. The shared
-    // snapshot refresher is needed for the active feed so stale finished cards
-    // are replaced, but inactive desktop routes must not keep Realtime streams.
-    final snapshotAsync = ref.watch(
-      streamingEnabled
-          ? forYouEventSnapshotProvider(event.id)
-          : eventGamesProvider(event.id),
+    final cachedSnapshot = ref.watch(
+      forYouTopGamesSnapshotCacheProvider.select((cache) => cache[event.id]),
     );
+    // The homepage fast path is the batched top-games cache. Only fall back to
+    // the detailed per-event resolver before that cache is available.
+    final snapshotAsync =
+        cachedSnapshot != null
+            ? AsyncValue.data(cachedSnapshot)
+            : ref.watch(
+              streamingEnabled
+                  ? forYouEventSnapshotProvider(event.id)
+                  : eventGamesProvider(event.id),
+            );
     final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
 
     final shouldHide = snapshotAsync.maybeWhen(
@@ -2887,18 +2885,6 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
                             ? kWhiteColor.withValues(alpha: 0.12)
                             : kDividerColor,
                   ),
-                  // selection keeps a persistent shadow; hover/press shadow
-                  // now owned by MotionCard.
-                  boxShadow:
-                      widget.selected
-                          ? [
-                            BoxShadow(
-                              color: categoryColor.withValues(alpha: 0.08),
-                              blurRadius: 12,
-                              offset: const Offset(0, 6),
-                            ),
-                          ]
-                          : null,
                 ),
                 child: LayoutBuilder(
                   builder: (context, constraints) {
@@ -3032,12 +3018,6 @@ class _ForYouEventHeroImage extends StatelessWidget {
                 stops: const [0, 0.58, 1],
               ),
             ),
-          ),
-          Positioned(
-            left: 0,
-            top: 0,
-            bottom: 0,
-            child: Container(width: 4, color: statusColor),
           ),
           // No text/controls overlaid on the photo — they were unreadable
           // against varying artwork. The status badge, time control and

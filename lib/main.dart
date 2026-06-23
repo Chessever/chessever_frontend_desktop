@@ -25,6 +25,7 @@ import 'package:chessever/screens/tour_detail/tournament_detail_screen.dart';
 import 'package:chessever/screens/group_event/group_event_screen.dart';
 import 'package:chessever/screens/calendar/calendar_screen.dart';
 import 'package:chessever/utils/audio_player_service.dart';
+import 'package:chessever/utils/chessground_image_cache.dart';
 import 'package:chessever/utils/lifecycle_event_handler.dart';
 import 'package:chessever/utils/responsive_helper.dart';
 import 'package:chessever/widgets/auth_state_listener.dart';
@@ -175,6 +176,7 @@ Future<void> main(List<String> args) async {
       _e2eStartupLog('binding initialized: ${widgetsBinding.runtimeType}');
       FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
       _e2eStartupLog('native splash preserved');
+      await _preloadDefaultChessgroundPieces();
 
       FlutterError.onError = (details) {
         debugPrint('FLUTTER ERROR: ${details.exception}\n${details.stack}');
@@ -618,6 +620,18 @@ void _initializePostStartupServices() {
 
   // Non-critical: Load audio assets in background (don't block app startup)
   unawaited(AudioPlayerService.instance.initializeAndLoadAllAssets());
+}
+
+Future<void> _preloadDefaultChessgroundPieces() async {
+  try {
+    await ChessgroundImageCache.preloadDefaultPieceSet();
+    _e2eStartupLog('chessground default pieces cached');
+  } catch (e, st) {
+    debugPrint('⚠️ Chessground default piece preload failed: $e');
+    if (kDebugMode) {
+      debugPrintStack(stackTrace: st);
+    }
+  }
 }
 
 class StartupGate extends ConsumerStatefulWidget {

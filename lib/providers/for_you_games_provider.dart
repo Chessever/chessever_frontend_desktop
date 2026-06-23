@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:chessever/providers/event_favorite_players_provider.dart';
 import 'package:chessever/providers/error_logger_provider.dart';
 import 'package:chessever/providers/favorite_events_provider.dart';
 import 'package:chessever/providers/event_pin_refresh_provider.dart';
@@ -15,13 +14,11 @@ import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/repository/supabase/round/round.dart';
 import 'package:chessever/repository/supabase/round/round_repository.dart';
 import 'package:chessever/repository/supabase/tour/tour.dart';
-import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_tour_repository.dart';
 import 'package:chessever/repository/supabase/tour/tour_repository.dart';
 import 'package:chessever/providers/auth_state_provider.dart';
 import 'package:chessever/providers/auto_pin_preferences_provider.dart';
 import 'package:chessever/providers/country_dropdown_provider.dart';
-import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/group_event/providers/live_group_broadcast_id_provider.dart';
 import 'package:chessever/screens/group_event/providers/sorting_all_event_provider.dart';
@@ -45,8 +42,24 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 const int kGamesPerEvent = 4;
+const int kDesktopForYouGamesPerEvent = 12;
 const int _kPageSize = 20;
 const Duration _kForYouStaleThreshold = Duration(minutes: 5);
+
+int get _topGamesPerEventSnapshotLimit {
+  if (kIsWeb) return kGamesPerEvent;
+  return switch (defaultTargetPlatform) {
+    TargetPlatform.macOS ||
+    TargetPlatform.windows ||
+    TargetPlatform.linux => kDesktopForYouGamesPerEvent,
+    _ => kGamesPerEvent,
+  };
+}
+
+final forYouTopGamesSnapshotCacheProvider =
+    StateProvider<Map<String, ForYouEventGamesSnapshot>>((ref) {
+      return const <String, ForYouEventGamesSnapshot>{};
+    });
 
 // ============================================================================
 // FOR YOU EVENTS - PAGINATED WITH SUPABASE QUERIES
@@ -95,19 +108,6 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     // Listen to favorite events changes and re-sort list immediately
     ref.listen(favoriteEventsProvider, (_, __) => _reSortList());
 
-    // Listen to favorite player cache updates (affects heart counts)
-    ref.listen(eventFavoritePlayersCacheProvider, (_, __) => _reSortList());
-
-    // When the user's favorite players change, recompute the visible
-    // heart-count cache in one batch. For You cards consume this cache only,
-    // avoiding an N-per-card fallback while preserving the same final UI.
-    ref.listen(favoritePlayersProviderNew, (_, next) {
-      if (!next.hasValue) return;
-      ref.read(eventFavoritePlayersCacheProvider.notifier).clear();
-      _prefetchHeartDataWithTimeout(state.events);
-      bumpForYouEventsRefreshSignal(ref);
-    });
-
     // Match the Current tab's behavior: when a tour transitions ongoing→live
     // (or live→completed), re-derive tourEventCategory on every existing card
     // so the _NextRoundLine flips from "starts in…" to "LIVE" without waiting
@@ -117,30 +117,6 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
       next,
     ) {
       next.whenData(_refreshLiveCategories);
-    });
-
-    // Global signals that affect EVERY visible event's snapshot (auto-pin,
-    // tour selection defaults, sign-in state, live transitions). Funnel them
-    // through `forYouEventsRefreshProvider` so each `eventGamesProvider`
-    // family entry only needs ONE listener instead of N. The single fan-out
-    // here replaces 6×N per-event listens.
-    ref.listen(favoritesVersionProvider, (_, __) {
-      bumpForYouEventsRefreshSignal(ref);
-    });
-    ref.listen(countryDropdownProvider, (_, __) {
-      bumpForYouEventsRefreshSignal(ref);
-    });
-    ref.listen(autoPinPreferencesProvider, (_, __) {
-      bumpForYouEventsRefreshSignal(ref);
-    });
-    ref.listen(currentUserProvider, (_, __) {
-      bumpForYouEventsRefreshSignal(ref);
-    });
-    ref.listen(liveTourIdProvider, (_, __) {
-      bumpForYouEventsRefreshSignal(ref);
-    });
-    ref.listen(liveRoundsIdProvider, (_, __) {
-      bumpForYouEventsRefreshSignal(ref);
     });
   }
 
@@ -179,6 +155,8 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   Future<void> refresh() async {
     _offset = 0;
     state = state.copyWith(isLoading: true, error: null);
+    ref.read(forYouTopGamesSnapshotCacheProvider.notifier).state =
+        const <String, ForYouEventGamesSnapshot>{};
     bumpForYouEventsRefreshSignal(ref);
     await _fetchPage(isInitial: true);
   }
@@ -235,57 +213,33 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
       // while the realtime settings stream is reconnecting.
       final liveIds = await _getLiveIdsSnapshot();
 
-      // Fetch pages from DB. When status filters are active, a single page
-      // may yield zero matches (e.g. no live events in the first 20 results).
-      // Keep fetching until we have results or the DB is exhausted.
-      List<GroupBroadcast> filteredBroadcasts = [];
-      bool dbHasMore = true;
+      final broadcasts = await repo.getForYouGroupBroadcasts(
+        limit: _kPageSize,
+        offset: _offset,
+        timeControlFilters: formatFilters.isNotEmpty ? formatFilters : null,
+        minElo: hasEloFilter ? minElo : null,
+        maxElo: hasEloFilter ? maxElo : null,
+        statusFilters: statusFilters.isNotEmpty ? statusFilters.toList() : null,
+      );
 
-      do {
-        final broadcasts = await repo.getCurrentGroupBroadcasts(
-          limit: _kPageSize,
-          offset: _offset,
-          timeControlFilters: formatFilters.isNotEmpty ? formatFilters : null,
-          minElo: hasEloFilter ? minElo : null,
-          maxElo: hasEloFilter ? maxElo : null,
-        );
+      debugPrint(
+        '[ForYou] RPC fetched ${broadcasts.length} events (offset: $_offset, filters: format=$formatFilters, elo=$hasEloFilter, status=$statusFilters)',
+      );
 
-        debugPrint(
-          '[ForYou] Fetched ${broadcasts.length} from Supabase (offset: $_offset, filters: format=$formatFilters, elo=$hasEloFilter)',
-        );
-
-        dbHasMore = broadcasts.length >= _kPageSize;
-        _offset += broadcasts.length;
-
-        // Apply status filter (live/completed) - can't do in DB query
-        if (statusFilters.isNotEmpty) {
-          final filtered =
-              broadcasts.where((tour) {
-                final isLive = liveIds.contains(tour.id);
-                return (statusFilters.contains('live') && isLive) ||
-                    (statusFilters.contains('completed') && !isLive);
-              }).toList();
-          filteredBroadcasts.addAll(filtered);
-        } else {
-          filteredBroadcasts = broadcasts;
-          break;
-        }
-      } while (filteredBroadcasts.isEmpty && dbHasMore);
+      final dbHasMore = broadcasts.length >= _kPageSize;
+      _offset += broadcasts.length;
 
       // Convert to models
       final models =
-          filteredBroadcasts
+          broadcasts
               .map((b) => GroupEventCardModel.fromGroupBroadcast(b, liveIds))
               .toList();
 
-      // Pre-fetch heart data in background — don't block page render.
-      // This prevents For You from saturating the HTTP connection pool
-      // and starving other tabs (e.g. Current) of network access.
-      // 5s timeout prevents indefinite stalling if any provider hangs.
-      _prefetchHeartDataWithTimeout(models);
+      await _prefetchTopGameSnapshots(models);
 
-      // Sort this batch (without heart data initially — will re-sort once heart data arrives)
-      final sortedModels = await _sortModels(models);
+      final nextEvents =
+          isInitial ? models : _mergeEvents(state.events, models);
+      final sortedModels = await _sortModels(nextEvents);
 
       // Update state
       if (isInitial) {
@@ -296,10 +250,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
         );
         _lastRefreshAt = DateTime.now();
       } else {
-        state = state.copyWith(
-          events: [...state.events, ...sortedModels],
-          hasMore: dbHasMore,
-        );
+        state = state.copyWith(events: sortedModels, hasMore: dbHasMore);
       }
     } catch (e, stack) {
       debugPrint('[ForYou] Error: $e');
@@ -331,186 +282,89 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     }
   }
 
-  /// Prefetch heart (favorite-player) data for a batch of events.
-  ///
-  /// Uses a single batch query to fetch tours for ALL events at once,
-  /// then computes heart data locally. This replaces the previous N+1
-  /// pattern (20 individual Supabase queries) with 1 batch query.
-  Future<void> _prefetchHeartData(List<GroupEventCardModel> models) async {
-    try {
-      // 1. Get the user's favorite players from the new provider (in-memory, no Supabase call).
-      // Data is already synced by the auth flow — reading synchronously avoids
-      // a redundant Supabase round-trip that the old autoDispose provider triggered.
-      final favoritePlayers =
-          ref.read(favoritePlayersProviderNew).valueOrNull ?? [];
-
-      if (favoritePlayers.isEmpty) {
-        // No favorites — cache empty results and return early
-        final map = {
-          for (final m in models) m.id: const EventFavoritePlayers.empty(),
-        };
-        ref
-            .read(eventFavoritePlayersCacheProvider.notifier)
-            .updateCacheBatch(map);
-        return;
-      }
-
-      final favoriteFideIds =
-          favoritePlayers
-              .where((p) => p.fideId != null)
-              .map((p) => int.tryParse(p.fideId!))
-              .whereType<int>()
-              .toSet();
-
-      if (favoriteFideIds.isEmpty) {
-        final map = {
-          for (final m in models) m.id: const EventFavoritePlayers.empty(),
-        };
-        ref
-            .read(eventFavoritePlayersCacheProvider.notifier)
-            .updateCacheBatch(map);
-        return;
-      }
-
-      // 2. Batch-fetch tours for ALL events in ONE query
-      final eventIds = models.map((m) => m.id).toList();
-      final tourRepo = ref.read(tourRepositoryProvider);
-      final toursMap = await tourRepo.getToursByGroupBroadcastIds(eventIds);
-
-      // 3. Compute heart data locally for each event
-      final resultMap = <String, EventFavoritePlayers>{};
-
-      for (final model in models) {
-        final tours = toursMap[model.id] ?? [];
-        final eventPlayerFideIds = <int>{};
-
-        for (final tour in tours) {
-          for (final player in tour.players) {
-            if (player.fideId != null && player.fideId! > 0) {
-              eventPlayerFideIds.add(player.fideId!);
-            }
-          }
-        }
-
-        // Match the legacy per-card provider behavior: if roster data is
-        // absent/stale, derive favorite-player presence from games instead.
-        if (eventPlayerFideIds.isEmpty) {
-          eventPlayerFideIds.addAll(
-            await _loadEventPlayerFideIdsFromGamesFallback(
-              eventId: model.id,
-              tours: tours,
-            ),
-          );
-        }
-
-        final matchingFideIds =
-            eventPlayerFideIds.intersection(favoriteFideIds).toList();
-
-        resultMap[model.id] =
-            matchingFideIds.isEmpty
-                ? const EventFavoritePlayers.empty()
-                : EventFavoritePlayers(
-                  count: matchingFideIds.length,
-                  fideIds: matchingFideIds,
-                );
-      }
-
-      ref
-          .read(eventFavoritePlayersCacheProvider.notifier)
-          .updateCacheBatch(resultMap);
-    } catch (e) {
-      debugPrint('[ForYou] Error in batch _prefetchHeartData: $e');
-      // On error, cache empty for all events so we don't retry endlessly
-      final map = {
-        for (final m in models) m.id: const EventFavoritePlayers.empty(),
-      };
-      ref
-          .read(eventFavoritePlayersCacheProvider.notifier)
-          .updateCacheBatch(map);
-    }
-  }
-
-  void _prefetchHeartDataWithTimeout(List<GroupEventCardModel> models) {
+  Future<void> _prefetchTopGameSnapshots(
+    List<GroupEventCardModel> models,
+  ) async {
     if (models.isEmpty) return;
-    unawaited(
-      _prefetchHeartData(models)
-          .timeout(
-            const Duration(seconds: 5),
-            onTimeout: () {
-              debugPrint('[ForYou] _prefetchHeartData timed out after 5s');
-            },
+
+    final eventIds = models.map((model) => model.id).toList(growable: false);
+
+    try {
+      final gamesByEvent = await ref
+          .read(gameRepositoryProvider)
+          .getForYouTopGamesByEventIds(
+            eventIds: eventIds,
+            boardsPerEvent: _topGamesPerEventSnapshotLimit,
           )
-          .then((_) {
-            if (mounted) _reSortList();
-          }),
-    );
+          .timeout(const Duration(seconds: 6));
+      _writeTopGameSnapshots(models: models, gamesByEvent: gamesByEvent);
+    } catch (e, stack) {
+      debugPrint('[ForYou] Top-game RPC failed: $e');
+      debugPrint('[ForYou] Top-game stack: $stack');
+      _logErrorToSentry(e, stack);
+      _writeTopGameSnapshots(
+        models: models,
+        gamesByEvent: const <String, List<Games>>{},
+      );
+    }
   }
 
-  Future<Set<int>> _loadEventPlayerFideIdsFromGamesFallback({
-    required String eventId,
-    required List<Tour> tours,
-  }) async {
-    try {
-      var tourIds = tours.map((tour) => tour.id).toList(growable: false);
-
-      if (tourIds.isEmpty) {
-        try {
-          tourIds = await ref
-              .read(groupBroadcastRepositoryProvider)
-              .getTourIdsForGroupBroadcast(eventId);
-        } catch (_) {
-          tourIds = const <String>[];
-        }
-      }
-
-      if (tourIds.isEmpty) {
-        tourIds = [eventId];
-      }
-
-      final games = await ref
-          .read(gameRepositoryProvider)
-          .getGamesFromTourIds(tourIds: tourIds, limit: 200, offset: 0);
-
-      final fideIds = <int>{};
-      for (final game in games) {
-        final players = game.players;
-        if (players == null || players.isEmpty) continue;
-        for (final player in players) {
-          if (player.fideId > 0) {
-            fideIds.add(player.fideId);
-          }
-        }
-      }
-      return fideIds;
-    } catch (e) {
-      debugPrint('[ForYou] Error in heart fallback for $eventId: $e');
-      return const <int>{};
+  void _writeTopGameSnapshots({
+    required List<GroupEventCardModel> models,
+    required Map<String, List<Games>> gamesByEvent,
+  }) {
+    final snapshots = <String, ForYouEventGamesSnapshot>{};
+    for (final model in models) {
+      snapshots[model.id] = _topGamesSnapshotFromGames(
+        eventId: model.id,
+        games: gamesByEvent[model.id] ?? const <Games>[],
+      );
     }
+
+    ref.read(forYouTopGamesSnapshotCacheProvider.notifier).update((current) {
+      return <String, ForYouEventGamesSnapshot>{...current, ...snapshots};
+    });
   }
 
   Future<List<GroupEventCardModel>> _sortModels(
     List<GroupEventCardModel> models,
   ) async {
-    final favoriteEventsAsync = ref.read(favoriteEventsProvider);
-    final favoriteEvents = favoriteEventsAsync.valueOrNull ?? [];
-    final starredIds = favoriteEvents.map((e) => e.eventId).toList();
-
-    final favoriteTimestamps = <String, DateTime>{};
-    for (final fav in favoriteEvents) {
-      favoriteTimestamps[fav.eventId] = fav.createdAt;
-    }
-
-    final cache = ref.read(eventFavoritePlayersCacheProvider);
-
-    return ref
-        .read(tournamentSortingServiceProvider)
-        .sortBasedOnFavorite(
-          tours: models,
-          favorites: starredIds,
-          eventFavoritePlayersMap: cache,
-          favoriteTimestamps: favoriteTimestamps,
-        );
+    return ref.read(tournamentSortingServiceProvider).sortAllTours(models);
   }
+}
+
+List<GroupEventCardModel> _mergeEvents(
+  List<GroupEventCardModel> current,
+  List<GroupEventCardModel> incoming,
+) {
+  final byId = <String, GroupEventCardModel>{
+    for (final event in current) event.id: event,
+  };
+  for (final event in incoming) {
+    byId[event.id] = event;
+  }
+  return byId.values.toList(growable: false);
+}
+
+ForYouEventGamesSnapshot _topGamesSnapshotFromGames({
+  required String eventId,
+  required List<Games> games,
+}) {
+  final visibleGames = <GamesTourModel>[];
+  for (final game in games.take(_topGamesPerEventSnapshotLimit)) {
+    try {
+      visibleGames.add(GamesTourModel.fromGame(game));
+    } catch (e) {
+      debugPrint('[ForYou] Skipping malformed top game ${game.id}: $e');
+    }
+  }
+
+  return ForYouEventGamesSnapshot(
+    eventId: eventId,
+    tourId: games.isEmpty ? '' : games.first.tourId,
+    visibleGames: visibleGames,
+    pinnedIds: const <String>[],
+  );
 }
 
 final forYouEventsProvider =
@@ -701,8 +555,8 @@ class _ForYouPinActionController implements ForYouPinAction {
 
 // ============================================================================
 // LAZY GAMES PER EVENT PROVIDER
-// Mirrors the Games tab for the event's resolved default tour,
-// then lets the UI render only the first 4 visible games.
+// Mirrors the Games tab for the event's resolved default tour, then lets each
+// platform's UI cap visible games to the density that fits its layout.
 // ============================================================================
 
 final eventGamesProvider = StateNotifierProvider.autoDispose.family<
@@ -889,6 +743,11 @@ Future<ForYouEventGamesSnapshot> _computeForYouEventGamesSnapshot({
   required String eventId,
   required _GamesStorageLoader loadGames,
 }) async {
+  final cachedTopGames = ref.read(forYouTopGamesSnapshotCacheProvider)[eventId];
+  if (cachedTopGames != null) {
+    return cachedTopGames;
+  }
+
   final resolvedEventData = await _loadForYouResolvedEventData(
     ref: ref,
     eventId: eventId,
@@ -1499,7 +1358,7 @@ final forYouEventGamesWithAutoRefreshProvider = Provider.autoDispose.family<
     data: (snapshot) {
       final liveGames =
           snapshot.visibleGames
-              .take(kGamesPerEvent)
+              .take(_topGamesPerEventSnapshotLimit)
               .where((game) => game.gameStatus == GameStatus.ongoing)
               .toList();
 
@@ -1511,7 +1370,9 @@ final forYouEventGamesWithAutoRefreshProvider = Provider.autoDispose.family<
           return AsyncValue.data(snapshot);
         }
 
-        final displayedGames = snapshot.visibleGames.take(kGamesPerEvent);
+        final displayedGames = snapshot.visibleGames.take(
+          _topGamesPerEventSnapshotLimit,
+        );
         final watchedGameIds = liveGames
             .map((game) => game.gameId)
             .toList(growable: false);

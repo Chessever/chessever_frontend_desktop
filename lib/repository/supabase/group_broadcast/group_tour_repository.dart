@@ -184,6 +184,42 @@ class GroupBroadcastRepository extends BaseRepository {
     });
   }
 
+  Future<List<GroupBroadcast>> getForYouGroupBroadcasts({
+    int limit = 20,
+    int offset = 0,
+    List<String>? timeControlFilters,
+    int? minElo,
+    int? maxElo,
+    List<String>? statusFilters,
+  }) async {
+    return handleApiCall(() async {
+      final response = await supabase.rpc(
+        'get_for_you_group_broadcasts',
+        params: {
+          'p_limit': limit,
+          'p_offset': offset,
+          'p_time_controls':
+              timeControlFilters == null || timeControlFilters.isEmpty
+                  ? null
+                  : timeControlFilters,
+          'p_min_elo': minElo,
+          'p_max_elo': maxElo,
+          'p_statuses':
+              statusFilters == null || statusFilters.isEmpty
+                  ? null
+                  : statusFilters,
+        },
+      );
+
+      return (response as List)
+          .map(
+            (json) =>
+                GroupBroadcast.fromJson(Map<String, dynamic>.from(json as Map)),
+          )
+          .toList();
+    });
+  }
+
   Future<List<GroupBroadcast>> getUpcomingGroupBroadcasts({
     int? limit,
     int? offset,

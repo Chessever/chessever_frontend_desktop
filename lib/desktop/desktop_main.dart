@@ -34,6 +34,7 @@ import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
+import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
@@ -42,6 +43,7 @@ import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
 import 'package:chessever/utils/audio_player_service.dart';
+import 'package:chessever/utils/chessground_image_cache.dart';
 import 'package:chessever/utils/foreground_task_scheduler.dart';
 
 /// Stripped-down startup path for the macOS / Windows builds.
@@ -66,13 +68,13 @@ Future<void> desktopMain({
   // runZonedGuarded later is exactly what triggered Flutter's "Zone mismatch"
   // assertion at startup. One zone also means a release-mode crash on any
   // path — board window, primary boot — gets logged before the OS kills us.
-  await runZonedGuarded(
-    () => _desktopEntrypoint(initialArguments),
-    (error, stack) {
-      print('[desktop] fatal error (details sent to Sentry)');
-      ErrorReporter.report(error, stackTrace: stack, tag: 'desktop.fatal');
-    },
-  );
+  await runZonedGuarded(() => _desktopEntrypoint(initialArguments), (
+    error,
+    stack,
+  ) {
+    print('[desktop] fatal error (details sent to Sentry)');
+    ErrorReporter.report(error, stackTrace: stack, tag: 'desktop.fatal');
+  });
 }
 
 Future<void> _desktopEntrypoint(List<String> initialArguments) async {
@@ -340,6 +342,10 @@ Future<void> _desktopBoot({
     // web and RevenueCat mobile state). Replaces the stub-true override.
     overrides: [desktopSubscriptionOverride],
   );
+  await _preloadChessgroundPieceImages(
+    container,
+    tag: 'desktop.chessground_preload',
+  );
   _desktopShutdownCoordinator = DesktopShutdownCoordinator(container);
   try {
     await _desktopShutdownCoordinator!.start();
@@ -443,6 +449,10 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
   );
 
   final container = ProviderContainer(overrides: [desktopSubscriptionOverride]);
+  await _preloadChessgroundPieceImages(
+    container,
+    tag: 'desktop.board_window.chessground_preload',
+  );
   final boardArgs = payload.args;
   final tabId =
       payload.kind == TabKind.board && boardArgs != null
@@ -468,6 +478,20 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
       child: DesktopBoardWindowApp(payload: payload, tabId: tabId),
     ),
   );
+}
+
+Future<void> _preloadChessgroundPieceImages(
+  ProviderContainer container, {
+  required String tag,
+}) async {
+  try {
+    final settings = await container.read(boardSettingsProviderNew.future);
+    await ChessgroundImageCache.preloadPieceSet(settings.pieceSet);
+    print('[desktop] chessground pieces cached (${settings.pieceSet.label})');
+  } catch (e, stack) {
+    print('[desktop] ⚠️ chessground piece cache preload failed');
+    ErrorReporter.report(e, stackTrace: stack, tag: tag);
+  }
 }
 
 void _restoreDetachedTabMetadata(

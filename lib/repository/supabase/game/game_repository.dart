@@ -1160,6 +1160,37 @@ class GameRepository extends BaseRepository {
     });
   }
 
+  Future<Map<String, List<Games>>> getForYouTopGamesByEventIds({
+    required List<String> eventIds,
+    int boardsPerEvent = 4,
+  }) async {
+    if (eventIds.isEmpty) return <String, List<Games>>{};
+
+    return handleApiCall(() async {
+      final response = await supabase.rpc(
+        'get_for_you_top_games',
+        params: {'p_event_ids': eventIds, 'p_boards_per_event': boardsPerEvent},
+      );
+
+      final gamesByEvent = <String, List<Games>>{};
+      for (final item in response as List) {
+        final row = Map<String, dynamic>.from(item as Map);
+        final eventId = row['event_id'] as String?;
+        if (eventId == null || eventId.isEmpty) continue;
+
+        try {
+          gamesByEvent
+              .putIfAbsent(eventId, () => <Games>[])
+              .add(Games.fromJson(row));
+        } catch (e) {
+          debugPrint('[GameRepository] Skipping malformed top game row: $e');
+        }
+      }
+
+      return gamesByEvent;
+    });
+  }
+
   /// Search games using the precomputed `search` tokens column.
   ///
   /// The `games.search` column contains normalized tokens (players, events,
