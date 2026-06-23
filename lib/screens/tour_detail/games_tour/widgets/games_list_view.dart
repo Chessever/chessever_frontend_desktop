@@ -86,20 +86,20 @@ class GamesListView extends ConsumerWidget {
     // instead of creating one realtime channel per card.
     final liveBatchKeyByGameId = _buildLiveBatchKeys(gamesByRound);
 
-    final itemCount = _computeItemCount(
-      gamesListViewMode,
-      rounds,
-      gamesByRound,
-      matchExpansionState,
-      roundExpansionState,
-      isKnockoutTournament,
-      displayMode,
-      matchGroupsByRound,
+    final listItems = _buildListItems(
+      mode: gamesListViewMode,
+      rounds: rounds,
+      gamesByRound: gamesByRound,
+      matchExpansionState: matchExpansionState,
+      roundExpansionState: roundExpansionState,
+      isKnockoutTournament: isKnockoutTournament,
+      displayMode: displayMode,
+      matchGroupsByRound: matchGroupsByRound,
       isSearchMode: isSearchMode,
       matchFormatHeader: matchFormatHeader,
     );
 
-    if (itemCount == 0) {
+    if (listItems.isEmpty) {
       return const SizedBox.shrink();
     }
 
@@ -113,7 +113,7 @@ class GamesListView extends ConsumerWidget {
     Widget listContent = PositionedListScrollbar(
       itemPositionsListener: itemPositionsListener,
       itemScrollController: itemScrollController,
-      itemCount: itemCount,
+      itemCount: listItems.length,
       thumbWidth: 4.sp,
       padding: EdgeInsets.only(
         top: 0,
@@ -131,25 +131,9 @@ class GamesListView extends ConsumerWidget {
           return ScrollablePositionedList.builder(
             itemScrollController: itemScrollController,
             itemPositionsListener: itemPositionsListener,
-            itemCount: itemCount,
+            itemCount: listItems.length,
             itemBuilder: (context, index) {
-              final lookup = _lookupItem(
-                index: index,
-                rounds: rounds,
-                gamesByRound: gamesByRound,
-                mode: gamesListViewMode,
-                matchExpansionState: matchExpansionState,
-                roundExpansionState: roundExpansionState,
-                isKnockoutTournament: isKnockoutTournament,
-                displayMode: displayMode,
-                matchGroupsByRound: matchGroupsByRound,
-                isSearchMode: isSearchMode,
-                matchFormatHeader: matchFormatHeader,
-              );
-
-              if (lookup == null) {
-                return const SizedBox.shrink();
-              }
+              final lookup = listItems[index];
 
               if (lookup is _MatchFormatHeaderData) {
                 return Padding(
@@ -494,74 +478,164 @@ Map<String, LiveGamesBatchKey> _buildLiveBatchKeys(
   return result;
 }
 
-int _computeItemCount(
-  GamesListViewMode mode,
-  List<GamesAppBarModel> rounds,
-  Map<String, List<GamesTourModel>> gamesByRound,
-  Map<String, bool> matchExpansionState,
-  Map<String, bool> roundExpansionState,
-  bool isKnockoutTournament,
-  GameDisplayMode displayMode,
-  Map<String, Map<String, List<GamesTourModel>>> matchGroupsByRound, {
+List<Object> _buildListItems({
+  required GamesListViewMode mode,
+  required List<GamesAppBarModel> rounds,
+  required Map<String, List<GamesTourModel>> gamesByRound,
+  required Map<String, bool> matchExpansionState,
+  required Map<String, bool> roundExpansionState,
+  required bool isKnockoutTournament,
+  required GameDisplayMode displayMode,
+  required Map<String, Map<String, List<GamesTourModel>>> matchGroupsByRound,
   bool isSearchMode = false,
   MatchHeaderModel? matchFormatHeader,
 }) {
-  var count = matchFormatHeader != null ? 1 : 0;
+  final items = <Object>[];
+  if (matchFormatHeader != null) {
+    items.add(_MatchFormatHeaderData(matchFormatHeader));
+  }
+
+  var globalGameIndex = 0;
   final isGrid = mode == GamesListViewMode.chessBoardGrid;
 
   for (final round in rounds) {
     final roundGames = gamesByRound[round.id] ?? const <GamesTourModel>[];
     if (roundGames.isEmpty) continue;
-    // In search mode, default to expanded (true)
+
+    final roundStartIndex = globalGameIndex;
     final isRoundExpanded =
         isSearchMode ? true : (roundExpansionState[round.id] ?? true);
 
-    count++; // round header always counted
+    items.add(_HeaderData(round, roundGames));
 
     if (!isRoundExpanded) {
+      globalGameIndex = roundStartIndex + roundGames.length;
       continue;
     }
 
     if (_isKnockoutRound(isKnockoutTournament, round)) {
-      // For knockout format: round header + match headers + games using pre-calculated groups
       final matches = matchGroupsByRound[round.id] ?? {};
+      var matchGameOffset = 0;
+
       for (final entry in matches.entries) {
         final matchKey = entry.key;
         final matchGames = entry.value;
-        // In search mode, default to expanded (true)
+        final matchHeader = KnockoutMatchDetector.createMatchHeader(
+          matchKey,
+          matchGames,
+        );
         final isExpanded =
             isSearchMode
                 ? true
                 : resolveMatchExpansionState(matchExpansionState, matchKey);
+        final matchGamesCount = matchGames.length;
+        final matchStartIndex = roundStartIndex + matchGameOffset;
 
-        count++; // match header
+        items.add(_MatchHeaderData(matchHeader));
 
-        // Only count games if match is expanded
         if (isExpanded) {
-          // Filter games based on displayMode for knockout tournaments
-          final filteredGames =
-              matchGames.where((game) {
-                return _shouldShowGame(displayMode, game);
-              }).toList();
+          final filteredGames = <GamesTourModel>[];
+          final filteredToOriginalIndex = <int, int>{};
+          for (var i = 0; i < matchGames.length; i++) {
+            final game = matchGames[i];
+            if (_shouldShowGame(displayMode, game)) {
+              filteredToOriginalIndex[filteredGames.length] = i;
+              filteredGames.add(game);
+            }
+          }
 
+          final fixedBottomPlayerName = _highestRatedPlayerName(matchGames);
           if (isGrid) {
-            count += (filteredGames.length / 2).ceil();
+            for (var row = 0; row < (filteredGames.length / 2).ceil(); row++) {
+              final game1Index = row * 2;
+              final game2Index = game1Index + 1;
+              items.add(
+                _GameRowData(
+                  game1: filteredGames[game1Index],
+                  globalIndex1:
+                      matchStartIndex + filteredToOriginalIndex[game1Index]!,
+                  fixedBottomSide1: _sideForPlayer(
+                    filteredGames[game1Index],
+                    fixedBottomPlayerName,
+                  ),
+                  game2:
+                      game2Index < filteredGames.length
+                          ? filteredGames[game2Index]
+                          : null,
+                  globalIndex2:
+                      game2Index < filteredGames.length
+                          ? matchStartIndex +
+                              filteredToOriginalIndex[game2Index]!
+                          : null,
+                  fixedBottomSide2:
+                      game2Index < filteredGames.length
+                          ? _sideForPlayer(
+                            filteredGames[game2Index],
+                            fixedBottomPlayerName,
+                          )
+                          : null,
+                  isLastInSection: row == (filteredGames.length / 2).ceil() - 1,
+                ),
+              );
+            }
           } else {
-            count += filteredGames.length;
+            for (var i = 0; i < filteredGames.length; i++) {
+              items.add(
+                _GameRowData(
+                  game1: filteredGames[i],
+                  globalIndex1: matchStartIndex + filteredToOriginalIndex[i]!,
+                  fixedBottomSide1: _sideForPlayer(
+                    filteredGames[i],
+                    fixedBottomPlayerName,
+                  ),
+                  isLastInSection: i == filteredGames.length - 1,
+                ),
+              );
+            }
           }
         }
+
+        matchGameOffset += matchGamesCount;
+      }
+
+      globalGameIndex = roundStartIndex + matchGameOffset;
+      continue;
+    }
+
+    if (isGrid) {
+      for (var row = 0; row < (roundGames.length / 2).ceil(); row++) {
+        final game1Index = row * 2;
+        final game2Index = game1Index + 1;
+        items.add(
+          _GameRowData(
+            game1: roundGames[game1Index],
+            globalIndex1: roundStartIndex + game1Index,
+            game2:
+                game2Index < roundGames.length ? roundGames[game2Index] : null,
+            globalIndex2:
+                game2Index < roundGames.length
+                    ? roundStartIndex + game2Index
+                    : null,
+            isLastInSection: row == (roundGames.length / 2).ceil() - 1,
+          ),
+        );
       }
     } else {
-      // Regular format: round header + games
-      if (isGrid) {
-        count += (roundGames.length / 2).ceil();
-      } else {
-        count += roundGames.length;
+      for (var i = 0; i < roundGames.length; i++) {
+        items.add(
+          _GameRowData(
+            game1: roundGames[i],
+            globalIndex1: roundStartIndex + i,
+            isLastInSection: i == roundGames.length - 1,
+          ),
+        );
       }
     }
+
+    globalGameIndex = roundStartIndex + roundGames.length;
   }
 
-  return count;
+  return items;
 }
 
 bool _shouldShowGame(GameDisplayMode mode, GamesTourModel game) {
@@ -573,198 +647,6 @@ bool _shouldShowGame(GameDisplayMode mode, GamesTourModel game) {
     case GameDisplayMode.all:
       return true;
   }
-}
-
-Object? _lookupItem({
-  required int index,
-  required List<GamesAppBarModel> rounds,
-  required Map<String, List<GamesTourModel>> gamesByRound,
-  required GamesListViewMode mode,
-  required Map<String, bool> matchExpansionState,
-  required Map<String, bool> roundExpansionState,
-  required bool isKnockoutTournament,
-  required GameDisplayMode displayMode,
-  required Map<String, Map<String, List<GamesTourModel>>> matchGroupsByRound,
-  bool isSearchMode = false,
-  MatchHeaderModel? matchFormatHeader,
-}) {
-  // Match format score card occupies index 0
-  if (matchFormatHeader != null) {
-    if (index == 0) return _MatchFormatHeaderData(matchFormatHeader);
-  }
-
-  var currentIndex = matchFormatHeader != null ? 1 : 0;
-  var globalGameIndex = 0;
-  final isGrid = mode == GamesListViewMode.chessBoardGrid;
-
-  for (final round in rounds) {
-    final roundGames = gamesByRound[round.id] ?? const <GamesTourModel>[];
-    if (roundGames.isEmpty) continue;
-
-    final roundStartIndex = globalGameIndex;
-    // In search mode, default to expanded (true)
-    final isRoundExpanded =
-        isSearchMode ? true : (roundExpansionState[round.id] ?? true);
-
-    if (index == currentIndex) {
-      return _HeaderData(round, roundGames);
-    }
-
-    currentIndex++; // move past round header
-
-    if (!isRoundExpanded) {
-      globalGameIndex = roundStartIndex + roundGames.length;
-      continue;
-    }
-
-    if (_isKnockoutRound(isKnockoutTournament, round)) {
-      // Handle knockout match format with match headers using pre-calculated groups
-      final matches = matchGroupsByRound[round.id] ?? {};
-      final matchHeaders =
-          matches.entries
-              .map(
-                (entry) => KnockoutMatchDetector.createMatchHeader(
-                  entry.key,
-                  entry.value,
-                ),
-              )
-              .toList();
-
-      int matchGameOffset = 0;
-
-      for (final matchHeader in matchHeaders) {
-        final matchGames = matchHeader.games;
-        final matchKey = matchHeader.matchKey;
-        // In search mode, default to expanded (true)
-        final isExpanded =
-            isSearchMode
-                ? true
-                : resolveMatchExpansionState(matchExpansionState, matchKey);
-        final matchGamesCount = matchGames.length;
-        final matchStartIndex = roundStartIndex + matchGameOffset;
-
-        // Check if this is the match header
-        if (index == currentIndex) {
-          return _MatchHeaderData(matchHeader);
-        }
-
-        currentIndex++; // move past match header
-
-        // Only process games if match is expanded
-        if (isExpanded) {
-          // Filter games based on displayMode for knockout tournaments
-          final filteredGames =
-              matchGames.where((game) {
-                return _shouldShowGame(displayMode, game);
-              }).toList();
-          final fixedBottomPlayerName = _highestRatedPlayerName(matchGames);
-
-          // Build index mapping from filtered to original
-          final filteredToOriginalIndex = <int, int>{};
-          int filteredIdx = 0;
-          for (int i = 0; i < matchGames.length; i++) {
-            if (_shouldShowGame(displayMode, matchGames[i])) {
-              filteredToOriginalIndex[filteredIdx] = i;
-              filteredIdx++;
-            }
-          }
-
-          final filteredCount = filteredGames.length;
-
-          if (isGrid) {
-            final rowCount = (filteredCount / 2).ceil();
-            if (index < currentIndex + rowCount) {
-              final row = index - currentIndex;
-              final game1Index = row * 2;
-              final game2Index = game1Index + 1;
-
-              return _GameRowData(
-                game1: filteredGames[game1Index],
-                globalIndex1:
-                    matchStartIndex + filteredToOriginalIndex[game1Index]!,
-                fixedBottomSide1: _sideForPlayer(
-                  filteredGames[game1Index],
-                  fixedBottomPlayerName,
-                ),
-                game2:
-                    game2Index < filteredCount
-                        ? filteredGames[game2Index]
-                        : null,
-                globalIndex2:
-                    game2Index < filteredCount
-                        ? matchStartIndex + filteredToOriginalIndex[game2Index]!
-                        : null,
-                fixedBottomSide2:
-                    game2Index < filteredCount
-                        ? _sideForPlayer(
-                          filteredGames[game2Index],
-                          fixedBottomPlayerName,
-                        )
-                        : null,
-                isLastInSection: row == rowCount - 1,
-              );
-            }
-            currentIndex += rowCount;
-          } else {
-            if (index < currentIndex + filteredCount) {
-              final localIndex = index - currentIndex;
-              return _GameRowData(
-                game1: filteredGames[localIndex],
-                globalIndex1:
-                    matchStartIndex + filteredToOriginalIndex[localIndex]!,
-                fixedBottomSide1: _sideForPlayer(
-                  filteredGames[localIndex],
-                  fixedBottomPlayerName,
-                ),
-                isLastInSection: localIndex == filteredCount - 1,
-              );
-            }
-            currentIndex += filteredCount;
-          }
-        }
-
-        matchGameOffset += matchGamesCount;
-      }
-
-      globalGameIndex = roundStartIndex + matchGameOffset;
-    } else {
-      // Regular format without match headers
-      final gamesCount = roundGames.length;
-
-      if (isGrid) {
-        final rowCount = (gamesCount / 2).ceil();
-        if (index < currentIndex + rowCount) {
-          final row = index - currentIndex;
-          final game1Index = row * 2;
-          final game2Index = game1Index + 1;
-
-          return _GameRowData(
-            game1: roundGames[game1Index],
-            globalIndex1: roundStartIndex + game1Index,
-            game2: game2Index < gamesCount ? roundGames[game2Index] : null,
-            globalIndex2:
-                game2Index < gamesCount ? roundStartIndex + game2Index : null,
-            isLastInSection: row == rowCount - 1,
-          );
-        }
-        currentIndex += rowCount;
-      } else {
-        if (index < currentIndex + gamesCount) {
-          final localIndex = index - currentIndex;
-          return _GameRowData(
-            game1: roundGames[localIndex],
-            globalIndex1: roundStartIndex + localIndex,
-            isLastInSection: localIndex == gamesCount - 1,
-          );
-        }
-        currentIndex += gamesCount;
-      }
-
-      globalGameIndex = roundStartIndex + gamesCount;
-    }
-  }
-
-  return null;
 }
 
 int? _listIndexForGameIndex({

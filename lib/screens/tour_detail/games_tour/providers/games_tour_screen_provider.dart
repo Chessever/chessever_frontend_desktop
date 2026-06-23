@@ -100,19 +100,22 @@ List<GamesTourModel> _processGamesWorker(_GamesProcessingArgs args) {
 
   // 2. Sort games
   final sortedGames = List<Games>.from(args.games);
+  final pinnedOrder = <String, int>{
+    for (var i = 0; i < args.pinnedIds.length; i++) args.pinnedIds[i]: i,
+  };
   sortedGames.sort((a, b) {
     // FIRST PRIORITY: Pinned games (only in non-search mode)
     if (!args.isSearchMode) {
-      final aPinned = args.pinnedIds.contains(a.id);
-      final bPinned = args.pinnedIds.contains(b.id);
+      final aPinnedIndex = pinnedOrder[a.id];
+      final bPinnedIndex = pinnedOrder[b.id];
+      final aPinned = aPinnedIndex != null;
+      final bPinned = bPinnedIndex != null;
       if (aPinned && !bPinned) return -1;
       if (!aPinned && bPinned) return 1;
 
       // If both are pinned, preserve pin order
       if (aPinned && bPinned) {
-        final aIndex = args.pinnedIds.indexOf(a.id);
-        final bIndex = args.pinnedIds.indexOf(b.id);
-        if (aIndex != bIndex) return aIndex.compareTo(bIndex);
+        return aPinnedIndex.compareTo(bPinnedIndex);
       }
     }
 
@@ -365,17 +368,7 @@ class GamesTourScreenProvider
         gameInfo[game.id] = (roundNum, gameNum);
       }
 
-      // Check if there are any live games
       final hasLiveGames = allGames.any((g) => g.status == "*");
-
-      debugPrint(
-        '🎮 GamesTourScreen: Total games: ${allGames.length}, Live games: ${allGames.where((g) => g.status == "*").length}',
-      );
-      if (allGames.where((g) => g.status == "*").isNotEmpty) {
-        debugPrint(
-          '🎮 GamesTourScreen: Live game rounds: ${allGames.where((g) => g.status == "*").map((g) => g.roundSlug).join(", ")}',
-        );
-      }
 
       // Find the upcoming round if no live games exist
       int? upcomingRoundNumber;
@@ -662,16 +655,19 @@ class GamesTourScreenProvider
     }
 
     final sortedGames = List<Games>.from(games);
+    final pinnedOrder = <String, int>{
+      for (var i = 0; i < pinnedIds.length; i++) pinnedIds[i]: i,
+    };
     sortedGames.sort((a, b) {
-      final aPinned = pinnedIds.contains(a.id);
-      final bPinned = pinnedIds.contains(b.id);
+      final aPinnedIndex = pinnedOrder[a.id];
+      final bPinnedIndex = pinnedOrder[b.id];
+      final aPinned = aPinnedIndex != null;
+      final bPinned = bPinnedIndex != null;
       if (aPinned && !bPinned) return -1;
       if (!aPinned && bPinned) return 1;
 
       if (aPinned && bPinned) {
-        final aIndex = pinnedIds.indexOf(a.id);
-        final bIndex = pinnedIds.indexOf(b.id);
-        if (aIndex != bIndex) return aIndex.compareTo(bIndex);
+        return aPinnedIndex.compareTo(bPinnedIndex);
       }
 
       final (roundA, gameA) = gameInfo[a.id] ?? (0, 0);

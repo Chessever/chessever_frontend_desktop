@@ -119,6 +119,7 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
 
   final gamesByRound = <String, List<GamesTourModel>>{};
   final seenGameIdsPerRound = <String, Set<String>>{};
+  final roundIds = rounds.map((round) => round.id).toSet();
 
   void ensureRoundEntry(String roundId) {
     gamesByRound.putIfAbsent(roundId, () => <GamesTourModel>[]);
@@ -198,8 +199,7 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
       if (!isKnockoutTournament && !_shouldIncludeGame(displayMode, game)) {
         continue;
       }
-      final isGameInAnyRound = rounds.any((r) => r.id == game.roundId);
-      if (isGameInAnyRound) {
+      if (roundIds.contains(game.roundId)) {
         addGameToRound(game.roundId, game);
       } else {
         final defaultRound = rounds.firstOrNull;
@@ -213,13 +213,21 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
   if (!isSearchMode) {
     final pinnedGameIds = screenModelAsync.valueOrNull?.pinnedGamedIs ?? [];
     if (pinnedGameIds.isNotEmpty) {
+      final pinnedOrder = <String, int>{
+        for (var i = 0; i < pinnedGameIds.length; i++) pinnedGameIds[i]: i,
+      };
       for (final roundId in gamesByRound.keys) {
         final roundGames = gamesByRound[roundId]!;
         roundGames.sort((a, b) {
-          final aPinned = pinnedGameIds.contains(a.gameId);
-          final bPinned = pinnedGameIds.contains(b.gameId);
+          final aPinnedIndex = pinnedOrder[a.gameId];
+          final bPinnedIndex = pinnedOrder[b.gameId];
+          final aPinned = aPinnedIndex != null;
+          final bPinned = bPinnedIndex != null;
           if (aPinned && !bPinned) return -1;
           if (!aPinned && bPinned) return 1;
+          if (aPinned && bPinned) {
+            return aPinnedIndex.compareTo(bPinnedIndex);
+          }
           return 0;
         });
       }

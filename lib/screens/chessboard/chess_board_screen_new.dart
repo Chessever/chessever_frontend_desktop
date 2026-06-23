@@ -1178,6 +1178,15 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
     }
   }
 
+  bool _sameGameOrder(List<GamesTourModel> a, List<GamesTourModel> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].gameId != b[i].gameId) return false;
+    }
+    return true;
+  }
+
   @override
   void didUpdateWidget(covariant ChessBoardScreenNew oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -1233,10 +1242,9 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
       return;
     }
 
-    final tourId =
-        _currentBoardGames
-            .map((game) => game.tourId.trim())
-            .firstWhere((id) => id.isNotEmpty, orElse: () => '');
+    final tourId = _currentBoardGames
+        .map((game) => game.tourId.trim())
+        .firstWhere((id) => id.isNotEmpty, orElse: () => '');
     if (tourId.isEmpty) return;
 
     _boardGamesRefreshTimer?.cancel();
@@ -1314,10 +1322,7 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
     if (boardGames.isEmpty) {
       return;
     }
-    final providerGameIndex = _currentPageIndex.clamp(
-      0,
-      boardGames.length - 1,
-    );
+    final providerGameIndex = _currentPageIndex.clamp(0, boardGames.length - 1);
     final viewGameId = boardGames[providerGameIndex].gameId;
     if (state.game.gameId != viewGameId) {
       return;
@@ -1451,10 +1456,7 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
     ref.invalidate(gameUpdatesStreamProvider);
     ref.invalidate(liveGameUpdateStreamProvider);
     ref.invalidate(gameUpdatesBatchStreamProvider);
-    final safeIndex = _currentPageIndex.clamp(
-      0,
-      _currentBoardGames.length - 1,
-    );
+    final safeIndex = _currentPageIndex.clamp(0, _currentBoardGames.length - 1);
     final currentGame = _resolveGameForIndex(safeIndex);
     final params = _createParams(currentGame, safeIndex);
     try {
@@ -1485,10 +1487,7 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
 
   void _handleLifecyclePaused() {
     if (!mounted || _currentBoardGames.isEmpty) return;
-    final safeIndex = _currentPageIndex.clamp(
-      0,
-      _currentBoardGames.length - 1,
-    );
+    final safeIndex = _currentPageIndex.clamp(0, _currentBoardGames.length - 1);
     final currentGame = _resolveGameForIndex(safeIndex);
     final params = _createParams(currentGame, safeIndex);
     try {
@@ -1800,11 +1799,16 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
     }
 
     final syncedGames = List<GamesTourModel>.from(liveGames);
-    _syncActiveBoardGames(syncedGames);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      ref.read(chessBoardAllGamesProvider.notifier).state = syncedGames;
-    });
+    if (!_sameGameOrder(_currentBoardGames, syncedGames)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _syncActiveBoardGames(syncedGames);
+        final allBoardGames = ref.read(chessBoardAllGamesProvider);
+        if (!_sameGameOrder(allBoardGames, syncedGames)) {
+          ref.read(chessBoardAllGamesProvider.notifier).state = syncedGames;
+        }
+      });
+    }
     if (syncedGames.isEmpty) {
       return _LoadingScreen(
         games: widget.games.isNotEmpty ? widget.games : [widget.games.first],
