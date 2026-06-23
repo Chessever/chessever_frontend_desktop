@@ -239,13 +239,21 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
   bool _hasSafetyNetChange(Games current, Games fresh) {
     return (fresh.status != null && current.status != fresh.status) ||
         current.roundId != fresh.roundId ||
-        current.roundSlug != fresh.roundSlug;
+        current.roundSlug != fresh.roundSlug ||
+        current.name != fresh.name ||
+        !listEquals(current.search, fresh.search) ||
+        current.boardNr != fresh.boardNr ||
+        current.dateStart != fresh.dateStart;
   }
 
   Games _mergeSafetyNetSnapshot(Games current, Games fresh) {
     return current.copyWith(
       roundId: fresh.roundId,
       roundSlug: fresh.roundSlug,
+      name: fresh.name,
+      search: fresh.search,
+      boardNr: fresh.boardNr,
+      dateStart: fresh.dateStart,
       status: fresh.status ?? current.status,
     );
   }
