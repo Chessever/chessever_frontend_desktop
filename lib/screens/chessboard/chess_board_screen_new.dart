@@ -755,6 +755,8 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
   ProviderSubscription<AsyncValue<ChessBoardStateNew>>? _audioSub;
   ChessBoardProviderParams? _audioParams;
   bool _didInitialBoardBootstrap = false;
+  Timer? _boardGamesRefreshTimer;
+  List<GamesTourModel> _activeBoardGames = const [];
 
   bool _hasCheckedWalkthrough = false;
   bool _showTutorialOverlay = false;
@@ -776,6 +778,7 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
     final safeIndex = widget.currentIndex.clamp(0, widget.games.length - 1);
     _pageController = PageController(initialPage: safeIndex);
     _currentPageIndex = safeIndex;
+    _activeBoardGames = widget.games;
     _keepBoardProviderAlive(_currentPageIndex);
 
     // Note: We'll enable streaming in didChangeDependencies when ref is available
@@ -990,12 +993,13 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
   }
 
   GamesTourModel _resolveGameForIndex(int index) {
-    if (widget.games.isEmpty) {
+    final boardGames = _currentBoardGames;
+    if (boardGames.isEmpty) {
       throw StateError('No games available to resolve');
     }
 
-    final safeIndex = index.clamp(0, widget.games.length - 1);
-    final fallbackGame = widget.games[safeIndex];
+    final safeIndex = index.clamp(0, boardGames.length - 1);
+    final fallbackGame = boardGames[safeIndex];
     final view = ref.read(chessboardViewFromProviderNew);
 
     final AsyncValue<GamesScreenModel>? gamesAsync;
@@ -1146,7 +1150,7 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
   /// This prevents the autoDispose notifier from being disposed while we kick off
   /// early work (parseMoves / initial eval) from initState/didChangeDependencies.
   void _keepBoardProviderAlive(int pageIndex) {
-    if (widget.games.isEmpty) return;
+    if (_currentBoardGames.isEmpty) return;
 
     final params = _createParams(_resolveGameForIndex(pageIndex), pageIndex);
 
@@ -1164,9 +1168,34 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
     );
   }
 
+  List<GamesTourModel> get _currentBoardGames =>
+      _activeBoardGames.isNotEmpty ? _activeBoardGames : widget.games;
+
+  void _syncActiveBoardGames(List<GamesTourModel> games) {
+    _activeBoardGames = games;
+    if (_currentPageIndex >= games.length) {
+      _currentPageIndex = math.max(0, games.length - 1);
+    }
+  }
+
+  bool _sameGameOrder(List<GamesTourModel> a, List<GamesTourModel> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].gameId != b[i].gameId) return false;
+    }
+    return true;
+  }
+
   @override
   void didUpdateWidget(covariant ChessBoardScreenNew oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!const ListEquality<GamesTourModel>().equals(
+      oldWidget.games,
+      widget.games,
+    )) {
+      _syncActiveBoardGames(widget.games);
+    }
   }
 
   @override
@@ -1202,8 +1231,39 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
         } catch (e) {
           debugPrint('Error preparing initial game evaluation: $e');
         }
+        _startBoardGamesRefresh();
       }
     });
+  }
+
+  void _startBoardGamesRefresh() {
+    final view = ref.read(chessboardViewFromProviderNew);
+    if (view != ChessboardView.tour && view != ChessboardView.countryman) {
+      return;
+    }
+
+    final tourId = _currentBoardGames
+        .map((game) => game.tourId.trim())
+        .firstWhere((id) => id.isNotEmpty, orElse: () => '');
+    if (tourId.isEmpty) return;
+
+    _boardGamesRefreshTimer?.cancel();
+    Future<void> refresh() async {
+      if (!mounted) return;
+      try {
+        await ref
+            .read(gamesTourProvider(tourId).notifier)
+            .refreshGames(forceRefresh: true);
+      } catch (e) {
+        debugPrint('Error refreshing board games for tour $tourId: $e');
+      }
+    }
+
+    unawaited(refresh());
+    _boardGamesRefreshTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => unawaited(refresh()),
+    );
   }
 
   void _onPageChanged(int newIndex) {
@@ -1258,8 +1318,12 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
     final state = nextState;
 
     // Verify this update is for the currently viewed game
-    final providerGameIndex = _currentPageIndex;
-    final viewGameId = widget.games[providerGameIndex].gameId;
+    final boardGames = _currentBoardGames;
+    if (boardGames.isEmpty) {
+      return;
+    }
+    final providerGameIndex = _currentPageIndex.clamp(0, boardGames.length - 1);
+    final viewGameId = boardGames[providerGameIndex].gameId;
     if (state.game.gameId != viewGameId) {
       return;
     }
@@ -1388,11 +1452,11 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
   }
 
   void _handleLifecycleResume() {
-    if (!mounted || widget.games.isEmpty) return;
+    if (!mounted || _currentBoardGames.isEmpty) return;
     ref.invalidate(gameUpdatesStreamProvider);
     ref.invalidate(liveGameUpdateStreamProvider);
     ref.invalidate(gameUpdatesBatchStreamProvider);
-    final safeIndex = _currentPageIndex.clamp(0, widget.games.length - 1);
+    final safeIndex = _currentPageIndex.clamp(0, _currentBoardGames.length - 1);
     final currentGame = _resolveGameForIndex(safeIndex);
     final params = _createParams(currentGame, safeIndex);
     try {
@@ -1422,8 +1486,8 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
   }
 
   void _handleLifecyclePaused() {
-    if (!mounted || widget.games.isEmpty) return;
-    final safeIndex = _currentPageIndex.clamp(0, widget.games.length - 1);
+    if (!mounted || _currentBoardGames.isEmpty) return;
+    final safeIndex = _currentPageIndex.clamp(0, _currentBoardGames.length - 1);
     final currentGame = _resolveGameForIndex(safeIndex);
     final params = _createParams(currentGame, safeIndex);
     try {
@@ -1565,6 +1629,7 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
     routeObserver.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
     ForegroundTaskScheduler.cancel('chessboard_resume_$hashCode');
+    _boardGamesRefreshTimer?.cancel();
     _boardKeepAliveSub?.close();
     _audioSub?.close();
     _pageSettleTimer?.cancel();
@@ -1583,9 +1648,10 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
     }
 
     // Validate gameIndex is within bounds
-    if (gameIndex < 0 || gameIndex >= widget.games.length) {
+    final boardGames = _currentBoardGames;
+    if (gameIndex < 0 || gameIndex >= boardGames.length) {
       debugPrint(
-        '🎯 Invalid gameIndex: $gameIndex (games.length: ${widget.games.length})',
+        '🎯 Invalid gameIndex: $gameIndex (games.length: ${boardGames.length})',
       );
       return;
     }
@@ -1702,32 +1768,47 @@ class _ChessBoardScreenState extends ConsumerState<ChessBoardScreenNew>
       );
     }
 
-    // Merge game data between gamesModel and widget.games
+    // Merge game data between gamesModel and the current board snapshot.
     // CRITICAL: For "For You" view, widget.games has live updates from liveGameCardProvider,
     // while gamesModel (convertedForYouGamesProvider) is a static snapshot without live streaming.
     // So for "For You", we use widget.games directly to preserve live state.
-    // For tour/countryman views, gamesModel has live streaming, so prefer it.
+    // For tour/countryman views, gamesModel can include newly added round games,
+    // so update existing games and append provider-only games.
     final shouldStream = ref.watch(shouldStreamProvider);
-    final preferWidgetGames = view == ChessboardView.forYou || !shouldStream;
+    final isEventBoard =
+        view == ChessboardView.tour || view == ChessboardView.countryman;
+    final preferWidgetGames =
+        view == ChessboardView.forYou || (!isEventBoard && !shouldStream);
     final List<GamesTourModel> liveGames;
     if (preferWidgetGames) {
       // For "For You": widget.games already has live updates from liveGameCardProvider
-      liveGames = widget.games;
+      liveGames = _currentBoardGames;
     } else {
       // For other views: merge with gamesModel which has live streaming
       final liveGamesMap = Map.fromEntries(
         gamesModel.gamesTourModels.map((g) => MapEntry(g.gameId, g)),
       );
-      liveGames =
-          widget.games
-              .map(
-                (originalGame) =>
-                    liveGamesMap[originalGame.gameId] ?? originalGame,
-              )
-              .toList();
+      final knownGameIds = <String>{};
+      liveGames = [
+        for (final originalGame in _currentBoardGames)
+          if (knownGameIds.add(originalGame.gameId))
+            liveGamesMap[originalGame.gameId] ?? originalGame,
+        for (final providerGame in gamesModel.gamesTourModels)
+          if (knownGameIds.add(providerGame.gameId)) providerGame,
+      ];
     }
 
     final syncedGames = List<GamesTourModel>.from(liveGames);
+    if (!_sameGameOrder(_currentBoardGames, syncedGames)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _syncActiveBoardGames(syncedGames);
+        final allBoardGames = ref.read(chessBoardAllGamesProvider);
+        if (!_sameGameOrder(allBoardGames, syncedGames)) {
+          ref.read(chessBoardAllGamesProvider.notifier).state = syncedGames;
+        }
+      });
+    }
     if (syncedGames.isEmpty) {
       return _LoadingScreen(
         games: widget.games.isNotEmpty ? widget.games : [widget.games.first],

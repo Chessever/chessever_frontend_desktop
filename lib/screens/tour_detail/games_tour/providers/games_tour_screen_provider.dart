@@ -1,4 +1,3 @@
-import 'package:chessever/repository/local_storage/tournament/games/games_local_storage.dart';
 import 'package:chessever/providers/event_pin_refresh_provider.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/group_event/model/about_tour_model.dart';
@@ -13,7 +12,6 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/games_app_bar
 import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tournament_state_provider.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
-import 'package:chessever/widgets/search/gameSearch/enhanced_game_search.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -65,6 +63,13 @@ class _GamesProcessingArgs {
   });
 }
 
+class _GamesSearchArgs {
+  const _GamesSearchArgs({required this.games, required this.query});
+
+  final List<Games> games;
+  final String query;
+}
+
 // Top-level worker function for isolate
 List<GamesTourModel> _processGamesWorker(_GamesProcessingArgs args) {
   // 1. Pre-parse numbers to avoid repeated regex operations during sort
@@ -95,19 +100,22 @@ List<GamesTourModel> _processGamesWorker(_GamesProcessingArgs args) {
 
   // 2. Sort games
   final sortedGames = List<Games>.from(args.games);
+  final pinnedOrder = <String, int>{
+    for (var i = 0; i < args.pinnedIds.length; i++) args.pinnedIds[i]: i,
+  };
   sortedGames.sort((a, b) {
     // FIRST PRIORITY: Pinned games (only in non-search mode)
     if (!args.isSearchMode) {
-      final aPinned = args.pinnedIds.contains(a.id);
-      final bPinned = args.pinnedIds.contains(b.id);
+      final aPinnedIndex = pinnedOrder[a.id];
+      final bPinnedIndex = pinnedOrder[b.id];
+      final aPinned = aPinnedIndex != null;
+      final bPinned = bPinnedIndex != null;
       if (aPinned && !bPinned) return -1;
       if (!aPinned && bPinned) return 1;
 
       // If both are pinned, preserve pin order
       if (aPinned && bPinned) {
-        final aIndex = args.pinnedIds.indexOf(a.id);
-        final bIndex = args.pinnedIds.indexOf(b.id);
-        if (aIndex != bIndex) return aIndex.compareTo(bIndex);
+        return aPinnedIndex.compareTo(bPinnedIndex);
       }
     }
 
@@ -139,6 +147,39 @@ List<GamesTourModel> _processGamesWorker(_GamesProcessingArgs args) {
     }
   }
   return models;
+}
+
+List<Games> _searchGamesWorker(_GamesSearchArgs args) {
+  final queryLower = args.query.toLowerCase().trim();
+  if (queryLower.isEmpty) {
+    return List<Games>.from(args.games);
+  }
+
+  final scoredGames = <MapEntry<Games, double>>[];
+
+  for (final game in args.games) {
+    double score = 0;
+    final searchTerms = game.search ?? const <String>[];
+
+    for (final term in searchTerms) {
+      final termLower = term.toLowerCase();
+      if (termLower == queryLower) {
+        score += 120;
+        break;
+      } else if (termLower.startsWith(queryLower)) {
+        score += 100;
+      } else if (termLower.contains(queryLower)) {
+        score += 80;
+      }
+    }
+
+    if (score > 0) {
+      scoredGames.add(MapEntry(game, score));
+    }
+  }
+
+  scoredGames.sort((a, b) => b.value.compareTo(a.value));
+  return scoredGames.take(20).map((entry) => entry.key).toList();
 }
 
 class GamesTourScreenProvider
@@ -225,9 +266,15 @@ class GamesTourScreenProvider
 
           if (prev == null ||
               prev.id != next.id ||
+              prev.roundId != next.roundId ||
+              prev.roundSlug != next.roundSlug ||
+              prev.name != next.name ||
+              prev.boardNr != next.boardNr ||
               prev.fen != next.fen ||
               prev.lastMove != next.lastMove ||
-              prev.status != next.status) {
+              prev.status != next.status ||
+              prev.dateStart != next.dateStart ||
+              !listEquals(prev.search, next.search)) {
             significantChange = true;
             break;
           }
@@ -239,38 +286,8 @@ class GamesTourScreenProvider
         }
       }
 
-      // During search mode or filter mode, we need to re-apply the filter
-      // when significant game changes occur (like status changes)
       if (current?.isSearchMode == true) {
-        // If this is a filter mode (not text search), re-apply the filter
-        final displayMode = current?.gameDisplayMode;
-        if (displayMode != null && displayMode != GameDisplayMode.all) {
-          // Check if any game status changed (finished/started)
-          bool statusChanged = false;
-          for (
-            int i = 0;
-            i < nextGames.length && i < previousGames.length;
-            i++
-          ) {
-            if (previousGames[i].status != nextGames[i].status) {
-              statusChanged = true;
-              break;
-            }
-          }
-
-          if (statusChanged) {
-            debugPrint(
-              '🎮 GamesTourScreen: Game status changed during filter mode - re-applying filter',
-            );
-            // Re-apply the current filter
-            if (displayMode == GameDisplayMode.hideFinishedGames) {
-              hideFinishedGames();
-            } else if (displayMode == GameDisplayMode.showfinishedGame) {
-              showFinishedGames();
-            }
-          }
-        }
-        // For text search mode, keep the current search results
+        await _applySearchQuery(current?.searchQuery);
         return;
       }
       _recompute();
@@ -351,17 +368,7 @@ class GamesTourScreenProvider
         gameInfo[game.id] = (roundNum, gameNum);
       }
 
-      // Check if there are any live games
       final hasLiveGames = allGames.any((g) => g.status == "*");
-
-      debugPrint(
-        '🎮 GamesTourScreen: Total games: ${allGames.length}, Live games: ${allGames.where((g) => g.status == "*").length}',
-      );
-      if (allGames.where((g) => g.status == "*").isNotEmpty) {
-        debugPrint(
-          '🎮 GamesTourScreen: Live game rounds: ${allGames.where((g) => g.status == "*").map((g) => g.roundSlug).join(", ")}',
-        );
-      }
 
       // Find the upcoming round if no live games exist
       int? upcomingRoundNumber;
@@ -648,16 +655,19 @@ class GamesTourScreenProvider
     }
 
     final sortedGames = List<Games>.from(games);
+    final pinnedOrder = <String, int>{
+      for (var i = 0; i < pinnedIds.length; i++) pinnedIds[i]: i,
+    };
     sortedGames.sort((a, b) {
-      final aPinned = pinnedIds.contains(a.id);
-      final bPinned = pinnedIds.contains(b.id);
+      final aPinnedIndex = pinnedOrder[a.id];
+      final bPinnedIndex = pinnedOrder[b.id];
+      final aPinned = aPinnedIndex != null;
+      final bPinned = bPinnedIndex != null;
       if (aPinned && !bPinned) return -1;
       if (!aPinned && bPinned) return 1;
 
       if (aPinned && bPinned) {
-        final aIndex = pinnedIds.indexOf(a.id);
-        final bIndex = pinnedIds.indexOf(b.id);
-        if (aIndex != bIndex) return aIndex.compareTo(bIndex);
+        return aPinnedIndex.compareTo(bPinnedIndex);
       }
 
       final (roundA, gameA) = gameInfo[a.id] ?? (0, 0);
@@ -699,6 +709,40 @@ class GamesTourScreenProvider
     return models;
   }
 
+  Future<void> _applySearchQuery(String? query) async {
+    if (aboutTourModel == null) return;
+    final trimmed = query?.trim() ?? '';
+    if (trimmed.isEmpty) {
+      clearSearch();
+      return;
+    }
+
+    final pinnedIds = ref.read(gamesPinprovider(aboutTourModel!.id)).allPins;
+    final allGames = _collectGamesAcrossVisibleStages();
+    final games = await compute(
+      _searchGamesWorker,
+      _GamesSearchArgs(games: allGames, query: trimmed),
+    );
+    final models = _mapGamesToModels(games);
+
+    debugPrint(
+      '🔍 Search refreshed: Found ${models.length} games for query "$trimmed"',
+    );
+
+    if (mounted) {
+      state = AsyncValue.data(
+        GamesScreenModel(
+          gamesTourModels: models,
+          pinnedGamedIs: pinnedIds,
+          isSearchMode: true,
+          searchQuery: trimmed,
+          gameDisplayMode:
+              state.valueOrNull?.gameDisplayMode ?? GameDisplayMode.all,
+        ),
+      );
+    }
+  }
+
   Future<void> searchGamesEnhanced(String query) async {
     if (aboutTourModel == null) return;
 
@@ -708,71 +752,7 @@ class GamesTourScreenProvider
         return;
       }
 
-      // Current pins for correct pin UI in search mode
-      final pinnedIds = ref.read(gamesPinprovider(aboutTourModel!.id)).allPins;
-
-      final gamesLocal = ref.read(gamesLocalStorage);
-
-      // Search in main tournament
-      final mainSearchResult = await gamesLocal.searchGamesWithScoring(
-        tourId: aboutTourModel!.id,
-        query: query,
-      );
-      final allResults = <GameSearchResult>[...mainSearchResult.results];
-
-      // Check if this is a multi-stage knockout tournament and search all stages
-      final gamesAppBar = ref.read(gamesAppBarProvider);
-      if (gamesAppBar.hasValue) {
-        final rounds = gamesAppBar.value?.gamesAppBarModels ?? [];
-        final stageTourIds =
-            rounds
-                .where((r) => r.id.startsWith('$kKnockoutStagePrefix-'))
-                .map((r) => r.id.replaceFirst('$kKnockoutStagePrefix-', ''))
-                .where(
-                  (id) => id != aboutTourModel!.id,
-                ) // Don't search main tour twice
-                .toSet()
-                .toList();
-
-        // Search each stage
-        for (final stageTourId in stageTourIds) {
-          try {
-            final stageSearchResult = await gamesLocal.searchGamesWithScoring(
-              tourId: stageTourId,
-              query: query,
-            );
-            allResults.addAll(stageSearchResult.results);
-          } catch (e) {
-            debugPrint('Error searching stage $stageTourId: $e');
-          }
-        }
-      }
-
-      final games = allResults.map((r) => r.game).toList();
-
-      final models = <GamesTourModel>[];
-      for (final g in games) {
-        try {
-          models.add(GamesTourModel.fromGame(g));
-        } catch (_) {}
-      }
-
-      debugPrint(
-        '🔍 Search completed: Found ${models.length} games across all stages for query "$query"',
-      );
-
-      if (mounted) {
-        state = AsyncValue.data(
-          GamesScreenModel(
-            gamesTourModels: models,
-            pinnedGamedIs: pinnedIds, // show accurate pins in search
-            isSearchMode: true,
-            searchQuery: query,
-            gameDisplayMode:
-                state.valueOrNull?.gameDisplayMode ?? GameDisplayMode.all,
-          ),
-        );
-      }
+      await _applySearchQuery(query);
     } catch (e, st) {
       if (mounted) state = AsyncValue.error(e, st);
     }
@@ -781,7 +761,10 @@ class GamesTourScreenProvider
   Future<void> refreshGames() async {
     if (aboutTourModel == null) return;
     try {
-      clearSearch();
+      final preserveSearch = state.valueOrNull?.isSearchMode == true;
+      if (!preserveSearch) {
+        clearSearch();
+      }
       final _ = ref.refresh(gamesTourProvider(aboutTourModel!.id));
     } catch (e, st) {
       if (mounted) state = AsyncValue.error(e, st);

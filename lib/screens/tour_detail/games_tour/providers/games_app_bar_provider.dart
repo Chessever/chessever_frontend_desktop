@@ -1,5 +1,7 @@
 // ignore_for_file: avoid_print, empty_catches, unused_element
 
+import 'dart:async';
+
 import 'package:collection/collection.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
@@ -66,6 +68,21 @@ class _GamesAppBarNotifier
     );
 
     if (tourId != null) {
+      _shouldStreamListener = ref.listen<bool>(shouldStreamProvider, (
+        previous,
+        next,
+      ) {
+        if (next) {
+          _startRoundRefresh();
+        } else {
+          _stopRoundRefresh();
+        }
+      });
+
+      if (ref.read(shouldStreamProvider)) {
+        _startRoundRefresh();
+      }
+
       ref.listen<AsyncValue<List<Games>>>(gamesTourProvider(tourId!), (
         previous,
         next,
@@ -93,7 +110,7 @@ class _GamesAppBarNotifier
           if (previous.isKnockout != next.isKnockout ||
               previous.stageName != next.stageName ||
               (gamesWereEmpty && gamesNowAvailable)) {
-            _load();
+            _load(showLoading: false);
           }
         },
       );
@@ -109,9 +126,23 @@ class _GamesAppBarNotifier
   final Map<String, _RoundSortMeta> _roundSortMeta;
   String? _lastRoundCountSignature;
   bool _selectionRefreshScheduled = false;
+  ProviderSubscription? _shouldStreamListener;
+  Timer? _roundRefreshTimer;
 
   Future<void> refresh() async {
     await _load();
+  }
+
+  void _startRoundRefresh() {
+    _stopRoundRefresh();
+    _roundRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _load(showLoading: false, scrollSelection: false);
+    });
+  }
+
+  void _stopRoundRefresh() {
+    _roundRefreshTimer?.cancel();
+    _roundRefreshTimer = null;
   }
 
   void select(GamesAppBarModel model) {
@@ -1452,6 +1483,13 @@ class _GamesAppBarNotifier
         _scrollToRound(fallbackId);
       }
     }
+  }
+
+  @override
+  void dispose() {
+    _stopRoundRefresh();
+    _shouldStreamListener?.close();
+    super.dispose();
   }
 }
 

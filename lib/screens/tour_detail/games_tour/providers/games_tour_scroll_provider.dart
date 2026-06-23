@@ -15,9 +15,16 @@ import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provid
 
 /// Scope identifier to allow multiple tournament detail screens to coexist
 /// without sharing the same ScrollablePositionedList controller.
-final gamesTourScrollScopeProvider = Provider<String>(
-  (_) => 'global_scroll_scope',
-);
+final gamesTourScrollScopeProvider = Provider<String>((ref) {
+  final tourId = ref.watch(
+    tourDetailScreenProvider.select(
+      (tourAsync) => tourAsync.valueOrNull?.aboutTourModel.id,
+    ),
+  );
+  return tourId == null || tourId.isEmpty
+      ? 'global_scroll_scope'
+      : 'tour_scroll_scope_$tourId';
+});
 
 /// Track whether we already performed the initial auto-scroll for a given scope.
 final gamesTourAutoScrollProvider = StateProvider.autoDispose
@@ -171,9 +178,8 @@ class _GamesTourScrollProvider extends StateNotifier<ItemScrollController> {
       if (positions.isEmpty) return;
 
       // Find the topmost visible item (considering items that are at least partially visible).
-      final topItem = positions
-          .where((pos) => pos.itemLeadingEdge < 0.3)
-          .firstOrNull;
+      final topItem =
+          positions.where((pos) => pos.itemLeadingEdge < 0.3).firstOrNull;
       if (topItem == null) return;
 
       final gameId = _getGameIdFromItemIndex(topItem.index);

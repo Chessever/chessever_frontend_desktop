@@ -1,14 +1,10 @@
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_scroll_provider.dart';
-import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/games_list_view.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_app_bar_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
-import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tournament_state_provider.dart';
-import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
 import 'package:chessever/screens/group_event/widget/tour_loading_widget.dart';
-import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
@@ -37,8 +33,6 @@ class GamesTourContentBody extends ConsumerWidget {
     final isKnockoutTournament = groupedData.isKnockoutTournament;
     final isMultiStageKnockout = groupedData.isMultiStageKnockout;
     final rounds = groupedData.rounds;
-    final allGames = groupedData.allGames;
-    final providerGameCount = groupedData.providerGameCount;
 
     final gamesAppBar = ref.watch(gamesAppBarProvider);
     final selectedRoundId = gamesAppBar.value?.selectedId;
@@ -55,19 +49,6 @@ class GamesTourContentBody extends ConsumerWidget {
     // 3. If all rounds are upcoming → show all upcoming rounds
 
     final sourceRounds = isSearchMode ? effectiveRounds : rounds;
-
-    // Debug: Log rounds with empty games to help diagnose timing issues
-    if (!isSearchMode && !isMultiStageKnockout) {
-      for (final round in sourceRounds) {
-        final gamesInRound = gamesByRound[round.id]?.length ?? 0;
-        if (gamesInRound == 0) {
-          debugPrint(
-            '⚠️ GamesTourContentBody: Round "${round.name}" (${round.id}) has 0 games. '
-            'Total allGames: ${allGames.length}, Provider games: $providerGameCount',
-          );
-        }
-      }
-    }
 
     final isPreConfigured = sourceRounds.every((r) => r.startsAt != null);
     final hasLiveOrOngoing = sourceRounds.any(
@@ -197,7 +178,7 @@ class GamesTourContentBody extends ConsumerWidget {
 
     return GamesListView(
       key: ValueKey(
-        'games_list_${gamesListViewMode.name}_search_$isSearchMode',
+        'games_list_${scopeId}_${gamesListViewMode.name}_search_$isSearchMode',
       ),
       rounds: visibleRounds,
       gamesByRound: gamesByRound,
