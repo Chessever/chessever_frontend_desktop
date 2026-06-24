@@ -22,7 +22,6 @@ import 'package:chessever/desktop/state/board_annotations.dart';
 ///  - Shift / Alt + right-click a square  → toggle a colour-variant circle
 ///  - Shift / Alt + right-click + drag    → finalize a colour-variant arrow
 ///  - Ctrl / Cmd + right-click            → board context menu
-///  - Plain left-click on the board       → wipe all shapes
 ///
 /// The overlay sits *on top* of the board widget but is transparent and
 /// only intercepts events when its gate conditions are met; left-click
@@ -37,7 +36,6 @@ class BoardAnnotationLayer extends ConsumerStatefulWidget {
     required this.positionKey,
     this.persistentShapes = const <cg.Shape>[],
     this.onShapesChanged,
-    this.onLeftClickClear,
   });
 
   /// Edge length of the visible chessboard in logical px.
@@ -60,11 +58,6 @@ class BoardAnnotationLayer extends ConsumerStatefulWidget {
   /// position. Hosts should persist the resulting set into the current move's
   /// PGN comment so arrows/circles survive navigation, move entry and export.
   final ValueChanged<Set<cg.Shape>>? onShapesChanged;
-
-  /// Called when the user left-clicks anywhere on the board *and* there
-  /// were drawn shapes to clear. Useful if the host wants a haptic /
-  /// undo-stack trigger on top of the wipe.
-  final VoidCallback? onLeftClickClear;
 
   @override
   ConsumerState<BoardAnnotationLayer> createState() =>
@@ -147,22 +140,6 @@ class _BoardAnnotationLayerState extends ConsumerState<BoardAnnotationLayer> {
             _plainSecondaryGesture = !hasModifier;
             _secondaryDragStarted = false;
           });
-        } else if (event.buttons & kPrimaryMouseButton != 0) {
-          // Left-click — if shapes exist, wipe them. We deliberately do
-          // not consume the event; chessground handles primary-button
-          // selection underneath this Listener.
-          final notifier = ref.read(boardAnnotationsProvider(tabId).notifier);
-          final hasShapes =
-              ref
-                  .read(boardAnnotationsProvider(tabId))
-                  .shapesForPosition(widget.positionKey)
-                  .isNotEmpty ||
-              widget.persistentShapes.isNotEmpty;
-          if (hasShapes) {
-            notifier.clear(positionKey: widget.positionKey);
-            widget.onShapesChanged?.call(const <cg.Shape>{});
-            widget.onLeftClickClear?.call();
-          }
         }
       },
       onPointerMove: (event) {
@@ -280,10 +257,9 @@ class _InFlightShapePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size canvasSize) {
     final squareSize = size / 8;
-    final paint =
-        Paint()
-          ..color = color.withValues(alpha: 0.55)
-          ..style = PaintingStyle.stroke;
+    final paint = Paint()
+      ..color = color.withValues(alpha: 0.55)
+      ..style = PaintingStyle.stroke;
 
     if (orig == dest) {
       // Draw a translucent ring on the origin square — the "I will plant
@@ -309,39 +285,37 @@ class _InFlightShapePainter extends CustomPainter {
       ..style = PaintingStyle.fill
       ..color = color.withValues(alpha: 0.55);
 
-    final shaft =
-        Path()
-          ..moveTo(
-            fromCenter.dx + perp.dx * lineWidth / 2,
-            fromCenter.dy + perp.dy * lineWidth / 2,
-          )
-          ..lineTo(
-            shaftEnd.dx + perp.dx * lineWidth / 2,
-            shaftEnd.dy + perp.dy * lineWidth / 2,
-          )
-          ..lineTo(
-            shaftEnd.dx - perp.dx * lineWidth / 2,
-            shaftEnd.dy - perp.dy * lineWidth / 2,
-          )
-          ..lineTo(
-            fromCenter.dx - perp.dx * lineWidth / 2,
-            fromCenter.dy - perp.dy * lineWidth / 2,
-          )
-          ..close();
+    final shaft = Path()
+      ..moveTo(
+        fromCenter.dx + perp.dx * lineWidth / 2,
+        fromCenter.dy + perp.dy * lineWidth / 2,
+      )
+      ..lineTo(
+        shaftEnd.dx + perp.dx * lineWidth / 2,
+        shaftEnd.dy + perp.dy * lineWidth / 2,
+      )
+      ..lineTo(
+        shaftEnd.dx - perp.dx * lineWidth / 2,
+        shaftEnd.dy - perp.dy * lineWidth / 2,
+      )
+      ..lineTo(
+        fromCenter.dx - perp.dx * lineWidth / 2,
+        fromCenter.dy - perp.dy * lineWidth / 2,
+      )
+      ..close();
     canvas.drawPath(shaft, paint);
 
-    final head =
-        Path()
-          ..moveTo(toCenter.dx, toCenter.dy)
-          ..lineTo(
-            shaftEnd.dx + perp.dx * headSize / 2,
-            shaftEnd.dy + perp.dy * headSize / 2,
-          )
-          ..lineTo(
-            shaftEnd.dx - perp.dx * headSize / 2,
-            shaftEnd.dy - perp.dy * headSize / 2,
-          )
-          ..close();
+    final head = Path()
+      ..moveTo(toCenter.dx, toCenter.dy)
+      ..lineTo(
+        shaftEnd.dx + perp.dx * headSize / 2,
+        shaftEnd.dy + perp.dy * headSize / 2,
+      )
+      ..lineTo(
+        shaftEnd.dx - perp.dx * headSize / 2,
+        shaftEnd.dy - perp.dy * headSize / 2,
+      )
+      ..close();
     canvas.drawPath(head, paint);
   }
 

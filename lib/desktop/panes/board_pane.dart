@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:chessground/chessground.dart' as cg;
 import 'package:file_picker/file_picker.dart';
 import 'package:dartchess/dartchess.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -207,6 +208,42 @@ double desktopBoardResizeDragDelta(Offset offset) {
     return magnitude * horizontalSign;
   }
   return magnitude * (offset.dy.isNegative ? -1.0 : 1.0);
+}
+
+@visibleForTesting
+bool shouldClearBoardAnnotationsForBoardMarginClick({
+  required Offset localPosition,
+  required Size contentSize,
+  required double boardSize,
+  required double boardWithBar,
+  required double topRowHeight,
+  required double bottomRowHeight,
+  required double headerGap,
+}) {
+  if (boardSize <= 0 || boardWithBar <= 0) return false;
+  if (contentSize.width <= 0 || contentSize.height <= 0) return false;
+
+  final columnHeight =
+      topRowHeight + headerGap + boardSize + headerGap + bottomRowHeight;
+  final columnLeft = math.max(0.0, (contentSize.width - boardWithBar) / 2);
+  final columnTop = math.max(0.0, (contentSize.height - columnHeight) / 2);
+  final boardTop = columnTop + topRowHeight + headerGap;
+
+  final nonClearBoardGroupRect = Rect.fromLTWH(
+    columnLeft,
+    boardTop,
+    boardWithBar,
+    boardSize,
+  );
+  final boardMarginBandRect = Rect.fromLTWH(
+    0,
+    boardTop - headerGap,
+    contentSize.width,
+    boardSize + headerGap * 2,
+  );
+
+  return boardMarginBandRect.contains(localPosition) &&
+      !nonClearBoardGroupRect.contains(localPosition);
 }
 
 @visibleForTesting
@@ -5406,64 +5443,96 @@ class _BoardArea extends ConsumerWidget {
             );
           }
 
-          return Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                chromeRow(
-                  height: topRowHeight,
-                  header:
-                      hasHeaders
-                          ? _PlayerHeader(
-                            name: topName,
-                            federation: topFed,
-                            title: topTitle,
-                            rating: topRating,
-                            fideId: topIsWhite ? whiteFideId : blackFideId,
-                            resultScore: topResultScore,
-                            isWhite: topIsWhite,
-                            isToMove:
-                                (topIsWhite && sideToMove == Side.white) ||
-                                (!topIsWhite && sideToMove == Side.black),
-                            clockText: topClock,
-                            activeGameId: activeGameId,
-                            useLiveClock: isForegroundTab && isLiveAtTip,
-                            boardArgs: boardArgs,
-                            sourceGame: sourceGame,
-                            viewSource: viewSource,
-                          )
-                          : null,
-                  trailing: focusButton,
-                ),
-                SizedBox(height: _BoardArea.headerGap),
-                boardRow,
-                SizedBox(height: _BoardArea.headerGap),
-                chromeRow(
-                  height: bottomRowHeight,
-                  header:
-                      hasHeaders
-                          ? _PlayerHeader(
-                            name: bottomName,
-                            federation: bottomFed,
-                            title: bottomTitle,
-                            rating: bottomRating,
-                            fideId: bottomIsWhite ? whiteFideId : blackFideId,
-                            resultScore: bottomResultScore,
-                            isWhite: bottomIsWhite,
-                            isToMove:
-                                (bottomIsWhite && sideToMove == Side.white) ||
-                                (!bottomIsWhite && sideToMove == Side.black),
-                            clockText: bottomClock,
-                            activeGameId: activeGameId,
-                            useLiveClock: isForegroundTab && isLiveAtTip,
-                            boardArgs: boardArgs,
-                            sourceGame: sourceGame,
-                            viewSource: viewSource,
-                          )
-                          : null,
-                  trailing: focusMode ? null : resizeHandle,
-                ),
-              ],
+          void clearGraphicCommentaryForCurrentPosition() {
+            final positionKey = _fenPositionKey(fen);
+            final hasShapes =
+                ref
+                    .read(boardAnnotationsProvider(tabId))
+                    .shapesForPosition(positionKey)
+                    .isNotEmpty ||
+                pgnShapes.isNotEmpty;
+            if (!hasShapes) return;
+            ref
+                .read(boardAnnotationsProvider(tabId).notifier)
+                .clear(positionKey: positionKey);
+            onGraphicCommentaryChanged?.call(const <cg.Shape>{});
+          }
+
+          return Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (event) {
+              if (event.buttons & kPrimaryMouseButton == 0) return;
+              final shouldClear =
+                  shouldClearBoardAnnotationsForBoardMarginClick(
+                    localPosition: event.localPosition,
+                    contentSize: constraints.biggest,
+                    boardSize: boardSize,
+                    boardWithBar: boardWithBar,
+                    topRowHeight: topRowHeight,
+                    bottomRowHeight: bottomRowHeight,
+                    headerGap: _BoardArea.headerGap,
+                  );
+              if (shouldClear) clearGraphicCommentaryForCurrentPosition();
+            },
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  chromeRow(
+                    height: topRowHeight,
+                    header:
+                        hasHeaders
+                            ? _PlayerHeader(
+                              name: topName,
+                              federation: topFed,
+                              title: topTitle,
+                              rating: topRating,
+                              fideId: topIsWhite ? whiteFideId : blackFideId,
+                              resultScore: topResultScore,
+                              isWhite: topIsWhite,
+                              isToMove:
+                                  (topIsWhite && sideToMove == Side.white) ||
+                                  (!topIsWhite && sideToMove == Side.black),
+                              clockText: topClock,
+                              activeGameId: activeGameId,
+                              useLiveClock: isForegroundTab && isLiveAtTip,
+                              boardArgs: boardArgs,
+                              sourceGame: sourceGame,
+                              viewSource: viewSource,
+                            )
+                            : null,
+                    trailing: focusButton,
+                  ),
+                  SizedBox(height: _BoardArea.headerGap),
+                  boardRow,
+                  SizedBox(height: _BoardArea.headerGap),
+                  chromeRow(
+                    height: bottomRowHeight,
+                    header:
+                        hasHeaders
+                            ? _PlayerHeader(
+                              name: bottomName,
+                              federation: bottomFed,
+                              title: bottomTitle,
+                              rating: bottomRating,
+                              fideId: bottomIsWhite ? whiteFideId : blackFideId,
+                              resultScore: bottomResultScore,
+                              isWhite: bottomIsWhite,
+                              isToMove:
+                                  (bottomIsWhite && sideToMove == Side.white) ||
+                                  (!bottomIsWhite && sideToMove == Side.black),
+                              clockText: bottomClock,
+                              activeGameId: activeGameId,
+                              useLiveClock: isForegroundTab && isLiveAtTip,
+                              boardArgs: boardArgs,
+                              sourceGame: sourceGame,
+                              viewSource: viewSource,
+                            )
+                            : null,
+                    trailing: focusMode ? null : resizeHandle,
+                  ),
+                ],
+              ),
             ),
           );
         },
