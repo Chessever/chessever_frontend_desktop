@@ -648,7 +648,9 @@ class _BoardPaneContent extends HookConsumerWidget {
       }
       updatedMetadata[ChessGame.metadataAllowMainlineExtensionKey] = !isLive;
       updatedMetadata[ChessGame.metadataIsLiveKey] = isLive;
-      final freshGame = parsed.copyWith(metadata: updatedMetadata);
+      final freshGame = parsed
+          .copyWith(metadata: updatedMetadata)
+          .rememberGameEndingPlyIndex(parsed.mainline.length - 1);
 
       final oldGame = chessGame.value;
       final oldPointer = pointer.value;
@@ -826,7 +828,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       final updatedGame = oldGame.copyWith(
         metadata: metadata,
         mainline: <ChessMove>[...oldGame.mainline, nextMove],
-      );
+      ).rememberGameEndingPlyIndex(oldGame.mainline.length);
       final initialFenKey = _nullableFenPositionKey(boardArgs?.initialFen);
       dirtySinceLoad.value = gameId.isNotEmpty && dirtySinceLoad.value;
       lastAppliedPgn.value = pgn;
@@ -1504,11 +1506,20 @@ class _BoardPaneContent extends HookConsumerWidget {
       final nav = _LocalChessGameNavigator(game);
       nav.goToMovePointerUnchecked(basePointer);
       nav.makeOrGoToMove(move.uci);
-      final newGame = nav.currentState.game;
+      var newGame = nav.currentState.game;
       final newPointer = nav.currentState.movePointer;
       final didChange =
           !identical(newGame, game) || !_pointersEqual(newPointer, basePointer);
       if (!didChange) return;
+      final gameEndingPlyIndex = game.gameEndingPlyIndex;
+      final movedFromGameEndingPly =
+          gameEndingPlyIndex != null &&
+          basePointer.length == 1 &&
+          basePointer.first == gameEndingPlyIndex &&
+          !_pointersEqual(newPointer, basePointer);
+      if (movedFromGameEndingPly) {
+        newGame = newGame.rememberGameEndingPlyIndex(gameEndingPlyIndex);
+      }
       if (!identical(newGame, game)) {
         pushUndoSnapshot();
       }
@@ -2641,16 +2652,18 @@ class _BoardPaneContent extends HookConsumerWidget {
     final boardAnnotationSquare = currentPly.lastMoveSquare;
     final pgnShapes = _shapesFromPgnComments(currentPly.comments).toList();
 
-    // End-of-game effect: only fires on the final mainline ply of a
-    // game with a decided Result header. While exploring backwards (or
-    // off-mainline) the king stands upright; jumping back to the last
-    // mainline move brings the falling-king / peace-icon overlay back.
-    final isAtFinalMainline =
+    // End-of-game effect: only fires on the PGN's original decided ply.
+    // If the user manually extends a finished game to analyze after the
+    // final position, the stored ending ply stays behind so the stale
+    // king-tilt / peace-icon overlay disappears immediately. Navigating
+    // back to the actual game-ending move brings the overlay back.
+    final gameEndingPlyIndex = chessGame.value.gameEndingPlyIndex;
+    final isAtGameEndingPly =
         isOnMainline &&
-        chessGame.value.mainline.isNotEmpty &&
-        pointer.value.first == chessGame.value.mainline.length - 1;
+        gameEndingPlyIndex != null &&
+        pointer.value.first == gameEndingPlyIndex;
     final gameEnding =
-        isAtFinalMainline
+        isAtGameEndingPly
             ? _gameEndingFor(headers['Result'] ?? '', position)
             : null;
 

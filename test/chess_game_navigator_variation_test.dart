@@ -97,6 +97,28 @@ void main() {
   });
 
   test(
+    'gameEndingPlyIndex stays on original final ply after manual extension',
+    () {
+      final game = ChessGame(
+        gameId: 'g1',
+        startingFen: 'fen',
+        metadata: const {'Result': '1-0'},
+        mainline: [move('e4'), move('e5')],
+      );
+
+      expect(game.gameEndingPlyIndex, 1);
+
+      final remembered = game.rememberGameEndingPlyIndex(1);
+      final extended = remembered.copyWith(
+        mainline: [...remembered.mainline, move('Nf3')],
+      );
+
+      expect(extended.gameEndingPlyIndex, 1);
+      expect(extended.gameEndingPlyIndex, isNot(extended.mainline.length - 1));
+    },
+  );
+
+  test(
     'promoteVariationToMainline demotes old first move when promoting an alternative first move',
     () {
       final alternativeFirstMove = [move('d4')];
