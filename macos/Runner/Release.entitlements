@@ -19,14 +19,10 @@
 	<!-- Bind 127.0.0.1 for the OAuth loopback flow -->
 	<key>com.apple.security.network.server</key>
 	<true/>
-	<!-- Associated domains let macOS deliver chessever.com universal links
-	     (for example /broadcast/<slug>/<id>) to the desktop app when the
-	     website's apple-app-site-association file includes this bundle/team. -->
-	<key>com.apple.developer.associated-domains</key>
-	<array>
-		<string>applinks:chessever.com</string>
-		<string>applinks:www.chessever.com</string>
-	</array>
+	<!-- Do not request Associated Domains in the desktop build. Account,
+	     pricing, and OAuth callback URLs must remain in the browser so users
+	     can manage Stripe subscriptions. Billing returns use the custom
+	     chessever://billing/... scheme declared in Info.plist. -->
 	<!-- Sign in with Apple intentionally omitted: the Developer ID
 	     provisioning profile required to grant this entitlement can only
 	     be issued by the Apple Developer account holder. The desktop app

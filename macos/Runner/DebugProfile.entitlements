@@ -28,11 +28,9 @@
 		 automatic "Mac Team Provisioning Profile", which does not carry the
 		 associated-domains entitlement, so requesting it here fails codesign with
 		 "Provisioning profile ... doesn't include the Associated Domains capability".
-		 Universal-link handoff is a production concern handled by the Release build
-		 (manual "Chessever Desktop Direct Distribution" profile) — see
-		 Release.entitlements, which keeps applinks:chessever.com. Local debug runs
-		 don't need it (custom-scheme chessever:// links and the OAuth loopback still
-		 work). Re-add here only if you give local debug a profile with the capability. -->
+		 The release build also avoids Associated Domains so account, pricing, and
+		 OAuth callback URLs stay in the browser. Custom-scheme chessever:// links
+		 and the OAuth loopback still work. -->
 	<key>com.apple.developer.applesignin</key>
 	<array>
 		<string>Default</string>
