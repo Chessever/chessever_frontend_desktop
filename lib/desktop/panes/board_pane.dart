@@ -1850,6 +1850,22 @@ class _BoardPaneContent extends HookConsumerWidget {
       dirtySinceLoad.value = true;
     }
 
+    void setMoveGraphicCommentary(
+      ChessMovePointer target,
+      Set<cg.Shape> shapes,
+    ) {
+      if (target.isEmpty) return;
+      final nextGame = _setMoveGraphicCommentaryAtPointer(
+        chessGame.value,
+        target,
+        shapes,
+      );
+      if (identical(nextGame, chessGame.value)) return;
+      pushUndoSnapshot();
+      chessGame.value = nextGame;
+      dirtySinceLoad.value = true;
+    }
+
     void setMoveNags(ChessMovePointer target, List<int> nags) {
       if (target.isEmpty) return;
       final nextGame = _setMoveNagsAtPointer(chessGame.value, target, nags);
@@ -3367,6 +3383,13 @@ class _BoardPaneContent extends HookConsumerWidget {
                               explorerPreview == null
                                   ? pgnShapes
                                   : const <cg.Shape>[],
+                          onGraphicCommentaryChanged:
+                              explorerPreview == null
+                                  ? (shapes) => setMoveGraphicCommentary(
+                                    pointer.value,
+                                    shapes,
+                                  )
+                                  : null,
                           whiteClock: whiteClockRaw,
                           blackClock: blackClockRaw,
                           boardAnnotation:
@@ -4159,6 +4182,18 @@ ChessGame _setMoveCommentAtPointer(
   );
 }
 
+ChessGame _setMoveGraphicCommentaryAtPointer(
+  ChessGame game,
+  ChessMovePointer pointer,
+  Set<cg.Shape> shapes,
+) {
+  return _updateMoveAtPointer(
+    game,
+    pointer,
+    (move) => _withGraphicCommentary(move, shapes),
+  );
+}
+
 ChessGame _setMoveNagsAtPointer(
   ChessGame game,
   ChessMovePointer pointer,
@@ -4197,6 +4232,50 @@ ChessMove _withEditableComment(ChessMove move, String? comment) {
   return move.copyWith(
     comments: <String>[...directives, if (nextComment.isNotEmpty) nextComment],
   );
+}
+
+ChessMove _withGraphicCommentary(ChessMove move, Set<cg.Shape> shapes) {
+  final nextDirectives = _pgnGraphicDirectivesFromShapes(shapes);
+  final preserved = <String>[];
+
+  for (final existing in move.comments ?? const <String>[]) {
+    final cleaned =
+        existing
+            .replaceAll(_pgnGraphicDirectiveRegex, '')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim();
+    if (cleaned.isNotEmpty) preserved.add(cleaned);
+  }
+
+  return move.copyWith(comments: <String>[...nextDirectives, ...preserved]);
+}
+
+List<String> _pgnGraphicDirectivesFromShapes(Set<cg.Shape> shapes) {
+  if (shapes.isEmpty) return const <String>[];
+  final arrows = <String>[];
+  final circles = <String>[];
+
+  for (final shape in shapes) {
+    if (shape is cg.Arrow && shape.orig != shape.dest) {
+      arrows.add(
+        '${_pgnAnnotationColorCode(shape.color)}${shape.orig.name}${shape.dest.name}',
+      );
+    } else if (shape is cg.Circle) {
+      circles.add('${_pgnAnnotationColorCode(shape.color)}${shape.orig.name}');
+    }
+  }
+
+  return <String>[
+    if (arrows.isNotEmpty) '[%cal ${arrows.join(',')}]',
+    if (circles.isNotEmpty) '[%csl ${circles.join(',')}]',
+  ];
+}
+
+String _pgnAnnotationColorCode(Color color) {
+  if (color == AnnotationColor.red.color) return 'R';
+  if (color == AnnotationColor.blue.color) return 'B';
+  if (color == AnnotationColor.yellow.color) return 'Y';
+  return 'G';
 }
 
 String? _insertedLineSourceComment(String? sourceLabel) {
@@ -4276,6 +4355,7 @@ Iterable<String> _extractNonClockDirectives(String comment) sync* {
 }
 
 final _pgnDirectiveRegex = RegExp(r'\[%[a-zA-Z]+\s+[^\]]+\]');
+final _pgnGraphicDirectiveRegex = RegExp(r'\[%(?:cal|csl)\s+[^\]]+\]');
 
 /// Returns the full sequence of moves played from the start of the game
 /// to the position pointed to by [pointer], correctly following any
@@ -4881,6 +4961,7 @@ class _BoardArea extends ConsumerWidget {
     required this.onBoardSizeChanged,
     required this.onBoardSizeReset,
     required this.onBoardSizeChangeEnd,
+    this.onGraphicCommentaryChanged,
     this.activeGameId,
     this.boardArgs,
     this.whiteClock,
@@ -4974,6 +5055,7 @@ class _BoardArea extends ConsumerWidget {
   final ValueChanged<double> onBoardSizeChanged;
   final VoidCallback onBoardSizeReset;
   final VoidCallback onBoardSizeChangeEnd;
+  final ValueChanged<Set<cg.Shape>>? onGraphicCommentaryChanged;
 
   static const double _evalBarWidth = 24.0;
   static const double _evalBarGap = 12.0;
@@ -5260,6 +5342,7 @@ class _BoardArea extends ConsumerWidget {
                     promotionMove: promotionMove,
                     onPromotionSelection: onPromotionSelection,
                     pgnShapes: pgnShapes,
+                    onGraphicCommentaryChanged: onGraphicCommentaryChanged,
                     boardAnnotation: boardAnnotation,
                     boardAnnotationGlyph: boardAnnotationGlyph,
                     boardAnnotationSquare: boardAnnotationSquare,
@@ -5643,6 +5726,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
     required this.promotionMove,
     required this.onPromotionSelection,
     required this.pgnShapes,
+    required this.onGraphicCommentaryChanged,
     required this.boardAnnotation,
     required this.boardAnnotationGlyph,
     required this.boardAnnotationSquare,
@@ -5665,6 +5749,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
   final NormalMove? promotionMove;
   final void Function(Role? role) onPromotionSelection;
   final List<cg.Shape> pgnShapes;
+  final ValueChanged<Set<cg.Shape>>? onGraphicCommentaryChanged;
   final LichessMoveAnnotation? boardAnnotation;
   final NagDisplay? boardAnnotationGlyph;
   final Square? boardAnnotationSquare;
@@ -5822,6 +5907,8 @@ class _BoardWithAnnotations extends ConsumerWidget {
             size: boardSize,
             orientation: orientation,
             positionKey: positionKey,
+            persistentShapes: pgnShapes,
+            onShapesChanged: onGraphicCommentaryChanged,
             child: DesktopChessBoard(
               key: ValueKey<String>(boardRenderKey),
               size: boardSize,

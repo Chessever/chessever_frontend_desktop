@@ -1,3 +1,4 @@
+import 'package:chessground/chessground.dart' as cg;
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -34,6 +35,8 @@ class BoardAnnotationLayer extends ConsumerStatefulWidget {
     required this.orientation,
     required this.child,
     required this.positionKey,
+    this.persistentShapes = const <cg.Shape>[],
+    this.onShapesChanged,
     this.onLeftClickClear,
   });
 
@@ -47,6 +50,16 @@ class BoardAnnotationLayer extends ConsumerStatefulWidget {
   /// arrows/circles are stored under this key so they reappear only when
   /// the same position is active.
   final String positionKey;
+
+  /// Shapes already persisted in the move's PGN comment (`[%cal]`/`[%csl]`).
+  /// They count as clearable annotations even before the user draws anything
+  /// in this local board session.
+  final List<cg.Shape> persistentShapes;
+
+  /// Called after the user intentionally changes graphic commentary on this
+  /// position. Hosts should persist the resulting set into the current move's
+  /// PGN comment so arrows/circles survive navigation, move entry and export.
+  final ValueChanged<Set<cg.Shape>>? onShapesChanged;
 
   /// Called when the user left-clicks anywhere on the board *and* there
   /// were drawn shapes to clear. Useful if the host wants a haptic /
@@ -143,9 +156,11 @@ class _BoardAnnotationLayerState extends ConsumerState<BoardAnnotationLayer> {
               ref
                   .read(boardAnnotationsProvider(tabId))
                   .shapesForPosition(widget.positionKey)
-                  .isNotEmpty;
+                  .isNotEmpty ||
+              widget.persistentShapes.isNotEmpty;
           if (hasShapes) {
             notifier.clear(positionKey: widget.positionKey);
+            widget.onShapesChanged?.call(const <cg.Shape>{});
             widget.onLeftClickClear?.call();
           }
         }
@@ -193,6 +208,11 @@ class _BoardAnnotationLayerState extends ConsumerState<BoardAnnotationLayer> {
               positionKey: widget.positionKey,
             );
           }
+          widget.onShapesChanged?.call(
+            ref
+                .read(boardAnnotationsProvider(tabId))
+                .shapesForPosition(widget.positionKey),
+          );
         }
         _resetGestureState();
       },

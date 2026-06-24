@@ -15,8 +15,13 @@ const _boardKey = ValueKey<String>('annotation-board');
 void main() {
   testWidgets('plain secondary drag draws a green arrow', (tester) async {
     final container = ProviderContainer();
+    Set<cg.Shape>? persistedShapes;
     addTearDown(container.dispose);
-    await _pumpBoard(tester, container);
+    await _pumpBoard(
+      tester,
+      container,
+      onShapesChanged: (shapes) => persistedShapes = shapes,
+    );
 
     final gesture = await tester.createGesture(
       kind: PointerDeviceKind.mouse,
@@ -38,6 +43,9 @@ void main() {
     expect(arrow.orig, Square.e2);
     expect(arrow.dest, Square.e4);
     expect(arrow.color, AnnotationColor.green.color);
+    expect(persistedShapes, isNotNull);
+    expect(persistedShapes, hasLength(1));
+    expect(persistedShapes!.single, isA<cg.Arrow>());
   });
 
   testWidgets('plain secondary tap toggles a green circle', (tester) async {
@@ -106,16 +114,41 @@ void main() {
       isEmpty,
     );
   });
+
+  testWidgets('left click clears persistent PGN-backed shapes', (tester) async {
+    final container = ProviderContainer();
+    Set<cg.Shape>? persistedShapes;
+    addTearDown(container.dispose);
+    await _pumpBoard(
+      tester,
+      container,
+      persistentShapes: <cg.Shape>[
+        cg.Arrow(
+          color: AnnotationColor.green.color,
+          orig: Square.h1,
+          dest: Square.h4,
+        ),
+      ],
+      onShapesChanged: (shapes) => persistedShapes = shapes,
+    );
+
+    await tester.tapAt(_squareOffset(tester, Square.e2));
+    await tester.pump();
+
+    expect(persistedShapes, isEmpty);
+  });
 }
 
 Future<void> _pumpBoard(
   WidgetTester tester,
-  ProviderContainer container,
-) async {
+  ProviderContainer container, {
+  List<cg.Shape> persistentShapes = const <cg.Shape>[],
+  ValueChanged<Set<cg.Shape>>? onShapesChanged,
+}) async {
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
-      child: const MaterialApp(
+      child: MaterialApp(
         home: Scaffold(
           body: Align(
             alignment: Alignment.topLeft,
@@ -127,6 +160,8 @@ Future<void> _pumpBoard(
                 size: _boardSize,
                 orientation: Side.white,
                 positionKey: 'start w KQkq -',
+                persistentShapes: persistentShapes,
+                onShapesChanged: onShapesChanged,
                 child: ColoredBox(color: Colors.transparent),
               ),
             ),
