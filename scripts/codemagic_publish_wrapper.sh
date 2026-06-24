@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ORIG="${SSH_ORIGINAL_COMMAND:-}"
+KEEP_LAST_N=3
 
 case "$ORIG" in
   "rsync --server"*)
@@ -12,15 +13,15 @@ case "$ORIG" in
     exec $ORIG
     ;;
   "prepare")
-    exec /usr/local/bin/codemagic-finalize prepare
+    exec /usr/local/bin/codemagic-finalize prepare --keep-last-n "$KEEP_LAST_N"
     ;;
   "clear-legacy")
-    exec /usr/local/bin/codemagic-finalize clear-legacy
+    exec /usr/local/bin/codemagic-finalize clear-legacy --keep-last-n "$KEEP_LAST_N"
     ;;
   "ingest "*)
     read -r _ platform archive version extra <<<"$ORIG"
     case "$platform" in
-      macos | windows) ;;
+      macos | windows | linux) ;;
       *)
         echo "bad platform" >&2
         exit 2
@@ -42,7 +43,8 @@ case "$ORIG" in
         exit 2
         ;;
     esac
-    exec /usr/local/bin/codemagic-finalize ingest "$platform" "$archive" "$version"
+    exec /usr/local/bin/codemagic-finalize ingest \
+      "$platform" "$archive" "$version" --keep-last-n "$KEEP_LAST_N"
     ;;
   *)
     echo "rejected: $ORIG" >&2

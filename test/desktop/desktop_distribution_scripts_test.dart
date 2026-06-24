@@ -229,7 +229,8 @@ void main() {
         contains('/usr/local/bin/codemagic-finalize clear-legacy'),
       );
       expect(wrapper, contains('/usr/local/bin/codemagic-finalize ingest'));
-      expect(wrapper, contains('macos | windows'));
+      expect(wrapper, contains(r'--keep-last-n "$KEEP_LAST_N"'));
+      expect(wrapper, contains('macos | windows | linux'));
       expect(wrapper, contains('bad archive'));
     });
   });
