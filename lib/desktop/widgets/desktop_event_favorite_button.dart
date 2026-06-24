@@ -5,6 +5,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/providers/event_favorite_players_provider.dart';
 import 'package:chessever/providers/favorite_events_provider.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/services/analytics/analytics_service.dart';
@@ -24,10 +25,22 @@ class DesktopEventFavoriteIconButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final selected = ref.watch(isEventFavoritedProvider(event.id));
+    final favoritePlayerCount =
+        ref.watch(
+          eventFavoritePlayersCacheProvider.select(
+            (cache) => cache[event.id]?.count,
+          ),
+        ) ??
+        0;
     return FTheme(
       data: FThemes.zinc.dark,
       child: DesktopTooltip(
-        message: selected ? 'Unstar event' : 'Star event',
+        message:
+            favoritePlayerCount > 0
+                ? '${selected ? 'Unstar event' : 'Star event'} - $favoritePlayerCount favorite player${favoritePlayerCount == 1 ? '' : 's'}'
+                : selected
+                ? 'Unstar event'
+                : 'Star event',
         child: FButton.icon(
           style: _eventFavoriteIconStyle(selected: selected, compact: compact),
           selected: selected,
@@ -39,8 +52,9 @@ class DesktopEventFavoriteIconButton extends ConsumerWidget {
                   event: event,
                 ),
               ),
-          child: Icon(
-            selected ? Icons.star_rounded : Icons.star_border_rounded,
+          child: _FavoriteIconWithPlayerCount(
+            selected: selected,
+            favoritePlayerCount: favoritePlayerCount,
           ),
         ),
       ),
@@ -145,6 +159,78 @@ FWidgetStateMap<BoxDecoration> _eventFavoriteDecoration({
       border: Border.all(color: idleBorder),
     ),
   });
+}
+
+class _FavoriteIconWithPlayerCount extends StatelessWidget {
+  const _FavoriteIconWithPlayerCount({
+    required this.selected,
+    required this.favoritePlayerCount,
+  });
+
+  final bool selected;
+  final int favoritePlayerCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final star = Icon(
+      selected ? Icons.star_rounded : Icons.star_border_rounded,
+    );
+
+    if (favoritePlayerCount <= 0) {
+      return star;
+    }
+
+    return SizedBox.square(
+      dimension: 23,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.center,
+        children: [
+          star,
+          Positioned(
+            right: -7,
+            bottom: -7,
+            child: _FavoritePlayerHeartBadge(count: favoritePlayerCount),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FavoritePlayerHeartBadge extends StatelessWidget {
+  const _FavoritePlayerHeartBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final displayCount = count > 9 ? '9+' : '$count';
+    return SizedBox.square(
+      dimension: 18,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          const Icon(
+            Icons.favorite_rounded,
+            size: 18,
+            color: Color(0xFFFF3B5C),
+          ),
+          Text(
+            displayCount,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: kWhiteColor,
+              fontSize: 8,
+              fontWeight: FontWeight.w900,
+              height: 1,
+              letterSpacing: 0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 FWidgetStateMap<IconThemeData> _eventFavoriteIconTheme({

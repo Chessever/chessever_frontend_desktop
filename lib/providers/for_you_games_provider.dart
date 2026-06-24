@@ -1,8 +1,9 @@
 import 'dart:async';
 
 import 'package:chessever/providers/error_logger_provider.dart';
-import 'package:chessever/providers/favorite_events_provider.dart';
+import 'package:chessever/providers/event_favorite_players_provider.dart';
 import 'package:chessever/providers/event_pin_refresh_provider.dart';
+import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/providers/for_you_games_logic.dart';
 import 'package:chessever/repository/local_storage/tournament/games/games_local_storage.dart';
 import 'package:chessever/repository/local_storage/tournament/games/pin_games_local_storage.dart';
@@ -98,6 +99,8 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   int _offset = 0;
   bool _isFetching = false;
   DateTime? _lastRefreshAt;
+  final Map<String, int> _sessionEventOrder = <String, int>{};
+  int _nextSessionEventOrder = 0;
 
   ForYouNotifier(this.ref) : super(const ForYouState(isLoading: true)) {
     _setupListeners();
@@ -105,9 +108,6 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   }
 
   void _setupListeners() {
-    // Listen to favorite events changes and re-sort list immediately
-    ref.listen(favoriteEventsProvider, (_, __) => _reSortList());
-
     // Match the Current tab's behavior: when a tour transitions ongoing→live
     // (or live→completed), re-derive tourEventCategory on every existing card
     // so the _NextRoundLine flips from "starts in…" to "LIVE" without waiting
@@ -117,6 +117,10 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
       next,
     ) {
       next.whenData(_refreshLiveCategories);
+    });
+
+    ref.listen(favoritePlayersProviderNew, (_, __) {
+      _refreshVisibleFavoritePlayerCounts();
     });
   }
 
@@ -136,16 +140,6 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     if (!changed) return;
 
     if (mounted) state = state.copyWith(events: updated);
-  }
-
-  Future<void> _reSortList() async {
-    if (state.events.isEmpty) return;
-
-    // Re-sort current events list with updated favorite data
-    final sorted = await _sortModels(state.events);
-    if (mounted) {
-      state = state.copyWith(events: sorted);
-    }
   }
 
   Future<void> _loadInitial() async {
@@ -235,22 +229,26 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
               .map((b) => GroupEventCardModel.fromGroupBroadcast(b, liveIds))
               .toList();
 
-      await _prefetchTopGameSnapshots(models);
+      await _prefetchTopGameSnapshots(models, replace: isInitial);
 
-      final nextEvents =
-          isInitial ? models : _mergeEvents(state.events, models);
-      final sortedModels = await _sortModels(nextEvents);
+      if (!mounted) return;
 
       // Update state
       if (isInitial) {
         state = ForYouState(
-          events: sortedModels,
+          events: _sortPageOnceForSession(models),
           isLoading: false,
           hasMore: dbHasMore,
         );
         _lastRefreshAt = DateTime.now();
       } else {
-        state = state.copyWith(events: sortedModels, hasMore: dbHasMore);
+        final existingIds = state.events.map((event) => event.id).toSet();
+        final newModels =
+            models.where((event) => !existingIds.contains(event.id)).toList();
+        state = state.copyWith(
+          events: [...state.events, ..._sortPageOnceForSession(newModels)],
+          hasMore: dbHasMore,
+        );
       }
     } catch (e, stack) {
       debugPrint('[ForYou] Error: $e');
@@ -283,28 +281,73 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   }
 
   Future<void> _prefetchTopGameSnapshots(
-    List<GroupEventCardModel> models,
-  ) async {
-    if (models.isEmpty) return;
+    List<GroupEventCardModel> models, {
+    required bool replace,
+  }) async {
+    final snapshotsNotifier = ref.read(
+      forYouTopGamesSnapshotCacheProvider.notifier,
+    );
 
-    final eventIds = models.map((model) => model.id).toList(growable: false);
+    if (models.isEmpty) {
+      if (replace) {
+        snapshotsNotifier.state = const <String, ForYouEventGamesSnapshot>{};
+      }
+      return;
+    }
+
+    final eventIds = models
+        .map((model) => model.id)
+        .where((eventId) => eventId.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+
+    if (eventIds.isEmpty) {
+      if (replace) {
+        snapshotsNotifier.state = const <String, ForYouEventGamesSnapshot>{};
+      }
+      return;
+    }
 
     try {
-      final gamesByEvent = await ref
-          .read(gameRepositoryProvider)
-          .getForYouTopGamesByEventIds(
-            eventIds: eventIds,
-            boardsPerEvent: _topGamesPerEventSnapshotLimit,
-          )
-          .timeout(const Duration(seconds: 6));
-      _writeTopGameSnapshots(models: models, gamesByEvent: gamesByEvent);
+      final gameRepository = ref.read(gameRepositoryProvider);
+      final prefetchResults = await Future.wait<Object?>([
+        gameRepository
+            .getForYouTopGamesByEventIds(
+              eventIds: eventIds,
+              boardsPerEvent: _topGamesPerEventSnapshotLimit,
+            )
+            .timeout(const Duration(seconds: 6)),
+        _loadFavoritePlayerMatches(
+          gameRepository: gameRepository,
+          eventIds: eventIds,
+        ),
+      ]);
+
+      final gamesByEvent = prefetchResults[0]! as Map<String, List<Games>>;
+      final favoritePlayerMatchesByEventId =
+          prefetchResults[1]! as Map<String, List<int>>;
+
+      _cacheFavoritePlayerMatches(
+        eventIds: eventIds,
+        matchesByEventId: favoritePlayerMatchesByEventId,
+      );
+      _writeTopGameSnapshots(
+        models: models,
+        gamesByEvent: gamesByEvent,
+        replace: replace,
+      );
     } catch (e, stack) {
       debugPrint('[ForYou] Top-game RPC failed: $e');
       debugPrint('[ForYou] Top-game stack: $stack');
       _logErrorToSentry(e, stack);
+      _cacheFavoritePlayerMatches(
+        eventIds: eventIds,
+        matchesByEventId: const <String, List<int>>{},
+      );
       _writeTopGameSnapshots(
         models: models,
         gamesByEvent: const <String, List<Games>>{},
+        replace: replace,
       );
     }
   }
@@ -312,6 +355,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   void _writeTopGameSnapshots({
     required List<GroupEventCardModel> models,
     required Map<String, List<Games>> gamesByEvent,
+    required bool replace,
   }) {
     final snapshots = <String, ForYouEventGamesSnapshot>{};
     for (final model in models) {
@@ -321,29 +365,134 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
       );
     }
 
-    ref.read(forYouTopGamesSnapshotCacheProvider.notifier).update((current) {
-      return <String, ForYouEventGamesSnapshot>{...current, ...snapshots};
-    });
+    final notifier = ref.read(forYouTopGamesSnapshotCacheProvider.notifier);
+    notifier.state =
+        replace
+            ? snapshots
+            : <String, ForYouEventGamesSnapshot>{
+              ...notifier.state,
+              ...snapshots,
+            };
   }
 
-  Future<List<GroupEventCardModel>> _sortModels(
+  List<GroupEventCardModel> _sortLikeCurrentTab(
     List<GroupEventCardModel> models,
-  ) async {
-    return ref.read(tournamentSortingServiceProvider).sortAllTours(models);
+  ) {
+    return ref
+        .read(tournamentSortingServiceProvider)
+        .sortAllTours(
+          models,
+          eventFavoritePlayersMap: ref.read(eventFavoritePlayersCacheProvider),
+        );
   }
-}
 
-List<GroupEventCardModel> _mergeEvents(
-  List<GroupEventCardModel> current,
-  List<GroupEventCardModel> incoming,
-) {
-  final byId = <String, GroupEventCardModel>{
-    for (final event in current) event.id: event,
-  };
-  for (final event in incoming) {
-    byId[event.id] = event;
+  List<GroupEventCardModel> _sortPageOnceForSession(
+    List<GroupEventCardModel> models,
+  ) {
+    if (models.isEmpty) return models;
+
+    final knownEvents = <GroupEventCardModel>[];
+    final newEvents = <GroupEventCardModel>[];
+    for (final model in models) {
+      if (_sessionEventOrder.containsKey(model.id)) {
+        knownEvents.add(model);
+      } else {
+        newEvents.add(model);
+      }
+    }
+
+    knownEvents.sort(
+      (a, b) => _sessionEventOrder[a.id]!.compareTo(_sessionEventOrder[b.id]!),
+    );
+
+    final sortedNewEvents = _sortLikeCurrentTab(newEvents);
+    for (final event in sortedNewEvents) {
+      _sessionEventOrder[event.id] = _nextSessionEventOrder++;
+    }
+
+    return [...knownEvents, ...sortedNewEvents];
   }
-  return byId.values.toList(growable: false);
+
+  Future<void> _refreshVisibleFavoritePlayerCounts() async {
+    final eventIds = state.events
+        .map((event) => event.id)
+        .where((eventId) => eventId.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (eventIds.isEmpty) return;
+
+    final matchesByEventId = await _loadFavoritePlayerMatches(
+      gameRepository: ref.read(gameRepositoryProvider),
+      eventIds: eventIds,
+    );
+    if (!mounted) return;
+
+    _cacheFavoritePlayerMatches(
+      eventIds: eventIds,
+      matchesByEventId: matchesByEventId,
+    );
+  }
+
+  Future<Map<String, List<int>>> _loadFavoritePlayerMatches({
+    required GameRepository gameRepository,
+    required List<String> eventIds,
+  }) async {
+    try {
+      final favoriteFideIds = await _favoriteFideIdsSnapshot();
+      if (favoriteFideIds.isEmpty) {
+        return <String, List<int>>{};
+      }
+
+      return await gameRepository.getForYouFavoritePlayerFideIdsByEventIds(
+        eventIds: eventIds,
+        favoriteFideIds: favoriteFideIds,
+      );
+    } catch (e, stack) {
+      debugPrint('[ForYou] Favorite player count prefetch failed: $e');
+      debugPrint('[ForYou] Favorite player count stack: $stack');
+      _logErrorToSentry(e, stack);
+      return <String, List<int>>{};
+    }
+  }
+
+  Future<List<int>> _favoriteFideIdsSnapshot() async {
+    final loadedFavorites = ref.read(favoritePlayersProviderNew).valueOrNull;
+    final favorites =
+        loadedFavorites ??
+        await ref
+            .read(favoritePlayersProviderNew.future)
+            .timeout(
+              const Duration(milliseconds: 700),
+              onTimeout: () => const [],
+            );
+
+    final fideIds = <int>{};
+    for (final favorite in favorites) {
+      final fideId = int.tryParse(favorite.fideId ?? '');
+      if (fideId != null && fideId > 0) {
+        fideIds.add(fideId);
+      }
+    }
+    return fideIds.toList(growable: false);
+  }
+
+  void _cacheFavoritePlayerMatches({
+    required List<String> eventIds,
+    required Map<String, List<int>> matchesByEventId,
+  }) {
+    final cacheEntries = <String, EventFavoritePlayers>{};
+    for (final eventId in eventIds) {
+      final fideIds = matchesByEventId[eventId] ?? const <int>[];
+      cacheEntries[eventId] = EventFavoritePlayers(
+        count: fideIds.length,
+        fideIds: List<int>.unmodifiable(fideIds),
+      );
+    }
+
+    ref
+        .read(eventFavoritePlayersCacheProvider.notifier)
+        .updateCacheBatch(cacheEntries);
+  }
 }
 
 ForYouEventGamesSnapshot _topGamesSnapshotFromGames({
