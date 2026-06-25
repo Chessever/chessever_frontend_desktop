@@ -125,6 +125,61 @@ void main() {
     ]);
   });
 
+  test(
+    'event rail merges fresh live tournament games into existing rounds',
+    () {
+      final cachedRoundStart = DateTime.utc(2026, 6, 20, 12);
+      final cached = [
+        _summary(
+          id: 'round-3-game-1',
+          roundLabel: 'R3',
+          roundName: 'Round 3',
+          roundStartsAt: cachedRoundStart,
+        ),
+        _summary(
+          id: 'round-4-game-1',
+          roundLabel: 'R4',
+          roundName: 'Round 4',
+          roundStartsAt: cachedRoundStart.add(const Duration(hours: 2)),
+          status: GameStatus.unknown,
+          hasStarted: false,
+        ),
+      ];
+      final fresh = [
+        _summary(
+          id: 'round-4-game-1',
+          roundLabel: 'R4',
+          status: GameStatus.ongoing,
+          hasStarted: true,
+        ),
+        _summary(
+          id: 'round-4-game-2',
+          roundLabel: 'R4',
+          status: GameStatus.ongoing,
+          hasStarted: true,
+        ),
+      ];
+
+      final merged = eventRailMergeFreshEventGamesForTesting(cached, fresh);
+
+      expect(merged.map((game) => game.id), [
+        'round-3-game-1',
+        'round-4-game-1',
+        'round-4-game-2',
+      ]);
+      final updatedRound4 = merged.singleWhere(
+        (game) => game.id == 'round-4-game-1',
+      );
+      expect(updatedRound4.status, GameStatus.ongoing);
+      expect(updatedRound4.hasStarted, isTrue);
+      expect(updatedRound4.roundName, 'Round 4');
+      expect(
+        updatedRound4.roundStartsAt,
+        cachedRoundStart.add(const Duration(hours: 2)),
+      );
+    },
+  );
+
   test('event rail copy selection can span rounds', () {
     final games = [
       _summary(id: 'round-1-game-1', roundLabel: 'Round 1'),
