@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:chessever/providers/error_logger_provider.dart';
 import 'package:chessever/providers/event_favorite_players_provider.dart';
 import 'package:chessever/providers/event_pin_refresh_provider.dart';
+import 'package:chessever/providers/favorite_events_provider.dart';
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/providers/for_you_games_logic.dart';
 import 'package:chessever/repository/local_storage/tournament/games/games_local_storage.dart';
@@ -121,6 +122,10 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
 
     ref.listen(favoritePlayersProviderNew, (_, __) {
       _refreshVisibleFavoritePlayerCounts();
+    });
+
+    ref.listen(favoriteEventsProvider, (_, next) {
+      next.whenData((_) => _resortVisibleEventsForFavoriteChange());
     });
   }
 
@@ -411,6 +416,33 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     }
 
     return [...knownEvents, ...sortedNewEvents];
+  }
+
+  void _resortVisibleEventsForFavoriteChange() {
+    final current = state.events;
+    if (current.isEmpty) return;
+
+    final sorted = _sortLikeCurrentTab(current);
+    var changed = false;
+    for (var i = 0; i < current.length; i++) {
+      if (current[i].id != sorted[i].id) {
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) return;
+
+    _replaceSessionEventOrder(sorted);
+    if (mounted) state = state.copyWith(events: sorted);
+  }
+
+  void _replaceSessionEventOrder(List<GroupEventCardModel> events) {
+    _sessionEventOrder
+      ..clear()
+      ..addEntries(
+        events.indexed.map((entry) => MapEntry(entry.$2.id, entry.$1)),
+      );
+    _nextSessionEventOrder = events.length;
   }
 
   Future<void> _refreshVisibleFavoritePlayerCounts() async {
