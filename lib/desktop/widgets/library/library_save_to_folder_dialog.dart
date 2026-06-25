@@ -91,7 +91,7 @@ class LibraryUpdateTarget {
 
   final String title;
   final String subtitle;
-  final Future<void> Function() onUpdate;
+  final Future<void> Function(ChessGame game) onUpdate;
 }
 
 /// Forui-styled "Save to folder(s)" dialog. Shows the user's writable
@@ -174,7 +174,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
   // Single-game metadata editor. Only allocated when [widget.games] holds
   // exactly one game, since editing 200 PGN headers from one form does not
   // make sense for bulk imports.
-  bool _showGameDetails = true;
+  late bool _showGameDetails;
   late final bool _supportsMetadataEdit;
   TextEditingController? _whiteSurnameCtrl;
   TextEditingController? _whiteFirstNameCtrl;
@@ -198,6 +198,10 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       _selected.add(widget.suggestedFolderId!);
     }
     _supportsMetadataEdit = widget.games.length == 1;
+    // Existing-library saves are usually quick "update this game" actions.
+    // Keep metadata available, but collapsed until the user explicitly wants
+    // to edit details before clicking Update existing game.
+    _showGameDetails = widget.updateTarget == null;
     if (_supportsMetadataEdit) {
       _seedMetadataControllers(widget.games.first.metadata);
     }
@@ -210,7 +214,9 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     _whiteFirstNameCtrl = TextEditingController(text: whiteParts.firstName);
     _blackSurnameCtrl = TextEditingController(text: blackParts.surname);
     _blackFirstNameCtrl = TextEditingController(text: blackParts.firstName);
-    _eventCtrl = TextEditingController(text: metadata['Event']?.toString() ?? '');
+    _eventCtrl = TextEditingController(
+      text: metadata['Event']?.toString() ?? '',
+    );
     _ecoCtrl = TextEditingController(text: metadata['ECO']?.toString() ?? '');
     _whiteEloCtrl = TextEditingController(
       text: metadata['WhiteElo']?.toString() ?? '',
@@ -218,13 +224,16 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     _blackEloCtrl = TextEditingController(
       text: metadata['BlackElo']?.toString() ?? '',
     );
-    _roundCtrl = TextEditingController(text: metadata['Round']?.toString() ?? '');
+    _roundCtrl = TextEditingController(
+      text: metadata['Round']?.toString() ?? '',
+    );
     _subroundCtrl = TextEditingController(
       text: metadata['Subround']?.toString() ?? '',
     );
     final dateParts = (metadata['Date']?.toString() ?? '').split('.');
     _yearCtrl = TextEditingController(
-      text: (dateParts.isNotEmpty && dateParts[0] != '????') ? dateParts[0] : '',
+      text:
+          (dateParts.isNotEmpty && dateParts[0] != '????') ? dateParts[0] : '',
     );
     _monthCtrl = TextEditingController(
       text: (dateParts.length > 1 && dateParts[1] != '??') ? dateParts[1] : '',
@@ -233,7 +242,8 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       text: (dateParts.length > 2 && dateParts[2] != '??') ? dateParts[2] : '',
     );
     final resultRaw = metadata['Result']?.toString().trim() ?? '';
-    _selectedResult = kSupportedPgnResults.contains(resultRaw) ? resultRaw : '*';
+    _selectedResult =
+        kSupportedPgnResults.contains(resultRaw) ? resultRaw : '*';
   }
 
   @override
@@ -342,7 +352,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     if (_isSaving || _isUpdatingOriginal || target == null) return;
     setState(() => _isUpdatingOriginal = true);
     try {
-      await target.onUpdate();
+      await target.onUpdate(_gamesForSave().first);
       if (!mounted) return;
       Navigator.of(context).pop(
         const LibrarySaveOutcome(
@@ -622,6 +632,10 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
+                              if (_supportsMetadataEdit) ...[
+                                _buildGameDetailsSection(),
+                                const SizedBox(height: 14),
+                              ],
                               if (updateTarget != null) ...[
                                 _UpdateOriginalTile(
                                   target: updateTarget,
@@ -630,10 +644,6 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                   onTap: _onUpdateOriginal,
                                 ),
                                 const SizedBox(height: 12),
-                              ],
-                              if (_supportsMetadataEdit) ...[
-                                _buildGameDetailsSection(),
-                                const SizedBox(height: 14),
                               ],
                               if (writable.isNotEmpty) ...[
                                 const _SectionHeader(
@@ -859,9 +869,11 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
         children: [
           _GameDetailsHeader(
             expanded: _showGameDetails,
-            onToggle: _isSaving
-                ? null
-                : () => setState(() => _showGameDetails = !_showGameDetails),
+            onToggle:
+                (_isSaving || _isUpdatingOriginal)
+                    ? null
+                    : () =>
+                        setState(() => _showGameDetails = !_showGameDetails),
           ),
           if (_showGameDetails) ...[
             const FDivider(),
@@ -874,21 +886,21 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                     label: 'White',
                     surnameCtrl: _whiteSurnameCtrl!,
                     firstNameCtrl: _whiteFirstNameCtrl!,
-                    enabled: !_isSaving,
+                    enabled: !_isSaving && !_isUpdatingOriginal,
                   ),
                   const SizedBox(height: 12),
                   _PlayerNameRow(
                     label: 'Black',
                     surnameCtrl: _blackSurnameCtrl!,
                     firstNameCtrl: _blackFirstNameCtrl!,
-                    enabled: !_isSaving,
+                    enabled: !_isSaving && !_isUpdatingOriginal,
                   ),
                   const SizedBox(height: 12),
                   _FieldLabel(label: 'Tournament'),
                   const SizedBox(height: 6),
                   FTextField(
                     controller: _eventCtrl,
-                    enabled: !_isSaving,
+                    enabled: !_isSaving && !_isUpdatingOriginal,
                     hint: 'Event name',
                   ),
                   const SizedBox(height: 12),
@@ -903,10 +915,9 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                             const SizedBox(height: 6),
                             FTextField(
                               controller: _ecoCtrl,
-                              enabled: !_isSaving,
+                              enabled: !_isSaving && !_isUpdatingOriginal,
                               hint: 'e.g. C50',
-                              textCapitalization:
-                                  TextCapitalization.characters,
+                              textCapitalization: TextCapitalization.characters,
                               inputFormatters: [
                                 LengthLimitingTextInputFormatter(6),
                               ],
@@ -924,7 +935,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                             FSelect<String>(
                               hint: 'Result',
                               initialValue: _selectedResult,
-                              enabled: !_isSaving,
+                              enabled: !_isSaving && !_isUpdatingOriginal,
                               onChange: (v) {
                                 if (v == null) return;
                                 setState(() => _selectedResult = v);
@@ -950,7 +961,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                             const SizedBox(height: 6),
                             FTextField(
                               controller: _whiteEloCtrl,
-                              enabled: !_isSaving,
+                              enabled: !_isSaving && !_isUpdatingOriginal,
                               hint: '0–4000',
                               keyboardType: TextInputType.number,
                               inputFormatters: [
@@ -970,7 +981,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                             const SizedBox(height: 6),
                             FTextField(
                               controller: _blackEloCtrl,
-                              enabled: !_isSaving,
+                              enabled: !_isSaving && !_isUpdatingOriginal,
                               hint: '0–4000',
                               keyboardType: TextInputType.number,
                               inputFormatters: [
@@ -995,7 +1006,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                             const SizedBox(height: 6),
                             FTextField(
                               controller: _roundCtrl,
-                              enabled: !_isSaving,
+                              enabled: !_isSaving && !_isUpdatingOriginal,
                               hint: 'e.g. 5',
                             ),
                           ],
@@ -1010,7 +1021,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                             const SizedBox(height: 6),
                             FTextField(
                               controller: _subroundCtrl,
-                              enabled: !_isSaving,
+                              enabled: !_isSaving && !_isUpdatingOriginal,
                               hint: 'e.g. 1.2',
                             ),
                           ],
@@ -1023,8 +1034,11 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                     yearCtrl: _yearCtrl!,
                     monthCtrl: _monthCtrl!,
                     dayCtrl: _dayCtrl!,
-                    enabled: !_isSaving,
-                    onToday: _isSaving ? null : _fillTodayDate,
+                    enabled: !_isSaving && !_isUpdatingOriginal,
+                    onToday:
+                        (_isSaving || _isUpdatingOriginal)
+                            ? null
+                            : _fillTodayDate,
                   ),
                 ],
               ),
@@ -1547,8 +1561,7 @@ Map<String, dynamic> buildEditedMetadata({
   final trimmedRound = round.trim();
   merged['Round'] = trimmedRound.isEmpty ? '?' : trimmedRound;
   merged['Subround'] = subround.trim();
-  merged['Result'] =
-      kSupportedPgnResults.contains(result) ? result : '*';
+  merged['Result'] = kSupportedPgnResults.contains(result) ? result : '*';
   merged['Date'] = buildPgnDate(year: year, month: month, day: day);
   return merged;
 }

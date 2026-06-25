@@ -3805,7 +3805,7 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
                 ? _libraryGameTitle(game)
                 : origin.title,
         subtitle: 'Cloud library',
-        onUpdate: () async {
+        onUpdate: (updatedGame) async {
           final repo = ref.read(libraryRepositoryProvider);
           final existing = await repo.getSavedAnalysis(analysisId);
           if (existing == null) {
@@ -3813,8 +3813,8 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
           }
           await repo.updateSavedAnalysis(
             existing.copyWith(
-              title: _libraryGameTitle(game),
-              chessGame: game,
+              title: _libraryGameTitle(updatedGame),
+              chessGame: updatedGame,
               updatedAt: DateTime.now(),
             ),
           );
@@ -3840,14 +3840,14 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
                 ? _libraryGameTitle(game)
                 : origin.title,
         subtitle: 'Local PGN file',
-        onUpdate: () async {
+        onUpdate: (updatedGame) async {
           await updateLocalLibraryPgnGame(
             target: LocalLibraryGameUpdateTarget(
               sourcePath: sourcePath,
               indexInFile: sourceIndex,
               fileGameCount: sourceFileGameCount,
             ),
-            game: game,
+            game: updatedGame,
           );
           unawaited(ref.read(localChessLibraryProvider.notifier).refresh());
         },
