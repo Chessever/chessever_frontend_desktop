@@ -5141,7 +5141,7 @@ class _BoardArea extends ConsumerWidget {
 
   static const double _evalBarWidth = 24.0;
   static const double _evalBarGap = 12.0;
-  static const double headerHeight = 44.0;
+  static const double headerHeight = 48.0;
   static const double headerGap = 4.0;
   static const double evalBarReservation = _evalBarWidth + _evalBarGap;
 
@@ -5539,6 +5539,7 @@ class _BoardArea extends ConsumerWidget {
                                   (topIsWhite && sideToMove == Side.white) ||
                                   (!topIsWhite && sideToMove == Side.black),
                               clockText: topClock,
+                              trailingControl: focusButton,
                               activeGameId: activeGameId,
                               useLiveClock: isForegroundTab && isLiveAtTip,
                               boardArgs: boardArgs,
@@ -5546,7 +5547,7 @@ class _BoardArea extends ConsumerWidget {
                               viewSource: viewSource,
                             )
                             : null,
-                    trailing: focusButton,
+                    trailing: null,
                   ),
                   SizedBox(height: _BoardArea.headerGap),
                   boardRow,
@@ -5567,6 +5568,7 @@ class _BoardArea extends ConsumerWidget {
                                   (bottomIsWhite && sideToMove == Side.white) ||
                                   (!bottomIsWhite && sideToMove == Side.black),
                               clockText: bottomClock,
+                              trailingControl: focusMode ? null : resizeHandle,
                               activeGameId: activeGameId,
                               useLiveClock: isForegroundTab && isLiveAtTip,
                               boardArgs: boardArgs,
@@ -5574,7 +5576,7 @@ class _BoardArea extends ConsumerWidget {
                               viewSource: viewSource,
                             )
                             : null,
-                    trailing: focusMode ? null : resizeHandle,
+                    trailing: null,
                   ),
                 ],
               ),
@@ -5694,19 +5696,21 @@ class _BoardResizeHandleState extends State<_BoardResizeHandle> {
             color:
                 _active
                     ? kPrimaryColor.withValues(alpha: 0.94)
-                    : kBlack2Color.withValues(alpha: 0.88),
-            borderRadius: BorderRadius.circular(8),
+                    : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
             border: Border.all(
-              color:
-                  _active ? kPrimaryColor : kWhiteColor.withValues(alpha: 0.14),
+              color: _active ? kPrimaryColor : Colors.transparent,
             ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: _active ? 0.35 : 0.24),
-                blurRadius: _active ? 14 : 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
+            boxShadow:
+                _active
+                    ? [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.35),
+                        blurRadius: 14,
+                        offset: const Offset(0, 4),
+                      ),
+                    ]
+                    : null,
           ),
           child: CustomPaint(
             painter: _ResizeGripPainter(
@@ -5757,49 +5761,27 @@ FBaseButtonStyle Function(FButtonStyle style) _floatingBoardIconButtonStyle({
     (style) => style.copyWith(
       decoration: FWidgetStateMap({
         WidgetState.disabled: BoxDecoration(
-          color: kBlack2Color.withValues(alpha: 0.45),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: kDividerColor.withValues(alpha: 0.5)),
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: Colors.transparent),
         ),
         WidgetState.hovered | WidgetState.pressed: BoxDecoration(
           color:
               selected
-                  ? kPrimaryColor.withValues(alpha: 0.22)
-                  : kBlack3Color.withValues(alpha: 0.96),
-          borderRadius: BorderRadius.circular(8),
+                  ? kPrimaryColor.withValues(alpha: 0.12)
+                  : kWhiteColor.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(6),
           border: Border.all(
             color:
                 selected
-                    ? kPrimaryColor.withValues(alpha: 0.72)
-                    : kWhiteColor.withValues(alpha: 0.18),
+                    ? kPrimaryColor.withValues(alpha: 0.42)
+                    : kWhiteColor.withValues(alpha: 0.10),
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.28),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
         ),
         WidgetState.any: BoxDecoration(
-          color:
-              selected
-                  ? kPrimaryColor.withValues(alpha: 0.16)
-                  : kBlack2Color.withValues(alpha: 0.86),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color:
-                selected
-                    ? kPrimaryColor.withValues(alpha: 0.54)
-                    : kWhiteColor.withValues(alpha: 0.12),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.22),
-              blurRadius: 10,
-              offset: const Offset(0, 3),
-            ),
-          ],
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: Colors.transparent),
         ),
       }),
       iconContentStyle:
@@ -6118,6 +6100,7 @@ class _PlayerHeader extends ConsumerWidget {
     required this.isWhite,
     required this.isToMove,
     this.clockText,
+    this.trailingControl,
     this.activeGameId,
     this.useLiveClock = false,
     this.boardArgs,
@@ -6139,6 +6122,10 @@ class _PlayerHeader extends ConsumerWidget {
   /// Format follows what `formatPgnClockForDisplay` accepts —
   /// `1:23:45`, `12:30`, etc.
   final String? clockText;
+
+  /// Optional board chrome control (focus toggle / resize grip) rendered inside
+  /// the same horizontal player bar so idle controls share the exact bar color.
+  final Widget? trailingControl;
 
   /// Live game stream id. The header reads only the clock snapshot so
   /// broadcast ticks rebuild this compact row instead of the full board pane.
@@ -6182,15 +6169,6 @@ class _PlayerHeader extends ConsumerWidget {
                 ?.trim();
     final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
 
-    final pieceDot = Container(
-      width: 10,
-      height: 10,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: isWhite ? kWhiteColor : Colors.black,
-        border: Border.all(color: kDividerColor, width: 1),
-      ),
-    );
     final hasName = name.isNotEmpty;
     final body = Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -6222,23 +6200,21 @@ class _PlayerHeader extends ConsumerWidget {
             ),
             const SizedBox(width: 8),
           ],
-          pieceDot,
-          const SizedBox(width: 8),
           if (hasPhoto) ...[
             Container(
-              width: 40,
-              height: 40,
+              width: 42,
+              height: 42,
               padding: const EdgeInsets.all(1),
               decoration: BoxDecoration(
                 color: kBlack3Color,
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(7),
                 border: Border.all(color: kWhiteColor.withValues(alpha: 0.24)),
               ),
               child: PlayerInitialsAvatarCompact(
                 photoUrl: photoUrl,
                 initials: _playerHeaderInitials(name),
-                size: 38,
-                borderRadius: 19,
+                size: 40,
+                borderRadius: 6,
               ),
             ),
             const SizedBox(width: 8),
@@ -6255,7 +6231,7 @@ class _PlayerHeader extends ConsumerWidget {
             Text(
               title,
               style: const TextStyle(
-                color: kLightYellowColor,
+                color: kPrimaryColor,
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
               ),
@@ -6298,6 +6274,10 @@ class _PlayerHeader extends ConsumerWidget {
           ] else if (clockText != null && clockText!.trim().isNotEmpty) ...[
             const SizedBox(width: 10),
             _PlayerClock(text: clockText!, isToMove: isToMove),
+          ],
+          if (trailingControl != null) ...[
+            const SizedBox(width: 8),
+            trailingControl!,
           ],
         ],
       ),
@@ -6703,12 +6683,15 @@ class _PlayerClock extends StatelessWidget {
       motion: DesktopMotion.layout,
       builder: (context, t, _) {
         final bg = Color.lerp(
-          kBlack3Color,
+          kBlack2Color,
           kPrimaryColor.withValues(alpha: 0.18),
           t,
         );
         final borderColor =
-            Color.lerp(kDividerColor, kPrimaryColor, t) ?? kDividerColor;
+            t <= 0.01
+                ? Colors.transparent
+                : (Color.lerp(kDividerColor, kPrimaryColor, t) ??
+                    kDividerColor);
         final textColor =
             Color.lerp(kWhiteColor70, kWhiteColor, t * 0.6) ?? kWhiteColor70;
         final textStyle = TextStyle(
