@@ -620,6 +620,109 @@ void main() {
     await tester.pumpAndSettle();
     expect(toggleCalls, ['2:18', '2:146']);
   });
+
+  testWidgets(
+    'right-click annotation palette includes compensation and time trouble',
+    (tester) async {
+      final toggleCalls = <String>[];
+
+      await tester.pumpWidget(
+        _host(
+          game: _sampleGame(),
+          onJump: (_) {},
+          width: 900,
+          onSetUserQualityNag: (_, _) {},
+          onToggleUserNag: (ply, nag) => toggleCalls.add('$ply:$nag'),
+        ),
+      );
+
+      final move = find.text('Nf3', findRichText: true);
+      await tester.tapAt(
+        tester.getCenter(move),
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('=/∞'), findsOneWidget);
+      expect(find.text('⏱'), findsOneWidget);
+      expect(find.text('⨀'), findsNothing);
+
+      await tester.tap(find.text('=/∞'));
+      await tester.pumpAndSettle();
+      expect(toggleCalls, ['2:44']);
+
+      await tester.tapAt(
+        tester.getCenter(move),
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('⏱'));
+      await tester.pumpAndSettle();
+      expect(toggleCalls, ['2:44', '2:138']);
+    },
+  );
+
+  testWidgets('move menu toggles hide and show all annotations', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        game: _sampleGame(),
+        onJump: (_) {},
+        width: 900,
+        userNags: const <int, List<int>>{
+          2: <int>[1],
+        },
+        onSetUserQualityNag: (_, _) {},
+        onToggleUserNag: (_, _) {},
+      ),
+    );
+
+    final move = find.text('Nf3', findRichText: true);
+    expect(find.text('!'), findsOneWidget);
+
+    await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Hide All Annotations'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('!'), findsNothing);
+
+    await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+    expect(find.text('Show All Annotations'), findsOneWidget);
+  });
+
+  testWidgets('delete all commentary clears every move NAG category', (
+    tester,
+  ) async {
+    final clearCalls = <int>[];
+
+    await tester.pumpWidget(
+      _host(
+        game: _sampleGame(),
+        onJump: (_) {},
+        width: 900,
+        userNags: const <int, List<int>>{
+          2: <int>[1, 44, 138],
+        },
+        onSetUserQualityNag: (_, _) {},
+        onToggleUserNag: (_, _) {},
+        onClearUserNags: clearCalls.add,
+        onSetMoveComment: (_, _) {},
+      ),
+    );
+
+    final move = find.text('Nf3', findRichText: true);
+    await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete All Commentary'));
+    await tester.pumpAndSettle();
+
+    expect(clearCalls, [2]);
+  });
 }
 
 ChessGame _sampleGameWithSourceMetadata() {

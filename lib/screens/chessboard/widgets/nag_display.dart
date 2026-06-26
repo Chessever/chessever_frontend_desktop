@@ -78,11 +78,11 @@ NagDisplay? getNagDisplay(int nag) {
     case 40:
       return const NagDisplay('↑', _kObservationDim, NagCategory.observation);
     case 44:
-      return const NagDisplay('=∞', _kEvalSlate, NagCategory.evaluation);
+      return const NagDisplay('=/∞', _kEvalSlate, NagCategory.evaluation);
     case 132:
       return const NagDisplay('⇆', _kObservationDim, NagCategory.observation);
     case 138:
-      return const NagDisplay('⊕', _kObservationDim, NagCategory.observation);
+      return const NagDisplay('⏱', _kObservationDim, NagCategory.observation);
     case 140:
       return const NagDisplay('∆', _kObservationDim, NagCategory.observation);
     case 146:
