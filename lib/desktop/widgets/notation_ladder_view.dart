@@ -179,6 +179,7 @@ class NotationLadderView extends StatefulWidget {
     this.onClearUserNags,
     this.onToggleMoveNag,
     this.onClearMoveNags,
+    this.onClearAllCommentary,
     this.onSetMoveComment,
     this.onPromoteVariation,
     this.onDeleteVariation,
@@ -256,6 +257,7 @@ class NotationLadderView extends StatefulWidget {
   /// zero-based mainline NAG overlay.
   final void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag;
   final void Function(ChessMovePointer pointer)? onClearMoveNags;
+  final VoidCallback? onClearAllCommentary;
 
   /// Set or clear a comment attached to a move pointer. Passing null or an
   /// empty string clears the rendered comment block.
@@ -1372,8 +1374,7 @@ class _LineBlock extends StatelessWidget {
               (depth > 0 || !isMainlineRoot) ? onToggleMoveNag : null,
           onClearUserNags:
               (depth == 0 && isMainlineRoot) ? onClearUserNags : null,
-          onClearMoveNags:
-              (depth > 0 || !isMainlineRoot) ? onClearMoveNags : null,
+          onClearMoveNags: onClearMoveNags,
           onSetWhiteComment:
               (whitePointer != null && onSetMoveComment != null)
                   ? (comment) => onSetMoveComment!(whitePointer!, comment)
@@ -2032,7 +2033,7 @@ class _InlineNotationBlock extends StatelessWidget {
         onToggleUserNag: isMainlineMove ? onToggleUserNag : null,
         onToggleMoveNag: isMainlineMove ? null : onToggleMoveNag,
         onClearUserNags: isMainlineMove ? onClearUserNags : null,
-        onClearMoveNags: isMainlineMove ? null : onClearMoveNags,
+        onClearMoveNags: onClearMoveNags,
         onSetComment:
             onSetMoveComment == null
                 ? null
@@ -2668,8 +2669,11 @@ class _InlineMove extends StatelessWidget {
                   ? (nag) => onToggleMoveNag!(pointer, nag)
                   : null,
           onClearNags:
-              depth == 0 && onClearUserNags != null
-                  ? () => onClearUserNags!(pointer.last)
+              depth == 0 && (onClearUserNags != null || onClearMoveNags != null)
+                  ? () {
+                    onClearUserNags?.call(pointer.last);
+                    onClearMoveNags?.call(pointer);
+                  }
                   : onClearMoveNags != null
                   ? () => onClearMoveNags!(pointer)
                   : null,
@@ -3169,11 +3173,12 @@ class _PairRow extends StatelessWidget {
                                 ? null
                                 : (nag) => onToggleMoveNag!(whitePointer!, nag),
                         onClearNags:
-                            onClearUserNags != null
-                                ? () => onClearUserNags!(whitePointer!.last)
-                                : onClearMoveNags == null
-                                ? null
-                                : () => onClearMoveNags!(whitePointer!),
+                            onClearUserNags != null || onClearMoveNags != null
+                                ? () {
+                                  onClearUserNags?.call(whitePointer!.last);
+                                  onClearMoveNags?.call(whitePointer!);
+                                }
+                                : null,
                         onSetComment: onSetWhiteComment,
                         onPromoteVariation:
                             onPromoteVariation == null ||
@@ -3229,11 +3234,12 @@ class _PairRow extends StatelessWidget {
                                 ? null
                                 : (nag) => onToggleMoveNag!(blackPointer!, nag),
                         onClearNags:
-                            onClearUserNags != null
-                                ? () => onClearUserNags!(blackPointer!.last)
-                                : onClearMoveNags == null
-                                ? null
-                                : () => onClearMoveNags!(blackPointer!),
+                            onClearUserNags != null || onClearMoveNags != null
+                                ? () {
+                                  onClearUserNags?.call(blackPointer!.last);
+                                  onClearMoveNags?.call(blackPointer!);
+                                }
+                                : null,
                         onSetComment: onSetBlackComment,
                         onPromoteVariation:
                             onPromoteVariation == null ||
@@ -3349,6 +3355,8 @@ class _LadderChipState extends State<_LadderChip> {
     final canTrim = widget.onTrimFromHere != null;
     final notationState =
         context.findAncestorStateOfType<_NotationLadderViewState>();
+    final canClearAllCommentary =
+        notationState?.widget.onClearAllCommentary != null;
 
     final selected = await showDesktopContextMenu<Object>(
       context: context,
@@ -3377,7 +3385,11 @@ class _LadderChipState extends State<_LadderChip> {
           icon: Icons.format_quote_rounded,
           label: 'Copy FEN',
         ),
-        if (canTrim || canDeleteVariation || canComment || canAnnotate) ...[
+        if (canTrim ||
+            canDeleteVariation ||
+            canComment ||
+            canAnnotate ||
+            canClearAllCommentary) ...[
           const DesktopContextMenuDivider<Object>(),
           DesktopContextSubmenu<Object>(
             icon: Icons.delete_outline_rounded,
@@ -3414,7 +3426,7 @@ class _LadderChipState extends State<_LadderChip> {
                 icon: Icons.comments_disabled_outlined,
                 label: 'Delete All Commentary',
                 shortcut: 'Shift+Ctrl+Y',
-                enabled: canComment || canAnnotate,
+                enabled: canClearAllCommentary || canComment || canAnnotate,
                 destructive: true,
               ),
               DesktopContextMenuItem<Object>(
@@ -3522,8 +3534,13 @@ class _LadderChipState extends State<_LadderChip> {
       case _LadderAction.deleteVariation:
         widget.onDeleteVariation?.call();
       case _LadderAction.deleteAllCommentary:
-        widget.onSetComment?.call(null);
-        widget.onClearNags?.call();
+        final clearAll = notationState?.widget.onClearAllCommentary;
+        if (clearAll != null) {
+          clearAll();
+        } else {
+          widget.onSetComment?.call(null);
+          widget.onClearNags?.call();
+        }
       case _LadderAction.deleteTextCommentary:
         widget.onSetComment?.call(null);
       case _LadderAction.clearAnnotation:

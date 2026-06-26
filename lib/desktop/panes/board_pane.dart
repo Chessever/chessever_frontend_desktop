@@ -862,10 +862,12 @@ class _BoardPaneContent extends HookConsumerWidget {
       metadata[ChessGame.metadataAllowMainlineExtensionKey] = !isLive;
       metadata[ChessGame.metadataIsLiveKey] = isLive;
 
-      final updatedGame = oldGame.copyWith(
-        metadata: metadata,
-        mainline: <ChessMove>[...oldGame.mainline, nextMove],
-      ).rememberGameEndingPlyIndex(oldGame.mainline.length);
+      final updatedGame = oldGame
+          .copyWith(
+            metadata: metadata,
+            mainline: <ChessMove>[...oldGame.mainline, nextMove],
+          )
+          .rememberGameEndingPlyIndex(oldGame.mainline.length);
       final initialFenKey = _nullableFenPositionKey(boardArgs?.initialFen);
       dirtySinceLoad.value = gameId.isNotEmpty && dirtySinceLoad.value;
       lastAppliedPgn.value = pgn;
@@ -1921,6 +1923,21 @@ class _BoardPaneContent extends HookConsumerWidget {
       pushUndoSnapshot();
       chessGame.value = nextGame;
       dirtySinceLoad.value = true;
+    }
+
+    void clearAllNotationCommentary() {
+      pushUndoSnapshot();
+      chessGame.value = chessGame.value.copyWith(
+        mainline: _stripCommentsAndNags(chessGame.value.mainline),
+      );
+      final id = activeTabId;
+      if (id != null) {
+        ref
+            .read(userMoveNagsProvider.notifier)
+            .restoreTab(id, const <int, List<int>>{});
+      }
+      dirtySinceLoad.value = true;
+      showToast('Commentary removed');
     }
 
     void toggleMoveNag(ChessMovePointer target, int nag) {
@@ -3253,6 +3270,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         },
         onToggleMoveNag: toggleMoveNag,
         onClearMoveNags: (target) => setMoveNags(target, const <int>[]),
+        onClearAllCommentary: clearAllNotationCommentary,
         onSetMoveComment: setMoveComment,
         onPromoteVariation: promoteVariation,
         onDeleteVariation: deleteVariation,
@@ -3797,6 +3815,20 @@ ChessLine _stripVariationsCommentsAndNags(ChessLine line) {
         comments: const <String>[],
         nags: const <int>[],
         variations: null,
+        overrideVariations: true,
+      ),
+  ];
+}
+
+ChessLine _stripCommentsAndNags(ChessLine line) {
+  return [
+    for (final move in line)
+      move.copyWith(
+        comments: const <String>[],
+        nags: const <int>[],
+        variations: move.variations
+            ?.map(_stripCommentsAndNags)
+            .toList(growable: false),
         overrideVariations: true,
       ),
   ];

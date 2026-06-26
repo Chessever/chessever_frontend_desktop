@@ -697,6 +697,8 @@ void main() {
     tester,
   ) async {
     final clearCalls = <int>[];
+    final clearMoveCalls = <ChessMovePointer>[];
+    var clearAllCalls = 0;
 
     await tester.pumpWidget(
       _host(
@@ -709,6 +711,8 @@ void main() {
         onSetUserQualityNag: (_, _) {},
         onToggleUserNag: (_, _) {},
         onClearUserNags: clearCalls.add,
+        onClearMoveNags: clearMoveCalls.add,
+        onClearAllCommentary: () => clearAllCalls += 1,
         onSetMoveComment: (_, _) {},
       ),
     );
@@ -721,7 +725,9 @@ void main() {
     await tester.tap(find.text('Delete All Commentary'));
     await tester.pumpAndSettle();
 
-    expect(clearCalls, [2]);
+    expect(clearAllCalls, 1);
+    expect(clearCalls, isEmpty);
+    expect(clearMoveCalls, isEmpty);
   });
 }
 
@@ -919,6 +925,7 @@ Widget _host({
   void Function(int ply)? onClearUserNags,
   void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag,
   void Function(ChessMovePointer pointer)? onClearMoveNags,
+  VoidCallback? onClearAllCommentary,
   void Function(ChessMovePointer pointer, String? comment)? onSetMoveComment,
   void Function(ChessMovePointer pointer)? onPromoteVariation,
   void Function(ChessMovePointer pointer)? onDeleteVariation,
@@ -937,6 +944,7 @@ Widget _host({
     onClearUserNags: onClearUserNags,
     onToggleMoveNag: onToggleMoveNag,
     onClearMoveNags: onClearMoveNags,
+    onClearAllCommentary: onClearAllCommentary,
     onSetMoveComment: onSetMoveComment,
     onPromoteVariation: onPromoteVariation,
     onDeleteVariation: onDeleteVariation,
