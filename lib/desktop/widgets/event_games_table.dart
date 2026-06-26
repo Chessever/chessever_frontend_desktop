@@ -36,6 +36,7 @@ import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
 import 'package:chessever/screens/player_profile/provider/player_profile_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/time_utils.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
@@ -88,6 +89,14 @@ List<String> eventRailOrderedIdsForTesting(
       .expand((group) => group.games)
       .map((game) => game.id)
       .toList(growable: false);
+}
+
+@visibleForTesting
+List<TournamentGameSummary> eventRailMergeFreshEventGamesForTesting(
+  List<TournamentGameSummary> fallbackGames,
+  List<TournamentGameSummary> freshGames,
+) {
+  return _mergeFreshEventGameSummaries(fallbackGames, freshGames);
 }
 
 /// Board-pane companion table for the event that produced the active game.
@@ -571,6 +580,27 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
     }
   }
 
+  List<TournamentGameSummary>? _watchFreshTournamentEventGames(
+    BoardTabGameArgs? args, {
+    required List<TournamentGameSummary> fallbackGames,
+  }) {
+    if (args == null) return null;
+    if (args.viewSource == ChessboardView.favScorecard) return null;
+    final tourId = _eventRailTourId(args, fallbackGames);
+    if (tourId == null || tourId.isEmpty) return null;
+
+    final freshGames = ref.watch(gamesTourProvider(tourId)).valueOrNull;
+    if (freshGames == null || freshGames.isEmpty) return null;
+
+    return _mergeFreshEventGameSummaries(
+      fallbackGames,
+      freshGames
+          .map(TournamentGameSummary.fromGame)
+          .map(_normalizeFreshEventGameSummary)
+          .toList(growable: false),
+    );
+  }
+
   bool _canLoadMoreContinuation(BoardTabGamesContinuation continuation) {
     switch (continuation.kind) {
       case BoardTabGamesContinuationKind.favorites:
@@ -637,6 +667,13 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
       activeArgs?.eventGamesContinuation,
       fallbackGames: activeArgs?.eventGames ?? const <TournamentGameSummary>[],
     );
+    final freshTournamentEventGames = _watchFreshTournamentEventGames(
+      activeArgs,
+      fallbackGames:
+          eventContinuationSnapshot?.games ??
+          activeArgs?.eventGames ??
+          const <TournamentGameSummary>[],
+    );
     final databaseContinuationSnapshot = _watchContinuationSnapshot(
       activeArgs?.databaseGamesContinuation,
       fallbackGames:
@@ -644,7 +681,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
     );
     final effectiveArgs = activeArgs?.copyWith(
       routeGames: routeContinuationSnapshot?.games,
-      eventGames: eventContinuationSnapshot?.games,
+      eventGames: freshTournamentEventGames ?? eventContinuationSnapshot?.games,
       databaseGames: databaseContinuationSnapshot?.games,
     );
     final legacy = ref.watch(tournamentGamesProvider);
@@ -1367,6 +1404,110 @@ List<TournamentGameSummary> _mergeGameSummaries(
     }
   }
   return merged;
+}
+
+String? _eventRailTourId(
+  BoardTabGameArgs args,
+  List<TournamentGameSummary> fallbackGames,
+) {
+  final sourceTourId = args.sourceGame?.tourId.trim() ?? '';
+  if (sourceTourId.isNotEmpty) return sourceTourId;
+  for (final game in fallbackGames) {
+    final tourId = game.tourId.trim();
+    if (tourId.isNotEmpty) return tourId;
+  }
+  return null;
+}
+
+List<TournamentGameSummary> _mergeFreshEventGameSummaries(
+  List<TournamentGameSummary> fallbackGames,
+  List<TournamentGameSummary> freshGames,
+) {
+  if (freshGames.isEmpty) return fallbackGames;
+  final normalizedFreshGames = [
+    for (final game in freshGames) _normalizeFreshEventGameSummary(game),
+  ];
+  if (fallbackGames.isEmpty) return normalizedFreshGames;
+
+  final freshById = <String, TournamentGameSummary>{};
+  for (final game in normalizedFreshGames) {
+    final id = game.id.trim();
+    if (id.isNotEmpty) freshById[id] = game;
+  }
+  if (freshById.isEmpty) return fallbackGames;
+
+  final merged = <TournamentGameSummary>[];
+  final seen = <String>{};
+  for (final fallback in fallbackGames) {
+    final id = fallback.id.trim();
+    final fresh = freshById[id];
+    if (id.isNotEmpty) seen.add(id);
+    merged.add(
+      fresh == null ? fallback : _mergeFreshEventGameSummary(fallback, fresh),
+    );
+  }
+
+  for (final fresh in normalizedFreshGames) {
+    final id = fresh.id.trim();
+    if (id.isEmpty || seen.add(id)) {
+      merged.add(fresh);
+    }
+  }
+  return merged;
+}
+
+TournamentGameSummary _normalizeFreshEventGameSummary(
+  TournamentGameSummary fresh,
+) {
+  if (fresh.hasStarted || !fresh.status.isOngoing) return fresh;
+  return fresh.copyWith(hasStarted: true);
+}
+
+TournamentGameSummary _mergeFreshEventGameSummary(
+  TournamentGameSummary current,
+  TournamentGameSummary fresh,
+) {
+  return TournamentGameSummary(
+    id: fresh.id,
+    name: fresh.name,
+    whitePlayer: fresh.whitePlayer,
+    blackPlayer: fresh.blackPlayer,
+    hasPgn: fresh.hasPgn || current.hasPgn,
+    tourId: fresh.tourId.isNotEmpty ? fresh.tourId : current.tourId,
+    tourSlug: fresh.tourSlug.isNotEmpty ? fresh.tourSlug : current.tourSlug,
+    whiteFederation:
+        fresh.whiteFederation.isNotEmpty
+            ? fresh.whiteFederation
+            : current.whiteFederation,
+    blackFederation:
+        fresh.blackFederation.isNotEmpty
+            ? fresh.blackFederation
+            : current.blackFederation,
+    whiteTitle:
+        fresh.whiteTitle.isNotEmpty ? fresh.whiteTitle : current.whiteTitle,
+    blackTitle:
+        fresh.blackTitle.isNotEmpty ? fresh.blackTitle : current.blackTitle,
+    whiteRating:
+        fresh.whiteRating > 0 ? fresh.whiteRating : current.whiteRating,
+    blackRating:
+        fresh.blackRating > 0 ? fresh.blackRating : current.blackRating,
+    whiteFideId: fresh.whiteFideId ?? current.whiteFideId,
+    blackFideId: fresh.blackFideId ?? current.blackFideId,
+    fen: fresh.fen ?? current.fen,
+    roundId: fresh.roundId.isNotEmpty ? fresh.roundId : current.roundId,
+    roundSlug: fresh.roundSlug.isNotEmpty ? fresh.roundSlug : current.roundSlug,
+    roundLabel:
+        fresh.roundLabel.isNotEmpty ? fresh.roundLabel : current.roundLabel,
+    roundName: fresh.roundName.isNotEmpty ? fresh.roundName : current.roundName,
+    boardNumber: fresh.boardNumber ?? current.boardNumber,
+    status: fresh.status,
+    openingName: fresh.openingName ?? current.openingName,
+    lastMoveTime: fresh.lastMoveTime ?? current.lastMoveTime,
+    startsAt: fresh.startsAt ?? current.startsAt,
+    roundStartsAt: fresh.roundStartsAt ?? current.roundStartsAt,
+    hasStarted: fresh.hasStarted || current.hasStarted,
+    pgn: fresh.pgn ?? current.pgn,
+  );
 }
 
 enum _GameRailTab { source, event }
@@ -2302,8 +2443,11 @@ class _UpcomingRoundsToggleState extends State<_UpcomingRoundsToggle> {
               value: _pressed ? 0.985 : (_hovered ? 1.003 : 1.0),
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
               builder:
-                  (context, scale, child) =>
-                      Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                  (context, scale, child) => Transform.scale(
+                    scale: scale,
+                    filterQuality: FilterQuality.medium,
+                    child: child,
+                  ),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 120),
                 padding: const EdgeInsets.symmetric(
@@ -2937,8 +3081,11 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
             value: _pressed ? 0.985 : (_hovered ? 1.003 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 100),
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
