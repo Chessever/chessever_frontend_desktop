@@ -210,7 +210,9 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     _whiteFirstNameCtrl = TextEditingController(text: whiteParts.firstName);
     _blackSurnameCtrl = TextEditingController(text: blackParts.surname);
     _blackFirstNameCtrl = TextEditingController(text: blackParts.firstName);
-    _eventCtrl = TextEditingController(text: metadata['Event']?.toString() ?? '');
+    _eventCtrl = TextEditingController(
+      text: metadata['Event']?.toString() ?? '',
+    );
     _ecoCtrl = TextEditingController(text: metadata['ECO']?.toString() ?? '');
     _whiteEloCtrl = TextEditingController(
       text: metadata['WhiteElo']?.toString() ?? '',
@@ -218,13 +220,16 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     _blackEloCtrl = TextEditingController(
       text: metadata['BlackElo']?.toString() ?? '',
     );
-    _roundCtrl = TextEditingController(text: metadata['Round']?.toString() ?? '');
+    _roundCtrl = TextEditingController(
+      text: metadata['Round']?.toString() ?? '',
+    );
     _subroundCtrl = TextEditingController(
       text: metadata['Subround']?.toString() ?? '',
     );
     final dateParts = (metadata['Date']?.toString() ?? '').split('.');
     _yearCtrl = TextEditingController(
-      text: (dateParts.isNotEmpty && dateParts[0] != '????') ? dateParts[0] : '',
+      text:
+          (dateParts.isNotEmpty && dateParts[0] != '????') ? dateParts[0] : '',
     );
     _monthCtrl = TextEditingController(
       text: (dateParts.length > 1 && dateParts[1] != '??') ? dateParts[1] : '',
@@ -233,7 +238,8 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       text: (dateParts.length > 2 && dateParts[2] != '??') ? dateParts[2] : '',
     );
     final resultRaw = metadata['Result']?.toString().trim() ?? '';
-    _selectedResult = kSupportedPgnResults.contains(resultRaw) ? resultRaw : '*';
+    _selectedResult =
+        kSupportedPgnResults.contains(resultRaw) ? resultRaw : '*';
   }
 
   @override
@@ -557,288 +563,293 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                 '${destinationCount == 1 ? '' : 's'}';
     final updateTarget = widget.updateTarget;
 
-    return FTheme(
-      data: FThemes.zinc.dark,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520, maxHeight: 620),
-          child: Container(
-            decoration: BoxDecoration(
-              color: kBlack2Color,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: kDividerColor),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.4),
-                  blurRadius: 28,
-                  offset: const Offset(0, 12),
-                ),
-              ],
-            ),
-            child: Focus(
-              autofocus: true,
-              onKeyEvent: (node, event) {
-                if (event is! KeyDownEvent) return KeyEventResult.ignored;
-                if (event.logicalKey == LogicalKeyboardKey.escape) {
-                  if (!_isSaving && !_isUpdatingOriginal) {
-                    Navigator.of(context).maybePop();
-                  }
-                  return KeyEventResult.handled;
-                }
-                return KeyEventResult.ignored;
-              },
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _Header(
-                    title: 'Save to library',
-                    subtitle:
-                        '${widget.games.length} '
-                        '${librarySaveEntryLabel(widget.games.length)} from '
-                        '${widget.sourceLabel}',
+    return Material(
+      type: MaterialType.transparency,
+      child: FTheme(
+        data: FThemes.zinc.dark,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520, maxHeight: 620),
+            child: Container(
+              decoration: BoxDecoration(
+                color: kBlack2Color,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: kDividerColor),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    blurRadius: 28,
+                    offset: const Offset(0, 12),
                   ),
-                  const FDivider(),
-                  Flexible(
-                    child: foldersAsync.when(
-                      data: (_) {
-                        final bothEmpty =
-                            writable.isEmpty && localEntries.isEmpty;
-                        if (bothEmpty && updateTarget == null) {
-                          return _EmptyHint(
-                            onCreate: () => _onCreateFolder(writable),
-                            onAddLocal:
-                                (_isSaving || _isUpdatingOriginal)
-                                    ? null
-                                    : _onAddLocalPgnFile,
-                          );
-                        }
-                        return SingleChildScrollView(
-                          physics: const DesktopScrollPhysics(),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              if (updateTarget != null) ...[
-                                _UpdateOriginalTile(
-                                  target: updateTarget,
-                                  busy: _isUpdatingOriginal,
-                                  disabled: _isSaving,
-                                  onTap: _onUpdateOriginal,
+                ],
+              ),
+              child: Focus(
+                autofocus: true,
+                onKeyEvent: (node, event) {
+                  if (event is! KeyDownEvent) return KeyEventResult.ignored;
+                  if (event.logicalKey == LogicalKeyboardKey.escape) {
+                    if (!_isSaving && !_isUpdatingOriginal) {
+                      Navigator.of(context).maybePop();
+                    }
+                    return KeyEventResult.handled;
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _Header(
+                      title: 'Save to library',
+                      subtitle:
+                          '${widget.games.length} '
+                          '${librarySaveEntryLabel(widget.games.length)} from '
+                          '${widget.sourceLabel}',
+                    ),
+                    const FDivider(),
+                    Flexible(
+                      child: foldersAsync.when(
+                        data: (_) {
+                          final bothEmpty =
+                              writable.isEmpty && localEntries.isEmpty;
+                          if (bothEmpty && updateTarget == null) {
+                            return _EmptyHint(
+                              onCreate: () => _onCreateFolder(writable),
+                              onAddLocal:
+                                  (_isSaving || _isUpdatingOriginal)
+                                      ? null
+                                      : _onAddLocalPgnFile,
+                            );
+                          }
+                          return SingleChildScrollView(
+                            physics: const DesktopScrollPhysics(),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                if (updateTarget != null) ...[
+                                  _UpdateOriginalTile(
+                                    target: updateTarget,
+                                    busy: _isUpdatingOriginal,
+                                    disabled: _isSaving,
+                                    onTap: _onUpdateOriginal,
+                                  ),
+                                  const SizedBox(height: 12),
+                                ],
+                                if (_supportsMetadataEdit) ...[
+                                  _buildGameDetailsSection(),
+                                  const SizedBox(height: 14),
+                                ],
+                                if (writable.isNotEmpty) ...[
+                                  const _SectionHeader(
+                                    icon: Icons.cloud_outlined,
+                                    label: 'CLOUD LIBRARY',
+                                  ),
+                                  ...ordered.map(
+                                    (folder) => _FolderRow(
+                                      folder: folder,
+                                      selected: _selected.contains(folder.id),
+                                      disabled:
+                                          _isSaving || _isUpdatingOriginal,
+                                      onToggle: () {
+                                        setState(() {
+                                          if (_selected.contains(folder.id)) {
+                                            _selected.remove(folder.id);
+                                          } else {
+                                            _selected.add(folder.id);
+                                          }
+                                        });
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                ],
+                                _SectionHeader(
+                                  icon:
+                                      Platform.isMacOS
+                                          ? Icons.computer_outlined
+                                          : Icons.storage_outlined,
+                                  label:
+                                      Platform.isMacOS
+                                          ? 'ON THIS MAC'
+                                          : 'ON THIS PC',
                                 ),
-                                const SizedBox(height: 12),
-                              ],
-                              if (_supportsMetadataEdit) ...[
-                                _buildGameDetailsSection(),
-                                const SizedBox(height: 14),
-                              ],
-                              if (writable.isNotEmpty) ...[
-                                const _SectionHeader(
-                                  icon: Icons.cloud_outlined,
-                                  label: 'CLOUD LIBRARY',
-                                ),
-                                ...ordered.map(
-                                  (folder) => _FolderRow(
-                                    folder: folder,
-                                    selected: _selected.contains(folder.id),
+                                ...localEntries.map((entry) {
+                                  final key = _normalizeLocalPath(entry.path);
+                                  return _LocalFolderRow(
+                                    entry: entry,
+                                    selected: _selectedLocalPaths.contains(key),
                                     disabled: _isSaving || _isUpdatingOriginal,
                                     onToggle: () {
                                       setState(() {
-                                        if (_selected.contains(folder.id)) {
-                                          _selected.remove(folder.id);
+                                        if (_selectedLocalPaths.contains(key)) {
+                                          _selectedLocalPaths.remove(key);
                                         } else {
-                                          _selected.add(folder.id);
+                                          _selectedLocalPaths.add(key);
                                         }
                                       });
                                     },
+                                    onForget:
+                                        (_isSaving || _isUpdatingOriginal)
+                                            ? null
+                                            : () async {
+                                              await ref
+                                                  .read(
+                                                    localLibraryRegistryProvider
+                                                        .notifier,
+                                                  )
+                                                  .unregister(entry.path);
+                                              if (!mounted) return;
+                                              setState(() {
+                                                _selectedLocalPaths.remove(key);
+                                              });
+                                            },
+                                  );
+                                }),
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: _AddLocalFolderTile(
+                                    onTap:
+                                        (_isSaving || _isUpdatingOriginal)
+                                            ? null
+                                            : _onAddLocalPgnFile,
                                   ),
                                 ),
-                                const SizedBox(height: 12),
                               ],
-                              _SectionHeader(
-                                icon:
-                                    Platform.isMacOS
-                                        ? Icons.computer_outlined
-                                        : Icons.storage_outlined,
-                                label:
-                                    Platform.isMacOS
-                                        ? 'ON THIS MAC'
-                                        : 'ON THIS PC',
-                              ),
-                              ...localEntries.map((entry) {
-                                final key = _normalizeLocalPath(entry.path);
-                                return _LocalFolderRow(
-                                  entry: entry,
-                                  selected: _selectedLocalPaths.contains(key),
-                                  disabled: _isSaving || _isUpdatingOriginal,
-                                  onToggle: () {
-                                    setState(() {
-                                      if (_selectedLocalPaths.contains(key)) {
-                                        _selectedLocalPaths.remove(key);
-                                      } else {
-                                        _selectedLocalPaths.add(key);
-                                      }
-                                    });
-                                  },
-                                  onForget:
-                                      (_isSaving || _isUpdatingOriginal)
-                                          ? null
-                                          : () async {
-                                            await ref
-                                                .read(
-                                                  localLibraryRegistryProvider
-                                                      .notifier,
-                                                )
-                                                .unregister(entry.path);
-                                            if (!mounted) return;
-                                            setState(() {
-                                              _selectedLocalPaths.remove(key);
-                                            });
-                                          },
-                                );
-                              }),
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: _AddLocalFolderTile(
-                                  onTap:
-                                      (_isSaving || _isUpdatingOriginal)
-                                          ? null
-                                          : _onAddLocalPgnFile,
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                      loading:
-                          () => const Padding(
-                            padding: EdgeInsets.all(40),
-                            child: Center(
-                              child: SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation(
-                                    kPrimaryColor,
+                            ),
+                          );
+                        },
+                        loading:
+                            () => const Padding(
+                              padding: EdgeInsets.all(40),
+                              child: Center(
+                                child: SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation(
+                                      kPrimaryColor,
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                      error:
-                          (e, _) => Padding(
-                            padding: const EdgeInsets.all(20),
-                            child: Text(
-                              'Could not load folders: $e',
-                              style: const TextStyle(
-                                color: kRedColor,
-                                fontSize: 12,
+                        error:
+                            (e, _) => Padding(
+                              padding: const EdgeInsets.all(20),
+                              child: Text(
+                                'Could not load folders: $e',
+                                style: const TextStyle(
+                                  color: kRedColor,
+                                  fontSize: 12,
+                                ),
                               ),
                             ),
-                          ),
+                      ),
                     ),
-                  ),
-                  if (_isSaving) ...[
+                    if (_isSaving) ...[
+                      const FDivider(),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(4),
+                              child: LinearProgressIndicator(
+                                value:
+                                    totalTarget == 0
+                                        ? null
+                                        : (totalDone / totalTarget).clamp(
+                                          0.0,
+                                          1.0,
+                                        ),
+                                minHeight: 6,
+                                color: kPrimaryColor,
+                                backgroundColor: kWhiteColor.withValues(
+                                  alpha: 0.06,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              _progressLabel(
+                                cloudDone: _savedRows,
+                                cloudTotal: cloudRowsTarget,
+                                localDone: _localWritten,
+                                localTotal: localFilesTarget,
+                              ),
+                              style: const TextStyle(
+                                color: kLightGreyColor,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     const FDivider(),
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
-                            child: LinearProgressIndicator(
-                              value:
-                                  totalTarget == 0
-                                      ? null
-                                      : (totalDone / totalTarget).clamp(
-                                        0.0,
-                                        1.0,
-                                      ),
-                              minHeight: 6,
-                              color: kPrimaryColor,
-                              backgroundColor: kWhiteColor.withValues(
-                                alpha: 0.06,
-                              ),
-                            ),
+                          DesktopDialogButton(
+                            label: 'New folder',
+                            icon: Icons.create_new_folder_outlined,
+                            onPress:
+                                (_isSaving || _isUpdatingOriginal)
+                                    ? null
+                                    : () => _onCreateFolder(writable),
                           ),
-                          const SizedBox(height: 6),
-                          Text(
-                            _progressLabel(
-                              cloudDone: _savedRows,
-                              cloudTotal: cloudRowsTarget,
-                              localDone: _localWritten,
-                              localTotal: localFilesTarget,
-                            ),
-                            style: const TextStyle(
-                              color: kLightGreyColor,
-                              fontSize: 11,
-                            ),
+                          Row(
+                            children: [
+                              DesktopDialogButton(
+                                label: 'Cancel',
+                                onPress:
+                                    (_isSaving || _isUpdatingOriginal)
+                                        ? null
+                                        : () =>
+                                            Navigator.of(context).maybePop(),
+                              ),
+                              const SizedBox(width: 8),
+                              DesktopDialogButton(
+                                label: saveLabel,
+                                tone: DesktopDialogButtonTone.primary,
+                                prefix:
+                                    _isSaving
+                                        ? const SizedBox(
+                                          width: 14,
+                                          height: 14,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor: AlwaysStoppedAnimation(
+                                              kWhiteColor,
+                                            ),
+                                          ),
+                                        )
+                                        : null,
+                                onPress:
+                                    (_isSaving ||
+                                            _isUpdatingOriginal ||
+                                            destinationCount == 0)
+                                        ? null
+                                        : () => _onSave(
+                                          selectedFolders,
+                                          selectedLocalPaths,
+                                        ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
                     ),
                   ],
-                  const FDivider(),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        DesktopDialogButton(
-                          label: 'New folder',
-                          icon: Icons.create_new_folder_outlined,
-                          onPress:
-                              (_isSaving || _isUpdatingOriginal)
-                                  ? null
-                                  : () => _onCreateFolder(writable),
-                        ),
-                        Row(
-                          children: [
-                            DesktopDialogButton(
-                              label: 'Cancel',
-                              onPress:
-                                  (_isSaving || _isUpdatingOriginal)
-                                      ? null
-                                      : () => Navigator.of(context).maybePop(),
-                            ),
-                            const SizedBox(width: 8),
-                            DesktopDialogButton(
-                              label: saveLabel,
-                              tone: DesktopDialogButtonTone.primary,
-                              prefix:
-                                  _isSaving
-                                      ? const SizedBox(
-                                        width: 14,
-                                        height: 14,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          valueColor: AlwaysStoppedAnimation(
-                                            kWhiteColor,
-                                          ),
-                                        ),
-                                      )
-                                      : null,
-                              onPress:
-                                  (_isSaving ||
-                                          _isUpdatingOriginal ||
-                                          destinationCount == 0)
-                                      ? null
-                                      : () => _onSave(
-                                        selectedFolders,
-                                        selectedLocalPaths,
-                                      ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -859,9 +870,11 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
         children: [
           _GameDetailsHeader(
             expanded: _showGameDetails,
-            onToggle: _isSaving
-                ? null
-                : () => setState(() => _showGameDetails = !_showGameDetails),
+            onToggle:
+                _isSaving
+                    ? null
+                    : () =>
+                        setState(() => _showGameDetails = !_showGameDetails),
           ),
           if (_showGameDetails) ...[
             const FDivider(),
@@ -905,8 +918,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                               controller: _ecoCtrl,
                               enabled: !_isSaving,
                               hint: 'e.g. C50',
-                              textCapitalization:
-                                  TextCapitalization.characters,
+                              textCapitalization: TextCapitalization.characters,
                               inputFormatters: [
                                 LengthLimitingTextInputFormatter(6),
                               ],
@@ -1547,8 +1559,7 @@ Map<String, dynamic> buildEditedMetadata({
   final trimmedRound = round.trim();
   merged['Round'] = trimmedRound.isEmpty ? '?' : trimmedRound;
   merged['Subround'] = subround.trim();
-  merged['Result'] =
-      kSupportedPgnResults.contains(result) ? result : '*';
+  merged['Result'] = kSupportedPgnResults.contains(result) ? result : '*';
   merged['Date'] = buildPgnDate(year: year, month: month, day: day);
   return merged;
 }
