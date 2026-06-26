@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:chessground/chessground.dart' as cg;
 import 'package:file_picker/file_picker.dart';
 import 'package:dartchess/dartchess.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -207,6 +208,42 @@ double desktopBoardResizeDragDelta(Offset offset) {
     return magnitude * horizontalSign;
   }
   return magnitude * (offset.dy.isNegative ? -1.0 : 1.0);
+}
+
+@visibleForTesting
+bool shouldClearBoardAnnotationsForBoardMarginClick({
+  required Offset localPosition,
+  required Size contentSize,
+  required double boardSize,
+  required double boardWithBar,
+  required double topRowHeight,
+  required double bottomRowHeight,
+  required double headerGap,
+}) {
+  if (boardSize <= 0 || boardWithBar <= 0) return false;
+  if (contentSize.width <= 0 || contentSize.height <= 0) return false;
+
+  final columnHeight =
+      topRowHeight + headerGap + boardSize + headerGap + bottomRowHeight;
+  final columnLeft = math.max(0.0, (contentSize.width - boardWithBar) / 2);
+  final columnTop = math.max(0.0, (contentSize.height - columnHeight) / 2);
+  final boardTop = columnTop + topRowHeight + headerGap;
+
+  final nonClearBoardGroupRect = Rect.fromLTWH(
+    columnLeft,
+    boardTop,
+    boardWithBar,
+    boardSize,
+  );
+  final boardMarginBandRect = Rect.fromLTWH(
+    0,
+    boardTop - headerGap,
+    contentSize.width,
+    boardSize + headerGap * 2,
+  );
+
+  return boardMarginBandRect.contains(localPosition) &&
+      !nonClearBoardGroupRect.contains(localPosition);
 }
 
 @visibleForTesting
@@ -1861,6 +1898,22 @@ class _BoardPaneContent extends HookConsumerWidget {
       dirtySinceLoad.value = true;
     }
 
+    void setMoveGraphicCommentary(
+      ChessMovePointer target,
+      Set<cg.Shape> shapes,
+    ) {
+      if (target.isEmpty) return;
+      final nextGame = _setMoveGraphicCommentaryAtPointer(
+        chessGame.value,
+        target,
+        shapes,
+      );
+      if (identical(nextGame, chessGame.value)) return;
+      pushUndoSnapshot();
+      chessGame.value = nextGame;
+      dirtySinceLoad.value = true;
+    }
+
     void setMoveNags(ChessMovePointer target, List<int> nags) {
       if (target.isEmpty) return;
       final nextGame = _setMoveNagsAtPointer(chessGame.value, target, nags);
@@ -3380,6 +3433,13 @@ class _BoardPaneContent extends HookConsumerWidget {
                               explorerPreview == null
                                   ? pgnShapes
                                   : const <cg.Shape>[],
+                          onGraphicCommentaryChanged:
+                              explorerPreview == null
+                                  ? (shapes) => setMoveGraphicCommentary(
+                                    pointer.value,
+                                    shapes,
+                                  )
+                                  : null,
                           whiteClock: whiteClockRaw,
                           blackClock: blackClockRaw,
                           boardAnnotation:
@@ -4172,6 +4232,18 @@ ChessGame _setMoveCommentAtPointer(
   );
 }
 
+ChessGame _setMoveGraphicCommentaryAtPointer(
+  ChessGame game,
+  ChessMovePointer pointer,
+  Set<cg.Shape> shapes,
+) {
+  return _updateMoveAtPointer(
+    game,
+    pointer,
+    (move) => _withGraphicCommentary(move, shapes),
+  );
+}
+
 ChessGame _setMoveNagsAtPointer(
   ChessGame game,
   ChessMovePointer pointer,
@@ -4210,6 +4282,50 @@ ChessMove _withEditableComment(ChessMove move, String? comment) {
   return move.copyWith(
     comments: <String>[...directives, if (nextComment.isNotEmpty) nextComment],
   );
+}
+
+ChessMove _withGraphicCommentary(ChessMove move, Set<cg.Shape> shapes) {
+  final nextDirectives = _pgnGraphicDirectivesFromShapes(shapes);
+  final preserved = <String>[];
+
+  for (final existing in move.comments ?? const <String>[]) {
+    final cleaned =
+        existing
+            .replaceAll(_pgnGraphicDirectiveRegex, '')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim();
+    if (cleaned.isNotEmpty) preserved.add(cleaned);
+  }
+
+  return move.copyWith(comments: <String>[...nextDirectives, ...preserved]);
+}
+
+List<String> _pgnGraphicDirectivesFromShapes(Set<cg.Shape> shapes) {
+  if (shapes.isEmpty) return const <String>[];
+  final arrows = <String>[];
+  final circles = <String>[];
+
+  for (final shape in shapes) {
+    if (shape is cg.Arrow && shape.orig != shape.dest) {
+      arrows.add(
+        '${_pgnAnnotationColorCode(shape.color)}${shape.orig.name}${shape.dest.name}',
+      );
+    } else if (shape is cg.Circle) {
+      circles.add('${_pgnAnnotationColorCode(shape.color)}${shape.orig.name}');
+    }
+  }
+
+  return <String>[
+    if (arrows.isNotEmpty) '[%cal ${arrows.join(',')}]',
+    if (circles.isNotEmpty) '[%csl ${circles.join(',')}]',
+  ];
+}
+
+String _pgnAnnotationColorCode(Color color) {
+  if (color == AnnotationColor.red.color) return 'R';
+  if (color == AnnotationColor.blue.color) return 'B';
+  if (color == AnnotationColor.yellow.color) return 'Y';
+  return 'G';
 }
 
 String? _insertedLineSourceComment(String? sourceLabel) {
@@ -4289,6 +4405,7 @@ Iterable<String> _extractNonClockDirectives(String comment) sync* {
 }
 
 final _pgnDirectiveRegex = RegExp(r'\[%[a-zA-Z]+\s+[^\]]+\]');
+final _pgnGraphicDirectiveRegex = RegExp(r'\[%(?:cal|csl)\s+[^\]]+\]');
 
 /// Returns the full sequence of moves played from the start of the game
 /// to the position pointed to by [pointer], correctly following any
@@ -4894,6 +5011,7 @@ class _BoardArea extends ConsumerWidget {
     required this.onBoardSizeChanged,
     required this.onBoardSizeReset,
     required this.onBoardSizeChangeEnd,
+    this.onGraphicCommentaryChanged,
     this.activeGameId,
     this.boardArgs,
     this.whiteClock,
@@ -4987,6 +5105,7 @@ class _BoardArea extends ConsumerWidget {
   final ValueChanged<double> onBoardSizeChanged;
   final VoidCallback onBoardSizeReset;
   final VoidCallback onBoardSizeChangeEnd;
+  final ValueChanged<Set<cg.Shape>>? onGraphicCommentaryChanged;
 
   static const double _evalBarWidth = 24.0;
   static const double _evalBarGap = 12.0;
@@ -5273,6 +5392,7 @@ class _BoardArea extends ConsumerWidget {
                     promotionMove: promotionMove,
                     onPromotionSelection: onPromotionSelection,
                     pgnShapes: pgnShapes,
+                    onGraphicCommentaryChanged: onGraphicCommentaryChanged,
                     boardAnnotation: boardAnnotation,
                     boardAnnotationGlyph: boardAnnotationGlyph,
                     boardAnnotationSquare: boardAnnotationSquare,
@@ -5336,64 +5456,96 @@ class _BoardArea extends ConsumerWidget {
             );
           }
 
-          return Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                chromeRow(
-                  height: topRowHeight,
-                  header:
-                      hasHeaders
-                          ? _PlayerHeader(
-                            name: topName,
-                            federation: topFed,
-                            title: topTitle,
-                            rating: topRating,
-                            fideId: topIsWhite ? whiteFideId : blackFideId,
-                            resultScore: topResultScore,
-                            isWhite: topIsWhite,
-                            isToMove:
-                                (topIsWhite && sideToMove == Side.white) ||
-                                (!topIsWhite && sideToMove == Side.black),
-                            clockText: topClock,
-                            activeGameId: activeGameId,
-                            useLiveClock: isForegroundTab && isLiveAtTip,
-                            boardArgs: boardArgs,
-                            sourceGame: sourceGame,
-                            viewSource: viewSource,
-                          )
-                          : null,
-                  trailing: focusButton,
-                ),
-                SizedBox(height: _BoardArea.headerGap),
-                boardRow,
-                SizedBox(height: _BoardArea.headerGap),
-                chromeRow(
-                  height: bottomRowHeight,
-                  header:
-                      hasHeaders
-                          ? _PlayerHeader(
-                            name: bottomName,
-                            federation: bottomFed,
-                            title: bottomTitle,
-                            rating: bottomRating,
-                            fideId: bottomIsWhite ? whiteFideId : blackFideId,
-                            resultScore: bottomResultScore,
-                            isWhite: bottomIsWhite,
-                            isToMove:
-                                (bottomIsWhite && sideToMove == Side.white) ||
-                                (!bottomIsWhite && sideToMove == Side.black),
-                            clockText: bottomClock,
-                            activeGameId: activeGameId,
-                            useLiveClock: isForegroundTab && isLiveAtTip,
-                            boardArgs: boardArgs,
-                            sourceGame: sourceGame,
-                            viewSource: viewSource,
-                          )
-                          : null,
-                  trailing: focusMode ? null : resizeHandle,
-                ),
-              ],
+          void clearGraphicCommentaryForCurrentPosition() {
+            final positionKey = _fenPositionKey(fen);
+            final hasShapes =
+                ref
+                    .read(boardAnnotationsProvider(tabId))
+                    .shapesForPosition(positionKey)
+                    .isNotEmpty ||
+                pgnShapes.isNotEmpty;
+            if (!hasShapes) return;
+            ref
+                .read(boardAnnotationsProvider(tabId).notifier)
+                .clear(positionKey: positionKey);
+            onGraphicCommentaryChanged?.call(const <cg.Shape>{});
+          }
+
+          return Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (event) {
+              if (event.buttons & kPrimaryMouseButton == 0) return;
+              final shouldClear =
+                  shouldClearBoardAnnotationsForBoardMarginClick(
+                    localPosition: event.localPosition,
+                    contentSize: constraints.biggest,
+                    boardSize: boardSize,
+                    boardWithBar: boardWithBar,
+                    topRowHeight: topRowHeight,
+                    bottomRowHeight: bottomRowHeight,
+                    headerGap: _BoardArea.headerGap,
+                  );
+              if (shouldClear) clearGraphicCommentaryForCurrentPosition();
+            },
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  chromeRow(
+                    height: topRowHeight,
+                    header:
+                        hasHeaders
+                            ? _PlayerHeader(
+                              name: topName,
+                              federation: topFed,
+                              title: topTitle,
+                              rating: topRating,
+                              fideId: topIsWhite ? whiteFideId : blackFideId,
+                              resultScore: topResultScore,
+                              isWhite: topIsWhite,
+                              isToMove:
+                                  (topIsWhite && sideToMove == Side.white) ||
+                                  (!topIsWhite && sideToMove == Side.black),
+                              clockText: topClock,
+                              activeGameId: activeGameId,
+                              useLiveClock: isForegroundTab && isLiveAtTip,
+                              boardArgs: boardArgs,
+                              sourceGame: sourceGame,
+                              viewSource: viewSource,
+                            )
+                            : null,
+                    trailing: focusButton,
+                  ),
+                  SizedBox(height: _BoardArea.headerGap),
+                  boardRow,
+                  SizedBox(height: _BoardArea.headerGap),
+                  chromeRow(
+                    height: bottomRowHeight,
+                    header:
+                        hasHeaders
+                            ? _PlayerHeader(
+                              name: bottomName,
+                              federation: bottomFed,
+                              title: bottomTitle,
+                              rating: bottomRating,
+                              fideId: bottomIsWhite ? whiteFideId : blackFideId,
+                              resultScore: bottomResultScore,
+                              isWhite: bottomIsWhite,
+                              isToMove:
+                                  (bottomIsWhite && sideToMove == Side.white) ||
+                                  (!bottomIsWhite && sideToMove == Side.black),
+                              clockText: bottomClock,
+                              activeGameId: activeGameId,
+                              useLiveClock: isForegroundTab && isLiveAtTip,
+                              boardArgs: boardArgs,
+                              sourceGame: sourceGame,
+                              viewSource: viewSource,
+                            )
+                            : null,
+                    trailing: focusMode ? null : resizeHandle,
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -5656,6 +5808,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
     required this.promotionMove,
     required this.onPromotionSelection,
     required this.pgnShapes,
+    required this.onGraphicCommentaryChanged,
     required this.boardAnnotation,
     required this.boardAnnotationGlyph,
     required this.boardAnnotationSquare,
@@ -5678,6 +5831,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
   final NormalMove? promotionMove;
   final void Function(Role? role) onPromotionSelection;
   final List<cg.Shape> pgnShapes;
+  final ValueChanged<Set<cg.Shape>>? onGraphicCommentaryChanged;
   final LichessMoveAnnotation? boardAnnotation;
   final NagDisplay? boardAnnotationGlyph;
   final Square? boardAnnotationSquare;
@@ -5835,6 +5989,8 @@ class _BoardWithAnnotations extends ConsumerWidget {
             size: boardSize,
             orientation: orientation,
             positionKey: positionKey,
+            persistentShapes: pgnShapes,
+            onShapesChanged: onGraphicCommentaryChanged,
             child: DesktopChessBoard(
               key: ValueKey<String>(boardRenderKey),
               size: boardSize,
