@@ -204,8 +204,7 @@ class LibraryPane extends HookConsumerWidget {
     }
 
     void enterCloudFolder(LibraryFolder folder) {
-      if (folder.id == kTwicBookId ||
-          !libraryFolderHasChildren(allFolders, folder.id)) {
+      if (folder.id == kTwicBookId || _isLibraryDatabase(folder, allFolders)) {
         openCloudDatabase(folder);
         return;
       }
@@ -359,6 +358,7 @@ class LibraryPane extends HookConsumerWidget {
                           ref: ref,
                           folders: allFolders,
                           lockedParent: null,
+                          allowKindSelection: true,
                         ),
                     onCollapse: () => mainSplitController.collapse(0),
                   ),
@@ -390,13 +390,23 @@ class LibraryPane extends HookConsumerWidget {
                             onOpenLocalFiles: openLocalFiles,
                             onImportPgnFiles: importLocalPgnFiles,
                             onDropDatabase: addDatabaseDragShortcut,
-                            onNewFolder:
-                                () => _onCreateFolder(
-                                  context: context,
-                                  ref: ref,
-                                  folders: allFolders,
-                                  lockedParent: null,
-                                ),
+                            onNewFolder: () {
+                              final currentFolder =
+                                  currentLibraryFolderId.value == null
+                                      ? null
+                                      : allFolders.firstWhereOrNull(
+                                        (folder) =>
+                                            folder.id ==
+                                            currentLibraryFolderId.value,
+                                      );
+                              _onCreateFolder(
+                                context: context,
+                                ref: ref,
+                                folders: allFolders,
+                                lockedParent: currentFolder,
+                                allowKindSelection: true,
+                              );
+                            },
                           ),
                 ),
               ],
@@ -514,6 +524,7 @@ class _FolderRail extends StatelessWidget {
   Widget _body() {
     if (isLoading) return const _RailLoading();
     if (error != null) return _RailError(error: error!);
+    final folders = [kTwicFolder, ...ownedFolders, ...subscribedFolders];
     return ListView(
       physics: const DesktopScrollPhysics(),
       padding: const EdgeInsets.symmetric(vertical: 12),
@@ -523,6 +534,7 @@ class _FolderRail extends StatelessWidget {
           for (final folder in ownedFolders)
             _FolderRow(
               folder: folder,
+              iconKind: _cloudFolderIconKind(folder, folders),
               selected: folder.id == selectedId,
               onTap: () => onSelect(folder.id),
               onOpen: () => onOpen(folder),
@@ -541,6 +553,7 @@ class _FolderRail extends StatelessWidget {
           for (final folder in subscribedFolders)
             _FolderRow(
               folder: folder,
+              iconKind: _cloudFolderIconKind(folder, folders),
               selected: folder.id == selectedId,
               onTap: () => onSelect(folder.id),
               onOpen: () => onOpen(folder),
@@ -835,6 +848,7 @@ class _RailError extends StatelessWidget {
 class _FolderRow extends ConsumerStatefulWidget {
   const _FolderRow({
     required this.folder,
+    required this.iconKind,
     required this.selected,
     required this.onTap,
     required this.onOpen,
@@ -842,6 +856,7 @@ class _FolderRow extends ConsumerStatefulWidget {
   });
 
   final LibraryFolder folder;
+  final _DatabaseBoardIconKind iconKind;
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback onOpen;
@@ -879,7 +894,9 @@ class _FolderRowState extends ConsumerState<_FolderRow> {
           ),
       child: LibraryFolderContextMenu(
         folder: widget.folder,
-        canCreateSubfolder: !isChild && !widget.folder.isSubscribed,
+        canCreateSubfolder:
+            !widget.folder.isSubscribed &&
+            widget.iconKind == _DatabaseBoardIconKind.folder,
         hasGames: true, // count is unknown at rail level; menu still useful.
         onAction: widget.onAction,
         child: Padding(
@@ -934,14 +951,10 @@ class _FolderRowState extends ConsumerState<_FolderRow> {
                           ),
                       child: Row(
                         children: [
-                          Icon(
-                            widget.folder.isSubscribed
-                                ? Icons.cloud_done_outlined
-                                : (isChild
-                                    ? Icons.folder_outlined
-                                    : Icons.folder_rounded),
-                            size: 14,
+                          _DatabaseBoardIcon(
+                            kind: widget.iconKind,
                             color: fg,
+                            size: 16,
                           ),
                           const SizedBox(width: 10),
                           Expanded(
@@ -1546,7 +1559,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       final entry = item.entry;
       final tile = _DatabaseBoardTile(
         title: item.title,
-        icon: item.icon,
+        iconKind: item.iconKind(folders),
         selected:
             folder != null
                 ? folder.id == selectedFolderId && selectedLocalPath == null
@@ -1732,19 +1745,169 @@ class _DatabaseBoardItem {
 
   String get title => folder?.name ?? entry!.displayName;
 
-  IconData get icon {
+  _DatabaseBoardIconKind iconKind(List<LibraryFolder> folders) {
     final f = folder;
-    if (f == null) return Icons.account_tree_outlined;
-    if (f.id == kTwicBookId) return Icons.public_rounded;
-    if (f.isSubscribed) return Icons.cloud_done_outlined;
-    return Icons.folder_rounded;
+    if (f == null) return _DatabaseBoardIconKind.localDatabase;
+    return _cloudFolderIconKind(f, folders);
+  }
+}
+
+_DatabaseBoardIconKind _cloudFolderIconKind(
+  LibraryFolder folder,
+  List<LibraryFolder> folders,
+) {
+  if (folder.id == kTwicBookId) return _DatabaseBoardIconKind.twic;
+  if (!_isLibraryDatabase(folder, folders)) {
+    return _DatabaseBoardIconKind.folder;
+  }
+  if (folder.isSubscribed) return _DatabaseBoardIconKind.subscribedDatabase;
+  return _DatabaseBoardIconKind.cloudDatabase;
+}
+
+bool _isLibraryDatabase(LibraryFolder folder, List<LibraryFolder> folders) {
+  if (folder.icon == 'database' || folder.icon == 'twic') return true;
+  if (folder.icon != 'folder' || folder.parentId == null) return false;
+  return !libraryFolderHasChildren(folders, folder.id);
+}
+
+enum _DatabaseBoardIconKind {
+  cloudDatabase,
+  folder,
+  localDatabase,
+  subscribedDatabase,
+  twic,
+}
+
+class _DatabaseBoardIcon extends StatelessWidget {
+  const _DatabaseBoardIcon({
+    required this.kind,
+    required this.color,
+    this.size = 20,
+  });
+
+  final _DatabaseBoardIconKind kind;
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return switch (kind) {
+      _DatabaseBoardIconKind.folder => Icon(
+        Icons.folder_rounded,
+        color: color,
+        size: size * 0.9,
+      ),
+      _DatabaseBoardIconKind.twic => Icon(
+        Icons.public_rounded,
+        color: color,
+        size: size * 0.85,
+      ),
+      _DatabaseBoardIconKind.subscribedDatabase => Stack(
+        clipBehavior: Clip.none,
+        children: [
+          _ChessDatabaseGlyph(color: color, size: size),
+          Positioned(
+            right: -size * 0.20,
+            bottom: -size * 0.15,
+            child: Icon(
+              Icons.cloud_done_outlined,
+              color: color,
+              size: size * 0.5,
+            ),
+          ),
+        ],
+      ),
+      _ => _ChessDatabaseGlyph(color: color, size: size),
+    };
+  }
+}
+
+class _ChessDatabaseGlyph extends StatelessWidget {
+  const _ChessDatabaseGlyph({required this.color, required this.size});
+
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(painter: _ChessDatabaseGlyphPainter(color)),
+    );
+  }
+}
+
+class _ChessDatabaseGlyphPainter extends CustomPainter {
+  const _ChessDatabaseGlyphPainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.scale(size.width / 20, size.height / 20);
+    final stroke =
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.45
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round;
+    final fill =
+        Paint()
+          ..color = color.withValues(alpha: 0.14)
+          ..style = PaintingStyle.fill;
+    final squareFill =
+        Paint()
+          ..color = color.withValues(alpha: 0.42)
+          ..style = PaintingStyle.fill;
+
+    final body = Rect.fromLTWH(3.2, 4.4, 13.6, 11.8);
+    final top = Rect.fromLTWH(3.2, 2.2, 13.6, 5.0);
+    final bottom = Rect.fromLTWH(3.2, 13.7, 13.6, 4.8);
+
+    final path =
+        Path()
+          ..moveTo(body.left, top.center.dy)
+          ..lineTo(body.left, bottom.center.dy)
+          ..arcTo(bottom, math.pi, -math.pi, false)
+          ..lineTo(body.right, top.center.dy);
+
+    canvas.drawPath(path, fill);
+    canvas.drawOval(top, fill);
+    canvas.drawPath(path, stroke);
+    canvas.drawOval(top, stroke);
+    canvas.drawArc(bottom, 0, math.pi, false, stroke);
+
+    const cell = 2.25;
+    final boardLeft = body.left + 4.55;
+    final boardTop = body.top + 5.25;
+    final boardStroke =
+        Paint()
+          ..color = color.withValues(alpha: 0.72)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.75;
+    final board = Rect.fromLTWH(boardLeft, boardTop, cell * 2, cell * 2);
+    canvas.drawRect(board, boardStroke);
+    canvas.drawRect(Rect.fromLTWH(boardLeft, boardTop, cell, cell), squareFill);
+    canvas.drawRect(
+      Rect.fromLTWH(boardLeft + cell, boardTop + cell, cell, cell),
+      squareFill,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _ChessDatabaseGlyphPainter oldDelegate) {
+    return oldDelegate.color != color;
   }
 }
 
 class _DatabaseBoardTile extends StatefulWidget {
   const _DatabaseBoardTile({
     required this.title,
-    required this.icon,
+    required this.iconKind,
     required this.selected,
     required this.onSelect,
     required this.onOpen,
@@ -1753,7 +1916,7 @@ class _DatabaseBoardTile extends StatefulWidget {
   });
 
   final String title;
-  final IconData icon;
+  final _DatabaseBoardIconKind iconKind;
   final bool selected;
   final VoidCallback onSelect;
   final VoidCallback onOpen;
@@ -1862,10 +2025,9 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile> {
                           color: kPrimaryColor.withValues(alpha: 0.10),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Icon(
-                          widget.icon,
+                        child: _DatabaseBoardIcon(
+                          kind: widget.iconKind,
                           color: kPrimaryColor,
-                          size: 17,
                         ),
                       ),
                       const SizedBox(width: 9),
@@ -3042,7 +3204,8 @@ class _FolderContentView extends HookConsumerWidget {
             count: analysesAsync.data?.length,
             isLoading: analysesAsync.connectionState != ConnectionState.done,
             canCreateSubfolder:
-                activeFolder.parentId == null && !activeFolder.isSubscribed,
+                !activeFolder.isSubscribed &&
+                !_isLibraryDatabase(activeFolder, folders),
             hasGames: hasGames,
             onAction:
                 (action) => _onFolderAction(
@@ -5507,6 +5670,8 @@ Future<void> _onCreateFolder({
   required WidgetRef ref,
   required List<LibraryFolder> folders,
   LibraryFolder? lockedParent,
+  LibraryFolderCreateKind kind = LibraryFolderCreateKind.folder,
+  bool allowKindSelection = false,
 }) async {
   final writableRoots = folders
       .where(
@@ -5517,16 +5682,27 @@ Future<void> _onCreateFolder({
     context,
     availableParents: writableRoots,
     lockedParent: lockedParent,
+    kind: kind,
+    allowKindSelection: allowKindSelection,
   );
   if (draft == null) return;
   try {
     await ref
         .read(libraryRepositoryProvider)
-        .createFolder(name: draft.name, parentId: draft.parentId);
+        .createFolder(
+          name: draft.name,
+          parentId: draft.parentId,
+          icon:
+              draft.kind == LibraryFolderCreateKind.database
+                  ? 'database'
+                  : 'folder_container',
+        );
     ref.invalidate(libraryFoldersStreamProvider);
     ref.invalidate(subscribedBooksProvider);
     if (!context.mounted) return;
-    _toast(context, 'Folder "${draft.name}" created');
+    final noun =
+        draft.kind == LibraryFolderCreateKind.database ? 'Database' : 'Folder';
+    _toast(context, '$noun "${draft.name}" created');
   } catch (e, st) {
     ErrorReporter.report(e, stackTrace: st, tag: 'library.create_folder');
     if (!context.mounted) return;
@@ -5580,6 +5756,14 @@ Future<void> _onFolderAction({
         ref: ref,
         folders: allFolders,
         lockedParent: folder,
+      );
+    case LibraryFolderAction.newDatabase:
+      await _onCreateFolder(
+        context: context,
+        ref: ref,
+        folders: allFolders,
+        lockedParent: folder,
+        kind: LibraryFolderCreateKind.database,
       );
     case LibraryFolderAction.delete:
       await _onDelete(context: context, ref: ref, folder: folder);
@@ -9120,11 +9304,13 @@ class _LibraryPreviewBoard extends StatelessWidget {
               size: side,
               fen: fen,
               orientation: orientation,
-              settings: cg.StaticChessboardSettings.fromBoardSettings(cg.ChessboardSettings(
-                enableCoordinates: false,
-                colorScheme: settings.colorScheme,
-                pieceAssets: settings.pieceAssets,
-              )),
+              settings: cg.StaticChessboardSettings.fromBoardSettings(
+                cg.ChessboardSettings(
+                  enableCoordinates: false,
+                  colorScheme: settings.colorScheme,
+                  pieceAssets: settings.pieceAssets,
+                ),
+              ),
               shapes: const <cg.Shape>{},
               lastMove: _uciToLastMove(lastMoveUci ?? ''),
             ),

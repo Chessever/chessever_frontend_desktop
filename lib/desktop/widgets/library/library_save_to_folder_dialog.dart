@@ -337,6 +337,10 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       final created = await repo.createFolder(
         name: draft.name,
         parentId: draft.parentId,
+        icon:
+            draft.kind == LibraryFolderCreateKind.database
+                ? 'database'
+                : 'folder_container',
       );
       ref.invalidate(libraryFoldersStreamProvider);
       ref.invalidate(subscribedBooksProvider);

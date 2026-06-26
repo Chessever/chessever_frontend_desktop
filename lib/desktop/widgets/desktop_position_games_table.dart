@@ -418,7 +418,7 @@ class _DesktopPositionGamesTableState
 
   void _scheduleResetFetch() {
     _cancelPendingResetFetch();
-    _resetFetchDebounce = Timer(const Duration(seconds: 2), () {
+    _resetFetchDebounce = Timer(const Duration(seconds: 1), () {
       _resetFetchDebounce = null;
       if (!mounted || !widget.active) {
         _needsRefresh = true;
