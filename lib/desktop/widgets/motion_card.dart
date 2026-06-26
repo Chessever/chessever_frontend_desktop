@@ -33,8 +33,7 @@ class CursorProximityScope extends StatefulWidget {
   /// there is none above [context].
   static ValueListenable<Offset?>? of(BuildContext context) {
     final inherited =
-        context
-            .dependOnInheritedWidgetOfExactType<_CursorProximityInherited>();
+        context.dependOnInheritedWidgetOfExactType<_CursorProximityInherited>();
     return inherited?.cursor;
   }
 
@@ -93,6 +92,7 @@ class MotionCard extends StatefulWidget {
     super.key,
     required this.child,
     this.enabled = true,
+    this.depressOnPress = true,
     this.borderRadius = 12,
     this.hoverScale = 1.022,
     this.pressScale = 0.97,
@@ -104,6 +104,15 @@ class MotionCard extends StatefulWidget {
 
   final Widget child;
   final bool enabled;
+
+  /// When false, pointer-down no longer depresses the card (no press
+  /// scale-down, no lift drop). Use for cards that *navigate on tap*: the
+  /// press dock collapses [hoverLift] to 0, and that downward translation
+  /// visibly shifts the card's content (e.g. a grid card's board preview)
+  /// in the frame before the route/tab switch — reading as a glitch. With
+  /// this off, the hover/proximity lift is held steady while the card is
+  /// clicked, so nothing moves before navigation.
+  final bool depressOnPress;
 
   /// Radius of the host card, so the spring drop-shadow hugs the tile.
   final double borderRadius;
@@ -196,9 +205,9 @@ class _MotionCardState extends State<MotionCard> {
                     ? null
                     : <BoxShadow>[
                       BoxShadow(
-                        color: const Color(0xFF000000).withValues(
-                          alpha: 0.22 * d.elevation,
-                        ),
+                        color: const Color(
+                          0xFF000000,
+                        ).withValues(alpha: 0.22 * d.elevation),
                         blurRadius: 10 * d.elevation,
                         offset: Offset(0, 4 * d.elevation),
                       ),
@@ -234,7 +243,9 @@ class _MotionCardState extends State<MotionCard> {
           final t = (_pressed || c == null) ? 0.0 : _proximityIntensity(c);
           return MotionBuilder<_Dock>(
             motion:
-                _pressed ? DesktopMotion.cardPress : DesktopMotion.cardProximity,
+                _pressed
+                    ? DesktopMotion.cardPress
+                    : DesktopMotion.cardProximity,
             value: _dockFor(t),
             converter: _dockConverter,
             builder: _dockBox,
@@ -255,13 +266,21 @@ class _MotionCardState extends State<MotionCard> {
 
     Widget content = MouseRegion(
       onEnter: (_) => _setInteractionState(hovered: true),
-      onExit:
-          (_) => _setInteractionState(hovered: false, pressed: false),
+      onExit: (_) => _setInteractionState(hovered: false, pressed: false),
       child: Listener(
         behavior: HitTestBehavior.translucent,
-        onPointerDown: (_) => _setInteractionState(pressed: true),
-        onPointerUp: (_) => _setInteractionState(pressed: false),
-        onPointerCancel: (_) => _setInteractionState(pressed: false),
+        onPointerDown:
+            widget.depressOnPress
+                ? (_) => _setInteractionState(pressed: true)
+                : null,
+        onPointerUp:
+            widget.depressOnPress
+                ? (_) => _setInteractionState(pressed: false)
+                : null,
+        onPointerCancel:
+            widget.depressOnPress
+                ? (_) => _setInteractionState(pressed: false)
+                : null,
         child: motion,
       ),
     );

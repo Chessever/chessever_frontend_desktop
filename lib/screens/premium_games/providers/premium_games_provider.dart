@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
+import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -25,8 +26,11 @@ enum PremiumGamesType {
   /// Games where the average rating of both players is at least 2500.
   gm,
 
-  /// Games from classical/standard time-control broadcasts.
+  /// Games with classical and standard time controls.
   classical,
+
+  /// Games from the miniature database, ending by move 25.
+  miniatures,
 }
 
 /// Date range filter for premium games.
@@ -189,6 +193,11 @@ final premiumGamesFilterProvider =
       (ref, type) => PremiumGamesFilter.defaultFilter,
     );
 
+/// Provider for backend miniatures filter state.
+final miniatureGamesFilterProvider = StateProvider<MiniatureGamesFilter>(
+  (ref) => MiniatureGamesFilter.defaultFilter,
+);
+
 /// Provider for premium games based on type.
 final premiumGamesProvider = StateNotifierProvider.autoDispose.family<
   PremiumGamesNotifier,
@@ -325,6 +334,9 @@ class PremiumGamesNotifier
         break;
       case PremiumGamesType.classical:
         fetched = await _fetchClassicalGames(repository);
+        break;
+      case PremiumGamesType.miniatures:
+        fetched = await _fetchMiniatures(_ref.read(gamebaseRepositoryProvider));
         break;
     }
 
@@ -493,6 +505,188 @@ class PremiumGamesNotifier
     }
   }
 
+  Future<_PremiumGamesFetch> _fetchMiniatures(
+    GamebaseRepository repository,
+  ) async {
+    try {
+      final page = await repository.getMiniatures(
+        filter: _ref.read(miniatureGamesFilterProvider),
+        limit: _pageSize,
+        offset: _offset,
+      );
+      final games = page.items.map(_miniatureToGame).toList(growable: false);
+      final nextOffset = _offset + page.items.length;
+
+      return _PremiumGamesFetch(
+        games: games,
+        hasMore: nextOffset < page.total && page.items.isNotEmpty,
+        nextOffset: nextOffset,
+      );
+    } catch (e) {
+      debugPrint('[PremiumGames] Error fetching miniatures: $e');
+      return _emptyFetch();
+    }
+  }
+
+  GamesTourModel _miniatureToGame(GamebaseMiniature miniature) {
+    final whiteName = _cleanText(miniature.whiteName, fallback: 'White');
+    final blackName = _cleanText(miniature.blackName, fallback: 'Black');
+    final eventName = _cleanText(miniature.event, fallback: 'Miniatures');
+    final result = GameStatus.fromString(miniature.result);
+    final pgnResult = _pgnResult(result);
+    final avgRating = _safeRating(miniature.avgRating);
+    final eco = _cleanNullableText(miniature.eco);
+    final openingName = _miniatureOpeningName(miniature);
+    final roundSlug =
+        eco ??
+        (miniature.finalMoveNumber > 0
+            ? '${miniature.finalMoveNumber} moves'
+            : 'Miniature');
+
+    return GamesTourModel(
+      gameId: miniature.gameId,
+      source: GameSource.gamebase,
+      whitePlayer: PlayerCard(
+        name: whiteName,
+        federation: _cleanText(miniature.whiteFed),
+        title: '',
+        rating: _safeRating(miniature.whiteElo) ?? 0,
+        countryCode: _cleanText(miniature.whiteFed),
+        team: null,
+        gamebasePlayerId: _cleanNullableText(miniature.whitePlayerId),
+      ),
+      blackPlayer: PlayerCard(
+        name: blackName,
+        federation: _cleanText(miniature.blackFed),
+        title: '',
+        rating: _safeRating(miniature.blackElo) ?? 0,
+        countryCode: _cleanText(miniature.blackFed),
+        team: null,
+        gamebasePlayerId: _cleanNullableText(miniature.blackPlayerId),
+      ),
+      whiteTimeDisplay: '--:--',
+      blackTimeDisplay: '--:--',
+      whiteClockCentiseconds: 0,
+      blackClockCentiseconds: 0,
+      gameStatus: result,
+      roundId: 'gamebase-miniatures',
+      roundSlug: roundSlug,
+      tourId: '',
+      tourName: eventName,
+      eventName: eventName,
+      pgn: _miniatureHeaderPgn(
+        whiteName: whiteName,
+        blackName: blackName,
+        eventName: eventName,
+        result: pgnResult,
+        date: miniature.date,
+        eco: eco,
+        openingName: openingName,
+        whiteElo: _safeRating(miniature.whiteElo),
+        blackElo: _safeRating(miniature.blackElo),
+        whiteFed: _cleanNullableText(miniature.whiteFed),
+        blackFed: _cleanNullableText(miniature.blackFed),
+      ),
+      // Miniatures have no event board number; reuse this existing sortable
+      // integer slot for the final move count so "fewest moves" stays local.
+      boardNr: miniature.finalMoveNumber > 0 ? miniature.finalMoveNumber : null,
+      lastMoveTime: miniature.date,
+      dateStart: miniature.date,
+      gameDay: miniature.date,
+      eco: eco,
+      openingName: openingName,
+      timeControl: _cleanNullableText(miniature.timeControl),
+      avgElo: avgRating,
+      isOnline: miniature.isOnline,
+    );
+  }
+
+  String _cleanText(String? value, {String fallback = ''}) {
+    final trimmed = value?.trim();
+    return trimmed == null || trimmed.isEmpty ? fallback : trimmed;
+  }
+
+  String? _cleanNullableText(String? value) {
+    final trimmed = _cleanText(value);
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  int? _safeRating(int? value) {
+    if (value == null || value <= 0 || value > 4000) return null;
+    return value;
+  }
+
+  String _pgnResult(GameStatus status) {
+    return switch (status) {
+      GameStatus.whiteWins => '1-0',
+      GameStatus.blackWins => '0-1',
+      GameStatus.draw => '1/2-1/2',
+      GameStatus.ongoing => '*',
+      GameStatus.unknown => '*',
+    };
+  }
+
+  String? _miniatureOpeningName(GamebaseMiniature miniature) {
+    final opening = _cleanNullableText(miniature.opening);
+    final variation = _cleanNullableText(miniature.variation);
+    if (opening == null) return variation;
+    return variation == null ? opening : '$opening: $variation';
+  }
+
+  String _pgnTagValue(String value) {
+    return value.replaceAll(r'\', r'\\').replaceAll('"', r'\"');
+  }
+
+  String _miniatureHeaderPgn({
+    required String whiteName,
+    required String blackName,
+    required String eventName,
+    required String result,
+    DateTime? date,
+    String? eco,
+    String? openingName,
+    int? whiteElo,
+    int? blackElo,
+    String? whiteFed,
+    String? blackFed,
+  }) {
+    final dateTag =
+        date == null
+            ? '????.??.??'
+            : '${date.year.toString().padLeft(4, '0')}.'
+                '${date.month.toString().padLeft(2, '0')}.'
+                '${date.day.toString().padLeft(2, '0')}';
+    final buffer =
+        StringBuffer()
+          ..writeln('[Event "${_pgnTagValue(eventName)}"]')
+          ..writeln('[Date "$dateTag"]')
+          ..writeln('[White "${_pgnTagValue(whiteName)}"]')
+          ..writeln('[Black "${_pgnTagValue(blackName)}"]')
+          ..writeln('[Result "$result"]');
+    if (eco != null) {
+      buffer.writeln('[ECO "${_pgnTagValue(eco)}"]');
+    }
+    if (openingName != null) {
+      buffer.writeln('[Opening "${_pgnTagValue(openingName)}"]');
+    }
+    if (whiteElo != null) {
+      buffer.writeln('[WhiteElo "$whiteElo"]');
+    }
+    if (blackElo != null) {
+      buffer.writeln('[BlackElo "$blackElo"]');
+    }
+    if (whiteFed != null) {
+      buffer.writeln('[WhiteFed "${_pgnTagValue(whiteFed)}"]');
+    }
+    if (blackFed != null) {
+      buffer.writeln('[BlackFed "${_pgnTagValue(blackFed)}"]');
+    }
+    buffer
+      ..writeln()
+      ..write(result);
+    return buffer.toString();
+  }
+
   _PremiumGamesFetch _emptyFetch() {
     return _PremiumGamesFetch(
       games: const <GamesTourModel>[],
@@ -503,6 +697,44 @@ class PremiumGamesNotifier
 
   void _sortGames() {
     _allGames.sort((a, b) {
+      if (_type == PremiumGamesType.miniatures) {
+        final filter = _ref.read(miniatureGamesFilterProvider);
+        final primaryCompare = switch (filter.sort) {
+          MiniatureGamesSort.rating => _compareMiniatureValues(
+            _miniatureRating(a),
+            _miniatureRating(b),
+            filter.order,
+          ),
+          MiniatureGamesSort.moves => _compareMiniatureValues(
+            a.boardNr ?? 0,
+            b.boardNr ?? 0,
+            filter.order,
+          ),
+          MiniatureGamesSort.recent => _compareMiniatureDates(
+            a.lastMoveTime,
+            b.lastMoveTime,
+            filter.order,
+          ),
+        };
+        if (primaryCompare != 0) return primaryCompare;
+
+        final dateCompare = _compareMiniatureDates(
+          a.lastMoveTime,
+          b.lastMoveTime,
+          MiniatureGamesSortOrder.desc,
+        );
+        if (dateCompare != 0) return dateCompare;
+
+        final eloCompare = _compareMiniatureValues(
+          _miniatureRating(a),
+          _miniatureRating(b),
+          MiniatureGamesSortOrder.desc,
+        );
+        if (eloCompare != 0) return eloCompare;
+
+        return a.gameId.compareTo(b.gameId);
+      }
+
       if (_isCurrentSmartEventType) {
         final aDay = _smartGameDay(a);
         final bDay = _smartGameDay(b);
@@ -538,6 +770,29 @@ class PremiumGamesNotifier
         return bElo.compareTo(aElo);
       }
     });
+  }
+
+  int _compareMiniatureValues(int a, int b, MiniatureGamesSortOrder order) {
+    return order == MiniatureGamesSortOrder.asc
+        ? a.compareTo(b)
+        : b.compareTo(a);
+  }
+
+  int _compareMiniatureDates(
+    DateTime? a,
+    DateTime? b,
+    MiniatureGamesSortOrder order,
+  ) {
+    final aDate = a ?? DateTime(0);
+    final bDate = b ?? DateTime(0);
+    return order == MiniatureGamesSortOrder.asc
+        ? aDate.compareTo(bDate)
+        : bDate.compareTo(aDate);
+  }
+
+  int _miniatureRating(GamesTourModel game) {
+    final avgElo = game.avgElo;
+    return avgElo != null && avgElo > 0 ? avgElo : _avgElo(game);
   }
 
   /// Calculate average ELO for a game.
@@ -631,6 +886,12 @@ class PremiumGamesNotifier
   /// Reset filter to defaults.
   void resetFilter() {
     applyFilter(PremiumGamesFilter.defaultFilter);
+  }
+
+  /// Apply backend miniatures filters and reload the miniature shelf.
+  Future<void> applyMiniatureFilter(MiniatureGamesFilter filter) async {
+    _ref.read(miniatureGamesFilterProvider.notifier).state = filter;
+    await loadGames(showLoading: true);
   }
 
   /// Refresh games (pull-to-refresh).

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 
 /// Persisted user-registered local PGN folders. Each entry represents a
@@ -26,8 +27,7 @@ class LocalLibraryEntry {
   final DateTime addedAt;
 
   String get displayName {
-    final base = p.basename(p.normalize(path));
-    return base.isEmpty ? path : base;
+    return localChessDatabaseDisplayNameForPath(path);
   }
 
   Map<String, dynamic> toJson() => <String, dynamic>{

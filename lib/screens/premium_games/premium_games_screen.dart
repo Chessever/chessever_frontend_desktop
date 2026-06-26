@@ -211,6 +211,8 @@ class _PremiumGamesScreenState extends ConsumerState<PremiumGamesScreen> {
         return 'GM Games';
       case PremiumGamesType.classical:
         return 'Classical Games';
+      case PremiumGamesType.miniatures:
+        return 'Miniature Games';
     }
   }
 
@@ -369,6 +371,11 @@ class _EmptyState extends StatelessWidget {
         Icons.timer_outlined,
         'No classical games found',
         'Classical and standard games will appear here',
+      ),
+      PremiumGamesType.miniatures => (
+        Icons.local_fire_department_rounded,
+        'No miniature games found',
+        'Decisive games ending by move 25 will appear here',
       ),
     };
 

@@ -19,6 +19,7 @@ List<DesktopGameDateGroup> buildDesktopGameDateGroups(
   DateTime? now,
   bool includeToday = false,
   bool excludeFuture = false,
+  bool preserveGameOrder = false,
 }) {
   const unknownKey = '0000-00-00';
   final clock = now ?? DateTime.now();
@@ -40,8 +41,10 @@ List<DesktopGameDateGroup> buildDesktopGameDateGroups(
     byDay.putIfAbsent(key, () => <GamesTourModel>[]).add(game);
   }
 
-  for (final dayGames in byDay.values) {
-    dayGames.sort(_compareGamesByAverageRatingThenTime);
+  if (!preserveGameOrder) {
+    for (final dayGames in byDay.values) {
+      dayGames.sort(_compareGamesByAverageRatingThenTime);
+    }
   }
 
   final keys =
@@ -89,5 +92,5 @@ String _formatDesktopGameDateHeader(String dateKey, {DateTime? now}) {
   final day = DateTime(date.year, date.month, date.day);
   if (day == today) return 'Today';
   if (day == yesterday) return 'Yesterday';
-  return DateFormat('MMM d, yyyy').format(date);
+  return DateFormat('d MMM yyyy').format(date);
 }

@@ -14,6 +14,7 @@ import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
+import 'package:chessever/desktop/widgets/desktop_tappable.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/library/library_folder_dialogs.dart';
 import 'package:chessever/utils/save_to_library_guard.dart';
@@ -1143,62 +1144,60 @@ class _UpdateOriginalTile extends StatelessWidget {
         border: Border.all(color: kPrimaryColor.withValues(alpha: 0.45)),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(10),
-          onTap: enabled ? onTap : null,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: Row(
-              children: [
-                if (busy)
-                  const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(kPrimaryColor),
-                    ),
-                  )
-                else
-                  const Icon(
-                    Icons.save_as_outlined,
-                    size: 18,
-                    color: kPrimaryColor,
+      child: DesktopTappable(
+        onPress: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(10),
+        hoverColor: kWhiteColor.withValues(alpha: 0.04),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              if (busy)
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation(kPrimaryColor),
                   ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        busy
-                            ? 'Updating existing game…'
-                            : 'Update existing game',
-                        style: const TextStyle(
-                          color: kWhiteColor,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${target.title} · ${target.subtitle}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: kLightGreyColor,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
+                )
+              else
+                const Icon(
+                  Icons.save_as_outlined,
+                  size: 18,
+                  color: kPrimaryColor,
                 ),
-                const SizedBox(width: 8),
-                const Icon(Icons.chevron_right_rounded, color: kLightGreyColor),
-              ],
-            ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      busy
+                          ? 'Updating existing game…'
+                          : 'Update existing game',
+                      style: const TextStyle(
+                        color: kWhiteColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${target.title} · ${target.subtitle}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: kLightGreyColor,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Icon(Icons.chevron_right_rounded, color: kLightGreyColor),
+            ],
           ),
         ),
       ),

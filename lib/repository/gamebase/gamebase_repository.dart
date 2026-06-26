@@ -31,6 +31,383 @@ class GamebaseData with GamebaseDataMappable {
   static const fromJson = GamebaseDataMapper.fromJson;
 }
 
+enum MiniatureGamesWindow {
+  today,
+  week,
+  all;
+
+  String get apiValue => name;
+
+  String get label {
+    return switch (this) {
+      MiniatureGamesWindow.today => 'Today',
+      MiniatureGamesWindow.week => 'Last 7 days',
+      MiniatureGamesWindow.all => 'All time',
+    };
+  }
+}
+
+enum MiniatureGamesSort {
+  rating,
+  moves,
+  recent;
+
+  String get apiValue => name;
+
+  String get label {
+    return switch (this) {
+      MiniatureGamesSort.rating => 'Rating',
+      MiniatureGamesSort.moves => 'Move count',
+      MiniatureGamesSort.recent => 'Recent',
+    };
+  }
+}
+
+enum MiniatureGamesSortOrder {
+  asc,
+  desc;
+
+  String get apiValue => name;
+
+  String get label {
+    return switch (this) {
+      MiniatureGamesSortOrder.asc => 'Ascending',
+      MiniatureGamesSortOrder.desc => 'Descending',
+    };
+  }
+}
+
+enum MiniatureGameResult {
+  whiteWins,
+  blackWins;
+
+  String get apiValue {
+    return switch (this) {
+      MiniatureGameResult.whiteWins => 'W',
+      MiniatureGameResult.blackWins => 'B',
+    };
+  }
+
+  String get label {
+    return switch (this) {
+      MiniatureGameResult.whiteWins => 'White wins',
+      MiniatureGameResult.blackWins => 'Black wins',
+    };
+  }
+}
+
+enum MiniatureGameTimeControl {
+  classical,
+  rapid,
+  blitz;
+
+  String get apiValue => name.toUpperCase();
+
+  String get label {
+    return switch (this) {
+      MiniatureGameTimeControl.classical => 'Classical',
+      MiniatureGameTimeControl.rapid => 'Rapid',
+      MiniatureGameTimeControl.blitz => 'Blitz',
+    };
+  }
+}
+
+class MiniatureGamesFilter {
+  const MiniatureGamesFilter({
+    this.window = MiniatureGamesWindow.all,
+    this.sort = MiniatureGamesSort.recent,
+    this.order = MiniatureGamesSortOrder.desc,
+    this.results = const <MiniatureGameResult>{},
+    this.eco,
+    this.ecoCategories = const <String>{},
+    this.timeControls = const <MiniatureGameTimeControl>{},
+    this.isOnline,
+    this.minRating,
+    this.maxRating,
+    this.minMoves,
+    this.maxMoves,
+    this.dateFrom,
+    this.dateTo,
+    this.player,
+  });
+
+  final MiniatureGamesWindow window;
+  final MiniatureGamesSort sort;
+  final MiniatureGamesSortOrder order;
+  final Set<MiniatureGameResult> results;
+  final String? eco;
+  final Set<String> ecoCategories;
+  final Set<MiniatureGameTimeControl> timeControls;
+  final bool? isOnline;
+  final int? minRating;
+  final int? maxRating;
+  final int? minMoves;
+  final int? maxMoves;
+  final String? dateFrom;
+  final String? dateTo;
+  final String? player;
+
+  static const defaultFilter = MiniatureGamesFilter();
+
+  bool get hasActiveFilters => activeFilterCount > 0;
+
+  int get activeFilterCount {
+    var count = 0;
+    if (window != MiniatureGamesWindow.all) count += 1;
+    if (results.isNotEmpty) count += 1;
+    if (_cleanCsv(eco) != null) count += 1;
+    if (ecoCategories.isNotEmpty) count += 1;
+    if (timeControls.isNotEmpty) count += 1;
+    if (isOnline != null) count += 1;
+    if (minRating != null || maxRating != null) count += 1;
+    if (minMoves != null || maxMoves != null) count += 1;
+    if (_cleanDate(dateFrom) != null || _cleanDate(dateTo) != null) count += 1;
+    if (_cleanText(player) != null) count += 1;
+    return count;
+  }
+
+  MiniatureGamesFilter copyWith({
+    MiniatureGamesWindow? window,
+    MiniatureGamesSort? sort,
+    MiniatureGamesSortOrder? order,
+    Set<MiniatureGameResult>? results,
+    String? eco,
+    bool clearEco = false,
+    Set<String>? ecoCategories,
+    Set<MiniatureGameTimeControl>? timeControls,
+    bool? isOnline,
+    bool clearOnline = false,
+    int? minRating,
+    int? maxRating,
+    bool clearRating = false,
+    int? minMoves,
+    int? maxMoves,
+    bool clearMoves = false,
+    String? dateFrom,
+    String? dateTo,
+    bool clearDates = false,
+    String? player,
+    bool clearPlayer = false,
+  }) {
+    return MiniatureGamesFilter(
+      window: window ?? this.window,
+      sort: sort ?? this.sort,
+      order: order ?? this.order,
+      results: results ?? this.results,
+      eco: clearEco ? null : (eco ?? this.eco),
+      ecoCategories: ecoCategories ?? this.ecoCategories,
+      timeControls: timeControls ?? this.timeControls,
+      isOnline: clearOnline ? null : (isOnline ?? this.isOnline),
+      minRating: clearRating ? null : (minRating ?? this.minRating),
+      maxRating: clearRating ? null : (maxRating ?? this.maxRating),
+      minMoves: clearMoves ? null : (minMoves ?? this.minMoves),
+      maxMoves: clearMoves ? null : (maxMoves ?? this.maxMoves),
+      dateFrom: clearDates ? null : (dateFrom ?? this.dateFrom),
+      dateTo: clearDates ? null : (dateTo ?? this.dateTo),
+      player: clearPlayer ? null : (player ?? this.player),
+    );
+  }
+
+  Map<String, dynamic> queryParameters({
+    required int limit,
+    required int offset,
+  }) {
+    final query = <String, dynamic>{
+      'window': window.apiValue,
+      'sort': sort.apiValue,
+      'order': order.apiValue,
+      'limit': limit,
+      'offset': offset,
+    };
+
+    if (results.isNotEmpty) {
+      query['result'] = results.map((result) => result.apiValue).join(',');
+    }
+    final normalizedEco = _cleanCsv(eco);
+    if (normalizedEco != null) query['eco'] = normalizedEco;
+    if (ecoCategories.isNotEmpty) {
+      query['ecoCategory'] = ecoCategories
+          .map((c) => c.toUpperCase())
+          .join(',');
+    }
+    if (timeControls.isNotEmpty) {
+      query['timeControl'] = timeControls
+          .map((control) => control.apiValue)
+          .join(',');
+    }
+    if (isOnline != null) query['isOnline'] = isOnline;
+    if (minRating != null) query['minRating'] = minRating;
+    if (maxRating != null) query['maxRating'] = maxRating;
+    if (minMoves != null) query['minMoves'] = minMoves;
+    if (maxMoves != null) query['maxMoves'] = maxMoves;
+    final normalizedDateFrom = _cleanDate(dateFrom);
+    if (normalizedDateFrom != null) query['dateFrom'] = normalizedDateFrom;
+    final normalizedDateTo = _cleanDate(dateTo);
+    if (normalizedDateTo != null) query['dateTo'] = normalizedDateTo;
+    final normalizedPlayer = _cleanText(player);
+    if (normalizedPlayer != null) query['player'] = normalizedPlayer;
+
+    return query;
+  }
+
+  static String? _cleanText(String? value) {
+    final trimmed = value?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  static String? _cleanCsv(String? value) {
+    final parts =
+        value
+            ?.split(',')
+            .map((part) => part.trim())
+            .where((part) => part.isNotEmpty)
+            .toList(growable: false) ??
+        const <String>[];
+    return parts.isEmpty ? null : parts.join(',');
+  }
+
+  static String? _cleanDate(String? value) {
+    final trimmed = _cleanText(value);
+    if (trimmed == null) return null;
+    return RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(trimmed) ? trimmed : null;
+  }
+}
+
+class GamebaseMiniaturesPage {
+  const GamebaseMiniaturesPage({
+    required this.items,
+    required this.total,
+    required this.limit,
+    required this.offset,
+  });
+
+  final List<GamebaseMiniature> items;
+  final int total;
+  final int limit;
+  final int offset;
+
+  factory GamebaseMiniaturesPage.fromJson(Map<String, dynamic> json) {
+    final data = Map<String, dynamic>.from(json['data'] as Map? ?? const {});
+    return GamebaseMiniaturesPage(
+      items:
+          (data['items'] as List?)
+              ?.whereType<Map>()
+              .map(
+                (item) =>
+                    GamebaseMiniature.fromJson(Map<String, dynamic>.from(item)),
+              )
+              .toList(growable: false) ??
+          const <GamebaseMiniature>[],
+      total: _readInt(data['total']),
+      limit: _readInt(data['limit']),
+      offset: _readInt(data['offset']),
+    );
+  }
+}
+
+class GamebaseMiniature {
+  const GamebaseMiniature({
+    required this.gameId,
+    this.avgRating,
+    required this.plyCount,
+    required this.finalMoveNumber,
+    required this.result,
+    required this.timeControl,
+    required this.isOnline,
+    this.date,
+    this.event,
+    this.eco,
+    this.ecoCategory,
+    this.opening,
+    this.variation,
+    this.whiteName,
+    this.blackName,
+    this.whiteElo,
+    this.blackElo,
+    this.whitePlayerId,
+    this.blackPlayerId,
+    this.whiteFed,
+    this.blackFed,
+  });
+
+  final String gameId;
+  final int? avgRating;
+  final int plyCount;
+  final int finalMoveNumber;
+  final String result;
+  final String timeControl;
+  final bool isOnline;
+  final DateTime? date;
+  final String? event;
+  final String? eco;
+  final String? ecoCategory;
+  final String? opening;
+  final String? variation;
+  final String? whiteName;
+  final String? blackName;
+  final int? whiteElo;
+  final int? blackElo;
+  final String? whitePlayerId;
+  final String? blackPlayerId;
+  final String? whiteFed;
+  final String? blackFed;
+
+  factory GamebaseMiniature.fromJson(Map<String, dynamic> json) {
+    return GamebaseMiniature(
+      gameId: _readString(json['gameId']),
+      avgRating: _readNullableInt(json['avgRating']),
+      plyCount: _readInt(json['plyCount']),
+      finalMoveNumber: _readInt(json['finalMoveNumber']),
+      result: _readString(json['result']),
+      timeControl: _readString(json['timeControl']),
+      isOnline: _readBool(json['isOnline']),
+      date: _readDate(json['date']),
+      event: _readNullableString(json['event']),
+      eco: _readNullableString(json['eco']),
+      ecoCategory: _readNullableString(json['ecoCategory']),
+      opening: _readNullableString(json['opening']),
+      variation: _readNullableString(json['variation']),
+      whiteName: _readNullableString(json['whiteName']),
+      blackName: _readNullableString(json['blackName']),
+      whiteElo: _readNullableInt(json['whiteElo']),
+      blackElo: _readNullableInt(json['blackElo']),
+      whitePlayerId: _readNullableString(json['whitePlayerId']),
+      blackPlayerId: _readNullableString(json['blackPlayerId']),
+      whiteFed: _readNullableString(json['whiteFed']),
+      blackFed: _readNullableString(json['blackFed']),
+    );
+  }
+}
+
+String _readString(Object? value) => value?.toString().trim() ?? '';
+
+String? _readNullableString(Object? value) {
+  final trimmed = _readString(value);
+  return trimmed.isEmpty ? null : trimmed;
+}
+
+int _readInt(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+int? _readNullableInt(Object? value) {
+  final parsed = _readInt(value);
+  return parsed == 0 && value == null ? null : parsed;
+}
+
+bool _readBool(Object? value) {
+  if (value is bool) return value;
+  final normalized = value?.toString().trim().toLowerCase();
+  return normalized == 'true' || normalized == '1';
+}
+
+DateTime? _readDate(Object? value) {
+  final raw = _readNullableString(value);
+  return raw == null ? null : DateTime.tryParse(raw);
+}
+
 class GamebaseRepository {
   final Dio _dio;
   final String _baseUrl;
@@ -127,6 +504,26 @@ class GamebaseRepository {
   }
 
   Options _openingTreeRequestOptions() {
+    if (!_useDirectOpeningTreeApi) return _requestOptions();
+    return Options(
+      headers: <String, String>{
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'X-API-Key': _env('GAMEBASE_API_KEY')!,
+      },
+    );
+  }
+
+  String get _miniaturesBaseUrl {
+    if (!_useDirectOpeningTreeApi) return _baseUrl;
+    final explicitBase = _env('GAMEBASE_MINIATURES_BASE');
+    if (explicitBase != null && explicitBase.isNotEmpty) {
+      return _trimTrailingSlash(explicitBase);
+    }
+    return 'https://service.chessever.com';
+  }
+
+  Options _miniaturesRequestOptions() {
     if (!_useDirectOpeningTreeApi) return _requestOptions();
     return Options(
       headers: <String, String>{
@@ -482,6 +879,43 @@ class GamebaseRepository {
         debugPrint('[GamebaseRepository] getGameWithPgn error: $e');
       }
       return null;
+    }
+  }
+
+  /// Fetch decisive short games from the Gamebase miniatures index.
+  ///
+  /// The backend defines miniatures as decisive games ending by move 25.
+  /// Pagination is offset-based and `sort=recent` keeps this desktop shelf from
+  /// surfacing stale rows when historical rating metadata is incomplete.
+  Future<GamebaseMiniaturesPage> getMiniatures({
+    MiniatureGamesFilter filter = MiniatureGamesFilter.defaultFilter,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    try {
+      final response = await _dio.get(
+        '$_miniaturesBaseUrl/api/miniatures',
+        queryParameters: filter.queryParameters(limit: limit, offset: offset),
+        options: _miniaturesRequestOptions(),
+      );
+
+      final data = response.data;
+      if (data is! Map) {
+        throw Exception('Unexpected response format');
+      }
+      return GamebaseMiniaturesPage.fromJson(Map<String, dynamic>.from(data));
+    } on DioException catch (e) {
+      if (kDebugMode) {
+        debugPrint('[GamebaseRepository] getMiniatures DioException:');
+        debugPrint('  Status: ${e.response?.statusCode}');
+        debugPrint('  Message: ${e.message}');
+        debugPrint('  Response: ${e.response?.data}');
+      }
+      throw Exception(
+        'Failed to load miniatures: ${e.response?.statusCode ?? 'network error'} - ${e.message}',
+      );
+    } catch (e) {
+      throw Exception('Failed to load miniatures: $e');
     }
   }
 

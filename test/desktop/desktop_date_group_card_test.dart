@@ -3,7 +3,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('date group card can show non-final loading badge', (
+  testWidgets('date group card shows the count badge when counts are final', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Material(
+          child: DesktopDateGroupCard(label: 'Today', gameCount: 30),
+        ),
+      ),
+    );
+
+    expect(find.text('Today'), findsOneWidget);
+    expect(find.text('30 games'), findsOneWidget);
+  });
+
+  testWidgets('date group card hides the count badge while still loading', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -12,14 +27,15 @@ void main() {
           child: DesktopDateGroupCard(
             label: 'Today',
             gameCount: 30,
-            gameCountLabel: 'Loading…',
+            showCount: false,
           ),
         ),
       ),
     );
 
     expect(find.text('Today'), findsOneWidget);
-    expect(find.text('Loading…'), findsOneWidget);
     expect(find.text('30 games'), findsNothing);
+    expect(find.text('Loading…'), findsNothing);
+    expect(find.text('Loading...'), findsNothing);
   });
 }

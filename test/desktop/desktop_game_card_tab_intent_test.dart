@@ -7,6 +7,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
+import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
@@ -159,6 +160,32 @@ void main() {
     expect(find.text('-'), findsNothing);
     expect(find.text('12:34'), findsOneWidget);
     expect(find.text('23:45'), findsOneWidget);
+  });
+
+  testWidgets('grid game card does not depress before opening', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _cardProviderOverrides(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 320,
+              height: 360,
+              child: DesktopGameCard(
+                data: _startedLiveDataWithClocks,
+                layout: DesktopCardLayout.grid,
+                onTap: _noop,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      tester.widget<MotionCard>(find.byType(MotionCard)).depressOnPress,
+      isFalse,
+    );
   });
 
   testWidgets('running live clock uses the primary color', (tester) async {

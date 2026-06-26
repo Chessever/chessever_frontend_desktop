@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:chessever/repository/sqlite/local_chess_schema.dart';
 
 /// Singleton SQLite database service for the app.
 /// Replaces SharedPreferences for all local storage except Supabase auth.
@@ -82,7 +84,7 @@ class AppDatabase {
 
     return openDatabase(
       path,
-      version: 1,
+      version: localChessDatabaseSchemaVersion,
       singleInstance: true,
       onConfigure: _configureDatabase,
       onCreate: _onCreate,
@@ -113,8 +115,9 @@ class AppDatabase {
       final dbDirectory = await getDatabasesPath();
       _cachedDbPath = join(dbDirectory, _dbFileName);
       return _cachedDbPath!;
-    } catch (_) {
-      // Fallback path if platform DB directory lookup fails.
+    } on MissingPluginException {
+      // Fallback path for tests or embedding environments that do not expose
+      // sqflite's platform database directory.
       final documentsDirectory = await getApplicationDocumentsDirectory();
       _cachedDbPath = join(documentsDirectory.path, _dbFileName);
       return _cachedDbPath!;
@@ -122,9 +125,16 @@ class AppDatabase {
   }
 
   Future<void> _configureDatabase(Database db) async {
-    // Keep pragma setup best-effort so a platform-specific pragma issue does
-    // not fail DB initialization on either Android or iOS.
-    await _executePragmaSafe(db, 'PRAGMA foreign_keys=ON');
+    await db.execute('PRAGMA foreign_keys=ON');
+    final foreignKeysEnabled = Sqflite.firstIntValue(
+      await db.rawQuery('PRAGMA foreign_keys'),
+    );
+    if (foreignKeysEnabled != 1) {
+      throw StateError(
+        'SQLite foreign_keys pragma is disabled for $_dbFileName',
+      );
+    }
+
     try {
       // sqflite helper uses platform-safe internals for journal mode setup.
       await db.setJournalMode('WAL');
@@ -183,6 +193,7 @@ class AppDatabase {
     await db.execute('CREATE INDEX idx_cache_key ON $_cacheTable (key)');
     await db.execute('CREATE INDEX idx_cache_user ON $_cacheTable (user_id)');
     await db.execute('CREATE INDEX idx_list_key ON $_listTable (key)');
+    await createLocalChessDatabaseSchema(db);
 
     if (kDebugMode) {
       print(
@@ -192,7 +203,9 @@ class AppDatabase {
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // Handle future schema migrations here
+    if (oldVersion < localChessDatabaseSchemaVersion) {
+      await createLocalChessDatabaseSchema(db);
+    }
     if (kDebugMode) {
       print('SQLite database upgrade from v$oldVersion to v$newVersion');
     }
@@ -673,8 +686,8 @@ class AppDatabase {
   /// Use to recover from corrupted SQLite files on Android.
   Future<void> reset() async {
     await close();
+    final path = await _resolveDatabasePath();
     try {
-      final path = await _resolveDatabasePath();
       await deleteDatabase(path);
       if (kDebugMode) {
         print('🧹 SQLite database deleted: $path');
@@ -683,6 +696,7 @@ class AppDatabase {
       if (kDebugMode) {
         print('⚠️ Failed to delete SQLite database: $e');
       }
+      rethrow;
     }
   }
 }

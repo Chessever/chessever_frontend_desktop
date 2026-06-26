@@ -47,6 +47,47 @@ void main() {
     },
   );
 
+  test('gamebase miniature cards can hydrate their final board remotely', () {
+    final game = GamesTourModel(
+      gameId: 'miniature-1',
+      source: GameSource.gamebase,
+      whitePlayer: PlayerCard(
+        name: 'White Player',
+        federation: 'AZE',
+        title: '',
+        rating: 2500,
+        countryCode: 'AZE',
+        team: null,
+      ),
+      blackPlayer: PlayerCard(
+        name: 'Black Player',
+        federation: 'USA',
+        title: '',
+        rating: 2400,
+        countryCode: 'USA',
+        team: null,
+      ),
+      whiteTimeDisplay: '--:--',
+      blackTimeDisplay: '--:--',
+      whiteClockCentiseconds: 0,
+      blackClockCentiseconds: 0,
+      gameStatus: GameStatus.whiteWins,
+      roundId: 'gamebase-miniatures',
+      tourId: '',
+      pgn:
+          '[Event "Miniatures"]\n'
+          '[White "White Player"]\n'
+          '[Black "Black Player"]\n'
+          '[Result "1-0"]\n\n'
+          '1-0',
+    );
+
+    final card = GameCardData.fromGamesTourModel(game);
+
+    expect(card.fen, isNull);
+    expect(card.canResolveRemoteFen, isTrue);
+  });
+
   test('board rail summaries preserve FIDE IDs and countryCode fallback', () {
     final game = GamesTourModel(
       gameId: 'twic-2',

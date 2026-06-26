@@ -6,6 +6,7 @@ import 'package:chessever/providers/event_pin_refresh_provider.dart';
 import 'package:chessever/providers/favorite_events_provider.dart';
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/providers/for_you_games_logic.dart';
+import 'package:chessever/repository/favorites/models/favorite_player.dart';
 import 'package:chessever/repository/local_storage/tournament/games/games_local_storage.dart';
 import 'package:chessever/repository/local_storage/tournament/games/pin_games_local_storage.dart';
 import 'package:chessever/repository/local_storage/auto_pin_preferences/auto_pin_preferences_repository.dart';
@@ -102,6 +103,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   DateTime? _lastRefreshAt;
   final Map<String, int> _sessionEventOrder = <String, int>{};
   int _nextSessionEventOrder = 0;
+  bool _pendingFavoritePlayerOrderHydration = false;
 
   ForYouNotifier(this.ref) : super(const ForYouState(isLoading: true)) {
     _setupListeners();
@@ -120,8 +122,22 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
       next.whenData(_refreshLiveCategories);
     });
 
-    ref.listen(favoritePlayersProviderNew, (_, __) {
-      _refreshVisibleFavoritePlayerCounts();
+    ref.listen(favoritePlayersProviderNew, (_, next) {
+      final shouldFinalizeOrder =
+          _pendingFavoritePlayerOrderHydration &&
+          _favoriteFideIdsFrom(
+            next.valueOrNull ?? const <FavoritePlayer>[],
+          ).isNotEmpty;
+
+      if (next.hasValue && !shouldFinalizeOrder) {
+        _pendingFavoritePlayerOrderHydration = false;
+      }
+
+      unawaited(
+        _refreshVisibleFavoritePlayerCounts(
+          finalizeOrderAfterRefresh: shouldFinalizeOrder,
+        ),
+      );
     });
 
     ref.listen(favoriteEventsProvider, (_, next) {
@@ -246,6 +262,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
           hasMore: dbHasMore,
         );
         _lastRefreshAt = DateTime.now();
+        _maybeFinalizePendingFavoritePlayerOrder();
       } else {
         final existingIds = state.events.map((event) => event.id).toSet();
         final newModels =
@@ -254,6 +271,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
           events: [...state.events, ..._sortPageOnceForSession(newModels)],
           hasMore: dbHasMore,
         );
+        _maybeFinalizePendingFavoritePlayerOrder();
       }
     } catch (e, stack) {
       debugPrint('[ForYou] Error: $e');
@@ -325,6 +343,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
         _loadFavoritePlayerMatches(
           gameRepository: gameRepository,
           eventIds: eventIds,
+          allowOrderHydrationFinalize: replace && _sessionEventOrder.isEmpty,
         ),
       ]);
 
@@ -445,7 +464,9 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     _nextSessionEventOrder = events.length;
   }
 
-  Future<void> _refreshVisibleFavoritePlayerCounts() async {
+  Future<void> _refreshVisibleFavoritePlayerCounts({
+    bool finalizeOrderAfterRefresh = false,
+  }) async {
     final eventIds = state.events
         .map((event) => event.id)
         .where((eventId) => eventId.isNotEmpty)
@@ -463,14 +484,21 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
       eventIds: eventIds,
       matchesByEventId: matchesByEventId,
     );
+
+    if (finalizeOrderAfterRefresh) {
+      _finalizeSessionOrderAfterFavoriteHydration();
+    }
   }
 
   Future<Map<String, List<int>>> _loadFavoritePlayerMatches({
     required GameRepository gameRepository,
     required List<String> eventIds,
+    bool allowOrderHydrationFinalize = false,
   }) async {
     try {
-      final favoriteFideIds = await _favoriteFideIdsSnapshot();
+      final favoriteFideIds = await _favoriteFideIdsSnapshot(
+        allowOrderHydrationFinalize: allowOrderHydrationFinalize,
+      );
       if (favoriteFideIds.isEmpty) {
         return <String, List<int>>{};
       }
@@ -487,25 +515,28 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     }
   }
 
-  Future<List<int>> _favoriteFideIdsSnapshot() async {
-    final loadedFavorites = ref.read(favoritePlayersProviderNew).valueOrNull;
-    final favorites =
-        loadedFavorites ??
-        await ref
-            .read(favoritePlayersProviderNew.future)
-            .timeout(
-              const Duration(milliseconds: 700),
-              onTimeout: () => const [],
-            );
-
-    final fideIds = <int>{};
-    for (final favorite in favorites) {
-      final fideId = int.tryParse(favorite.fideId ?? '');
-      if (fideId != null && fideId > 0) {
-        fideIds.add(fideId);
-      }
+  Future<List<int>> _favoriteFideIdsSnapshot({
+    bool allowOrderHydrationFinalize = false,
+  }) async {
+    final favoritePlayersState = ref.read(favoritePlayersProviderNew);
+    final loadedFavorites = favoritePlayersState.valueOrNull;
+    if (loadedFavorites != null) {
+      return _favoriteFideIdsFrom(loadedFavorites);
     }
-    return fideIds.toList(growable: false);
+
+    final favorites = await ref
+        .read(favoritePlayersProviderNew.future)
+        .timeout(
+          const Duration(milliseconds: 1500),
+          onTimeout: () {
+            if (allowOrderHydrationFinalize) {
+              _pendingFavoritePlayerOrderHydration = true;
+            }
+            return const <FavoritePlayer>[];
+          },
+        );
+
+    return _favoriteFideIdsFrom(favorites);
   }
 
   void _cacheFavoritePlayerMatches({
@@ -525,6 +556,48 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
         .read(eventFavoritePlayersCacheProvider.notifier)
         .updateCacheBatch(cacheEntries);
   }
+
+  void _finalizeSessionOrderAfterFavoriteHydration() {
+    if (!_pendingFavoritePlayerOrderHydration || state.events.isEmpty) return;
+
+    final sortedEvents = _sortLikeCurrentTab(state.events);
+    _sessionEventOrder
+      ..clear()
+      ..addEntries(
+        sortedEvents.indexed.map((entry) => MapEntry(entry.$2.id, entry.$1)),
+      );
+    _nextSessionEventOrder = sortedEvents.length;
+    _pendingFavoritePlayerOrderHydration = false;
+
+    if (mounted) {
+      state = state.copyWith(events: sortedEvents);
+    }
+  }
+
+  void _maybeFinalizePendingFavoritePlayerOrder() {
+    if (!_pendingFavoritePlayerOrderHydration || state.events.isEmpty) return;
+
+    final favoriteFideIds = _favoriteFideIdsFrom(
+      ref.read(favoritePlayersProviderNew).valueOrNull ??
+          const <FavoritePlayer>[],
+    );
+    if (favoriteFideIds.isEmpty) return;
+
+    unawaited(
+      _refreshVisibleFavoritePlayerCounts(finalizeOrderAfterRefresh: true),
+    );
+  }
+}
+
+List<int> _favoriteFideIdsFrom(Iterable<FavoritePlayer> favorites) {
+  final fideIds = <int>{};
+  for (final favorite in favorites) {
+    final fideId = int.tryParse(favorite.fideId ?? '');
+    if (fideId != null && fideId > 0) {
+      fideIds.add(fideId);
+    }
+  }
+  return fideIds.toList(growable: false);
 }
 
 ForYouEventGamesSnapshot _topGamesSnapshotFromGames({

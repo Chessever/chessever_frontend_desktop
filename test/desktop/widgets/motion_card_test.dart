@@ -111,4 +111,77 @@ void main() {
     );
     expect(find.byKey(const Key('c')), findsOneWidget);
   });
+
+  // The reported "board shifts before navigation" bug: a hovered card sits
+  // lifted (Transform.translate y = -hoverLift); pressing collapses the lift
+  // back to 0, dropping the card a few px in the frame before a navigating
+  // tap fires. Lift is read straight off the Transform matrix.
+  double minLiftY(WidgetTester tester) => tester
+      .widgetList<Transform>(find.byType(Transform))
+      .map((t) => t.transform.getTranslation().y)
+      .fold<double>(0, math.min);
+
+  Future<TestGesture> hoverCenter(WidgetTester tester) async {
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: Offset.zero);
+    addTearDown(() => gesture.removePointer());
+    await gesture.moveTo(tester.getCenter(find.byType(MotionCard)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600)); // settle hover lift
+    return gesture;
+  }
+
+  testWidgets('MotionCard drops its hover lift on press by default', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: MotionCard(child: SizedBox(width: 200, height: 100)),
+          ),
+        ),
+      ),
+    );
+
+    final gesture = await hoverCenter(tester);
+    final hoverLift = minLiftY(tester);
+    expect(hoverLift, lessThan(-3)); // hover clearly raises the card
+
+    await gesture.down(tester.getCenter(find.byType(MotionCard)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600)); // settle press
+
+    // Press collapses the lift toward the surface — the visible board drop.
+    expect(minLiftY(tester), greaterThan(hoverLift + 3));
+  });
+
+  testWidgets('MotionCard(depressOnPress: false) keeps its lift on press', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: MotionCard(
+              depressOnPress: false,
+              child: SizedBox(width: 200, height: 100),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final gesture = await hoverCenter(tester);
+    final hoverLift = minLiftY(tester);
+    expect(hoverLift, lessThan(-3)); // hover still raises the card
+
+    await gesture.down(tester.getCenter(find.byType(MotionCard)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+
+    // No press depression: the card holds its lift, so nothing shifts in the
+    // frame before a navigating tap fires.
+    expect(minLiftY(tester), closeTo(hoverLift, 1.0));
+  });
 }

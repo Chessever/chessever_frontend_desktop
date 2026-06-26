@@ -90,7 +90,7 @@ import 'package:showcaseview/showcaseview.dart';
 import 'package:chessever/repository/local_storage/local_storage_repository.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
 import 'package:chessever/services/live_updates_service.dart';
-import 'package:chessever/main.dart' show routeObserver;
+import 'package:chessever/app_globals.dart' show routeObserver;
 import 'package:chessever/providers/auth_state_provider.dart';
 import 'package:chessever/providers/notifications_settings_provider.dart';
 import 'package:chessever/widgets/paywall/premium_paywall_sheet.dart';

@@ -1,6 +1,7 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 
 /// Picks PGN files from the Library Import action and opens them as a local
@@ -37,11 +38,8 @@ Future<String?> pickAndOpenLibraryPgnDatabase(WidgetRef ref) async {
 
 String _sourceLabel(List<String> paths) {
   if (paths.isEmpty) return 'PGN import';
-  if (paths.length == 1) return _fileName(paths.single);
+  if (paths.length == 1) {
+    return localChessDatabaseDisplayNameForPath(paths.single);
+  }
   return '${paths.length} PGN files';
-}
-
-String _fileName(String path) {
-  final parts = path.split(RegExp(r'[/\\]'));
-  return parts.isEmpty ? path : parts.last;
 }

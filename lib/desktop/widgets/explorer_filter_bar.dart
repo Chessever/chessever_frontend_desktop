@@ -7,6 +7,7 @@ import 'package:chessever/screens/gamebase/models/gamebase_game.dart'
 import 'package:chessever/screens/gamebase/models/gamebase_player.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
+import 'package:chessever/desktop/widgets/desktop_tappable.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/explorer_filter_scope.dart';
 import 'package:chessever/desktop/widgets/explorer_filters_popover.dart';
@@ -221,8 +222,8 @@ class PlayerOpeningTreeProgressChip extends StatelessWidget {
 
     return DesktopTooltip(
       message: label,
-      child: InkWell(
-        onTap: isError ? onRetry : null,
+      child: DesktopTappable(
+        onPress: isError ? onRetry : null,
         borderRadius: BorderRadius.circular(5),
         child: Container(
           constraints: BoxConstraints(maxWidth: maxWidth),

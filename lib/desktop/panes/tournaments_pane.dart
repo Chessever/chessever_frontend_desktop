@@ -38,7 +38,7 @@ import 'package:chessever/screens/chessboard/provider/chess_board_screen_provide
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/countrymen/provider/countrymen_mode_provider.dart';
 import 'package:chessever/screens/favorites/provider/favorites_mode_provider.dart';
-import 'package:chessever/screens/group_event/group_event_screen.dart' as ge;
+import 'package:chessever/providers/group_event_category.dart' as ge;
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/group_event/providers/group_event_screen_provider.dart';
 import 'package:chessever/screens/group_event/providers/supabase_combined_search_provider.dart';
@@ -74,6 +74,7 @@ String _smartCollectionTitle(PremiumGamesType type) {
     PremiumGamesType.live => 'Live',
     PremiumGamesType.gm => 'GM',
     PremiumGamesType.classical => 'Classical',
+    PremiumGamesType.miniatures => 'Miniatures',
     PremiumGamesType.favorites => 'Favorites',
     PremiumGamesType.countrymen => 'Countrymen',
   };

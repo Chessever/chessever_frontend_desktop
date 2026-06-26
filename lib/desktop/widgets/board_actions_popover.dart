@@ -4,6 +4,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -289,9 +290,8 @@ Future<bool> showResetEditsConfirmation(
     if (hasShapes) 'Arrows and circles drawn on the board',
     if (hasNags) 'Move-quality marks (!, ?, !!, ??, !?, ?!) you applied',
   ];
-  final confirmed = await showDialog<bool>(
-    context: context,
-    barrierColor: Colors.black.withValues(alpha: 0.55),
+  final confirmed = await showDesktopDialog<bool>(
+    context,
     builder:
         (ctx) => FTheme(
           data: FThemes.zinc.dark,

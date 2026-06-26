@@ -58,7 +58,7 @@ void main() {
         name: 'local.pgn',
         path: 'local-file:abc123',
         relativePath: '',
-        children: const <LocalChessNode>[
+        children: <LocalChessNode>[
           LocalChessFileNode(
             name: 'local.pgn',
             path: filePath,

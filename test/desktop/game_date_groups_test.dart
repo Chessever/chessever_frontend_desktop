@@ -26,13 +26,27 @@ void main() {
       expect(groups.map((g) => g.label), [
         'Today',
         'Yesterday',
-        'Jun 12, 2026',
+        '12 Jun 2026',
       ]);
       expect(groups.first.games, isEmpty);
       expect(groups[1].games.map((g) => g.gameId), ['yesterday']);
       expect(groups[2].games.map((g) => g.gameId), ['older-high', 'older-low']);
     },
   );
+
+  test('can preserve feed order inside date groups', () {
+    final day = DateTime(2026, 6, 12, 12);
+
+    final groups = buildDesktopGameDateGroups([
+      _game('low-first', day, 2500, 2500),
+      _game('high-second', day, 2700, 2700),
+    ], preserveGameOrder: true);
+
+    expect(groups.single.games.map((g) => g.gameId), [
+      'low-first',
+      'high-second',
+    ]);
+  });
 }
 
 GamesTourModel _game(

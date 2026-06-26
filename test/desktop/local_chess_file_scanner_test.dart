@@ -1,7 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:archive/archive.dart';
+import 'package:libcompress/libcompress.dart';
 
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 
@@ -19,8 +22,14 @@ void main() {
       }
     });
 
-    test('picker extensions only allow PGN files', () {
-      expect(localChessSupportedExtensions, {'.pgn'});
+    test('picker extensions allow raw and compressed PGN files', () {
+      expect(localChessSupportedExtensions, {
+        '.pgn',
+        '.pgn.bz2',
+        '.pgn.zst',
+        '.bz2',
+        '.zst',
+      });
       expect(
         localChessRecognizedExtensions,
         containsAll(localChessSupportedExtensions),
@@ -29,10 +38,13 @@ void main() {
         localChessPickerExtensions.toSet(),
         hasLength(localChessPickerExtensions.length),
       );
-      expect(localChessPickerExtensions, <String>['pgn']);
+      expect(localChessPickerExtensions, <String>['pgn', 'bz2', 'zst']);
       expect(looksLikeLocalChessFile('/tmp/lines.pgn'), isTrue);
+      expect(looksLikeLocalChessFile('/tmp/lines.pgn.bz2'), isTrue);
+      expect(looksLikeLocalChessFile('/tmp/lines.pgn.zst'), isTrue);
       expect(looksLikeLocalChessFile('/tmp/lines.pgn.gz'), isFalse);
-      expect(looksLikeLocalChessFile('/tmp/notes.gz'), isFalse);
+      expect(looksLikeLocalChessFile('/tmp/notes.bz2'), isTrue);
+      expect(looksLikeLocalChessFile('/tmp/notes.zst'), isTrue);
       expect(looksLikeLocalChessFile('/tmp/archive.zip'), isFalse);
       expect(looksLikeLocalChessFile('/tmp/archive.cbz'), isFalse);
       expect(looksLikeLocalChessFile('/tmp/mega.cbh'), isTrue);
@@ -43,6 +55,18 @@ void main() {
       expect(localChessEntryCountLabel(0), '0 entries');
       expect(localChessEntryCountLabel(1), '1 entry');
       expect(localChessEntryCountLabel(2), '2 entries');
+    });
+
+    test('database display names are derived from polished file names', () {
+      expect(
+        localChessDatabaseDisplayNameForPath('/tmp/idc_2053.pgn'),
+        'IDC_2053.pgn',
+      );
+      expect(
+        localChessDatabaseDisplayNameForPath('/tmp/hikaru_chesscom.pgn'),
+        'Hikaru_Chesscom.pgn',
+      );
+      expect(localChessDatabaseDisplayNameForPath('/tmp/mini.pgn'), 'mini.pgn');
     });
 
     test('input path identity follows Windows filesystem semantics', () {
@@ -108,6 +132,101 @@ void main() {
       expect(source.root.gameCount, 1);
       expect(source.nodeForPath(file.path), same(source.root.files.single));
       expect(source.nodeForPath('${temp.path}/other.pgn'), isNull);
+    });
+
+    test(
+      'raw PGN files stream past the compressed decode byte limit',
+      () async {
+        final file = File('${temp.path}/large-raw.pgn');
+        await file.writeAsString(
+          List<String>.filled(20, _samplePgn).join('\n\n'),
+        );
+
+        final source = await scanLocalChessPaths(
+          <String>[file.path],
+          maxDecodedBytes: 1024,
+          maxGames: 2,
+        );
+        final scanned = source.root.files.single;
+
+        expect(scanned.sizeBytes, greaterThan(1024));
+        expect(scanned.status, LocalChessFileStatus.parsed);
+        expect(scanned.games, hasLength(2));
+        expect(scanned.games.first.fileGameCount, 20);
+        expect(scanned.message, contains('Showing first 2 of 20 entries'));
+        expect(scanned.openingTreeIndex, isNotNull);
+      },
+    );
+
+    test('raw PGN scans expose byte checkpoints and game ranges', () async {
+      final file = File('${temp.path}/offsets.pgn');
+      await file.writeAsBytes(<int>[
+        0xEF,
+        0xBB,
+        0xBF,
+        ...utf8.encode(
+          '$_samplePgn\n\n$_secondSamplePgn'.replaceAll('\n', '\r\n'),
+        ),
+      ]);
+
+      final source = await scanLocalChessPaths(<String>[file.path]);
+      final scanned = source.root.files.single;
+      final index = scanned.pgnOffsetIndex;
+      final bytes = await file.readAsBytes();
+
+      expect(index, isNotNull);
+      expect(index!.totalGames, 2);
+      expect(index.checkpointStride, greaterThan(1));
+      expect(
+        index.checkpointOffsetForGame(0),
+        scanned.games.first.sourceByteStart,
+      );
+      expect(index.checkpointGameIndexForGame(1), 0);
+      expect(
+        utf8.decode(
+          bytes.sublist(
+            scanned.games.first.sourceByteStart!,
+            scanned.games.first.sourceByteStart! + '[Event'.length,
+          ),
+        ),
+        '[Event',
+      );
+
+      final secondStart = scanned.games.last.sourceByteStart!;
+      final secondEnd = scanned.games.last.sourceByteEnd!;
+      final secondRaw = utf8.decode(bytes.sublist(secondStart, secondEnd));
+      expect(secondRaw.trim(), scanned.games.last.rawPgn);
+      expect(secondRaw, contains('[White "Polgar, Judit"]'));
+
+      final rangeBackedGame = LocalChessGame(
+        id: 'range-backed',
+        game: scanned.games.last.game,
+        rawPgn: '',
+        sourcePath: file.path,
+        sourceRelativePath: scanned.games.last.sourceRelativePath,
+        fileName: scanned.games.last.fileName,
+        indexInFile: scanned.games.last.indexInFile,
+        fileGameCount: scanned.games.last.fileGameCount,
+        hasMoves: scanned.games.last.hasMoves,
+        sourceByteStart: secondStart,
+        sourceByteEnd: secondEnd,
+      );
+      expect(rangeBackedGame.rawPgn, secondRaw.trim());
+    });
+
+    test('raw PGN byte scanner handles CR-only line endings', () async {
+      final file = File('${temp.path}/classic-mac.pgn');
+      await file.writeAsString(
+        '$_samplePgn\n\n$_secondSamplePgn'.replaceAll('\n', '\r'),
+      );
+
+      final source = await scanLocalChessPaths(<String>[file.path]);
+      final scanned = source.root.files.single;
+
+      expect(scanned.status, LocalChessFileStatus.parsed);
+      expect(scanned.games, hasLength(2));
+      expect(scanned.pgnOffsetIndex?.totalGames, 2);
+      expect(scanned.games.last.game.metadata['White'], 'Polgar, Judit');
     });
 
     test(
@@ -188,7 +307,109 @@ void main() {
       );
     });
 
-    test('compressed PGN databases are rejected', () async {
+    test('parses bzip2-compressed PGN databases', () async {
+      final file = File('${temp.path}/archive.bz2');
+      await file.writeAsBytes(
+        BZip2Encoder().encodeBytes(utf8.encode(_samplePgn)),
+      );
+
+      final source = await scanLocalChessPaths(<String>[file.path]);
+      final scanned = source.root.files.single;
+
+      expect(scanned.extension, '.bz2');
+      expect(scanned.status, LocalChessFileStatus.parsed);
+      expect(scanned.games.single.game.metadata['White'], 'Carlsen, Magnus');
+      expect(scanned.openingTreeIndex, isNotNull);
+    });
+
+    test('parses zstd-compressed PGN databases', () async {
+      final file = File('${temp.path}/archive.zst');
+      await file.writeAsBytes(
+        ZstdCodec().compress(Uint8List.fromList(utf8.encode(_samplePgn))),
+      );
+
+      final source = await scanLocalChessPaths(<String>[file.path]);
+      final scanned = source.root.files.single;
+
+      expect(scanned.extension, '.zst');
+      expect(scanned.status, LocalChessFileStatus.parsed);
+      expect(scanned.games.single.game.metadata['White'], 'Carlsen, Magnus');
+      expect(scanned.openingTreeIndex, isNotNull);
+    });
+
+    test('corrupt bzip2-compressed PGNs report a failed file', () async {
+      final file = File('${temp.path}/broken.pgn.bz2');
+      await file.writeAsBytes(<int>[0x42, 0x5a, 0x68, 0x39, 0x00]);
+
+      final source = await scanLocalChessPaths(<String>[file.path]);
+      final scanned = source.root.files.single;
+
+      expect(scanned.extension, '.pgn.bz2');
+      expect(scanned.status, LocalChessFileStatus.failed);
+      expect(scanned.games, isEmpty);
+      expect(scanned.message, contains('Could not decode compressed PGN'));
+    });
+
+    test('corrupt simple bzip2 PGNs keep their extension in errors', () async {
+      final file = File('${temp.path}/broken.bz2');
+      await file.writeAsBytes(<int>[0x42, 0x5a, 0x68, 0x39, 0x00]);
+
+      final source = await scanLocalChessPaths(<String>[file.path]);
+      final scanned = source.root.files.single;
+
+      expect(scanned.extension, '.bz2');
+      expect(scanned.status, LocalChessFileStatus.failed);
+      expect(scanned.message, contains('(.bz2)'));
+      expect(scanned.message, isNot(contains('(.pgn.bz2)')));
+    });
+
+    test('corrupt compressed PGN does not abort directory siblings', () async {
+      final first = File('${temp.path}/a.pgn');
+      final broken = File('${temp.path}/b.pgn.bz2');
+      final second = File('${temp.path}/c.pgn');
+      await first.writeAsString(_samplePgn);
+      await broken.writeAsBytes(<int>[0x42, 0x5a, 0x68, 0x39, 0x00]);
+      await second.writeAsString(_secondSamplePgn);
+
+      final source = await scanLocalChessPaths(<String>[temp.path]);
+      final failed = source.nodeForPath(broken.path);
+      expect(failed, isA<LocalChessFileNode>());
+      final failedFile = failed! as LocalChessFileNode;
+
+      expect(source.root.gameCount, 2);
+      expect(source.nodeForPath(first.path), isA<LocalChessFileNode>());
+      expect(source.nodeForPath(second.path), isA<LocalChessFileNode>());
+      expect(failedFile.status, LocalChessFileStatus.failed);
+      expect(failedFile.message, contains('Could not decode compressed PGN'));
+    });
+
+    test('corrupt zstd-compressed PGNs report a failed file', () async {
+      final file = File('${temp.path}/broken.pgn.zst');
+      await file.writeAsBytes(<int>[0x28, 0xb5, 0x2f, 0xfd, 0x00]);
+
+      final source = await scanLocalChessPaths(<String>[file.path]);
+      final scanned = source.root.files.single;
+
+      expect(scanned.extension, '.pgn.zst');
+      expect(scanned.status, LocalChessFileStatus.failed);
+      expect(scanned.games, isEmpty);
+      expect(scanned.message, contains('Could not decode compressed PGN'));
+    });
+
+    test('oversized zstd-compressed PGNs report the scan limit', () async {
+      final file = File('${temp.path}/huge.pgn.zst');
+      await file.writeAsBytes(_zstdFrameDeclaringSize(64 * 1024 * 1024 + 1));
+
+      final source = await scanLocalChessPaths(<String>[file.path]);
+      final scanned = source.root.files.single;
+
+      expect(scanned.extension, '.pgn.zst');
+      expect(scanned.status, LocalChessFileStatus.unsupported);
+      expect(scanned.games, isEmpty);
+      expect(scanned.message, contains('over the 64 MB scan limit'));
+    });
+
+    test('gzip-compressed PGN databases are rejected', () async {
       final file = File('${temp.path}/archive.pgn.gz');
       await file.writeAsBytes(gzip.encode(utf8.encode(_samplePgn)));
 
@@ -249,6 +470,13 @@ void main() {
       );
     });
   });
+}
+
+Uint8List _zstdFrameDeclaringSize(int size) {
+  final bytes = Uint8List(13);
+  bytes.setAll(0, <int>[0x28, 0xb5, 0x2f, 0xfd, 0xe0]);
+  ByteData.view(bytes.buffer).setUint64(5, size, Endian.little);
+  return bytes;
 }
 
 const _samplePgn = '''

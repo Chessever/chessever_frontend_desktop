@@ -16,6 +16,7 @@ import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
+import 'package:chessever/desktop/widgets/desktop_tappable.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
@@ -322,10 +323,19 @@ class _LocalHeader extends StatelessWidget {
       ),
       _ => (0, 0, 0),
     };
-    final countLabel =
-        selectedDatabase == null
-            ? '$fileCount files · ${localChessEntryCountLabel(gameCount)}'
-            : localChessEntryCountLabel(selectedDatabase.games.length);
+    late final String countLabel;
+    if (selectedDatabase == null) {
+      countLabel = '$fileCount files · ${localChessEntryCountLabel(gameCount)}';
+    } else {
+      final entryCountLabel = localChessEntryCountLabel(
+        selectedDatabase.games.length,
+      );
+      final treeIndex = selectedDatabase.openingTreeIndex;
+      countLabel =
+          treeIndex != null && treeIndex.downloadedGameCount > 0
+              ? '$entryCountLabel · ${treeIndex.positionCount} indexed positions'
+              : entryCountLabel;
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 16, 12),
       child: Row(
@@ -1361,10 +1371,9 @@ class _LocalHeaderCell extends StatelessWidget {
     return DesktopTooltip(
       message: 'Sort by $label',
       hoverEnterDuration: const Duration(milliseconds: 450),
-      child: InkWell(
+      child: DesktopTappable(
         hoverColor: kWhiteColor.withValues(alpha: 0.04),
-        splashColor: kWhiteColor.withValues(alpha: 0.06),
-        onTap: () => onSortChange(_LocalGamesSortConfig(sortKey, nextDir)),
+        onPress: () => onSortChange(_LocalGamesSortConfig(sortKey, nextDir)),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Align(

@@ -37,6 +37,7 @@ import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/utils/library_multi_select.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
+import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -4715,12 +4716,12 @@ class _GamesTableRowState extends State<_GamesTableRow> {
                 },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 100),
-                  color:
-                      _selected
-                          ? kPrimaryColor.withValues(alpha: 0.18)
-                          : (_hovered
-                              ? kBlack3Color.withValues(alpha: 0.55)
-                              : null),
+                  decoration: librarySelectedRowDecoration(
+                    selected: _selected,
+                    hovered: _hovered,
+                    bottomDivider: false,
+                    selectedTint: 0.18,
+                  ),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 14,
                     vertical: 10,
@@ -5643,8 +5644,8 @@ Future<void> _onExport({
     const _ExportProgress(processed: 0, total: 0, done: false),
   );
 
-  final dialogFuture = showDialog<void>(
-    context: context,
+  final dialogFuture = showDesktopDialog<void>(
+    context,
     barrierDismissible: false,
     builder:
         (_) =>
@@ -7125,16 +7126,9 @@ class _TwicTableRowState extends State<_TwicTableRow> {
             },
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 100),
-              decoration: BoxDecoration(
-                color:
-                    widget.selected
-                        ? kPrimaryColor.withValues(alpha: 0.20)
-                        : (_hovered
-                            ? kBlack3Color.withValues(alpha: 0.55)
-                            : null),
-                border: const Border(
-                  bottom: BorderSide(color: kDividerColor, width: 1),
-                ),
+              decoration: librarySelectedRowDecoration(
+                selected: widget.selected,
+                hovered: _hovered,
               ),
               padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
               child: Row(
@@ -8333,6 +8327,38 @@ class _DatabaseWorkspaceToolbar extends StatelessWidget {
   }
 }
 
+/// Shared row decoration for every desktop library database table
+/// (`_GamesTableRow`, `_DatabaseSavedGameRow`, `_TwicTableRow`).
+///
+/// A selected row gets a 3px [kPrimaryColor] left accent bar plus a tint;
+/// unselected/hover rows carry the same-width transparent left border so the
+/// row content never shifts horizontally when selection moves. This is the
+/// visible "selected row" indicator for the library page tables.
+@visibleForTesting
+BoxDecoration librarySelectedRowDecoration({
+  required bool selected,
+  required bool hovered,
+  bool bottomDivider = true,
+  double selectedTint = 0.20,
+}) {
+  return BoxDecoration(
+    color:
+        selected
+            ? kPrimaryColor.withValues(alpha: selectedTint)
+            : (hovered ? kBlack3Color.withValues(alpha: 0.55) : null),
+    border: Border(
+      left: BorderSide(
+        color: selected ? kPrimaryColor : Colors.transparent,
+        width: 3,
+      ),
+      bottom:
+          bottomDivider
+              ? const BorderSide(color: kDividerColor, width: 1)
+              : BorderSide.none,
+    ),
+  );
+}
+
 class _DatabaseSavedGamesTable extends HookWidget {
   const _DatabaseSavedGamesTable({
     required this.rows,
@@ -8558,16 +8584,9 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
             onDoubleTap: widget.onOpen,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 100),
-              decoration: BoxDecoration(
-                color:
-                    widget.selected
-                        ? kPrimaryColor.withValues(alpha: 0.20)
-                        : (_hovered
-                            ? kBlack3Color.withValues(alpha: 0.55)
-                            : null),
-                border: const Border(
-                  bottom: BorderSide(color: kDividerColor, width: 1),
-                ),
+              decoration: librarySelectedRowDecoration(
+                selected: widget.selected,
+                hovered: _hovered,
               ),
               padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
               child: Row(
