@@ -58,46 +58,6 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
     return url == null || url.isEmpty ? null : url;
   }
 
-  Future<void> _shareImage() async {
-    setState(() => _isCapturing = true);
-    try {
-      final settings =
-          ref.read(boardSettingsProviderNew).valueOrNull ??
-          const BoardSettingsNew();
-      final card = BoardShareCard(
-        fen: widget.position.fen,
-        boardSettings: cg.ChessboardSettings(
-          enableCoordinates: true,
-          animationDuration: Duration.zero,
-          colorScheme: settings.colorScheme,
-          pieceAssets: settings.pieceAssets,
-          borderRadius: BorderRadius.zero,
-          boxShadow: const [],
-        ),
-        lastMove: widget.lastMove,
-        whiteName: _whiteName,
-        blackName: _blackName,
-        event: _event,
-        result: _result,
-      );
-      final bytes = await BoardShareService.captureWidget(
-        card,
-        width: 352,
-        height: 420,
-        pixelRatio: 2.5,
-      );
-      if (bytes == null) throw Exception('Capture returned null');
-      await BoardShareService.sharePngBytes(
-        bytes,
-        subject: '$_whiteName vs $_blackName',
-      );
-    } catch (e) {
-      _showToast('Failed to share image', isError: true);
-    } finally {
-      if (mounted) setState(() => _isCapturing = false);
-    }
-  }
-
   Future<void> _downloadImage() async {
     setState(() => _isCapturing = true);
     try {
@@ -140,7 +100,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
     }
   }
 
-  Future<void> _shareGif() async {
+  Future<void> _downloadGif() async {
     if (!_hasMoves) {
       _showToast('No moves to animate', isError: true);
       return;
@@ -196,12 +156,14 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       );
 
       if (gifBytes == null) throw Exception('GIF generation returned null');
-      await BoardShareService.shareGifBytes(
+      await BoardShareService.saveGifBytesToDisk(
         gifBytes,
-        subject: '$_whiteName vs $_blackName',
+        defaultName:
+            'chessever_${_sanitizeFilename('$_whiteName vs $_blackName')}.gif',
       );
+      _showToast('GIF saved', isError: false);
     } catch (e) {
-      _showToast('Failed to share GIF', isError: true);
+      _showToast('Failed to save GIF', isError: true);
     } finally {
       if (mounted) setState(() => _isGeneratingGif = false);
     }
@@ -348,14 +310,16 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                     borderRadius: BorderRadius.circular(8),
                     child: cg.StaticChessboard(
                       size: 240,
-                      settings: cg.StaticChessboardSettings.fromBoardSettings(cg.ChessboardSettings(
-                        enableCoordinates: true,
-                        animationDuration: Duration.zero,
-                        colorScheme: settings.colorScheme,
-                        pieceAssets: settings.pieceAssets,
-                        borderRadius: BorderRadius.zero,
-                        boxShadow: const [],
-                      )),
+                      settings: cg.StaticChessboardSettings.fromBoardSettings(
+                        cg.ChessboardSettings(
+                          enableCoordinates: true,
+                          animationDuration: Duration.zero,
+                          colorScheme: settings.colorScheme,
+                          pieceAssets: settings.pieceAssets,
+                          borderRadius: BorderRadius.zero,
+                          boxShadow: const [],
+                        ),
+                      ),
                       orientation: Side.white,
                       fen: widget.position.fen,
                       lastMove: widget.lastMove,
@@ -401,16 +365,32 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
               const SizedBox(height: 16),
               // Actions
               if (_isCapturing || _isGeneratingGif)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 24),
                   child: Center(
-                    child: SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                        color: kPrimaryColor,
-                      ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: kPrimaryColor,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          _isGeneratingGif
+                              ? 'Generating GIF…'
+                              : 'Preparing image…',
+                          style: const TextStyle(
+                            color: kWhiteColor70,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 )
@@ -421,28 +401,21 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                     spacing: 8,
                     runSpacing: 8,
                     alignment: WrapAlignment.center,
-                    children: [
-                      _ActionChip(
-                        icon: Icons.image_outlined,
-                        label: 'Share Image',
-                        onTap: _shareImage,
-                      ),
-                      _ActionChip(
-                        icon: Icons.gif_box_outlined,
-                        label: 'Share GIF',
-                        onTap: _shareGif,
-                      ),
-                      _ActionChip(
-                        icon: Icons.download_rounded,
-                        label: 'Download Image',
-                        onTap: _downloadImage,
-                      ),
-                      _ActionChip(
-                        icon: Icons.copy_rounded,
-                        label: 'Copy PGN',
-                        onTap: _copyPgn,
-                      ),
-                    ],
+                    children:
+                        boardShareActionDescriptors(
+                              copyLink: _copyLink,
+                              downloadGif: _downloadGif,
+                              downloadImage: _downloadImage,
+                              copyPgn: _copyPgn,
+                            )
+                            .map(
+                              (action) => _ActionChip(
+                                icon: action.icon,
+                                label: action.label,
+                                onTap: action.onTap,
+                              ),
+                            )
+                            .toList(),
                   ),
                 ),
               const SizedBox(height: 20),
@@ -452,6 +425,50 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       ),
     );
   }
+}
+
+@visibleForTesting
+class BoardShareActionDescriptor {
+  const BoardShareActionDescriptor({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+}
+
+@visibleForTesting
+List<BoardShareActionDescriptor> boardShareActionDescriptors({
+  required VoidCallback copyLink,
+  required VoidCallback downloadGif,
+  required VoidCallback downloadImage,
+  required VoidCallback copyPgn,
+}) {
+  return [
+    BoardShareActionDescriptor(
+      icon: Icons.link_rounded,
+      label: 'Copy Link',
+      onTap: copyLink,
+    ),
+    BoardShareActionDescriptor(
+      icon: Icons.gif_box_outlined,
+      label: 'Download GIF',
+      onTap: downloadGif,
+    ),
+    BoardShareActionDescriptor(
+      icon: Icons.download_rounded,
+      label: 'Download Image',
+      onTap: downloadImage,
+    ),
+    BoardShareActionDescriptor(
+      icon: Icons.copy_rounded,
+      label: 'Copy PGN',
+      onTap: copyPgn,
+    ),
+  ];
 }
 
 class _ActionChip extends StatelessWidget {

@@ -28,4 +28,30 @@ void main() {
       );
     });
   });
+
+  group('boardShareActionDescriptors', () {
+    test('uses copy/download actions for desktop sharing', () {
+      final actions = boardShareActionDescriptors(
+        copyLink: () {},
+        downloadGif: () {},
+        downloadImage: () {},
+        copyPgn: () {},
+      );
+
+      expect(actions.map((action) => action.label), [
+        'Copy Link',
+        'Download GIF',
+        'Download Image',
+        'Copy PGN',
+      ]);
+      expect(
+        actions.map((action) => action.label),
+        isNot(contains('Share Image')),
+      );
+      expect(
+        actions.map((action) => action.label),
+        isNot(contains('Share GIF')),
+      );
+    });
+  });
 }
