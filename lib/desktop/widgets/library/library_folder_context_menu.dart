@@ -12,6 +12,7 @@ enum LibraryFolderAction {
   showOnMyDatabases,
   rename,
   newSubfolder,
+  newDatabase,
   exportPgn,
   delete,
 }
@@ -119,6 +120,11 @@ Future<void> _showFolderMenu({
             icon: Icons.create_new_folder_outlined,
             label: 'New sub-folder...',
           ),
+        const DesktopContextMenuItem(
+          value: LibraryFolderAction.newDatabase,
+          icon: Icons.storage_rounded,
+          label: 'New database...',
+        ),
         const DesktopContextMenuItem(
           value: LibraryFolderAction.rename,
           icon: Icons.edit_outlined,
