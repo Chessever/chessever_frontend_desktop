@@ -85,16 +85,6 @@ class DesktopCollectionCards extends StatelessWidget {
               onTap: () => onSmartCollectionTap(PremiumGamesType.gm),
             ),
             const SizedBox(width: _gap),
-            _SmartCollectionCard(
-              width: _smartCardWidth,
-              height: _cardHeight,
-              title: 'Classical',
-              hint: 'Standard games',
-              icon: Icons.timer_outlined,
-              colors: const [Color(0xFF6366F1), Color(0xFF2563EB)],
-              onTap: () => onSmartCollectionTap(PremiumGamesType.classical),
-            ),
-            const SizedBox(width: _gap),
             _MiniaturesCollectionCard(
               width: _smartCardWidth + 24,
               height: _cardHeight,
