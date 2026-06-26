@@ -125,6 +125,7 @@ class LibraryPane extends HookConsumerWidget {
     final import = ref.watch(libraryImportBufferProvider);
     final localState = ref.watch(localChessLibraryProvider);
     final mainSplitController = useMemoized(ResizableSplitViewController.new);
+    final currentLibraryFolderId = useState<String?>(null);
     final selectedFolderId = useState<String?>(null);
     final selectedLocalPath = useState<String?>(null);
     final localFullViewPath = useState<String?>(null);
@@ -190,6 +191,35 @@ class LibraryPane extends HookConsumerWidget {
           isSubscribed: folder.isSubscribed,
         ),
       );
+    }
+
+    void selectCloudFolder(LibraryFolder folder) {
+      selectedFolderId.value = folder.id;
+      selectedLocalPath.value = null;
+      localFullViewPath.value = null;
+      if (ref.read(libraryImportBufferProvider) != null) {
+        ref.read(libraryImportBufferProvider.notifier).clear();
+      }
+    }
+
+    void enterCloudFolder(LibraryFolder folder) {
+      if (folder.id == kTwicBookId ||
+          !libraryFolderHasChildren(allFolders, folder.id)) {
+        openCloudDatabase(folder);
+        return;
+      }
+      currentLibraryFolderId.value = folder.id;
+      selectCloudFolder(folder);
+    }
+
+    void navigateToLibraryFolder(String? folderId) {
+      currentLibraryFolderId.value = folderId;
+      selectedFolderId.value = folderId ?? kTwicBookId;
+      selectedLocalPath.value = null;
+      localFullViewPath.value = null;
+      if (ref.read(libraryImportBufferProvider) != null) {
+        ref.read(libraryImportBufferProvider.notifier).clear();
+      }
     }
 
     Future<void> importLocalPgnFiles() async {
@@ -313,7 +343,7 @@ class LibraryPane extends HookConsumerWidget {
                         ref.read(libraryImportBufferProvider.notifier).clear();
                       }
                     },
-                    onOpen: (folder) => openCloudDatabase(folder),
+                    onOpen: enterCloudFolder,
                     onAction:
                         (folder, action) => _onFolderAction(
                           context: context,
@@ -347,14 +377,13 @@ class LibraryPane extends HookConsumerWidget {
                           )
                           : _MyDatabasesHomeView(
                             folders: allFolders,
+                            currentFolderId: currentLibraryFolderId.value,
                             selectedFolderId: selectedFolderId.value,
                             selectedLocalPath: selectedLocalPath.value,
-                            onSelectFolder: (folder) {
-                              selectedFolderId.value = folder.id;
-                              selectedLocalPath.value = null;
-                              localFullViewPath.value = null;
-                            },
-                            onOpenFolder: (folder) => openCloudDatabase(folder),
+                            onSelectFolder: selectCloudFolder,
+                            onOpenFolder: enterCloudFolder,
+                            onOpenDatabase: openCloudDatabase,
+                            onNavigateToFolder: navigateToLibraryFolder,
                             onSelectLocalPath: activateLocalPath,
                             onOpenLocalPath: openLocalFullView,
                             onOpenLocalFiles: openLocalFiles,
@@ -1127,10 +1156,13 @@ enum _DatabaseBoardAction { preview, open, remove }
 class _MyDatabasesHomeView extends HookConsumerWidget {
   const _MyDatabasesHomeView({
     required this.folders,
+    required this.currentFolderId,
     required this.selectedFolderId,
     required this.selectedLocalPath,
     required this.onSelectFolder,
     required this.onOpenFolder,
+    required this.onOpenDatabase,
+    required this.onNavigateToFolder,
     required this.onSelectLocalPath,
     required this.onOpenLocalPath,
     required this.onOpenLocalFiles,
@@ -1140,10 +1172,13 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
   });
 
   final List<LibraryFolder> folders;
+  final String? currentFolderId;
   final String? selectedFolderId;
   final String? selectedLocalPath;
   final ValueChanged<LibraryFolder> onSelectFolder;
   final ValueChanged<LibraryFolder> onOpenFolder;
+  final ValueChanged<LibraryFolder> onOpenDatabase;
+  final ValueChanged<String?> onNavigateToFolder;
   final ValueChanged<String> onSelectLocalPath;
   final ValueChanged<String> onOpenLocalPath;
   final VoidCallback onOpenLocalFiles;
@@ -1186,11 +1221,14 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
                 label: 'My Databases',
                 child: _MyDatabasesBoard(
                   folders: folders,
+                  currentFolderId: currentFolderId,
                   localSource: localSource,
                   selectedFolderId: selectedFolderId,
                   selectedLocalPath: selectedLocalPath,
                   onSelectFolder: onSelectFolder,
                   onOpenFolder: onOpenFolder,
+                  onOpenDatabase: onOpenDatabase,
+                  onNavigateToFolder: onNavigateToFolder,
                   onSelectLocalPath: onSelectLocalPath,
                   onOpenLocalPath: onOpenLocalPath,
                   onDropDatabase: onDropDatabase,
@@ -1212,7 +1250,7 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
                   ),
                   _LibraryDatabaseKind.cloud => _CloudDatabaseMiniPreview(
                     folder: selectedFolder,
-                    onOpenFolder: onOpenFolder,
+                    onOpenFolder: onOpenDatabase,
                   ),
                 },
               ),
@@ -1288,22 +1326,28 @@ class _MyDatabasesHeader extends StatelessWidget {
 class _MyDatabasesBoard extends HookConsumerWidget {
   const _MyDatabasesBoard({
     required this.folders,
+    required this.currentFolderId,
     required this.localSource,
     required this.selectedFolderId,
     required this.selectedLocalPath,
     required this.onSelectFolder,
     required this.onOpenFolder,
+    required this.onOpenDatabase,
+    required this.onNavigateToFolder,
     required this.onSelectLocalPath,
     required this.onOpenLocalPath,
     required this.onDropDatabase,
   });
 
   final List<LibraryFolder> folders;
+  final String? currentFolderId;
   final LocalChessSource? localSource;
   final String? selectedFolderId;
   final String? selectedLocalPath;
   final ValueChanged<LibraryFolder> onSelectFolder;
   final ValueChanged<LibraryFolder> onOpenFolder;
+  final ValueChanged<LibraryFolder> onOpenDatabase;
+  final ValueChanged<String?> onNavigateToFolder;
   final ValueChanged<String> onSelectLocalPath;
   final ValueChanged<String> onOpenLocalPath;
   final Future<void> Function(LibraryDatabaseDragPayload payload)
@@ -1354,16 +1398,22 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       };
     }
 
+    final visibleCloudFolders = libraryVisibleCloudFolders(
+      folders: folders,
+      parentId: currentFolderId,
+      hiddenIds: hiddenCloudFolderIds,
+    );
     final items = <_DatabaseBoardItem>[
-      for (final folder in <LibraryFolder>[
-        kTwicFolder,
-        ...folders.where(
-          (f) => f.id != kTwicBookId && !hiddenCloudFolderIds.contains(f.id),
+      if (currentFolderId == null)
+        _DatabaseBoardItem.cloud(
+          folder: kTwicFolder,
+          count: counts[kTwicBookId],
         ),
-      ])
+      for (final folder in visibleCloudFolders)
         _DatabaseBoardItem.cloud(folder: folder, count: counts[folder.id]),
-      for (final entry in localEntries)
-        _DatabaseBoardItem.local(entry: entry, count: localGameCount(entry)),
+      if (currentFolderId == null)
+        for (final entry in localEntries)
+          _DatabaseBoardItem.local(entry: entry, count: localGameCount(entry)),
     ];
     items.sort((a, b) {
       final byCount = (b.count ?? 0).compareTo(a.count ?? 0);
@@ -1484,7 +1534,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         case _DatabaseBoardAction.preview:
           onSelectFolder(folder);
         case _DatabaseBoardAction.open:
-          onOpenFolder(folder);
+          onOpenDatabase(folder);
         case _DatabaseBoardAction.remove:
           await removeCloudFolderFromBoard(folder);
       }
@@ -1561,15 +1611,107 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             physics: const DesktopScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
             children: [
+              _LibraryFolderBreadcrumb(
+                folders: folders,
+                currentFolderId: currentFolderId,
+                onNavigate: onNavigateToFolder,
+              ),
+              const SizedBox(height: 10),
               Wrap(
                 spacing: 10,
                 runSpacing: 10,
                 children: [for (final item in items) buildBoardTile(item)],
               ),
+              if (items.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: 36),
+                  child: _LibraryEmpty(
+                    icon: Icons.folder_open_outlined,
+                    title: 'This folder is empty',
+                    message: 'Create a subfolder or import PGN files here.',
+                  ),
+                ),
             ],
           ),
         );
       },
+    );
+  }
+}
+
+class _LibraryFolderBreadcrumb extends StatelessWidget {
+  const _LibraryFolderBreadcrumb({
+    required this.folders,
+    required this.currentFolderId,
+    required this.onNavigate,
+  });
+
+  final List<LibraryFolder> folders;
+  final String? currentFolderId;
+  final ValueChanged<String?> onNavigate;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = libraryFolderPath(folders, currentFolderId);
+    final current = path.isEmpty ? null : path.last;
+    return Row(
+      children: [
+        FButton(
+          style: FButtonStyle.ghost(),
+          onPress: currentFolderId == null ? null : () => onNavigate(null),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.storage_rounded, size: 14),
+              SizedBox(width: 6),
+              Text('My Databases'),
+            ],
+          ),
+        ),
+        for (final folder in path) ...[
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 4),
+            child: Icon(
+              Icons.chevron_right_rounded,
+              color: kLightGreyColor,
+              size: 15,
+            ),
+          ),
+          FButton(
+            style: FButtonStyle.ghost(),
+            onPress:
+                folder.id == currentFolderId
+                    ? null
+                    : () => onNavigate(folder.id),
+            child: Text(
+              folder.name,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: folder.id == current?.id ? kWhiteColor : kWhiteColor70,
+                fontWeight:
+                    folder.id == current?.id
+                        ? FontWeight.w700
+                        : FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+        if (current != null) ...[
+          const Spacer(),
+          FButton(
+            style: FButtonStyle.ghost(),
+            onPress: () => onNavigate(current.parentId),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.arrow_upward_rounded, size: 14),
+                SizedBox(width: 6),
+                Text('Up'),
+              ],
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -9243,6 +9385,53 @@ String _formatSavedDate(DateTime date) {
   final m = date.month.toString().padLeft(2, '0');
   final d = date.day.toString().padLeft(2, '0');
   return '${date.year}-$m-$d';
+}
+
+@visibleForTesting
+bool libraryFolderHasChildren(List<LibraryFolder> folders, String folderId) {
+  return folders.any((folder) => folder.parentId == folderId);
+}
+
+@visibleForTesting
+List<LibraryFolder> libraryVisibleCloudFolders({
+  required List<LibraryFolder> folders,
+  required String? parentId,
+  Set<String> hiddenIds = const <String>{},
+}) {
+  final visible = folders
+      .where(
+        (folder) =>
+            folder.id != kTwicBookId &&
+            folder.parentId == parentId &&
+            !hiddenIds.contains(folder.id),
+      )
+      .toList(growable: false);
+  final sorted = List<LibraryFolder>.of(visible);
+  sorted.sort((a, b) {
+    final byOrder = a.orderIndex.compareTo(b.orderIndex);
+    if (byOrder != 0) return byOrder;
+    return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  });
+  return sorted;
+}
+
+@visibleForTesting
+List<LibraryFolder> libraryFolderPath(
+  List<LibraryFolder> folders,
+  String? folderId,
+) {
+  if (folderId == null) return const <LibraryFolder>[];
+  final byId = {for (final folder in folders) folder.id: folder};
+  final path = <LibraryFolder>[];
+  final seen = <String>{};
+  String? currentId = folderId;
+  while (currentId != null && seen.add(currentId)) {
+    final folder = byId[currentId];
+    if (folder == null) break;
+    path.insert(0, folder);
+    currentId = folder.parentId;
+  }
+  return path;
 }
 
 // =====================================================================
