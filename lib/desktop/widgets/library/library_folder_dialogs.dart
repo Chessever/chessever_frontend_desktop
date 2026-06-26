@@ -270,115 +270,123 @@ class _LibraryFolderDialogState extends State<_LibraryFolderDialog> {
     return FTheme(
       data: FThemes.zinc.dark,
       child: Center(
-        child: Container(
-          width: 460,
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-          decoration: BoxDecoration(
-            color: kBlack2Color,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: kDividerColor),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.4),
-                blurRadius: 28,
-                offset: const Offset(0, 12),
-              ),
-            ],
-          ),
-          child: Focus(
-            autofocus: true,
-            onKeyEvent: (node, event) {
-              if (event is! KeyDownEvent) return KeyEventResult.ignored;
-              if (event.logicalKey == LogicalKeyboardKey.escape) {
-                _cancel();
-                return KeyEventResult.handled;
-              }
-              return KeyEventResult.ignored;
-            },
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      widget.isRename
-                          ? Icons.edit_outlined
-                          : (_isSubdatabase
-                              ? Icons.create_new_folder_outlined
-                              : Icons.folder_outlined),
-                      size: 18,
-                      color: kPrimaryColor,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        widget.title,
-                        style: const TextStyle(
-                          color: kWhiteColor,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                if (canShowTypeSelector) ...[
-                  _TypeSelector(
-                    isSubdatabase: _isSubdatabase,
-                    onChanged:
-                        (sub) => setState(() {
-                          _isSubdatabase = sub;
-                          if (sub &&
-                              _selectedParentId == null &&
-                              widget.availableParents.isNotEmpty) {
-                            _selectedParentId =
-                                widget.availableParents.first.id;
-                          }
-                        }),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                if (canShowParentSelector) ...[
-                  if (widget.availableParents.isEmpty)
-                    const Text(
-                      'No folders yet. Create a folder first to nest a '
-                      'database under it.',
-                      style: TextStyle(color: Color(0xFFEB5757), fontSize: 12),
-                    )
-                  else
-                    _ParentSelector(
-                      parents: widget.availableParents,
-                      selectedId: _selectedParentId,
-                      onChanged: (id) => setState(() => _selectedParentId = id),
-                    ),
-                  const SizedBox(height: 12),
-                ],
-                _NameField(
-                  controller: _controller,
-                  focusNode: _focusNode,
-                  hasError: _attemptedSubmit && _controller.text.trim().isEmpty,
-                  onSubmitted: (_) => _confirm(),
-                  onChanged: (_) {
-                    if (_attemptedSubmit) setState(() {});
-                  },
-                ),
-                const SizedBox(height: 18),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    DesktopDialogButton(label: 'Cancel', onPress: _cancel),
-                    const SizedBox(width: 8),
-                    DesktopDialogButton(
-                      label: widget.confirmLabel,
-                      tone: DesktopDialogButtonTone.primary,
-                      onPress: _confirm,
-                    ),
-                  ],
+        child: Material(
+          type: MaterialType.transparency,
+          child: Container(
+            width: 460,
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+            decoration: BoxDecoration(
+              color: kBlack2Color,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: kDividerColor),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.4),
+                  blurRadius: 28,
+                  offset: const Offset(0, 12),
                 ),
               ],
+            ),
+            child: Focus(
+              autofocus: true,
+              onKeyEvent: (node, event) {
+                if (event is! KeyDownEvent) return KeyEventResult.ignored;
+                if (event.logicalKey == LogicalKeyboardKey.escape) {
+                  _cancel();
+                  return KeyEventResult.handled;
+                }
+                return KeyEventResult.ignored;
+              },
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        widget.isRename
+                            ? Icons.edit_outlined
+                            : (_isSubdatabase
+                                ? Icons.create_new_folder_outlined
+                                : Icons.folder_outlined),
+                        size: 18,
+                        color: kPrimaryColor,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          widget.title,
+                          style: const TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  if (canShowTypeSelector) ...[
+                    _TypeSelector(
+                      isSubdatabase: _isSubdatabase,
+                      onChanged:
+                          (sub) => setState(() {
+                            _isSubdatabase = sub;
+                            if (sub &&
+                                _selectedParentId == null &&
+                                widget.availableParents.isNotEmpty) {
+                              _selectedParentId =
+                                  widget.availableParents.first.id;
+                            }
+                          }),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (canShowParentSelector) ...[
+                    if (widget.availableParents.isEmpty)
+                      const Text(
+                        'No folders yet. Create a folder first to nest a '
+                        'database under it.',
+                        style: TextStyle(
+                          color: Color(0xFFEB5757),
+                          fontSize: 12,
+                        ),
+                      )
+                    else
+                      _ParentSelector(
+                        parents: widget.availableParents,
+                        selectedId: _selectedParentId,
+                        onChanged:
+                            (id) => setState(() => _selectedParentId = id),
+                      ),
+                    const SizedBox(height: 12),
+                  ],
+                  _NameField(
+                    controller: _controller,
+                    focusNode: _focusNode,
+                    hasError:
+                        _attemptedSubmit && _controller.text.trim().isEmpty,
+                    onSubmitted: (_) => _confirm(),
+                    onChanged: (_) {
+                      if (_attemptedSubmit) setState(() {});
+                    },
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      DesktopDialogButton(label: 'Cancel', onPress: _cancel),
+                      const SizedBox(width: 8),
+                      DesktopDialogButton(
+                        label: widget.confirmLabel,
+                        tone: DesktopDialogButtonTone.primary,
+                        onPress: _confirm,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -407,11 +415,7 @@ class _TypeSelector extends StatelessWidget {
             child: _segment('Folder', !isSubdatabase, () => onChanged(false)),
           ),
           Expanded(
-            child: _segment(
-              'Database',
-              isSubdatabase,
-              () => onChanged(true),
-            ),
+            child: _segment('Database', isSubdatabase, () => onChanged(true)),
           ),
         ],
       ),
