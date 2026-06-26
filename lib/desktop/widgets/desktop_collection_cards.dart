@@ -84,16 +84,6 @@ class DesktopCollectionCards extends StatelessWidget {
               colors: const [Color(0xFFF59E0B), Color(0xFFB45309)],
               onTap: () => onSmartCollectionTap(PremiumGamesType.gm),
             ),
-            const SizedBox(width: _gap),
-            _SmartCollectionCard(
-              width: _smartCardWidth,
-              height: _cardHeight,
-              title: 'Classical',
-              hint: 'Standard games',
-              icon: Icons.timer_outlined,
-              colors: const [Color(0xFF6366F1), Color(0xFF2563EB)],
-              onTap: () => onSmartCollectionTap(PremiumGamesType.classical),
-            ),
           ],
         ),
       ),
@@ -153,10 +143,9 @@ class _SmartCollectionCardState extends State<_SmartCollectionCard> {
                     colors: widget.colors,
                   ),
                   border: Border.all(
-                    color:
-                        _hovered
-                            ? kWhiteColor.withValues(alpha: 0.45)
-                            : kWhiteColor.withValues(alpha: 0.18),
+                    color: _hovered
+                        ? kWhiteColor.withValues(alpha: 0.45)
+                        : kWhiteColor.withValues(alpha: 0.18),
                   ),
                 ),
                 child: Stack(
@@ -249,10 +238,9 @@ class _CollectionCardState extends State<_CollectionCard> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color:
-                      _hovered
-                          ? kPrimaryColor.withValues(alpha: 0.45)
-                          : kWhiteColor.withValues(alpha: 0.18),
+                  color: _hovered
+                      ? kPrimaryColor.withValues(alpha: 0.45)
+                      : kWhiteColor.withValues(alpha: 0.18),
                 ),
                 // no selection concept here; hover/press shadow now owned by MotionCard
               ),
