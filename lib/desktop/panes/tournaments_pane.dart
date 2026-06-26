@@ -973,9 +973,11 @@ class _EventPosterInfoPanel extends StatelessWidget {
             // unreadable overlaid on the poster image).
             Row(
               children: [
-                _StatusBadge(category: event.tourEventCategory),
+                if (_shouldShowStatusBadge(event.tourEventCategory))
+                  _StatusBadge(category: event.tourEventCategory),
                 if (event.timeControl.isNotEmpty) ...[
-                  const SizedBox(width: 8),
+                  if (_shouldShowStatusBadge(event.tourEventCategory))
+                    const SizedBox(width: 8),
                   Flexible(
                     child: Text(
                       event.timeControl,
@@ -2034,6 +2036,10 @@ String _eventMetaLine(GroupEventCardModel tournament) {
   return parts.isEmpty ? 'No schedule metadata' : parts.join(' · ');
 }
 
+bool _shouldShowStatusBadge(TourEventCategory category) {
+  return category != TourEventCategory.ongoing;
+}
+
 class _StatusBadge extends StatelessWidget {
   const _StatusBadge({required this.category});
 
@@ -2908,9 +2914,12 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
                                 // the solid body where their colours read.
                                 Row(
                                   children: [
-                                    _StatusBadge(
-                                      category: event.tourEventCategory,
-                                    ),
+                                    if (_shouldShowStatusBadge(
+                                      event.tourEventCategory,
+                                    ))
+                                      _StatusBadge(
+                                        category: event.tourEventCategory,
+                                      ),
                                     const Spacer(),
                                     DesktopEventFavoriteIconButton(
                                       event: event,
