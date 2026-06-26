@@ -30,5 +30,53 @@ void main() {
         '1:30:46',
       ]);
     });
+
+    test('orders PGN headers before player metadata for ChessBase paste', () {
+      final pgn = buildPgnFromGamebaseData({
+        'md': {
+          'Black': 'Radjabov,T',
+          'BlackElo': '2689',
+          'BlackFideId': '13400924',
+          'BlackTitle': 'GM',
+          'Date': '2026.05.23',
+          'ECO': 'C49',
+          'Event': '75th Ann. Karpov 2026',
+          'EventDate': '2026.05.21',
+          'Opening': 'Four knights',
+          'Result': '0-1',
+          'Round': '7.3',
+          'Site': 'Moscow RUS',
+          'White': 'Esipenko,Andrey',
+          'WhiteElo': '2684',
+          'WhiteFideId': '24175439',
+          'WhiteTitle': 'GM',
+        },
+        'm': [
+          {'u': 'e2e4'},
+          {'u': 'e7e5'},
+        ],
+      });
+
+      expect(pgn, isNotNull);
+      expect(pgn!.split('\n').take(16).toList(), [
+        '[Event "75th Ann. Karpov 2026"]',
+        '[Site "Moscow RUS"]',
+        '[Date "2026.05.23"]',
+        '[Round "7.3"]',
+        '[White "Esipenko,Andrey"]',
+        '[Black "Radjabov,T"]',
+        '[Result "0-1"]',
+        '[WhiteElo "2684"]',
+        '[BlackElo "2689"]',
+        '[WhiteTitle "GM"]',
+        '[BlackTitle "GM"]',
+        '[WhiteFideId "24175439"]',
+        '[BlackFideId "13400924"]',
+        '[ECO "C49"]',
+        '[Opening "Four knights"]',
+        '[EventDate "2026.05.21"]',
+      ]);
+      expect(pgn, contains('\n\n1. e4 e5 0-1'));
+    });
   });
 }
