@@ -46,18 +46,21 @@ List<DesktopSmartGameSection> buildDesktopSmartGameSections(
       continue;
     }
 
-    final eventKey = _eventKey(game);
+    final dateLabel = _formatSmartSectionDate(day, now: clock);
     final dateKey =
         day == null ? '0000-00-00' : DateFormat('yyyy-MM-dd').format(day);
-    final key = '$eventKey::$dateKey';
+    final isGmDateSection = type == PremiumGamesType.gm;
+    final key =
+        isGmDateSection ? 'gm-date::$dateKey' : '${_eventKey(game)}::$dateKey';
     final section = sectionsByKey.putIfAbsent(
       key,
       () => _MutableSmartGameSection(
         key: key,
-        title: _eventTitle(game),
-        dateLabel: _formatSmartSectionDate(day, now: clock),
+        title: isGmDateSection ? dateLabel : _eventTitle(game),
+        dateLabel: isGmDateSection ? '2500+ average rating' : dateLabel,
         sortDay: day ?? DateTime(0),
-        timeControlLabel: _timeControlLabel(game.timeControl),
+        timeControlLabel:
+            isGmDateSection ? null : _timeControlLabel(game.timeControl),
       ),
     );
     section.add(game);
@@ -125,6 +128,19 @@ int _compareSections(
   DesktopSmartGameSection b,
   PremiumGamesType type,
 ) {
+  if (type == PremiumGamesType.gm) {
+    final dayCompare = b.sortDay.compareTo(a.sortDay);
+    if (dayCompare != 0) return dayCompare;
+
+    final liveCompare = b.liveCount.compareTo(a.liveCount);
+    if (liveCompare != 0) return liveCompare;
+
+    final ratingCompare = b.eventAverageRating.compareTo(a.eventAverageRating);
+    if (ratingCompare != 0) return ratingCompare;
+
+    return b.latestActivity.compareTo(a.latestActivity);
+  }
+
   if (type == PremiumGamesType.live || a.hasLiveGames != b.hasLiveGames) {
     final liveCompare = b.liveCount.compareTo(a.liveCount);
     if (liveCompare != 0) return liveCompare;
@@ -240,7 +256,7 @@ String _formatSmartSectionDate(DateTime? date, {required DateTime now}) {
   final day = DateTime(date.year, date.month, date.day);
   if (day == today) return 'Today';
   if (day == yesterday) return 'Yesterday';
-  return DateFormat('MMM d, yyyy').format(date);
+  return DateFormat('d MMM yyyy').format(date);
 }
 
 String? _timeControlLabel(String? value) {

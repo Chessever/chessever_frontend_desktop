@@ -8,24 +8,34 @@ import 'package:chessever/theme/app_theme.dart';
 
 /// Result returned by [showLibraryCreateFolderDialog].
 class LibraryFolderDraft {
-  const LibraryFolderDraft({required this.name, this.parentId});
+  const LibraryFolderDraft({
+    required this.name,
+    required this.kind,
+    this.parentId,
+  });
+
   final String name;
+  final LibraryFolderCreateKind kind;
   final String? parentId;
 }
 
-/// Forui-styled dialog to create a new folder (root) or database
-/// (child of an existing root folder). Mirrors the mobile `showCreateFolderDialog`
-/// but adapts the chrome to desktop: floating dialog, FButton actions, no
-/// haptic feedback, Esc to cancel, Enter to confirm.
+enum LibraryFolderCreateKind { folder, database }
+
+/// Forui-styled dialog to create a folder or database. Mirrors the mobile
+/// `showCreateFolderDialog` but adapts the chrome to desktop: floating dialog,
+/// FButton actions, no haptics, Esc to cancel, Enter to confirm.
 ///
-/// [availableParents] lists writable root-level folders the user could nest
-/// into. When [lockedParent] is supplied the dialog renders without the
-/// type/parent selector and creates a database under it.
+/// [availableParents] lists writable root-level folders a database can be
+/// nested into. When [lockedParent] is supplied the dialog creates the selected
+/// kind directly under that parent.
 Future<LibraryFolderDraft?> showLibraryCreateFolderDialog(
   BuildContext context, {
   required List<LibraryFolder> availableParents,
   LibraryFolder? lockedParent,
+  LibraryFolderCreateKind kind = LibraryFolderCreateKind.folder,
+  bool allowKindSelection = false,
 }) {
+  final isDatabase = kind == LibraryFolderCreateKind.database;
   return showGeneralDialog<LibraryFolderDraft>(
     context: context,
     barrierDismissible: true,
@@ -36,10 +46,16 @@ Future<LibraryFolderDraft?> showLibraryCreateFolderDialog(
         (ctx, _, _) => _LibraryFolderDialog(
           availableParents: availableParents,
           lockedParent: lockedParent,
+          kind: kind,
+          allowKindSelection: allowKindSelection,
           title:
-              lockedParent != null
-                  ? 'New database in "${lockedParent.name}"'
-                  : 'New folder',
+              allowKindSelection
+                  ? (lockedParent == null
+                      ? 'New library item'
+                      : 'New item in "${lockedParent.name}"')
+                  : lockedParent != null
+                  ? '${isDatabase ? 'New database' : 'New folder'} in "${lockedParent.name}"'
+                  : (isDatabase ? 'New database' : 'New folder'),
           confirmLabel: 'Create',
         ),
     transitionBuilder: (ctx, anim, _, child) {
@@ -74,6 +90,8 @@ Future<String?> showLibraryRenameFolderDialog(
         (ctx, _, _) => _LibraryFolderDialog(
           availableParents: const [],
           lockedParent: null,
+          kind: LibraryFolderCreateKind.folder,
+          allowKindSelection: false,
           title: 'Rename "${folder.name}"',
           confirmLabel: 'Save',
           initialName: folder.name,
@@ -191,6 +209,8 @@ class _LibraryFolderDialog extends StatefulWidget {
   const _LibraryFolderDialog({
     required this.availableParents,
     required this.lockedParent,
+    required this.kind,
+    required this.allowKindSelection,
     required this.title,
     required this.confirmLabel,
     this.initialName,
@@ -199,6 +219,8 @@ class _LibraryFolderDialog extends StatefulWidget {
 
   final List<LibraryFolder> availableParents;
   final LibraryFolder? lockedParent;
+  final LibraryFolderCreateKind kind;
+  final bool allowKindSelection;
   final String title;
   final String confirmLabel;
   final String? initialName;
@@ -211,8 +233,8 @@ class _LibraryFolderDialog extends StatefulWidget {
 class _LibraryFolderDialogState extends State<_LibraryFolderDialog> {
   late final TextEditingController _controller;
   late final FocusNode _focusNode;
+  late LibraryFolderCreateKind _kind;
   String? _selectedParentId;
-  bool _isSubdatabase = false;
   bool _attemptedSubmit = false;
 
   @override
@@ -220,8 +242,8 @@ class _LibraryFolderDialogState extends State<_LibraryFolderDialog> {
     super.initState();
     _controller = TextEditingController(text: widget.initialName ?? '');
     _focusNode = FocusNode();
+    _kind = widget.kind;
     if (widget.lockedParent != null) {
-      _isSubdatabase = true;
       _selectedParentId = widget.lockedParent!.id;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -254,18 +276,32 @@ class _LibraryFolderDialogState extends State<_LibraryFolderDialog> {
       Navigator.of(context).pop(name);
       return;
     }
-    final parentId = _isSubdatabase ? _selectedParentId : null;
+    final parentId =
+        widget.lockedParent?.id ??
+        (_kind == LibraryFolderCreateKind.database
+            ? _selectedParentId ??
+                (widget.availableParents.isEmpty
+                    ? null
+                    : widget.availableParents.first.id)
+            : null);
+    if (_kind == LibraryFolderCreateKind.database && parentId == null) {
+      setState(() => _attemptedSubmit = true);
+      return;
+    }
     Navigator.of(
       context,
-    ).pop(LibraryFolderDraft(name: name, parentId: parentId));
+    ).pop(LibraryFolderDraft(name: name, kind: _kind, parentId: parentId));
   }
 
   void _cancel() => Navigator.of(context).maybePop();
 
   @override
   Widget build(BuildContext context) {
-    final canShowTypeSelector = !widget.isRename && widget.lockedParent == null;
-    final canShowParentSelector = canShowTypeSelector && _isSubdatabase;
+    final canShowParentSelector =
+        !widget.isRename &&
+        widget.lockedParent == null &&
+        _kind == LibraryFolderCreateKind.database;
+    final canShowKindSelector = !widget.isRename && widget.allowKindSelection;
 
     return FTheme(
       data: FThemes.zinc.dark,
@@ -306,9 +342,9 @@ class _LibraryFolderDialogState extends State<_LibraryFolderDialog> {
                       Icon(
                         widget.isRename
                             ? Icons.edit_outlined
-                            : (_isSubdatabase
-                                ? Icons.create_new_folder_outlined
-                                : Icons.folder_outlined),
+                            : (_kind == LibraryFolderCreateKind.database
+                                ? Icons.storage_rounded
+                                : Icons.create_new_folder_outlined),
                         size: 18,
                         color: kPrimaryColor,
                       ),
@@ -327,13 +363,13 @@ class _LibraryFolderDialogState extends State<_LibraryFolderDialog> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  if (canShowTypeSelector) ...[
+                  if (canShowKindSelector) ...[
                     _TypeSelector(
-                      isSubdatabase: _isSubdatabase,
+                      kind: _kind,
                       onChanged:
-                          (sub) => setState(() {
-                            _isSubdatabase = sub;
-                            if (sub &&
+                          (kind) => setState(() {
+                            _kind = kind;
+                            if (kind == LibraryFolderCreateKind.database &&
                                 _selectedParentId == null &&
                                 widget.availableParents.isNotEmpty) {
                               _selectedParentId =
@@ -356,7 +392,11 @@ class _LibraryFolderDialogState extends State<_LibraryFolderDialog> {
                     else
                       _ParentSelector(
                         parents: widget.availableParents,
-                        selectedId: _selectedParentId,
+                        selectedId:
+                            _selectedParentId ??
+                            (widget.availableParents.isEmpty
+                                ? null
+                                : widget.availableParents.first.id),
                         onChanged:
                             (id) => setState(() => _selectedParentId = id),
                       ),
@@ -396,10 +436,10 @@ class _LibraryFolderDialogState extends State<_LibraryFolderDialog> {
 }
 
 class _TypeSelector extends StatelessWidget {
-  const _TypeSelector({required this.isSubdatabase, required this.onChanged});
+  const _TypeSelector({required this.kind, required this.onChanged});
 
-  final bool isSubdatabase;
-  final ValueChanged<bool> onChanged;
+  final LibraryFolderCreateKind kind;
+  final ValueChanged<LibraryFolderCreateKind> onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -412,10 +452,18 @@ class _TypeSelector extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: _segment('Folder', !isSubdatabase, () => onChanged(false)),
+            child: _segment(
+              'Folder',
+              kind == LibraryFolderCreateKind.folder,
+              () => onChanged(LibraryFolderCreateKind.folder),
+            ),
           ),
           Expanded(
-            child: _segment('Database', isSubdatabase, () => onChanged(true)),
+            child: _segment(
+              'Database',
+              kind == LibraryFolderCreateKind.database,
+              () => onChanged(LibraryFolderCreateKind.database),
+            ),
           ),
         ],
       ),
@@ -464,7 +512,7 @@ class _ParentSelector extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Parent database',
+          'Parent folder',
           style: TextStyle(
             color: kLightGreyColor,
             fontSize: 11,

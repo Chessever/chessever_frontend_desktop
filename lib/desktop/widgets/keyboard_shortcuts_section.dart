@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -467,16 +467,12 @@ Future<KeyChord?> _showChordRecorder(
   required BoardActionKey action,
   required BoardShortcutMap currentBindings,
 }) {
-  return showDialog<KeyChord>(
-    context: context,
-    barrierColor: Colors.black.withValues(alpha: 0.55),
+  return showDesktopDialog<KeyChord>(
+    context,
     builder:
-        (ctx) => FTheme(
-          data: FThemes.zinc.dark,
-          child: _ChordRecorderDialog(
-            action: action,
-            currentBindings: currentBindings,
-          ),
+        (ctx) => _ChordRecorderDialog(
+          action: action,
+          currentBindings: currentBindings,
         ),
   );
 }

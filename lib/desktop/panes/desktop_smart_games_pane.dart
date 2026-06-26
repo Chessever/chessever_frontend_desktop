@@ -9,14 +9,17 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
 import 'package:chessever/desktop/utils/desktop_smart_game_sections.dart';
 import 'package:chessever/desktop/utils/game_date_groups.dart';
+import 'package:chessever/desktop/widgets/desktop_date_group_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
+import 'package:chessever/desktop/widgets/desktop_miniatures_filter_controls.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
     show LiveDesktopGameCard, openTournamentGameTab;
+import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
@@ -111,15 +114,36 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 14),
-            child: DesktopSearchField(
-              controller: _searchController,
-              hintText: 'Search games — player, event, opening, ECO…',
-              onChanged: (value) => setState(() => _query = value),
-              onClear: () {
-                _searchController.clear();
-                setState(() => _query = '');
-              },
-            ),
+            child:
+                type == PremiumGamesType.miniatures
+                    ? Row(
+                      children: [
+                        Expanded(
+                          child: DesktopSearchField(
+                            controller: _searchController,
+                            hintText:
+                                'Search miniatures — player, event, opening, ECO…',
+                            onChanged:
+                                (value) => setState(() => _query = value),
+                            onClear: () {
+                              _searchController.clear();
+                              setState(() => _query = '');
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        const DesktopMiniaturesFilterButton(),
+                      ],
+                    )
+                    : DesktopSearchField(
+                      controller: _searchController,
+                      hintText: 'Search games — player, event, opening, ECO…',
+                      onChanged: (value) => setState(() => _query = value),
+                      onClear: () {
+                        _searchController.clear();
+                        setState(() => _query = '');
+                      },
+                    ),
           ),
           Expanded(
             child: gamesAsync.when(
@@ -137,10 +161,44 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                   _query,
                 );
                 if (state.games.isEmpty) {
+                  final miniatureFilter =
+                      type == PremiumGamesType.miniatures
+                          ? ref.watch(miniatureGamesFilterProvider)
+                          : MiniatureGamesFilter.defaultFilter;
                   return _PaneMessage(
                     icon: Icons.grid_off_rounded,
-                    title: 'No games found',
-                    message: copy.emptyMessage,
+                    title:
+                        miniatureFilter.hasActiveFilters
+                            ? 'No matching miniatures'
+                            : 'No games found',
+                    message:
+                        miniatureFilter.hasActiveFilters
+                            ? 'No miniatures match your filters.'
+                            : copy.emptyMessage,
+                    actionLabel:
+                        miniatureFilter.hasActiveFilters
+                            ? 'Reset filters'
+                            : null,
+                    onAction:
+                        miniatureFilter.hasActiveFilters
+                            ? () {
+                              unawaited(
+                                ref
+                                    .read(
+                                      premiumGamesProvider(
+                                        PremiumGamesType.miniatures,
+                                      ).notifier,
+                                    )
+                                    .applyMiniatureFilter(
+                                      MiniatureGamesFilter.defaultFilter
+                                          .copyWith(
+                                            sort: miniatureFilter.sort,
+                                            order: miniatureFilter.order,
+                                          ),
+                                    ),
+                              );
+                            }
+                            : null,
                   );
                 }
                 if (visibleGames.isEmpty) {
@@ -157,7 +215,8 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                   routeTitle: copy.title,
                   hasMore: state.hasMore,
                   isLoading: state.isLoadingMore,
-                  showCounts: !state.hasMore,
+                  showCounts:
+                      type == PremiumGamesType.miniatures || !state.hasMore,
                   onLoadMore: () {
                     ref.read(premiumGamesProvider(type).notifier).loadMore();
                   },
@@ -254,6 +313,51 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
     setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
   }
 
+  List<DesktopSmartGameSection> _buildMiniatureSections(
+    List<GamesTourModel> games,
+    MiniatureGamesFilter filter,
+  ) {
+    final groups = buildDesktopGameDateGroups(games, preserveGameOrder: true);
+
+    return [
+      for (final group in groups)
+        DesktopSmartGameSection(
+          key: 'miniatures-${group.key}',
+          title: group.label,
+          dateLabel: filter.window.label,
+          games: group.games,
+          liveCount: 0,
+          eventAverageRating: _peakMiniatureRating(group.games),
+          latestActivity: _latestMiniatureActivity(group.games),
+          sortDay: _miniatureSortDay(group.key),
+        ),
+    ];
+  }
+
+  int _peakMiniatureRating(List<GamesTourModel> games) {
+    var peakRating = 0;
+    for (final game in games) {
+      final rating = game.avgElo ?? desktopGameAverageRating(game);
+      if (rating > peakRating) peakRating = rating;
+    }
+    return peakRating;
+  }
+
+  DateTime _latestMiniatureActivity(List<GamesTourModel> games) {
+    var latestActivity = DateTime(0);
+    for (final game in games) {
+      final activity = game.lastMoveTime ?? game.gameDay ?? DateTime(0);
+      if (activity.isAfter(latestActivity)) latestActivity = activity;
+    }
+    return latestActivity;
+  }
+
+  DateTime _miniatureSortDay(String dateKey) {
+    if (dateKey == '0000-00-00') return DateTime(0);
+    return DateTime.tryParse(dateKey) ?? DateTime(0);
+  }
+
+
   @override
   Widget build(BuildContext context) {
     final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
@@ -261,10 +365,13 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
       desktopTabsProvider.select((state) => state.activeId == widget.tabId),
     );
     final cardStreamingEnabled = streamingEnabled;
-    final sections = buildDesktopSmartGameSections(
-      widget.games,
-      type: widget.type,
-    );
+    final sections =
+        widget.type == PremiumGamesType.miniatures
+            ? _buildMiniatureSections(
+              widget.games,
+              ref.watch(miniatureGamesFilterProvider),
+            )
+            : buildDesktopSmartGameSections(widget.games, type: widget.type);
     final groupedGames = <GamesTourModel>[
       for (final section in sections) ...section.games,
     ];
@@ -328,7 +435,10 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                               onSelect: selectGame,
                               child: LiveDesktopGameCard(
                                 game: game,
-                                tournamentTitle: sections[sectionIndex].title,
+                                tournamentTitle: _smartGameTournamentTitle(
+                                  game,
+                                  widget.routeTitle,
+                                ),
                                 routeTitle: widget.routeTitle,
                                 routeGames: groupedGames,
                                 layout: DesktopCardLayout.grid,
@@ -427,7 +537,10 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                           onSelect: selectGame,
                           child: LiveDesktopGameCard(
                             game: game,
-                            tournamentTitle: sections[sectionIndex].title,
+                            tournamentTitle: _smartGameTournamentTitle(
+                              game,
+                              widget.routeTitle,
+                            ),
                             routeTitle: widget.routeTitle,
                             routeGames: groupedGames,
                             layout: layout,
@@ -456,24 +569,38 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
     int sectionIndex,
   ) {
     final collapsed = _collapsedGroups.contains(section.key);
+    void toggleCollapsed() {
+      setState(() {
+        if (collapsed) {
+          _collapsedGroups.remove(section.key);
+        } else {
+          _collapsedGroups.add(section.key);
+        }
+      });
+    }
+
+    final usesDateHeader =
+        widget.type == PremiumGamesType.miniatures ||
+        widget.type == PremiumGamesType.gm;
+    final header =
+        usesDateHeader
+            ? DesktopDateGroupCard(
+              label: section.title,
+              gameCount: section.gameCount,
+              showCount: widget.showCounts,
+              collapsed: collapsed,
+              onToggle: toggleCollapsed,
+            )
+            : _SmartEventSectionCard(
+              section: section,
+              showCount: widget.showCounts,
+              collapsed: collapsed,
+              onToggle: toggleCollapsed,
+            );
+
     return SliverPadding(
       padding: EdgeInsets.fromLTRB(24, sectionIndex == 0 ? 4 : 16, 24, 8),
-      sliver: SliverToBoxAdapter(
-        child: _SmartEventSectionCard(
-          section: section,
-          gameCountLabel: widget.showCounts ? null : 'Loading…',
-          collapsed: collapsed,
-          onToggle: () {
-            setState(() {
-              if (collapsed) {
-                _collapsedGroups.remove(section.key);
-              } else {
-                _collapsedGroups.add(section.key);
-              }
-            });
-          },
-        ),
-      ),
+      sliver: SliverToBoxAdapter(child: header),
     );
   }
 }
@@ -483,13 +610,16 @@ class _SmartEventSectionCard extends StatelessWidget {
     required this.section,
     required this.collapsed,
     required this.onToggle,
-    this.gameCountLabel,
+    this.showCount = true,
   });
 
   final DesktopSmartGameSection section;
   final bool collapsed;
   final VoidCallback onToggle;
-  final String? gameCountLabel;
+
+  /// Whether to render the game-count badge. Hidden while the feed is still
+  /// paginating and the total would be misleading.
+  final bool showCount;
 
   @override
   Widget build(BuildContext context) {
@@ -584,14 +714,15 @@ class _SmartEventSectionCard extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                   ],
-                  _SmartHeaderBadge(
-                    label:
-                        gameCountLabel ??
-                        (section.gameCount == 1
-                            ? '1 game'
-                            : '${section.gameCount} games'),
-                  ),
-                  const SizedBox(width: 8),
+                  if (showCount) ...[
+                    _SmartHeaderBadge(
+                      label:
+                          section.gameCount == 1
+                              ? '1 game'
+                              : '${section.gameCount} games',
+                    ),
+                    const SizedBox(width: 8),
+                  ],
                   Icon(
                     collapsed
                         ? Icons.keyboard_arrow_right_rounded
@@ -661,6 +792,20 @@ void _openSmartGame(
     routeGames: routeGames,
     viewSource: ChessboardView.tour,
   );
+}
+
+String _smartGameTournamentTitle(GamesTourModel game, String fallback) {
+  for (final value in [
+    game.eventName,
+    game.tourName,
+    game.tourSlug,
+    game.roundSlug,
+    fallback,
+  ]) {
+    final title = value?.trim();
+    if (title != null && title.isNotEmpty) return title;
+  }
+  return fallback;
 }
 
 List<GamesTourModel> filterDesktopSmartGames(
@@ -940,16 +1085,18 @@ class _PlayerCell extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(width: 8),
-        Text(
-          player.rating > 0 ? player.rating.toString() : '—',
-          style: const TextStyle(
-            color: kWhiteColor70,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            fontFeatures: [FontFeature.tabularFigures()],
+        if (player.rating > 0) ...[
+          const SizedBox(width: 8),
+          Text(
+            player.rating.toString(),
+            style: const TextStyle(
+              color: kWhiteColor70,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
           ),
-        ),
+        ],
       ],
     );
   }
@@ -999,12 +1146,16 @@ class _PaneMessage extends StatelessWidget {
     required this.title,
     required this.message,
     this.error = false,
+    this.actionLabel,
+    this.onAction,
   });
 
   final IconData icon;
   final String title;
   final String message;
   final bool error;
+  final String? actionLabel;
+  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -1034,6 +1185,17 @@ class _PaneMessage extends StatelessWidget {
                 fontSize: 13,
               ),
             ),
+            if (actionLabel != null && onAction != null) ...[
+              const SizedBox(height: 16),
+              FTheme(
+                data: FThemes.zinc.dark,
+                child: FButton(
+                  style: FButtonStyle.outline(),
+                  onPress: onAction,
+                  child: Text(actionLabel!),
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1253,6 +1415,11 @@ class _InlineLoader extends StatelessWidget {
       title: 'Classical',
       subtitle: 'Classical and standard time-control games.',
       emptyMessage: 'No classical games were found.',
+    ),
+    PremiumGamesType.miniatures => (
+      title: 'Miniatures',
+      subtitle: 'Decisive Gamebase wins that ended by move 25.',
+      emptyMessage: 'No miniature games were found.',
     ),
     PremiumGamesType.favorites => (
       title: 'Favorites',

@@ -71,6 +71,29 @@ void main() {
         <String>[fen.path],
       );
     });
+
+    test('does not treat empty launches as single-instance handoffs', () async {
+      final pgn = File('${temp.path}/round.pgn');
+      await pgn.writeAsString('[Event "x"]\n\n*');
+
+      expect(
+        DesktopFileOpenService.hasForwardableSingleInstancePayload(const []),
+        isFalse,
+      );
+      expect(
+        DesktopFileOpenService.hasForwardableSingleInstancePayload(<String>[
+          '--enable-impeller',
+          'chessever://billing/success',
+        ]),
+        isFalse,
+      );
+      expect(
+        DesktopFileOpenService.hasForwardableSingleInstancePayload(<String>[
+          pgn.path,
+        ]),
+        isTrue,
+      );
+    });
     test(
       'encodes single-instance handoff payloads as filtered chess paths',
       () async {

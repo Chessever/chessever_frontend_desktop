@@ -37,7 +37,7 @@ import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
 import 'package:chessever/screens/gamebase/widgets/widgets.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
-import 'package:chessever/main.dart' show routeObserver;
+import 'package:chessever/app_globals.dart' show routeObserver;
 import 'package:chessever/widgets/auth/auth_upgrade_sheet.dart';
 import 'package:chessever/widgets/paywall/premium_paywall_sheet.dart';
 import 'package:chessever/widgets/persistent_tab_state.dart';

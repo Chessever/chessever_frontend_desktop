@@ -1,10 +1,10 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 
+import 'package:chessever/desktop/utils/eco_input_formatter.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
+import 'package:chessever/desktop/widgets/desktop_range_slider.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
@@ -244,7 +244,7 @@ class _DesktopGameFilterDialogState extends State<_DesktopGameFilterDialog> {
                         _FilterSection(
                           title: 'Year',
                           subtitle: '$_minYear - $_maxYear',
-                          child: _DesktopRangeSlider(
+                          child: DesktopRangeSlider(
                             min: GameFilter.absoluteMinYear,
                             max: DateTime.now().year,
                             step: 1,
@@ -261,7 +261,7 @@ class _DesktopGameFilterDialogState extends State<_DesktopGameFilterDialog> {
                         _FilterSection(
                           title: 'Rating',
                           subtitle: '$_minRating - $_maxRating',
-                          child: _DesktopRangeSlider(
+                          child: DesktopRangeSlider(
                             min: GameFilter.absoluteMinRating,
                             max: GameFilter.absoluteMaxRating,
                             step: 50,
@@ -345,13 +345,7 @@ class _DesktopGameFilterDialogState extends State<_DesktopGameFilterDialog> {
           controller: _ecoController,
           hint: 'ECO code, e.g. B90 or C',
           textCapitalization: TextCapitalization.characters,
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r'[a-eA-E0-9]')),
-            LengthLimitingTextInputFormatter(3),
-            TextInputFormatter.withFunction((oldValue, newValue) {
-              return newValue.copyWith(text: newValue.text.toUpperCase());
-            }),
-          ],
+          inputFormatters: const [EcoCodeInputFormatter()],
           onChange: (_) => setState(() {}),
         ),
       ],
@@ -499,91 +493,6 @@ class _FilterChipButton extends StatelessWidget {
       onPress: onTap,
       child: Text(label),
     );
-  }
-}
-
-class _DesktopRangeSlider extends StatefulWidget {
-  const _DesktopRangeSlider({
-    required this.min,
-    required this.max,
-    required this.step,
-    required this.start,
-    required this.end,
-    required this.onChanged,
-  });
-
-  final int min;
-  final int max;
-  final int step;
-  final int start;
-  final int end;
-  final void Function(int start, int end) onChanged;
-
-  @override
-  State<_DesktopRangeSlider> createState() => _DesktopRangeSliderState();
-}
-
-class _DesktopRangeSliderState extends State<_DesktopRangeSlider> {
-  late FContinuousSliderController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = _buildController();
-  }
-
-  @override
-  void didUpdateWidget(covariant _DesktopRangeSlider oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.start != widget.start ||
-        oldWidget.end != widget.end ||
-        oldWidget.min != widget.min ||
-        oldWidget.max != widget.max) {
-      _controller.selection = _selection();
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FSlider(controller: _controller, onChange: _handleChange);
-  }
-
-  FContinuousSliderController _buildController() {
-    final span = math.max(1, widget.max - widget.min);
-    return FContinuousSliderController.range(
-      selection: _selection(),
-      stepPercentage: (widget.step / span).clamp(0.001, 1.0),
-    );
-  }
-
-  FSliderSelection _selection() {
-    final start = _norm(widget.start);
-    final end = _norm(widget.end).clamp(start, 1.0);
-    return FSliderSelection(min: start, max: end);
-  }
-
-  double _norm(int value) {
-    final span = math.max(1, widget.max - widget.min);
-    return ((value - widget.min) / span).clamp(0.0, 1.0);
-  }
-
-  int _denorm(double value) {
-    final span = math.max(1, widget.max - widget.min);
-    final raw = widget.min + (span * value);
-    final snapped = (raw / widget.step).round() * widget.step;
-    return snapped.clamp(widget.min, widget.max);
-  }
-
-  void _handleChange(FSliderSelection selection) {
-    final start = _denorm(selection.offset.min);
-    final end = _denorm(selection.offset.max);
-    widget.onChanged(start <= end ? start : end, end >= start ? end : start);
   }
 }
 

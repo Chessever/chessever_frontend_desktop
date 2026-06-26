@@ -66,7 +66,7 @@ class LibraryRepository extends BaseRepository {
       userId: userId,
       name: name,
       color: color ?? '#0FB4E5',
-      icon: icon ?? 'folder',
+      icon: icon ?? 'folder_container',
       orderIndex: nextOrder,
       parentId: parentId,
       createdAt: DateTime.now(),
@@ -100,8 +100,12 @@ class LibraryRepository extends BaseRepository {
 
     // Create root folder
     final rootFolder = await createFolder(name: 'My Database');
-    // Create child folder inside it
-    await createFolder(name: 'My Subdatabase', parentId: rootFolder.id);
+    // Create child database inside it.
+    await createFolder(
+      name: 'My Subdatabase',
+      parentId: rootFolder.id,
+      icon: 'database',
+    );
   }
 
   /// Update a folder
@@ -556,16 +560,15 @@ class LibraryRepository extends BaseRepository {
   /// Fresh, server-side count — do not derive this from the realtime stream
   /// provider, which can return a stale cached value right after a save and
   /// let the user squeak past the free-tier cap.
-  Future<int> getTotalAnalysisCountForCurrentUser() =>
-      handleApiCall(() async {
-        final userId = supabase.auth.currentUser?.id;
-        if (userId == null) throw Exception('User not authenticated');
+  Future<int> getTotalAnalysisCountForCurrentUser() => handleApiCall(() async {
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) throw Exception('User not authenticated');
 
-        return supabase
-            .from('user_saved_analyses')
-            .count(CountOption.exact)
-            .eq('user_id', userId);
-      });
+    return supabase
+        .from('user_saved_analyses')
+        .count(CountOption.exact)
+        .eq('user_id', userId);
+  });
 
   /// Count of analyses saved **directly** in [folderId], not counting
   /// sub-folders. Used by the tree PGN export so every folder level gets

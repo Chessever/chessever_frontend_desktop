@@ -5,6 +5,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/board_share_service.dart';
+import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
@@ -503,9 +504,8 @@ Future<void> showBoardShareDialog(
   required List<int> pointer,
   String? shareUrl,
 }) {
-  return showDialog(
-    context: context,
-    barrierColor: Colors.black.withValues(alpha: 0.55),
+  return showDesktopDialog<void>(
+    context,
     builder:
         (_) => BoardShareDialog(
           chessGame: chessGame,

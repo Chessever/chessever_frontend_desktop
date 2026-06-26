@@ -1,4 +1,5 @@
 import 'package:chessever/desktop/utils/desktop_smart_game_sections.dart';
+import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
@@ -122,7 +123,7 @@ void main() {
 
   group('desktop smart event sections', () {
     test(
-      'groups by event day and orders live sections before stronger events',
+      'groups GM smart games by date cards instead of event cards',
       () {
         final now = DateTime(2026, 6, 22, 12);
         final sections = buildDesktopSmartGameSections(
@@ -155,6 +156,14 @@ void main() {
               boardNr: 1,
             ),
             _tourGame(
+              id: 'yesterday',
+              status: GameStatus.draw,
+              tourId: 'gamma',
+              tourSlug: 'previous-event',
+              gameDay: DateTime(2026, 6, 21),
+              avgElo: 2750,
+            ),
+            _tourGame(
               id: 'future',
               status: GameStatus.ongoing,
               tourId: 'future',
@@ -168,14 +177,15 @@ void main() {
         );
 
         expect(sections.map((section) => section.title), [
-          'Alpha Event',
-          'Stronger Event',
+          'Today',
+          'Yesterday',
         ]);
         expect(sections.first.liveCount, 2);
-        expect(sections.first.dateLabel, 'Today');
+        expect(sections.first.dateLabel, '2500+ average rating');
         expect(sections.first.games.map((game) => game.gameId), [
           'alpha-1',
           'alpha-2',
+          'beta-1',
         ]);
       },
     );
@@ -252,6 +262,103 @@ void main() {
         'FIDE World Team Rapid & Blitz Chess Championships 2026',
       );
       expect(sections.single.gameCount, 2);
+    });
+  });
+
+  group('Gamebase miniatures parsing', () {
+    test('maps the backend pagination envelope and miniature fields', () {
+      final page = GamebaseMiniaturesPage.fromJson({
+        'status': 'success',
+        'data': {
+          'items': [
+            {
+              'gameId': '04a5af9b-0a7f-58c6-837f-ed3a49162b54',
+              'avgRating': 1629,
+              'plyCount': 50,
+              'finalMoveNumber': 25,
+              'result': 'W',
+              'timeControl': 'RAPID',
+              'isOnline': false,
+              'date': '2026-06-25T00:00:00.000Z',
+              'event': 'Fountain Open',
+              'eco': 'B03',
+              'opening': 'Alekhine Defense',
+              'variation': 'Four Pawns Attack',
+              'whiteName': 'Ashwin Jayaram',
+              'blackName': 'Mathilde Sage Housion',
+              'whiteElo': null,
+              'blackElo': 1629,
+              'whitePlayerId': 'white-id',
+              'blackPlayerId': 'black-id',
+              'whiteFed': 'USA',
+              'blackFed': 'ITA',
+            },
+          ],
+          'total': 2632661,
+          'limit': 1,
+          'offset': 0,
+        },
+      });
+
+      expect(page.total, 2632661);
+      expect(page.limit, 1);
+      expect(page.offset, 0);
+      expect(page.items, hasLength(1));
+
+      final miniature = page.items.single;
+      expect(miniature.gameId, '04a5af9b-0a7f-58c6-837f-ed3a49162b54');
+      expect(miniature.avgRating, 1629);
+      expect(miniature.finalMoveNumber, 25);
+      expect(miniature.result, 'W');
+      expect(miniature.isOnline, isFalse);
+      expect(miniature.date, DateTime.utc(2026, 6, 25));
+      expect(miniature.opening, 'Alekhine Defense');
+      expect(miniature.variation, 'Four Pawns Attack');
+      expect(miniature.blackElo, 1629);
+      expect(miniature.whiteElo, isNull);
+    });
+
+    test('serializes endpoint filter options into miniatures query params', () {
+      final filter = MiniatureGamesFilter(
+        window: MiniatureGamesWindow.week,
+        sort: MiniatureGamesSort.moves,
+        order: MiniatureGamesSortOrder.asc,
+        results: {MiniatureGameResult.whiteWins},
+        eco: 'B12,C44',
+        ecoCategories: {'B', 'C'},
+        timeControls: {
+          MiniatureGameTimeControl.rapid,
+          MiniatureGameTimeControl.blitz,
+        },
+        isOnline: true,
+        minRating: 2200,
+        maxRating: 2800,
+        minMoves: 8,
+        maxMoves: 25,
+        dateFrom: '2026-01-01',
+        dateTo: '2026-12-31',
+        player: 'Kasparov',
+      );
+
+      expect(filter.queryParameters(limit: 30, offset: 60), {
+        'window': 'week',
+        'sort': 'moves',
+        'order': 'asc',
+        'limit': 30,
+        'offset': 60,
+        'result': 'W',
+        'eco': 'B12,C44',
+        'ecoCategory': 'B,C',
+        'timeControl': 'RAPID,BLITZ',
+        'isOnline': true,
+        'minRating': 2200,
+        'maxRating': 2800,
+        'minMoves': 8,
+        'maxMoves': 25,
+        'dateFrom': '2026-01-01',
+        'dateTo': '2026-12-31',
+        'player': 'Kasparov',
+      });
     });
   });
 }

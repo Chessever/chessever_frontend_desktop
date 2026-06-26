@@ -30,7 +30,13 @@ class DesktopFileOpenService {
     if (!kReleaseMode) return false;
     if (initialArguments.contains(_newInstanceFlag)) return false;
 
+    if (!hasForwardableSingleInstancePayload(initialArguments)) {
+      await _startSingleInstanceServer();
+      return false;
+    }
+
     final paths = chessPathsFromArguments(initialArguments);
+
     try {
       final socket = await Socket.connect(
         InternetAddress.loopbackIPv4,
@@ -136,6 +142,13 @@ class DesktopFileOpenService {
     final paths = List<String>.of(_pendingSingleInstancePaths);
     _pendingSingleInstancePaths.clear();
     return paths;
+  }
+
+  @visibleForTesting
+  static bool hasForwardableSingleInstancePayload(
+    Iterable<String> initialArguments,
+  ) {
+    return chessPathsFromArguments(initialArguments).isNotEmpty;
   }
 
   @visibleForTesting

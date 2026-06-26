@@ -12,14 +12,17 @@ class DesktopDateGroupCard extends StatelessWidget {
     super.key,
     required this.label,
     required this.gameCount,
-    this.gameCountLabel,
+    this.showCount = true,
     this.collapsed = false,
     this.onToggle,
   });
 
   final String label;
   final int gameCount;
-  final String? gameCountLabel;
+
+  /// Whether to render the game-count badge. Hidden while a feed is still
+  /// paginating and the total would be misleading.
+  final bool showCount;
   final bool collapsed;
   final VoidCallback? onToggle;
 
@@ -70,35 +73,36 @@ class DesktopDateGroupCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                FBadge(
-                  style: FBadgeStyle.outline(
-                    (style) => style.copyWith(
-                      decoration: BoxDecoration(
-                        color: kBlack3Color,
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: kDividerColor),
+                if (showCount) ...[
+                  const SizedBox(width: 12),
+                  FBadge(
+                    style: FBadgeStyle.outline(
+                      (style) => style.copyWith(
+                        decoration: BoxDecoration(
+                          color: kBlack3Color,
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: kDividerColor),
+                        ),
+                        contentStyle:
+                            (content) => content.copyWith(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              labelTextStyle: const TextStyle(
+                                color: kWhiteColor70,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                fontFeatures: [FontFeature.tabularFigures()],
+                              ),
+                            ),
                       ),
-                      contentStyle:
-                          (content) => content.copyWith(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            labelTextStyle: const TextStyle(
-                              color: kWhiteColor70,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              fontFeatures: [FontFeature.tabularFigures()],
-                            ),
-                          ),
+                    ),
+                    child: Text(
+                      gameCount == 1 ? '1 game' : '$gameCount games',
                     ),
                   ),
-                  child: Text(
-                    gameCountLabel ??
-                        (gameCount == 1 ? '1 game' : '$gameCount games'),
-                  ),
-                ),
+                ],
                 if (onToggle != null) ...[
                   const SizedBox(width: 8),
                   Icon(

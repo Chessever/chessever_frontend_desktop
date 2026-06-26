@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/state/local_library_registry.dart';
 
 @immutable
@@ -25,13 +26,14 @@ class LocalChessLibraryState {
 }
 
 class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
-  LocalChessLibraryNotifier({this.registry})
+  LocalChessLibraryNotifier({this.registry, this.localDatabaseRepository})
     : super(const LocalChessLibraryState());
 
   /// Optional registry that records picked/opened local PGNs as persistent
   /// "local databases" the user can save into later. Tests can leave
   /// this null to avoid touching the DB.
   final LocalLibraryRegistryNotifier? registry;
+  final LocalChessDatabaseRepository? localDatabaseRepository;
 
   Object? _scanToken;
 
@@ -72,7 +74,12 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       isScanning: true,
     );
     try {
-      final source = await scanLocalChessPaths(paths, sourceLabel: sourceLabel);
+      final cached = await localDatabaseRepository?.loadFreshSource(
+        paths,
+        sourceLabel: sourceLabel,
+      );
+      final source =
+          cached ?? await scanLocalChessPaths(paths, sourceLabel: sourceLabel);
       if (_scanToken != token) {
         return false;
       }
@@ -81,6 +88,9 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         selectedPath: source.root.path,
       );
       await registry?.registerAll(paths);
+      if (cached == null) {
+        await localDatabaseRepository?.persistSource(source);
+      }
       return true;
     } catch (e) {
       if (_scanToken != token) return false;
@@ -115,6 +125,7 @@ final localChessLibraryProvider =
     StateNotifierProvider<LocalChessLibraryNotifier, LocalChessLibraryState>(
       (ref) => LocalChessLibraryNotifier(
         registry: ref.read(localLibraryRegistryProvider.notifier),
+        localDatabaseRepository: ref.read(localChessDatabaseRepositoryProvider),
       ),
     );
 

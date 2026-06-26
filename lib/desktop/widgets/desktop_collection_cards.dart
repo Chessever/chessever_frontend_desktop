@@ -79,10 +79,16 @@ class DesktopCollectionCards extends StatelessWidget {
               width: _smartCardWidth,
               height: _cardHeight,
               title: 'GM',
-              hint: 'Avg 2500+',
+              hint: '2500+ avg games',
               icon: Icons.military_tech_rounded,
-              colors: const [Color(0xFFF59E0B), Color(0xFFB45309)],
+              colors: const [Color(0xFF7C3AED), Color(0xFF0F766E)],
               onTap: () => onSmartCollectionTap(PremiumGamesType.gm),
+            ),
+            const SizedBox(width: _gap),
+            _MiniaturesCollectionCard(
+              width: _smartCardWidth + 24,
+              height: _cardHeight,
+              onTap: () => onSmartCollectionTap(PremiumGamesType.miniatures),
             ),
           ],
         ),
@@ -143,9 +149,10 @@ class _SmartCollectionCardState extends State<_SmartCollectionCard> {
                     colors: widget.colors,
                   ),
                   border: Border.all(
-                    color: _hovered
-                        ? kWhiteColor.withValues(alpha: 0.45)
-                        : kWhiteColor.withValues(alpha: 0.18),
+                    color:
+                        _hovered
+                            ? kWhiteColor.withValues(alpha: 0.45)
+                            : kWhiteColor.withValues(alpha: 0.18),
                   ),
                 ),
                 child: Stack(
@@ -201,6 +208,159 @@ class _SmartCollectionCardState extends State<_SmartCollectionCard> {
   }
 }
 
+class _MiniaturesCollectionCard extends StatefulWidget {
+  const _MiniaturesCollectionCard({
+    required this.width,
+    required this.height,
+    required this.onTap,
+  });
+
+  final double width;
+  final double height;
+  final VoidCallback onTap;
+
+  @override
+  State<_MiniaturesCollectionCard> createState() =>
+      _MiniaturesCollectionCardState();
+}
+
+class _MiniaturesCollectionCardState extends State<_MiniaturesCollectionCard> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: widget.width,
+      height: widget.height,
+      child: ClickCursor(
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.onTap,
+            child: MotionCard(
+              borderRadius: 14,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                curve: Curves.easeOutCubic,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color(0xFF1F1028),
+                      Color(0xFF7C2D12),
+                      Color(0xFFEAB308),
+                    ],
+                    stops: [0, 0.58, 1],
+                  ),
+                  border: Border.all(
+                    color:
+                        _hovered
+                            ? const Color(0xFFFFF7AD).withValues(alpha: 0.62)
+                            : kWhiteColor.withValues(alpha: 0.2),
+                  ),
+                ),
+                child: Stack(
+                  children: [
+                    Positioned(
+                      right: -22,
+                      top: -24,
+                      child: Icon(
+                        Icons.auto_awesome_rounded,
+                        size: 106,
+                        color: kWhiteColor.withValues(alpha: 0.11),
+                      ),
+                    ),
+                    Positioned(
+                      right: 8,
+                      top: 4,
+                      child: AnimatedScale(
+                        scale: _hovered ? 1.04 : 1,
+                        duration: const Duration(milliseconds: 160),
+                        curve: Curves.easeOutCubic,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: kBlackColor.withValues(alpha: 0.28),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: kWhiteColor.withValues(alpha: 0.28),
+                            ),
+                          ),
+                          child: const Text(
+                            '≤25',
+                            style: TextStyle(
+                              color: kWhiteColor,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                              fontFeatures: [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 160),
+                          curve: Curves.easeOutCubic,
+                          width: 34,
+                          height: 34,
+                          decoration: BoxDecoration(
+                            color: kWhiteColor.withValues(
+                              alpha: _hovered ? 0.2 : 0.14,
+                            ),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.local_fire_department_rounded,
+                            size: 20,
+                            color: kWhiteColor,
+                          ),
+                        ),
+                        const Spacer(),
+                        const Text(
+                          'Miniatures',
+                          style: TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.25,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Brilliancies by move 25',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: kWhiteColor.withValues(alpha: 0.8),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _CollectionCard extends StatefulWidget {
   const _CollectionCard({
     required this.title,
@@ -238,9 +398,10 @@ class _CollectionCardState extends State<_CollectionCard> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: _hovered
-                      ? kPrimaryColor.withValues(alpha: 0.45)
-                      : kWhiteColor.withValues(alpha: 0.18),
+                  color:
+                      _hovered
+                          ? kPrimaryColor.withValues(alpha: 0.45)
+                          : kWhiteColor.withValues(alpha: 0.18),
                 ),
                 // no selection concept here; hover/press shadow now owned by MotionCard
               ),

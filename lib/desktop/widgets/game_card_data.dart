@@ -300,8 +300,11 @@ class GameCardData {
 }
 
 bool _isGamebasePreviewGame(GamesTourModel game) {
+  if (game.source == GameSource.gamebase) return true;
+
   final marker = game.roundId.trim().toLowerCase();
   return marker == 'gamebase_search' ||
+      marker == 'gamebase-miniatures' ||
       marker == 'twic_profile' ||
       marker == 'twic_event';
 }

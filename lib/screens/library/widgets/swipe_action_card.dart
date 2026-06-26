@@ -156,6 +156,17 @@ class _SwipeActionCardState extends State<SwipeActionCard>
     }
   }
 
+  void _handleDragCancel() {
+    // Parent gesture (e.g. vertical scroll) won the arena after our
+    // horizontal recognizer already started accumulating. Flutter fires
+    // onHorizontalDragCancel here — without resetting _dragExtent the card
+    // stays translated left forever, eating its leading padding for the rest
+    // of the session. Spring back to neutral.
+    if (_isDismissing || !widget.enabled || _isShowingHint) return;
+    if (_dragExtent == 0) return;
+    setState(() => _dragExtent = 0);
+  }
+
   Future<void> _triggerAction() async {
     if (widget.behavior == SwipeActionBehavior.dismiss) {
       await _dismissCard();
@@ -209,6 +220,7 @@ class _SwipeActionCardState extends State<SwipeActionCard>
     return GestureDetector(
       onHorizontalDragUpdate: _handleDragUpdate,
       onHorizontalDragEnd: _handleDragEnd,
+      onHorizontalDragCancel: _handleDragCancel,
       child: Stack(
         children: [
           // Background action indicator

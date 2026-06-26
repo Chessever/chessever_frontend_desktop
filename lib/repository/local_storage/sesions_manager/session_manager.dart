@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/repository/local_storage/local_storage_repository.dart';
-import 'package:chessever/screens/authentication/auth_screen_provider.dart';
+import 'package:chessever/providers/auth_screen_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';

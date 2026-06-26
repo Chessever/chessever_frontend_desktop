@@ -247,6 +247,9 @@ class PlayerOpeningTreeIndex {
     String key,
     PlayerOpeningTreeFilterCriteria filters,
   ) {
+    if (gamesByFen.isEmpty && gameRowsById.isNotEmpty) {
+      return _replayRowsForFenKey(key, filters: filters);
+    }
     final refs = gamesByFen[key] ?? const <PlayerOpeningTreeGameRef>[];
     if (!filters.hasFilters) return refs;
     return refs
@@ -271,6 +274,24 @@ class PlayerOpeningTreeIndex {
     final row = gameRowsById[ref.gameId];
     if (row == null) return false;
     return _nextUciForRef(row, ref) == uci;
+  }
+
+  List<PlayerOpeningTreeGameRef> _replayRowsForFenKey(
+    String key, {
+    required PlayerOpeningTreeFilterCriteria filters,
+  }) {
+    final refs = <PlayerOpeningTreeGameRef>[];
+    for (final entry in gameRowsById.entries) {
+      final row = entry.value;
+      if (filters.hasFilters && !filters.matches(row)) continue;
+      final ref = _replayRowForFenKey(
+        gameId: entry.key,
+        row: row,
+        fenKey: key,
+      );
+      if (ref != null) refs.add(ref);
+    }
+    return List<PlayerOpeningTreeGameRef>.unmodifiable(refs);
   }
 
   static int _compareRows(
@@ -694,7 +715,9 @@ class PlayerOpeningTreeGamesIndex {
 }
 
 String _fenKey(String fen) =>
-    fen.trim().split(RegExp(r'\s+')).take(4).join(' ');
+    fen.trim().split(RegExp(r'\s+')).take(2).join(' ');
+
+String playerOpeningTreeFenKey(String fen) => _fenKey(fen);
 
 Future<PlayerOpeningTreeGamesIndex> buildPlayerOpeningGamesIndexBatchAsync(
   List<Map<String, dynamic>> rows,
@@ -763,7 +786,10 @@ PlayerOpeningTreeGamesIndex _buildPlayerOpeningGamesIndexBatch(
     final line = <String>[
       for (final move in game.mainline) move.uci.trim().toLowerCase(),
     ].where((m) => m.isNotEmpty).toList(growable: false);
-    gameRowsById[gameId] = _compactGameRow(normalizedRow, line);
+    gameRowsById[gameId] = _compactGameRow(
+      <String, dynamic>{...normalizedRow, 'startingFen': game.startingFen},
+      line,
+    );
 
     var previousFen =
         game.startingFen.trim().isEmpty ? Chess.initial.fen : game.startingFen;
@@ -1015,6 +1041,7 @@ Map<String, dynamic> _compactGameRow(
     'group_broadcast_name': row['group_broadcast_name'],
     'event': row['event'],
     'site': row['site'],
+    'startingFen': row['startingFen'],
     'line': List<String>.unmodifiable(line),
   };
   compact.removeWhere((_, value) => value == null);
@@ -1075,6 +1102,52 @@ String? _nextUciForRef(Map<String, dynamic> row, PlayerOpeningTreeGameRef ref) {
   final line = _lineForRow(row);
   if (ref.ply < 0 || ref.ply >= line.length) return null;
   return line[ref.ply];
+}
+
+PlayerOpeningTreeGameRef? _replayRowForFenKey({
+  required String gameId,
+  required Map<String, dynamic> row,
+  required String fenKey,
+}) {
+  final line = _lineForRow(row);
+  final startingFen = _startingFenForRow(row);
+  Position position;
+  try {
+    position = Chess.fromSetup(
+      Setup.parseFen(startingFen),
+      ignoreImpossibleCheck: true,
+    );
+  } on Object {
+    return null;
+  }
+
+  PlayerOpeningTreeGameRef? latest;
+  for (var ply = 0; ply <= line.length; ply++) {
+    final currentFen = position.fen;
+    if (_fenKey(currentFen) == fenKey) {
+      latest = PlayerOpeningTreeGameRef(
+        gameId: gameId,
+        fen: currentFen,
+        ply: ply,
+      );
+    }
+    if (ply == line.length) break;
+
+    try {
+      position = position.play(NormalMove.fromUci(line[ply]));
+    } on Object {
+      break;
+    }
+  }
+  return latest;
+}
+
+String _startingFenForRow(Map<String, dynamic> row) {
+  final startingFen = row['startingFen']?.toString().trim();
+  if (startingFen != null && startingFen.isNotEmpty) return startingFen;
+  final fen = row['fen']?.toString().trim();
+  if (fen != null && fen.isNotEmpty) return fen;
+  return Chess.initial.fen;
 }
 
 String? _playerColorForRow(Map<String, dynamic> row, String playerId) {

@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 16.4.1+168
+version: 17.0.0+170
 
 environment:
   sdk: ^3.7.2
@@ -84,6 +84,7 @@ dependencies:
   # Engine download/install pipeline: zip + tar extraction for Stockfish /
   # lc0 / Maia release archives.
   archive: ^4.0.7
+  libcompress: ^1.2.0
 
   #secure key storage
   flutter_dotenv: ^5.1.0
@@ -193,6 +194,7 @@ dev_dependencies:
   patrol: ^4.3.0
   patrol_finders: ^3.1.0
   xml: ^6.6.1
+  yaml: ^3.1.3
 
 
 dependency_overrides:
@@ -206,6 +208,12 @@ dependency_overrides:
 
 # The following section is specific to Flutter packages.
 flutter:
+  # Flutter's Swift Package Manager integration currently emits malformed
+  # macOS PackageProduct.framework bundles for this project under Xcode 17.
+  # Keep plugin integration on CocoaPods until the Flutter/SPM path is stable.
+  config:
+    enable-swift-package-manager: false
+
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.

@@ -179,6 +179,7 @@ class NotationLadderView extends StatefulWidget {
     this.onClearUserNags,
     this.onToggleMoveNag,
     this.onClearMoveNags,
+    this.onClearAllCommentary,
     this.onSetMoveComment,
     this.onPromoteVariation,
     this.onDeleteVariation,
@@ -256,6 +257,7 @@ class NotationLadderView extends StatefulWidget {
   /// zero-based mainline NAG overlay.
   final void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag;
   final void Function(ChessMovePointer pointer)? onClearMoveNags;
+  final VoidCallback? onClearAllCommentary;
 
   /// Set or clear a comment attached to a move pointer. Passing null or an
   /// empty string clears the rendered comment block.
@@ -312,6 +314,7 @@ class _NotationLadderViewState extends State<NotationLadderView> {
   // identity because callers may rebuild the same logical game.
   String? _lastTreeSignature;
   NotationLayoutMode _layoutMode = NotationLayoutMode.ladder;
+  bool _annotationsHidden = false;
 
   @override
   void initState() {
@@ -431,6 +434,12 @@ class _NotationLadderViewState extends State<NotationLadderView> {
     } else {
       _collapseAllVariations();
     }
+  }
+
+  void _toggleAllAnnotationsFromMenu() {
+    setState(() {
+      _annotationsHidden = !_annotationsHidden;
+    });
   }
 
   void _scrollActiveIntoView() {
@@ -612,6 +621,8 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                                       widget.onSetUserQualityNag,
                                   onToggleUserNag: widget.onToggleUserNag,
                                   onToggleMoveNag: widget.onToggleMoveNag,
+                                  onClearUserNags: widget.onClearUserNags,
+                                  onClearMoveNags: widget.onClearMoveNags,
                                   onSetMoveComment: widget.onSetMoveComment,
                                   onPromoteVariation: widget.onPromoteVariation,
                                   onDeleteVariation: widget.onDeleteVariation,
@@ -653,6 +664,8 @@ class _NotationLadderViewState extends State<NotationLadderView> {
                             onSetUserQualityNag: widget.onSetUserQualityNag,
                             onToggleUserNag: widget.onToggleUserNag,
                             onToggleMoveNag: widget.onToggleMoveNag,
+                            onClearUserNags: widget.onClearUserNags,
+                            onClearMoveNags: widget.onClearMoveNags,
                             onSetMoveComment: widget.onSetMoveComment,
                             onPromoteVariation: widget.onPromoteVariation,
                             onDeleteVariation: widget.onDeleteVariation,
@@ -1030,15 +1043,17 @@ class _LadderNagPalette extends StatelessWidget {
     [
       _PaletteNag(17, _LadderNagKind.evaluation, '∓'),
       _PaletteNag(19, _LadderNagKind.evaluation, '-+'),
+      _PaletteNag(44, _LadderNagKind.evaluation, '=/∞'),
       _PaletteNag(40, _LadderNagKind.idea, '↑'),
       _PaletteNag(36, _LadderNagKind.idea, '→'),
       _PaletteNag(132, _LadderNagKind.idea, '⇆'),
-      _PaletteNag(32, _LadderNagKind.idea, '⟳'),
     ],
     [
+      _PaletteNag(32, _LadderNagKind.idea, '⟳'),
       _PaletteNag(7, _LadderNagKind.quality, '□'),
       _PaletteNag(146, _LadderNagKind.idea, 'N'),
       _PaletteNag(140, _LadderNagKind.idea, '∆'),
+      _PaletteNag(138, _LadderNagKind.idea, '⏱'),
     ],
   ];
 
@@ -1210,6 +1225,8 @@ class _LineBlock extends StatelessWidget {
     required this.onSetUserQualityNag,
     required this.onToggleUserNag,
     required this.onToggleMoveNag,
+    required this.onClearUserNags,
+    required this.onClearMoveNags,
     required this.onSetMoveComment,
     required this.onPromoteVariation,
     required this.onDeleteVariation,
@@ -1242,6 +1259,8 @@ class _LineBlock extends StatelessWidget {
   final void Function(int ply, int? nag)? onSetUserQualityNag;
   final void Function(int ply, int nag)? onToggleUserNag;
   final void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag;
+  final void Function(int ply)? onClearUserNags;
+  final void Function(ChessMovePointer pointer)? onClearMoveNags;
   final void Function(ChessMovePointer pointer, String? comment)?
   onSetMoveComment;
   final void Function(ChessMovePointer)? onPromoteVariation;
@@ -1353,6 +1372,9 @@ class _LineBlock extends StatelessWidget {
               (depth == 0 && isMainlineRoot) ? onToggleUserNag : null,
           onToggleMoveNag:
               (depth > 0 || !isMainlineRoot) ? onToggleMoveNag : null,
+          onClearUserNags:
+              (depth == 0 && isMainlineRoot) ? onClearUserNags : null,
+          onClearMoveNags: onClearMoveNags,
           onSetWhiteComment:
               (whitePointer != null && onSetMoveComment != null)
                   ? (comment) => onSetMoveComment!(whitePointer!, comment)
@@ -1374,7 +1396,13 @@ class _LineBlock extends StatelessWidget {
       );
 
       void appendMoveComments(ChessMove? move) {
-        if (move == null) return;
+        if (move == null ||
+            (context
+                    .findAncestorStateOfType<_NotationLadderViewState>()
+                    ?._annotationsHidden ??
+                false)) {
+          return;
+        }
         final sourceLabel = _sourceLabelFromComments(move.comments);
         if (sourceLabel != null) {
           pairChildren.add(
@@ -1447,6 +1475,8 @@ class _LineBlock extends StatelessWidget {
                 onSetUserQualityNag: onSetUserQualityNag,
                 onToggleUserNag: onToggleUserNag,
                 onToggleMoveNag: onToggleMoveNag,
+                onClearUserNags: onClearUserNags,
+                onClearMoveNags: onClearMoveNags,
                 onSetMoveComment: onSetMoveComment,
                 onPromoteVariation: onPromoteVariation,
                 onDeleteVariation: onDeleteVariation,
@@ -1872,6 +1902,8 @@ class _InlineNotationBlock extends StatelessWidget {
     required this.onSetUserQualityNag,
     required this.onToggleUserNag,
     required this.onToggleMoveNag,
+    required this.onClearUserNags,
+    required this.onClearMoveNags,
     required this.onSetMoveComment,
     required this.onPromoteVariation,
     required this.onDeleteVariation,
@@ -1902,6 +1934,8 @@ class _InlineNotationBlock extends StatelessWidget {
   final void Function(int ply, int? nag)? onSetUserQualityNag;
   final void Function(int ply, int nag)? onToggleUserNag;
   final void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag;
+  final void Function(int ply)? onClearUserNags;
+  final void Function(ChessMovePointer pointer)? onClearMoveNags;
   final void Function(ChessMovePointer pointer, String? comment)?
   onSetMoveComment;
   final void Function(ChessMovePointer)? onPromoteVariation;
@@ -1938,6 +1972,11 @@ class _InlineNotationBlock extends StatelessWidget {
     // the analyst's authored group without any forced extra line break
     // between mainline runs.
     final spans = <InlineSpan>[];
+    final annotationsHidden =
+        context
+            .findAncestorStateOfType<_NotationLadderViewState>()
+            ?._annotationsHidden ??
+        false;
 
     final commentColor = depth == 0 ? kCommentaryGreen : kCommentaryGreenDim;
     final commentStyle = TextStyle(
@@ -1993,6 +2032,8 @@ class _InlineNotationBlock extends StatelessWidget {
         onSetUserQualityNag: isMainlineMove ? onSetUserQualityNag : null,
         onToggleUserNag: isMainlineMove ? onToggleUserNag : null,
         onToggleMoveNag: isMainlineMove ? null : onToggleMoveNag,
+        onClearUserNags: isMainlineMove ? onClearUserNags : null,
+        onClearMoveNags: onClearMoveNags,
         onSetComment:
             onSetMoveComment == null
                 ? null
@@ -2039,10 +2080,12 @@ class _InlineNotationBlock extends StatelessWidget {
         );
       }
 
-      for (final comment in _cleanPgnComments(move.comments)) {
-        // Bare text — flows with the move stream and breaks at word
-        // boundaries when the column wraps, instead of forcing its own row.
-        spans.add(TextSpan(text: '$comment ', style: commentStyle));
+      if (!annotationsHidden) {
+        for (final comment in _cleanPgnComments(move.comments)) {
+          // Bare text — flows with the move stream and breaks at word
+          // boundaries when the column wraps, instead of forcing its own row.
+          spans.add(TextSpan(text: '$comment ', style: commentStyle));
+        }
       }
 
       final vars = move.variations;
@@ -2098,6 +2141,8 @@ class _InlineNotationBlock extends StatelessWidget {
                 onSetUserQualityNag: onSetUserQualityNag,
                 onToggleUserNag: onToggleUserNag,
                 onToggleMoveNag: onToggleMoveNag,
+                onClearUserNags: onClearUserNags,
+                onClearMoveNags: onClearMoveNags,
                 onSetMoveComment: onSetMoveComment,
                 onPromoteVariation: onPromoteVariation,
                 onDeleteVariation: onDeleteVariation,
@@ -2160,6 +2205,8 @@ class _InlineVariationBlock extends StatelessWidget {
     required this.onSetUserQualityNag,
     required this.onToggleUserNag,
     required this.onToggleMoveNag,
+    required this.onClearUserNags,
+    required this.onClearMoveNags,
     required this.onSetMoveComment,
     required this.onPromoteVariation,
     required this.onDeleteVariation,
@@ -2192,6 +2239,8 @@ class _InlineVariationBlock extends StatelessWidget {
   final void Function(int ply, int? nag)? onSetUserQualityNag;
   final void Function(int ply, int nag)? onToggleUserNag;
   final void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag;
+  final void Function(int ply)? onClearUserNags;
+  final void Function(ChessMovePointer pointer)? onClearMoveNags;
   final void Function(ChessMovePointer pointer, String? comment)?
   onSetMoveComment;
   final void Function(ChessMovePointer)? onPromoteVariation;
@@ -2275,6 +2324,8 @@ class _InlineVariationBlock extends StatelessWidget {
             onSetUserQualityNag: null,
             onToggleUserNag: null,
             onToggleMoveNag: onToggleMoveNag,
+            onClearUserNags: null,
+            onClearMoveNags: onClearMoveNags,
             onSetComment:
                 onSetMoveComment == null
                     ? null
@@ -2332,6 +2383,8 @@ class _InlineVariationBlock extends StatelessWidget {
               onSetUserQualityNag: onSetUserQualityNag,
               onToggleUserNag: onToggleUserNag,
               onToggleMoveNag: onToggleMoveNag,
+              onClearUserNags: onClearUserNags,
+              onClearMoveNags: onClearMoveNags,
               onSetMoveComment: onSetMoveComment,
               onPromoteVariation: onPromoteVariation,
               onDeleteVariation: onDeleteVariation,
@@ -2417,6 +2470,8 @@ class _InlineVariationBlock extends StatelessWidget {
             onSetUserQualityNag: null,
             onToggleUserNag: null,
             onToggleMoveNag: onToggleMoveNag,
+            onClearUserNags: null,
+            onClearMoveNags: onClearMoveNags,
             onSetComment:
                 onSetMoveComment == null
                     ? null
@@ -2472,6 +2527,8 @@ class _InlineVariationBlock extends StatelessWidget {
               onSetUserQualityNag: onSetUserQualityNag,
               onToggleUserNag: onToggleUserNag,
               onToggleMoveNag: onToggleMoveNag,
+              onClearUserNags: onClearUserNags,
+              onClearMoveNags: onClearMoveNags,
               onSetMoveComment: onSetMoveComment,
               onPromoteVariation: onPromoteVariation,
               onDeleteVariation: onDeleteVariation,
@@ -2525,6 +2582,8 @@ class _InlineMove extends StatelessWidget {
     required this.onSetUserQualityNag,
     required this.onToggleUserNag,
     required this.onToggleMoveNag,
+    required this.onClearUserNags,
+    required this.onClearMoveNags,
     required this.onSetComment,
     required this.onPromoteVariation,
     required this.onDeleteVariation,
@@ -2547,6 +2606,8 @@ class _InlineMove extends StatelessWidget {
   final void Function(int ply, int? nag)? onSetUserQualityNag;
   final void Function(int ply, int nag)? onToggleUserNag;
   final void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag;
+  final void Function(int ply)? onClearUserNags;
+  final void Function(ChessMovePointer pointer)? onClearMoveNags;
   final void Function(String? comment)? onSetComment;
   final void Function(ChessMovePointer)? onPromoteVariation;
   final void Function(ChessMovePointer)? onDeleteVariation;
@@ -2606,6 +2667,15 @@ class _InlineMove extends StatelessWidget {
                   ? (nag) => onToggleUserNag!(pointer.last, nag)
                   : depth > 0 && onToggleMoveNag != null
                   ? (nag) => onToggleMoveNag!(pointer, nag)
+                  : null,
+          onClearNags:
+              depth == 0 && (onClearUserNags != null || onClearMoveNags != null)
+                  ? () {
+                    onClearUserNags?.call(pointer.last);
+                    onClearMoveNags?.call(pointer);
+                  }
+                  : onClearMoveNags != null
+                  ? () => onClearMoveNags!(pointer)
                   : null,
           onSetComment: onSetComment,
           onPromoteVariation:
@@ -2973,6 +3043,8 @@ class _PairRow extends StatelessWidget {
     required this.onSetUserQualityNag,
     required this.onToggleUserNag,
     required this.onToggleMoveNag,
+    required this.onClearUserNags,
+    required this.onClearMoveNags,
     required this.onSetWhiteComment,
     required this.onSetBlackComment,
     required this.onPromoteVariation,
@@ -3005,6 +3077,8 @@ class _PairRow extends StatelessWidget {
   final void Function(int ply, int? nag)? onSetUserQualityNag;
   final void Function(int ply, int nag)? onToggleUserNag;
   final void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag;
+  final void Function(int ply)? onClearUserNags;
+  final void Function(ChessMovePointer pointer)? onClearMoveNags;
   final void Function(String? comment)? onSetWhiteComment;
   final void Function(String? comment)? onSetBlackComment;
   final void Function(ChessMovePointer)? onPromoteVariation;
@@ -3098,6 +3172,13 @@ class _PairRow extends StatelessWidget {
                                 : onToggleMoveNag == null
                                 ? null
                                 : (nag) => onToggleMoveNag!(whitePointer!, nag),
+                        onClearNags:
+                            onClearUserNags != null || onClearMoveNags != null
+                                ? () {
+                                  onClearUserNags?.call(whitePointer!.last);
+                                  onClearMoveNags?.call(whitePointer!);
+                                }
+                                : null,
                         onSetComment: onSetWhiteComment,
                         onPromoteVariation:
                             onPromoteVariation == null ||
@@ -3152,6 +3233,13 @@ class _PairRow extends StatelessWidget {
                                 : onToggleMoveNag == null
                                 ? null
                                 : (nag) => onToggleMoveNag!(blackPointer!, nag),
+                        onClearNags:
+                            onClearUserNags != null || onClearMoveNags != null
+                                ? () {
+                                  onClearUserNags?.call(blackPointer!.last);
+                                  onClearMoveNags?.call(blackPointer!);
+                                }
+                                : null,
                         onSetComment: onSetBlackComment,
                         onPromoteVariation:
                             onPromoteVariation == null ||
@@ -3195,6 +3283,7 @@ class _LadderChip extends StatefulWidget {
     required this.userHasQualityNag,
     required this.onSetUserQualityNag,
     required this.onToggleUserNag,
+    required this.onClearNags,
     required this.onSetComment,
     required this.onPromoteVariation,
     required this.onDeleteVariation,
@@ -3221,6 +3310,7 @@ class _LadderChip extends StatefulWidget {
   final bool userHasQualityNag;
   final void Function(int? nag)? onSetUserQualityNag;
   final void Function(int nag)? onToggleUserNag;
+  final VoidCallback? onClearNags;
   final void Function(String? comment)? onSetComment;
   final VoidCallback? onPromoteVariation;
   final VoidCallback? onDeleteVariation;
@@ -3265,6 +3355,8 @@ class _LadderChipState extends State<_LadderChip> {
     final canTrim = widget.onTrimFromHere != null;
     final notationState =
         context.findAncestorStateOfType<_NotationLadderViewState>();
+    final canClearAllCommentary =
+        notationState?.widget.onClearAllCommentary != null;
 
     final selected = await showDesktopContextMenu<Object>(
       context: context,
@@ -3293,7 +3385,11 @@ class _LadderChipState extends State<_LadderChip> {
           icon: Icons.format_quote_rounded,
           label: 'Copy FEN',
         ),
-        if (canTrim || canDeleteVariation || canComment || canAnnotate) ...[
+        if (canTrim ||
+            canDeleteVariation ||
+            canComment ||
+            canAnnotate ||
+            canClearAllCommentary) ...[
           const DesktopContextMenuDivider<Object>(),
           DesktopContextSubmenu<Object>(
             icon: Icons.delete_outline_rounded,
@@ -3330,7 +3426,7 @@ class _LadderChipState extends State<_LadderChip> {
                 icon: Icons.comments_disabled_outlined,
                 label: 'Delete All Commentary',
                 shortcut: 'Shift+Ctrl+Y',
-                enabled: canComment || canAnnotate,
+                enabled: canClearAllCommentary || canComment || canAnnotate,
                 destructive: true,
               ),
               DesktopContextMenuItem<Object>(
@@ -3362,6 +3458,17 @@ class _LadderChipState extends State<_LadderChip> {
                       ? 'Add comment'
                       : 'Edit comment',
             ),
+          DesktopContextMenuItem<Object>(
+            value: _LadderAction.toggleAllAnnotations,
+            icon:
+                (notationState?._annotationsHidden ?? false)
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+            label:
+                (notationState?._annotationsHidden ?? false)
+                    ? 'Show All Annotations'
+                    : 'Hide All Annotations',
+          ),
           _ladderNagPaletteEntry(
             activeNags: widget.nags.toSet(),
             canQualityAnnotate: canQualityAnnotate,
@@ -3382,6 +3489,17 @@ class _LadderChipState extends State<_LadderChip> {
                 (widget.commentText ?? '').trim().isEmpty
                     ? 'Add comment'
                     : 'Edit comment',
+          ),
+          DesktopContextMenuItem<Object>(
+            value: _LadderAction.toggleAllAnnotations,
+            icon:
+                (notationState?._annotationsHidden ?? false)
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+            label:
+                (notationState?._annotationsHidden ?? false)
+                    ? 'Show All Annotations'
+                    : 'Hide All Annotations',
           ),
         ],
       ],
@@ -3416,12 +3534,19 @@ class _LadderChipState extends State<_LadderChip> {
       case _LadderAction.deleteVariation:
         widget.onDeleteVariation?.call();
       case _LadderAction.deleteAllCommentary:
-        widget.onSetComment?.call(null);
-        widget.onSetUserQualityNag?.call(null);
+        final clearAll = notationState?.widget.onClearAllCommentary;
+        if (clearAll != null) {
+          clearAll();
+        } else {
+          widget.onSetComment?.call(null);
+          widget.onClearNags?.call();
+        }
       case _LadderAction.deleteTextCommentary:
         widget.onSetComment?.call(null);
       case _LadderAction.clearAnnotation:
         widget.onSetUserQualityNag?.call(null);
+      case _LadderAction.toggleAllAnnotations:
+        notationState?._toggleAllAnnotationsFromMenu();
       case _LadderAction.editComment:
         if (!context.mounted) return;
         final next = await showMoveCommentEditor(
@@ -3461,7 +3586,12 @@ class _LadderChipState extends State<_LadderChip> {
         widget.selected
             ? kPrimaryColor
             : (_hovered ? kBlack3Color : Colors.transparent);
-    final nags = _resolvedNags();
+    final annotationsHidden =
+        context
+            .findAncestorStateOfType<_NotationLadderViewState>()
+            ?._annotationsHidden ??
+        false;
+    final nags = annotationsHidden ? const <NagDisplay>[] : _resolvedNags();
     final firstQualityNag = nags.cast<NagDisplay?>().firstWhere(
       (d) => d?.isQuality == true,
       orElse: () => null,
@@ -3607,7 +3737,7 @@ class _LadderChipState extends State<_LadderChip> {
     // Main notation hover must stay passive: do not preview or jump the
     // board until the user explicitly clicks a move. Engine PVs own their
     // fixed preview board separately in the analysis panel.
-    final comment = widget.annotationComment;
+    final comment = annotationsHidden ? null : widget.annotationComment;
     if (comment != null && comment.trim().isNotEmpty) {
       return DesktopTooltip(message: comment, child: chip);
     }
@@ -3734,6 +3864,7 @@ enum _LadderAction {
   deleteAllCommentary,
   deleteTextCommentary,
   clearAnnotation,
+  toggleAllAnnotations,
   editComment,
 }
 
