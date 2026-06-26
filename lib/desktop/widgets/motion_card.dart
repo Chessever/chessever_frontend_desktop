@@ -135,6 +135,19 @@ class _MotionCardState extends State<MotionCard> {
   bool _hovered = false;
   bool _pressed = false;
 
+  void _setInteractionState({bool? hovered, bool? pressed}) {
+    if (!mounted) return;
+
+    final nextHovered = hovered ?? _hovered;
+    final nextPressed = pressed ?? _pressed;
+    if (nextHovered == _hovered && nextPressed == _pressed) return;
+
+    setState(() {
+      _hovered = nextHovered;
+      _pressed = nextPressed;
+    });
+  }
+
   /// Maps an intensity `t` in [0,1] (proximity nearness, or binary hover) plus
   /// the press flag to the dock target.
   _Dock _dockFor(double t) {
@@ -241,17 +254,14 @@ class _MotionCardState extends State<MotionCard> {
     }
 
     Widget content = MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
+      onEnter: (_) => _setInteractionState(hovered: true),
       onExit:
-          (_) => setState(() {
-            _hovered = false;
-            _pressed = false;
-          }),
+          (_) => _setInteractionState(hovered: false, pressed: false),
       child: Listener(
         behavior: HitTestBehavior.translucent,
-        onPointerDown: (_) => setState(() => _pressed = true),
-        onPointerUp: (_) => setState(() => _pressed = false),
-        onPointerCancel: (_) => setState(() => _pressed = false),
+        onPointerDown: (_) => _setInteractionState(pressed: true),
+        onPointerUp: (_) => _setInteractionState(pressed: false),
+        onPointerCancel: (_) => _setInteractionState(pressed: false),
         child: motion,
       ),
     );
