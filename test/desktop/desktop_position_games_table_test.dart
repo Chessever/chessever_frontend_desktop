@@ -410,6 +410,7 @@ void main() {
 
     setHarnessState!(() => active = true);
     await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
     await tester.pumpAndSettle();
 
     expect(repository.positionGameCalls, hasLength(1));
@@ -473,8 +474,13 @@ void main() {
       setHarnessState!(() => fen = afterE4);
       await tester.pump();
 
-      expect(repository.requests, hasLength(2));
+      expect(repository.requests, hasLength(1));
       expect(find.text('Carlsen'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+
+      await tester.pump(const Duration(seconds: 2));
+
+      expect(repository.requests, hasLength(2));
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
 
       repository.requests.last.complete(
@@ -491,6 +497,70 @@ void main() {
       expect(find.byType(LinearProgressIndicator), findsNothing);
     },
   );
+
+  testWidgets('debounces rapid position changes before fetching games', (
+    tester,
+  ) async {
+    final repository = _DeferredGamebaseRepository();
+    var fen = _initialFen;
+    StateSetter? setHarnessState;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          gamebaseRepositoryProvider.overrideWithValue(repository),
+          boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            backgroundColor: kBackgroundColor,
+            body: StatefulBuilder(
+              builder: (context, setState) {
+                setHarnessState = setState;
+                return SizedBox(
+                  width: 720,
+                  height: 520,
+                  child: DesktopPositionGamesTable(fen: fen),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    expect(repository.requests, hasLength(1));
+    repository.requests.single.complete(
+      _singlePositionGamesResponse(
+        id: 'gamebase-old',
+        white: 'Carlsen',
+        black: 'Nakamura',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final afterE4 = Chess.initial.play(NormalMove.fromUci('e2e4'));
+    final afterE5 = afterE4.play(NormalMove.fromUci('e7e5'));
+    final afterNf3 = afterE5.play(NormalMove.fromUci('g1f3')).fen;
+
+    setHarnessState!(() => fen = afterE4.fen);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 700));
+    setHarnessState!(() => fen = afterE5.fen);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 700));
+    setHarnessState!(() => fen = afterNf3);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1999));
+
+    expect(repository.requests, hasLength(1));
+
+    await tester.pump(const Duration(milliseconds: 1));
+
+    expect(repository.requests, hasLength(2));
+    expect(repository.requestFens.last, afterNf3);
+  });
 
   testWidgets('right-click shows context menu without opening game tab', (
     tester,
@@ -1022,6 +1092,7 @@ class _DeferredGamebaseRepository extends GamebaseRepository {
 
   final List<_DeferredPositionGamesRequest> requests =
       <_DeferredPositionGamesRequest>[];
+  final List<String> requestFens = <String>[];
 
   @override
   Future<GamebaseSearchQueryResponse> getPositionGames({
@@ -1043,6 +1114,7 @@ class _DeferredGamebaseRepository extends GamebaseRepository {
     int pageSize = 20,
     int notationPlies = 0,
   }) {
+    requestFens.add(fen);
     final request = _DeferredPositionGamesRequest();
     requests.add(request);
     return request.future;

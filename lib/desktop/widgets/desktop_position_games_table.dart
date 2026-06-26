@@ -289,6 +289,7 @@ class _DesktopPositionGamesTableState
       <String, List<String>>{};
   final Set<String> _loadingFullContinuations = <String>{};
   Timer? _localTreeRefreshDebounce;
+  Timer? _resetFetchDebounce;
   String? _lastPreviewedRowId;
   bool _lastPreviewAutoplay = true;
   int? _lastPreviewStep;
@@ -360,21 +361,21 @@ class _DesktopPositionGamesTableState
       );
     }
     if (fenChanged || movesChanged || uciChanged || modeChanged) {
+      _cancelPendingResetFetch(invalidate: true);
       if (!widget.active) {
         _needsRefresh = true;
         _isInitialLoading = false;
-        _requestToken += 1;
         _fullContinuationCache.clear();
         _loadingFullContinuations.clear();
         return;
       }
-      _fetchPage(reset: true);
+      _scheduleResetFetch();
       return;
     }
     if (activeChanged && widget.active) {
       if (_needsRefresh || !_hasLoadedCurrentQuery()) {
         _needsRefresh = false;
-        _fetchPage(reset: true);
+        _scheduleResetFetch();
       }
     }
   }
@@ -382,6 +383,7 @@ class _DesktopPositionGamesTableState
   @override
   void dispose() {
     _localTreeRefreshDebounce?.cancel();
+    _resetFetchDebounce?.cancel();
     widget.controller?._detach(this);
     widget.externalScrollController?.removeListener(_onScroll);
     _scroll.removeListener(_onScroll);
@@ -398,6 +400,7 @@ class _DesktopPositionGamesTableState
 
   void _onScroll() {
     if (!widget.active) return;
+    if (_resetFetchDebounce?.isActive ?? false) return;
     if (_isLoadingMore || !_hasMore) return;
     final controller = _activeScrollController;
     if (!controller.hasClients) return;
@@ -405,6 +408,24 @@ class _DesktopPositionGamesTableState
     if (pos.pixels >= pos.maxScrollExtent - _scrollPrefetchExtent) {
       _fetchPage(reset: false);
     }
+  }
+
+  void _cancelPendingResetFetch({bool invalidate = false}) {
+    _resetFetchDebounce?.cancel();
+    _resetFetchDebounce = null;
+    if (invalidate) _requestToken += 1;
+  }
+
+  void _scheduleResetFetch() {
+    _cancelPendingResetFetch();
+    _resetFetchDebounce = Timer(const Duration(seconds: 2), () {
+      _resetFetchDebounce = null;
+      if (!mounted || !widget.active) {
+        _needsRefresh = true;
+        return;
+      }
+      _fetchPage(reset: true);
+    });
   }
 
   Future<void> _fetchPage({
@@ -416,6 +437,7 @@ class _DesktopPositionGamesTableState
       return;
     }
     _needsRefresh = false;
+    if (reset) _cancelPendingResetFetch();
     final treeWaitMessage = _playerTreeWaitMessage();
     if (treeWaitMessage != null) {
       _requestToken += 1;
