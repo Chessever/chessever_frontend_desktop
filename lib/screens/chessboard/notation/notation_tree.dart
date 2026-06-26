@@ -189,12 +189,29 @@ String exportGameToPgn(ChessGame game) {
 const _standardStartingFen =
     'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
+const _pgnHeaderOrder = <String>[
+  'Event',
+  'Site',
+  'Date',
+  'Round',
+  'White',
+  'Black',
+  'Result',
+  'WhiteElo',
+  'BlackElo',
+  'WhiteTitle',
+  'BlackTitle',
+  'WhiteFideId',
+  'BlackFideId',
+  'ECO',
+  'Opening',
+  'EventDate',
+];
+
 Map<String, String> _buildPgnHeaders(ChessGame game) {
-  final sortedEntries =
-      game.metadata.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
   final headers = <String, String>{};
 
-  for (final entry in sortedEntries) {
+  for (final entry in game.metadata.entries) {
     headers[entry.key] = entry.value?.toString() ?? '';
   }
 
@@ -210,7 +227,24 @@ Map<String, String> _buildPgnHeaders(ChessGame game) {
     headers.putIfAbsent('FEN', () => game.startingFen);
   }
 
-  return headers;
+  return _orderedPgnHeaders(headers);
+}
+
+Map<String, String> _orderedPgnHeaders(Map<String, String> headers) {
+  final ordered = <String, String>{};
+
+  for (final key in _pgnHeaderOrder) {
+    final value = headers[key];
+    if (value != null) ordered[key] = value;
+  }
+
+  final remainingKeys =
+      headers.keys.where((key) => !ordered.containsKey(key)).toList()..sort();
+  for (final key in remainingKeys) {
+    ordered[key] = headers[key]!;
+  }
+
+  return ordered;
 }
 
 void _appendLineToPgnNode(PgnNode<PgnNodeData> parent, ChessLine line) {

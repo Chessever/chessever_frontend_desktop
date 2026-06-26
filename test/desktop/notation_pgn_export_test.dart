@@ -12,6 +12,50 @@ void main() {
     expect(pgn, contains('( 1... c5 )'));
     expect(pgn, contains('1. e4 e5 ( 1... c5 ) 2. Nf3 Nc6'));
   });
+
+  test('exportGameToPgn writes ChessBase-friendly header order', () {
+    final game = _sampleGame().copyWith(
+      metadata: const <String, dynamic>{
+        'Black': 'Radjabov,T',
+        'BlackElo': '2689',
+        'BlackFideId': '13400924',
+        'BlackTitle': 'GM',
+        'Date': '2026.05.23',
+        'ECO': 'C49',
+        'Event': '75th Ann. Karpov 2026',
+        'EventDate': '2026.05.21',
+        'Opening': 'Four knights',
+        'Result': '0-1',
+        'Round': '7.3',
+        'Site': 'Moscow RUS',
+        'White': 'Esipenko,Andrey',
+        'WhiteElo': '2684',
+        'WhiteFideId': '24175439',
+        'WhiteTitle': 'GM',
+      },
+    );
+
+    final pgn = exportGameToPgn(game);
+
+    expect(pgn.split('\n').take(16).toList(), [
+      '[Event "75th Ann. Karpov 2026"]',
+      '[Site "Moscow RUS"]',
+      '[Date "2026.05.23"]',
+      '[Round "7.3"]',
+      '[White "Esipenko,Andrey"]',
+      '[Black "Radjabov,T"]',
+      '[Result "0-1"]',
+      '[WhiteElo "2684"]',
+      '[BlackElo "2689"]',
+      '[WhiteTitle "GM"]',
+      '[BlackTitle "GM"]',
+      '[WhiteFideId "24175439"]',
+      '[BlackFideId "13400924"]',
+      '[ECO "C49"]',
+      '[Opening "Four knights"]',
+      '[EventDate "2026.05.21"]',
+    ]);
+  });
 }
 
 ChessGame _sampleGame() {
