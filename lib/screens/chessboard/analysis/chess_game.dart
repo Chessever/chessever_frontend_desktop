@@ -11,6 +11,7 @@ class ChessGame {
   static const String metadataIsLiveKey = 'isLiveGame';
   static const String metadataAllowMainlineExtensionKey =
       'allowMainlineExtension';
+  static const String metadataGameEndingPlyIndexKey = 'gameEndingPlyIndex';
 
   final String gameId;
   final String startingFen;
@@ -71,6 +72,48 @@ class ChessGame {
 
   bool get allowMainlineExtension =>
       metadata[metadataAllowMainlineExtensionKey] == true;
+
+  bool get hasDecidedResult {
+    final result = (metadata['Result']?.toString() ?? '')
+        .replaceAll(RegExp(r'\s+'), '')
+        .replaceAll('½', '1/2');
+    return result == '1-0' ||
+        result == '1.0-0.0' ||
+        result == '1-0.0' ||
+        result == '0-1' ||
+        result == '0.0-1.0' ||
+        result == '0.0-1' ||
+        result == '1/2-1/2' ||
+        result == '0.5-0.5' ||
+        result == '1.0-1.0';
+  }
+
+  int? get gameEndingPlyIndex {
+    if (!hasDecidedResult || mainline.isEmpty) return null;
+    final stored = metadata[metadataGameEndingPlyIndexKey];
+    final parsed =
+        stored is int ? stored : int.tryParse(stored?.toString() ?? '');
+    if (parsed != null && parsed >= 0 && parsed < mainline.length) {
+      return parsed;
+    }
+    return mainline.length - 1;
+  }
+
+  ChessGame rememberGameEndingPlyIndex(int plyIndex) {
+    if (!hasDecidedResult || plyIndex < 0 || plyIndex >= mainline.length) {
+      return this;
+    }
+    if (gameEndingPlyIndex == plyIndex &&
+        metadata.containsKey(metadataGameEndingPlyIndexKey)) {
+      return this;
+    }
+    return copyWith(
+      metadata: <String, dynamic>{
+        ...metadata,
+        metadataGameEndingPlyIndexKey: plyIndex,
+      },
+    );
+  }
 
   String? get timeControl => metadata['TimeControl'] as String?;
 
