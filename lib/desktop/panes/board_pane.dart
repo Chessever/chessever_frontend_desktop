@@ -6222,6 +6222,7 @@ class _PlayerHeader extends ConsumerWidget {
           BackfilledFederationFlag(
             federation: federation,
             fideId: fideId,
+            playerName: name,
             width: 22,
             height: 16,
             borderRadius: BorderRadius.circular(2),
