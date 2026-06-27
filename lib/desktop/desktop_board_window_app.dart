@@ -5,6 +5,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/shell/desktop_shell.dart';
 import 'package:chessever/desktop/services/desktop_board_window_payload.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/responsive_helper.dart';
 
@@ -26,6 +27,7 @@ class DesktopBoardWindowApp extends ConsumerWidget {
       theme: AppTheme.darkTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
+      navigatorObservers: [AnalyticsService.instance.routeObserver],
       builder: (context, child) {
         ResponsiveHelper.init(context);
         return FTheme(

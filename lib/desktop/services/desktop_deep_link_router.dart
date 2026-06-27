@@ -15,6 +15,7 @@ import 'package:chessever/screens/chessboard/provider/chess_board_screen_provide
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
+import 'package:chessever/services/analytics/analytics_service.dart';
 
 @visibleForTesting
 class DesktopBroadcastDeepLink {
@@ -153,7 +154,14 @@ class DesktopDeepLinkRouter {
     if (game != null) return _handleGame(uri, game, container);
 
     final broadcast = parseDesktopBroadcastDeepLink(uri);
-    if (broadcast == null) return false;
+    if (broadcast == null) {
+      _trackDeepLink(
+        'Desktop Deep Link Ignored',
+        uri,
+        properties: {'reason': 'unsupported_route'},
+      );
+      return false;
+    }
     return _handleBroadcast(uri, broadcast, container);
   }
 
@@ -162,16 +170,38 @@ class DesktopDeepLinkRouter {
     DesktopBroadcastDeepLink broadcast,
     ProviderContainer container,
   ) async {
-    if (_shouldIgnoreDuplicateOrBusy(uri)) return true;
+    if (_shouldIgnoreDuplicateOrBusy(uri)) {
+      _trackDeepLink(
+        'Desktop Deep Link Ignored',
+        uri,
+        properties: {'link_type': 'broadcast', 'reason': 'duplicate_or_busy'},
+      );
+      return true;
+    }
+    _trackDeepLink(
+      'Desktop Deep Link Opened',
+      uri,
+      properties: {'link_type': 'broadcast'},
+    );
     _markRouting(uri);
 
     try {
       await _openBroadcast(broadcast, container);
+      _trackDeepLink(
+        'Desktop Deep Link Completed',
+        uri,
+        properties: {'link_type': 'broadcast'},
+      );
       return true;
     } catch (e, stack) {
       if (kDebugMode) {
         debugPrint('[desktop deeplink] failed to open $uri: $e\n$stack');
       }
+      _trackDeepLink(
+        'Desktop Deep Link Failed',
+        uri,
+        properties: {'link_type': 'broadcast'},
+      );
       return true;
     } finally {
       _routing = false;
@@ -183,16 +213,38 @@ class DesktopDeepLinkRouter {
     DesktopGameDeepLink game,
     ProviderContainer container,
   ) async {
-    if (_shouldIgnoreDuplicateOrBusy(uri)) return true;
+    if (_shouldIgnoreDuplicateOrBusy(uri)) {
+      _trackDeepLink(
+        'Desktop Deep Link Ignored',
+        uri,
+        properties: {'link_type': 'game', 'reason': 'duplicate_or_busy'},
+      );
+      return true;
+    }
+    _trackDeepLink(
+      'Desktop Deep Link Opened',
+      uri,
+      properties: {'link_type': 'game'},
+    );
     _markRouting(uri);
 
     try {
       await _openGame(game, container);
+      _trackDeepLink(
+        'Desktop Deep Link Completed',
+        uri,
+        properties: {'link_type': 'game'},
+      );
       return true;
     } catch (e, stack) {
       if (kDebugMode) {
         debugPrint('[desktop deeplink] failed to open $uri: $e\n$stack');
       }
+      _trackDeepLink(
+        'Desktop Deep Link Failed',
+        uri,
+        properties: {'link_type': 'game'},
+      );
       return true;
     } finally {
       _routing = false;
@@ -385,4 +437,20 @@ class DesktopDeepLinkRouter {
       };
     });
   }
+}
+
+void _trackDeepLink(
+  String eventName,
+  Uri uri, {
+  Map<String, Object?> properties = const <String, Object?>{},
+}) {
+  AnalyticsService.instance.trackEventDetached(
+    eventName,
+    properties: {
+      'scheme': uri.scheme,
+      'host': uri.host,
+      'path_segment_count': uri.pathSegments.length,
+      ...properties,
+    },
+  );
 }

@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:country_picker/country_picker.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:window_manager/window_manager.dart';
@@ -16,6 +17,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:chessever/desktop/desktop_board_window_app.dart';
 import 'package:chessever/desktop/panes/library_pane.dart';
 import 'package:chessever/desktop/desktop_app.dart';
+import 'package:chessever/firebase_options.dart';
 import 'package:chessever/desktop/services/billing/desktop_deep_link_listener.dart';
 import 'package:chessever/desktop/services/desktop_board_window_payload.dart';
 import 'package:chessever/desktop/services/desktop_db_init.dart';
@@ -42,6 +44,7 @@ import 'package:chessever/screens/countrymen/provider/countrymen_mode_provider.d
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
+import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/chessground_image_cache.dart';
 import 'package:chessever/utils/foreground_task_scheduler.dart';
@@ -251,6 +254,9 @@ Future<void> _desktopBoot({
   WidgetsFlutterBinding.ensureInitialized();
   print('[desktop] flutter binding ready');
 
+  await _initializeFirebaseForCurrentPlatform(tag: 'desktop.firebase_init');
+  await AnalyticsService.instance.initialize();
+
   // SQLite must be initialized before any AppDatabase access.
   initializeDesktopDatabaseFactory();
   print('[desktop] sqflite ffi initialized');
@@ -373,15 +379,27 @@ Future<void> _desktopBoot({
         switch (uri.path) {
           case '/success':
           case '/portal-return':
+            AnalyticsService.instance.trackEventDetached(
+              'Desktop Billing Deep Link Received',
+              properties: {'billing_path': uri.path, 'outcome': 'success'},
+            );
             // ignore: discarded_futures
             DesktopSubscriptionNotifier.current?.refreshFromBackend(
               forceSessionRefresh: true,
             );
             break;
           case '/cancel':
+            AnalyticsService.instance.trackEventDetached(
+              'Desktop Billing Deep Link Received',
+              properties: {'billing_path': uri.path, 'outcome': 'cancel'},
+            );
             // user closed the Stripe tab — nothing to refresh
             break;
           default:
+            AnalyticsService.instance.trackEventDetached(
+              'Desktop Billing Deep Link Received',
+              properties: {'billing_path': uri.path, 'outcome': 'unknown'},
+            );
             break;
         }
         return;
@@ -390,6 +408,14 @@ Future<void> _desktopBoot({
     },
   );
   for (final uri in desktopDeepLinkUrisFromArguments(initialArguments)) {
+    AnalyticsService.instance.trackEventDetached(
+      'Desktop Launch Deep Link Detected',
+      properties: {
+        'scheme': uri.scheme,
+        'host': uri.host,
+        'path_segment_count': uri.pathSegments.length,
+      },
+    );
     unawaited(DesktopDeepLinkRouter.instance.handle(uri, container));
   }
 
@@ -422,6 +448,9 @@ Future<void> _desktopBoot({
 Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
   print('[desktop] board window startup begin');
   WidgetsFlutterBinding.ensureInitialized();
+  await _initializeFirebaseForCurrentPlatform(
+    tag: 'desktop.board_window.firebase_init',
+  );
   initializeDesktopDatabaseFactory();
   await DesktopWindow.initialize();
   try {
@@ -478,6 +507,28 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
       child: DesktopBoardWindowApp(payload: payload, tabId: tabId),
     ),
   );
+}
+
+Future<void> _initializeFirebaseForCurrentPlatform({
+  required String tag,
+}) async {
+  if (Firebase.apps.isNotEmpty) {
+    print('[desktop] firebase already initialized');
+    return;
+  }
+
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    print('[desktop] firebase init done');
+  } on UnsupportedError catch (e, stack) {
+    print('[desktop] firebase unavailable on this platform: $e');
+    ErrorReporter.report(e, stackTrace: stack, tag: tag);
+  } catch (e, stack) {
+    print('[desktop] firebase init failed; starting without Firebase');
+    ErrorReporter.report(e, stackTrace: stack, tag: tag);
+  }
 }
 
 Future<void> _preloadChessgroundPieceImages(
@@ -651,11 +702,27 @@ Future<void> _openLocalChessPaths(
   String sourceLabel,
 ) async {
   if (paths.isEmpty) return;
+  AnalyticsService.instance.trackEventDetached(
+    'Local Chess Files Open Requested',
+    properties: {
+      'source': sourceLabel,
+      'file_count': paths.length,
+      'extensions': _pathExtensions(paths),
+    },
+  );
   try {
     final opened = await container
         .read(localChessLibraryProvider.notifier)
         .openPaths(paths, sourceLabel: sourceLabel);
     if (!opened) {
+      AnalyticsService.instance.trackEventDetached(
+        'Local Chess Files Open Failed',
+        properties: {
+          'source': sourceLabel,
+          'file_count': paths.length,
+          'reason': 'not_activated',
+        },
+      );
       print('[desktop] ⚠️ local file open was not activated');
       return;
     }
@@ -663,6 +730,15 @@ Future<void> _openLocalChessPaths(
     final path = state.selectedPath;
     if (path == null || path.isEmpty) {
       container.read(desktopTabsProvider.notifier).open(TabKind.library);
+      AnalyticsService.instance.trackEventDetached(
+        'Local Chess Files Opened',
+        properties: {
+          'source': sourceLabel,
+          'file_count': paths.length,
+          'destination': 'library',
+          'extensions': _pathExtensions(paths),
+        },
+      );
       print('[desktop] opened ${paths.length} local chess path(s) in Library');
       return;
     }
@@ -678,8 +754,37 @@ Future<void> _openLocalChessPaths(
     print(
       '[desktop] opened ${paths.length} local chess path(s) in database tab',
     );
+    AnalyticsService.instance.trackEventDetached(
+      'Local Chess Files Opened',
+      properties: {
+        'source': sourceLabel,
+        'file_count': paths.length,
+        'destination': 'database_workspace',
+        'extensions': _pathExtensions(paths),
+      },
+    );
   } catch (e, stack) {
+    AnalyticsService.instance.trackEventDetached(
+      'Local Chess Files Open Failed',
+      properties: {
+        'source': sourceLabel,
+        'file_count': paths.length,
+        'reason': 'exception',
+      },
+    );
     print('[desktop] ⚠️ local file open failed');
     ErrorReporter.report(e, stackTrace: stack, tag: 'desktop.local_open');
   }
+}
+
+List<String> _pathExtensions(Iterable<String> paths) {
+  final extensions = <String>{};
+  for (final path in paths) {
+    final filename = path.split(Platform.pathSeparator).last;
+    final dot = filename.lastIndexOf('.');
+    if (dot <= 0 || dot == filename.length - 1) continue;
+    extensions.add(filename.substring(dot + 1).toLowerCase());
+  }
+  final sorted = extensions.toList()..sort();
+  return sorted;
 }
