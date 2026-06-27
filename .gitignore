@@ -187,7 +187,7 @@ supabase/.temp/
 # Firebase configuration (contains API keys)
 **/google-services.json
 **/GoogleService-Info.plist
-lib/firebase_options.dart
+# lib/firebase_options.dart
 firebase.json
 .firebaserc
 

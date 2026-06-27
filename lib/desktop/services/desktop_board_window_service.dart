@@ -11,6 +11,7 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/screens/countrymen/provider/countrymen_combined_games_provider.dart';
 import 'package:chessever/screens/countrymen/provider/countrymen_mode_provider.dart';
+import 'package:chessever/services/analytics/analytics_service.dart';
 
 class DesktopBoardWindowService {
   const DesktopBoardWindowService({this.createWindow});
@@ -18,6 +19,14 @@ class DesktopBoardWindowService {
   final Future<void> Function(DesktopBoardWindowPayload payload)? createWindow;
 
   Future<void> openBoardGameWindow(BoardTabGameArgs args) async {
+    AnalyticsService.instance.trackEventDetached(
+      'Desktop Board Window Opened',
+      properties: {
+        'source': args.viewSource.name,
+        'has_game_id': args.gameId?.trim().isNotEmpty == true,
+        'has_pgn': args.pgn.trim().isNotEmpty,
+      },
+    );
     await _openPayload(DesktopBoardWindowPayload.fromArgs(args));
   }
 
@@ -26,6 +35,13 @@ class DesktopBoardWindowService {
     DesktopTab tab,
   ) async {
     final boardArgs = container.read(boardTabGameArgsByTabIdProvider)[tab.id];
+    AnalyticsService.instance.trackEventDetached(
+      'Desktop Tab Window Opened',
+      properties: {
+        'tab_kind': tab.kind.name,
+        'has_board_game': boardArgs != null,
+      },
+    );
     await _openPayload(
       DesktopBoardWindowPayload.fromTab(
         tab,
@@ -67,6 +83,10 @@ class DesktopBoardWindowService {
 
     await openDesktopTabWindow(container, tab);
     container.read(desktopTabsProvider.notifier).close(tabId);
+    AnalyticsService.instance.trackEventDetached(
+      'Desktop Tab Detached',
+      properties: {'tab_kind': tab.kind.name},
+    );
     return true;
   }
 

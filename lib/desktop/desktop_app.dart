@@ -3,6 +3,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_auth_gate.dart';
+import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/responsive_helper.dart';
 
@@ -23,6 +24,7 @@ class DesktopApp extends ConsumerWidget {
       theme: AppTheme.darkTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
+      navigatorObservers: [AnalyticsService.instance.routeObserver],
       builder: (context, child) {
         // Init ResponsiveHelper so widgets that share with the mobile app
         // (EventCard's tablet grid layout, tablet-style tournament cards,

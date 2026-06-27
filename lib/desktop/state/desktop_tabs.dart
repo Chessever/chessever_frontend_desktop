@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/services/analytics/analytics_service.dart';
+
 const int _maxRouteHistoryEntries = 50;
 
 /// Identifier for the kind of content a tab hosts. Mapped 1:1 onto the
@@ -287,6 +289,11 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
           if (focus) {
             state = _stateWithActive(tabs: state.tabs, activeId: tab.id);
           }
+          _trackTabEvent(
+            'Desktop Tab Reused',
+            tab,
+            properties: {'focused': focus},
+          );
           return tab.id;
         }
       }
@@ -298,13 +305,19 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
       subtitle: subtitle,
     );
     final newTabs = [...state.tabs, tab];
-    state = focus
-        ? _stateWithActive(tabs: newTabs, activeId: tab.id)
-        : DesktopTabsState(
-            tabs: newTabs,
-            activeId: state.activeId,
-            activationHistory: state.activationHistory,
-          );
+    state =
+        focus
+            ? _stateWithActive(tabs: newTabs, activeId: tab.id)
+            : DesktopTabsState(
+              tabs: newTabs,
+              activeId: state.activeId,
+              activationHistory: state.activationHistory,
+            );
+    _trackTabEvent(
+      'Desktop Tab Opened',
+      tab,
+      properties: {'focused': focus, 'tab_count': newTabs.length},
+    );
     return tab.id;
   }
 
@@ -354,6 +367,11 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
       activeId: activeId,
       activationHistory: state.activationHistory,
     );
+    _trackTabEvent(
+      'Desktop Tab Navigated',
+      replaced,
+      properties: {'previous_kind': old.kind.name},
+    );
     return activeId;
   }
 
@@ -381,6 +399,11 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
       tabs: newTabs,
       activeId: activeId,
       activationHistory: state.activationHistory,
+    );
+    _trackTabEvent(
+      'Desktop Tab History Navigated',
+      updated,
+      properties: {'direction': 'back', 'previous_kind': old.kind.name},
     );
   }
 
@@ -412,6 +435,11 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
       activeId: activeId,
       activationHistory: state.activationHistory,
     );
+    _trackTabEvent(
+      'Desktop Tab History Navigated',
+      updated,
+      properties: {'direction': 'forward', 'previous_kind': old.kind.name},
+    );
   }
 
   /// Brings the tab with [id] to the foreground. No-op if it doesn't exist.
@@ -420,6 +448,7 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
     for (final tab in state.tabs) {
       if (tab.id == id) {
         state = _stateWithActive(tabs: state.tabs, activeId: id);
+        _trackTabEvent('Desktop Tab Activated', tab);
         return;
       }
     }
@@ -495,16 +524,22 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
           if (historyId != id && historyId != newActive) historyId,
       ],
     );
+    _trackTabEvent(
+      'Desktop Tab Closed',
+      tab,
+      properties: {'remaining_tab_count': remaining.length},
+    );
   }
 
   /// Close every closable tab *except* [keepId]. Mirrors Chrome's
   /// "Close other tabs" context-menu action.
   void closeOthers(String keepId) {
+    final previousTabs = state.tabs;
     final keep = <DesktopTab>[
-      for (final t in state.tabs)
+      for (final t in previousTabs)
         if (t.id == keepId || !t.closable) t,
     ];
-    if (keep.length == state.tabs.length) return;
+    if (keep.length == previousTabs.length) return;
     final activeStillExists = keep.any((t) => t.id == state.activeId);
     final keptIds = keep.map((tab) => tab.id).toSet();
     final nextActiveId = activeStillExists ? state.activeId : keepId;
@@ -516,18 +551,27 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
           if (id != nextActiveId && keptIds.contains(id)) id,
       ],
     );
+    _trackTabEvent(
+      'Desktop Tabs Bulk Closed',
+      previousTabs.firstWhere((tab) => tab.id == keepId),
+      properties: {
+        'action': 'close_others',
+        'closed_count': previousTabs.length - keep.length,
+      },
+    );
   }
 
   /// Close every closable tab on the right of [pivotId]. Mirrors Chrome's
   /// "Close tabs to the right" action.
   void closeToTheRight(String pivotId) {
-    final idx = state.tabs.indexWhere((t) => t.id == pivotId);
+    final previousTabs = state.tabs;
+    final idx = previousTabs.indexWhere((t) => t.id == pivotId);
     if (idx < 0) return;
     final keep = <DesktopTab>[
-      for (var i = 0; i < state.tabs.length; i++)
-        if (i <= idx || !state.tabs[i].closable) state.tabs[i],
+      for (var i = 0; i < previousTabs.length; i++)
+        if (i <= idx || !previousTabs[i].closable) previousTabs[i],
     ];
-    if (keep.length == state.tabs.length) return;
+    if (keep.length == previousTabs.length) return;
     final activeStillExists = keep.any((t) => t.id == state.activeId);
     final keptIds = keep.map((tab) => tab.id).toSet();
     final nextActiveId = activeStillExists ? state.activeId : pivotId;
@@ -538,6 +582,14 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
         for (final id in state.activationHistory)
           if (id != nextActiveId && keptIds.contains(id)) id,
       ],
+    );
+    _trackTabEvent(
+      'Desktop Tabs Bulk Closed',
+      previousTabs.firstWhere((tab) => tab.id == pivotId),
+      properties: {
+        'action': 'close_to_right',
+        'closed_count': previousTabs.length - keep.length,
+      },
     );
   }
 
@@ -555,6 +607,11 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
       tabs: tabs,
       activeId: state.activeId,
       activationHistory: state.activationHistory,
+    );
+    _trackTabEvent(
+      'Desktop Tab Reordered',
+      moved,
+      properties: {'old_index': oldIndex, 'new_index': adjusted},
     );
   }
 
@@ -574,6 +631,21 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
       activationHistory: state.activationHistory,
     );
   }
+}
+
+void _trackTabEvent(
+  String eventName,
+  DesktopTab tab, {
+  Map<String, Object?> properties = const <String, Object?>{},
+}) {
+  AnalyticsService.instance.trackEventDetached(
+    eventName,
+    properties: {
+      'tab_kind': tab.kind.name,
+      'closable': tab.closable,
+      ...properties,
+    },
+  );
 }
 
 List<DesktopTabRoute> _pushRoute(

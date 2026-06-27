@@ -14,6 +14,7 @@ import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_button.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
+import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 /// The desktop subscription body, reused by both the onboarding "Subscribe"
@@ -187,6 +188,14 @@ class _DesktopSubscriptionViewState
   }
 
   Future<void> _continueInApp(int tier) async {
+    AnalyticsService.instance.trackEventDetached(
+      'Desktop Checkout Started',
+      properties: {
+        'checkout_surface': 'stripe_desktop',
+        'interval': _interval,
+        'tier': tier,
+      },
+    );
     setState(() {
       _busy = true;
       _waitingForCheckout = false;
@@ -206,10 +215,27 @@ class _DesktopSubscriptionViewState
                   forceSessionRefresh: true,
                 ),
               );
+              AnalyticsService.instance.trackEventDetached(
+                'Desktop Checkout Completed',
+                properties: {
+                  'checkout_surface': 'stripe_desktop',
+                  'interval': _interval,
+                  'tier': tier,
+                },
+              );
               _completeOnce();
             },
             onError: (Object e, StackTrace st) {
               ErrorReporter.report(e, stackTrace: st, tag: 'billing.checkout');
+              AnalyticsService.instance.trackEventDetached(
+                'Desktop Checkout Failed',
+                properties: {
+                  'checkout_surface': 'stripe_desktop',
+                  'interval': _interval,
+                  'tier': tier,
+                  'stage': 'entitlement_watch',
+                },
+              );
               if (mounted) {
                 setState(() {
                   _waitingForCheckout = false;
@@ -226,6 +252,15 @@ class _DesktopSubscriptionViewState
       if (mounted) setState(() => _waitingForCheckout = true);
     } catch (e, st) {
       ErrorReporter.report(e, stackTrace: st, tag: 'billing.checkout_start');
+      AnalyticsService.instance.trackEventDetached(
+        'Desktop Checkout Failed',
+        properties: {
+          'checkout_surface': 'stripe_desktop',
+          'interval': _interval,
+          'tier': tier,
+          'stage': 'checkout_start',
+        },
+      );
       if (mounted) {
         setState(() => _error = ErrorReporter.genericUserMessage);
       }
@@ -235,6 +270,10 @@ class _DesktopSubscriptionViewState
   }
 
   Future<void> _openWebsite() async {
+    AnalyticsService.instance.trackEventDetached(
+      'Desktop Web Checkout Opened',
+      properties: {'interval': _interval},
+    );
     setState(() {
       _busy = true;
       _error = null;
@@ -260,10 +299,25 @@ class _DesktopSubscriptionViewState
               forceSessionRefresh: true,
             ),
           );
+          AnalyticsService.instance.trackEventDetached(
+            'Desktop Checkout Completed',
+            properties: {
+              'checkout_surface': 'web_checkout',
+              'interval': _interval,
+            },
+          );
           _completeOnce();
         },
         onError: (Object e, StackTrace st) {
           ErrorReporter.report(e, stackTrace: st, tag: 'billing.watch_ent');
+          AnalyticsService.instance.trackEventDetached(
+            'Desktop Checkout Failed',
+            properties: {
+              'checkout_surface': 'web_checkout',
+              'interval': _interval,
+              'stage': 'entitlement_watch',
+            },
+          );
           if (mounted) {
             setState(() {
               _waitingForCheckout = false;
@@ -280,6 +334,14 @@ class _DesktopSubscriptionViewState
       setState(() => _waitingForCheckout = true);
     } catch (e, st) {
       ErrorReporter.report(e, stackTrace: st, tag: 'billing.open_web');
+      AnalyticsService.instance.trackEventDetached(
+        'Desktop Checkout Failed',
+        properties: {
+          'checkout_surface': 'web_checkout',
+          'interval': _interval,
+          'stage': 'open_browser',
+        },
+      );
       if (mounted) {
         setState(() => _error = ErrorReporter.genericUserMessage);
       }
@@ -289,6 +351,9 @@ class _DesktopSubscriptionViewState
   }
 
   Future<void> _refreshMembership() async {
+    AnalyticsService.instance.trackEventDetached(
+      'Desktop Membership Refresh Started',
+    );
     setState(() {
       _refreshingMembership = true;
       _error = null;
@@ -305,11 +370,19 @@ class _DesktopSubscriptionViewState
       if (!mounted) return;
 
       if (ent?.isActive == true) {
+        AnalyticsService.instance.trackEventDetached(
+          'Desktop Membership Refresh Completed',
+          properties: {'is_active': true},
+        );
         _completeOnce();
         return;
       }
 
       final signedIn = Supabase.instance.client.auth.currentSession != null;
+      AnalyticsService.instance.trackEventDetached(
+        'Desktop Membership Refresh Completed',
+        properties: {'is_active': false, 'signed_in': signedIn},
+      );
       setState(() {
         _notice =
             signedIn
@@ -318,6 +391,9 @@ class _DesktopSubscriptionViewState
       });
     } catch (e, st) {
       ErrorReporter.report(e, stackTrace: st, tag: 'billing.refresh_member');
+      AnalyticsService.instance.trackEventDetached(
+        'Desktop Membership Refresh Failed',
+      );
       if (mounted) {
         setState(() => _error = ErrorReporter.genericUserMessage);
       }
