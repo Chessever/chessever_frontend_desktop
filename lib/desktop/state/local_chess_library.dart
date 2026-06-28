@@ -14,7 +14,6 @@ import 'package:chessever/desktop/state/local_library_registry.dart';
 const Object _localChessUnset = Object();
 const Duration _treeProgressMinInterval = Duration(milliseconds: 120);
 const double _treeProgressMinFractionDelta = 0.01;
-const Duration _automaticTreeBuildDelay = Duration(milliseconds: 750);
 
 typedef LocalChessPathsScanner =
     Future<LocalChessSource> Function(
@@ -234,7 +233,6 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         if (imported == null) {
           await _persistSourceBestEffort(source);
         }
-        _scheduleMissingTreeBuilds(source);
       }
       return true;
     } catch (e) {
@@ -311,7 +309,6 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       await _persistFileNodeBestEffort(refreshed, sourceLabel: source.label);
       if (_scanToken != token) return false;
 
-      _scheduleMissingTreeBuilds(state.source ?? source);
       return installed;
     } catch (e) {
       if (_scanToken != token) return false;
@@ -448,13 +445,6 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     return true;
   }
 
-  void _scheduleMissingTreeBuilds(LocalChessSource source) {
-    for (final file in _playableLocalChessFiles(source.root)) {
-      if (file.openingTreeIndex != null) continue;
-      _scheduleTreeBuild(file, source, delay: _automaticTreeBuildDelay);
-    }
-  }
-
   bool _scheduleTreeBuild(
     LocalChessFileNode file,
     LocalChessSource source, {
@@ -583,7 +573,8 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
           path: path,
           phase: LocalChessTreeBuildPhase.failed,
           fraction: 0,
-          message: 'Opening tree rebuild failed. Click Tree to start over.',
+          message:
+              'Opening tree rebuild failed. Click Build Tree to start over.',
           error: localChessOpenErrorMessage(e),
         ),
       );
@@ -637,23 +628,6 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   bool _isCurrentTreeBuild(String path, int generation) {
     return generation == _treeBuildGeneration && _sourceContainsPath(path);
   }
-}
-
-List<LocalChessFileNode> _playableLocalChessFiles(LocalChessNode node) {
-  final out = <LocalChessFileNode>[];
-  void visit(LocalChessNode current) {
-    switch (current) {
-      case LocalChessFileNode(:final isPlayable):
-        if (isPlayable) out.add(current);
-      case LocalChessFolderNode(:final children):
-        for (final child in children) {
-          visit(child);
-        }
-    }
-  }
-
-  visit(node);
-  return out;
 }
 
 final localChessLibraryProvider =

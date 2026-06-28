@@ -52,8 +52,8 @@ class _LocalTreeActionButtonState extends State<LocalTreeActionButton> {
             : isBuilding
             ? 'Tree ${progress!.percent}%'
             : isFailed
-            ? 'Retry tree'
-            : 'Build tree';
+            ? 'Retry Tree'
+            : 'Build Tree';
     final icon =
         isFailed ? Icons.restart_alt_rounded : Icons.account_tree_outlined;
 
@@ -150,8 +150,7 @@ class _LocalTreeActionButtonState extends State<LocalTreeActionButton> {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: onPress,
-            onTapDown:
-                enabled ? (_) => setState(() => _pressed = true) : null,
+            onTapDown: enabled ? (_) => setState(() => _pressed = true) : null,
             onTapUp: enabled ? (_) => setState(() => _pressed = false) : null,
             onTapCancel:
                 enabled ? () => setState(() => _pressed = false) : null,
@@ -177,6 +176,6 @@ String _tooltipText({
     if (error != null && error.isNotEmpty) return 'Tree rebuild failed: $error';
     return 'Tree rebuild failed. Click to start over.';
   }
-  if (onBuild != null) return 'Build this local opening tree';
+  if (onBuild != null) return 'Build this local opening tree on demand';
   return 'No local tree is available for this database yet';
 }

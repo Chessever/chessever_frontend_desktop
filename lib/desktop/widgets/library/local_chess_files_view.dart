@@ -963,6 +963,7 @@ class _LocalGamesTable extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = useScrollController();
     final focusNode = useFocusNode(debugLabel: 'local-pgn-games-table');
+    final lastScrollLoadRequest = useRef<int?>(null);
     final openableTreeIndex =
         database?.openingTreeIndex?.isUsable == true
             ? database!.openingTreeIndex
@@ -1018,6 +1019,30 @@ class _LocalGamesTable extends HookConsumerWidget {
       }
       return null;
     }, [games]);
+
+    useEffect(() {
+      lastScrollLoadRequest.value = null;
+      return null;
+    }, [games.length, hasMore, isLoadingMore]);
+
+    useEffect(() {
+      void maybeLoadMore() {
+        if (!hasMore || isLoadingMore || onLoadMore == null) return;
+        if (!controller.hasClients) return;
+        final position = controller.position;
+        if (!position.hasContentDimensions) return;
+        if (position.extentAfter > _kLocalDatabaseScrollLoadMoreThreshold) {
+          return;
+        }
+        if (lastScrollLoadRequest.value == games.length) return;
+        lastScrollLoadRequest.value = games.length;
+        onLoadMore!();
+      }
+
+      controller.addListener(maybeLoadMore);
+      WidgetsBinding.instance.addPostFrameCallback((_) => maybeLoadMore());
+      return () => controller.removeListener(maybeLoadMore);
+    }, [controller, games.length, hasMore, isLoadingMore, onLoadMore]);
 
     void scrollToIndex(int index) {
       if (!controller.hasClients) return;
@@ -1307,6 +1332,7 @@ class _LocalGamesTable extends HookConsumerWidget {
                   controller: controller,
                   thumbVisibility: false,
                   child: ListView.builder(
+                    key: const ValueKey('local-games-table-list'),
                     controller: controller,
                     physics: const DesktopScrollPhysics(),
                     itemExtent: _kLocalGameRowHeight,
@@ -1373,6 +1399,7 @@ class _LocalGamesTable extends HookConsumerWidget {
 
 const double _kLocalGameRowHeight = 34;
 const int _kLocalDatabaseGameQueryPageSize = 1000;
+const double _kLocalDatabaseScrollLoadMoreThreshold = 420;
 const String _kLocalDatabaseTreeStartingFen =
     'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 

@@ -103,6 +103,9 @@ void main() {
             notifier.state.source!.nodeForPath(file.path) as LocalChessFileNode;
         expect(loadedFile.games, hasLength(1));
         expect(loadedFile.games.single.game.metadata['Event'], 'Candidates');
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+        expect(repo.rebuildOpeningTreeCalls, 0);
+        expect(notifier.state.treeBuilds, isEmpty);
         notifier.clear();
       },
     );
@@ -186,6 +189,7 @@ void main() {
         expect(initialFile.games, hasLength(1));
         expect(initialFile.relativePath, 'lines/mini.pgn');
         expect(await _count(db, 'local_chess_games'), 1);
+        expect(notifier.rebuildOpeningTree(file.path), isTrue);
         await _waitForLocalTree(notifier, file.path);
 
         final added = await appendPgnTextToLocalChessFile(
@@ -205,6 +209,10 @@ void main() {
         expect(refreshedFile.games, hasLength(2));
         expect(refreshedFile.relativePath, 'lines/mini.pgn');
         expect(await _count(db, 'local_chess_games'), 2);
+        expect(refreshedFile.openingTreeIndex, isNull);
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+        expect(notifier.state.treeBuildForPath(file.path), isNull);
+        expect(notifier.rebuildOpeningTree(file.path), isTrue);
         final rebuiltFile = await _waitForLocalTree(notifier, file.path);
         expect(rebuiltFile.openingTreeIndex!.downloadedGameCount, 2);
         final restored = await repo.loadFreshFileNode(
@@ -260,36 +268,32 @@ void main() {
       },
     );
 
-    test(
-      'clear prevents stale background tree build from installing',
-      () async {
-        final file = File('${temp.path}/mini.pgn');
-        await file.writeAsString(_samplePgn);
-        final treeStarted = Completer<void>();
-        final releaseTree = Completer<void>();
-        final treeRebuildReturned = Completer<void>();
-        final repo = _FailingLocalChessDatabaseRepository(
-          rebuildStarted: treeStarted,
-          releaseRebuild: releaseTree,
-          rebuildReturned: treeRebuildReturned,
-        );
-        final notifier = LocalChessLibraryNotifier(
-          localDatabaseRepository: repo,
-        );
+    test('clear prevents stale on-demand tree build from installing', () async {
+      final file = File('${temp.path}/mini.pgn');
+      await file.writeAsString(_samplePgn);
+      final treeStarted = Completer<void>();
+      final releaseTree = Completer<void>();
+      final treeRebuildReturned = Completer<void>();
+      final repo = _FailingLocalChessDatabaseRepository(
+        rebuildStarted: treeStarted,
+        releaseRebuild: releaseTree,
+        rebuildReturned: treeRebuildReturned,
+      );
+      final notifier = LocalChessLibraryNotifier(localDatabaseRepository: repo);
 
-        final opened = await notifier.openPaths(<String>[file.path]);
-        await treeStarted.future.timeout(const Duration(seconds: 2));
-        notifier.clear();
-        releaseTree.complete();
-        await treeRebuildReturned.future.timeout(const Duration(seconds: 2));
-        await Future<void>.delayed(const Duration(milliseconds: 50));
+      final opened = await notifier.openPaths(<String>[file.path]);
+      expect(opened, isTrue);
+      expect(notifier.rebuildOpeningTree(file.path), isTrue);
+      await treeStarted.future.timeout(const Duration(seconds: 2));
+      notifier.clear();
+      releaseTree.complete();
+      await treeRebuildReturned.future.timeout(const Duration(seconds: 2));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
 
-        expect(opened, isTrue);
-        expect(notifier.state.source, isNull);
-        expect(notifier.state.treeBuilds, isEmpty);
-        expect(repo.rebuildOpeningTreeCalls, 1);
-      },
-    );
+      expect(notifier.state.source, isNull);
+      expect(notifier.state.treeBuilds, isEmpty);
+      expect(repo.rebuildOpeningTreeCalls, 1);
+    });
 
     test(
       'openPaths recovers persisted games without auto rebuilding a missing tree',
@@ -380,6 +384,7 @@ void main() {
           file.path,
         ]);
         expect(initiallyOpened, isTrue);
+        expect(buildNotifier.rebuildOpeningTree(file.path), isTrue);
         await _waitForLocalTree(buildNotifier, file.path);
 
         final readRepo = LocalChessDatabaseRepository(
@@ -501,7 +506,7 @@ void main() {
     });
 
     test(
-      'missing tree build installs repository rebuild result without cache reload',
+      'on-demand tree build installs repository rebuild result without cache reload',
       () async {
         final file = File('${temp.path}/reload-fallback.pgn');
         await file.writeAsString(_samplePgn);
@@ -543,6 +548,7 @@ void main() {
         );
 
         expect(await notifier.openPaths(<String>[file.path]), isTrue);
+        expect(notifier.rebuildOpeningTree(file.path), isTrue);
 
         final rebuilt = await _waitForLocalTree(notifier, file.path);
 

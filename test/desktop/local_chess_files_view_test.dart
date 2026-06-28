@@ -85,7 +85,7 @@ void main() {
   });
 
   testWidgets(
-    'selected local database loads more games by requesting the next page',
+    'selected local database loads more games when scrolled near the bottom',
     (tester) async {
       final source = _sourceWithGame(
         _localGame(
@@ -153,7 +153,13 @@ void main() {
       expect(find.text('Load more'), findsOneWidget);
       expect(find.text('1000 / 2500 loaded'), findsOneWidget);
 
-      await tester.tap(find.text('Load more'));
+      final tableScrollable = tester.state<ScrollableState>(
+        find.descendant(
+          of: find.byKey(const ValueKey('local-games-table-list')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      tableScrollable.position.jumpTo(tableScrollable.position.maxScrollExtent);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
       await tester.pump(const Duration(milliseconds: 250));
@@ -308,10 +314,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    expect(find.text('Build tree'), findsOneWidget);
+    expect(find.text('Build Tree'), findsOneWidget);
     expect(find.text('Tree'), findsNothing);
 
-    await tester.tap(find.text('Build tree'));
+    await tester.tap(find.text('Build Tree'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
 
@@ -476,7 +482,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(find.text('Tree 42%'), findsOneWidget);
-    expect(find.text('Build tree'), findsNothing);
+    expect(find.text('Build Tree'), findsNothing);
   });
 }
 

@@ -2878,7 +2878,85 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
           _ => const <LocalChessGame>[],
         };
     final databaseTitle = node.name.isEmpty ? source!.label : node.name;
-    final visibleGames = games.take(80).toList();
+    final previewEntryCount = selectedDatabase?.gameCount ?? games.length;
+    final previewQueryKey =
+        Object.hash(
+          selectedPath,
+          selectedDatabase?.path,
+          selectedDatabase?.gameCount,
+          selectedDatabase?.sizeBytes,
+          selectedDatabase?.modifiedAt?.millisecondsSinceEpoch,
+        ).toString();
+    final previewPageWindow = useState(
+      _LocalMiniPreviewPageWindow(previewQueryKey, 0),
+    );
+    final previewLoadedPages = useState(
+      const _LoadedLocalMiniPreviewPages.empty(),
+    );
+    final effectivePreviewPageWindow =
+        previewPageWindow.value.queryKey == previewQueryKey
+            ? previewPageWindow.value
+            : _LocalMiniPreviewPageWindow(previewQueryKey, 0);
+    useEffect(() {
+      if (previewPageWindow.value.queryKey != previewQueryKey) {
+        previewPageWindow.value = _LocalMiniPreviewPageWindow(
+          previewQueryKey,
+          0,
+        );
+      }
+      if (previewLoadedPages.value.queryKey != previewQueryKey) {
+        previewLoadedPages.value = const _LoadedLocalMiniPreviewPages.empty();
+      }
+      return null;
+    }, [previewQueryKey]);
+    final previewPageFuture = useMemoized<Future<LocalChessGameQueryPage?>?>(
+      () {
+        final database = selectedDatabase;
+        if (database == null || previewEntryCount <= 0) return null;
+        return _queryLocalMiniPreviewPage(
+          ref.read(localChessDatabaseRepositoryProvider),
+          databasePath: database.path,
+          pageNumber: effectivePreviewPageWindow.pageNumber,
+          pageSize: _kLocalMiniPreviewGameQueryPageSize,
+        );
+      },
+      [
+        selectedDatabase?.path,
+        previewEntryCount,
+        effectivePreviewPageWindow.queryKey,
+        effectivePreviewPageWindow.pageNumber,
+      ],
+    );
+    final previewPageSnapshot = useFuture(
+      previewPageFuture,
+      preserveState: false,
+    );
+    final previewPage = previewPageSnapshot.data;
+    useEffect(() {
+      final page = previewPage;
+      if (page == null) return null;
+      if (previewPageWindow.value.queryKey != previewQueryKey) return null;
+      previewLoadedPages.value = previewLoadedPages.value.merge(
+        queryKey: previewQueryKey,
+        page: page,
+      );
+      return null;
+    }, [previewPage, previewQueryKey]);
+    final previewRows = _visibleLocalMiniPreviewRows(
+      queryKey: previewQueryKey,
+      loaded: previewLoadedPages.value,
+      livePage: previewPage,
+    );
+    final visibleGames = previewRows?.games ?? games;
+    final previewTotalCount =
+        previewRows?.totalCount ?? previewPage?.totalCount ?? previewEntryCount;
+    final isLoadingPreviewPage =
+        previewPageFuture != null &&
+        previewPageSnapshot.connectionState != ConnectionState.done;
+    final hasMorePreviewRows = previewRows?.hasMore ?? false;
+    final previewContextGames = previewRows == null ? games : visibleGames;
+    final showPreviewLoadingRow = hasMorePreviewRows || isLoadingPreviewPage;
+    final lastScrollLoadRequest = useRef<int?>(null);
     final visibleIds = visibleGames
         .map((game) => game.id)
         .toList(growable: false);
@@ -2895,6 +2973,58 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
       }
       return null;
     }, [selectedPath, visibleGames.length]);
+
+    useEffect(
+      () {
+        lastScrollLoadRequest.value = null;
+        return null;
+      },
+      [
+        previewQueryKey,
+        visibleGames.length,
+        hasMorePreviewRows,
+        isLoadingPreviewPage,
+      ],
+    );
+
+    void requestNextPreviewPage() {
+      if (!hasMorePreviewRows || isLoadingPreviewPage) return;
+      if (previewRows == null) return;
+      final nextPage = previewRows.nextPageNumber;
+      if (lastScrollLoadRequest.value == nextPage) return;
+      lastScrollLoadRequest.value = nextPage;
+      previewPageWindow.value = _LocalMiniPreviewPageWindow(
+        previewQueryKey,
+        nextPage,
+      );
+    }
+
+    useEffect(
+      () {
+        void maybeLoadMore() {
+          if (!scrollController.hasClients) return;
+          final position = scrollController.position;
+          if (!position.hasContentDimensions) return;
+          if (position.extentAfter >
+              _kLocalMiniPreviewScrollLoadMoreThreshold) {
+            return;
+          }
+          requestNextPreviewPage();
+        }
+
+        scrollController.addListener(maybeLoadMore);
+        WidgetsBinding.instance.addPostFrameCallback((_) => maybeLoadMore());
+        return () => scrollController.removeListener(maybeLoadMore);
+      },
+      [
+        scrollController,
+        previewQueryKey,
+        visibleGames.length,
+        hasMorePreviewRows,
+        isLoadingPreviewPage,
+        previewRows?.nextPageNumber,
+      ],
+    );
 
     final safeIndex =
         visibleGames.isEmpty
@@ -2992,7 +3122,7 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
         ref,
         current,
         databaseTitle: databaseTitle,
-        databaseGames: games,
+        databaseGames: previewContextGames,
         localOpeningTreeIndex: openableLocalTreeIndex,
         initialFen: _initialFenForPreviewPly(
           selectedPreviewGame,
@@ -3053,8 +3183,11 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
             ),
         child: _MiniDatabasePreviewFrame(
           title: databaseTitle,
-          subtitle:
-              '${localChessEntryCountLabel(games.length)} · local mini preview',
+          subtitle: _localMiniPreviewSubtitle(
+            loadedCount: visibleGames.length,
+            totalCount: previewTotalCount,
+            isLoading: isLoadingPreviewPage,
+          ),
           onOpen: onOpen,
           treeBuildProgress: treeBuildProgress,
           onOpenTree:
@@ -3071,7 +3204,18 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                   ? null
                   : rebuildLocalTree,
           child:
-              selectedGame == null
+              visibleGames.isEmpty && isLoadingPreviewPage
+                  ? const Center(
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                      ),
+                    ),
+                  )
+                  : selectedGame == null
                   ? const _LibraryEmpty(
                     icon: Icons.description_outlined,
                     title: 'No parsed games here',
@@ -3089,8 +3233,17 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                             physics: const DesktopScrollPhysics(),
                             padding: EdgeInsets.zero,
                             itemExtent: _kLocalMiniPreviewRowExtent,
-                            itemCount: visibleGames.length,
+                            itemCount:
+                                visibleGames.length +
+                                (showPreviewLoadingRow ? 1 : 0),
                             itemBuilder: (context, index) {
+                              if (index >= visibleGames.length) {
+                                return _LocalMiniPreviewLoadingRow(
+                                  loadedCount: visibleGames.length,
+                                  totalCount: previewTotalCount,
+                                  isLoading: isLoadingPreviewPage,
+                                );
+                              }
                               final game = visibleGames[index];
                               final meta = game.game.metadata;
                               final selected =
@@ -3112,7 +3265,7 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                                         ref,
                                         game,
                                         databaseTitle: databaseTitle,
-                                        databaseGames: games,
+                                        databaseGames: previewContextGames,
                                         localOpeningTreeIndex:
                                             openableLocalTreeIndex,
                                       ),
@@ -3199,7 +3352,7 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                                 ref,
                                 selectedGame,
                                 databaseTitle: databaseTitle,
-                                databaseGames: games,
+                                databaseGames: previewContextGames,
                                 localOpeningTreeIndex: openableLocalTreeIndex,
                                 initialFen: _initialFenForPreviewPly(
                                   selectedPreviewGame,
@@ -3211,6 +3364,66 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                     ],
                   ),
         ),
+      ),
+    );
+  }
+}
+
+class _LocalMiniPreviewLoadingRow extends StatelessWidget {
+  const _LocalMiniPreviewLoadingRow({
+    required this.loadedCount,
+    required this.totalCount,
+    required this.isLoading,
+  });
+
+  final int loadedCount;
+  final int totalCount;
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: const BoxDecoration(
+        color: kBlack2Color,
+        border: Border(bottom: BorderSide(color: kDividerColor, width: 1)),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 36,
+            child:
+                isLoading
+                    ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                      ),
+                    )
+                    : const Icon(
+                      Icons.expand_more_rounded,
+                      size: 16,
+                      color: kLightGreyColor,
+                    ),
+          ),
+          Expanded(
+            child: Text(
+              isLoading
+                  ? 'Loading more...'
+                  : '$loadedCount of $totalCount loaded',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kLightGreyColor,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -7818,8 +8031,152 @@ class DatabaseWorkspacePane extends HookConsumerWidget {
 const double _kDatabaseWorkspaceSavedRowExtent = 44.0;
 const double _kDatabaseWorkspaceTwicRowExtent = 44.0;
 const double _kLocalMiniPreviewRowExtent = 40.0;
+const int _kLocalMiniPreviewGameQueryPageSize = 1000;
+const double _kLocalMiniPreviewScrollLoadMoreThreshold = 420.0;
 
 typedef _DatabaseWorkspaceKeyAction = bool Function();
+
+class _LocalMiniPreviewPageWindow {
+  const _LocalMiniPreviewPageWindow(this.queryKey, this.pageNumber);
+
+  final String queryKey;
+  final int pageNumber;
+}
+
+class _LoadedLocalMiniPreviewPages {
+  const _LoadedLocalMiniPreviewPages({
+    required this.queryKey,
+    required this.games,
+    required this.totalCount,
+    required this.nextPageNumber,
+    required this.pageSize,
+  });
+
+  const _LoadedLocalMiniPreviewPages.empty()
+    : queryKey = '',
+      games = const <LocalChessGame>[],
+      totalCount = 0,
+      nextPageNumber = 0,
+      pageSize = _kLocalMiniPreviewGameQueryPageSize;
+
+  final String queryKey;
+  final List<LocalChessGame> games;
+  final int totalCount;
+  final int nextPageNumber;
+  final int pageSize;
+
+  bool get hasRows => games.isNotEmpty;
+
+  bool get hasMore => nextPageNumber * pageSize < totalCount;
+
+  _LoadedLocalMiniPreviewPages merge({
+    required String queryKey,
+    required LocalChessGameQueryPage page,
+  }) {
+    if (page.pageNumber == 0 || this.queryKey != queryKey) {
+      return _LoadedLocalMiniPreviewPages(
+        queryKey: queryKey,
+        games: List<LocalChessGame>.unmodifiable(page.games),
+        totalCount: page.totalCount,
+        nextPageNumber: page.pageNumber + 1,
+        pageSize: page.pageSize,
+      );
+    }
+    if (page.pageNumber < nextPageNumber) return this;
+    if (page.pageNumber > nextPageNumber) {
+      return _LoadedLocalMiniPreviewPages(
+        queryKey: queryKey,
+        games: List<LocalChessGame>.unmodifiable(page.games),
+        totalCount: page.totalCount,
+        nextPageNumber: page.pageNumber + 1,
+        pageSize: page.pageSize,
+      );
+    }
+    return _LoadedLocalMiniPreviewPages(
+      queryKey: queryKey,
+      games: List<LocalChessGame>.unmodifiable(<LocalChessGame>[
+        ...games,
+        ...page.games,
+      ]),
+      totalCount: page.totalCount,
+      nextPageNumber: page.pageNumber + 1,
+      pageSize: page.pageSize,
+    );
+  }
+}
+
+_LoadedLocalMiniPreviewPages? _visibleLocalMiniPreviewRows({
+  required String queryKey,
+  required _LoadedLocalMiniPreviewPages loaded,
+  required LocalChessGameQueryPage? livePage,
+}) {
+  final hasLoadedRows = loaded.queryKey == queryKey && loaded.hasRows;
+  if (livePage == null) return hasLoadedRows ? loaded : null;
+  if (livePage.pageNumber == 0 || !hasLoadedRows) {
+    return _LoadedLocalMiniPreviewPages(
+      queryKey: queryKey,
+      games: List<LocalChessGame>.unmodifiable(livePage.games),
+      totalCount: livePage.totalCount,
+      nextPageNumber: livePage.pageNumber + 1,
+      pageSize: livePage.pageSize,
+    );
+  }
+  if (livePage.pageNumber < loaded.nextPageNumber) return loaded;
+  if (livePage.pageNumber > loaded.nextPageNumber) {
+    return _LoadedLocalMiniPreviewPages(
+      queryKey: queryKey,
+      games: List<LocalChessGame>.unmodifiable(livePage.games),
+      totalCount: livePage.totalCount,
+      nextPageNumber: livePage.pageNumber + 1,
+      pageSize: livePage.pageSize,
+    );
+  }
+  return _LoadedLocalMiniPreviewPages(
+    queryKey: queryKey,
+    games: List<LocalChessGame>.unmodifiable(<LocalChessGame>[
+      ...loaded.games,
+      ...livePage.games,
+    ]),
+    totalCount: livePage.totalCount,
+    nextPageNumber: livePage.pageNumber + 1,
+    pageSize: livePage.pageSize,
+  );
+}
+
+Future<LocalChessGameQueryPage?> _queryLocalMiniPreviewPage(
+  LocalChessDatabaseRepository repository, {
+  required String databasePath,
+  required int pageNumber,
+  required int pageSize,
+}) async {
+  try {
+    return await repository.localDatabaseGamesPage(
+      databasePath: databasePath,
+      sortBy: LocalChessGameSortField.originalOrder,
+      sortDirection: LocalChessGameSortDirection.asc,
+      pageNumber: pageNumber,
+      pageSize: pageSize,
+    );
+  } on Object {
+    return null;
+  }
+}
+
+String _localMiniPreviewSubtitle({
+  required int loadedCount,
+  required int totalCount,
+  required bool isLoading,
+}) {
+  if (totalCount <= 0) {
+    return isLoading ? 'Loading entries...' : 'No entries';
+  }
+  final totalLabel = localChessEntryCountLabel(totalCount);
+  if (loadedCount > 0 && loadedCount < totalCount) {
+    return '$loadedCount of $totalLabel loaded';
+  }
+  if (isLoading && loadedCount == 0) return 'Loading $totalLabel';
+  return totalLabel;
+}
 
 class _LibraryRangeSelection {
   const _LibraryRangeSelection({
