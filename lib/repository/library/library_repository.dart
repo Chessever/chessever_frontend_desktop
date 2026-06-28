@@ -114,6 +114,20 @@ class LibraryRepository extends BaseRepository {
         final userId = supabase.auth.currentUser?.id;
         if (userId == null) throw Exception('User not authenticated');
 
+        final current =
+            await supabase
+                .from('user_folders')
+                .select('name')
+                .eq('id', folder.id)
+                .eq('user_id', userId)
+                .maybeSingle();
+        final currentName = current?['name'] as String?;
+        if (currentName != null &&
+            isPermanentLibraryFolderName(currentName) &&
+            currentName.trim() != folder.name.trim()) {
+          throw StateError('Permanent library folders cannot be renamed.');
+        }
+
         final response =
             await supabase
                 .from('user_folders')
@@ -136,6 +150,19 @@ class LibraryRepository extends BaseRepository {
   Future<void> deleteFolder(String folderId) => handleApiCall(() async {
     final userId = supabase.auth.currentUser?.id;
     if (userId == null) throw Exception('User not authenticated');
+
+    final current =
+        await supabase
+            .from('user_folders')
+            .select('name')
+            .eq('id', folderId)
+            .eq('user_id', userId)
+            .maybeSingle();
+    final currentName = current?['name'] as String?;
+    if (currentName != null && isPermanentLibraryFolderName(currentName)) {
+      throw StateError('Permanent library folders cannot be deleted.');
+    }
+    if (current == null) return;
 
     await supabase
         .from('user_folders')

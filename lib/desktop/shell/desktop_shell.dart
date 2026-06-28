@@ -26,6 +26,8 @@ import 'package:chessever/desktop/panes/tournament_detail_pane.dart';
 import 'package:chessever/desktop/panes/tournaments_pane.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
+import 'package:chessever/desktop/services/local_chess_file_scanner.dart'
+    show LocalChessScanProgress;
 import 'package:chessever/desktop/widgets/paywall/desktop_billing_issue_dialog.dart';
 import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/services/pgn_file_picker.dart';
@@ -83,8 +85,14 @@ class DesktopShell extends HookConsumerWidget {
     final activeSidebarPane = sidebarPaneForActiveTabKind(
       tabsState.active?.kind,
     );
+    final shellDropZoneEnabled =
+        activeSidebarPane != DesktopPane.library &&
+        activeSidebarPane != DesktopPane.boardEditor;
     final isLocalPgnLoading = ref.watch(
       localChessLibraryProvider.select((state) => state.isScanning),
+    );
+    final localPgnProgress = ref.watch(
+      localChessLibraryProvider.select((state) => state.scanProgress),
     );
     final boardShortcutsActive = tabsState.active?.kind == TabKind.board;
     final boardFocusMode = ref.watch(boardFocusModeProvider);
@@ -613,6 +621,7 @@ class DesktopShell extends HookConsumerWidget {
                     RepaintBoundary(
                       key: feedbackScreenshotKey,
                       child: LocalChessDropZone(
+                        enabled: shellDropZoneEnabled,
                         onChessPathsDropped: (paths) async {
                           // The Library and Board Editor panes wrap their own drop
                           // zones with pane-specific local-file handling.
@@ -682,7 +691,8 @@ class DesktopShell extends HookConsumerWidget {
                         ),
                       ),
                     ),
-                    if (isLocalPgnLoading) const _DesktopPgnLoadingOverlay(),
+                    if (isLocalPgnLoading)
+                      _DesktopPgnLoadingOverlay(progress: localPgnProgress),
                   ],
                 ),
               ),
@@ -695,10 +705,16 @@ class DesktopShell extends HookConsumerWidget {
 }
 
 class _DesktopPgnLoadingOverlay extends StatelessWidget {
-  const _DesktopPgnLoadingOverlay();
+  const _DesktopPgnLoadingOverlay({this.progress});
+
+  final LocalChessScanProgress? progress;
 
   @override
   Widget build(BuildContext context) {
+    final fraction = progress?.fraction;
+    final percentLabel =
+        progress == null ? null : '${progress!.percent.clamp(0, 100)}%';
+    final phase = progress?.message.trim();
     return Positioned.fill(
       child: ColoredBox(
         color: kBackgroundColor.withValues(alpha: 0.72),
@@ -716,29 +732,73 @@ class _DesktopPgnLoadingOverlay extends StatelessWidget {
                 ),
               ],
             ),
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.5,
-                      valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints.tightFor(width: 280),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        value: fraction,
+                        strokeWidth: 2.5,
+                        valueColor: const AlwaysStoppedAnimation(kPrimaryColor),
+                        backgroundColor: kWhiteColor.withValues(alpha: 0.12),
+                      ),
                     ),
-                  ),
-                  SizedBox(width: 16),
-                  Text(
-                    'Loading PGN...',
-                    style: TextStyle(
-                      color: kWhiteColor,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            percentLabel == null
+                                ? 'Loading PGN...'
+                                : 'Loading PGN... $percentLabel',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: kWhiteColor,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          if (phase != null && phase.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              phase,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: kWhiteColor.withValues(alpha: 0.72),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 12),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(999),
+                            child: LinearProgressIndicator(
+                              value: fraction,
+                              minHeight: 4,
+                              valueColor: const AlwaysStoppedAnimation(
+                                kPrimaryColor,
+                              ),
+                              backgroundColor: kWhiteColor.withValues(
+                                alpha: 0.12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

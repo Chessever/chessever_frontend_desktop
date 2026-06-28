@@ -107,6 +107,8 @@ class _MiniaturesFilterDialogState extends State<_MiniaturesFilterDialog>
     with TickerProviderStateMixin {
   late MiniatureGamesFilter _draft;
   late final TextEditingController _ecoController;
+  late final TextEditingController _openingController;
+  late final TextEditingController _variationController;
   late final FDateFieldController _dateFromController;
   late final FDateFieldController _dateToController;
   late final TextEditingController _playerController;
@@ -116,6 +118,8 @@ class _MiniaturesFilterDialogState extends State<_MiniaturesFilterDialog>
     super.initState();
     _draft = widget.initialFilter;
     _ecoController = TextEditingController(text: _draft.eco ?? '');
+    _openingController = TextEditingController(text: _draft.opening ?? '');
+    _variationController = TextEditingController(text: _draft.variation ?? '');
     _dateFromController = FDateFieldController(
       vsync: this,
       initialDate: _parseIsoDate(_draft.dateFrom),
@@ -130,6 +134,8 @@ class _MiniaturesFilterDialogState extends State<_MiniaturesFilterDialog>
   @override
   void dispose() {
     _ecoController.dispose();
+    _openingController.dispose();
+    _variationController.dispose();
     _dateFromController.dispose();
     _dateToController.dispose();
     _playerController.dispose();
@@ -183,6 +189,8 @@ class _MiniaturesFilterDialogState extends State<_MiniaturesFilterDialog>
                   child: _MiniaturesFilterBody(
                     draft: _draft,
                     ecoController: _ecoController,
+                    openingController: _openingController,
+                    variationController: _variationController,
                     dateFromController: _dateFromController,
                     dateToController: _dateToController,
                     playerController: _playerController,
@@ -229,6 +237,8 @@ class _MiniaturesFilterDialogState extends State<_MiniaturesFilterDialog>
       MiniatureGamesFilter.defaultFilter.copyWith(
         sort: widget.initialFilter.sort,
         order: widget.initialFilter.order,
+        search: widget.initialFilter.search,
+        clearSearch: widget.initialFilter.search == null,
       ),
     );
   }
@@ -241,6 +251,8 @@ class _MiniaturesFilterDialogState extends State<_MiniaturesFilterDialog>
       order: _draft.order,
       results: _draft.results,
       eco: normalizedEco,
+      opening: _normalizedText(_openingController.text),
+      variation: _normalizedText(_variationController.text),
       ecoCategories:
           normalizedEco == null ? _draft.ecoCategories : const <String>{},
       timeControls: _draft.timeControls,
@@ -251,6 +263,7 @@ class _MiniaturesFilterDialogState extends State<_MiniaturesFilterDialog>
       maxMoves: _draft.maxMoves,
       dateFrom: _draft.dateFrom,
       dateTo: _draft.dateTo,
+      search: _draft.search,
       player: _normalizedText(_playerController.text),
     );
   }
@@ -264,6 +277,8 @@ class _MiniaturesFilterDialogState extends State<_MiniaturesFilterDialog>
     setState(() {
       _draft = filter;
       _ecoController.text = filter.eco ?? '';
+      _openingController.text = filter.opening ?? '';
+      _variationController.text = filter.variation ?? '';
       _dateFromController.value = _parseIsoDate(filter.dateFrom);
       _dateToController.value = _parseIsoDate(filter.dateTo);
       _playerController.text = filter.player ?? '';
@@ -275,6 +290,8 @@ class _MiniaturesFilterBody extends StatelessWidget {
   const _MiniaturesFilterBody({
     required this.draft,
     required this.ecoController,
+    required this.openingController,
+    required this.variationController,
     required this.dateFromController,
     required this.dateToController,
     required this.playerController,
@@ -283,6 +300,8 @@ class _MiniaturesFilterBody extends StatelessWidget {
 
   final MiniatureGamesFilter draft;
   final TextEditingController ecoController;
+  final TextEditingController openingController;
+  final TextEditingController variationController;
   final FDateFieldController dateFromController;
   final FDateFieldController dateToController;
   final TextEditingController playerController;
@@ -444,12 +463,18 @@ class _MiniaturesFilterBody extends StatelessWidget {
                       label: 'All',
                       selected:
                           draft.ecoCategories.isEmpty &&
-                          ecoController.text.trim().isEmpty,
+                          ecoController.text.trim().isEmpty &&
+                          openingController.text.trim().isEmpty &&
+                          variationController.text.trim().isEmpty,
                       onPress: () {
                         ecoController.clear();
+                        openingController.clear();
+                        variationController.clear();
                         onChanged(
                           draft.copyWith(
                             clearEco: true,
+                            clearOpening: true,
+                            clearVariation: true,
                             ecoCategories: const <String>{},
                           ),
                         );
@@ -484,6 +509,34 @@ class _MiniaturesFilterBody extends StatelessWidget {
                         eco: eco,
                         clearEco: eco.isEmpty,
                         ecoCategories: const <String>{},
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+                FTextField(
+                  controller: openingController,
+                  hint: 'Opening name, e.g. Sicilian Defense',
+                  onChange: (value) {
+                    final opening = _normalizedText(value);
+                    onChanged(
+                      draft.copyWith(
+                        opening: opening,
+                        clearOpening: opening == null,
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+                FTextField(
+                  controller: variationController,
+                  hint: 'Variation, e.g. Najdorf',
+                  onChange: (value) {
+                    final variation = _normalizedText(value);
+                    onChanged(
+                      draft.copyWith(
+                        variation: variation,
+                        clearVariation: variation == null,
                       ),
                     );
                   },

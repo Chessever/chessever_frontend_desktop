@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/board_explorer_scope.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/utils/list_keyboard_nav.dart';
@@ -66,6 +67,8 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.onClearPreviewUciMove,
     this.tabId,
     this.explorerScope,
+    this.localOpeningTreeIndex,
+    this.localOpeningTreeTitle = '',
     this.onNotationVertical,
     this.onNotationStep,
     this.onNotationJumpToHead,
@@ -97,6 +100,8 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   /// the explorer keeps the move table and position-games table restricted to
   /// that player's games while still allowing normal time/rating/result filters.
   final BoardExplorerScope? explorerScope;
+  final PlayerOpeningTreeIndex? localOpeningTreeIndex;
+  final String localOpeningTreeTitle;
 
   /// The notation widget rendered on page 0. Built by the caller so this
   /// panel doesn't have to know about the desktop board's _Ply / history.
@@ -490,6 +495,8 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                 onKeepExplorerActive: _keepExplorerActive,
                 onKeepGamesActive: _keepGamesActive,
                 explorerScope: widget.explorerScope,
+                localOpeningTreeIndex: widget.localOpeningTreeIndex,
+                localOpeningTreeTitle: widget.localOpeningTreeTitle,
                 exactFenSearch: !_isInitialPositionFen(widget.startingFen),
               )
               : const ColoredBox(color: kBlack2Color),
@@ -632,6 +639,11 @@ bool debugIsRightRailPreviousTabChord({
       key == LogicalKeyboardKey.comma ||
       key == LogicalKeyboardKey.arrowLeft ||
       character == '<';
+}
+
+@visibleForTesting
+bool debugShouldActivateExplorerGamesPanel({required bool pageActive}) {
+  return pageActive;
 }
 
 class _SegmentBar extends ConsumerWidget {
@@ -968,6 +980,8 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
     required this.onKeepExplorerActive,
     required this.onKeepGamesActive,
     required this.explorerScope,
+    required this.localOpeningTreeIndex,
+    required this.localOpeningTreeTitle,
     this.exactFenSearch = false,
   });
 
@@ -989,6 +1003,8 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
   final VoidCallback onKeepExplorerActive;
   final VoidCallback onKeepGamesActive;
   final BoardExplorerScope? explorerScope;
+  final PlayerOpeningTreeIndex? localOpeningTreeIndex;
+  final String localOpeningTreeTitle;
   final bool exactFenSearch;
 
   @override
@@ -1012,12 +1028,19 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
   bool _focusedGameAutoplaying = false;
   bool _pendingGamesFocus = false;
   bool _gamesControllerReconcileScheduled = false;
+  _ExplorerSource _explorerSource = _ExplorerSource.local;
 
   @override
   bool get wantKeepAlive => true;
 
+  PlayerOpeningTreeIndex? get _effectiveLocalOpeningTreeIndex {
+    if (_explorerSource != _ExplorerSource.local) return null;
+    return widget.localOpeningTreeIndex;
+  }
+
   void _syncProvider({bool force = false}) {
     if (!widget.active) return;
+    final effectiveLocalTree = _effectiveLocalOpeningTreeIndex;
     // Same shape mobile uses: starting FEN + line of UCIs up to cursor.
     // Sanitise here too (the provider also sanitises) so our cache key
     // matches what the provider stores.
@@ -1026,13 +1049,16 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
         .where((m) => RegExp(r'^[a-h][1-8][a-h][1-8][qrbn]?$').hasMatch(m))
         .toList(growable: false);
     final scopeKey = widget.explorerScope?.identityKey ?? '';
-    final key = '${widget.currentFen}|${sanitised.join(' ')}|$scopeKey';
+    final localTreeKey = effectiveLocalTree?.treeId ?? '';
+    final key =
+        '${widget.currentFen}|${sanitised.join(' ')}|$scopeKey|$localTreeKey';
     if (!force && key == _lastSyncedKey) return;
     _lastSyncedKey = key;
     // Defer to next microtask so we don't notify a provider during build.
     Future.microtask(() {
       if (!mounted || !widget.active) return;
       final notifier = ref.read(gamebaseExplorerProvider.notifier);
+      notifier.setLocalDatabaseTreeMode(effectiveLocalTree != null);
       final scope = widget.explorerScope;
       final appliedScopeKey = ref.read(appliedBoardExplorerScopeKeyProvider);
       final scopedFilters = boardExplorerFiltersForScope(
@@ -1049,6 +1075,7 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
         widget.currentFen,
         sanitised,
         startingFen: widget.startingFen,
+        fetchAggregates: effectiveLocalTree == null,
       );
     });
   }
@@ -1083,10 +1110,16 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
     }
     final oldScopeKey = old.explorerScope?.identityKey;
     final nextScopeKey = widget.explorerScope?.identityKey;
+    final oldLocalTreeKey = old.localOpeningTreeIndex?.treeId;
+    final nextLocalTreeKey = widget.localOpeningTreeIndex?.treeId;
+    if (oldLocalTreeKey == null && nextLocalTreeKey != null) {
+      _explorerSource = _ExplorerSource.local;
+    }
     if (old.currentFen != widget.currentFen ||
         old.startingFen != widget.startingFen ||
         !_listEquals(old.lineUcis, widget.lineUcis) ||
-        oldScopeKey != nextScopeKey) {
+        oldScopeKey != nextScopeKey ||
+        oldLocalTreeKey != nextLocalTreeKey) {
       widget.onClearPreviewUciMove?.call();
       _pendingGamesFocus = false;
       _activeTable = _ExplorerTableFocus.moves;
@@ -1100,6 +1133,27 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       if (widget.active && widget.activeSection > 0) {
         _keepExplorerFocusAfterFrame();
       }
+    }
+  }
+
+  void _setExplorerSource(_ExplorerSource source) {
+    if (_explorerSource == source) return;
+    setState(() {
+      _explorerSource = source;
+      _pendingGamesFocus = false;
+      _activeTable = _ExplorerTableFocus.moves;
+      _focusedMoveIndex = -1;
+      _focusedGameIndex = -1;
+      _focusedGameMoveIndex = -1;
+      _focusedGameAutoplaying = false;
+      _moveCount = 0;
+      _lastSyncedKey = '';
+    });
+    widget.onClearPreviewUciMove?.call();
+    _gamesController.select(null);
+    _syncProvider(force: true);
+    if (widget.active && widget.activeSection > 0) {
+      _keepExplorerFocusAfterFrame();
     }
   }
 
@@ -1661,7 +1715,11 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
   Widget build(BuildContext context) {
     super.build(context);
     if (!widget.active) return const SizedBox.expand();
+    final effectiveLocalTree = _effectiveLocalOpeningTreeIndex;
     final activeContinuationStep = _activeGameContinuationStep();
+    final gamesPanelActive = debugShouldActivateExplorerGamesPanel(
+      pageActive: widget.active,
+    );
     final movesPanel = DesktopOpeningExplorer(
       compactColumns: true,
       showHeader: false,
@@ -1682,15 +1740,20 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       sortedAggregatesCallback: (next) => _sortedAggs = next,
       onMove: _activateExplorerMove,
       onShowGames: widget.onShowGames,
-      usePlayerOpeningTree: widget.explorerScope != null,
+      usePlayerOpeningTree:
+          widget.explorerScope != null && effectiveLocalTree == null,
+      localOpeningTreeIndex: effectiveLocalTree,
     );
     final gamesPanel = DesktopPositionGamesTable(
       fen: widget.currentFen,
       moves: widget.lineUcis,
       exactFenSearch: widget.exactFenSearch,
-      active: widget.active,
-      waitForPlayerOpeningTree: widget.explorerScope != null,
+      active: gamesPanelActive,
+      waitForPlayerOpeningTree:
+          widget.explorerScope != null && effectiveLocalTree == null,
       playerOpeningTreePlayerId: widget.explorerScope?.player.id,
+      localOpeningTreeIndex: effectiveLocalTree,
+      localOpeningTreeTitle: widget.localOpeningTreeTitle,
       controller: _gamesController,
       referenceLayout: true,
       activeContinuationStep: activeContinuationStep,
@@ -1730,6 +1793,12 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (widget.localOpeningTreeIndex != null)
+                  _ExplorerSourceSwitcher(
+                    value: _explorerSource,
+                    localLabel: widget.localOpeningTreeTitle,
+                    onChanged: _setExplorerSource,
+                  ),
                 Expanded(
                   child: ResizableSplitView(
                     axis: Axis.vertical,
@@ -1777,6 +1846,119 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
 }
 
 enum _ExplorerTableFocus { moves, games }
+
+enum _ExplorerSource { global, local }
+
+class _ExplorerSourceSwitcher extends StatelessWidget {
+  const _ExplorerSourceSwitcher({
+    required this.value,
+    required this.localLabel,
+    required this.onChanged,
+  });
+
+  final _ExplorerSource value;
+  final String localLabel;
+  final ValueChanged<_ExplorerSource> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = localLabel.trim().isEmpty ? 'Local database' : localLabel;
+    return Container(
+      height: 42,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: const BoxDecoration(
+        color: kBlack2Color,
+        border: Border(bottom: BorderSide(color: kDividerColor)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.account_tree_outlined,
+            size: 15,
+            color: kLightGreyColor,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          _ExplorerSourceSegment(
+            label: 'Global',
+            selected: value == _ExplorerSource.global,
+            onTap: () => onChanged(_ExplorerSource.global),
+          ),
+          _ExplorerSourceSegment(
+            label: 'Local',
+            selected: value == _ExplorerSource.local,
+            onTap: () => onChanged(_ExplorerSource.local),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ExplorerSourceSegment extends StatelessWidget {
+  const _ExplorerSourceSegment({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = selected ? kPrimaryColor : kWhiteColor70;
+    return DesktopTooltip(
+      message: 'Use $label opening explorer data',
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          height: 28,
+          width: 64,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color:
+                selected ? kPrimaryColor.withValues(alpha: 0.12) : kBlack3Color,
+            border: Border.all(
+              color:
+                  selected
+                      ? kPrimaryColor.withValues(alpha: 0.42)
+                      : kDividerColor,
+            ),
+            borderRadius: BorderRadius.horizontal(
+              left: Radius.circular(label == 'Global' ? 7 : 0),
+              right: Radius.circular(label == 'Local' ? 7 : 0),
+            ),
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: fg,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 /// True for a bare `Shift+→` (forward) or `Shift+←` (backward) chord — the
 /// Explorer's local Moves ⇄ Games focus switch. Excludes Ctrl/Alt/Meta so it
@@ -1870,6 +2052,8 @@ class _PositionGamesPage extends ConsumerStatefulWidget {
     required this.onClearPreviewUciMove,
     required this.onNotationStep,
     required this.explorerScope,
+    required this.localOpeningTreeIndex,
+    required this.localOpeningTreeTitle,
   });
 
   final String fen;
@@ -1885,6 +2069,8 @@ class _PositionGamesPage extends ConsumerStatefulWidget {
   final VoidCallback? onClearPreviewUciMove;
   final bool Function(int delta)? onNotationStep;
   final BoardExplorerScope? explorerScope;
+  final PlayerOpeningTreeIndex? localOpeningTreeIndex;
+  final String localOpeningTreeTitle;
 
   @override
   ConsumerState<_PositionGamesPage> createState() => _PositionGamesPageState();
@@ -2312,6 +2498,8 @@ class _PositionGamesPageState extends ConsumerState<_PositionGamesPage>
                 exactFenSearch: widget.exactFenSearch,
                 active: widget.active,
                 uci: widget.pinnedUci,
+                localOpeningTreeIndex: widget.localOpeningTreeIndex,
+                localOpeningTreeTitle: widget.localOpeningTreeTitle,
                 controller: _controller,
                 activeContinuationStep: activeContinuationStep,
                 activeContinuationAutoplay:

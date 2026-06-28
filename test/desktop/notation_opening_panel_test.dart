@@ -1,6 +1,10 @@
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
+import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/desktop/widgets/desktop_opening_explorer.dart';
+import 'package:chessever/desktop/widgets/desktop_position_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
@@ -69,6 +73,11 @@ void main() {
     },
   );
 
+  test('local Explorer games pane activates while Explorer is visible', () {
+    expect(debugShouldActivateExplorerGamesPanel(pageActive: false), isFalse);
+    expect(debugShouldActivateExplorerGamesPanel(pageActive: true), isTrue);
+  });
+
   testWidgets('PageDown from Explorer focuses the games table after load', (
     tester,
   ) async {
@@ -90,6 +99,65 @@ void main() {
     final argsByTab = container.read(boardTabGameArgsByTabIdProvider);
 
     expect(argsByTab.values.single.gameId, 'gamebase-0');
+  });
+
+  testWidgets('local Explorer defaults to local source and can switch global', (
+    tester,
+  ) async {
+    final repository = _FakeExplorerRepository();
+    final localIndex = _testLocalOpeningTreeIndex();
+
+    await tester.pumpWidget(
+      _harness(
+        repository: repository,
+        localOpeningTreeIndex: localIndex,
+        localOpeningTreeTitle: 'Hikaru Chesscom',
+      ),
+    );
+    await tester.pump();
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(NotationOpeningPanel)),
+    );
+    container.read(rightRailActivePageProvider('__none__').notifier).state = 1;
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('Global'), findsOneWidget);
+    expect(find.text('Local'), findsOneWidget);
+    expect(
+      tester
+          .widget<DesktopOpeningExplorer>(find.byType(DesktopOpeningExplorer))
+          .localOpeningTreeIndex,
+      same(localIndex),
+    );
+    expect(
+      tester
+          .widget<DesktopPositionGamesTable>(
+            find.byType(DesktopPositionGamesTable),
+          )
+          .localOpeningTreeIndex,
+      same(localIndex),
+    );
+
+    await tester.tap(find.text('Global'));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(
+      tester
+          .widget<DesktopOpeningExplorer>(find.byType(DesktopOpeningExplorer))
+          .localOpeningTreeIndex,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<DesktopPositionGamesTable>(
+            find.byType(DesktopPositionGamesTable),
+          )
+          .localOpeningTreeIndex,
+      isNull,
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('Explorer bottom strip navigation controls are always visible', (
@@ -1880,6 +1948,8 @@ Widget _harness({
   bool previewLineAutoplay = false,
   double width = 760,
   double height = 360,
+  PlayerOpeningTreeIndex? localOpeningTreeIndex,
+  String localOpeningTreeTitle = '',
 }) {
   return ProviderScope(
     overrides: [
@@ -1924,6 +1994,8 @@ Widget _harness({
             lastMoveShortcutLabel: lastMoveShortcutLabel,
             previousGameShortcutLabel: previousGameShortcutLabel,
             nextGameShortcutLabel: nextGameShortcutLabel,
+            localOpeningTreeIndex: localOpeningTreeIndex,
+            localOpeningTreeTitle: localOpeningTreeTitle,
           ),
         ),
       ),
@@ -2391,11 +2463,15 @@ class _StatefulLineInsertionHarnessState
 
 Future<void> _openExplorerTab(WidgetTester tester) async {
   await tester.pump();
-  final explorerTab = find.text('Explorer');
-  final compactExplorerTab = find.text('Book');
-  await tester.tap(
-    explorerTab.evaluate().isNotEmpty ? explorerTab : compactExplorerTab,
+  final panel = tester.widget<NotationOpeningPanel>(
+    find.byType(NotationOpeningPanel),
   );
+  final container = ProviderScope.containerOf(
+    tester.element(find.byType(NotationOpeningPanel)),
+  );
+  container
+      .read(rightRailActivePageProvider(panel.tabId ?? '__none__').notifier)
+      .state = 1;
   await tester.pumpAndSettle();
 }
 
@@ -2411,7 +2487,15 @@ Future<void> _openExplorerFromStripIcon(WidgetTester tester) async {
 
 Future<void> _openGamesTab(WidgetTester tester) async {
   await tester.pump();
-  await tester.tap(find.text('Games'));
+  final panel = tester.widget<NotationOpeningPanel>(
+    find.byType(NotationOpeningPanel),
+  );
+  final container = ProviderScope.containerOf(
+    tester.element(find.byType(NotationOpeningPanel)),
+  );
+  container
+      .read(rightRailActivePageProvider(panel.tabId ?? '__none__').notifier)
+      .state = 2;
   await tester.pumpAndSettle();
 }
 
@@ -2421,6 +2505,34 @@ String _fenAfterUcis(List<String> ucis) {
     position = position.play(NormalMove.fromUci(uci));
   }
   return position.fen;
+}
+
+PlayerOpeningTreeIndex _testLocalOpeningTreeIndex() {
+  return buildLocalOpeningTreeIndex(
+    treeId: 'local:test-notation',
+    databaseId: '/tmp/test-notation.pgn',
+    games: <LocalOpeningTreeGameInput>[
+      LocalOpeningTreeGameInput(
+        id: 'local-notation-1',
+        rawPgn: '''
+[Event "Local Notation"]
+[Site "ChessEver"]
+[Date "2026.06.28"]
+[Round "1"]
+[White "Local White"]
+[Black "Local Black"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 1-0
+''',
+        sourcePath: '/tmp/test-notation.pgn',
+        sourceRelativePath: 'test-notation.pgn',
+        fileName: 'test-notation.pgn',
+        indexInFile: 0,
+        fileGameCount: 1,
+      ),
+    ],
+  );
 }
 
 class _FakeExplorerRepository extends GamebaseRepository {

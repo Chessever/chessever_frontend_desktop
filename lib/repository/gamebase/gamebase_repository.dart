@@ -117,8 +117,11 @@ class MiniatureGamesFilter {
     this.window = MiniatureGamesWindow.all,
     this.sort = MiniatureGamesSort.recent,
     this.order = MiniatureGamesSortOrder.desc,
+    this.search,
     this.results = const <MiniatureGameResult>{},
     this.eco,
+    this.opening,
+    this.variation,
     this.ecoCategories = const <String>{},
     this.timeControls = const <MiniatureGameTimeControl>{},
     this.isOnline,
@@ -134,8 +137,11 @@ class MiniatureGamesFilter {
   final MiniatureGamesWindow window;
   final MiniatureGamesSort sort;
   final MiniatureGamesSortOrder order;
+  final String? search;
   final Set<MiniatureGameResult> results;
   final String? eco;
+  final String? opening;
+  final String? variation;
   final Set<String> ecoCategories;
   final Set<MiniatureGameTimeControl> timeControls;
   final bool? isOnline;
@@ -156,6 +162,8 @@ class MiniatureGamesFilter {
     if (window != MiniatureGamesWindow.all) count += 1;
     if (results.isNotEmpty) count += 1;
     if (_cleanCsv(eco) != null) count += 1;
+    if (_cleanText(opening) != null) count += 1;
+    if (_cleanText(variation) != null) count += 1;
     if (ecoCategories.isNotEmpty) count += 1;
     if (timeControls.isNotEmpty) count += 1;
     if (isOnline != null) count += 1;
@@ -170,9 +178,15 @@ class MiniatureGamesFilter {
     MiniatureGamesWindow? window,
     MiniatureGamesSort? sort,
     MiniatureGamesSortOrder? order,
+    String? search,
+    bool clearSearch = false,
     Set<MiniatureGameResult>? results,
     String? eco,
     bool clearEco = false,
+    String? opening,
+    bool clearOpening = false,
+    String? variation,
+    bool clearVariation = false,
     Set<String>? ecoCategories,
     Set<MiniatureGameTimeControl>? timeControls,
     bool? isOnline,
@@ -193,8 +207,11 @@ class MiniatureGamesFilter {
       window: window ?? this.window,
       sort: sort ?? this.sort,
       order: order ?? this.order,
+      search: clearSearch ? null : (search ?? this.search),
       results: results ?? this.results,
       eco: clearEco ? null : (eco ?? this.eco),
+      opening: clearOpening ? null : (opening ?? this.opening),
+      variation: clearVariation ? null : (variation ?? this.variation),
       ecoCategories: ecoCategories ?? this.ecoCategories,
       timeControls: timeControls ?? this.timeControls,
       isOnline: clearOnline ? null : (isOnline ?? this.isOnline),
@@ -220,11 +237,17 @@ class MiniatureGamesFilter {
       'offset': offset,
     };
 
+    final normalizedSearch = _cleanText(search);
+    if (normalizedSearch != null) query['q'] = normalizedSearch;
     if (results.isNotEmpty) {
       query['result'] = results.map((result) => result.apiValue).join(',');
     }
     final normalizedEco = _cleanCsv(eco);
     if (normalizedEco != null) query['eco'] = normalizedEco;
+    final normalizedOpening = _cleanText(opening);
+    if (normalizedOpening != null) query['opening'] = normalizedOpening;
+    final normalizedVariation = _cleanText(variation);
+    if (normalizedVariation != null) query['variation'] = normalizedVariation;
     if (ecoCategories.isNotEmpty) {
       query['ecoCategory'] = ecoCategories
           .map((c) => c.toUpperCase())
@@ -240,10 +263,9 @@ class MiniatureGamesFilter {
     if (maxRating != null) query['maxRating'] = maxRating;
     if (minMoves != null) query['minMoves'] = minMoves;
     if (maxMoves != null) query['maxMoves'] = maxMoves;
-    final normalizedDateFrom = _cleanDate(dateFrom);
-    if (normalizedDateFrom != null) query['dateFrom'] = normalizedDateFrom;
-    final normalizedDateTo = _cleanDate(dateTo);
-    if (normalizedDateTo != null) query['dateTo'] = normalizedDateTo;
+    final (:from, :to) = _cleanDateRange(dateFrom: dateFrom, dateTo: dateTo);
+    if (from != null) query['dateFrom'] = from;
+    if (to != null) query['dateTo'] = to;
     final normalizedPlayer = _cleanText(player);
     if (normalizedPlayer != null) query['player'] = normalizedPlayer;
 
@@ -270,6 +292,18 @@ class MiniatureGamesFilter {
     final trimmed = _cleanText(value);
     if (trimmed == null) return null;
     return RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(trimmed) ? trimmed : null;
+  }
+
+  static ({String? from, String? to}) _cleanDateRange({
+    required String? dateFrom,
+    required String? dateTo,
+  }) {
+    final from = _cleanDate(dateFrom);
+    final to = _cleanDate(dateTo);
+    if (from != null && to != null && from.compareTo(to) > 0) {
+      return (from: to, to: from);
+    }
+    return (from: from, to: to);
   }
 }
 

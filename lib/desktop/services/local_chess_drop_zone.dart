@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:desktop_drop/desktop_drop.dart';
@@ -22,10 +23,12 @@ class LocalChessDropZone extends StatefulWidget {
     super.key,
     required this.child,
     required this.onChessPathsDropped,
+    this.enabled = true,
   });
 
   final Widget child;
-  final void Function(List<String> paths) onChessPathsDropped;
+  final FutureOr<void> Function(List<String> paths) onChessPathsDropped;
+  final bool enabled;
 
   @override
   State<LocalChessDropZone> createState() => _LocalChessDropZoneState();
@@ -33,17 +36,25 @@ class LocalChessDropZone extends StatefulWidget {
 
 class _LocalChessDropZoneState extends State<LocalChessDropZone> {
   bool _hovering = false;
+  bool _dropInFlight = false;
 
   @override
   Widget build(BuildContext context) {
     return DropTarget(
+      enable: widget.enabled,
       onDragEntered: (_) => setState(() => _hovering = true),
       onDragExited: (_) => setState(() => _hovering = false),
-      onDragDone: (details) {
+      onDragDone: (details) async {
+        if (_dropInFlight) return;
         setState(() => _hovering = false);
         final paths = localChessDropPaths(details.files.map((x) => x.path));
         if (paths.isEmpty) return;
-        widget.onChessPathsDropped(paths);
+        _dropInFlight = true;
+        try {
+          await Future<void>.sync(() => widget.onChessPathsDropped(paths));
+        } finally {
+          _dropInFlight = false;
+        }
       },
       child: Stack(
         children: [

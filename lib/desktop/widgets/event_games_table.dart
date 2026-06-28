@@ -21,6 +21,7 @@ import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
@@ -123,6 +124,7 @@ class EventGamesTable extends ConsumerStatefulWidget {
 
 class _EventGamesTableState extends ConsumerState<EventGamesTable> {
   static const double _databaseScrollPrefetchExtent = 360;
+  static const double _databaseGameRowExtent = 38;
 
   final ScrollController _scrollController = ScrollController();
   final FocusNode _railFocusNode = FocusNode(debugLabel: 'event-games-rail');
@@ -346,6 +348,35 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
         duration: const Duration(milliseconds: 140),
         curve: Curves.easeOutCubic,
         alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+      );
+    });
+  }
+
+  void _scheduleDatabaseSelectedScroll({
+    required List<TournamentGameSummary> orderedGames,
+    required String? selectedGameId,
+    required String signature,
+  }) {
+    if (selectedGameId == null || selectedGameId.isEmpty) return;
+    if (_lastScrollSignature == signature) return;
+    _lastScrollSignature = signature;
+    final selectedIndex = orderedGames.indexWhere(
+      (game) => game.id == selectedGameId,
+    );
+    if (selectedIndex < 0) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      final target =
+          (selectedIndex * _databaseGameRowExtent -
+                  position.viewportDimension * 0.34)
+              .clamp(position.minScrollExtent, position.maxScrollExtent)
+              .toDouble();
+      _scrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.easeOutCubic,
       );
     });
   }
@@ -703,7 +734,9 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
         effectiveArgs?.viewSource == ChessboardView.playerProfile;
 
     final allRoundGroups =
-        resolved.kind == _GameListKind.favorites
+        resolved.kind == _GameListKind.database
+            ? const <_EventRoundGroup>[]
+            : resolved.kind == _GameListKind.favorites
             ? _buildDateGroups(resolved.games)
             : _buildRoundGroups(
               resolved.games,
@@ -744,12 +777,18 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
       for (final group in roundGroups)
         if (expandedByGroup[group.id] == true) group,
     ];
-    final allOrderedGames = allRoundGroups
-        .expand((round) => round.games)
-        .toList(growable: false);
-    final orderedGames = visibleRoundGroups
-        .expand((round) => round.games)
-        .toList(growable: false);
+    final allOrderedGames =
+        resolved.kind == _GameListKind.database
+            ? resolved.games
+            : allRoundGroups
+                .expand((round) => round.games)
+                .toList(growable: false);
+    final orderedGames =
+        resolved.kind == _GameListKind.database
+            ? resolved.games
+            : visibleRoundGroups
+                .expand((round) => round.games)
+                .toList(growable: false);
     final selectedGameId = resolved.selectedGameId;
     final activeSelectionId = _highlightedGameId ?? selectedGameId;
     _pruneRowKeys(orderedGames);
@@ -769,15 +808,32 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
               ).select((async) => _EventLiveSummaries.from(async.valueOrNull)),
             );
 
-    final scrollSignature = [
-      activeSelectionId ?? '',
-      for (final group in roundGroups)
-        '${resolved.kind.index}:${group.id}:${expandedByGroup[group.id] == true}:${group.games.map((game) => game.id).join(',')}',
-    ].join('|');
-    _scheduleSelectedScroll(
-      selectedGameId: activeSelectionId,
-      signature: scrollSignature,
-    );
+    final scrollSignature =
+        resolved.kind == _GameListKind.database
+            ? [
+              activeSelectionId ?? '',
+              resolved.kind.index,
+              orderedGames.length,
+              orderedGames.isEmpty ? '' : orderedGames.first.id,
+              orderedGames.isEmpty ? '' : orderedGames.last.id,
+            ].join('|')
+            : [
+              activeSelectionId ?? '',
+              for (final group in roundGroups)
+                '${resolved.kind.index}:${group.id}:${expandedByGroup[group.id] == true}:${group.games.map((game) => game.id).join(',')}',
+            ].join('|');
+    if (resolved.kind == _GameListKind.database) {
+      _scheduleDatabaseSelectedScroll(
+        orderedGames: orderedGames,
+        selectedGameId: activeSelectionId,
+        signature: scrollSignature,
+      );
+    } else {
+      _scheduleSelectedScroll(
+        selectedGameId: activeSelectionId,
+        signature: scrollSignature,
+      );
+    }
 
     final databasePagination =
         resolved.kind == _GameListKind.database
@@ -946,74 +1002,102 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
                 ),
               ),
               Expanded(
-                child: ListView(
-                  controller: _scrollController,
-                  physics: const DesktopScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
-                  children: [
-                    if (upcomingGroups.isNotEmpty)
-                      _UpcomingRoundsToggle(
-                        expanded: showUpcoming,
-                        roundCount: upcomingGroups.length,
-                        gameCount: upcomingGames.length,
-                        onToggle:
-                            () =>
-                                ref
-                                    .read(
-                                      _eventUpcomingVisibleProvider(
-                                        railKey,
-                                      ).notifier,
-                                    )
-                                    .state = !showUpcoming,
-                      ),
-                    for (final group in roundGroups)
-                      _EventRoundSection(
-                        group: group,
-                        selectedGameId: selectedGameId,
-                        selectedGameIds: _highlightedGameIds,
-                        highlightedGameId: _highlightedGameId,
-                        selectedRowKey:
-                            (_highlightedGameId ?? selectedGameId) == null
-                                ? null
-                                : _rowKeyFor(
-                                  _highlightedGameId ?? selectedGameId!,
-                                ),
-                        liveSummaries: liveSummaries,
-                        eventGames:
-                            resolved.kind == _GameListKind.event
-                                ? allOrderedGames
-                                : orderedGames,
-                        tournamentTitle: resolved.title,
-                        kind: resolved.kind,
-                        activeArgs: effectiveArgs,
-                        showBoardColumn: showBoardColumn,
-                        onHighlightGame: _highlightGame,
-                        onRangeHighlightGame:
-                            (game) => _highlightGameRange(
-                              orderedGames,
-                              game,
-                              fallbackAnchorGameId: selectedGameId,
-                            ),
-                      ),
-                    if (resolved.kind == _GameListKind.database &&
-                        (isLoadingMoreDatabase ||
-                            databasePagination?.hasMore == true ||
-                            databaseLoadError != null))
-                      _GamesPaginationSection(
-                        isLoading: isLoadingMoreDatabase,
-                        error: databaseLoadError,
-                      ),
-                    if (activeContinuation != null &&
-                        (isLoadingMoreContinuation ||
-                            continuationSnapshot?.hasMore == true ||
-                            continuationLoadError != null))
-                      _GamesPaginationSection(
-                        isLoading: isLoadingMoreContinuation,
-                        error: continuationLoadError,
-                      ),
-                    if (resolved.isLoading) const _EventGamesLoadingSection(),
-                  ],
-                ),
+                child:
+                    resolved.kind == _GameListKind.database
+                        ? _DatabaseGamesList(
+                          controller: _scrollController,
+                          games: orderedGames,
+                          copyScopeGames: railActivationGames,
+                          selectedGameId: selectedGameId,
+                          selectedGameIds: _highlightedGameIds,
+                          highlightedGameId: _highlightedGameId,
+                          selectedRowKey:
+                              (_highlightedGameId ?? selectedGameId) == null
+                                  ? null
+                                  : _rowKeyFor(
+                                    _highlightedGameId ?? selectedGameId!,
+                                  ),
+                          tournamentTitle: resolved.title,
+                          activeArgs: effectiveArgs,
+                          isLoadingMoreDatabase: isLoadingMoreDatabase,
+                          databaseHasMore: databasePagination?.hasMore == true,
+                          databaseLoadError: databaseLoadError,
+                          activeContinuation: activeContinuation,
+                          isLoadingMoreContinuation: isLoadingMoreContinuation,
+                          continuationHasMore:
+                              continuationSnapshot?.hasMore == true,
+                          continuationLoadError: continuationLoadError,
+                          isLoading: resolved.isLoading,
+                          onHighlightGame: _highlightGame,
+                          onRangeHighlightGame:
+                              (game) => _highlightGameRange(
+                                orderedGames,
+                                game,
+                                fallbackAnchorGameId: selectedGameId,
+                              ),
+                        )
+                        : ListView(
+                          controller: _scrollController,
+                          physics: const DesktopScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
+                          children: [
+                            if (upcomingGroups.isNotEmpty)
+                              _UpcomingRoundsToggle(
+                                expanded: showUpcoming,
+                                roundCount: upcomingGroups.length,
+                                gameCount: upcomingGames.length,
+                                onToggle:
+                                    () =>
+                                        ref
+                                            .read(
+                                              _eventUpcomingVisibleProvider(
+                                                railKey,
+                                              ).notifier,
+                                            )
+                                            .state = !showUpcoming,
+                              ),
+                            for (final group in roundGroups)
+                              _EventRoundSection(
+                                group: group,
+                                selectedGameId: selectedGameId,
+                                selectedGameIds: _highlightedGameIds,
+                                highlightedGameId: _highlightedGameId,
+                                selectedRowKey:
+                                    (_highlightedGameId ?? selectedGameId) ==
+                                            null
+                                        ? null
+                                        : _rowKeyFor(
+                                          _highlightedGameId ?? selectedGameId!,
+                                        ),
+                                liveSummaries: liveSummaries,
+                                eventGames:
+                                    resolved.kind == _GameListKind.event
+                                        ? allOrderedGames
+                                        : orderedGames,
+                                tournamentTitle: resolved.title,
+                                kind: resolved.kind,
+                                activeArgs: effectiveArgs,
+                                showBoardColumn: showBoardColumn,
+                                onHighlightGame: _highlightGame,
+                                onRangeHighlightGame:
+                                    (game) => _highlightGameRange(
+                                      orderedGames,
+                                      game,
+                                      fallbackAnchorGameId: selectedGameId,
+                                    ),
+                              ),
+                            if (activeContinuation != null &&
+                                (isLoadingMoreContinuation ||
+                                    continuationSnapshot?.hasMore == true ||
+                                    continuationLoadError != null))
+                              _GamesPaginationSection(
+                                isLoading: isLoadingMoreContinuation,
+                                error: continuationLoadError,
+                              ),
+                            if (resolved.isLoading)
+                              const _EventGamesLoadingSection(),
+                          ],
+                        ),
               ),
             ],
           ),
@@ -2519,6 +2603,372 @@ class _UpcomingRoundsToggleState extends State<_UpcomingRoundsToggle> {
                     ),
                   ],
                 ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DatabaseGamesList extends ConsumerWidget {
+  const _DatabaseGamesList({
+    required this.controller,
+    required this.games,
+    required this.copyScopeGames,
+    required this.selectedGameId,
+    required this.selectedGameIds,
+    required this.highlightedGameId,
+    required this.selectedRowKey,
+    required this.tournamentTitle,
+    required this.activeArgs,
+    required this.isLoadingMoreDatabase,
+    required this.databaseHasMore,
+    required this.databaseLoadError,
+    required this.activeContinuation,
+    required this.isLoadingMoreContinuation,
+    required this.continuationHasMore,
+    required this.continuationLoadError,
+    required this.isLoading,
+    required this.onHighlightGame,
+    required this.onRangeHighlightGame,
+  });
+
+  final ScrollController controller;
+  final List<TournamentGameSummary> games;
+  final List<TournamentGameSummary> copyScopeGames;
+  final String? selectedGameId;
+  final Set<String> selectedGameIds;
+  final String? highlightedGameId;
+  final GlobalKey? selectedRowKey;
+  final String tournamentTitle;
+  final BoardTabGameArgs? activeArgs;
+  final bool isLoadingMoreDatabase;
+  final bool databaseHasMore;
+  final String? databaseLoadError;
+  final BoardTabGamesContinuation? activeContinuation;
+  final bool isLoadingMoreContinuation;
+  final bool continuationHasMore;
+  final String? continuationLoadError;
+  final bool isLoading;
+  final void Function(TournamentGameSummary game) onHighlightGame;
+  final void Function(TournamentGameSummary game) onRangeHighlightGame;
+
+  String? get _activeSelectionId => highlightedGameId ?? selectedGameId;
+
+  bool _isSelected(TournamentGameSummary game) {
+    if (selectedGameIds.isNotEmpty) return selectedGameIds.contains(game.id);
+    return game.id == _activeSelectionId;
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final showDatabasePagination =
+        isLoadingMoreDatabase || databaseHasMore || databaseLoadError != null;
+    final showContinuationPagination =
+        activeContinuation != null &&
+        (isLoadingMoreContinuation ||
+            continuationHasMore ||
+            continuationLoadError != null);
+    final itemCount =
+        games.length +
+        (showDatabasePagination ? 1 : 0) +
+        (showContinuationPagination ? 1 : 0) +
+        (isLoading ? 1 : 0);
+
+    return ListView.builder(
+      controller: controller,
+      physics: const DesktopScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
+      itemCount: itemCount,
+      itemBuilder: (context, index) {
+        if (index < games.length) {
+          final game = games[index];
+          return _DatabaseGameRow(
+            key: game.id == _activeSelectionId ? selectedRowKey : null,
+            game: game,
+            selected: _isSelected(game),
+            onTap: ({required bool inNewTab, required bool shiftPressed}) {
+              if (inNewTab) {
+                onHighlightGame(game);
+                unawaited(
+                  _openEventGame(
+                    ref: ref,
+                    context: context,
+                    container: ProviderScope.containerOf(
+                      context,
+                      listen: false,
+                    ),
+                    kind: _GameListKind.database,
+                    game: game,
+                    eventGames: copyScopeGames,
+                    tournamentTitle: tournamentTitle,
+                    activeArgs: activeArgs,
+                    inNewTab: true,
+                  ),
+                );
+                return;
+              }
+              if (shiftPressed) {
+                onRangeHighlightGame(game);
+                return;
+              }
+              onHighlightGame(game);
+            },
+            onDoubleTap: ({required bool inNewTab}) {
+              onHighlightGame(game);
+              unawaited(
+                _openEventGame(
+                  ref: ref,
+                  context: context,
+                  container: ProviderScope.containerOf(context, listen: false),
+                  kind: _GameListKind.database,
+                  game: game,
+                  eventGames: copyScopeGames,
+                  tournamentTitle: tournamentTitle,
+                  activeArgs: activeArgs,
+                  inNewTab: inNewTab,
+                ),
+              );
+            },
+            onSecondaryTap: (position) async {
+              final action = await showDesktopContextMenu<_GameRowAction>(
+                context: context,
+                position: position,
+                entries: const [
+                  DesktopContextMenuItem<_GameRowAction>(
+                    value: _GameRowAction.openInNewTab,
+                    icon: Icons.open_in_new_rounded,
+                    label: 'Open game in new tab',
+                    shortcut: 'Ctrl/⌘·Click',
+                  ),
+                  DesktopContextMenuItem<_GameRowAction>(
+                    value: _GameRowAction.openInNewWindow,
+                    icon: Icons.open_in_browser_rounded,
+                    label: 'Open game in new window',
+                  ),
+                  DesktopContextMenuItem<_GameRowAction>(
+                    value: _GameRowAction.insertGame,
+                    icon: Icons.call_merge_rounded,
+                    label: 'Insert game',
+                  ),
+                  DesktopContextMenuDivider<_GameRowAction>(),
+                  DesktopContextMenuItem<_GameRowAction>(
+                    value: _GameRowAction.copyPgn,
+                    icon: Icons.copy_rounded,
+                    label: 'Copy PGN',
+                    shortcut: 'Ctrl/⌘C',
+                  ),
+                ],
+              );
+              if (action == null) return;
+              if (!context.mounted) return;
+              final container = ProviderScope.containerOf(
+                context,
+                listen: false,
+              );
+              switch (action) {
+                case _GameRowAction.openInNewTab:
+                  await _openEventGame(
+                    ref: ref,
+                    context: context,
+                    container: container,
+                    kind: _GameListKind.database,
+                    game: game,
+                    eventGames: copyScopeGames,
+                    tournamentTitle: tournamentTitle,
+                    activeArgs: activeArgs,
+                    inNewTab: true,
+                  );
+                case _GameRowAction.openInNewWindow:
+                  await _openEventGame(
+                    ref: ref,
+                    context: context,
+                    container: container,
+                    kind: _GameListKind.database,
+                    game: game,
+                    eventGames: copyScopeGames,
+                    tournamentTitle: tournamentTitle,
+                    activeArgs: activeArgs,
+                    inNewWindow: true,
+                  );
+                case _GameRowAction.insertGame:
+                  await _insertEventGame(
+                    ref: ref,
+                    game: game,
+                    tournamentTitle: tournamentTitle,
+                  );
+                case _GameRowAction.copyPgn:
+                  final copyGames = eventRailGamesForCopy(
+                    orderedGames: copyScopeGames,
+                    selectedIds: selectedGameIds,
+                    highlightedGameId: highlightedGameId,
+                    selectedGameId: selectedGameId,
+                    fallbackGame: game,
+                  );
+                  await _copyEventGameSummariesAsPgn(
+                    context: context,
+                    ref: ref,
+                    games: copyGames,
+                  );
+              }
+            },
+          );
+        }
+
+        var footerIndex = index - games.length;
+        if (showDatabasePagination) {
+          if (footerIndex == 0) {
+            return _GamesPaginationSection(
+              isLoading: isLoadingMoreDatabase,
+              error: databaseLoadError,
+            );
+          }
+          footerIndex--;
+        }
+        if (showContinuationPagination) {
+          if (footerIndex == 0) {
+            return _GamesPaginationSection(
+              isLoading: isLoadingMoreContinuation,
+              error: continuationLoadError,
+            );
+          }
+          footerIndex--;
+        }
+        return const _EventGamesLoadingSection();
+      },
+    );
+  }
+}
+
+class _DatabaseGameRow extends StatefulWidget {
+  const _DatabaseGameRow({
+    super.key,
+    required this.game,
+    required this.selected,
+    required this.onTap,
+    required this.onDoubleTap,
+    required this.onSecondaryTap,
+  });
+
+  final TournamentGameSummary game;
+  final bool selected;
+  final void Function({required bool inNewTab, required bool shiftPressed})
+  onTap;
+  final void Function({required bool inNewTab}) onDoubleTap;
+  final ValueChanged<Offset> onSecondaryTap;
+
+  @override
+  State<_DatabaseGameRow> createState() => _DatabaseGameRowState();
+}
+
+class _DatabaseGameRowState extends State<_DatabaseGameRow> {
+  bool _hovered = false;
+  bool _tapDownInNewTab = false;
+  bool _tapDownShiftPressed = false;
+
+  void _captureGestureModifiers(TapDownDetails _) {
+    _tapDownInNewTab = isNewTabModifierPressed();
+    _tapDownShiftPressed = HardwareKeyboard.instance.isShiftPressed;
+  }
+
+  bool _newTabForGesture() {
+    final inNewTab = _tapDownInNewTab || isNewTabModifierPressed();
+    _tapDownInNewTab = false;
+    return inNewTab;
+  }
+
+  bool _shiftForGesture() {
+    final shiftPressed =
+        _tapDownShiftPressed || HardwareKeyboard.instance.isShiftPressed;
+    _tapDownShiftPressed = false;
+    return shiftPressed;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final game = widget.game;
+    final selected = widget.selected;
+    final bg =
+        selected
+            ? kPrimaryColor.withValues(alpha: 0.18)
+            : (_hovered ? kBlack3Color : Colors.transparent);
+    final border =
+        selected ? kPrimaryColor.withValues(alpha: 0.72) : Colors.transparent;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      child: ClickCursor(
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: _captureGestureModifiers,
+            onTap:
+                () => widget.onTap(
+                  inNewTab: _newTabForGesture(),
+                  shiftPressed: _shiftForGesture(),
+                ),
+            onDoubleTap:
+                () => widget.onDoubleTap(inNewTab: _newTabForGesture()),
+            onSecondaryTapUp:
+                (details) => widget.onSecondaryTap(details.globalPosition),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 90),
+              height: _EventGamesTableState._databaseGameRowExtent,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: border, width: selected ? 1.2 : 1),
+                boxShadow:
+                    selected
+                        ? [
+                          BoxShadow(
+                            color: kPrimaryColor.withValues(alpha: 0.18),
+                            blurRadius: 14,
+                            offset: const Offset(0, 3),
+                          ),
+                        ]
+                        : null,
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _PlayerCell(
+                      name: game.whitePlayer,
+                      federation: game.whiteFederation,
+                      fideId: game.whiteFideId,
+                      title: game.whiteTitle,
+                      rating: game.whiteRating,
+                      selected: selected,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _PlayerCell(
+                      name: game.blackPlayer,
+                      federation: game.blackFederation,
+                      fideId: game.blackFideId,
+                      title: game.blackTitle,
+                      rating: game.blackRating,
+                      selected: selected,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 38,
+                    child: Center(
+                      child: _StatusPill(
+                        status: game.status,
+                        isLive: false,
+                        hasStarted: game.hasStarted,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

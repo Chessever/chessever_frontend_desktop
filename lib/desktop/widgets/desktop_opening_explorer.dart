@@ -6,6 +6,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -31,6 +32,61 @@ import 'package:chessever/utils/figurine_notation.dart';
 ///
 /// The narrow mode is what kicks in inside the BoardPane right rail; the
 /// wide mode is the dedicated OpeningExplorerPane centre column.
+final _localOpeningTreeMoveAggregatesProvider = FutureProvider.autoDispose
+    .family<List<MoveAggregate>, _LocalOpeningTreeMoveQuery>((ref, query) {
+      return ref
+          .read(localChessDatabaseRepositoryProvider)
+          .localMoveAggregatesForFen(
+            databasePath: query.databasePath,
+            fen: query.fen,
+            filters: query.filters,
+          );
+    });
+
+@immutable
+class _LocalOpeningTreeMoveQuery {
+  const _LocalOpeningTreeMoveQuery({
+    required this.databasePath,
+    required this.fen,
+    required this.filters,
+  });
+
+  final String databasePath;
+  final String fen;
+  final PlayerOpeningTreeFilterCriteria filters;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _LocalOpeningTreeMoveQuery &&
+        other.databasePath == databasePath &&
+        other.fen == fen &&
+        other.filters.playerId == filters.playerId &&
+        other.filters.timeControl == filters.timeControl &&
+        other.filters.minRating == filters.minRating &&
+        other.filters.maxRating == filters.maxRating &&
+        other.filters.color == filters.color &&
+        other.filters.result == filters.result &&
+        other.filters.isOnline == filters.isOnline &&
+        other.filters.yearFrom == filters.yearFrom &&
+        other.filters.yearTo == filters.yearTo;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    databasePath,
+    fen,
+    filters.playerId,
+    filters.timeControl,
+    filters.minRating,
+    filters.maxRating,
+    filters.color,
+    filters.result,
+    filters.isOnline,
+    filters.yearFrom,
+    filters.yearTo,
+  );
+}
+
 class DesktopOpeningExplorer extends ConsumerWidget {
   const DesktopOpeningExplorer({
     super.key,
@@ -46,6 +102,7 @@ class DesktopOpeningExplorer extends ConsumerWidget {
     this.showHeader = true,
     this.enableRowHover = true,
     this.usePlayerOpeningTree = false,
+    this.localOpeningTreeIndex,
   });
 
   /// Invoked when the user clicks a move row. UCI form (e.g. `e2e4`).
@@ -103,11 +160,19 @@ class DesktopOpeningExplorer extends ConsumerWidget {
   /// with a player filter still use backend aggregate queries directly.
   final bool usePlayerOpeningTree;
 
+  /// Local PGN database tree for board tabs opened from an imported database.
+  /// When present, moves are read from the local persisted tree instead of the
+  /// backend aggregate endpoint.
+  final PlayerOpeningTreeIndex? localOpeningTreeIndex;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(gamebaseExplorerProvider);
+    final localIndex = localOpeningTreeIndex;
     final localPlayerId =
-        usePlayerOpeningTree && state.filters.playerIds.length == 1
+        localIndex == null &&
+                usePlayerOpeningTree &&
+                state.filters.playerIds.length == 1
             ? state.filters.playerIds.first.trim()
             : null;
     if (localPlayerId != null && localPlayerId.isNotEmpty) {
@@ -145,21 +210,59 @@ class DesktopOpeningExplorer extends ConsumerWidget {
       });
     } else {
       Future.microtask(() {
-        if (usePlayerOpeningTree) {
+        if (usePlayerOpeningTree && localIndex == null) {
           _logPlayerTree(
             'moves panel Build Tree enabled but no single player filter; '
             'filtersPlayerIds=${state.filters.playerIds}',
           );
         }
-        ref.read(gamebaseExplorerProvider.notifier).disableLocalPlayerTree();
+        if (localIndex == null) {
+          ref.read(gamebaseExplorerProvider.notifier).disableLocalPlayerTree();
+        }
       });
     }
+    final localCriteria = _localTreeCriteriaForFilters(state.filters);
+    final localFallbackMoves =
+        localIndex == null
+            ? const <MoveAggregate>[]
+            : localIndex.movesForFen(state.currentFen, filters: localCriteria);
+    final localDatabasePath = localIndex?.playerId?.trim() ?? '';
+    final localFen = state.currentFen.trim();
+    final localSqlMoves =
+        localIndex == null || localDatabasePath.isEmpty || localFen.isEmpty
+            ? null
+            : ref.watch(
+              _localOpeningTreeMoveAggregatesProvider(
+                _LocalOpeningTreeMoveQuery(
+                  databasePath: localDatabasePath,
+                  fen: localFen,
+                  filters: localCriteria,
+                ),
+              ),
+            );
+    final queriedLocalMoves = localSqlMoves?.maybeWhen(
+      data: (moves) => moves,
+      orElse: () => null,
+    );
+    final effectiveState =
+        localIndex == null
+            ? state
+            : state.copyWith(
+              moveAggregates: queriedLocalMoves ?? localFallbackMoves,
+              isLoading:
+                  localFallbackMoves.isEmpty &&
+                  (localSqlMoves?.isLoading ?? false),
+              error:
+                  localFallbackMoves.isEmpty && localSqlMoves?.hasError == true
+                      ? 'Could not load local database moves.'
+                      : null,
+            );
     return FTheme(
       data: FThemes.zinc.dark,
       child: ColoredBox(
         color: kBlack2Color,
         child: _ExplorerBody(
-          state: state,
+          state: effectiveState,
           onMove: onMove,
           onShowGames: onShowGames,
           shrinkWrap: shrinkWrap,
@@ -179,6 +282,26 @@ class DesktopOpeningExplorer extends ConsumerWidget {
   void _logPlayerTree(String message) {
     if (kDebugMode) debugPrint('[PlayerOpeningTree][MovesPanel] $message');
   }
+}
+
+PlayerOpeningTreeFilterCriteria _localTreeCriteriaForFilters(
+  GamebaseFilters filters,
+) {
+  return PlayerOpeningTreeFilterCriteria(
+    timeControl:
+        filters.timeControls.isNotEmpty ? filters.timeControls.first : null,
+    minRating: filters.minRating,
+    maxRating: filters.maxRating,
+    color: switch (filters.playerColor) {
+      GamebasePlayerColor.white => 'white',
+      GamebasePlayerColor.black => 'black',
+      null => null,
+    },
+    result: filters.gameResult?.apiValue,
+    isOnline: filters.isOnline,
+    yearFrom: filters.yearFrom,
+    yearTo: filters.yearTo,
+  );
 }
 
 class _ExplorerBody extends StatefulWidget {
@@ -537,7 +660,7 @@ class _ColumnDims {
       required double? score,
       required double gap,
     }) {
-      final contentWidth = (width - horizontalPad * 2).clamp(0, width);
+      final contentWidth = (width - horizontalPad * 2 - 4).clamp(0, width);
       final fixedWidth =
           move +
           gamesValue +

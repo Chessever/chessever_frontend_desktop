@@ -95,6 +95,7 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
   final Map<String, Future<List<MoveAggregate>>> _inFlightAggregateRequests =
       {};
   String? _enabledLocalPlayerTreeId;
+  bool _localDatabaseTreeMode = false;
 
   /// Play SFX for a SAN move string if sound is enabled.
   void _playSfx(String san) {
@@ -952,9 +953,13 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
     String fen,
     List<String> moves, {
     String? startingFen,
+    bool fetchAggregates = true,
   }) {
     try {
       final normalized = normalizeFenForGamebase(fen);
+      if (!fetchAggregates) {
+        _debounceTimer?.cancel();
+      }
       final targetPositionKey = _positionKeyForComparison(normalized);
       final sanitizedMoves = moves
           .map((m) => m.trim().toLowerCase())
@@ -982,17 +987,17 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
           if (_positionKeyForComparison(state.currentFen) ==
                   targetPositionKey &&
               listEquals(state.movePointer, existingPointer)) {
-            if (needsInitialFetch) _scheduleFetch();
+            if (needsInitialFetch && fetchAggregates) _scheduleFetch();
             return;
           }
           state = state.copyWith(
             currentFen: normalized,
             movePointer: existingPointer,
-            isLoading: true,
+            isLoading: fetchAggregates,
             error: null,
             moveAggregates: const [],
           );
-          _scheduleFetch();
+          if (fetchAggregates) _scheduleFetch();
           return;
         }
       }
@@ -1002,7 +1007,7 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
       if (listEquals(currentExploredMoves, sanitizedMoves) &&
           _positionKeyForComparison(state.currentFen) == targetPositionKey &&
           state.game?.startingFen == actualStartingFen) {
-        if (needsInitialFetch) _scheduleFetch();
+        if (needsInitialFetch && fetchAggregates) _scheduleFetch();
         return;
       }
 
@@ -1067,11 +1072,11 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
             pathMatchesTarget && mainline.isNotEmpty
                 ? [mainline.length - 1]
                 : const [],
-        isLoading: true,
+        isLoading: fetchAggregates,
         error: null,
         moveAggregates: const [],
       );
-      _scheduleFetch();
+      if (fetchAggregates) _scheduleFetch();
     } catch (e) {
       debugPrint('[GamebaseExplorer] setPosition error: $e');
       state = state.copyWith(error: 'Invalid FEN: $fen');
@@ -1141,11 +1146,24 @@ class GamebaseExplorerNotifier extends StateNotifier<GamebaseExplorerState> {
     _fetchToken++;
     state = state.copyWith(
       filters: filters,
-      isLoading: true,
+      isLoading: !_localDatabaseTreeMode,
       error: null,
       moveAggregates: const [],
     );
+    if (_localDatabaseTreeMode) {
+      _debounceTimer?.cancel();
+      return;
+    }
     _scheduleFetch();
+  }
+
+  void setLocalDatabaseTreeMode(bool enabled) {
+    if (_localDatabaseTreeMode == enabled) return;
+    _localDatabaseTreeMode = enabled;
+    if (enabled) {
+      _debounceTimer?.cancel();
+      state = state.copyWith(isLoading: false, error: null);
+    }
   }
 
   void syncLocalPlayerTree(String playerId) {

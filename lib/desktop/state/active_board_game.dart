@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show BuildContext;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/board_explorer_scope.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
@@ -73,6 +74,8 @@ class BoardTabGameArgs {
     this.databaseGames = const <TournamentGameSummary>[],
     this.databaseGamesPagination,
     this.databaseGamesContinuation,
+    this.localOpeningTreeIndex,
+    this.localOpeningTreeTitle = '',
     this.eventGamesContinuation,
     this.gameListSelectedId,
     this.librarySaveOrigin,
@@ -152,6 +155,12 @@ class BoardTabGameArgs {
   final BoardTabDatabaseGamesPagination? databaseGamesPagination;
   final BoardTabGamesContinuation? databaseGamesContinuation;
 
+  /// Local PGN database tree available to the in-board explorer for tabs opened
+  /// from an imported local database. Null means the explorer should use the
+  /// normal Gamebase / player-tree query paths.
+  final PlayerOpeningTreeIndex? localOpeningTreeIndex;
+  final String localOpeningTreeTitle;
+
   /// Provider-backed continuation for event/favorites context.
   final BoardTabGamesContinuation? eventGamesContinuation;
 
@@ -194,6 +203,8 @@ class BoardTabGameArgs {
     List<TournamentGameSummary>? databaseGames,
     BoardTabDatabaseGamesPagination? databaseGamesPagination,
     BoardTabGamesContinuation? databaseGamesContinuation,
+    PlayerOpeningTreeIndex? localOpeningTreeIndex,
+    String? localOpeningTreeTitle,
     BoardTabGamesContinuation? eventGamesContinuation,
     String? gameListSelectedId,
     BoardTabLibrarySaveOrigin? librarySaveOrigin,
@@ -230,6 +241,10 @@ class BoardTabGameArgs {
           databaseGamesPagination ?? this.databaseGamesPagination,
       databaseGamesContinuation:
           databaseGamesContinuation ?? this.databaseGamesContinuation,
+      localOpeningTreeIndex:
+          localOpeningTreeIndex ?? this.localOpeningTreeIndex,
+      localOpeningTreeTitle:
+          localOpeningTreeTitle ?? this.localOpeningTreeTitle,
       eventGamesContinuation:
           eventGamesContinuation ?? this.eventGamesContinuation,
       gameListSelectedId: gameListSelectedId ?? this.gameListSelectedId,

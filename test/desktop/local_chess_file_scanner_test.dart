@@ -7,6 +7,8 @@ import 'package:archive/archive.dart';
 import 'package:libcompress/libcompress.dart';
 
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
+import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
 void main() {
   group('local chess file scanner', () {
@@ -135,6 +137,71 @@ void main() {
     });
 
     test(
+      'local opening tree defaults to 50 ply for normal and large imports',
+      () {
+        expect(localOpeningTreeDefaultMaxPly, 50);
+        expect(
+          localOpeningTreeLargeImportMaxPly,
+          localOpeningTreeDefaultMaxPly,
+        );
+      },
+    );
+
+    test('normal PGN imports build tree moves at the 50 ply limit', () async {
+      final pgn = _repeatingKnightPgn(fullMoves: 30);
+      final file = File('${temp.path}/deep-small.pgn');
+      await file.writeAsString(pgn);
+
+      final source = await scanLocalChessPaths(<String>[file.path]);
+      final scanned = source.root.files.single;
+      final index = scanned.openingTreeIndex!;
+      final game = ChessGame.fromPgn('deep-small', pgn);
+      final fenBeforePly50 = game.mainline[48].fen;
+
+      expect(index.maxPly, 50);
+      expect(
+        index.movesForFen(fenBeforePly50).map((move) => move.uci),
+        contains(game.mainline[49].uci),
+      );
+    });
+
+    test('large PGN tree skips eager position refs but keeps moves', () async {
+      final file = File('${temp.path}/bulk-tree.pgn');
+      final pgn = StringBuffer();
+      for (var i = 0; i < 10001; i++) {
+        pgn
+          ..writeln('[Event "Bulk Tree $i"]')
+          ..writeln('[Site "ChessEver"]')
+          ..writeln('[Date "2026.06.28"]')
+          ..writeln('[Round "$i"]')
+          ..writeln('[White "White $i"]')
+          ..writeln('[Black "Black $i"]')
+          ..writeln('[Result "1-0"]')
+          ..writeln()
+          ..writeln('1. e4 e5 2. Nf3 Nc6 1-0')
+          ..writeln();
+      }
+      await file.writeAsString(pgn.toString());
+
+      final source = await scanLocalChessPaths(<String>[file.path]);
+      final scanned = source.root.files.single;
+      final index = scanned.openingTreeIndex!;
+
+      expect(scanned.gameCount, 10001);
+      expect(index.downloadedGameCount, 10001);
+      expect(index.gamesByFen, isEmpty);
+      expect(index.gameRowsById, isEmpty);
+      expect(
+        index
+            .movesForFen(
+              'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+            )
+            .map((move) => move.uci),
+        contains('e2e4'),
+      );
+    });
+
+    test(
       'raw PGN files stream past the compressed decode byte limit',
       () async {
         final file = File('${temp.path}/large-raw.pgn');
@@ -151,9 +218,10 @@ void main() {
 
         expect(scanned.sizeBytes, greaterThan(1024));
         expect(scanned.status, LocalChessFileStatus.parsed);
-        expect(scanned.games, hasLength(2));
+        expect(scanned.games, hasLength(1));
         expect(scanned.games.first.fileGameCount, 20);
-        expect(scanned.message, contains('Showing first 2 of 20 entries'));
+        expect(scanned.message, contains('Showing first 1 of 20 entries'));
+        expect(scanned.message, contains('Skipped 1 duplicate PGN entry'));
         expect(scanned.openingTreeIndex, isNotNull);
       },
     );
@@ -256,6 +324,98 @@ void main() {
       expect(scanned.games.map((game) => game.fileGameCount), <int>[2, 2]);
       expect(scanned.games.last.game.metadata['White'], 'Polgar, Judit');
     });
+
+    test(
+      'dedupes duplicate PGNs while preserving original file indexes',
+      () async {
+        final file = File('${temp.path}/dedupe.pgn');
+        const first = '''
+[Event "Dedupe"]
+[White "A"]
+[Black "B"]
+[Result "1-0"]
+
+1. e4 e5 1-0
+''';
+        const duplicate = '''
+[Event "Dedupe"]
+[White "A"]
+[Black "B"]
+[Result "1-0"]
+
+1.   e4   e5 1-0
+''';
+        const fresh = '''
+[Event "Fresh"]
+[White "C"]
+[Black "D"]
+[Result "0-1"]
+
+1. d4 Nf6 0-1
+''';
+        await file.writeAsString('$first\n\n$duplicate\n\n$fresh');
+
+        final source = await scanLocalChessPaths(<String>[file.path]);
+        final scanned = source.root.files.single;
+
+        expect(scanned.status, LocalChessFileStatus.parsed);
+        expect(scanned.games, hasLength(2));
+        expect(scanned.games.map((game) => game.indexInFile), <int>[0, 2]);
+        expect(scanned.games.map((game) => game.fileGameCount).toSet(), {3});
+        expect(
+          scanned.games.map((game) => game.pgnFingerprint).toSet(),
+          hasLength(2),
+        );
+        expect(scanned.message, contains('Skipped 1 duplicate PGN entry'));
+        expect(scanned.openingTreeIndex!.downloadedGameCount, 2);
+      },
+    );
+
+    test(
+      'dedupes imported PGNs with equivalent SAN spelling and reordered headers',
+      () async {
+        final file = File('${temp.path}/san-dedupe.pgn');
+        const first = '''
+[Event "Castling"]
+[Site "Local"]
+[Date "2026.06.28"]
+[Round "1"]
+[White "A"]
+[Black "B"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. 0-0 Nf6 5. Re1+ 1-0
+''';
+        const duplicate = '''
+[Black "B"]
+[White "A"]
+[Round "1"]
+[Date "2026.06.28"]
+[Site "Local"]
+[Event "Castling"]
+[Result "1-0"]
+
+1. e4 {comment} e5 2. Nf3 (2. Bc4) Nc6 3. Bc4 Bc5 4. O-O Nf6 5. Re1 1-0
+''';
+        const fresh = '''
+[Event "Fresh"]
+[White "C"]
+[Black "D"]
+[Result "0-1"]
+
+1. c4 c5 0-1
+''';
+        await file.writeAsString('$first\n\n$duplicate\n\n$fresh');
+
+        final source = await scanLocalChessPaths(<String>[file.path]);
+        final scanned = source.root.files.single;
+
+        expect(scanned.status, LocalChessFileStatus.parsed);
+        expect(scanned.games, hasLength(2));
+        expect(scanned.games.map((game) => game.indexInFile), <int>[0, 2]);
+        expect(scanned.message, contains('Skipped 1 duplicate PGN entry'));
+      },
+    );
 
     test('splits games even when later PGNs do not start with Event', () async {
       final file = File('${temp.path}/missing-event-boundary.pgn');
@@ -477,6 +637,26 @@ Uint8List _zstdFrameDeclaringSize(int size) {
   bytes.setAll(0, <int>[0x28, 0xb5, 0x2f, 0xfd, 0xe0]);
   ByteData.view(bytes.buffer).setUint64(5, size, Endian.little);
   return bytes;
+}
+
+String _repeatingKnightPgn({required int fullMoves}) {
+  final moves = StringBuffer();
+  for (var move = 1; move <= fullMoves; move++) {
+    final whiteSan = move.isOdd ? 'Nf3' : 'Ng1';
+    final blackSan = move.isOdd ? 'Nf6' : 'Ng8';
+    moves.write('$move. $whiteSan $blackSan ');
+  }
+  return '''
+[Event "Depth Limit"]
+[Site "Local"]
+[Date "2026.06.28"]
+[Round "1"]
+[White "Depth"]
+[Black "Limit"]
+[Result "*"]
+
+${moves.toString().trim()} *
+''';
 }
 
 const _samplePgn = '''

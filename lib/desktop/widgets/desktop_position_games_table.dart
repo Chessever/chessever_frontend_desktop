@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' as io;
 
 import 'package:chessground/chessground.dart' show PieceAssets;
 import 'package:dartchess/dartchess.dart';
@@ -12,10 +13,13 @@ import 'package:intl/intl.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
+import 'package:chessever/desktop/services/local_library_game_updater.dart'
+    show pgnGameRanges;
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/widgets/adaptive_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
+import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
@@ -203,6 +207,8 @@ class DesktopPositionGamesTable extends ConsumerStatefulWidget {
     this.active = true,
     this.waitForPlayerOpeningTree = false,
     this.playerOpeningTreePlayerId,
+    this.localOpeningTreeIndex,
+    this.localOpeningTreeTitle = '',
   });
 
   /// Optional bridge for host-driven keyboard navigation. The host calls
@@ -241,6 +247,11 @@ class DesktopPositionGamesTable extends ConsumerStatefulWidget {
   /// Player id for the Build Tree scope. Supplying this prevents the first
   /// frame from fetching unscoped games before global explorer filters apply.
   final String? playerOpeningTreePlayerId;
+
+  /// Local PGN database tree for board tabs opened from an imported database.
+  /// When present, pages and sorts are served directly from this index.
+  final PlayerOpeningTreeIndex? localOpeningTreeIndex;
+  final String localOpeningTreeTitle;
 
   /// reference-style compact position-reference density for the in-game
   /// Explorer split. The column schema stays shared with the standalone
@@ -304,6 +315,7 @@ class _DesktopPositionGamesTableState
   int? _totalCount;
   BoardTabPositionGamesApi? _resolvedApi;
   GamebasePositionGamesQuery? _lastSuccessfulQuery;
+  String? _lastSuccessfulSourceKey;
   String? _error;
   String? _waitingForTreeMessage;
   bool _needsRefresh = false;
@@ -337,6 +349,9 @@ class _DesktopPositionGamesTableState
     final movesChanged = !listEquals(old.moves, widget.moves);
     final uciChanged = (old.uci ?? '').trim() != (widget.uci ?? '').trim();
     final modeChanged = old.exactFenSearch != widget.exactFenSearch;
+    final localTreeChanged =
+        old.localOpeningTreeIndex != widget.localOpeningTreeIndex ||
+        old.localOpeningTreeTitle != widget.localOpeningTreeTitle;
     final activeChanged = old.active != widget.active;
     final scrollChanged =
         old.externalScrollController != widget.externalScrollController;
@@ -360,7 +375,11 @@ class _DesktopPositionGamesTableState
         _rowSourceLabelsSnapshot(),
       );
     }
-    if (fenChanged || movesChanged || uciChanged || modeChanged) {
+    if (fenChanged ||
+        movesChanged ||
+        uciChanged ||
+        modeChanged ||
+        localTreeChanged) {
       _cancelPendingResetFetch(invalidate: true);
       if (!widget.active) {
         _needsRefresh = true;
@@ -369,7 +388,10 @@ class _DesktopPositionGamesTableState
         _loadingFullContinuations.clear();
         return;
       }
-      _scheduleResetFetch();
+      if (localTreeChanged) {
+        _clearRowsForPendingReset();
+      }
+      _scheduleResetFetch(delay: localTreeChanged ? Duration.zero : null);
       return;
     }
     if (activeChanged && widget.active) {
@@ -416,9 +438,34 @@ class _DesktopPositionGamesTableState
     if (invalidate) _requestToken += 1;
   }
 
-  void _scheduleResetFetch() {
+  void _clearRowsForPendingReset() {
+    _fullContinuationCache.clear();
+    _loadingFullContinuations.clear();
+    _lastSuccessfulSourceKey = null;
+    _lastPreviewedRowId = null;
+    setState(() {
+      _rows.clear();
+      _isInitialLoading = true;
+      _isLoadingMore = false;
+      _hasMore = true;
+      _nextPageNumber = 0;
+      _totalCount = null;
+      _resolvedApi = null;
+      _lastSuccessfulQuery = null;
+      _error = null;
+      _waitingForTreeMessage = null;
+    });
+    _pruneRowKeys(const <String>[]);
+    widget.controller?._setRows(
+      const <String>[],
+      const <List<String>>[],
+      const <String?>[],
+    );
+  }
+
+  void _scheduleResetFetch({Duration? delay}) {
     _cancelPendingResetFetch();
-    _resetFetchDebounce = Timer(const Duration(seconds: 1), () {
+    _resetFetchDebounce = Timer(delay ?? _resetFetchDebounceDuration, () {
       _resetFetchDebounce = null;
       if (!mounted || !widget.active) {
         _needsRefresh = true;
@@ -427,6 +474,11 @@ class _DesktopPositionGamesTableState
       _fetchPage(reset: true);
     });
   }
+
+  Duration get _resetFetchDebounceDuration =>
+      widget.localOpeningTreeIndex == null
+          ? const Duration(seconds: 2)
+          : const Duration(milliseconds: 120);
 
   Future<void> _fetchPage({
     required bool reset,
@@ -511,6 +563,7 @@ class _DesktopPositionGamesTableState
         query,
         exactFenSearch: widget.exactFenSearch,
         resolvedApi: _resolvedApi,
+        localOpeningTreeIndex: widget.localOpeningTreeIndex,
       );
       final response = page.response;
       if (!mounted || requestToken != _requestToken) return;
@@ -541,6 +594,7 @@ class _DesktopPositionGamesTableState
         _totalCount = response.metadata.totalCount ?? _totalCount;
         _resolvedApi = page.resolvedApi ?? _resolvedApi;
         _lastSuccessfulQuery = query;
+        _lastSuccessfulSourceKey = _sourceKey;
         _isInitialLoading = false;
         _isLoadingMore = false;
       });
@@ -576,6 +630,7 @@ class _DesktopPositionGamesTableState
   }
 
   String? _playerTreeWaitMessage() {
+    if (widget.localOpeningTreeIndex != null) return null;
     if (!widget.waitForPlayerOpeningTree) return null;
     final filters = ref.read(gamebaseExplorerProvider).filters;
     final scopedPlayerId = widget.playerOpeningTreePlayerId?.trim();
@@ -686,8 +741,16 @@ class _DesktopPositionGamesTableState
   bool _hasLoadedCurrentQuery() {
     final last = _lastSuccessfulQuery;
     if (last == null || _rows.isEmpty || _error != null) return false;
+    if (_lastSuccessfulSourceKey != _sourceKey) return false;
     return gamebasePositionGamesQueryWithPage(last, 0) ==
         _buildQuery(pageNumber: 0);
+  }
+
+  String get _sourceKey {
+    final local = widget.localOpeningTreeIndex;
+    if (local == null) return 'global';
+    final databaseId = local.playerId?.trim() ?? '';
+    return 'local:${local.treeId}:$databaseId:${local.persistedPositionCount}:${local.persistedGameCount}';
   }
 
   List<String> _rowIdsSnapshot() {
@@ -852,9 +915,9 @@ class _DesktopPositionGamesTableState
   Future<void> _insertGame(Map<String, dynamic> row) async {
     final id = (row['id']?.toString().trim() ?? '');
     if (id.isEmpty) return;
-    var pgn = (row['pgn']?.toString() ?? '').trim();
+    var pgn = _pgnForOpenedRow(row);
     try {
-      if (!pgnHasMoves(pgn)) {
+      if (!pgnHasMoves(pgn) && widget.localOpeningTreeIndex == null) {
         final gameWithPgn = await ref
             .read(gamebaseRepositoryProvider)
             .getGameWithPgn(id);
@@ -1050,9 +1113,15 @@ class _DesktopPositionGamesTableState
         .toList(growable: false);
     final query = _lastSuccessfulQuery ?? _buildQuery(pageNumber: 0);
     final databaseTitle = _databaseTitleForOpenedGame();
+    final isLocalRow = widget.localOpeningTreeIndex != null;
+    final pgn = _pgnForOpenedRow(row);
+    if (isLocalRow && !pgnHasMoves(pgn)) {
+      _showErrorToast('Could not load local PGN for this game.');
+      return;
+    }
     final args = BoardTabGameArgs(
-      gameId: id,
-      pgn: '',
+      gameId: isLocalRow ? null : id,
+      pgn: pgn,
       label: '$whiteName vs $blackName',
       whiteName: whiteName,
       blackName: blackName,
@@ -1084,7 +1153,10 @@ class _DesktopPositionGamesTableState
         resolvedApi: _resolvedApi,
         totalCount: _totalCount,
       ),
+      localOpeningTreeIndex: widget.localOpeningTreeIndex,
+      localOpeningTreeTitle: widget.localOpeningTreeTitle,
       gameListSelectedId: id,
+      librarySaveOrigin: _localLibrarySaveOriginForRow(row),
     );
     if (inNewWindow) {
       unawaited(openBoardGameWindow(ref, args));
@@ -1098,6 +1170,56 @@ class _DesktopPositionGamesTableState
       reuseExisting: false,
       replaceActive: false,
     );
+  }
+
+  String _pgnForOpenedRow(Map<String, dynamic> row) {
+    final inline = (row['pgn']?.toString() ?? '').trim();
+    if (pgnHasMoves(inline) || widget.localOpeningTreeIndex == null) {
+      return inline;
+    }
+    return _readLocalPgnForRow(row);
+  }
+
+  String _readLocalPgnForRow(Map<String, dynamic> row) {
+    final sourcePath = (row['sourcePath']?.toString() ?? '').trim();
+    if (sourcePath.isEmpty) return '';
+
+    final start = _readOptionalInt(row['sourceByteStart']);
+    final end = _readOptionalInt(row['sourceByteEnd']);
+    if (start != null && end != null && start >= 0 && end > start) {
+      try {
+        final file = io.File(sourcePath);
+        final raf = file.openSync();
+        try {
+          raf.setPositionSync(start);
+          return utf8
+              .decode(raf.readSync(end - start), allowMalformed: true)
+              .trim();
+        } finally {
+          raf.closeSync();
+        }
+      } on Object {
+        return '';
+      }
+    }
+
+    final indexInFile = _readOptionalInt(row['indexInFile']);
+    if (indexInFile == null || indexInFile < 0) return '';
+    try {
+      final text = io.File(sourcePath).readAsStringSync();
+      final ranges = pgnGameRanges(text);
+      final fileGameCount = _readOptionalInt(row['fileGameCount']);
+      if (fileGameCount != null &&
+          fileGameCount > 0 &&
+          ranges.length != fileGameCount) {
+        return '';
+      }
+      if (indexInFile >= ranges.length) return '';
+      final range = ranges[indexInFile];
+      return text.substring(range.start, range.end).trim();
+    } on Object {
+      return '';
+    }
   }
 
   String _initialFenForOpenedGame(
@@ -1154,7 +1276,35 @@ class _DesktopPositionGamesTableState
     }
   }
 
+  BoardTabLibrarySaveOrigin? _localLibrarySaveOriginForRow(
+    Map<String, dynamic> row,
+  ) {
+    if (widget.localOpeningTreeIndex == null) return null;
+    final sourcePath = (row['sourcePath']?.toString() ?? '').trim();
+    final sourceIndex =
+        row['indexInFile'] == null ? null : _readInt(row['indexInFile']);
+    final sourceFileGameCount = _readNullableInt(row['fileGameCount']);
+    if (sourcePath.isEmpty ||
+        sourceIndex == null ||
+        sourceFileGameCount == null) {
+      return null;
+    }
+    final white = (row['white']?.toString() ?? '').trim();
+    final black = (row['black']?.toString() ?? '').trim();
+    final title =
+        white.isNotEmpty || black.isNotEmpty
+            ? '${white.isEmpty ? 'White' : white} vs ${black.isEmpty ? 'Black' : black}'
+            : (row['event']?.toString().trim() ?? 'Local PGN game');
+    return BoardTabLibrarySaveOrigin.localPgnFile(
+      sourcePath: sourcePath,
+      sourceIndex: sourceIndex,
+      sourceFileGameCount: sourceFileGameCount,
+      title: title,
+    );
+  }
+
   String _databaseTitleForOpenedGame() {
+    final localTitle = widget.localOpeningTreeTitle.trim();
     final tokens = <String>[..._toSanTokens(Chess.initial.fen, widget.moves)];
     final pinnedUci = widget.uci?.trim();
     if (pinnedUci != null && pinnedUci.isNotEmpty) {
@@ -1162,12 +1312,16 @@ class _DesktopPositionGamesTableState
     }
 
     if (tokens.isEmpty) {
+      if (localTitle.isNotEmpty) return localTitle;
       if (_positionKey(widget.fen) == _positionKey(Chess.initial.fen)) {
         return 'Start position games';
       }
       return 'Position games: ${_compactFen(widget.fen)}';
     }
 
+    if (localTitle.isNotEmpty) {
+      return '$localTitle - continuation after ${_shortNotation(tokens)}';
+    }
     return 'Continuation after ${_shortNotation(tokens)}';
   }
 
@@ -1193,7 +1347,9 @@ class _DesktopPositionGamesTableState
     );
     final playerId =
         filters.playerIds.length == 1 ? filters.playerIds.first.trim() : null;
-    if (playerId != null && playerId.isNotEmpty) {
+    if (widget.localOpeningTreeIndex == null &&
+        playerId != null &&
+        playerId.isNotEmpty) {
       ref.listen<PlayerOpeningTreeState>(playerOpeningTreeProvider(playerId), (
         previous,
         next,
@@ -1919,6 +2075,10 @@ class _NotationCell extends StatelessWidget {
                       tokenKey: ValueKey<String>(
                         'position-game-notation-token-$indicatorNamespace-$rowId-$i',
                       ),
+                      startingFen: fen,
+                      movesUpToHover: cappedContinuation
+                          .take(i + 1)
+                          .toList(growable: false),
                       token: sanTokens[i],
                       useFigurine: useFigurine,
                       pieceAssets: pieceAssets,
@@ -1953,6 +2113,8 @@ class _NotationCell extends StatelessWidget {
 class _NotationHoverToken extends StatefulWidget {
   const _NotationHoverToken({
     required this.tokenKey,
+    required this.startingFen,
+    required this.movesUpToHover,
     required this.token,
     required this.useFigurine,
     required this.pieceAssets,
@@ -1964,6 +2126,8 @@ class _NotationHoverToken extends StatefulWidget {
   });
 
   final Key tokenKey;
+  final String startingFen;
+  final List<String> movesUpToHover;
   final String token;
   final bool useFigurine;
   final PieceAssets pieceAssets;
@@ -2069,14 +2233,19 @@ class _NotationHoverTokenState extends State<_NotationHoverToken> {
     );
     return KeyedSubtree(
       key: widget.tokenKey,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: widget.onTap,
-          child: child,
+      child: MoveHoverPreview(
+        startingFen: widget.startingFen,
+        movesUpToHover: widget.movesUpToHover,
+        size: 180,
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.onTap,
+            child: child,
+          ),
         ),
       ),
     );
@@ -2304,6 +2473,13 @@ int _readInt(dynamic value) {
 int? _readNullableInt(dynamic value) {
   final parsed = _readInt(value);
   return parsed > 0 ? parsed : null;
+}
+
+int? _readOptionalInt(dynamic value) {
+  if (value == null) return null;
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value.toString());
 }
 
 String _rowText(Map<String, dynamic> row, List<String> keys) {

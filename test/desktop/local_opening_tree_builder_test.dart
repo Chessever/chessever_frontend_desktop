@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 
@@ -97,27 +98,92 @@ void main() {
       },
     );
 
-    test('unknown results are counted in the draw bucket like En Croissant', () {
+    test(
+      'games index compaction preserves local PGN source metadata',
+      () async {
+        final gamesIndex = await buildPlayerOpeningGamesIndexBatchAsync(
+          <Map<String, dynamic>>[
+            <String, dynamic>{
+              'id': 'persisted-local',
+              'pgn': _spanishPgn,
+              'sourcePath': '/tmp/lines.pgn',
+              'sourceRelativePath': 'lines.pgn',
+              'fileName': 'lines.pgn',
+              'indexInFile': 4,
+              'fileGameCount': 9,
+              'headers': const <String, String>{'WhiteTitle': 'GM'},
+              'metadata': const <String, String>{'WhiteFed': 'NOR'},
+            },
+          ],
+        );
+
+        final row = gamesIndex.gameRowsById['persisted-local'];
+
+        expect(row, isNotNull);
+        expect(row!['pgn'], contains('[Event "Fast tree"]'));
+        expect(row['sourcePath'], '/tmp/lines.pgn');
+        expect(row['sourceRelativePath'], 'lines.pgn');
+        expect(row['fileName'], 'lines.pgn');
+        expect(row['indexInFile'], 4);
+        expect(row['fileGameCount'], 9);
+        expect(row['headers'], containsPair('WhiteTitle', 'GM'));
+        expect(row['metadata'], containsPair('WhiteFed', 'NOR'));
+      },
+    );
+
+    test('builder tokenizes mainline PGN without building a full PGN AST', () {
       final index = buildLocalOpeningTreeIndex(
         treeId: 'local:test',
         databaseId: 'local-db',
         games: <LocalOpeningTreeGameInput>[
-          _input('unknown', _unknownResultPgn, 0),
+          _input('annotated', _annotatedMainlinePgn, 0),
         ],
       );
-      final rootMoves = index.movesForFen(
-        ChessGame.fromPgn('unknown', _unknownResultPgn).startingFen,
-      );
-      final row = index.gameRowsById['unknown'];
+      final row = index.gameRowsById['annotated'];
+      final afterE4 =
+          ChessGame.fromPgn('annotated', _annotatedMainlinePgn).mainline[0].fen;
+      final afterNc6 =
+          ChessGame.fromPgn('annotated', _annotatedMainlinePgn).mainline[3].fen;
 
-      expect(_move(rootMoves, 'e2e4').total, 1);
-      expect(_move(rootMoves, 'e2e4').white, 0);
-      expect(_move(rootMoves, 'e2e4').black, 0);
-      expect(_move(rootMoves, 'e2e4').draws, 1);
       expect(row, isNotNull);
-      expect(row!.containsKey('pgn'), isFalse);
-      expect(row['result'], '*');
+      expect(row!['line'], <String>[
+        'e2e4',
+        'e7e5',
+        'g1f3',
+        'b8c6',
+        'f1b5',
+        'a7a6',
+      ]);
+      expect(_move(index.movesForFen(afterE4), 'e7e5').total, 1);
+      expect(_move(index.movesForFen(afterNc6), 'f1b5').total, 1);
+      expect(index.gameRowsById, hasLength(1));
     });
+
+    test(
+      'unknown results are counted in the draw bucket like En Croissant',
+      () {
+        final index = buildLocalOpeningTreeIndex(
+          treeId: 'local:test',
+          databaseId: 'local-db',
+          games: <LocalOpeningTreeGameInput>[
+            _input('unknown', _unknownResultPgn, 0),
+          ],
+        );
+        final rootMoves = index.movesForFen(
+          ChessGame.fromPgn('unknown', _unknownResultPgn).startingFen,
+        );
+        final row = index.gameRowsById['unknown'];
+
+        expect(_move(rootMoves, 'e2e4').total, 1);
+        expect(_move(rootMoves, 'e2e4').white, 0);
+        expect(_move(rootMoves, 'e2e4').black, 0);
+        expect(_move(rootMoves, 'e2e4').draws, 1);
+        expect(row, isNotNull);
+        expect(row!['pgn'], isNull);
+        expect(row['pgnHash'], isNotEmpty);
+        expect(row['result'], '*');
+      },
+    );
 
     test('transposes positions by board and side to move', () {
       final index = buildLocalOpeningTreeIndex(
@@ -129,10 +195,7 @@ void main() {
         ],
       );
       final transposedFen =
-          ChessGame.fromPgn(
-            'a',
-            _knightsFirstTranspositionPgn,
-          ).mainline[3].fen;
+          ChessGame.fromPgn('a', _knightsFirstTranspositionPgn).mainline[3].fen;
       final rootMoves = index.movesForFen(
         ChessGame.fromPgn('a', _knightsFirstTranspositionPgn).startingFen,
       );
@@ -153,10 +216,7 @@ void main() {
         ],
       );
       final transposedFen =
-          ChessGame.fromPgn(
-            'a',
-            _knightsFirstTranspositionPgn,
-          ).mainline[3].fen;
+          ChessGame.fromPgn('a', _knightsFirstTranspositionPgn).mainline[3].fen;
 
       expect(index.gamesByFen, isEmpty);
       expect(index.gamesCountForFen(transposedFen), 2);
@@ -172,6 +232,27 @@ void main() {
       expect(rows.map((row) => row['id']), <String>['a', 'b']);
       expect(rows.first['continuation'], isEmpty);
       expect(index.gamesCountForFen(transposedFen, uci: 'a2a3'), 0);
+    });
+
+    test('memory-safe large tree omits duplicate game rows', () {
+      final index = buildLocalOpeningTreeIndex(
+        treeId: 'local:test',
+        databaseId: 'local-db',
+        includePositionGameRefs: false,
+        includeGameRows: false,
+        games: <LocalOpeningTreeGameInput>[
+          _input('a', _knightsFirstTranspositionPgn, 0),
+          _input('b', _pawnsFirstTranspositionPgn, 1),
+        ],
+      );
+      final rootFen =
+          ChessGame.fromPgn('a', _knightsFirstTranspositionPgn).startingFen;
+
+      expect(index.downloadedGameCount, 2);
+      expect(index.gameRowsById, isEmpty);
+      expect(index.gamesByFen, isEmpty);
+      expect(_move(index.movesForFen(rootFen), 'g1f3').total, 1);
+      expect(_move(index.movesForFen(rootFen), 'c2c4').total, 1);
     });
 
     test('builder skips illegal SAN instead of indexing prefixes', () {
@@ -285,6 +366,20 @@ const _unknownResultPgn = '''
 [Result "*"]
 
 1. e4 e5 *
+''';
+
+const _annotatedMainlinePgn = '''
+[Event "Annotated"]
+[Site "Local"]
+[Date "2024.01.04"]
+[Round "4"]
+[White "Annotated"]
+[Black "Line"]
+[Result "1-0"]
+
+1.e4! { center [%clk 0:03:00] } 1...e5 \$1 ; line comment
+( 1... c5 2. Nf3 d6 )
+2.Nf3?! Nc6 3. Bb5 a6!! 1-0
 ''';
 
 const _illegalSanPgn = '''

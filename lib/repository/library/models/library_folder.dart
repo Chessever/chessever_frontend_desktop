@@ -2,6 +2,22 @@ import 'package:dart_mappable/dart_mappable.dart';
 
 part 'library_folder.mapper.dart';
 
+const kPermanentLibraryFolderNames = <String>{
+  'Liked Games',
+  'My Database',
+  'My Folder',
+};
+
+const _kPermanentLibraryFolderKeys = <String>{
+  'liked games',
+  'my database',
+  'my folder',
+};
+
+bool isPermanentLibraryFolderName(String name) {
+  return _kPermanentLibraryFolderKeys.contains(name.trim().toLowerCase());
+}
+
 @MappableClass()
 class LibraryFolder with LibraryFolderMappable {
   final String id;
@@ -34,6 +50,8 @@ class LibraryFolder with LibraryFolderMappable {
     this.parentId,
     this.isSubscribed = false,
   });
+
+  bool get isPermanentLibraryFolder => isPermanentLibraryFolderName(name);
 
   /// Convert Supabase JSON to LibraryFolder
   factory LibraryFolder.fromSupabase(Map<String, dynamic> json) {

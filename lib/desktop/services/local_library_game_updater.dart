@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
+import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 
 class LocalLibraryGameUpdateTarget {
   const LocalLibraryGameUpdateTarget({
@@ -25,6 +26,7 @@ class LocalLibraryGameUpdateOutcome {
 Future<LocalLibraryGameUpdateOutcome> updateLocalLibraryPgnGame({
   required LocalLibraryGameUpdateTarget target,
   required ChessGame game,
+  LocalChessDatabaseRepository? repository,
 }) async {
   final path = target.sourcePath.trim();
   if (!isLocalLibraryPgnUpdateSupported(path)) {
@@ -33,6 +35,18 @@ Future<LocalLibraryGameUpdateOutcome> updateLocalLibraryPgnGame({
   final nextPgn = exportGameToPgn(game).trim();
   if (nextPgn.isEmpty) {
     throw ArgumentError('Cannot update the source file with an empty PGN.');
+  }
+
+  final cachedUpdate = await repository?.replaceLocalPgnGame(
+    databasePath: path,
+    indexInFile: target.indexInFile,
+    rawPgn: nextPgn,
+  );
+  if (cachedUpdate == true) {
+    return LocalLibraryGameUpdateOutcome(sourcePath: path);
+  }
+  if (cachedUpdate == false) {
+    throw StateError('Could not update the cached local PGN database.');
   }
 
   final file = File(path);

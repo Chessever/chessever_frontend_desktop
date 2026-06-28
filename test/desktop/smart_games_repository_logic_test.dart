@@ -1,3 +1,5 @@
+import 'package:chessever/desktop/panes/desktop_smart_games_pane.dart'
+    show shouldLoadMoreForCollapsedMiniatures, visibleDesktopSmartGames;
 import 'package:chessever/desktop/utils/desktop_smart_game_sections.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
@@ -122,73 +124,67 @@ void main() {
   });
 
   group('desktop smart event sections', () {
-    test(
-      'groups GM smart games by date cards instead of event cards',
-      () {
-        final now = DateTime(2026, 6, 22, 12);
-        final sections = buildDesktopSmartGameSections(
-          [
-            _tourGame(
-              id: 'beta-1',
-              status: GameStatus.whiteWins,
-              tourId: 'beta',
-              tourSlug: 'stronger-event',
-              gameDay: DateTime(2026, 6, 22),
-              avgElo: 2820,
-              boardNr: 1,
-            ),
-            _tourGame(
-              id: 'alpha-2',
-              status: GameStatus.ongoing,
-              tourId: 'alpha',
-              tourSlug: 'alpha-event',
-              gameDay: DateTime(2026, 6, 22),
-              avgElo: 2700,
-              boardNr: 2,
-            ),
-            _tourGame(
-              id: 'alpha-1',
-              status: GameStatus.ongoing,
-              tourId: 'alpha',
-              tourSlug: 'alpha-event',
-              gameDay: DateTime(2026, 6, 22),
-              avgElo: 2700,
-              boardNr: 1,
-            ),
-            _tourGame(
-              id: 'yesterday',
-              status: GameStatus.draw,
-              tourId: 'gamma',
-              tourSlug: 'previous-event',
-              gameDay: DateTime(2026, 6, 21),
-              avgElo: 2750,
-            ),
-            _tourGame(
-              id: 'future',
-              status: GameStatus.ongoing,
-              tourId: 'future',
-              tourSlug: 'future-event',
-              gameDay: DateTime(2026, 6, 23),
-              avgElo: 2900,
-            ),
-          ],
-          type: PremiumGamesType.gm,
-          now: now,
-        );
+    test('groups GM smart games by date cards instead of event cards', () {
+      final now = DateTime(2026, 6, 22, 12);
+      final sections = buildDesktopSmartGameSections(
+        [
+          _tourGame(
+            id: 'beta-1',
+            status: GameStatus.whiteWins,
+            tourId: 'beta',
+            tourSlug: 'stronger-event',
+            gameDay: DateTime(2026, 6, 22),
+            avgElo: 2820,
+            boardNr: 1,
+          ),
+          _tourGame(
+            id: 'alpha-2',
+            status: GameStatus.ongoing,
+            tourId: 'alpha',
+            tourSlug: 'alpha-event',
+            gameDay: DateTime(2026, 6, 22),
+            avgElo: 2700,
+            boardNr: 2,
+          ),
+          _tourGame(
+            id: 'alpha-1',
+            status: GameStatus.ongoing,
+            tourId: 'alpha',
+            tourSlug: 'alpha-event',
+            gameDay: DateTime(2026, 6, 22),
+            avgElo: 2700,
+            boardNr: 1,
+          ),
+          _tourGame(
+            id: 'yesterday',
+            status: GameStatus.draw,
+            tourId: 'gamma',
+            tourSlug: 'previous-event',
+            gameDay: DateTime(2026, 6, 21),
+            avgElo: 2750,
+          ),
+          _tourGame(
+            id: 'future',
+            status: GameStatus.ongoing,
+            tourId: 'future',
+            tourSlug: 'future-event',
+            gameDay: DateTime(2026, 6, 23),
+            avgElo: 2900,
+          ),
+        ],
+        type: PremiumGamesType.gm,
+        now: now,
+      );
 
-        expect(sections.map((section) => section.title), [
-          'Today',
-          'Yesterday',
-        ]);
-        expect(sections.first.liveCount, 2);
-        expect(sections.first.dateLabel, '2500+ average rating');
-        expect(sections.first.games.map((game) => game.gameId), [
-          'alpha-1',
-          'alpha-2',
-          'beta-1',
-        ]);
-      },
-    );
+      expect(sections.map((section) => section.title), ['Today', 'Yesterday']);
+      expect(sections.first.liveCount, 2);
+      expect(sections.first.dateLabel, '2500+ average rating');
+      expect(sections.first.games.map((game) => game.gameId), [
+        'alpha-1',
+        'alpha-2',
+        'beta-1',
+      ]);
+    });
 
     test('keeps separate expandable sections per classical event day', () {
       final now = DateTime(2026, 6, 22, 12);
@@ -323,8 +319,11 @@ void main() {
         window: MiniatureGamesWindow.week,
         sort: MiniatureGamesSort.moves,
         order: MiniatureGamesSortOrder.asc,
+        search: 'Carlsen',
         results: {MiniatureGameResult.whiteWins},
         eco: 'B12,C44',
+        opening: 'Sicilian Defense',
+        variation: 'Najdorf',
         ecoCategories: {'B', 'C'},
         timeControls: {
           MiniatureGameTimeControl.rapid,
@@ -346,8 +345,11 @@ void main() {
         'order': 'asc',
         'limit': 30,
         'offset': 60,
+        'q': 'Carlsen',
         'result': 'W',
         'eco': 'B12,C44',
+        'opening': 'Sicilian Defense',
+        'variation': 'Najdorf',
         'ecoCategory': 'B,C',
         'timeControl': 'RAPID,BLITZ',
         'isOnline': true,
@@ -360,6 +362,119 @@ void main() {
         'player': 'Kasparov',
       });
     });
+
+    test('normalizes inverted date range before API serialization', () {
+      final filter = MiniatureGamesFilter(
+        dateFrom: '2026-12-31',
+        dateTo: '2026-01-01',
+      );
+
+      expect(filter.queryParameters(limit: 30, offset: 0), {
+        'window': 'all',
+        'sort': 'recent',
+        'order': 'desc',
+        'limit': 30,
+        'offset': 0,
+        'dateFrom': '2026-01-01',
+        'dateTo': '2026-12-31',
+      });
+    });
+
+    test('miniature search does not filter only the loaded client page', () {
+      final loadedPage = [
+        _tourGame(
+          id: 'loaded-row',
+          status: GameStatus.whiteWins,
+          whiteName: 'Already Loaded',
+          blackName: 'Visible Opponent',
+        ),
+      ];
+
+      expect(
+        visibleDesktopSmartGames(
+          type: PremiumGamesType.miniatures,
+          games: loadedPage,
+          query: 'Carlsen',
+        ),
+        loadedPage,
+      );
+      expect(
+        visibleDesktopSmartGames(
+          type: PremiumGamesType.live,
+          games: loadedPage,
+          query: 'Carlsen',
+        ),
+        isEmpty,
+      );
+    });
+
+    test(
+      'collapsed miniatures request another page when nothing is expanded',
+      () {
+        expect(
+          shouldLoadMoreForCollapsedMiniatures(
+            type: PremiumGamesType.miniatures,
+            sectionCount: 2,
+            expandedGameCount: 0,
+            hasMore: true,
+            isLoading: false,
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'collapsed miniature pagination waits when already loading or exhausted',
+      () {
+        expect(
+          shouldLoadMoreForCollapsedMiniatures(
+            type: PremiumGamesType.miniatures,
+            sectionCount: 2,
+            expandedGameCount: 0,
+            hasMore: true,
+            isLoading: true,
+          ),
+          isFalse,
+        );
+        expect(
+          shouldLoadMoreForCollapsedMiniatures(
+            type: PremiumGamesType.miniatures,
+            sectionCount: 2,
+            expandedGameCount: 0,
+            hasMore: false,
+            isLoading: false,
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'collapsed miniature pagination keeps visible expanded games stable',
+      () {
+        expect(
+          shouldLoadMoreForCollapsedMiniatures(
+            type: PremiumGamesType.miniatures,
+            sectionCount: 2,
+            expandedGameCount: 3,
+            hasMore: true,
+            isLoading: false,
+          ),
+          isFalse,
+        );
+        expect(
+          shouldLoadMoreForCollapsedMiniatures(
+            type: PremiumGamesType.live,
+            sectionCount: 2,
+            expandedGameCount: 0,
+            hasMore: true,
+            isLoading: false,
+          ),
+          isFalse,
+        );
+      },
+    );
   });
 }
 
@@ -379,11 +494,13 @@ GamesTourModel _tourGame({
   int? avgElo,
   int? boardNr,
   String? timeControl,
+  String whiteName = 'White',
+  String blackName = 'Black',
 }) {
   return GamesTourModel(
     gameId: id,
     whitePlayer: PlayerCard(
-      name: 'White',
+      name: whiteName,
       federation: 'USA',
       title: 'GM',
       rating: 2700,
@@ -391,7 +508,7 @@ GamesTourModel _tourGame({
       team: null,
     ),
     blackPlayer: PlayerCard(
-      name: 'Black',
+      name: blackName,
       federation: 'IND',
       title: 'GM',
       rating: 2700,

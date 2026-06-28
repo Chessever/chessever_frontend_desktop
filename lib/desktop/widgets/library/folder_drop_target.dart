@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 
@@ -24,8 +26,9 @@ class LibraryDropArbiterScope extends InheritedWidget {
   final LibraryDropArbiter arbiter;
 
   static LibraryDropArbiter? maybeOf(BuildContext context) {
-    final element = context
-        .getElementForInheritedWidgetOfExactType<LibraryDropArbiterScope>();
+    final element =
+        context
+            .getElementForInheritedWidgetOfExactType<LibraryDropArbiterScope>();
     final widget = element?.widget as LibraryDropArbiterScope?;
     return widget?.arbiter;
   }
@@ -67,6 +70,7 @@ class FolderDropTarget extends StatefulWidget {
 
 class _FolderDropTargetState extends State<FolderDropTarget> {
   bool _hovering = false;
+  bool _dropInFlight = false;
 
   @override
   Widget build(BuildContext context) {
@@ -75,19 +79,24 @@ class _FolderDropTargetState extends State<FolderDropTarget> {
       onDragEntered: (_) => setState(() => _hovering = true),
       onDragExited: (_) => setState(() => _hovering = false),
       onDragDone: (details) async {
+        if (_dropInFlight) return;
         setState(() => _hovering = false);
         final paths = details.files
             .map((f) => f.path)
-            .where(
-              (p) => p.trim().isNotEmpty && looksLikeLocalChessFile(p),
-            )
+            .where((p) => p.trim().isNotEmpty && looksLikeLocalChessFile(p))
+            .where(canQuickImportPathToFolder)
             .toList(growable: false);
         if (paths.isEmpty) return;
         // Claim before the async work so the outer's microtask-deferred
         // arbitration always sees the flag set.
         arbiter?.claim();
         if (!widget.enabled) return;
-        await widget.onAcceptPaths(paths);
+        _dropInFlight = true;
+        try {
+          await Future<void>.sync(() => widget.onAcceptPaths(paths));
+        } finally {
+          _dropInFlight = false;
+        }
       },
       child: _wrap(widget.child),
     );
@@ -105,9 +114,10 @@ class _FolderDropTargetState extends State<FolderDropTarget> {
           child: IgnorePointer(
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 90),
-              margin: widget.style == FolderDropStyle.row
-                  ? const EdgeInsets.symmetric(horizontal: 8, vertical: 1)
-                  : const EdgeInsets.all(12),
+              margin:
+                  widget.style == FolderDropStyle.row
+                      ? const EdgeInsets.symmetric(horizontal: 8, vertical: 1)
+                      : const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: accent.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(radius),
@@ -116,14 +126,15 @@ class _FolderDropTargetState extends State<FolderDropTarget> {
                   width: 1.5,
                 ),
               ),
-              child: widget.style == FolderDropStyle.body
-                  ? Center(
-                      child: _BodyHint(
-                        folderName: widget.folderName,
-                        enabled: widget.enabled,
-                      ),
-                    )
-                  : const SizedBox.shrink(),
+              child:
+                  widget.style == FolderDropStyle.body
+                      ? Center(
+                        child: _BodyHint(
+                          folderName: widget.folderName,
+                          enabled: widget.enabled,
+                        ),
+                      )
+                      : const SizedBox.shrink(),
             ),
           ),
         ),
@@ -158,9 +169,7 @@ class _BodyHint extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            enabled
-                ? Icons.library_add_outlined
-                : Icons.lock_outline_rounded,
+            enabled ? Icons.library_add_outlined : Icons.lock_outline_rounded,
             size: 18,
             color: accent,
           ),
