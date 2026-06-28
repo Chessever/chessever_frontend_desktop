@@ -171,12 +171,27 @@ class _MotionCardState extends State<MotionCard> {
   /// Proximity intensity for this card given a global cursor position: 1 at
   /// the card centre, easing to 0 at [MotionCard.proximityRadius].
   double _proximityIntensity(Offset cursorGlobal) {
-    final box = context.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return 0;
-    final center = box.localToGlobal(box.size.center(Offset.zero));
-    final distance = (cursorGlobal - center).distance;
-    final linear = (1 - distance / widget.proximityRadius).clamp(0.0, 1.0);
-    return linear * linear; // ease-in falloff: quiet at the edges
+    if (!mounted) return 0;
+
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox ||
+        !renderObject.attached ||
+        !renderObject.hasSize) {
+      return 0;
+    }
+
+    try {
+      final center = renderObject.localToGlobal(
+        renderObject.size.center(Offset.zero),
+      );
+      final distance = (cursorGlobal - center).distance;
+      final linear = (1 - distance / widget.proximityRadius).clamp(0.0, 1.0);
+      return linear * linear; // ease-in falloff: quiet at the edges
+    } on FlutterError {
+      return 0;
+    } on TypeError {
+      return 0;
+    }
   }
 
   Widget _dockBox(BuildContext context, _Dock d, Widget? child) {
