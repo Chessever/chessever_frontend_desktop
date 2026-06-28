@@ -5,6 +5,7 @@ import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -101,18 +102,27 @@ class PremiumGamesFilter {
   const PremiumGamesFilter({
     this.dateRange = PremiumGamesDateRange.allTime,
     this.result = PremiumGamesResult.all,
+    this.timeControl = GameTimeControlFilter.all,
+    this.eco = GameEcoFilter.all,
+    this.finish = GameFinishFilter.all,
     this.minElo,
     this.maxElo,
   });
 
   final PremiumGamesDateRange dateRange;
   final PremiumGamesResult result;
+  final GameTimeControlFilter timeControl;
+  final GameEcoFilter eco;
+  final GameFinishFilter finish;
   final int? minElo;
   final int? maxElo;
 
   bool get hasActiveFilters {
     return dateRange != PremiumGamesDateRange.allTime ||
         result != PremiumGamesResult.all ||
+        timeControl != GameTimeControlFilter.all ||
+        !eco.isAll ||
+        finish != GameFinishFilter.all ||
         minElo != null ||
         maxElo != null;
   }
@@ -120,6 +130,9 @@ class PremiumGamesFilter {
   PremiumGamesFilter copyWith({
     PremiumGamesDateRange? dateRange,
     PremiumGamesResult? result,
+    GameTimeControlFilter? timeControl,
+    GameEcoFilter? eco,
+    GameFinishFilter? finish,
     int? minElo,
     int? maxElo,
     bool clearElo = false,
@@ -127,6 +140,9 @@ class PremiumGamesFilter {
     return PremiumGamesFilter(
       dateRange: dateRange ?? this.dateRange,
       result: result ?? this.result,
+      timeControl: timeControl ?? this.timeControl,
+      eco: eco ?? this.eco,
+      finish: finish ?? this.finish,
       minElo: clearElo ? null : (minElo ?? this.minElo),
       maxElo: clearElo ? null : (maxElo ?? this.maxElo),
     );
@@ -850,6 +866,16 @@ class PremiumGamesNotifier
 
       // Result filter
       if (!filter.result.matches(game.effectiveGameStatus)) {
+        return false;
+      }
+
+      final gameFilter = GameFilter(
+        result: GameResultFilter.all,
+        timeControl: filter.timeControl,
+        eco: filter.eco,
+        finish: filter.finish,
+      );
+      if (!GameFilterHelper.applyFilter([game], gameFilter).contains(game)) {
         return false;
       }
 
