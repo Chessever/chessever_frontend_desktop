@@ -53,8 +53,8 @@ class BackfilledFederationFlag extends ConsumerWidget {
       }
       if (country.isNotEmpty) {
         resolved = country;
-      } else if (raw.isEmpty && fideId != null && fideId! > 0) {
-        return SizedBox(width: width, height: height);
+      } else {
+        return const SizedBox.shrink();
       }
     }
 
