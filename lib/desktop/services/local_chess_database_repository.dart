@@ -4584,17 +4584,11 @@ class LocalChessDatabaseRepository {
 
 final localChessDatabaseRepositoryProvider =
     Provider<LocalChessDatabaseRepository>((_) {
-      final repository = LocalChessDatabaseRepository(
+      return LocalChessDatabaseRepository(
         database: () => LocalChessResqliteDatabase.instance.database,
         purgeDatabase:
             () => LocalChessResqliteDatabase.instance.openDedicatedConnection(),
       );
-      repository.scheduleDeletedCachePurge(
-        batchSize: 4096,
-        cleanupOrphanMetadata: false,
-        checkpoint: false,
-      );
-      return repository;
     });
 
 Future<void> _importSingleLocalChessFileWorker(

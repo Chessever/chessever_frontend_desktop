@@ -1635,6 +1635,36 @@ void main() {
     expect(await _count(db, 'local_chess_position_games'), 0);
   });
 
+  test('marked deleted cache stays hidden without startup purge', () async {
+    final pgnFile = File('${temp.path}/restart-hidden-delete.pgn');
+    await pgnFile.writeAsString(_samplePgn);
+    final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+    final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+    final repo = LocalChessDatabaseRepository(database: () async => db);
+    await repo.persistFileNode(fileNode, sourceLabel: source.label);
+
+    expect(await repo.markCachedSourceDeleted(pgnFile.path), 1);
+
+    final restartedRepo = LocalChessDatabaseRepository(
+      database: () async => db,
+    );
+
+    expect(await restartedRepo.deletedCacheCount(), 1);
+    expect(await _count(db, 'local_chess_databases'), 1);
+    expect(
+      await restartedRepo.loadFreshFileNode(pgnFile.path, rootPath: temp.path),
+      isNull,
+    );
+    expect(
+      await restartedRepo.localDatabaseGamesPage(
+        databasePath: pgnFile.path,
+        pageNumber: 0,
+        pageSize: 10,
+      ),
+      isNull,
+    );
+  });
+
   test(
     'purgeDeletedCaches reports progress while deleting chunked tree cache',
     () async {

@@ -1834,6 +1834,9 @@ class _BoardPaneContent extends HookConsumerWidget {
         metadata[ChessGame.metadataAllowMainlineExtensionKey] = false;
         final eventLabel = headers['Event']?.trim();
         final gameSnapshot = snapshot.copyWith(metadata: metadata);
+        final isLocalPgnSaveOrigin =
+            boardArgs?.librarySaveOrigin?.kind ==
+            BoardTabLibrarySaveOriginKind.localPgnFile;
         final outcome = await showLibrarySaveToFolderDialog(
           context: context,
           ref: ref,
@@ -1849,6 +1852,10 @@ class _BoardPaneContent extends HookConsumerWidget {
             boardArgs: boardArgs,
             game: gameSnapshot,
           ),
+          destinationMode:
+              isLocalPgnSaveOrigin
+                  ? LibrarySaveDestinationMode.localOnly
+                  : LibrarySaveDestinationMode.cloudAndLocal,
         );
         if (!context.mounted || outcome == null || !outcome.didSave) return;
         showToast(outcome.toToastMessage());

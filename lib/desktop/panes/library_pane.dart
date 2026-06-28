@@ -1499,14 +1499,6 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         if (activeSource != null && activeSource.paths.contains(entry.path)) {
           ref.read(localChessLibraryProvider.notifier).clear();
         }
-        if (marked > 0) {
-          repository.scheduleDeletedCachePurge(
-            sourcePath: entry.path,
-            batchSize: 4096,
-            cleanupOrphanMetadata: false,
-            checkpoint: false,
-          );
-        }
         localChessLog.info(
           'Local database remove finished',
           context: <String, Object?>{

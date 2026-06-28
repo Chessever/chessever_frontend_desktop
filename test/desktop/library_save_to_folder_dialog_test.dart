@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
+import 'package:chessever/repository/library/models/library_folder.dart';
 
 void main() {
   group('library save dialog copy', () {
@@ -19,6 +20,38 @@ void main() {
 
       expect(outcome.didSave, isTrue);
       expect(outcome.toToastMessage(), 'Updated existing game');
+    });
+  });
+
+  group('destination mode', () {
+    test('local-only mode hides every cloud folder', () {
+      final folders = [
+        _folder(id: 'my-database', name: 'My Database'),
+        _folder(id: 'shared', name: 'Shared', isSubscribed: true),
+      ];
+
+      expect(
+        librarySaveWritableCloudFolders(
+          folders: folders,
+          destinationMode: LibrarySaveDestinationMode.localOnly,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('cloud-and-local mode keeps writable cloud folders only', () {
+      final folders = [
+        _folder(id: 'my-database', name: 'My Database'),
+        _folder(id: 'shared', name: 'Shared', isSubscribed: true),
+      ];
+
+      expect(
+        librarySaveWritableCloudFolders(
+          folders: folders,
+          destinationMode: LibrarySaveDestinationMode.cloudAndLocal,
+        ).map((folder) => folder.id),
+        ['my-database'],
+      );
     });
   });
 
@@ -65,10 +98,7 @@ void main() {
     });
 
     test('pads month and day to two digits', () {
-      expect(
-        buildPgnDate(year: '2026', month: '5', day: '7'),
-        '2026.05.07',
-      );
+      expect(buildPgnDate(year: '2026', month: '5', day: '7'), '2026.05.07');
     });
 
     test('substitutes ?? for missing month or day', () {
@@ -148,30 +178,50 @@ void main() {
       expect(merged['Result'], '*');
     });
 
-    test('substitutes "?" for empty White/Black/Event/Round so PGN stays valid',
-        () {
-      final merged = buildEditedMetadata(
-        original: const {},
-        whiteSurname: '',
-        whiteFirstName: '',
-        blackSurname: '',
-        blackFirstName: '',
-        event: '',
-        eco: '',
-        whiteElo: '',
-        blackElo: '',
-        round: '',
-        subround: '',
-        result: '*',
-        year: '',
-        month: '',
-        day: '',
-      );
-      expect(merged['White'], '?');
-      expect(merged['Black'], '?');
-      expect(merged['Event'], '?');
-      expect(merged['Round'], '?');
-      expect(merged['Date'], '????.??.??');
-    });
+    test(
+      'substitutes "?" for empty White/Black/Event/Round so PGN stays valid',
+      () {
+        final merged = buildEditedMetadata(
+          original: const {},
+          whiteSurname: '',
+          whiteFirstName: '',
+          blackSurname: '',
+          blackFirstName: '',
+          event: '',
+          eco: '',
+          whiteElo: '',
+          blackElo: '',
+          round: '',
+          subround: '',
+          result: '*',
+          year: '',
+          month: '',
+          day: '',
+        );
+        expect(merged['White'], '?');
+        expect(merged['Black'], '?');
+        expect(merged['Event'], '?');
+        expect(merged['Round'], '?');
+        expect(merged['Date'], '????.??.??');
+      },
+    );
   });
+}
+
+LibraryFolder _folder({
+  required String id,
+  required String name,
+  bool isSubscribed = false,
+}) {
+  return LibraryFolder(
+    id: id,
+    userId: 'user',
+    name: name,
+    color: '#0FB4E5',
+    icon: 'database',
+    orderIndex: 0,
+    createdAt: DateTime(2026),
+    updatedAt: DateTime(2026),
+    isSubscribed: isSubscribed,
+  );
 }

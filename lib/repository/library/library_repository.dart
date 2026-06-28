@@ -83,8 +83,7 @@ class LibraryRepository extends BaseRepository {
     return LibraryFolder.fromSupabase(response);
   });
 
-  /// Ensure the user has the default "My Database" structure.
-  /// Creates a root "My Database" folder and a child "My Subdatabase" folder.
+  /// Ensure the user has the default "My Folder" -> "My Database" structure.
   Future<void> ensureDefaultFolders() async {
     final userId = supabase.auth.currentUser?.id;
     if (userId == null) return;
@@ -98,11 +97,9 @@ class LibraryRepository extends BaseRepository {
 
     if ((existing as List).isNotEmpty) return;
 
-    // Create root folder
-    final rootFolder = await createFolder(name: 'My Database');
-    // Create child database inside it.
+    final rootFolder = await createFolder(name: 'My Folder');
     await createFolder(
-      name: 'My Subdatabase',
+      name: 'My Database',
       parentId: rootFolder.id,
       icon: 'database',
     );
