@@ -205,10 +205,23 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                         const DesktopMiniaturesFilterButton(),
                       ],
                     )
-                    : DesktopSearchField(
-                      controller: _searchController,
-                      hintText: 'Search games — player, event, opening, ECO…',
-                      onChanged: (value) => _onSearchChanged(type, value),
+                    : Row(
+                      children: [
+                        Expanded(
+                          child: DesktopSearchField(
+                            controller: _searchController,
+                            hintText:
+                                'Search games — player, event, opening, ECO…',
+                            onChanged: (value) => _onSearchChanged(type, value),
+                            onClear: () {
+                              _searchController.clear();
+                              _onSearchChanged(type, '');
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        DesktopPremiumGamesFilterButton(type: type),
+                      ],
                     ),
           ),
           Expanded(
@@ -235,6 +248,13 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                       type == PremiumGamesType.miniatures
                           ? miniatureFilter
                           : MiniatureGamesFilter.defaultFilter;
+                  final premiumFilter =
+                      type == PremiumGamesType.miniatures
+                          ? PremiumGamesFilter.defaultFilter
+                          : ref.watch(premiumGamesFilterProvider(type));
+                  final hasPremiumFilter =
+                      type != PremiumGamesType.miniatures &&
+                      premiumFilter.hasActiveFilters;
                   return _PaneMessage(
                     icon: Icons.grid_off_rounded,
                     title:
@@ -242,17 +262,22 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                             ? 'No matching miniatures'
                             : activeMiniatureFilter.hasActiveFilters
                             ? 'No matching miniatures'
+                            : hasPremiumFilter
+                            ? 'No matching games'
                             : 'No games found',
                     message:
                         hasMiniatureSearch
                             ? 'No miniatures match "${_query.trim()}".'
                             : activeMiniatureFilter.hasActiveFilters
                             ? 'No miniatures match your filters.'
+                            : hasPremiumFilter
+                            ? 'No games match your filters.'
                             : copy.emptyMessage,
                     actionLabel:
                         hasMiniatureSearch
                             ? 'Clear search'
-                            : activeMiniatureFilter.hasActiveFilters
+                            : activeMiniatureFilter.hasActiveFilters ||
+                                hasPremiumFilter
                             ? 'Reset filters'
                             : null,
                     onAction:
@@ -275,6 +300,12 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                                           ),
                                     ),
                               );
+                            }
+                            : hasPremiumFilter
+                            ? () {
+                              ref
+                                  .read(premiumGamesProvider(type).notifier)
+                                  .resetFilter();
                             }
                             : null,
                   );

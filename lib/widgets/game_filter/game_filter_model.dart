@@ -44,6 +44,37 @@ extension GameResultFilterX on GameResultFilter {
   }
 }
 
+/// Finish-length filter for miniature-style game collections.
+enum GameFinishFilter { all, byMove25, byMove20, byMove15 }
+
+extension GameFinishFilterX on GameFinishFilter {
+  String get displayText {
+    switch (this) {
+      case GameFinishFilter.all:
+        return 'All';
+      case GameFinishFilter.byMove25:
+        return '≤25';
+      case GameFinishFilter.byMove20:
+        return '≤20';
+      case GameFinishFilter.byMove15:
+        return '≤15';
+    }
+  }
+
+  int? get maxMoveNumber {
+    switch (this) {
+      case GameFinishFilter.all:
+        return null;
+      case GameFinishFilter.byMove25:
+        return 25;
+      case GameFinishFilter.byMove20:
+        return 20;
+      case GameFinishFilter.byMove15:
+        return 15;
+    }
+  }
+}
+
 /// Color filter options
 enum GameColorFilter { all, white, black }
 
@@ -179,6 +210,7 @@ class GameFilter {
   GameFilter({
     this.result = GameResultFilter.all,
     this.color = GameColorFilter.all,
+    this.finish = GameFinishFilter.all,
     this.timeControl = GameTimeControlFilter.all,
     this.online = GameOnlineFilter.all,
     GameEcoFilter? eco,
@@ -191,6 +223,7 @@ class GameFilter {
 
   final GameResultFilter result;
   final GameColorFilter color;
+  final GameFinishFilter finish;
   final GameTimeControlFilter timeControl;
   final GameOnlineFilter online;
   final GameEcoFilter eco;
@@ -203,6 +236,7 @@ class GameFilter {
   bool get hasActiveFilters =>
       result != GameResultFilter.all ||
       color != GameColorFilter.all ||
+      finish != GameFinishFilter.all ||
       timeControl != GameTimeControlFilter.all ||
       online != GameOnlineFilter.all ||
       !eco.isAll ||
@@ -216,19 +250,22 @@ class GameFilter {
     int count = 0;
     if (result != GameResultFilter.all) count++;
     if (color != GameColorFilter.all) count++;
+    if (finish != GameFinishFilter.all) count++;
     if (timeControl != GameTimeControlFilter.all) count++;
     if (online != GameOnlineFilter.all) count++;
     if (!eco.isAll) count++;
     if (minYear != defaultMinYear || maxYear != DateTime.now().year) count++;
     if (minRating != defaultMinRating ||
-        maxRating != GameFilter.absoluteMaxRating)
+        maxRating != GameFilter.absoluteMaxRating) {
       count++;
+    }
     return count;
   }
 
   GameFilter copyWith({
     GameResultFilter? result,
     GameColorFilter? color,
+    GameFinishFilter? finish,
     GameTimeControlFilter? timeControl,
     GameOnlineFilter? online,
     GameEcoFilter? eco,
@@ -240,6 +277,7 @@ class GameFilter {
     return GameFilter(
       result: result ?? this.result,
       color: color ?? this.color,
+      finish: finish ?? this.finish,
       timeControl: timeControl ?? this.timeControl,
       online: online ?? this.online,
       eco: eco ?? this.eco,
@@ -258,6 +296,7 @@ class GameFilter {
     return other is GameFilter &&
         other.result == result &&
         other.color == color &&
+        other.finish == finish &&
         other.timeControl == timeControl &&
         other.online == online &&
         other.eco == eco &&
@@ -271,6 +310,7 @@ class GameFilter {
   int get hashCode => Object.hash(
     result,
     color,
+    finish,
     timeControl,
     online,
     eco,
@@ -300,6 +340,17 @@ class GameFilterHelper {
       // Result filter
       if (!filter.result.matches(game.gameStatus)) return false;
 
+      // Finish filter
+      if (filter.finish != GameFinishFilter.all) {
+        final moveNumber = _estimateFinalMoveNumber(game);
+        final maxMoveNumber = filter.finish.maxMoveNumber;
+        if (moveNumber == null ||
+            maxMoveNumber == null ||
+            moveNumber > maxMoveNumber) {
+          return false;
+        }
+      }
+
       // Time control filter
       if (filter.timeControl != GameTimeControlFilter.all) {
         final inferred = _inferTimeControl(game);
@@ -327,9 +378,9 @@ class GameFilterHelper {
         if (year < filter.minYear || year > filter.maxYear) return false;
       }
 
-      // Rating filter - use the game's top rating
-      final cardElo = game.cardElo;
-      if (cardElo < filter.minRating || cardElo > filter.maxRating) {
+      // Rating filter - use average game rating when available.
+      final avgRating = _averageRating(game);
+      if (avgRating < filter.minRating || avgRating > filter.maxRating) {
         return false;
       }
 
@@ -389,5 +440,44 @@ class GameFilterHelper {
     // No fallback - if timeControl is not set in the database, we can't reliably
     // determine it. Return 'all' which means "unknown" and won't filter out the game.
     return GameTimeControlFilter.all;
+  }
+
+  static int? _estimateFinalMoveNumber(GamesTourModel game) {
+    final pgn = game.pgn;
+    if (pgn != null && pgn.isNotEmpty) {
+      return _estimateMoveNumberFromPgn(pgn);
+    }
+
+    final lastMove = game.lastMove;
+    if (lastMove == null || lastMove.isEmpty) return null;
+    return _estimateMoveNumberFromPgn(lastMove);
+  }
+
+  static int _averageRating(GamesTourModel game) {
+    final explicit = game.avgElo;
+    if (explicit != null && explicit > 0) return explicit;
+
+    final white = game.whitePlayer.rating;
+    final black = game.blackPlayer.rating;
+    if (white <= 0 && black <= 0) return 0;
+    if (white <= 0) return black;
+    if (black <= 0) return white;
+    return (white + black) ~/ 2;
+  }
+
+  static int? _estimateMoveNumberFromPgn(String text) {
+    final cleaned = text
+        .replaceAll(RegExp(r'\[[^\]]*\]'), ' ')
+        .replaceAll(RegExp(r'\{[^}]*\}'), ' ')
+        .replaceAll(RegExp(r'\([^)]*\)'), ' ')
+        .replaceAll(RegExp(r'\$\d+'), ' ');
+    final matches = RegExp(r'\b(\d{1,3})\s*\.{1,3}').allMatches(cleaned);
+    int? maxMove;
+    for (final match in matches) {
+      final value = int.tryParse(match.group(1) ?? '');
+      if (value == null) continue;
+      if (maxMove == null || value > maxMove) maxMove = value;
+    }
+    return maxMove;
   }
 }
