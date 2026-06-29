@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/repository/library/library_repository.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/repository/library/models/shared_book_preview.dart';
@@ -18,10 +19,35 @@ final kTwicFolder = LibraryFolder(
   updatedAt: DateTime(2000),
 );
 
+/// Folder-stream error signatures already sent to Sentry this session, so a
+/// realtime reconnect loop (common on Windows when the websocket times out)
+/// doesn't flood Sentry with the identical "could not load folders" error.
+final _reportedFolderStreamErrors = <String>{};
+
+void _reportFolderStreamError(Object error, StackTrace stackTrace) {
+  final signature = '${error.runtimeType}: $error';
+  if (!_reportedFolderStreamErrors.add(signature)) return;
+  ErrorReporter.report(
+    error,
+    stackTrace: stackTrace,
+    tag: 'library.folders.subscribe',
+  );
+}
+
 final libraryFoldersStreamProvider =
     StreamProvider.autoDispose<List<LibraryFolder>>((ref) {
       final repository = ref.watch(libraryRepositoryProvider);
-      return repository.subscribeFolders();
+      // The folder list comes from a Supabase Realtime subscription. When that
+      // websocket times out (notably on Windows) the error is handled
+      // gracefully in the UI, so it never reached Sentry. Capture it here, then
+      // re-propagate so the UI still degrades gracefully.
+      return repository.subscribeFolders().handleError((
+        Object error,
+        StackTrace stackTrace,
+      ) {
+        _reportFolderStreamError(error, stackTrace);
+        throw error;
+      });
     });
 
 /// Analysis count per folder for subtitle display

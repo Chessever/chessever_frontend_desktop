@@ -58,7 +58,16 @@ class LocalChessResqliteDatabase {
       _database = db;
       completer.complete(db);
       return db;
-    } catch (error) {
+    } catch (error, stackTrace) {
+      // Report unconditionally: a failure to open the local-chess resqlite
+      // database is exactly the kind of Windows issue that otherwise gets
+      // swallowed by a UI .when(error:) and never reaches Sentry.
+      localChessLog.error(
+        'Failed to open local chess resqlite database',
+        error,
+        stackTrace,
+        tag: 'local-chess.open',
+      );
       completer.completeError(error);
       completer.future.ignore();
       _initCompleter = null;
