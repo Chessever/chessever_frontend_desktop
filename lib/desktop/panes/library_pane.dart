@@ -229,8 +229,32 @@ class LibraryPane extends HookConsumerWidget {
     }
 
     Future<void> importLocalPgnFiles() async {
-      final path = await pickAndOpenLibraryPgnDatabase(ref);
-      if (path != null) openLocalFullView(path);
+      final paths = await pickLibraryPgnDatabasePaths();
+      if (paths == null) return;
+      if (!context.mounted) return;
+
+      showDesktopToast(
+        context,
+        paths.length == 1
+            ? 'Importing PGN...'
+            : 'Importing ${paths.length} PGN files...',
+      );
+
+      final path = await openLibraryPgnDatabasePaths(ref, paths);
+      if (!context.mounted) return;
+      if (path != null) {
+        openLocalFullView(path);
+        return;
+      }
+
+      final error = ref.read(localChessLibraryProvider).error?.trim();
+      showDesktopToast(
+        context,
+        error == null || error.isEmpty
+            ? 'Could not import PGN. Please try another file.'
+            : error,
+        error: true,
+      );
     }
 
     Future<void> openLocalFiles() async {
