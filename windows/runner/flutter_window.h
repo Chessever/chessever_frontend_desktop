@@ -31,7 +31,7 @@ class FlutterWindow : public Win32Window {
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
 
-  // Channel used by the native Windows Help menu to request update checks.
+  // Channel used by the native Windows system menu to request update checks.
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       native_update_menu_channel_;
 };

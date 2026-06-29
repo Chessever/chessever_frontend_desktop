@@ -3,7 +3,7 @@
 // Used by Runner.rc
 //
 #define IDI_APP_ICON                    101
-#define ID_HELP_CHECK_FOR_UPDATES       40001
+#define ID_SYSTEM_CHECK_FOR_UPDATES     0x1F00
 
 // Next default values for new objects
 //

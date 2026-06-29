@@ -8,15 +8,15 @@
 
 namespace {
 
-void InstallNativeHelpMenu(HWND window) {
-  HMENU menu_bar = CreateMenu();
-  HMENU help_menu = CreatePopupMenu();
-  AppendMenu(help_menu, MF_STRING, ID_HELP_CHECK_FOR_UPDATES,
+void InstallNativeSystemUpdateMenu(HWND window) {
+  HMENU system_menu = GetSystemMenu(window, FALSE);
+  if (!system_menu) {
+    return;
+  }
+
+  AppendMenu(system_menu, MF_SEPARATOR, 0, nullptr);
+  AppendMenu(system_menu, MF_STRING, ID_SYSTEM_CHECK_FOR_UPDATES,
              L"Check for Updates...");
-  AppendMenu(menu_bar, MF_POPUP, reinterpret_cast<UINT_PTR>(help_menu),
-             L"&Help");
-  SetMenu(window, menu_bar);
-  DrawMenuBar(window);
 }
 
 }  // namespace
@@ -31,7 +31,7 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
 
-  InstallNativeHelpMenu(GetHandle());
+  InstallNativeSystemUpdateMenu(GetHandle());
 
   RECT frame = GetClientArea();
 
@@ -82,6 +82,15 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if (message == WM_SYSCOMMAND &&
+      (wparam & 0xFFF0) == ID_SYSTEM_CHECK_FOR_UPDATES) {
+    if (native_update_menu_channel_) {
+      native_update_menu_channel_->InvokeMethod(
+          "checkForUpdates", std::make_unique<flutter::EncodableValue>());
+    }
+    return 0;
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =
@@ -93,17 +102,6 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
-    case WM_COMMAND:
-      if (LOWORD(wparam) == ID_HELP_CHECK_FOR_UPDATES) {
-        if (native_update_menu_channel_) {
-          native_update_menu_channel_->InvokeMethod(
-              "checkForUpdates",
-              std::make_unique<flutter::EncodableValue>());
-        }
-        return 0;
-      }
-      break;
-
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
