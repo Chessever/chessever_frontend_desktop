@@ -37,15 +37,27 @@ branch="${CM_BRANCH:-unknown}"
 commit="${CM_COMMIT:-$(git rev-parse HEAD 2>/dev/null || true)}"
 commit="${commit:-unknown}"
 short_commit="${commit:0:8}"
+author="${CM_COMMIT_AUTHOR:-$(git log -1 --pretty=format:%an 2>/dev/null || true)}"
+author="${author:-unknown}"
+subject="$(git log -1 --pretty=format:%s 2>/dev/null || true)"
+subject="${subject:-unknown}"
 build_id="${CM_BUILD_ID:-unknown}"
 build_url="${CM_BUILD_URL:-}"
 
+case "$status" in
+  started) emoji="🚀" ;;
+  succeeded) emoji="✅" ;;
+  failed) emoji="❌" ;;
+  *) emoji="ℹ️" ;;
+esac
+
 message=$(cat <<EOF
-ChessEver desktop ${platform} release ${status}
+${emoji} ChessEver desktop ${platform} release ${status}
 Version: ${version}
 Workflow: ${workflow}
 Branch: ${branch}
-Commit: ${short_commit}
+Commit: ${short_commit} — ${subject}
+Author: ${author}
 Build: ${build_id}
 EOF
 )

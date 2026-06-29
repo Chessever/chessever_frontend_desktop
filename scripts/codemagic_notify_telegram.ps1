@@ -38,15 +38,27 @@ $workflow = if ($env:CM_WORKFLOW_NAME) { $env:CM_WORKFLOW_NAME } elseif ($env:CM
 $branch = if ($env:CM_BRANCH) { $env:CM_BRANCH } else { 'unknown' }
 $commit = if ($env:CM_COMMIT) { $env:CM_COMMIT } else { 'unknown' }
 $shortCommit = if ($commit.Length -gt 8) { $commit.Substring(0, 8) } else { $commit }
+$author = if ($env:CM_COMMIT_AUTHOR) { $env:CM_COMMIT_AUTHOR } else { (git log -1 --pretty=format:%an 2>$null) }
+if (-not $author) { $author = 'unknown' }
+$subject = (git log -1 --pretty=format:%s 2>$null)
+if (-not $subject) { $subject = 'unknown' }
 $buildId = if ($env:CM_BUILD_ID) { $env:CM_BUILD_ID } else { 'unknown' }
 $buildUrl = if ($env:CM_BUILD_URL) { $env:CM_BUILD_URL } else { '' }
 
+$emoji = switch ($status) {
+    'started' { '🚀' }
+    'succeeded' { '✅' }
+    'failed' { '❌' }
+    default { 'ℹ️' }
+}
+
 $message = @"
-ChessEver desktop $Platform release $status
+$emoji ChessEver desktop $Platform release $status
 Version: $version
 Workflow: $workflow
 Branch: $branch
-Commit: $shortCommit
+Commit: $shortCommit — $subject
+Author: $author
 Build: $buildId
 "@
 
