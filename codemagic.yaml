@@ -109,6 +109,7 @@ workflows:
         TELEGRAM_CHAT_ID: "-1003954728178"
     scripts:
       - name: Notify Telegram release started
+        ignore_failure: true
         script: |
           bash ./scripts/codemagic_notify_telegram.sh macOS started
       - name: Verify release environment
@@ -124,7 +125,6 @@ workflows:
             APP_STORE_CONNECT_ISSUER_ID
             APP_STORE_CONNECT_PRIVATE_KEY
             CODEMAGIC_PUBLISHER_KEY
-            TELEGRAM_BOT_TOKEN
           )
           missing=0
           for name in "${required[@]}"; do
@@ -222,6 +222,7 @@ workflows:
     publishing:
       scripts:
         - name: Notify Telegram release finished
+          ignore_failure: true
           script: |
             bash ./scripts/codemagic_notify_telegram.sh macOS finished
 
@@ -237,6 +238,7 @@ workflows:
         TELEGRAM_CHAT_ID: "-1003954728178"
     scripts:
       - name: Notify Telegram release started
+        ignore_failure: true
         script: |
           powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_notify_telegram.ps1 -Platform Windows -Event started
       - name: Verify release environment
@@ -247,8 +249,7 @@ workflows:
             'GOOGLE_DESKTOP_CLIENT_ID',
             'GOOGLE_DESKTOP_CLIENT_SECRET',
             'SENTRY_FLUTTER',
-            'CODEMAGIC_PUBLISHER_KEY',
-            'TELEGRAM_BOT_TOKEN'
+            'CODEMAGIC_PUBLISHER_KEY'
           )
           $missing = @()
           foreach ($name in $required) {
@@ -287,6 +288,7 @@ workflows:
     publishing:
       scripts:
         - name: Notify Telegram release finished
+          ignore_failure: true
           script: |
             powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_notify_telegram.ps1 -Platform Windows -Event finished
 
@@ -302,6 +304,7 @@ workflows:
         TELEGRAM_CHAT_ID: "-1003954728178"
     scripts:
       - name: Notify Telegram release started
+        ignore_failure: true
         script: |
           bash ./scripts/codemagic_notify_telegram.sh Linux started
       - name: Verify release environment
@@ -315,7 +318,6 @@ workflows:
             SENTRY_FLUTTER
             CODEMAGIC_PUBLISHER_KEY
             CODEMAGIC_PUBLISH_REMOTE
-            TELEGRAM_BOT_TOKEN
           )
           missing=0
           for name in "${required[@]}"; do
@@ -345,5 +347,6 @@ workflows:
     publishing:
       scripts:
         - name: Notify Telegram release finished
+          ignore_failure: true
           script: |
             bash ./scripts/codemagic_notify_telegram.sh Linux finished
