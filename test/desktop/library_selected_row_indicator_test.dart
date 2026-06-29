@@ -3,17 +3,61 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Renders the real production row decoration used by every desktop library
-/// database table (`librarySelectedRowDecoration`) so the selected-row
-/// indicator can be verified visually via a golden image — without launching
-/// the app. Row 2 is selected: it must show the 3px kPrimaryColor left bar
-/// plus tint; rows 1/3 must not.
+/// Mirrors the production `selected` expression used by the library database
+/// tables beside the board (`_DatabaseSavedGamesTable` /
+/// `_TwicGamesTable` itemBuilders in library_pane.dart):
+///
+///   (selectedIds?.contains(id) ?? false) || id == selectedId
+///
+/// The previous form `selectedIds?.contains(id) ?? id == selectedId` was bugged:
+/// `selectedIds` is always a non-null (often empty) set, so `{}.contains(id)`
+/// returned `false` and the `??` never fell through to the single `selectedId`
+/// — meaning a single-clicked row was never marked selected.
+bool rowSelected({
+  required String id,
+  required Set<String> selectedIds,
+  required String? selectedId,
+}) {
+  return (selectedIds.contains(id)) || id == selectedId;
+}
+
 void main() {
-  testWidgets('library table selected row shows left accent indicator', (
+  test('single-select (empty selectedIds + selectedId) marks exactly one row', () {
+    const ids = ['r1', 'r2', 'r3'];
+    const selectedId = 'r2';
+    final selectedIds = <String>{}; // single-select clears the multi-set
+
+    final selected = [
+      for (final id in ids)
+        rowSelected(id: id, selectedIds: selectedIds, selectedId: selectedId),
+    ];
+    expect(selected, [false, true, false]);
+
+    // Faithful replay of the OLD bugged precedence: a non-null empty set makes
+    // `?? selectedId` unreachable, so every row resolves false (no highlight).
+    List<bool> oldPrecedence(Set<String>? ids2) =>
+        [for (final id in ids) ids2?.contains(id) ?? (id == selectedId)];
+    expect(oldPrecedence(selectedIds), [false, false, false]);
+  });
+
+  testWidgets('selected library row renders the kPrimaryColor accent + tint', (
     tester,
   ) async {
-    Widget row(String white, String black, {required bool selected}) {
+    const ids = ['r1', 'r2', 'r3'];
+    const labels = {
+      'r1': ('Xu, X.', 'Carlsen, M.'),
+      'r2': ('Le, Q.', 'Caruana, F.'),
+      'r3': ('Zhao, Y.', 'Caruana, F.'),
+    };
+    const selectedId = 'r2';
+    final selectedIds = <String>{};
+
+    Widget row(String id) {
+      final selected =
+          rowSelected(id: id, selectedIds: selectedIds, selectedId: selectedId);
+      final (white, black) = labels[id]!;
       return Container(
+        // The real production decoration.
         decoration: librarySelectedRowDecoration(
           selected: selected,
           hovered: false,
@@ -24,11 +68,7 @@ void main() {
             SizedBox(
               width: 30,
               child: Text(
-                white == 'Xu, X.'
-                    ? '1'
-                    : white == 'Le, Q.'
-                    ? '2'
-                    : '3',
+                '${ids.indexOf(id) + 1}',
                 style: const TextStyle(color: kLightGreyColor, fontSize: 11),
               ),
             ),
@@ -66,11 +106,7 @@ void main() {
                 clipBehavior: Clip.antiAlias,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
-                  children: [
-                    row('Xu, X.', 'Carlsen, M.', selected: false),
-                    row('Le, Q.', 'Caruana, F.', selected: true),
-                    row('Zhao, Y.', 'Caruana, F.', selected: false),
-                  ],
+                  children: [for (final id in ids) row(id)],
                 ),
               ),
             ),
@@ -79,18 +115,17 @@ void main() {
       ),
     );
 
-    // The selected row paints the kPrimaryColor accent bar; assert a
-    // BoxDecoration in the tree carries a left BorderSide in that color.
-    final hasAccent = tester
+    // Exactly one row paints the kPrimaryColor left accent bar.
+    final accentRows = tester
         .widgetList<Container>(find.byType(Container))
-        .any((c) {
+        .where((c) {
           final decoration = c.decoration;
           if (decoration is! BoxDecoration) return false;
           final border = decoration.border;
           if (border is! Border) return false;
           return border.left.color == kPrimaryColor && border.left.width == 3;
         });
-    expect(hasAccent, isTrue);
+    expect(accentRows.length, 1);
 
     await expectLater(
       find.byType(MaterialApp),

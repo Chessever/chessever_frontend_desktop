@@ -5,35 +5,75 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 /// Splits a text blob that may contain one or more PGN games into individual
 /// PGN strings (trimmed, without trailing whitespace).
 ///
-/// Uses the `[Event` tag as a game boundary: each PGN must start with at least
-/// one `[Event ...]` header (per the spec), so consecutive games in a
-/// concatenated blob always have one. If no `[Event` headers are found, the
-/// whole blob is returned as a single game (best-effort — `ChessGame.fromPgn`
-/// can still parse header-less movetext).
+/// Uses the next PGN header after movetext as a game boundary. This preserves
+/// the whole header block even when `[Event ...]` is not the first tag.
 List<String> splitPgnGames(String text) {
-  final normalized = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  final normalized =
+      text.contains('\r')
+          ? text.replaceAll('\r\n', '\n').replaceAll('\r', '\n')
+          : text;
   final trimmed = normalized.trim();
   if (trimmed.isEmpty) return const [];
 
-  // Find all `[Event ...]` header positions that appear at the start of a line
-  // (ignoring indentation). These mark the start of each game.
-  final eventPattern = RegExp(r'^\[Event\s', multiLine: true);
-  final matches = eventPattern.allMatches(trimmed).toList();
-
-  if (matches.length <= 1) {
-    return [trimmed];
-  }
-
   final games = <String>[];
-  for (var i = 0; i < matches.length; i++) {
-    final start = matches[i].start;
-    final end =
-        (i + 1 < matches.length) ? matches[i + 1].start : trimmed.length;
-    final game = trimmed.substring(start, end).trim();
-    if (game.isNotEmpty) games.add(game);
+  final current = StringBuffer();
+  var sawMovetext = false;
+  var inComment = false;
+
+  var start = 0;
+  while (start <= trimmed.length) {
+    final newline = trimmed.indexOf('\n', start);
+    final isLastLine = newline == -1;
+    final line =
+        isLastLine
+            ? trimmed.substring(start)
+            : trimmed.substring(start, newline);
+    final stripped = _stripBom(line).trimLeft();
+    final isHeader =
+        !inComment &&
+        stripped.startsWith('[') &&
+        _pgnHeaderLineRegex.hasMatch(stripped);
+    if (isHeader && sawMovetext && current.isNotEmpty) {
+      final game = current.toString().trim();
+      if (game.isNotEmpty) games.add(game);
+      current.clear();
+      sawMovetext = false;
+    }
+
+    current.writeln(line);
+    if (stripped.isNotEmpty && !isHeader) {
+      sawMovetext = true;
+    }
+    inComment = _updatePgnCommentState(line, inComment);
+    if (isLastLine) break;
+    start = newline + 1;
   }
 
-  return games;
+  final tail = current.toString().trim();
+  if (tail.isNotEmpty) games.add(tail);
+  return games.isEmpty ? <String>[trimmed] : games;
+}
+
+final RegExp _pgnHeaderLineRegex = RegExp(
+  r'^\[\s*[A-Za-z0-9_]+\s+"(?:\\.|[^"\\])*"\s*\]$',
+);
+
+String _stripBom(String line) {
+  if (line.startsWith('\uFEFF')) return line.substring(1);
+  return line;
+}
+
+bool _updatePgnCommentState(String line, bool inComment) {
+  if (!inComment && !line.contains('{')) return false;
+  var next = inComment;
+  for (final codeUnit in line.codeUnits) {
+    if (codeUnit == 0x7B) {
+      next = true;
+    } else if (codeUnit == 0x7D) {
+      next = false;
+    }
+  }
+  return next;
 }
 
 /// Parsed PGN result, bundling the `ChessGame` alongside its raw PGN text.

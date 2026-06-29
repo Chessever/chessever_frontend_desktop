@@ -38,8 +38,14 @@ class DesktopSmartGamesPane extends ConsumerStatefulWidget {
 }
 
 class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
+  static const Duration _miniatureSearchDebounceDuration = Duration(
+    milliseconds: 350,
+  );
+
   late final TextEditingController _searchController;
+  Timer? _miniatureSearchDebounce;
   String _query = '';
+  bool _didSyncInitialMiniatureSearch = false;
 
   @override
   void initState() {
@@ -49,12 +55,72 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
 
   @override
   void dispose() {
+    _miniatureSearchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
 
+  void _syncMiniatureSearchController(String search) {
+    if (_searchController.text != search) {
+      _searchController.value = TextEditingValue(
+        text: search,
+        selection: TextSelection.collapsed(offset: search.length),
+      );
+    }
+    _query = search;
+  }
+
+  void _onSearchChanged(PremiumGamesType type, String value) {
+    if (type != PremiumGamesType.miniatures) {
+      setState(() => _query = value);
+      return;
+    }
+
+    final normalized = value.trim();
+    setState(() => _query = normalized);
+    _miniatureSearchDebounce?.cancel();
+    _miniatureSearchDebounce = Timer(
+      _miniatureSearchDebounceDuration,
+      () => _applyMiniatureSearch(normalized),
+    );
+  }
+
+  void _applyMiniatureSearch(String query) {
+    if (!mounted) return;
+    final current = ref.read(miniatureGamesFilterProvider);
+    final currentSearch = current.search?.trim() ?? '';
+    if (currentSearch == query) return;
+
+    unawaited(
+      ref
+          .read(premiumGamesProvider(PremiumGamesType.miniatures).notifier)
+          .applyMiniatureFilter(
+            current.copyWith(
+              search: query.isEmpty ? null : query,
+              clearSearch: query.isEmpty,
+            ),
+          ),
+    );
+  }
+
+  void _clearMiniatureSearch() {
+    _miniatureSearchDebounce?.cancel();
+    setState(() => _syncMiniatureSearchController(''));
+    _applyMiniatureSearch('');
+  }
+
   @override
   Widget build(BuildContext context) {
+    ref.listen<MiniatureGamesFilter>(miniatureGamesFilterProvider, (
+      previous,
+      next,
+    ) {
+      final previousSearch = previous?.search?.trim() ?? '';
+      final nextSearch = next.search?.trim() ?? '';
+      if (previousSearch == nextSearch) return;
+      _syncMiniatureSearchController(nextSearch);
+    });
+
     final type =
         ref.watch(
           desktopSmartGamesTypeByTabIdProvider.select(
@@ -62,6 +128,15 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
           ),
         ) ??
         PremiumGamesType.live;
+    final miniatureFilter = ref.watch(miniatureGamesFilterProvider);
+    if (type == PremiumGamesType.miniatures) {
+      if (!_didSyncInitialMiniatureSearch) {
+        _didSyncInitialMiniatureSearch = true;
+        _syncMiniatureSearchController(miniatureFilter.search?.trim() ?? '');
+      }
+    } else {
+      _didSyncInitialMiniatureSearch = false;
+    }
     final gamesAsync = ref.watch(premiumGamesProvider(type));
     final copy = _copyForType(type);
 
@@ -123,12 +198,7 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                             controller: _searchController,
                             hintText:
                                 'Search miniatures — player, event, opening, ECO…',
-                            onChanged:
-                                (value) => setState(() => _query = value),
-                            onClear: () {
-                              _searchController.clear();
-                              setState(() => _query = '');
-                            },
+                            onChanged: (value) => _onSearchChanged(type, value),
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -142,11 +212,10 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                             controller: _searchController,
                             hintText:
                                 'Search games — player, event, opening, ECO…',
-                            onChanged:
-                                (value) => setState(() => _query = value),
+                            onChanged: (value) => _onSearchChanged(type, value),
                             onClear: () {
                               _searchController.clear();
-                              setState(() => _query = '');
+                              _onSearchChanged(type, '');
                             },
                           ),
                         ),
@@ -166,60 +235,77 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                     error: true,
                   ),
               data: (state) {
-                final visibleGames = filterDesktopSmartGames(
-                  state.games,
-                  _query,
+                final visibleGames = visibleDesktopSmartGames(
+                  type: type,
+                  games: state.games,
+                  query: _query,
                 );
                 if (state.games.isEmpty) {
-                  final miniatureFilter =
+                  final hasMiniatureSearch =
+                      type == PremiumGamesType.miniatures &&
+                      _query.trim().isNotEmpty;
+                  final activeMiniatureFilter =
                       type == PremiumGamesType.miniatures
-                          ? ref.watch(miniatureGamesFilterProvider)
+                          ? miniatureFilter
                           : MiniatureGamesFilter.defaultFilter;
                   final premiumFilter =
                       type == PremiumGamesType.miniatures
                           ? PremiumGamesFilter.defaultFilter
                           : ref.watch(premiumGamesFilterProvider(type));
-                  final hasActiveFilters =
-                      type == PremiumGamesType.miniatures
-                          ? miniatureFilter.hasActiveFilters
-                          : premiumFilter.hasActiveFilters;
+                  final hasPremiumFilter =
+                      type != PremiumGamesType.miniatures &&
+                      premiumFilter.hasActiveFilters;
                   return _PaneMessage(
                     icon: Icons.grid_off_rounded,
                     title:
-                        hasActiveFilters
-                            ? type == PremiumGamesType.miniatures
-                                ? 'No matching miniatures'
-                                : 'No matching games'
+                        hasMiniatureSearch
+                            ? 'No matching miniatures'
+                            : activeMiniatureFilter.hasActiveFilters
+                            ? 'No matching miniatures'
+                            : hasPremiumFilter
+                            ? 'No matching games'
                             : 'No games found',
                     message:
-                        hasActiveFilters
+                        hasMiniatureSearch
+                            ? 'No miniatures match "${_query.trim()}".'
+                            : activeMiniatureFilter.hasActiveFilters
+                            ? 'No miniatures match your filters.'
+                            : hasPremiumFilter
                             ? 'No games match your filters.'
                             : copy.emptyMessage,
-                    actionLabel: hasActiveFilters ? 'Reset filters' : null,
+                    actionLabel:
+                        hasMiniatureSearch
+                            ? 'Clear search'
+                            : activeMiniatureFilter.hasActiveFilters ||
+                                hasPremiumFilter
+                            ? 'Reset filters'
+                            : null,
                     onAction:
-                        hasActiveFilters
+                        hasMiniatureSearch
+                            ? _clearMiniatureSearch
+                            : activeMiniatureFilter.hasActiveFilters
                             ? () {
-                              if (type == PremiumGamesType.miniatures) {
-                                unawaited(
-                                  ref
-                                      .read(
-                                        premiumGamesProvider(
-                                          PremiumGamesType.miniatures,
-                                        ).notifier,
-                                      )
-                                      .applyMiniatureFilter(
-                                        MiniatureGamesFilter.defaultFilter
-                                            .copyWith(
-                                              sort: miniatureFilter.sort,
-                                              order: miniatureFilter.order,
-                                            ),
-                                      ),
-                                );
-                              } else {
+                              unawaited(
                                 ref
-                                    .read(premiumGamesProvider(type).notifier)
-                                    .resetFilter();
-                              }
+                                    .read(
+                                      premiumGamesProvider(
+                                        PremiumGamesType.miniatures,
+                                      ).notifier,
+                                    )
+                                    .applyMiniatureFilter(
+                                      MiniatureGamesFilter.defaultFilter
+                                          .copyWith(
+                                            sort: activeMiniatureFilter.sort,
+                                            order: activeMiniatureFilter.order,
+                                          ),
+                                    ),
+                              );
+                            }
+                            : hasPremiumFilter
+                            ? () {
+                              ref
+                                  .read(premiumGamesProvider(type).notifier)
+                                  .resetFilter();
                             }
                             : null,
                   );
@@ -285,6 +371,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
   final Set<String> _collapsedGroups = <String>{};
   Timer? _scrollIdleTimer;
   bool _liveCardsPausedForScroll = false;
+  bool _emptyMiniaturesPageLoadQueued = false;
 
   String get _liveCardsPauseReason =>
       'desktop_smart_games_scroll_${widget.routeTitle}';
@@ -334,6 +421,52 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
     if (_liveCardsPausedForScroll == paused) return;
     _liveCardsPausedForScroll = paused;
     setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
+  }
+
+  int _expandedGameCount(List<DesktopSmartGameSection> sections) {
+    var count = 0;
+    for (final section in sections) {
+      if (!_collapsedGroups.contains(section.key)) {
+        count += section.games.length;
+      }
+    }
+    return count;
+  }
+
+  void _maybeLoadMoreForCollapsedMiniatures(
+    List<DesktopSmartGameSection> sections,
+  ) {
+    final expandedGameCount = _expandedGameCount(sections);
+    if (!shouldLoadMoreForCollapsedMiniatures(
+      type: widget.type,
+      sectionCount: sections.length,
+      expandedGameCount: expandedGameCount,
+      hasMore: widget.hasMore,
+      isLoading: widget.isLoading,
+    )) {
+      _emptyMiniaturesPageLoadQueued = false;
+      return;
+    }
+
+    if (_emptyMiniaturesPageLoadQueued) return;
+    _emptyMiniaturesPageLoadQueued = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      final currentExpandedGameCount = _expandedGameCount(sections);
+      final shouldLoad = shouldLoadMoreForCollapsedMiniatures(
+        type: widget.type,
+        sectionCount: sections.length,
+        expandedGameCount: currentExpandedGameCount,
+        hasMore: widget.hasMore,
+        isLoading: widget.isLoading,
+      );
+      _emptyMiniaturesPageLoadQueued = false;
+      if (shouldLoad) {
+        widget.onLoadMore();
+      }
+    });
   }
 
   List<DesktopSmartGameSection> _buildMiniatureSections(
@@ -401,6 +534,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
       for (final section in sections)
         if (!_collapsedGroups.contains(section.key)) ...section.games,
     ];
+    _maybeLoadMoreForCollapsedMiniatures(sections);
     final scopeId = 'smart-games-${widget.type.name}';
 
     if (sections.isEmpty) {
@@ -856,6 +990,31 @@ List<GamesTourModel> filterDesktopSmartGames(
         ].whereType<String>().join(' ').toLowerCase();
     return haystack.contains(normalized);
   }).toList();
+}
+
+@visibleForTesting
+List<GamesTourModel> visibleDesktopSmartGames({
+  required PremiumGamesType type,
+  required List<GamesTourModel> games,
+  required String query,
+}) {
+  if (type == PremiumGamesType.miniatures) return games;
+  return filterDesktopSmartGames(games, query);
+}
+
+@visibleForTesting
+bool shouldLoadMoreForCollapsedMiniatures({
+  required PremiumGamesType type,
+  required int sectionCount,
+  required int expandedGameCount,
+  required bool hasMore,
+  required bool isLoading,
+}) {
+  return type == PremiumGamesType.miniatures &&
+      sectionCount > 0 &&
+      expandedGameCount == 0 &&
+      hasMore &&
+      !isLoading;
 }
 
 class _SmartGamesTable extends ConsumerWidget {

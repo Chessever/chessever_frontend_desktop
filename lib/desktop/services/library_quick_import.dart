@@ -21,11 +21,28 @@ import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
 import 'package:chessever/utils/pgn_multi_parser.dart';
 import 'package:chessever/utils/save_to_library_guard.dart';
 
+const int _kQuickImportMaxPgnBytes = 32 * 1024 * 1024;
+
 /// `true` when [folder] can receive direct PGN imports (writable, not TWIC,
 /// not a subscribed read-only book). The drop targets, Ctrl+V handler, and
 /// the rail-row hover affordance all gate on this same predicate.
 bool isWritableLibraryFolder(LibraryFolder folder) {
   return !folder.isSubscribed && folder.id != kTwicBookId;
+}
+
+@visibleForTesting
+bool isPgnTooLargeForQuickFolderImport(int bytes) {
+  return bytes > _kQuickImportMaxPgnBytes;
+}
+
+bool canQuickImportPathToFolder(String path) {
+  try {
+    final type = FileSystemEntity.typeSync(path, followLinks: false);
+    if (type != FileSystemEntityType.file || !_isPgnPath(path)) return true;
+    return !isPgnTooLargeForQuickFolderImport(File(path).lengthSync());
+  } catch (_) {
+    return false;
+  }
 }
 
 /// Reads, parses, and bulk-saves chess files at [paths] into [folder] with
@@ -300,6 +317,13 @@ Future<List<ChessGame>> _gamesFromFile(String path) async {
       _quickImportLog(
         'worker file stat bytes=${stat.size} modified=${stat.modified.toIso8601String()}',
       );
+      if (isPgnTooLargeForQuickFolderImport(stat.size)) {
+        _quickImportLog(
+          'worker file skipped too large for quick import '
+          'bytes=${stat.size} limit=$_kQuickImportMaxPgnBytes path=$path',
+        );
+        return const <ChessGame>[];
+      }
       final bytes = await File(path).readAsBytes();
       _quickImportLog('worker file read bytes=${bytes.length}');
       final utf = utf8.decode(bytes, allowMalformed: true);

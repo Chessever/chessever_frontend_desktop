@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' as io;
 
+import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/widgets/desktop_position_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_opening_explorer.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -20,6 +23,23 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 const _initialFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+const _localTreePgn = '''
+[Event "Local DB"]
+[Site "Disk"]
+[Date "2024.05.02"]
+[Round "3"]
+[White "Carlsen"]
+[Black "Nakamura"]
+[WhiteTitle "GM"]
+[BlackTitle "GM"]
+[WhiteFed "NOR"]
+[BlackFed "USA"]
+[WhiteElo "2830"]
+[BlackElo "2780"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0
+''';
 
 void main() {
   testWidgets('renders position search results as a table', (tester) async {
@@ -646,6 +666,159 @@ void main() {
     expect(args.gameId, 'gamebase-1');
     expect(args.whiteName, 'Carlsen');
     expect(args.blackName, 'Nakamura');
+  });
+
+  testWidgets('local opening tree rows open as local PGN tabs', (tester) async {
+    final repository = _FakeGamebaseRepository();
+    final temp = io.Directory.systemTemp.createTempSync('chessever_local_row_');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final file = io.File('${temp.path}/local-test.pgn');
+    file.writeAsStringSync(_localTreePgn.trim());
+    final index = buildLocalOpeningTreeIndex(
+      treeId: 'local:test-db',
+      databaseId: 'test-db',
+      games: <LocalOpeningTreeGameInput>[
+        LocalOpeningTreeGameInput(
+          id: 'local-game-1',
+          rawPgn: _localTreePgn,
+          sourcePath: file.path,
+          sourceRelativePath: 'local-test.pgn',
+          fileName: 'local-test.pgn',
+          indexInFile: 0,
+          fileGameCount: 1,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          gamebaseRepositoryProvider.overrideWithValue(repository),
+          boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            backgroundColor: kBackgroundColor,
+            body: SizedBox(
+              width: 360,
+              height: 520,
+              child: DesktopPositionGamesTable(
+                fen: _initialFen,
+                localOpeningTreeIndex: index,
+                localOpeningTreeTitle: 'Local Test DB',
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(repository.positionGameCalls, isEmpty);
+    expect(find.text('Carlsen'), findsOneWidget);
+
+    await tester.tap(find.text('Carlsen'));
+    await tester.pump(const Duration(milliseconds: 40));
+    await tester.tap(find.text('Carlsen'));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(DesktopPositionGamesTable)),
+    );
+    final args = container.read(boardTabGameArgsByTabIdProvider).values.single;
+
+    expect(args.gameId, isNull);
+    expect(args.pgn, contains('[Event "Local DB"]'));
+    expect(args.localOpeningTreeIndex, same(index));
+    expect(args.localOpeningTreeTitle, 'Local Test DB');
+    expect(
+      args.librarySaveOrigin?.kind,
+      BoardTabLibrarySaveOriginKind.localPgnFile,
+    );
+    expect(args.librarySaveOrigin?.sourcePath, file.path);
+    expect(args.librarySaveOrigin?.sourceIndex, 0);
+  });
+
+  testWidgets('source switch refreshes position game rows', (tester) async {
+    final repository = _FakeGamebaseRepository();
+    final localIndex = buildLocalOpeningTreeIndex(
+      treeId: 'local:switch-db',
+      databaseId: 'switch-db',
+      games: <LocalOpeningTreeGameInput>[
+        LocalOpeningTreeGameInput(
+          id: 'local-switch-1',
+          rawPgn: '''
+[Event "Local Switch"]
+[Site "Disk"]
+[Date "2026.06.28"]
+[Round "1"]
+[White "Local White"]
+[Black "Local Black"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 1-0
+''',
+          sourcePath: '/tmp/local-switch.pgn',
+          sourceRelativePath: 'local-switch.pgn',
+          fileName: 'local-switch.pgn',
+          indexInFile: 0,
+          fileGameCount: 1,
+        ),
+      ],
+    );
+    PlayerOpeningTreeIndex? activeLocalIndex;
+    late StateSetter setHostState;
+    final controller = DesktopPositionGamesTableController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          gamebaseRepositoryProvider.overrideWithValue(repository),
+          boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            backgroundColor: kBackgroundColor,
+            body: StatefulBuilder(
+              builder: (context, setState) {
+                setHostState = setState;
+                return SizedBox(
+                  width: 480,
+                  height: 520,
+                  child: DesktopPositionGamesTable(
+                    fen: _initialFen,
+                    controller: controller,
+                    localOpeningTreeIndex: activeLocalIndex,
+                    localOpeningTreeTitle: 'Switch DB',
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.text('Carlsen'), findsOneWidget);
+    expect(controller.rowIdAt(0), 'gamebase-1');
+
+    setHostState(() => activeLocalIndex = localIndex);
+    await tester.pump();
+    expect(find.text('Carlsen'), findsNothing);
+    await tester.pumpAndSettle();
+    expect(controller.rowIdAt(0), 'local-switch-1');
+
+    setHostState(() => activeLocalIndex = null);
+    await tester.pump();
+    expect(controller.rowCount, 0);
+    await tester.pumpAndSettle();
+    expect(controller.rowIdAt(0), 'gamebase-1');
+    expect(find.text('Carlsen'), findsOneWidget);
   });
 
   testWidgets('opened position game carries continuation title and query', (

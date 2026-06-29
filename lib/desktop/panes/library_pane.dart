@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:chessground/chessground.dart' as cg;
@@ -22,9 +23,12 @@ import 'package:chessever/desktop/services/board_tab_pgn_resolver.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
 import 'package:chessever/desktop/services/library_pgn_export.dart';
 import 'package:chessever/desktop/services/library_quick_import.dart';
+import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
+import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
+import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/cloud_library_refresh.dart';
@@ -54,10 +58,12 @@ import 'package:chessever/desktop/widgets/library/library_game_context_menu.dart
 import 'package:chessever/desktop/widgets/library/library_game_dialogs.dart';
 import 'package:chessever/desktop/widgets/library/library_database_drag_payload.dart';
 import 'package:chessever/desktop/widgets/library/local_chess_files_view.dart';
+import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
 import 'package:chessever/desktop/widgets/library/library_pgn_preview_panel.dart';
 import 'package:chessever/desktop/widgets/library/twic_filter_dialog.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
+import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
@@ -223,8 +229,32 @@ class LibraryPane extends HookConsumerWidget {
     }
 
     Future<void> importLocalPgnFiles() async {
-      final path = await pickAndOpenLibraryPgnDatabase(ref);
-      if (path != null) openLocalFullView(path);
+      final paths = await pickLibraryPgnDatabasePaths();
+      if (paths == null) return;
+      if (!context.mounted) return;
+
+      showDesktopToast(
+        context,
+        paths.length == 1
+            ? 'Importing PGN...'
+            : 'Importing ${paths.length} PGN files...',
+      );
+
+      final path = await openLibraryPgnDatabasePaths(ref, paths);
+      if (!context.mounted) return;
+      if (path != null) {
+        openLocalFullView(path);
+        return;
+      }
+
+      final error = ref.read(localChessLibraryProvider).error?.trim();
+      showDesktopToast(
+        context,
+        error == null || error.isEmpty
+            ? 'Could not import PGN. Please try another file.'
+            : error,
+        error: true,
+      );
     }
 
     Future<void> openLocalFiles() async {
@@ -262,41 +292,14 @@ class LibraryPane extends HookConsumerWidget {
     final arbiter = useMemoized(LibraryDropArbiter.new);
 
     Future<void> handleOuterDrop(List<String> paths) async {
-      // Yield one microtask so a nested FolderDropTarget gets a chance to
-      // synchronously call arbiter.claim() before we decide what to do.
-      await Future<void>.delayed(Duration.zero);
+      // desktop_drop sends onDragDone to nested and outer targets for the same
+      // OS drop. Give the nested FolderDropTarget/body target a short window
+      // to claim the drop before the outer fallback opens a local browse flow.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
       if (arbiter.consumeClaim()) return;
 
-      // No inner target claimed the drop. If the user is currently looking
-      // at a writable cloud folder (and not the local browser), treat the
-      // drop as "import into that folder" — that's the goal of the
-      // local→supabase quick-drop affordance. Otherwise fall back to the
-      // legacy behavior of opening the files as a local browse session.
-      final folderId = selectedFolderId.value;
-      LibraryFolder? activeFolder;
-      if (folderId != null) {
-        for (final f in allFolders) {
-          if (f.id == folderId) {
-            activeFolder = f;
-            break;
-          }
-        }
-      }
-      final canImportToActive =
-          selectedLocalPath.value == null &&
-          activeFolder != null &&
-          isWritableLibraryFolder(activeFolder);
-      if (canImportToActive) {
-        if (!context.mounted) return;
-        await quickImportPathsToFolder(
-          context: context,
-          ref: ref,
-          folder: activeFolder,
-          paths: paths,
-        );
-        return;
-      }
-
+      // No inner target claimed the drop. The safe default for large PGNs is
+      // local-database open; folder import remains available on folder targets.
       final opened = await ref
           .read(localChessLibraryProvider.notifier)
           .openPaths(paths, sourceLabel: 'Dropped local files');
@@ -1213,64 +1216,83 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
         selectedLocalPath != null
             ? _LibraryDatabaseKind.local
             : _LibraryDatabaseKind.cloud;
+    final deleteProgress = useState<LocalChessScanProgress?>(null);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    void setDeleteProgress(LocalChessScanProgress? progress) {
+      if (!context.mounted) return;
+      deleteProgress.value = progress;
+    }
+
+    return Stack(
       children: [
-        _MyDatabasesHeader(
-          onNewFolder: onNewFolder,
-          onOpenLocalFiles: onOpenLocalFiles,
-          onImportPgnFiles: onImportPgnFiles,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _MyDatabasesHeader(
+              onNewFolder: onNewFolder,
+              onOpenLocalFiles: onOpenLocalFiles,
+              onImportPgnFiles: onImportPgnFiles,
+            ),
+            const FDivider(),
+            Expanded(
+              child: ResizableSplitView(
+                axis: Axis.vertical,
+                storageKey: 'library_pane.my_databases.home_split',
+                children: [
+                  SplitChild(
+                    minSize: 132,
+                    maxSize: 320,
+                    initialWeight: 0.30,
+                    label: 'My Databases',
+                    child: _MyDatabasesBoard(
+                      folders: folders,
+                      currentFolderId: currentFolderId,
+                      localSource: localSource,
+                      selectedFolderId: selectedFolderId,
+                      selectedLocalPath: selectedLocalPath,
+                      isDeletingLocalDatabase: deleteProgress.value != null,
+                      onDeleteProgress: setDeleteProgress,
+                      onSelectFolder: onSelectFolder,
+                      onOpenFolder: onOpenFolder,
+                      onOpenDatabase: onOpenDatabase,
+                      onNavigateToFolder: onNavigateToFolder,
+                      onSelectLocalPath: onSelectLocalPath,
+                      onOpenLocalPath: onOpenLocalPath,
+                      onDropDatabase: onDropDatabase,
+                    ),
+                  ),
+                  SplitChild(
+                    minSize: 260,
+                    initialWeight: 0.70,
+                    label: 'Preview',
+                    child: switch (selectedKind) {
+                      _LibraryDatabaseKind.local => _LocalDatabaseMiniPreview(
+                        source: localSource,
+                        selectedNode: selectedLocalNode,
+                        selectedPath: selectedLocalPath,
+                        onOpen:
+                            selectedLocalPath == null
+                                ? null
+                                : () => onOpenLocalPath(selectedLocalPath!),
+                      ),
+                      _LibraryDatabaseKind.cloud => _CloudDatabaseMiniPreview(
+                        folder: selectedFolder,
+                        onOpenFolder: onOpenDatabase,
+                      ),
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        const FDivider(),
-        Expanded(
-          child: ResizableSplitView(
-            axis: Axis.vertical,
-            storageKey: 'library_pane.my_databases.home_split',
-            children: [
-              SplitChild(
-                minSize: 132,
-                maxSize: 320,
-                initialWeight: 0.30,
-                label: 'My Databases',
-                child: _MyDatabasesBoard(
-                  folders: folders,
-                  currentFolderId: currentFolderId,
-                  localSource: localSource,
-                  selectedFolderId: selectedFolderId,
-                  selectedLocalPath: selectedLocalPath,
-                  onSelectFolder: onSelectFolder,
-                  onOpenFolder: onOpenFolder,
-                  onOpenDatabase: onOpenDatabase,
-                  onNavigateToFolder: onNavigateToFolder,
-                  onSelectLocalPath: onSelectLocalPath,
-                  onOpenLocalPath: onOpenLocalPath,
-                  onDropDatabase: onDropDatabase,
-                ),
-              ),
-              SplitChild(
-                minSize: 260,
-                initialWeight: 0.70,
-                label: 'Preview',
-                child: switch (selectedKind) {
-                  _LibraryDatabaseKind.local => _LocalDatabaseMiniPreview(
-                    source: localSource,
-                    selectedNode: selectedLocalNode,
-                    selectedPath: selectedLocalPath,
-                    onOpen:
-                        selectedLocalPath == null
-                            ? null
-                            : () => onOpenLocalPath(selectedLocalPath!),
-                  ),
-                  _LibraryDatabaseKind.cloud => _CloudDatabaseMiniPreview(
-                    folder: selectedFolder,
-                    onOpenFolder: onOpenDatabase,
-                  ),
-                },
-              ),
-            ],
+        if (deleteProgress.value != null)
+          Positioned.fill(
+            child: _LibraryBlockingProgressOverlay(
+              title: 'Deleting local database',
+              progress: deleteProgress.value!,
+            ),
           ),
-        ),
       ],
     );
   }
@@ -1344,6 +1366,8 @@ class _MyDatabasesBoard extends HookConsumerWidget {
     required this.localSource,
     required this.selectedFolderId,
     required this.selectedLocalPath,
+    required this.isDeletingLocalDatabase,
+    required this.onDeleteProgress,
     required this.onSelectFolder,
     required this.onOpenFolder,
     required this.onOpenDatabase,
@@ -1358,6 +1382,8 @@ class _MyDatabasesBoard extends HookConsumerWidget {
   final LocalChessSource? localSource;
   final String? selectedFolderId;
   final String? selectedLocalPath;
+  final bool isDeletingLocalDatabase;
+  final ValueChanged<LocalChessScanProgress?> onDeleteProgress;
   final ValueChanged<LibraryFolder> onSelectFolder;
   final ValueChanged<LibraryFolder> onOpenFolder;
   final ValueChanged<LibraryFolder> onOpenDatabase;
@@ -1430,6 +1456,20 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           _DatabaseBoardItem.local(entry: entry, count: localGameCount(entry)),
     ];
     items.sort((a, b) {
+      // Cloud databases (incl. TWIC) always sort ahead of local databases.
+      final aLocal = a.entry != null;
+      final bLocal = b.entry != null;
+      if (aLocal != bLocal) return aLocal ? 1 : -1;
+
+      // Local order must stay stable across selection. `count` for a local
+      // entry is only resolvable for the currently-open database (it reads
+      // the active localSource), so sorting locals by count makes the list
+      // reshuffle every time the user picks a different database. Order them
+      // by name instead — a pure function of the registry entry.
+      if (aLocal) {
+        return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+      }
+
       final byCount = (b.count ?? 0).compareTo(a.count ?? 0);
       if (byCount != 0) return byCount;
       if (a.isTwic) return -1;
@@ -1456,12 +1496,106 @@ class _MyDatabasesBoard extends HookConsumerWidget {
     }
 
     Future<void> removeLocalEntry(LocalLibraryEntry entry) async {
-      await ref
-          .read(localLibraryRegistryProvider.notifier)
-          .unregister(entry.path);
-      final activeSource = ref.read(localChessLibraryProvider).source;
-      if (activeSource != null && activeSource.paths.contains(entry.path)) {
-        ref.read(localChessLibraryProvider.notifier).clear();
+      if (isDeletingLocalDatabase) return;
+      final repository = ref.read(localChessDatabaseRepositoryProvider);
+      var markedForDelete = false;
+      Object? cacheDeleteError;
+      StackTrace? cacheDeleteStackTrace;
+      void updateDeleteProgress(LocalChessScanProgress progress) {
+        onDeleteProgress(progress);
+      }
+
+      try {
+        updateDeleteProgress(
+          LocalChessScanProgress(fraction: 0, message: 'Preparing delete...'),
+        );
+        localChessLog.info(
+          'Local database remove requested',
+          context: <String, Object?>{
+            'path': entry.path,
+            'label': entry.displayName,
+          },
+        );
+        var marked = 0;
+        try {
+          marked = await repository.markCachedSourceDeleted(entry.path);
+          markedForDelete = marked > 0;
+          if (markedForDelete) {
+            repository.scheduleDeletedCachePurge(sourcePath: entry.path);
+          }
+        } catch (e, st) {
+          cacheDeleteError = e;
+          cacheDeleteStackTrace = st;
+          localChessLog.warning(
+            'Local database cache delete mark failed; removing registry entry',
+            error: e,
+            stackTrace: st,
+            tag: 'library.remove_local_database.cache_mark',
+            context: <String, Object?>{
+              'path': entry.path,
+              'label': entry.displayName,
+            },
+          );
+        }
+        await ref
+            .read(localLibraryRegistryProvider.notifier)
+            .unregister(entry.path);
+        final activeSource = ref.read(localChessLibraryProvider).source;
+        if (activeSource != null && activeSource.paths.contains(entry.path)) {
+          ref.read(localChessLibraryProvider.notifier).clear();
+        }
+        localChessLog.info(
+          'Local database remove finished',
+          context: <String, Object?>{
+            'path': entry.path,
+            'label': entry.displayName,
+            'marked': marked,
+            'cacheDeleteFailed': cacheDeleteError != null,
+          },
+        );
+        if (context.mounted) {
+          showDesktopToast(
+            context,
+            cacheDeleteError == null
+                ? 'Local database deleted.'
+                : 'Local database removed. Cache cleanup did not finish.',
+          );
+        }
+      } catch (e, st) {
+        if (cacheDeleteError != null) {
+          localChessLog.warning(
+            'Local database remove also failed after cache delete failure',
+            error: cacheDeleteError,
+            stackTrace: cacheDeleteStackTrace,
+            tag: 'library.remove_local_database.cache_mark',
+            context: <String, Object?>{
+              'path': entry.path,
+              'label': entry.displayName,
+            },
+          );
+        }
+        localChessLog.error(
+          'Local database remove failed',
+          e,
+          st,
+          tag: 'library.remove_local_database',
+          context: <String, Object?>{
+            'path': entry.path,
+            'label': entry.displayName,
+          },
+        );
+        if (context.mounted) {
+          showDesktopToast(
+            context,
+            markedForDelete
+                ? 'Local database was removed, but cache cleanup did not finish.'
+                : 'Could not remove local database cache. Please try again.',
+            error: true,
+          );
+        }
+        return;
+      } finally {
+        onDeleteProgress(null);
       }
     }
 
@@ -1557,9 +1691,11 @@ class _MyDatabasesBoard extends HookConsumerWidget {
     Widget buildBoardTile(_DatabaseBoardItem item) {
       final folder = item.folder;
       final entry = item.entry;
+      final iconKind = item.iconKind(folders);
+      final isFolder = iconKind == _DatabaseBoardIconKind.folder;
       final tile = _DatabaseBoardTile(
         title: item.title,
-        iconKind: item.iconKind(folders),
+        iconKind: iconKind,
         selected:
             folder != null
                 ? folder.id == selectedFolderId && selectedLocalPath == null
@@ -1572,7 +1708,13 @@ class _MyDatabasesBoard extends HookConsumerWidget {
                 : () => unawaited(previewLocalEntry(entry!)),
         onOpen:
             folder != null
-                ? () => onOpenFolder(folder)
+                ? () {
+                  if (isFolder) {
+                    onOpenFolder(folder);
+                  } else {
+                    onOpenDatabase(folder);
+                  }
+                }
                 : () => unawaited(openLocalEntry(entry!)),
         onContextMenu:
             folder != null
@@ -1730,6 +1872,100 @@ class _LibraryFolderBreadcrumb extends StatelessWidget {
   }
 }
 
+class _LibraryBlockingProgressOverlay extends StatelessWidget {
+  const _LibraryBlockingProgressOverlay({
+    required this.title,
+    required this.progress,
+  });
+
+  final String title;
+  final LocalChessScanProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    return AbsorbPointer(
+      child: ColoredBox(
+        color: kBlackColor.withValues(alpha: 0.72),
+        child: Center(
+          child: Container(
+            width: 340,
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: kBlack3Color,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: kDividerColor),
+              boxShadow: [
+                BoxShadow(
+                  color: kBlackColor.withValues(alpha: 0.35),
+                  blurRadius: 24,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        value:
+                            progress.fraction <= 0 || progress.fraction >= 1
+                                ? null
+                                : progress.fraction,
+                        valueColor: const AlwaysStoppedAnimation(kPrimaryColor),
+                        backgroundColor: kWhiteColor.withValues(alpha: 0.10),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                          color: kWhiteColor,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '${progress.percent}%',
+                      style: const TextStyle(
+                        color: kWhiteColor70,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    minHeight: 4,
+                    value: progress.fraction,
+                    backgroundColor: kWhiteColor.withValues(alpha: 0.10),
+                    valueColor: const AlwaysStoppedAnimation(kPrimaryColor),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  progress.message,
+                  style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _DatabaseBoardItem {
   const _DatabaseBoardItem.cloud({required this.folder, required this.count})
     : entry = null;
@@ -1748,16 +1984,17 @@ class _DatabaseBoardItem {
   _DatabaseBoardIconKind iconKind(List<LibraryFolder> folders) {
     final f = folder;
     if (f == null) return _DatabaseBoardIconKind.localDatabase;
-    return _cloudFolderIconKind(f, folders);
+    return _cloudFolderIconKind(f, folders, gameCount: count);
   }
 }
 
 _DatabaseBoardIconKind _cloudFolderIconKind(
   LibraryFolder folder,
-  List<LibraryFolder> folders,
-) {
+  List<LibraryFolder> folders, {
+  int? gameCount,
+}) {
   if (folder.id == kTwicBookId) return _DatabaseBoardIconKind.twic;
-  if (!_isLibraryDatabase(folder, folders)) {
+  if (!libraryFolderIsDatabase(folder, folders, gameCount: gameCount)) {
     return _DatabaseBoardIconKind.folder;
   }
   if (folder.isSubscribed) return _DatabaseBoardIconKind.subscribedDatabase;
@@ -1765,9 +2002,27 @@ _DatabaseBoardIconKind _cloudFolderIconKind(
 }
 
 bool _isLibraryDatabase(LibraryFolder folder, List<LibraryFolder> folders) {
+  return libraryFolderIsDatabase(folder, folders);
+}
+
+bool libraryFolderIsDatabase(
+  LibraryFolder folder,
+  List<LibraryFolder> folders, {
+  int? gameCount,
+}) {
   if (folder.icon == 'database' || folder.icon == 'twic') return true;
-  if (folder.icon != 'folder' || folder.parentId == null) return false;
-  return !libraryFolderHasChildren(folders, folder.id);
+  if (_isKnownRootDatabase(folder) &&
+      !libraryFolderHasChildren(folders, folder.id)) {
+    return true;
+  }
+  if (folder.icon != 'folder') return false;
+  if (libraryFolderHasChildren(folders, folder.id)) return false;
+  if (folder.parentId != null) return true;
+  return gameCount != null && gameCount > 0;
+}
+
+bool _isKnownRootDatabase(LibraryFolder folder) {
+  return folder.name.trim().toLowerCase() == 'liked games';
 }
 
 enum _DatabaseBoardIconKind {
@@ -2087,6 +2342,12 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
     final shortcutsFocusNode = useFocusNode(
       debugLabel: 'library-mini-saved-${activeFolder.id}',
     );
+    // Focus the table on entry (and when the previewed database changes) so
+    // arrow-key navigation works immediately without a mouse click first.
+    useEffect(() {
+      _requestDatabaseWorkspaceFocusAfterFrame(shortcutsFocusNode);
+      return null;
+    }, [activeFolder.id]);
     final cloudRefreshNonce = ref.watch(cloudLibraryRefreshNonceProvider);
 
     final analysesAsync = useFuture(
@@ -2360,6 +2621,12 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
     final selectionExtent = useState<int?>(null);
     final plyIndex = useState<int>(0);
     final shortcutsFocusNode = useFocusNode(debugLabel: 'library-mini-twic');
+    // Focus the table on entry so arrow-key navigation works immediately
+    // without a mouse click first.
+    useEffect(() {
+      _requestDatabaseWorkspaceFocusAfterFrame(shortcutsFocusNode);
+      return null;
+    }, const <Object?>[]);
     final state = ref.watch(gamebaseDatabaseGamesPaginatedProvider);
     final totalAsync = ref.watch(twicDatabaseTotalGamesProvider);
     final games = state.games;
@@ -2631,6 +2898,12 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
     final selectionExtent = useState<int?>(null);
     final plyIndex = useState<int>(0);
     final shortcutsFocusNode = useFocusNode(debugLabel: 'library-mini-local');
+    // Focus the table on entry (and when the previewed database changes) so
+    // arrow-key navigation works immediately without a mouse click first.
+    useEffect(() {
+      _requestDatabaseWorkspaceFocusAfterFrame(shortcutsFocusNode);
+      return null;
+    }, [selectedPath]);
 
     if (source == null || node == null || selectedPath == null) {
       return const _LibraryEmpty(
@@ -2640,13 +2913,105 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
             'Open a local folder or files above, then click a tile to preview it.',
       );
     }
-    final games = switch (node) {
-      LocalChessFolderNode() =>
-        selectedLocalChessDatabaseFile(node)?.games ?? node.gamesInSubtree,
-      LocalChessFileNode(:final games) => games,
-      _ => const <LocalChessGame>[],
+    final selectedDatabase = switch (node) {
+      LocalChessFolderNode() => selectedLocalChessDatabaseFile(node),
+      LocalChessFileNode() => node,
+      _ => null,
     };
-    final visibleGames = games.take(80).toList();
+    final localOpeningTreeIndex = selectedDatabase?.openingTreeIndex;
+    final openableLocalTreeIndex =
+        localOpeningTreeIndex?.isUsable == true ? localOpeningTreeIndex : null;
+    final treeBuildProgress = ref.watch(
+      localChessLibraryProvider.select(
+        (state) => state.treeBuildForPath(selectedDatabase?.path),
+      ),
+    );
+    final games =
+        selectedDatabase?.games ??
+        switch (node) {
+          LocalChessFolderNode() => node.gamesInSubtree,
+          _ => const <LocalChessGame>[],
+        };
+    final databaseTitle = node.name.isEmpty ? source!.label : node.name;
+    final previewEntryCount = selectedDatabase?.gameCount ?? games.length;
+    final previewQueryKey =
+        Object.hash(
+          selectedPath,
+          selectedDatabase?.path,
+          selectedDatabase?.gameCount,
+          selectedDatabase?.sizeBytes,
+          selectedDatabase?.modifiedAt?.millisecondsSinceEpoch,
+        ).toString();
+    final previewPageWindow = useState(
+      _LocalMiniPreviewPageWindow(previewQueryKey, 0),
+    );
+    final previewLoadedPages = useState(
+      const _LoadedLocalMiniPreviewPages.empty(),
+    );
+    final effectivePreviewPageWindow =
+        previewPageWindow.value.queryKey == previewQueryKey
+            ? previewPageWindow.value
+            : _LocalMiniPreviewPageWindow(previewQueryKey, 0);
+    useEffect(() {
+      if (previewPageWindow.value.queryKey != previewQueryKey) {
+        previewPageWindow.value = _LocalMiniPreviewPageWindow(
+          previewQueryKey,
+          0,
+        );
+      }
+      if (previewLoadedPages.value.queryKey != previewQueryKey) {
+        previewLoadedPages.value = const _LoadedLocalMiniPreviewPages.empty();
+      }
+      return null;
+    }, [previewQueryKey]);
+    final previewPageFuture = useMemoized<Future<LocalChessGameQueryPage?>?>(
+      () {
+        final database = selectedDatabase;
+        if (database == null || previewEntryCount <= 0) return null;
+        return _queryLocalMiniPreviewPage(
+          ref.read(localChessDatabaseRepositoryProvider),
+          databasePath: database.path,
+          pageNumber: effectivePreviewPageWindow.pageNumber,
+          pageSize: _kLocalMiniPreviewGameQueryPageSize,
+        );
+      },
+      [
+        selectedDatabase?.path,
+        previewEntryCount,
+        effectivePreviewPageWindow.queryKey,
+        effectivePreviewPageWindow.pageNumber,
+      ],
+    );
+    final previewPageSnapshot = useFuture(
+      previewPageFuture,
+      preserveState: false,
+    );
+    final previewPage = previewPageSnapshot.data;
+    useEffect(() {
+      final page = previewPage;
+      if (page == null) return null;
+      if (previewPageWindow.value.queryKey != previewQueryKey) return null;
+      previewLoadedPages.value = previewLoadedPages.value.merge(
+        queryKey: previewQueryKey,
+        page: page,
+      );
+      return null;
+    }, [previewPage, previewQueryKey]);
+    final previewRows = _visibleLocalMiniPreviewRows(
+      queryKey: previewQueryKey,
+      loaded: previewLoadedPages.value,
+      livePage: previewPage,
+    );
+    final visibleGames = previewRows?.games ?? games;
+    final previewTotalCount =
+        previewRows?.totalCount ?? previewPage?.totalCount ?? previewEntryCount;
+    final isLoadingPreviewPage =
+        previewPageFuture != null &&
+        previewPageSnapshot.connectionState != ConnectionState.done;
+    final hasMorePreviewRows = previewRows?.hasMore ?? false;
+    final previewContextGames = previewRows == null ? games : visibleGames;
+    final showPreviewLoadingRow = hasMorePreviewRows || isLoadingPreviewPage;
+    final lastScrollLoadRequest = useRef<int?>(null);
     final visibleIds = visibleGames
         .map((game) => game.id)
         .toList(growable: false);
@@ -2664,6 +3029,58 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
       return null;
     }, [selectedPath, visibleGames.length]);
 
+    useEffect(
+      () {
+        lastScrollLoadRequest.value = null;
+        return null;
+      },
+      [
+        previewQueryKey,
+        visibleGames.length,
+        hasMorePreviewRows,
+        isLoadingPreviewPage,
+      ],
+    );
+
+    void requestNextPreviewPage() {
+      if (!hasMorePreviewRows || isLoadingPreviewPage) return;
+      if (previewRows == null) return;
+      final nextPage = previewRows.nextPageNumber;
+      if (lastScrollLoadRequest.value == nextPage) return;
+      lastScrollLoadRequest.value = nextPage;
+      previewPageWindow.value = _LocalMiniPreviewPageWindow(
+        previewQueryKey,
+        nextPage,
+      );
+    }
+
+    useEffect(
+      () {
+        void maybeLoadMore() {
+          if (!scrollController.hasClients) return;
+          final position = scrollController.position;
+          if (!position.hasContentDimensions) return;
+          if (position.extentAfter >
+              _kLocalMiniPreviewScrollLoadMoreThreshold) {
+            return;
+          }
+          requestNextPreviewPage();
+        }
+
+        scrollController.addListener(maybeLoadMore);
+        WidgetsBinding.instance.addPostFrameCallback((_) => maybeLoadMore());
+        return () => scrollController.removeListener(maybeLoadMore);
+      },
+      [
+        scrollController,
+        previewQueryKey,
+        visibleGames.length,
+        hasMorePreviewRows,
+        isLoadingPreviewPage,
+        previewRows?.nextPageNumber,
+      ],
+    );
+
     final safeIndex =
         visibleGames.isEmpty
             ? 0
@@ -2674,7 +3091,12 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
           selectedGame == null
               ? null
               : _previewChessGameFromLocalGame(selectedGame),
-      [selectedPath, selectedGame?.id, selectedGame?.rawPgn],
+      [
+        selectedPath,
+        selectedGame?.id,
+        selectedGame?.sourceByteStart,
+        selectedGame?.sourceByteEnd,
+      ],
     );
     final selectedPlyCount = selectedPreviewGame?.mainline.length ?? 0;
 
@@ -2754,8 +3176,9 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
       _openLocalPreviewGame(
         ref,
         current,
-        databaseTitle: node.name.isEmpty ? source!.label : node.name,
-        databaseGames: games,
+        databaseTitle: databaseTitle,
+        databaseGames: previewContextGames,
+        localOpeningTreeIndex: openableLocalTreeIndex,
         initialFen: _initialFenForPreviewPly(
           selectedPreviewGame,
           plyIndex.value,
@@ -2776,6 +3199,14 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
           pgns: copyGames.map((game) => game.rawPgn),
         ),
       );
+    }
+
+    void rebuildLocalTree() {
+      final database = selectedDatabase;
+      if (database == null) return;
+      ref
+          .read(localChessLibraryProvider.notifier)
+          .rebuildOpeningTree(database.path);
     }
 
     return _databaseWorkspaceClipboardShortcuts(
@@ -2806,12 +3237,40 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
               },
             ),
         child: _MiniDatabasePreviewFrame(
-          title: node.name.isEmpty ? source!.label : node.name,
-          subtitle:
-              '${localChessEntryCountLabel(games.length)} · local mini preview',
+          title: databaseTitle,
+          subtitle: _localMiniPreviewSubtitle(
+            loadedCount: visibleGames.length,
+            totalCount: previewTotalCount,
+            isLoading: isLoadingPreviewPage,
+          ),
           onOpen: onOpen,
+          treeBuildProgress: treeBuildProgress,
+          onOpenTree:
+              openableLocalTreeIndex == null
+                  ? null
+                  : () => _openLocalPreviewTree(
+                    ref,
+                    title: '$databaseTitle Tree',
+                    sourceLabel: databaseTitle,
+                    index: openableLocalTreeIndex,
+                  ),
+          onBuildTree:
+              selectedDatabase == null || openableLocalTreeIndex != null
+                  ? null
+                  : rebuildLocalTree,
           child:
-              selectedGame == null
+              visibleGames.isEmpty && isLoadingPreviewPage
+                  ? const Center(
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                      ),
+                    ),
+                  )
+                  : selectedGame == null
                   ? const _LibraryEmpty(
                     icon: Icons.description_outlined,
                     title: 'No parsed games here',
@@ -2829,8 +3288,17 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                             physics: const DesktopScrollPhysics(),
                             padding: EdgeInsets.zero,
                             itemExtent: _kLocalMiniPreviewRowExtent,
-                            itemCount: visibleGames.length,
+                            itemCount:
+                                visibleGames.length +
+                                (showPreviewLoadingRow ? 1 : 0),
                             itemBuilder: (context, index) {
+                              if (index >= visibleGames.length) {
+                                return _LocalMiniPreviewLoadingRow(
+                                  loadedCount: visibleGames.length,
+                                  totalCount: previewTotalCount,
+                                  isLoading: isLoadingPreviewPage,
+                                );
+                              }
                               final game = visibleGames[index];
                               final meta = game.game.metadata;
                               final selected =
@@ -2851,11 +3319,10 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                                       () => _openLocalPreviewGame(
                                         ref,
                                         game,
-                                        databaseTitle:
-                                            node.name.isEmpty
-                                                ? source!.label
-                                                : node.name,
-                                        databaseGames: games,
+                                        databaseTitle: databaseTitle,
+                                        databaseGames: previewContextGames,
+                                        localOpeningTreeIndex:
+                                            openableLocalTreeIndex,
                                       ),
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(
@@ -2932,17 +3399,16 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                         flex: 5,
                         child: _LocalPreviewPanel(
                           game: selectedGame,
+                          previewGame: selectedPreviewGame,
                           plyIndex: plyIndex.value,
                           onPlyChanged: setSelectedLocalPly,
                           onOpen:
                               () => _openLocalPreviewGame(
                                 ref,
                                 selectedGame,
-                                databaseTitle:
-                                    node.name.isEmpty
-                                        ? source!.label
-                                        : node.name,
-                                databaseGames: games,
+                                databaseTitle: databaseTitle,
+                                databaseGames: previewContextGames,
+                                localOpeningTreeIndex: openableLocalTreeIndex,
                                 initialFen: _initialFenForPreviewPly(
                                   selectedPreviewGame,
                                   plyIndex.value,
@@ -2958,17 +3424,83 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
   }
 }
 
+class _LocalMiniPreviewLoadingRow extends StatelessWidget {
+  const _LocalMiniPreviewLoadingRow({
+    required this.loadedCount,
+    required this.totalCount,
+    required this.isLoading,
+  });
+
+  final int loadedCount;
+  final int totalCount;
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: const BoxDecoration(
+        color: kBlack2Color,
+        border: Border(bottom: BorderSide(color: kDividerColor, width: 1)),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 36,
+            child:
+                isLoading
+                    ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                      ),
+                    )
+                    : const Icon(
+                      Icons.expand_more_rounded,
+                      size: 16,
+                      color: kLightGreyColor,
+                    ),
+          ),
+          Expanded(
+            child: Text(
+              isLoading
+                  ? 'Loading more...'
+                  : '$loadedCount of $totalCount loaded',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kLightGreyColor,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MiniDatabasePreviewFrame extends StatelessWidget {
   const _MiniDatabasePreviewFrame({
     required this.title,
     required this.subtitle,
     required this.onOpen,
+    this.treeBuildProgress,
+    this.onOpenTree,
+    this.onBuildTree,
     required this.child,
   });
 
   final String title;
   final String subtitle;
   final VoidCallback? onOpen;
+  final LocalChessTreeBuildProgress? treeBuildProgress;
+  final VoidCallback? onOpenTree;
+  final VoidCallback? onBuildTree;
   final Widget child;
 
   @override
@@ -3014,7 +3546,18 @@ class _MiniDatabasePreviewFrame extends StatelessWidget {
                   ],
                 ),
               ),
-              if (onOpen != null)
+              if (onOpenTree != null ||
+                  onBuildTree != null ||
+                  treeBuildProgress != null) ...[
+                const SizedBox(width: 10),
+                LocalTreeActionButton(
+                  progress: treeBuildProgress,
+                  onOpen: onOpenTree,
+                  onBuild: onBuildTree,
+                ),
+              ],
+              if (onOpen != null) ...[
+                const SizedBox(width: 10),
                 const DesktopTooltip(
                   message: 'Double-click or press Enter to open this database',
                   child: Icon(
@@ -3023,6 +3566,7 @@ class _MiniDatabasePreviewFrame extends StatelessWidget {
                     color: kLightGreyColor,
                   ),
                 ),
+              ],
             ],
           ),
         ),
@@ -3203,9 +3747,18 @@ class _FolderContentView extends HookConsumerWidget {
             folder: activeFolder,
             count: analysesAsync.data?.length,
             isLoading: analysesAsync.connectionState != ConnectionState.done,
+            isDatabase: libraryFolderIsDatabase(
+              activeFolder,
+              folders,
+              gameCount: analysesAsync.data?.length,
+            ),
             canCreateSubfolder:
                 !activeFolder.isSubscribed &&
-                !_isLibraryDatabase(activeFolder, folders),
+                !libraryFolderIsDatabase(
+                  activeFolder,
+                  folders,
+                  gameCount: analysesAsync.data?.length,
+                ),
             hasGames: hasGames,
             onAction:
                 (action) => _onFolderAction(
@@ -3388,6 +3941,7 @@ class _FolderHeader extends StatelessWidget {
     required this.folder,
     required this.count,
     required this.isLoading,
+    required this.isDatabase,
     required this.canCreateSubfolder,
     required this.hasGames,
     required this.onAction,
@@ -3404,6 +3958,7 @@ class _FolderHeader extends StatelessWidget {
   final LibraryFolder folder;
   final int? count;
   final bool isLoading;
+  final bool isDatabase;
   final bool canCreateSubfolder;
   final bool hasGames;
   final ValueChanged<LibraryFolderAction>? onAction;
@@ -3439,6 +3994,8 @@ class _FolderHeader extends StatelessWidget {
         iconOverride ??
         (folder.isSubscribed
             ? Icons.cloud_done_outlined
+            : isDatabase
+            ? Icons.storage_outlined
             : Icons.folder_rounded);
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 18, 16, 14),
@@ -5246,11 +5803,40 @@ String _short(String n) {
   return parts.length == 1 ? parts.first : parts.last;
 }
 
+const String _kLocalPreviewTreeStartingFen =
+    'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+void _openLocalPreviewTree(
+  WidgetRef ref, {
+  required String title,
+  required String sourceLabel,
+  required PlayerOpeningTreeIndex index,
+}) {
+  if (!index.isUsable) return;
+  final tabId = openBoardGameTab(
+    ref,
+    BoardTabGameArgs(
+      pgn: '',
+      label: title,
+      whiteName: '',
+      blackName: '',
+      fenSeed: _kLocalPreviewTreeStartingFen,
+      initialFen: _kLocalPreviewTreeStartingFen,
+      databaseTitle: sourceLabel,
+      localOpeningTreeIndex: index,
+      localOpeningTreeTitle: sourceLabel,
+    ),
+    reuseExisting: false,
+  );
+  ref.read(rightRailActivePageProvider(tabId).notifier).state = 1;
+}
+
 void _openLocalPreviewGame(
   WidgetRef ref,
   LocalChessGame localGame, {
   required String databaseTitle,
   required List<LocalChessGame> databaseGames,
+  PlayerOpeningTreeIndex? localOpeningTreeIndex,
   String? initialFen,
   bool focus = true,
 }) {
@@ -5262,6 +5848,7 @@ void _openLocalPreviewGame(
       localGame,
       databaseTitle: databaseTitle,
       databaseGames: databaseGames,
+      localOpeningTreeIndex: localOpeningTreeIndex,
       initialFen: initialFen,
     ),
     reuseExisting: false,
@@ -5273,6 +5860,7 @@ BoardTabGameArgs _boardArgsForLocalPreviewGame(
   LocalChessGame localGame, {
   required String databaseTitle,
   required List<LocalChessGame> databaseGames,
+  PlayerOpeningTreeIndex? localOpeningTreeIndex,
   String? initialFen,
 }) {
   final game = localGame.game;
@@ -5309,6 +5897,8 @@ BoardTabGameArgs _boardArgsForLocalPreviewGame(
       ))
         _summaryFromLocalPreviewGame(game),
     ],
+    localOpeningTreeIndex: localOpeningTreeIndex,
+    localOpeningTreeTitle: databaseTitle,
     gameListSelectedId: localGame.id,
     librarySaveOrigin: BoardTabLibrarySaveOrigin.localPgnFile(
       sourcePath: localGame.sourcePath,
@@ -5775,6 +6365,10 @@ Future<void> _onRename({
   required WidgetRef ref,
   required LibraryFolder folder,
 }) async {
+  if (folder.isPermanentLibraryFolder) {
+    _toast(context, '"${folder.name}" is part of the default library.');
+    return;
+  }
   final next = await showLibraryRenameFolderDialog(context, folder: folder);
   if (next == null) return;
   try {
@@ -5796,6 +6390,10 @@ Future<void> _onDelete({
   required WidgetRef ref,
   required LibraryFolder folder,
 }) async {
+  if (folder.isPermanentLibraryFolder) {
+    _toast(context, '"${folder.name}" cannot be deleted.', error: true);
+    return;
+  }
   final confirmed = await showLibraryDeleteFolderConfirmation(
     context,
     folder: folder,
@@ -6200,6 +6798,7 @@ class _TwicContentView extends HookConsumerWidget {
             folder: kTwicFolder,
             count: totalCount,
             isLoading: isInitialLoading,
+            isDatabase: true,
             canCreateSubfolder: false,
             hasGames: paginationState.games.isNotEmpty,
             onAction: null,
@@ -7179,7 +7778,7 @@ class _TwicGamesTable extends StatelessWidget {
                     child: _TwicTableRow(
                       game: game,
                       selected:
-                          selectedGameIds?.contains(game.gameId) ??
+                          (selectedGameIds?.contains(game.gameId) ?? false) ||
                           game.gameId == selectedGameId,
                       onRangeSelect:
                           onRangeSelect == null
@@ -7487,8 +8086,152 @@ class DatabaseWorkspacePane extends HookConsumerWidget {
 const double _kDatabaseWorkspaceSavedRowExtent = 44.0;
 const double _kDatabaseWorkspaceTwicRowExtent = 44.0;
 const double _kLocalMiniPreviewRowExtent = 40.0;
+const int _kLocalMiniPreviewGameQueryPageSize = 1000;
+const double _kLocalMiniPreviewScrollLoadMoreThreshold = 420.0;
 
 typedef _DatabaseWorkspaceKeyAction = bool Function();
+
+class _LocalMiniPreviewPageWindow {
+  const _LocalMiniPreviewPageWindow(this.queryKey, this.pageNumber);
+
+  final String queryKey;
+  final int pageNumber;
+}
+
+class _LoadedLocalMiniPreviewPages {
+  const _LoadedLocalMiniPreviewPages({
+    required this.queryKey,
+    required this.games,
+    required this.totalCount,
+    required this.nextPageNumber,
+    required this.pageSize,
+  });
+
+  const _LoadedLocalMiniPreviewPages.empty()
+    : queryKey = '',
+      games = const <LocalChessGame>[],
+      totalCount = 0,
+      nextPageNumber = 0,
+      pageSize = _kLocalMiniPreviewGameQueryPageSize;
+
+  final String queryKey;
+  final List<LocalChessGame> games;
+  final int totalCount;
+  final int nextPageNumber;
+  final int pageSize;
+
+  bool get hasRows => games.isNotEmpty;
+
+  bool get hasMore => nextPageNumber * pageSize < totalCount;
+
+  _LoadedLocalMiniPreviewPages merge({
+    required String queryKey,
+    required LocalChessGameQueryPage page,
+  }) {
+    if (page.pageNumber == 0 || this.queryKey != queryKey) {
+      return _LoadedLocalMiniPreviewPages(
+        queryKey: queryKey,
+        games: List<LocalChessGame>.unmodifiable(page.games),
+        totalCount: page.totalCount,
+        nextPageNumber: page.pageNumber + 1,
+        pageSize: page.pageSize,
+      );
+    }
+    if (page.pageNumber < nextPageNumber) return this;
+    if (page.pageNumber > nextPageNumber) {
+      return _LoadedLocalMiniPreviewPages(
+        queryKey: queryKey,
+        games: List<LocalChessGame>.unmodifiable(page.games),
+        totalCount: page.totalCount,
+        nextPageNumber: page.pageNumber + 1,
+        pageSize: page.pageSize,
+      );
+    }
+    return _LoadedLocalMiniPreviewPages(
+      queryKey: queryKey,
+      games: List<LocalChessGame>.unmodifiable(<LocalChessGame>[
+        ...games,
+        ...page.games,
+      ]),
+      totalCount: page.totalCount,
+      nextPageNumber: page.pageNumber + 1,
+      pageSize: page.pageSize,
+    );
+  }
+}
+
+_LoadedLocalMiniPreviewPages? _visibleLocalMiniPreviewRows({
+  required String queryKey,
+  required _LoadedLocalMiniPreviewPages loaded,
+  required LocalChessGameQueryPage? livePage,
+}) {
+  final hasLoadedRows = loaded.queryKey == queryKey && loaded.hasRows;
+  if (livePage == null) return hasLoadedRows ? loaded : null;
+  if (livePage.pageNumber == 0 || !hasLoadedRows) {
+    return _LoadedLocalMiniPreviewPages(
+      queryKey: queryKey,
+      games: List<LocalChessGame>.unmodifiable(livePage.games),
+      totalCount: livePage.totalCount,
+      nextPageNumber: livePage.pageNumber + 1,
+      pageSize: livePage.pageSize,
+    );
+  }
+  if (livePage.pageNumber < loaded.nextPageNumber) return loaded;
+  if (livePage.pageNumber > loaded.nextPageNumber) {
+    return _LoadedLocalMiniPreviewPages(
+      queryKey: queryKey,
+      games: List<LocalChessGame>.unmodifiable(livePage.games),
+      totalCount: livePage.totalCount,
+      nextPageNumber: livePage.pageNumber + 1,
+      pageSize: livePage.pageSize,
+    );
+  }
+  return _LoadedLocalMiniPreviewPages(
+    queryKey: queryKey,
+    games: List<LocalChessGame>.unmodifiable(<LocalChessGame>[
+      ...loaded.games,
+      ...livePage.games,
+    ]),
+    totalCount: livePage.totalCount,
+    nextPageNumber: livePage.pageNumber + 1,
+    pageSize: livePage.pageSize,
+  );
+}
+
+Future<LocalChessGameQueryPage?> _queryLocalMiniPreviewPage(
+  LocalChessDatabaseRepository repository, {
+  required String databasePath,
+  required int pageNumber,
+  required int pageSize,
+}) async {
+  try {
+    return await repository.localDatabaseGamesPage(
+      databasePath: databasePath,
+      sortBy: LocalChessGameSortField.originalOrder,
+      sortDirection: LocalChessGameSortDirection.asc,
+      pageNumber: pageNumber,
+      pageSize: pageSize,
+    );
+  } on Object {
+    return null;
+  }
+}
+
+String _localMiniPreviewSubtitle({
+  required int loadedCount,
+  required int totalCount,
+  required bool isLoading,
+}) {
+  if (totalCount <= 0) {
+    return isLoading ? 'Loading entries...' : 'No entries';
+  }
+  final totalLabel = localChessEntryCountLabel(totalCount);
+  if (loadedCount > 0 && loadedCount < totalCount) {
+    return '$loadedCount of $totalLabel loaded';
+  }
+  if (isLoading && loadedCount == 0) return 'Loading $totalLabel';
+  return totalLabel;
+}
 
 class _LibraryRangeSelection {
   const _LibraryRangeSelection({
@@ -7688,8 +8431,18 @@ void _scrollDatabaseWorkspaceListToIndex(
 }
 
 final _localDatabaseWorkspaceSourceProvider = FutureProvider.autoDispose
-    .family<LocalChessSource, String>((ref, path) {
-      return scanLocalChessPaths(<String>[path]);
+    .family<LocalChessSource, String>((ref, path) async {
+      final repository = ref.read(localChessDatabaseRepositoryProvider);
+      final cached = await repository.loadFreshSource(<String>[path]);
+      if (cached != null) return cached;
+      final type = await FileSystemEntity.type(path, followLinks: false);
+      if (type == FileSystemEntityType.file && looksLikeLocalChessFile(path)) {
+        final imported = await repository.importSingleFileSource(path: path);
+        if (imported != null) return imported;
+      }
+      final source = await scanLocalChessPaths(<String>[path]);
+      await repository.persistSource(source);
+      return source;
     });
 
 class _LocalDatabaseWorkspace extends ConsumerWidget {
@@ -8602,7 +9355,7 @@ class _DatabaseSavedGamesTable extends HookWidget {
                       index: i + 1,
                       analysis: rows[i],
                       selected:
-                          selectedIds?.contains(rows[i].id) ??
+                          (selectedIds?.contains(rows[i].id) ?? false) ||
                           rows[i].id == selectedId,
                       columnFlexes: columnFlexes.value,
                       columnOrder: columnOrder.value,
@@ -8931,12 +9684,14 @@ class _SavedAnalysisPreviewPanel extends ConsumerWidget {
 class _LocalPreviewPanel extends StatelessWidget {
   const _LocalPreviewPanel({
     required this.game,
+    required this.previewGame,
     required this.plyIndex,
     required this.onPlyChanged,
     required this.onOpen,
   });
 
   final LocalChessGame? game;
+  final ChessGame? previewGame;
   final int plyIndex;
   final ValueChanged<int> onPlyChanged;
   final VoidCallback? onOpen;
@@ -8946,7 +9701,7 @@ class _LocalPreviewPanel extends StatelessWidget {
     final localGame = game;
     if (localGame == null) return const _EmptyDatabasePreview();
     return _LibraryChessGamePreviewPanel(
-      game: _previewChessGameFromLocalGame(localGame),
+      game: previewGame ?? localGame.game,
       plyIndex: plyIndex,
       title: localGame.title,
       onOpen: onOpen,

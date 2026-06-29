@@ -95,6 +95,21 @@ class LibraryUpdateTarget {
   final Future<void> Function(ChessGame game) onUpdate;
 }
 
+enum LibrarySaveDestinationMode { cloudAndLocal, localOnly }
+
+@visibleForTesting
+List<LibraryFolder> librarySaveWritableCloudFolders({
+  required List<LibraryFolder> folders,
+  required LibrarySaveDestinationMode destinationMode,
+}) {
+  if (destinationMode == LibrarySaveDestinationMode.localOnly) {
+    return const <LibraryFolder>[];
+  }
+  return folders
+      .where((folder) => !folder.isSubscribed)
+      .toList(growable: false);
+}
+
 /// Forui-styled "Save to folder(s)" dialog. Shows the user's writable
 /// folders as multi-select rows, supports inline create, and writes the
 /// supplied [games] into every selected folder as library entries via
@@ -110,6 +125,8 @@ Future<LibrarySaveOutcome?> showLibrarySaveToFolderDialog({
   String? suggestedFolderId,
   String? sourceLabel,
   LibraryUpdateTarget? updateTarget,
+  LibrarySaveDestinationMode destinationMode =
+      LibrarySaveDestinationMode.cloudAndLocal,
 }) {
   if (games.isEmpty) {
     return Future.value(null);
@@ -127,6 +144,7 @@ Future<LibrarySaveOutcome?> showLibrarySaveToFolderDialog({
           sourceLabel: sourceLabel ?? 'imported',
           suggestedFolderId: suggestedFolderId,
           updateTarget: updateTarget,
+          destinationMode: destinationMode,
         ),
     transitionBuilder: (ctx, anim, _, child) {
       final eased = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
@@ -151,6 +169,7 @@ class _SaveToFolderDialog extends ConsumerStatefulWidget {
     required this.sourceLabel,
     required this.suggestedFolderId,
     required this.updateTarget,
+    required this.destinationMode,
   });
 
   final WidgetRef ref;
@@ -158,6 +177,7 @@ class _SaveToFolderDialog extends ConsumerStatefulWidget {
   final String sourceLabel;
   final String? suggestedFolderId;
   final LibraryUpdateTarget? updateTarget;
+  final LibrarySaveDestinationMode destinationMode;
 
   @override
   ConsumerState<_SaveToFolderDialog> createState() =>
@@ -195,7 +215,8 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
   @override
   void initState() {
     super.initState();
-    if (widget.suggestedFolderId != null) {
+    if (widget.destinationMode != LibrarySaveDestinationMode.localOnly &&
+        widget.suggestedFolderId != null) {
       _selected.add(widget.suggestedFolderId!);
     }
     _supportsMetadataEdit = widget.games.length == 1;
@@ -541,9 +562,10 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
   Widget build(BuildContext context) {
     final foldersAsync = ref.watch(libraryFoldersStreamProvider);
     final folders = foldersAsync.valueOrNull ?? const <LibraryFolder>[];
-    final writable = folders
-        .where((f) => !f.isSubscribed)
-        .toList(growable: false);
+    final writable = librarySaveWritableCloudFolders(
+      folders: folders,
+      destinationMode: widget.destinationMode,
+    );
     final ordered = _hierarchical(writable);
     final selectedFolders = ordered
         .where((f) => _selected.contains(f.id))
@@ -621,7 +643,11 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                             writable.isEmpty && localEntries.isEmpty;
                         if (bothEmpty && updateTarget == null) {
                           return _EmptyHint(
-                            onCreate: () => _onCreateFolder(writable),
+                            onCreate:
+                                widget.destinationMode ==
+                                        LibrarySaveDestinationMode.localOnly
+                                    ? null
+                                    : () => _onCreateFolder(writable),
                             onAddLocal:
                                 (_isSaving || _isUpdatingOriginal)
                                     ? null
@@ -804,14 +830,18 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        DesktopDialogButton(
-                          label: 'New folder',
-                          icon: Icons.create_new_folder_outlined,
-                          onPress:
-                              (_isSaving || _isUpdatingOriginal)
-                                  ? null
-                                  : () => _onCreateFolder(writable),
-                        ),
+                        if (widget.destinationMode !=
+                            LibrarySaveDestinationMode.localOnly)
+                          DesktopDialogButton(
+                            label: 'New folder',
+                            icon: Icons.create_new_folder_outlined,
+                            onPress:
+                                (_isSaving || _isUpdatingOriginal)
+                                    ? null
+                                    : () => _onCreateFolder(writable),
+                          )
+                        else
+                          const SizedBox.shrink(),
                         Row(
                           children: [
                             DesktopDialogButton(
@@ -1177,9 +1207,7 @@ class _UpdateOriginalTile extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      busy
-                          ? 'Updating existing game…'
-                          : 'Update existing game',
+                      busy ? 'Updating existing game…' : 'Update existing game',
                       style: const TextStyle(
                         color: kWhiteColor,
                         fontSize: 13,
@@ -1211,7 +1239,7 @@ class _UpdateOriginalTile extends StatelessWidget {
 
 class _EmptyHint extends StatelessWidget {
   const _EmptyHint({required this.onCreate, required this.onAddLocal});
-  final VoidCallback onCreate;
+  final VoidCallback? onCreate;
   final VoidCallback? onAddLocal;
 
   @override
@@ -1227,23 +1255,28 @@ class _EmptyHint extends StatelessWidget {
             color: kLightGreyColor,
           ),
           const SizedBox(height: 12),
-          const Text(
-            'No destinations yet. Save to the cloud library, or pick a '
-            'PGN file on this computer to keep games locally.',
-            style: TextStyle(color: kWhiteColor70, fontSize: 13),
+          Text(
+            onCreate == null
+                ? 'No local destinations yet. Pick a PGN file on this '
+                    'computer to keep games locally.'
+                : 'No destinations yet. Save to the cloud library, or pick a '
+                    'PGN file on this computer to keep games locally.',
+            style: const TextStyle(color: kWhiteColor70, fontSize: 13),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              DesktopDialogButton(
-                label: 'Cloud folder',
-                icon: Icons.cloud_outlined,
-                tone: DesktopDialogButtonTone.primary,
-                onPress: onCreate,
-              ),
-              const SizedBox(width: 10),
+              if (onCreate != null) ...[
+                DesktopDialogButton(
+                  label: 'Cloud folder',
+                  icon: Icons.cloud_outlined,
+                  tone: DesktopDialogButtonTone.primary,
+                  onPress: onCreate,
+                ),
+                const SizedBox(width: 10),
+              ],
               DesktopDialogButton(
                 label: 'PGN file',
                 icon: Icons.description_outlined,

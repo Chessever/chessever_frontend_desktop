@@ -116,6 +116,8 @@ class PlayerOpeningTreeIndex {
     required this.nodesByFenKey,
     required this.gamesByFen,
     required this.gameRowsById,
+    this.persistedPositionCount,
+    this.persistedGameCount,
   });
 
   const PlayerOpeningTreeIndex.empty()
@@ -127,7 +129,9 @@ class PlayerOpeningTreeIndex {
       nodesById = const <int, PlayerOpeningTreeNode>{},
       nodesByFenKey = const <String, PlayerOpeningTreeNode>{},
       gamesByFen = const <String, List<PlayerOpeningTreeGameRef>>{},
-      gameRowsById = const <String, Map<String, dynamic>>{};
+      gameRowsById = const <String, Map<String, dynamic>>{},
+      persistedPositionCount = null,
+      persistedGameCount = null;
 
   final String? treeId;
   final String? playerId;
@@ -138,9 +142,12 @@ class PlayerOpeningTreeIndex {
   final Map<String, PlayerOpeningTreeNode> nodesByFenKey;
   final Map<String, List<PlayerOpeningTreeGameRef>> gamesByFen;
   final Map<String, Map<String, dynamic>> gameRowsById;
+  final int? persistedPositionCount;
+  final int? persistedGameCount;
 
-  int get positionCount => nodesByFenKey.length;
-  int get downloadedGameCount => gameRowsById.length;
+  int get positionCount => persistedPositionCount ?? nodesByFenKey.length;
+  int get downloadedGameCount => persistedGameCount ?? gameRowsById.length;
+  bool get isUsable => treeId?.trim().isNotEmpty == true && positionCount > 0;
 
   factory PlayerOpeningTreeIndex.fromSnapshot(
     PlayerOpeningTreeSnapshot snapshot,
@@ -155,10 +162,11 @@ class PlayerOpeningTreeIndex {
         for (final node in snapshot.nodes) node.id: node,
       }),
       nodesByFenKey: Map<String, PlayerOpeningTreeNode>.unmodifiable({
-        for (final node in snapshot.nodes) node.fenKey: node,
+        for (final node in snapshot.nodes) _fenKey(node.fenKey): node,
       }),
       gamesByFen: const <String, List<PlayerOpeningTreeGameRef>>{},
       gameRowsById: const <String, Map<String, dynamic>>{},
+      persistedPositionCount: snapshot.nodes.length,
     );
   }
 
@@ -173,6 +181,8 @@ class PlayerOpeningTreeIndex {
       nodesByFenKey: nodesByFenKey,
       gamesByFen: games.gamesByFen,
       gameRowsById: games.gameRowsById,
+      persistedPositionCount: persistedPositionCount,
+      persistedGameCount: games.gameRowsById.length,
     );
   }
 
@@ -284,11 +294,7 @@ class PlayerOpeningTreeIndex {
     for (final entry in gameRowsById.entries) {
       final row = entry.value;
       if (filters.hasFilters && !filters.matches(row)) continue;
-      final ref = _replayRowForFenKey(
-        gameId: entry.key,
-        row: row,
-        fenKey: key,
-      );
+      final ref = _replayRowForFenKey(gameId: entry.key, row: row, fenKey: key);
       if (ref != null) refs.add(ref);
     }
     return List<PlayerOpeningTreeGameRef>.unmodifiable(refs);
@@ -786,10 +792,10 @@ PlayerOpeningTreeGamesIndex _buildPlayerOpeningGamesIndexBatch(
     final line = <String>[
       for (final move in game.mainline) move.uci.trim().toLowerCase(),
     ].where((m) => m.isNotEmpty).toList(growable: false);
-    gameRowsById[gameId] = _compactGameRow(
-      <String, dynamic>{...normalizedRow, 'startingFen': game.startingFen},
-      line,
-    );
+    gameRowsById[gameId] = _compactGameRow(<String, dynamic>{
+      ...normalizedRow,
+      'startingFen': game.startingFen,
+    }, line);
 
     var previousFen =
         game.startingFen.trim().isEmpty ? Chess.initial.fen : game.startingFen;
@@ -1041,7 +1047,16 @@ Map<String, dynamic> _compactGameRow(
     'group_broadcast_name': row['group_broadcast_name'],
     'event': row['event'],
     'site': row['site'],
+    'sourcePath': row['sourcePath'],
+    'sourceRelativePath': row['sourceRelativePath'],
+    'fileName': row['fileName'],
+    'indexInFile': row['indexInFile'],
+    'fileGameCount': row['fileGameCount'],
     'startingFen': row['startingFen'],
+    'pgn': row['pgn'],
+    'pgnHash': row['pgnHash'],
+    'headers': row['headers'],
+    'metadata': row['metadata'],
     'line': List<String>.unmodifiable(line),
   };
   compact.removeWhere((_, value) => value == null);

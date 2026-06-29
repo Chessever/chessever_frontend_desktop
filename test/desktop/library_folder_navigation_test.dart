@@ -76,6 +76,44 @@ void main() {
         );
       },
     );
+
+    test('treats legacy liked games as a database, not a folder', () {
+      final folders = [
+        _folder(id: 'liked', name: 'Liked games', icon: 'folder_container'),
+      ];
+
+      expect(libraryFolderIsDatabase(folders.first, folders), isTrue);
+    });
+
+    test('identifies permanent built-in library folders by name', () {
+      expect(
+        _folder(id: 'liked', name: 'Liked Games').isPermanentLibraryFolder,
+        isTrue,
+      );
+      expect(isPermanentLibraryFolderName(' my database '), isTrue);
+      expect(isPermanentLibraryFolderName('MY FOLDER'), isTrue);
+      expect(isPermanentLibraryFolderName('Opening Prep'), isFalse);
+    });
+
+    test('keeps root folder containers as folders when they have children', () {
+      final folders = [
+        _folder(id: 'root', name: 'Root'),
+        _folder(id: 'child', name: 'Child database', parentId: 'root'),
+      ];
+
+      expect(libraryFolderIsDatabase(folders.first, folders), isFalse);
+      expect(libraryFolderIsDatabase(folders.last, folders), isTrue);
+    });
+
+    test('uses saved game count to identify legacy root databases', () {
+      final folders = [_folder(id: 'legacy', name: 'Legacy database')];
+
+      expect(
+        libraryFolderIsDatabase(folders.first, folders, gameCount: 12),
+        isTrue,
+      );
+      expect(libraryFolderIsDatabase(folders.first, folders), isFalse);
+    });
   });
 }
 
@@ -83,6 +121,7 @@ LibraryFolder _folder({
   required String id,
   required String name,
   String? parentId,
+  String icon = 'folder',
   int orderIndex = 0,
 }) {
   final now = DateTime(2026);
@@ -91,7 +130,7 @@ LibraryFolder _folder({
     userId: 'user',
     name: name,
     color: '#0FB4E5',
-    icon: 'folder',
+    icon: icon,
     orderIndex: orderIndex,
     createdAt: now,
     updatedAt: now,

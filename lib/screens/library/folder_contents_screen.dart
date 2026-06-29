@@ -306,6 +306,20 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen> {
   }
 
   Future<void> _handleRename() async {
+    if (isPermanentLibraryFolderName(_currentFolderName)) {
+      HapticFeedbackService.error();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '"$_currentFolderName" is part of the default library.',
+            style: AppTypography.textSmMedium.copyWith(color: kWhiteColor),
+          ),
+          backgroundColor: kBlack2Color.withValues(alpha: 0.95),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     HapticFeedbackService.light();
     final nextName = await showRenameFolderDialog(
       context,
@@ -511,7 +525,8 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen> {
     final totalCount = bookAsync.valueOrNull?.totalCount;
 
     final bool showExport = (bookAsync.valueOrNull?.totalCount ?? 0) > 0;
-    final bool showRename = !_isSubscribed;
+    final bool showRename =
+        !_isSubscribed && !isPermanentLibraryFolderName(_currentFolderName);
     final bool showAdd = !_isSubscribed;
     final int rightIconCount =
         (showExport ? 1 : 0) + (showRename ? 1 : 0) + (showAdd ? 1 : 0);
@@ -754,7 +769,7 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen> {
                       analysis: analysis,
                       onTap: () async {
                         final allowed = await requirePremiumGuard(context, ref);
-                        if (!allowed || !mounted) return;
+                        if (!allowed || !context.mounted) return;
                         loadSavedAnalysisWithSwiping(
                           context,
                           filteredAnalyses,
@@ -779,7 +794,7 @@ class _FolderContentsScreenState extends ConsumerState<FolderContentsScreen> {
                       analysis: analysis,
                       onTap: () async {
                         final allowed = await requirePremiumGuard(context, ref);
-                        if (!allowed || !mounted) return;
+                        if (!allowed || !context.mounted) return;
                         loadSavedAnalysisWithSwiping(
                           context,
                           filteredAnalyses,

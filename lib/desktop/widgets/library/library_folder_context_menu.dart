@@ -93,6 +93,7 @@ Future<void> _showFolderMenu({
   required bool hasGames,
 }) async {
   final isSubscribed = folder.isSubscribed;
+  final canRenameOrDelete = !isSubscribed && !folder.isPermanentLibraryFolder;
   final action = await showDesktopContextMenu<LibraryFolderAction>(
     context: context,
     position: anchor,
@@ -125,18 +126,20 @@ Future<void> _showFolderMenu({
           icon: Icons.storage_rounded,
           label: 'New database...',
         ),
-        const DesktopContextMenuItem(
-          value: LibraryFolderAction.rename,
-          icon: Icons.edit_outlined,
-          label: 'Rename...',
-        ),
-        const DesktopContextMenuDivider(),
-        const DesktopContextMenuItem(
-          value: LibraryFolderAction.delete,
-          icon: Icons.delete_outline_rounded,
-          label: 'Delete folder',
-          destructive: true,
-        ),
+        if (canRenameOrDelete) ...[
+          const DesktopContextMenuItem(
+            value: LibraryFolderAction.rename,
+            icon: Icons.edit_outlined,
+            label: 'Rename...',
+          ),
+          const DesktopContextMenuDivider(),
+          const DesktopContextMenuItem(
+            value: LibraryFolderAction.delete,
+            icon: Icons.delete_outline_rounded,
+            label: 'Delete folder',
+            destructive: true,
+          ),
+        ],
       ],
     ],
   );

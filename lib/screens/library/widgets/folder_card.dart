@@ -256,6 +256,7 @@ class FolderCard extends ConsumerWidget {
     HapticFeedbackService.light();
 
     final isSubFolder = folder.parentId != null;
+    final canRenameOrDelete = !folder.isPermanentLibraryFolder;
 
     if (folder.isSubscribed) {
       // Subscribed books: only show Unsubscribe
@@ -272,6 +273,8 @@ class FolderCard extends ConsumerWidget {
         onRename: () => _renameFolder(context, ref),
         onDelete: () => _deleteFolder(context, ref),
         isSubFolder: isSubFolder,
+        canRename: canRenameOrDelete,
+        canDelete: canRenameOrDelete,
       );
     } else {
       // Not shared: show Share, Rename, Delete
@@ -281,6 +284,8 @@ class FolderCard extends ConsumerWidget {
         onRename: () => _renameFolder(context, ref),
         onDelete: () => _deleteFolder(context, ref),
         isSubFolder: isSubFolder,
+        canRename: canRenameOrDelete,
+        canDelete: canRenameOrDelete,
       );
     }
   }
@@ -401,6 +406,20 @@ class FolderCard extends ConsumerWidget {
   }
 
   Future<void> _renameFolder(BuildContext context, WidgetRef ref) async {
+    if (folder.isPermanentLibraryFolder) {
+      HapticFeedbackService.error();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '"${folder.name}" is part of the default library.',
+            style: AppTypography.textSmMedium.copyWith(color: kWhiteColor),
+          ),
+          backgroundColor: kBlack2Color.withValues(alpha: 0.95),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     final nextName = await showRenameFolderDialog(
       context,
       currentName: folder.name,
@@ -452,6 +471,20 @@ class FolderCard extends ConsumerWidget {
   }
 
   Future<void> _deleteFolder(BuildContext context, WidgetRef ref) async {
+    if (folder.isPermanentLibraryFolder) {
+      HapticFeedbackService.error();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '"${folder.name}" cannot be deleted.',
+            style: AppTypography.textSmMedium.copyWith(color: kWhiteColor),
+          ),
+          backgroundColor: kRedColor,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder:
@@ -613,6 +646,8 @@ void showFolderOverlayMenu({
   required VoidCallback onRename,
   required VoidCallback onDelete,
   bool isSubFolder = false,
+  bool canRename = true,
+  bool canDelete = true,
 }) {
   _showOverlay(
     context: context,
@@ -636,18 +671,20 @@ void showFolderOverlayMenu({
         _MenuItemPosition.top,
         isEnabled: !isSubFolder,
       ),
-      _OverlayMenuItemData(
-        Icons.edit_rounded,
-        'Rename Database',
-        onRename,
-        _MenuItemPosition.middle,
-      ),
-      _OverlayMenuItemData(
-        Icons.delete_outline_rounded,
-        'Delete Folder',
-        onDelete,
-        _MenuItemPosition.bottom,
-      ),
+      if (canRename)
+        _OverlayMenuItemData(
+          Icons.edit_rounded,
+          'Rename Database',
+          onRename,
+          _MenuItemPosition.middle,
+        ),
+      if (canDelete)
+        _OverlayMenuItemData(
+          Icons.delete_outline_rounded,
+          'Delete Folder',
+          onDelete,
+          _MenuItemPosition.bottom,
+        ),
     ],
   );
 }
@@ -660,6 +697,8 @@ void showSharedFolderOverlayMenu({
   required VoidCallback onRename,
   required VoidCallback onDelete,
   bool isSubFolder = false,
+  bool canRename = true,
+  bool canDelete = true,
 }) {
   _showOverlay(
     context: context,
@@ -690,18 +729,20 @@ void showSharedFolderOverlayMenu({
         _MenuItemPosition.middle,
         isEnabled: !isSubFolder,
       ),
-      _OverlayMenuItemData(
-        Icons.edit_rounded,
-        'Rename Database',
-        onRename,
-        _MenuItemPosition.middle,
-      ),
-      _OverlayMenuItemData(
-        Icons.delete_outline_rounded,
-        'Delete Folder',
-        onDelete,
-        _MenuItemPosition.bottom,
-      ),
+      if (canRename)
+        _OverlayMenuItemData(
+          Icons.edit_rounded,
+          'Rename Database',
+          onRename,
+          _MenuItemPosition.middle,
+        ),
+      if (canDelete)
+        _OverlayMenuItemData(
+          Icons.delete_outline_rounded,
+          'Delete Folder',
+          onDelete,
+          _MenuItemPosition.bottom,
+        ),
     ],
   );
 }

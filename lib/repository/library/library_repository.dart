@@ -83,8 +83,7 @@ class LibraryRepository extends BaseRepository {
     return LibraryFolder.fromSupabase(response);
   });
 
-  /// Ensure the user has the default "My Database" structure.
-  /// Creates a root "My Database" folder and a child "My Subdatabase" folder.
+  /// Ensure the user has the default "My Folder" -> "My Database" structure.
   Future<void> ensureDefaultFolders() async {
     final userId = supabase.auth.currentUser?.id;
     if (userId == null) return;
@@ -98,11 +97,9 @@ class LibraryRepository extends BaseRepository {
 
     if ((existing as List).isNotEmpty) return;
 
-    // Create root folder
-    final rootFolder = await createFolder(name: 'My Database');
-    // Create child database inside it.
+    final rootFolder = await createFolder(name: 'My Folder');
     await createFolder(
-      name: 'My Subdatabase',
+      name: 'My Database',
       parentId: rootFolder.id,
       icon: 'database',
     );
@@ -113,6 +110,20 @@ class LibraryRepository extends BaseRepository {
       handleApiCall(() async {
         final userId = supabase.auth.currentUser?.id;
         if (userId == null) throw Exception('User not authenticated');
+
+        final current =
+            await supabase
+                .from('user_folders')
+                .select('name')
+                .eq('id', folder.id)
+                .eq('user_id', userId)
+                .maybeSingle();
+        final currentName = current?['name'] as String?;
+        if (currentName != null &&
+            isPermanentLibraryFolderName(currentName) &&
+            currentName.trim() != folder.name.trim()) {
+          throw StateError('Permanent library folders cannot be renamed.');
+        }
 
         final response =
             await supabase
@@ -136,6 +147,19 @@ class LibraryRepository extends BaseRepository {
   Future<void> deleteFolder(String folderId) => handleApiCall(() async {
     final userId = supabase.auth.currentUser?.id;
     if (userId == null) throw Exception('User not authenticated');
+
+    final current =
+        await supabase
+            .from('user_folders')
+            .select('name')
+            .eq('id', folderId)
+            .eq('user_id', userId)
+            .maybeSingle();
+    final currentName = current?['name'] as String?;
+    if (currentName != null && isPermanentLibraryFolderName(currentName)) {
+      throw StateError('Permanent library folders cannot be deleted.');
+    }
+    if (current == null) return;
 
     await supabase
         .from('user_folders')

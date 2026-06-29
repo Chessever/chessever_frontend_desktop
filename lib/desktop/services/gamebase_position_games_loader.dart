@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
@@ -50,7 +51,49 @@ Future<DesktopPositionGamesPageResult> fetchDesktopPositionGamesPage(
   GamebasePositionGamesQuery query, {
   required bool exactFenSearch,
   BoardTabPositionGamesApi? resolvedApi,
+  PlayerOpeningTreeIndex? localOpeningTreeIndex,
 }) async {
+  if (localOpeningTreeIndex != null) {
+    final localDatabasePath = localOpeningTreeIndex.playerId?.trim();
+    if (localOpeningTreeIndex.gamesByFen.isEmpty &&
+        localDatabasePath != null &&
+        localDatabasePath.isNotEmpty) {
+      final localResponse = await ref
+          .read(localChessDatabaseRepositoryProvider)
+          .localPositionGamesResponse(
+            databasePath: localDatabasePath,
+            fen: query.fen,
+            moves: query.moves,
+            uci: query.uci,
+            filters: _localTreeCriteriaFromQuery(query),
+            sortBy: query.sortBy,
+            sortDirection: query.sortDirection,
+            pageNumber: query.pageNumber,
+            pageSize: query.pageSize,
+          );
+      if (localResponse != null) {
+        return DesktopPositionGamesPageResult(
+          response: localResponse,
+          resolvedApi: resolvedApi,
+        );
+      }
+    }
+
+    return DesktopPositionGamesPageResult(
+      response: localPlayerTreeGamesResponse(
+        index: localOpeningTreeIndex,
+        fen: query.fen,
+        uci: query.uci,
+        filters: _localTreeCriteriaFromQuery(query),
+        sortBy: query.sortBy,
+        sortDirection: query.sortDirection,
+        pageNumber: query.pageNumber,
+        pageSize: query.pageSize,
+      ),
+      resolvedApi: resolvedApi,
+    );
+  }
+
   final playerId = query.playerId?.trim();
   if (playerId != null &&
       playerId.isNotEmpty &&
@@ -173,6 +216,21 @@ Future<DesktopPositionGamesPageResult> fetchDesktopPositionGamesPage(
   return DesktopPositionGamesPageResult(
     response: exact,
     resolvedApi: BoardTabPositionGamesApi.exactFen,
+  );
+}
+
+PlayerOpeningTreeFilterCriteria _localTreeCriteriaFromQuery(
+  GamebasePositionGamesQuery query,
+) {
+  return PlayerOpeningTreeFilterCriteria(
+    timeControl: query.timeControl,
+    minRating: query.minRating,
+    maxRating: query.maxRating,
+    color: query.color,
+    result: query.result,
+    isOnline: query.isOnline,
+    yearFrom: query.yearFrom,
+    yearTo: query.yearTo,
   );
 }
 

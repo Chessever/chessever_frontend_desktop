@@ -258,6 +258,37 @@ void main() {
     );
   });
 
+  testWidgets('database games rail virtualizes large local lists', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          pgn: '1. d4 d5 *',
+          label: 'Local database game',
+          whiteName: 'Local White 0',
+          blackName: 'Local Black 0',
+          databaseTitle: 'Huge Local Database',
+          databaseGames: [
+            for (var i = 0; i < 1000; i++)
+              _summary(
+                id: 'local-game-$i',
+                roundLabel: 'Local',
+                whitePlayer: 'Local White $i',
+                blackPlayer: 'Local Black $i',
+              ),
+          ],
+          gameListSelectedId: 'local-game-0',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Huge Local Database'), findsOneWidget);
+    expect(find.text('Local White 0'), findsOneWidget);
+    expect(find.text('Local White 999'), findsNothing);
+  });
+
   testWidgets(
     'opening a database row with header-only PGN keeps hydration id',
     (tester) async {

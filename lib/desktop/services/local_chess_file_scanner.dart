@@ -1,7 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
-import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:libcompress/libcompress.dart';
 
+import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
@@ -52,12 +53,17 @@ const localChessUnsupportedFormatMessage =
     'as PGN and import the PGN file.';
 
 // Compressed PGNs are still decoded into memory by the current Dart codecs, so
-// they keep a decoded-size guard. Raw .pgn files are streamed line by line.
+// they keep a decoded-size guard. Raw .pgn files use a bounded in-memory fast
+// path before falling back to streamed byte scanning for very large files.
 const int _kMaxParseBytes = 64 * 1024 * 1024; // 64 MB
 const int _kMaxTotalGames = 200000;
+const int _kEagerTreeGameRowLimit = 10000;
 const int _kEagerPositionGameRefLimit = 10000;
 const int _kInlineRawPgnLimit = 10000;
 const int _kPgnOffsetCheckpointStride = 128;
+const int _kFastInMemoryPgnScanBytes = 96 * 1024 * 1024;
+const int _kSingleWorkerTreeBuildBytes = 128 * 1024 * 1024;
+const int _kTwoWorkerTreeBuildBytes = 64 * 1024 * 1024;
 const String _kStandardStartingFen =
     'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -171,7 +177,7 @@ class LocalChessFolderNode extends LocalChessNode {
           unsupportedCount += child.unsupportedCount;
         case LocalChessFileNode():
           fileCount++;
-          gameCount += child.games.length;
+          gameCount += child.gameCount;
           if (!child.isPlayable) unsupportedCount++;
       }
     }
@@ -300,11 +306,14 @@ class LocalChessFileNode extends LocalChessNode {
     this.message,
     this.openingTreeIndex,
     this.pgnOffsetIndex,
-  }) : games = List<LocalChessGame>.unmodifiable(games);
+    int? gameCount,
+  }) : games = List<LocalChessGame>.unmodifiable(games),
+       gameCount = gameCount ?? games.length;
 
   final String extension;
   final LocalChessFileStatus status;
   final List<LocalChessGame> games;
+  final int gameCount;
   final int sizeBytes;
   final DateTime? modifiedAt;
   final String? message;
@@ -376,6 +385,7 @@ class LocalChessGame {
     required this.indexInFile,
     required this.fileGameCount,
     required this.hasMoves,
+    this.pgnFingerprint = '',
     this.sourceByteStart,
     this.sourceByteEnd,
   }) : _rawPgn = rawPgn;
@@ -388,12 +398,17 @@ class LocalChessGame {
   final String fileName;
   final int indexInFile;
   final int fileGameCount;
+  final String pgnFingerprint;
   final int? sourceByteStart;
   final int? sourceByteEnd;
   // Mainline parsing is deferred to keep scans cheap. This flag mirrors
   // whether the raw PGN actually carries movetext, so list cards can still
   // show a "started" state without parsing every game.
   final bool hasMoves;
+
+  bool get hasInlineRawPgn => _rawPgn.isNotEmpty;
+
+  String get inlineRawPgn => _rawPgn;
 
   String get rawPgn {
     if (_rawPgn.isNotEmpty) return _rawPgn;
@@ -427,12 +442,609 @@ class LocalChessGame {
   }
 }
 
+@immutable
+class LocalChessFileImportStart {
+  const LocalChessFileImportStart({
+    required this.path,
+    required this.relativePath,
+    required this.extension,
+    required this.sizeBytes,
+    required this.modifiedAt,
+    required this.totalEntries,
+    this.pgnOffsetIndex,
+  });
+
+  final String path;
+  final String relativePath;
+  final String extension;
+  final int sizeBytes;
+  final DateTime? modifiedAt;
+  final int totalEntries;
+  final LocalChessPgnOffsetIndex? pgnOffsetIndex;
+}
+
+@immutable
+class LocalChessFileImportBatch {
+  const LocalChessFileImportBatch({
+    required this.games,
+    required this.acceptedCount,
+    required this.totalEntries,
+  });
+
+  final List<LocalChessGame> games;
+  final int acceptedCount;
+  final int totalEntries;
+}
+
+LocalChessGame? localChessGameFromRawPgnChunk({
+  required String rawPgn,
+  required String sourcePath,
+  required String rootPath,
+  required int indexInFile,
+  required int fileGameCount,
+  int? sourceByteStart,
+  int? sourceByteEnd,
+}) {
+  final entry = _entryFromPgnChunk(rawPgn.trim());
+  if (entry == null || !entry.hasMoves) return null;
+  final id = 'local_${_stableId('$sourcePath#$indexInFile')}';
+  final relativePath = _relative(rootPath, sourcePath);
+  return LocalChessGame(
+    id: id,
+    game: entry.game.copyWith(gameId: id),
+    rawPgn: entry.rawPgn,
+    sourcePath: sourcePath,
+    sourceRelativePath: relativePath,
+    fileName: _basename(sourcePath),
+    indexInFile: indexInFile,
+    fileGameCount: fileGameCount,
+    hasMoves: entry.hasMoves,
+    pgnFingerprint: localChessPgnFingerprint(entry.rawPgn),
+    sourceByteStart: sourceByteStart,
+    sourceByteEnd: sourceByteEnd,
+  );
+}
+
+Future<LocalChessFileNode> scanLocalChessFileNodeForImportWithProgress({
+  required String path,
+  required String rootPath,
+  int maxDecodedBytes = _kMaxParseBytes,
+  int maxGames = _kMaxTotalGames,
+  int previewGameLimit = 1000,
+  int batchSize = 4096,
+  void Function(LocalChessScanProgress progress)? onProgress,
+  Future<void> Function(LocalChessFileImportStart start)? onImportStart,
+  Future<void> Function(LocalChessFileImportBatch batch)? onGameBatch,
+}) async {
+  final scanPath = path.trim();
+  if (scanPath.isEmpty) {
+    throw ArgumentError('No file was provided.');
+  }
+  if (maxDecodedBytes <= 0) {
+    throw ArgumentError.value(
+      maxDecodedBytes,
+      'maxDecodedBytes',
+      'must be > 0',
+    );
+  }
+  if (maxGames <= 0) {
+    throw ArgumentError.value(maxGames, 'maxGames', 'must be > 0');
+  }
+
+  void emit(double fraction, String message) {
+    onProgress?.call(
+      LocalChessScanProgress(fraction: fraction, message: message),
+    );
+  }
+
+  if (!looksLikeLocalChessFile(scanPath)) {
+    throw ArgumentError(
+      'No recognized chess file was found at ${_basename(scanPath)}. '
+      'Open $localChessRecognizedFormatsLabel.',
+    );
+  }
+
+  final extension = _extensionForPath(scanPath);
+  final FileStat stat;
+  try {
+    stat = await File(scanPath).stat();
+  } on FileSystemException catch (e) {
+    return _failedFileNodeFromFileSystemException(
+          scanPath,
+          rootPath: rootPath,
+          extension: extension,
+          exception: e,
+        ) ??
+        LocalChessFileNode(
+          name: localChessDatabaseDisplayNameForPath(scanPath),
+          path: scanPath,
+          relativePath: _relative(rootPath, scanPath),
+          extension: extension,
+          status: LocalChessFileStatus.failed,
+          games: const <LocalChessGame>[],
+          sizeBytes: 0,
+          modifiedAt: null,
+          message: 'Could not scan this file: $e',
+        );
+  }
+
+  if (!isSupportedLocalChessFile(scanPath)) {
+    return LocalChessFileNode(
+      name: localChessDatabaseDisplayNameForPath(scanPath),
+      path: scanPath,
+      relativePath: _relative(rootPath, scanPath),
+      extension: extension,
+      status: LocalChessFileStatus.unsupported,
+      games: const <LocalChessGame>[],
+      sizeBytes: stat.size,
+      modifiedAt: stat.modified,
+      message: _unsupportedMessage(extension),
+    );
+  }
+
+  if (_requiresFullDecode(extension) && stat.size > maxDecodedBytes) {
+    return LocalChessFileNode(
+      name: localChessDatabaseDisplayNameForPath(scanPath),
+      path: scanPath,
+      relativePath: _relative(rootPath, scanPath),
+      extension: extension,
+      status: LocalChessFileStatus.unsupported,
+      games: const <LocalChessGame>[],
+      sizeBytes: stat.size,
+      modifiedAt: stat.modified,
+      message: _tooLargeMessage(stat.size),
+    );
+  }
+
+  final relativePath = _relative(rootPath, scanPath);
+  try {
+    emit(0.03, 'Scanning PGN...');
+    final preview = <LocalChessGame>[];
+    final pendingBatch = <LocalChessGame>[];
+    final seenFingerprints = <String>{};
+    var duplicateCount = 0;
+    var acceptedCount = 0;
+    var totalEntries = 0;
+    LocalChessPgnOffsetIndex? offsetIndex;
+
+    Future<void> flushBatch() async {
+      if (pendingBatch.isEmpty) return;
+      final batch = LocalChessFileImportBatch(
+        games: List<LocalChessGame>.unmodifiable(pendingBatch),
+        acceptedCount: acceptedCount,
+        totalEntries: totalEntries,
+      );
+      pendingBatch.clear();
+      await onGameBatch?.call(batch);
+    }
+
+    Future<void> acceptEntry(
+      int sourceIndex,
+      _ParsedLocalChessGame entry, {
+      required int fileGameCount,
+      required bool inlineRawPgn,
+    }) async {
+      final fingerprint = localChessPgnFingerprint(entry.rawPgn);
+      if (!seenFingerprints.add(fingerprint)) {
+        duplicateCount++;
+        return;
+      }
+      if (acceptedCount >= maxGames) return;
+
+      final id = 'local_${_stableId('$scanPath#$sourceIndex')}';
+      final game = LocalChessGame(
+        id: id,
+        game: entry.game.copyWith(gameId: id),
+        rawPgn: inlineRawPgn ? entry.rawPgn : '',
+        sourcePath: scanPath,
+        sourceRelativePath: relativePath,
+        fileName: _basename(scanPath),
+        indexInFile: sourceIndex,
+        fileGameCount: fileGameCount,
+        hasMoves: entry.hasMoves,
+        pgnFingerprint: fingerprint,
+        sourceByteStart: entry.sourceByteStart,
+        sourceByteEnd: entry.sourceByteEnd,
+      );
+      acceptedCount++;
+      if (preview.length < previewGameLimit) {
+        preview.add(game);
+      }
+      pendingBatch.add(game);
+      if (pendingBatch.length >= batchSize) {
+        await flushBatch();
+      }
+    }
+
+    switch (extension.toLowerCase()) {
+      case '.pgn':
+        final scan = await _scanPgnFileRanges(
+          scanPath,
+          maxEntries: maxGames,
+          onScanProgress:
+              (fraction) => emit(0.03 + (fraction * 0.27), 'Scanning PGN...'),
+        );
+        totalEntries = scan.totalEntries;
+        offsetIndex = scan.offsetIndex;
+        if (scan.ranges.isEmpty) {
+          return LocalChessFileNode(
+            name: localChessDatabaseDisplayNameForPath(scanPath),
+            path: scanPath,
+            relativePath: relativePath,
+            extension: extension,
+            status: LocalChessFileStatus.noGames,
+            games: const <LocalChessGame>[],
+            sizeBytes: stat.size,
+            modifiedAt: stat.modified,
+            message: 'No playable entries were found.',
+          );
+        }
+        await onImportStart?.call(
+          LocalChessFileImportStart(
+            path: scanPath,
+            relativePath: relativePath,
+            extension: extension,
+            sizeBytes: stat.size,
+            modifiedAt: stat.modified,
+            totalEntries: totalEntries,
+            pgnOffsetIndex: offsetIndex,
+          ),
+        );
+        final inlineRawPgn = totalEntries <= _kInlineRawPgnLimit;
+        await _forEachParsedPgnRange(
+          scanPath,
+          scan,
+          onEntry: (sourceIndex, entry) async {
+            await acceptEntry(
+              sourceIndex,
+              entry,
+              fileGameCount: totalEntries,
+              inlineRawPgn: inlineRawPgn,
+            );
+          },
+          onReadProgress:
+              (fraction) =>
+                  emit(0.30 + (fraction * 0.64), 'Importing games...'),
+        );
+      case '.pgn.bz2':
+      case '.bz2':
+      case '.pgn.zst':
+      case '.zst':
+        emit(0.04, 'Reading PGN file...');
+        final raw = await _readTextFile(
+          scanPath,
+          extension,
+          maxDecodedBytes: maxDecodedBytes,
+        );
+        emit(0.30, 'Importing games...');
+        final parseResult = _parsePgnText(raw, maxEntries: maxGames);
+        totalEntries = parseResult.totalEntries;
+        if (parseResult.entries.isEmpty) {
+          return LocalChessFileNode(
+            name: localChessDatabaseDisplayNameForPath(scanPath),
+            path: scanPath,
+            relativePath: relativePath,
+            extension: extension,
+            status: LocalChessFileStatus.noGames,
+            games: const <LocalChessGame>[],
+            sizeBytes: stat.size,
+            modifiedAt: stat.modified,
+            message: 'No playable entries were found.',
+          );
+        }
+        await onImportStart?.call(
+          LocalChessFileImportStart(
+            path: scanPath,
+            relativePath: relativePath,
+            extension: extension,
+            sizeBytes: stat.size,
+            modifiedAt: stat.modified,
+            totalEntries: totalEntries,
+          ),
+        );
+        for (final (sourceIndex, entry) in parseResult.entries.indexed) {
+          await acceptEntry(
+            sourceIndex,
+            entry,
+            fileGameCount: totalEntries,
+            inlineRawPgn: true,
+          );
+          if (parseResult.entries.length <= 1 ||
+              sourceIndex % 256 == 0 ||
+              sourceIndex == parseResult.entries.length - 1) {
+            emit(
+              0.30 + (((sourceIndex + 1) / parseResult.entries.length) * 0.64),
+              'Importing games...',
+            );
+          }
+        }
+        parseResult.entries.clear();
+      default:
+        return LocalChessFileNode(
+          name: localChessDatabaseDisplayNameForPath(scanPath),
+          path: scanPath,
+          relativePath: relativePath,
+          extension: extension,
+          status: LocalChessFileStatus.unsupported,
+          games: const <LocalChessGame>[],
+          sizeBytes: stat.size,
+          modifiedAt: stat.modified,
+          message: _unsupportedMessage(extension),
+        );
+    }
+
+    await flushBatch();
+    seenFingerprints.clear();
+    emit(0.97, 'Finalizing PGN...');
+
+    if (acceptedCount == 0) {
+      return LocalChessFileNode(
+        name: localChessDatabaseDisplayNameForPath(scanPath),
+        path: scanPath,
+        relativePath: relativePath,
+        extension: extension,
+        status: LocalChessFileStatus.noGames,
+        games: const <LocalChessGame>[],
+        gameCount: 0,
+        sizeBytes: stat.size,
+        modifiedAt: stat.modified,
+        message: 'No playable entries were found.',
+        pgnOffsetIndex: offsetIndex,
+      );
+    }
+
+    final messages = <String>[
+      if (acceptedCount + duplicateCount < totalEntries)
+        'Showing first $acceptedCount of $totalEntries entries; the rest were '
+            'skipped to stay within the index cap.',
+      'Opening tree queued for background build.',
+      if (duplicateCount > 0)
+        'Skipped $duplicateCount duplicate PGN ${duplicateCount == 1 ? 'entry' : 'entries'}.',
+    ];
+
+    return LocalChessFileNode(
+      name: localChessDatabaseDisplayNameForPath(scanPath),
+      path: scanPath,
+      relativePath: relativePath,
+      extension: extension,
+      status: LocalChessFileStatus.parsed,
+      games: preview,
+      gameCount: acceptedCount,
+      sizeBytes: stat.size,
+      modifiedAt: stat.modified,
+      message: messages.join(' '),
+      pgnOffsetIndex: offsetIndex,
+    );
+  } on FileSystemException catch (e) {
+    return LocalChessFileNode(
+      name: localChessDatabaseDisplayNameForPath(scanPath),
+      path: scanPath,
+      relativePath: relativePath,
+      extension: extension,
+      status: LocalChessFileStatus.failed,
+      games: const <LocalChessGame>[],
+      sizeBytes: stat.size,
+      modifiedAt: stat.modified,
+      message: 'Could not read this file: $e',
+    );
+  } on _DecodedPgnTooLargeException catch (e) {
+    return LocalChessFileNode(
+      name: localChessDatabaseDisplayNameForPath(scanPath),
+      path: scanPath,
+      relativePath: relativePath,
+      extension: extension,
+      status: LocalChessFileStatus.unsupported,
+      games: const <LocalChessGame>[],
+      sizeBytes: stat.size,
+      modifiedAt: stat.modified,
+      message: _tooLargeMessage(e.sizeBytes),
+    );
+  } on _CompressedPgnDecodeException catch (e) {
+    return LocalChessFileNode(
+      name: localChessDatabaseDisplayNameForPath(scanPath),
+      path: scanPath,
+      relativePath: relativePath,
+      extension: extension,
+      status: LocalChessFileStatus.failed,
+      games: const <LocalChessGame>[],
+      sizeBytes: stat.size,
+      modifiedAt: stat.modified,
+      message: e.toString(),
+    );
+  }
+}
+
+@immutable
+class LocalChessScanProgress {
+  LocalChessScanProgress({required double fraction, required this.message})
+    : fraction = fraction.clamp(0.0, 1.0).toDouble();
+
+  final double fraction;
+  final String message;
+
+  int get percent => (fraction * 100).round().clamp(0, 100).toInt();
+}
+
 Future<LocalChessSource> scanLocalChessPaths(
   List<String> rawPaths, {
   String? sourceLabel,
   int maxDecodedBytes = _kMaxParseBytes,
   int maxGames = _kMaxTotalGames,
+  bool buildOpeningTree = true,
 }) async {
+  final paths = _validateScanInputs(
+    rawPaths,
+    maxDecodedBytes: maxDecodedBytes,
+    maxGames: maxGames,
+  );
+  // Heavy filesystem walk + PGN parsing runs on its own isolate so the UI
+  // thread stays responsive on huge databases.
+  return Isolate.run(
+    () => _runScan(
+      paths,
+      sourceLabel: sourceLabel,
+      maxDecodedBytes: maxDecodedBytes,
+      maxGames: maxGames,
+      buildOpeningTree: buildOpeningTree,
+    ),
+  );
+}
+
+Future<LocalChessSource> scanLocalChessPathsWithProgress(
+  List<String> rawPaths, {
+  String? sourceLabel,
+  int maxDecodedBytes = _kMaxParseBytes,
+  int maxGames = _kMaxTotalGames,
+  bool buildOpeningTree = true,
+  void Function(LocalChessScanProgress progress)? onProgress,
+}) async {
+  final paths = _validateScanInputs(
+    rawPaths,
+    maxDecodedBytes: maxDecodedBytes,
+    maxGames: maxGames,
+  );
+  final receivePort = ReceivePort();
+  final completer = Completer<LocalChessSource>();
+  late final StreamSubscription<dynamic> subscription;
+  Isolate? isolate;
+
+  void completeWithError(Object error, StackTrace stackTrace) {
+    if (completer.isCompleted) return;
+    completer.completeError(error, stackTrace);
+  }
+
+  subscription = receivePort.listen((message) {
+    switch (message) {
+      case LocalChessScanProgress progress:
+        onProgress?.call(progress);
+      case _ScanWorkerSuccess(:final source):
+        if (!completer.isCompleted) completer.complete(source);
+      case _ScanWorkerFailure(:final message, :final stackTrace):
+        completeWithError(
+          ArgumentError(message),
+          StackTrace.fromString(stackTrace),
+        );
+      case null:
+        if (!completer.isCompleted) {
+          completeWithError(
+            StateError('PGN scan worker exited before returning a result.'),
+            StackTrace.current,
+          );
+        }
+    }
+  });
+
+  try {
+    isolate = await Isolate.spawn(
+      _scanLocalChessPathsWorker,
+      _ScanWorkerRequest(
+        sendPort: receivePort.sendPort,
+        paths: paths,
+        sourceLabel: sourceLabel,
+        maxDecodedBytes: maxDecodedBytes,
+        maxGames: maxGames,
+        buildOpeningTree: buildOpeningTree,
+      ),
+      onExit: receivePort.sendPort,
+      errorsAreFatal: true,
+    );
+    return await completer.future;
+  } catch (error, stackTrace) {
+    completeWithError(error, stackTrace);
+    return await completer.future;
+  } finally {
+    receivePort.close();
+    await subscription.cancel();
+    isolate?.kill(priority: Isolate.immediate);
+  }
+}
+
+Future<LocalChessFileNode> scanLocalChessFileNodeWithProgress({
+  required String path,
+  required String rootPath,
+  int maxDecodedBytes = _kMaxParseBytes,
+  int maxGames = _kMaxTotalGames,
+  bool buildOpeningTree = true,
+  void Function(LocalChessScanProgress progress)? onProgress,
+}) async {
+  final scanPath = path.trim();
+  if (scanPath.isEmpty) {
+    throw ArgumentError('No file was provided.');
+  }
+  if (maxDecodedBytes <= 0) {
+    throw ArgumentError.value(
+      maxDecodedBytes,
+      'maxDecodedBytes',
+      'must be > 0',
+    );
+  }
+  if (maxGames <= 0) {
+    throw ArgumentError.value(maxGames, 'maxGames', 'must be > 0');
+  }
+
+  final receivePort = ReceivePort();
+  final completer = Completer<LocalChessFileNode>();
+  late final StreamSubscription<dynamic> subscription;
+  Isolate? isolate;
+
+  void completeWithError(Object error, StackTrace stackTrace) {
+    if (completer.isCompleted) return;
+    completer.completeError(error, stackTrace);
+  }
+
+  subscription = receivePort.listen((message) {
+    switch (message) {
+      case LocalChessScanProgress progress:
+        onProgress?.call(progress);
+      case _ScanFileWorkerSuccess(:final file):
+        if (!completer.isCompleted) completer.complete(file);
+      case _ScanWorkerFailure(:final message, :final stackTrace):
+        completeWithError(
+          ArgumentError(message),
+          StackTrace.fromString(stackTrace),
+        );
+      case null:
+        if (!completer.isCompleted) {
+          completeWithError(
+            StateError(
+              'PGN file scan worker exited before returning a result.',
+            ),
+            StackTrace.current,
+          );
+        }
+    }
+  });
+
+  try {
+    isolate = await Isolate.spawn(
+      _scanLocalChessFileNodeWorker,
+      _ScanFileWorkerRequest(
+        sendPort: receivePort.sendPort,
+        path: scanPath,
+        rootPath: rootPath,
+        maxDecodedBytes: maxDecodedBytes,
+        maxGames: maxGames,
+        buildOpeningTree: buildOpeningTree,
+      ),
+      onExit: receivePort.sendPort,
+      errorsAreFatal: true,
+    );
+    return await completer.future;
+  } catch (error, stackTrace) {
+    completeWithError(error, stackTrace);
+    return await completer.future;
+  } finally {
+    receivePort.close();
+    await subscription.cancel();
+    isolate?.kill(priority: Isolate.immediate);
+  }
+}
+
+List<String> _validateScanInputs(
+  List<String> rawPaths, {
+  required int maxDecodedBytes,
+  required int maxGames,
+}) {
   if (maxDecodedBytes <= 0) {
     throw ArgumentError.value(
       maxDecodedBytes,
@@ -447,15 +1059,157 @@ Future<LocalChessSource> scanLocalChessPaths(
   if (paths.isEmpty) {
     throw ArgumentError('No files or folders were provided.');
   }
-  // Heavy filesystem walk + PGN parsing runs on its own isolate so the UI
-  // thread stays responsive on huge databases.
-  return Isolate.run(
-    () => _runScan(
-      paths,
-      sourceLabel: sourceLabel,
-      maxDecodedBytes: maxDecodedBytes,
-      maxGames: maxGames,
-    ),
+  return paths;
+}
+
+class _ScanWorkerRequest {
+  const _ScanWorkerRequest({
+    required this.sendPort,
+    required this.paths,
+    required this.maxDecodedBytes,
+    required this.maxGames,
+    required this.buildOpeningTree,
+    this.sourceLabel,
+  });
+
+  final SendPort sendPort;
+  final List<String> paths;
+  final String? sourceLabel;
+  final int maxDecodedBytes;
+  final int maxGames;
+  final bool buildOpeningTree;
+}
+
+class _ScanFileWorkerRequest {
+  const _ScanFileWorkerRequest({
+    required this.sendPort,
+    required this.path,
+    required this.rootPath,
+    required this.maxDecodedBytes,
+    required this.maxGames,
+    required this.buildOpeningTree,
+  });
+
+  final SendPort sendPort;
+  final String path;
+  final String rootPath;
+  final int maxDecodedBytes;
+  final int maxGames;
+  final bool buildOpeningTree;
+}
+
+class _ScanWorkerSuccess {
+  const _ScanWorkerSuccess(this.source);
+
+  final LocalChessSource source;
+}
+
+class _ScanFileWorkerSuccess {
+  const _ScanFileWorkerSuccess(this.file);
+
+  final LocalChessFileNode file;
+}
+
+class _ScanWorkerFailure {
+  const _ScanWorkerFailure(this.message, this.stackTrace);
+
+  final String message;
+  final String stackTrace;
+}
+
+Future<void> _scanLocalChessPathsWorker(_ScanWorkerRequest request) async {
+  void emit(LocalChessScanProgress progress) {
+    request.sendPort.send(progress);
+  }
+
+  try {
+    emit(LocalChessScanProgress(fraction: 0, message: 'Preparing PGN...'));
+    final source = await _runScan(
+      request.paths,
+      sourceLabel: request.sourceLabel,
+      maxDecodedBytes: request.maxDecodedBytes,
+      maxGames: request.maxGames,
+      buildOpeningTree: request.buildOpeningTree,
+      onProgress: emit,
+    );
+    emit(LocalChessScanProgress(fraction: 1, message: 'PGN ready.'));
+    request.sendPort.send(_ScanWorkerSuccess(source));
+  } catch (error, stackTrace) {
+    request.sendPort.send(
+      _ScanWorkerFailure(_scanWorkerErrorMessage(error), stackTrace.toString()),
+    );
+  }
+}
+
+Future<void> _scanLocalChessFileNodeWorker(
+  _ScanFileWorkerRequest request,
+) async {
+  void emit(LocalChessScanProgress progress) {
+    request.sendPort.send(progress);
+  }
+
+  try {
+    emit(LocalChessScanProgress(fraction: 0, message: 'Preparing PGN...'));
+    final file = await _runFileNodeScan(
+      request.path,
+      rootPath: request.rootPath,
+      maxDecodedBytes: request.maxDecodedBytes,
+      maxGames: request.maxGames,
+      buildOpeningTree: request.buildOpeningTree,
+      onProgress: emit,
+    );
+    emit(LocalChessScanProgress(fraction: 1, message: 'PGN ready.'));
+    request.sendPort.send(_ScanFileWorkerSuccess(file));
+  } catch (error, stackTrace) {
+    request.sendPort.send(
+      _ScanWorkerFailure(_scanWorkerErrorMessage(error), stackTrace.toString()),
+    );
+  }
+}
+
+String _scanWorkerErrorMessage(Object error) {
+  if (error is ArgumentError) {
+    final message = error.message;
+    if (message != null) {
+      final text = message.toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+  }
+
+  if (error is FileSystemException) {
+    final message = error.message.trim();
+    final path = error.path?.trim();
+    if (path == null || path.isEmpty) return message;
+    return '$message: $path';
+  }
+
+  return error.toString();
+}
+
+Future<LocalChessFileNode> _runFileNodeScan(
+  String path, {
+  required String rootPath,
+  required int maxDecodedBytes,
+  required int maxGames,
+  required bool buildOpeningTree,
+  void Function(LocalChessScanProgress progress)? onProgress,
+}) async {
+  final worker = _ScanWorker(
+    maxDecodedBytes: maxDecodedBytes,
+    maxGames: maxGames,
+    buildOpeningTree: buildOpeningTree,
+    onProgress: onProgress,
+  );
+  final node = await worker.scanPath(path, rootPath: rootPath, force: true);
+  if (node is LocalChessFileNode) return node;
+  if (node == null) {
+    throw ArgumentError(
+      'No recognized chess file was found at ${_basename(path)}. '
+      'Open $localChessRecognizedFormatsLabel.',
+    );
+  }
+  throw ArgumentError(
+    'Expected a local chess file but found a folder at ${_basename(path)}.',
   );
 }
 
@@ -464,10 +1218,14 @@ Future<LocalChessSource> _runScan(
   String? sourceLabel,
   required int maxDecodedBytes,
   required int maxGames,
+  required bool buildOpeningTree,
+  void Function(LocalChessScanProgress progress)? onProgress,
 }) async {
   final worker = _ScanWorker(
     maxDecodedBytes: maxDecodedBytes,
     maxGames: maxGames,
+    buildOpeningTree: buildOpeningTree,
+    onProgress: onProgress,
   );
 
   if (paths.length == 1) {
@@ -507,10 +1265,17 @@ Future<LocalChessSource> _runScan(
 }
 
 class _ScanWorker {
-  _ScanWorker({required this.maxDecodedBytes, required this.maxGames});
+  _ScanWorker({
+    required this.maxDecodedBytes,
+    required this.maxGames,
+    required this.buildOpeningTree,
+    this.onProgress,
+  });
 
   final int maxDecodedBytes;
   final int maxGames;
+  final bool buildOpeningTree;
+  final void Function(LocalChessScanProgress progress)? onProgress;
 
   int _totalGames = 0;
 
@@ -524,10 +1289,17 @@ class _ScanWorker {
     return granted;
   }
 
+  void _emitProgress(double fraction, String message) {
+    onProgress?.call(
+      LocalChessScanProgress(fraction: fraction, message: message),
+    );
+  }
+
   Future<LocalChessSource> scanSingle(
     String path, {
     String? sourceLabel,
   }) async {
+    _emitProgress(0.01, 'Opening PGN...');
     final type = await FileSystemEntity.type(path, followLinks: false);
     if (type == FileSystemEntityType.notFound) {
       throw FileSystemException('File or folder does not exist', path);
@@ -552,6 +1324,7 @@ class _ScanWorker {
       );
     }
 
+    _emitProgress(0.02, 'Reading PGN file...');
     final parent = p.dirname(path);
     final node = await _scanFile(path, rootPath: parent);
     if (node == null) {
@@ -712,13 +1485,22 @@ class _ScanWorker {
     }
 
     try {
+      _emitProgress(0.03, 'Scanning PGN...');
       final parseResult = await _parseSupportedFile(
         path: path,
         extension: extension,
         maxEntries: maxGames - _totalGames,
         maxDecodedBytes: maxDecodedBytes,
+        onPgnScanProgress:
+            (fraction) =>
+                _emitProgress(0.03 + (fraction * 0.27), 'Scanning PGN...'),
+        onPgnReadProgress:
+            (fraction) =>
+                _emitProgress(0.30 + (fraction * 0.10), 'Reading games...'),
       );
       final entries = parseResult.entries;
+      final totalEntries = parseResult.totalEntries;
+      final offsetIndex = parseResult.offsetIndex;
       if (entries.isEmpty) {
         return LocalChessFileNode(
           name: localChessDatabaseDisplayNameForPath(path),
@@ -733,17 +1515,54 @@ class _ScanWorker {
         );
       }
 
-      final granted = _claim(entries.length);
-      final accepted = entries.take(granted).toList(growable: false);
+      final uniqueEntries = <_UniqueParsedLocalChessGame>[];
+      final seenFingerprints = <String>{};
+      var duplicateCount = 0;
+      for (final (sourceIndex, entry) in entries.indexed) {
+        final fingerprint = localChessPgnFingerprint(entry.rawPgn);
+        if (!seenFingerprints.add(fingerprint)) {
+          duplicateCount++;
+          continue;
+        }
+        uniqueEntries.add(
+          _UniqueParsedLocalChessGame(
+            sourceIndex: sourceIndex,
+            fingerprint: fingerprint,
+            entry: entry,
+          ),
+        );
+      }
+      entries.clear();
+      seenFingerprints.clear();
+
+      final granted = _claim(uniqueEntries.length);
+      final accepted = uniqueEntries.take(granted).toList(growable: true);
+      uniqueEntries.clear();
+      final acceptedCount = accepted.length;
       final relativePath = _relative(rootPath, path);
-      final canLazyLoadRawPgn = parseResult.offsetIndex != null;
+      final canLazyLoadRawPgn = offsetIndex != null;
       final inlineRawPgn =
-          !canLazyLoadRawPgn || accepted.length <= _kInlineRawPgnLimit;
+          !canLazyLoadRawPgn || acceptedCount <= _kInlineRawPgnLimit;
+      final treeWorkerCount =
+          buildOpeningTree
+              ? _treeWorkerCountForLocalFile(
+                fileSizeBytes: stat.size,
+                gameCount: acceptedCount,
+              )
+              : null;
+      final treeMaxPly =
+          buildOpeningTree
+              ? _treeMaxPlyForLocalFile(
+                fileSizeBytes: stat.size,
+                gameCount: acceptedCount,
+              )
+              : localOpeningTreeDefaultMaxPly;
+      _emitProgress(0.41, 'Preparing game list...');
       final games = <LocalChessGame>[];
-      final treeInputs = <LocalOpeningTreeGameInput>[];
-      for (var i = 0; i < accepted.length; i++) {
-        final entry = accepted[i];
-        final id = 'local_${_stableId('$path#$i')}';
+      for (final acceptedEntry in accepted) {
+        final entry = acceptedEntry.entry;
+        final sourceIndex = acceptedEntry.sourceIndex;
+        final id = 'local_${_stableId('$path#$sourceIndex')}';
         final rawPgn = entry.rawPgn;
         games.add(
           LocalChessGame(
@@ -753,27 +1572,18 @@ class _ScanWorker {
             sourcePath: path,
             sourceRelativePath: relativePath,
             fileName: _basename(path),
-            indexInFile: i,
-            fileGameCount: parseResult.totalEntries,
+            indexInFile: sourceIndex,
+            fileGameCount: totalEntries,
             hasMoves: entry.hasMoves,
+            pgnFingerprint: acceptedEntry.fingerprint,
             sourceByteStart: entry.sourceByteStart,
             sourceByteEnd: entry.sourceByteEnd,
-          ),
-        );
-        treeInputs.add(
-          LocalOpeningTreeGameInput(
-            id: id,
-            rawPgn: rawPgn,
-            sourcePath: path,
-            sourceRelativePath: relativePath,
-            fileName: _basename(path),
-            indexInFile: i,
-            fileGameCount: parseResult.totalEntries,
           ),
         );
       }
 
       if (games.isEmpty) {
+        accepted.clear();
         return LocalChessFileNode(
           name: localChessDatabaseDisplayNameForPath(path),
           path: path,
@@ -787,29 +1597,87 @@ class _ScanWorker {
         );
       }
 
-      final LocalOpeningTreeBuildResult buildResult;
-      try {
-        buildResult = buildLocalOpeningTreeIndexWithDiagnostics(
-          treeId: 'local:${_stableId(path)}',
-          databaseId: path,
-          includePositionGameRefs: games.length <= _kEagerPositionGameRefLimit,
-          games: treeInputs,
-        );
-      } on ArgumentError catch (e) {
-        throw LocalOpeningTreeBuildException(path, e);
-      } on Exception catch (e) {
-        throw LocalOpeningTreeBuildException(path, e);
+      LocalOpeningTreeBuildResult? buildResult;
+      String? treeBuildMessage;
+      if (buildOpeningTree) {
+        final includeTreeGameRows = games.length <= _kEagerTreeGameRowLimit;
+        final includePositionGameRefs =
+            games.length <= _kEagerPositionGameRefLimit;
+        try {
+          _emitProgress(0.45, 'Building opening tree...');
+          if (treeWorkerCount == 1) {
+            try {
+              buildResult = buildLocalOpeningTreeIndexWithDiagnosticsIterable(
+                treeId: 'local:${_stableId(path)}',
+                databaseId: path,
+                maxPly: treeMaxPly,
+                includePositionGameRefs: includePositionGameRefs,
+                includeGameRows: includeTreeGameRows,
+                games: _treeInputsForAcceptedEntries(
+                  accepted: accepted,
+                  path: path,
+                  relativePath: relativePath,
+                  totalEntries: totalEntries,
+                ),
+              );
+              _emitProgress(0.95, 'Building opening tree...');
+            } finally {
+              accepted.clear();
+            }
+          } else {
+            final treeInputs = _treeInputsForAcceptedEntries(
+              accepted: accepted,
+              path: path,
+              relativePath: relativePath,
+              totalEntries: totalEntries,
+            ).toList(growable: true);
+            accepted.clear();
+            try {
+              buildResult =
+                  await buildLocalOpeningTreeIndexWithDiagnosticsAsync(
+                    treeId: 'local:${_stableId(path)}',
+                    databaseId: path,
+                    maxPly: treeMaxPly,
+                    includePositionGameRefs: includePositionGameRefs,
+                    includeGameRows: includeTreeGameRows,
+                    workerCount: treeWorkerCount,
+                    games: treeInputs,
+                    onShardComplete: (completedShards, totalShards) {
+                      if (totalShards <= 0) return;
+                      final fraction = completedShards / totalShards;
+                      _emitProgress(
+                        0.45 + (fraction * 0.50),
+                        'Building opening tree...',
+                      );
+                    },
+                  );
+            } finally {
+              treeInputs.clear();
+            }
+          }
+        } on ArgumentError catch (e) {
+          treeBuildMessage = LocalOpeningTreeBuildException(path, e).toString();
+        } on Exception catch (e) {
+          treeBuildMessage = LocalOpeningTreeBuildException(path, e).toString();
+        }
+      } else {
+        accepted.clear();
+        treeBuildMessage = 'Opening tree queued for background build.';
       }
-      final openingTreeIndex = buildResult.index;
+      final openingTreeIndex = buildResult?.index;
+      _emitProgress(0.97, 'Finalizing PGN...');
       final messages = <String>[
-        if (granted < parseResult.totalEntries)
-          'Showing first $granted of ${parseResult.totalEntries} entries; the rest were '
+        if (granted < totalEntries)
+          'Showing first $granted of $totalEntries entries; the rest were '
               'skipped to stay within the index cap.',
-        if (buildResult.skippedGames.isNotEmpty)
+        if (treeBuildMessage != null) treeBuildMessage,
+        if (buildResult != null && buildResult.skippedGames.isNotEmpty)
           _openingTreeSkippedMessage(
-            indexedGames: openingTreeIndex.downloadedGameCount,
+            indexedGames: openingTreeIndex!.downloadedGameCount,
             skippedGames: buildResult.skippedGames.length,
           ),
+        if (duplicateCount > 0)
+          'Skipped $duplicateCount duplicate PGN ${duplicateCount == 1 ? 'entry' : 'entries'}.',
       ];
 
       return LocalChessFileNode(
@@ -823,7 +1691,7 @@ class _ScanWorker {
         modifiedAt: stat.modified,
         message: messages.isEmpty ? null : messages.join(' '),
         openingTreeIndex: openingTreeIndex,
-        pgnOffsetIndex: parseResult.offsetIndex,
+        pgnOffsetIndex: offsetIndex,
       );
     } on FileSystemException catch (e) {
       return LocalChessFileNode(
@@ -875,6 +1743,48 @@ class _ScanWorker {
       );
     }
   }
+}
+
+Iterable<LocalOpeningTreeGameInput> _treeInputsForAcceptedEntries({
+  required List<_UniqueParsedLocalChessGame> accepted,
+  required String path,
+  required String relativePath,
+  required int totalEntries,
+}) sync* {
+  for (final acceptedEntry in accepted) {
+    final sourceIndex = acceptedEntry.sourceIndex;
+    yield LocalOpeningTreeGameInput(
+      id: 'local_${_stableId('$path#$sourceIndex')}',
+      rawPgn: acceptedEntry.entry.rawPgn,
+      sourcePath: path,
+      sourceRelativePath: relativePath,
+      fileName: _basename(path),
+      indexInFile: sourceIndex,
+      fileGameCount: totalEntries,
+      sourceByteStart: acceptedEntry.entry.sourceByteStart,
+      sourceByteEnd: acceptedEntry.entry.sourceByteEnd,
+    );
+  }
+}
+
+int? _treeWorkerCountForLocalFile({
+  required int fileSizeBytes,
+  required int gameCount,
+}) {
+  if (gameCount <= 1) return 1;
+  if (fileSizeBytes >= _kSingleWorkerTreeBuildBytes) return 1;
+  if (fileSizeBytes >= _kTwoWorkerTreeBuildBytes) return 2;
+  return null;
+}
+
+int _treeMaxPlyForLocalFile({
+  required int fileSizeBytes,
+  required int gameCount,
+}) {
+  if (fileSizeBytes >= _kSingleWorkerTreeBuildBytes || gameCount >= 50000) {
+    return localOpeningTreeLargeImportMaxPly;
+  }
+  return localOpeningTreeDefaultMaxPly;
 }
 
 LocalChessFileNode? _failedFileNodeFromFileSystemException(
@@ -1067,20 +1977,32 @@ Future<_PgnParseResult> _parseSupportedFile({
   required String extension,
   required int maxEntries,
   required int maxDecodedBytes,
+  void Function(double fraction)? onPgnScanProgress,
+  void Function(double fraction)? onPgnReadProgress,
 }) async {
   switch (extension.toLowerCase()) {
     case '.pgn':
-      return _parsePgnFile(path, maxEntries: maxEntries);
+      return _parsePgnFile(
+        path,
+        maxEntries: maxEntries,
+        onScanProgress: onPgnScanProgress,
+        onReadProgress: onPgnReadProgress,
+      );
     case '.pgn.bz2':
     case '.bz2':
     case '.pgn.zst':
     case '.zst':
+      onPgnScanProgress?.call(0);
       final raw = await _readTextFile(
         path,
         extension,
         maxDecodedBytes: maxDecodedBytes,
       );
-      return _parsePgnText(raw, maxEntries: maxEntries);
+      onPgnScanProgress?.call(1);
+      onPgnReadProgress?.call(0);
+      final result = _parsePgnText(raw, maxEntries: maxEntries);
+      onPgnReadProgress?.call(1);
+      return result;
     default:
       return const _PgnParseResult(
         entries: <_ParsedLocalChessGame>[],
@@ -1121,9 +2043,17 @@ List<String> _splitPgnGameChunks(String text) {
   var sawMovetext = false;
   var inComment = false;
 
-  for (final line in text.split('\n')) {
+  var start = 0;
+  while (start <= text.length) {
+    final newline = text.indexOf('\n', start);
+    final isLastLine = newline == -1;
+    final line =
+        isLastLine ? text.substring(start) : text.substring(start, newline);
     final trimmedLine = _stripBom(line).trimLeft();
-    final isHeader = !inComment && _kPgnHeaderLineRegex.hasMatch(trimmedLine);
+    final isHeader =
+        !inComment &&
+        trimmedLine.startsWith('[') &&
+        _kPgnHeaderLineRegex.hasMatch(trimmedLine);
     if (isHeader && sawMovetext && current.isNotEmpty) {
       final chunk = current.toString().trim();
       if (chunk.isNotEmpty) chunks.add(chunk);
@@ -1136,6 +2066,8 @@ List<String> _splitPgnGameChunks(String text) {
       sawMovetext = true;
     }
     inComment = _updatePgnCommentState(line, inComment);
+    if (isLastLine) break;
+    start = newline + 1;
   }
 
   final tail = current.toString().trim();
@@ -1146,81 +2078,121 @@ List<String> _splitPgnGameChunks(String text) {
 Future<_PgnParseResult> _parsePgnFile(
   String path, {
   required int maxEntries,
+  void Function(double fraction)? onScanProgress,
+  void Function(double fraction)? onReadProgress,
 }) async {
+  final scan = await _scanPgnFileRanges(
+    path,
+    maxEntries: maxEntries,
+    onScanProgress: onScanProgress,
+  );
   final entries = <_ParsedLocalChessGame>[];
-  final current = BytesBuilder(copy: false);
+  await _forEachParsedPgnRange(
+    path,
+    scan,
+    onEntry: (_, entry) {
+      entries.add(entry);
+    },
+    onReadProgress: onReadProgress,
+  );
+  return _PgnParseResult(
+    entries: entries,
+    totalEntries: scan.totalEntries,
+    offsetIndex: scan.offsetIndex,
+  );
+}
+
+Future<_PgnRangeScanResult> _scanPgnFileRanges(
+  String path, {
+  required int maxEntries,
+  void Function(double fraction)? onScanProgress,
+}) async {
+  final ranges = <_PgnByteRange>[];
   final checkpointOffsets = <int>[];
-  var currentByteLength = 0;
   var currentStartOffset = 0;
+  var hasCurrent = false;
   var sawMovetext = false;
-  var inComment = false;
-  var isFirstLine = true;
+  var currentHasHeader = false;
+  var currentHasMoveHint = false;
   var totalEntries = 0;
   var finalOffset = 0;
 
   void flushCurrent(int endOffset) {
-    if (currentByteLength <= 0) return;
-    final rawPgnBytes = current.takeBytes();
-    currentByteLength = 0;
-    final rawPgn = _decodeTextBytes(rawPgnBytes).trim();
-    if (rawPgn.isEmpty) return;
-    final entry = _entryFromPgnChunk(rawPgn);
-    if (entry == null) return;
+    if (!hasCurrent || endOffset <= currentStartOffset) {
+      hasCurrent = false;
+      sawMovetext = false;
+      currentHasHeader = false;
+      currentHasMoveHint = false;
+      return;
+    }
+    if (!currentHasHeader && !currentHasMoveHint) {
+      hasCurrent = false;
+      sawMovetext = false;
+      currentHasHeader = false;
+      currentHasMoveHint = false;
+      return;
+    }
     final gameIndex = totalEntries;
     totalEntries++;
     if (gameIndex % _kPgnOffsetCheckpointStride == 0) {
       checkpointOffsets.add(currentStartOffset);
     }
-    if (entries.length < maxEntries) {
-      entries.add(
-        entry.copyWithSourceByteRange(
-          start: currentStartOffset,
-          end: endOffset,
-        ),
-      );
+    if (ranges.length < maxEntries) {
+      ranges.add(_PgnByteRange(start: currentStartOffset, end: endOffset));
     }
+    hasCurrent = false;
+    sawMovetext = false;
+    currentHasHeader = false;
+    currentHasMoveHint = false;
   }
 
-  await _forEachPgnFileLine(path, (_RawPgnLine rawLine) {
-    final stripBom = isFirstLine;
-    final lineBytes = rawLine.contentBytesForParsing(stripUtf8Bom: stripBom);
-    final rawBytes = rawLine.bytesForRawPgn(stripUtf8Bom: stripBom);
-    final lineStartOffset =
-        stripBom && rawLine.startsWithUtf8Bom
-            ? rawLine.startOffset + _kUtf8Bom.length
-            : rawLine.startOffset;
-    isFirstLine = false;
-    finalOffset = rawLine.endOffset;
-    final line = _decodeTextBytes(lineBytes);
-    final trimmedLine = line.trimLeft();
-    final isHeader = !inComment && _kPgnHeaderLineRegex.hasMatch(trimmedLine);
+  final stat = await File(path).stat();
+  final scanner = _PgnByteLineScanner((line) {
+    finalOffset = line.endOffset;
 
-    if (currentByteLength == 0 && trimmedLine.isEmpty) {
-      inComment = _updatePgnCommentState(line, inComment);
+    if (!hasCurrent && line.isBlank) {
       return;
     }
 
-    if (isHeader && sawMovetext && currentByteLength > 0) {
-      flushCurrent(rawLine.startOffset);
+    if (line.isHeader && sawMovetext && hasCurrent) {
+      flushCurrent(line.startOffset);
       sawMovetext = false;
     }
 
-    if (currentByteLength == 0) {
-      currentStartOffset = lineStartOffset;
+    if (!hasCurrent) {
+      currentStartOffset = line.contentStartOffset;
+      hasCurrent = true;
     }
-    current.add(rawBytes);
-    currentByteLength += rawBytes.length;
-    if (trimmedLine.isNotEmpty && !isHeader) {
+    if (line.isHeader) {
+      currentHasHeader = true;
+    }
+    if (line.hasMoveHint) {
+      currentHasMoveHint = true;
+    }
+    if (!line.isBlank && !line.isHeader) {
       sawMovetext = true;
     }
-    inComment = _updatePgnCommentState(line, inComment);
   });
+  final Uint8List? inMemoryBytes =
+      stat.size <= _kFastInMemoryPgnScanBytes
+          ? await File(path).readAsBytes()
+          : null;
+  if (inMemoryBytes != null) {
+    scanner.scanBytes(
+      inMemoryBytes,
+      totalBytes: inMemoryBytes.length,
+      onProgress: onScanProgress,
+    );
+  } else {
+    await scanner.scan(path, totalBytes: stat.size, onProgress: onScanProgress);
+  }
+  finalOffset = scanner.finalOffset;
 
   flushCurrent(finalOffset);
+  onScanProgress?.call(1);
 
-  final stat = await File(path).stat();
-  return _PgnParseResult(
-    entries: entries,
+  return _PgnRangeScanResult(
+    ranges: ranges,
     totalEntries: totalEntries,
     offsetIndex: LocalChessPgnOffsetIndex(
       path: path,
@@ -1230,95 +2202,287 @@ Future<_PgnParseResult> _parsePgnFile(
       checkpointStride: _kPgnOffsetCheckpointStride,
       checkpointOffsets: checkpointOffsets,
     ),
+    inMemoryBytes: inMemoryBytes,
   );
+}
+
+Future<void> _forEachParsedPgnRange(
+  String path,
+  _PgnRangeScanResult scan, {
+  required FutureOr<void> Function(int sourceIndex, _ParsedLocalChessGame entry)
+  onEntry,
+  void Function(double fraction)? onReadProgress,
+}) async {
+  onReadProgress?.call(0);
+  final ranges = scan.ranges;
+  if (ranges.isEmpty) {
+    onReadProgress?.call(1);
+    return;
+  }
+  final inMemoryBytes = scan.inMemoryBytes;
+  if (inMemoryBytes != null) {
+    for (var i = 0; i < ranges.length; i++) {
+      final range = ranges[i];
+      final rawPgn =
+          _decodeTextBytes(
+            Uint8List.sublistView(inMemoryBytes, range.start, range.end),
+          ).trim();
+      if (rawPgn.isEmpty) continue;
+      final entry = _entryFromPgnChunk(rawPgn);
+      if (entry == null) continue;
+      await onEntry(
+        i,
+        entry.copyWithSourceByteRange(start: range.start, end: range.end),
+      );
+      if (ranges.length <= 1 || i % 256 == 0 || i == ranges.length - 1) {
+        onReadProgress?.call((i + 1) / ranges.length);
+      }
+    }
+  } else {
+    final raf = await File(path).open();
+    try {
+      for (var i = 0; i < ranges.length; i++) {
+        final range = ranges[i];
+        await raf.setPosition(range.start);
+        final rawPgn =
+            _decodeTextBytes(await raf.read(range.end - range.start)).trim();
+        if (rawPgn.isEmpty) continue;
+        final entry = _entryFromPgnChunk(rawPgn);
+        if (entry == null) continue;
+        await onEntry(
+          i,
+          entry.copyWithSourceByteRange(start: range.start, end: range.end),
+        );
+        if (ranges.length <= 1 || i % 256 == 0 || i == ranges.length - 1) {
+          onReadProgress?.call((i + 1) / ranges.length);
+        }
+      }
+    } finally {
+      await raf.close();
+    }
+  }
+
+  onReadProgress?.call(1);
 }
 
 const _kUtf8Bom = <int>[0xEF, 0xBB, 0xBF];
 
-Future<void> _forEachPgnFileLine(
-  String path,
-  void Function(_RawPgnLine line) onLine,
-) async {
-  final line = <int>[];
-  var lineStartOffset = 0;
-  var offset = 0;
-  var pendingCr = false;
+class _PgnRangeScanResult {
+  const _PgnRangeScanResult({
+    required this.ranges,
+    required this.totalEntries,
+    required this.offsetIndex,
+    this.inMemoryBytes,
+  });
 
-  void flushLine({required int endOffset}) {
-    if (line.isEmpty && endOffset == lineStartOffset) return;
-    onLine(
-      _RawPgnLine(
-        startOffset: lineStartOffset,
-        endOffset: endOffset,
-        bytes: List<int>.unmodifiable(line),
-      ),
-    );
-    line.clear();
-    lineStartOffset = endOffset;
-  }
-
-  await for (final chunk in File(path).openRead()) {
-    for (final byte in chunk) {
-      if (pendingCr) {
-        if (byte == 0x0A) {
-          offset++;
-          line.add(byte);
-          flushLine(endOffset: offset);
-          pendingCr = false;
-          continue;
-        }
-        flushLine(endOffset: offset);
-        pendingCr = false;
-      }
-
-      offset++;
-      line.add(byte);
-      if (byte == 0x0D) {
-        pendingCr = true;
-      } else if (byte == 0x0A) {
-        flushLine(endOffset: offset);
-      }
-    }
-  }
-  if (pendingCr) {
-    flushLine(endOffset: offset);
-  }
-  flushLine(endOffset: offset);
+  final List<_PgnByteRange> ranges;
+  final int totalEntries;
+  final LocalChessPgnOffsetIndex offsetIndex;
+  final Uint8List? inMemoryBytes;
 }
 
-class _RawPgnLine {
-  const _RawPgnLine({
+class _PgnByteRange {
+  const _PgnByteRange({required this.start, required this.end});
+
+  final int start;
+  final int end;
+}
+
+class _PgnByteLine {
+  const _PgnByteLine({
     required this.startOffset,
+    required this.contentStartOffset,
     required this.endOffset,
-    required this.bytes,
+    required this.isHeader,
+    required this.isBlank,
+    required this.hasMoveHint,
   });
 
   final int startOffset;
+  final int contentStartOffset;
   final int endOffset;
-  final List<int> bytes;
+  final bool isHeader;
+  final bool isBlank;
+  final bool hasMoveHint;
+}
 
-  bool get startsWithUtf8Bom {
-    return bytes.length >= _kUtf8Bom.length &&
-        bytes[0] == _kUtf8Bom[0] &&
-        bytes[1] == _kUtf8Bom[1] &&
-        bytes[2] == _kUtf8Bom[2];
+class _PgnByteLineScanner {
+  _PgnByteLineScanner(this.onLine);
+
+  final void Function(_PgnByteLine line) onLine;
+
+  int finalOffset = 0;
+  int _offset = 0;
+  int _lineStartOffset = 0;
+  int _lineByteCount = 0;
+  bool _pendingCr = false;
+  bool _isFirstLine = true;
+  bool _lineStartedInComment = false;
+  bool _inComment = false;
+  bool _lineHasNonWhitespace = false;
+  bool _lineHasMoveHint = false;
+  bool _lineMoveNumberCandidate = false;
+  bool _lineStartsWithUtf8Bom = false;
+  int? _firstNonWhitespaceByte;
+
+  Future<void> scan(
+    String path, {
+    int? totalBytes,
+    void Function(double fraction)? onProgress,
+  }) async {
+    var lastProgressOffset = 0;
+    void emitProgress({bool force = false}) {
+      if (onProgress == null || totalBytes == null || totalBytes <= 0) return;
+      if (!force && _offset - lastProgressOffset < 1024 * 1024) return;
+      lastProgressOffset = _offset;
+      onProgress((_offset / totalBytes).clamp(0.0, 1.0).toDouble());
+    }
+
+    emitProgress(force: true);
+    await for (final chunk in File(path).openRead()) {
+      for (final byte in chunk) {
+        _readByte(byte);
+      }
+      emitProgress();
+    }
+    if (_pendingCr) {
+      _flushLine(_offset);
+      _pendingCr = false;
+    }
+    if (_lineByteCount > 0 || _offset == _lineStartOffset) {
+      _flushLine(_offset);
+    }
+    finalOffset = _offset;
+    emitProgress(force: true);
   }
 
-  List<int> contentBytesForParsing({required bool stripUtf8Bom}) {
-    var end = bytes.length;
-    if (end > 0 && bytes[end - 1] == 0x0A) end--;
-    if (end > 0 && bytes[end - 1] == 0x0D) end--;
-    final start = stripUtf8Bom && startsWithUtf8Bom ? _kUtf8Bom.length : 0;
-    if (start == 0 && end == bytes.length) return bytes;
-    if (start >= end) return const <int>[];
-    return bytes.sublist(start, end);
+  void scanBytes(
+    Uint8List bytes, {
+    int? totalBytes,
+    void Function(double fraction)? onProgress,
+  }) {
+    var lastProgressOffset = 0;
+    void emitProgress({bool force = false}) {
+      if (onProgress == null || totalBytes == null || totalBytes <= 0) return;
+      if (!force && _offset - lastProgressOffset < 1024 * 1024) return;
+      lastProgressOffset = _offset;
+      onProgress((_offset / totalBytes).clamp(0.0, 1.0).toDouble());
+    }
+
+    emitProgress(force: true);
+    for (final byte in bytes) {
+      _readByte(byte);
+      if (_offset - lastProgressOffset >= 1024 * 1024) {
+        emitProgress();
+      }
+    }
+    if (_pendingCr) {
+      _flushLine(_offset);
+      _pendingCr = false;
+    }
+    if (_lineByteCount > 0 || _offset == _lineStartOffset) {
+      _flushLine(_offset);
+    }
+    finalOffset = _offset;
+    emitProgress(force: true);
   }
 
-  List<int> bytesForRawPgn({required bool stripUtf8Bom}) {
-    if (!stripUtf8Bom || !startsWithUtf8Bom) return bytes;
-    if (bytes.length == _kUtf8Bom.length) return const <int>[];
-    return bytes.sublist(_kUtf8Bom.length);
+  void _readByte(int byte) {
+    if (_pendingCr) {
+      if (byte == 0x0A) {
+        _offset++;
+        _flushLine(_offset);
+        _pendingCr = false;
+        return;
+      }
+      _flushLine(_offset);
+      _pendingCr = false;
+    }
+
+    _offset++;
+    if (byte == 0x0D) {
+      _pendingCr = true;
+      return;
+    }
+    if (byte == 0x0A) {
+      _flushLine(_offset);
+      return;
+    }
+    _readContentByte(byte);
   }
+
+  void _readContentByte(int byte) {
+    if (_isFirstLine &&
+        _lineByteCount < _kUtf8Bom.length &&
+        byte == _kUtf8Bom[_lineByteCount]) {
+      if (_lineByteCount == _kUtf8Bom.length - 1) {
+        _lineStartsWithUtf8Bom = true;
+      }
+      _lineByteCount++;
+      return;
+    }
+
+    _lineByteCount++;
+    if (!_isWhitespaceByte(byte)) {
+      _lineHasNonWhitespace = true;
+      _firstNonWhitespaceByte ??= byte;
+    }
+
+    if (byte >= 0x30 && byte <= 0x39) {
+      _lineMoveNumberCandidate = true;
+    } else if (byte == 0x2E && _lineMoveNumberCandidate) {
+      _lineHasMoveHint = true;
+      _lineMoveNumberCandidate = false;
+    } else if (!_isWhitespaceByte(byte)) {
+      _lineMoveNumberCandidate = false;
+    }
+
+    if (byte == 0x7B) {
+      _inComment = true;
+    } else if (byte == 0x7D) {
+      _inComment = false;
+    }
+  }
+
+  void _flushLine(int endOffset) {
+    if (_lineByteCount == 0 && endOffset == _lineStartOffset) return;
+    final startsWithBom = _isFirstLine && _startsWithUtf8Bom();
+    onLine(
+      _PgnByteLine(
+        startOffset: _lineStartOffset,
+        contentStartOffset:
+            startsWithBom
+                ? _lineStartOffset + _kUtf8Bom.length
+                : _lineStartOffset,
+        endOffset: endOffset,
+        isHeader: !_lineStartedInComment && _firstNonWhitespaceByte == 0x5B,
+        isBlank: !_lineHasNonWhitespace,
+        hasMoveHint: _lineHasMoveHint,
+      ),
+    );
+    _lineStartOffset = endOffset;
+    _lineByteCount = 0;
+    _lineHasNonWhitespace = false;
+    _lineHasMoveHint = false;
+    _lineMoveNumberCandidate = false;
+    _lineStartsWithUtf8Bom = false;
+    _firstNonWhitespaceByte = null;
+    _lineStartedInComment = _inComment;
+    _isFirstLine = false;
+  }
+
+  bool _startsWithUtf8Bom() {
+    return _lineStartOffset == 0 && _lineStartsWithUtf8Bom;
+  }
+}
+
+bool _isWhitespaceByte(int byte) {
+  return byte == 0x20 ||
+      byte == 0x09 ||
+      byte == 0x0A ||
+      byte == 0x0D ||
+      byte == 0x0B ||
+      byte == 0x0C;
 }
 
 bool _requiresFullDecode(String extension) => extension.toLowerCase() != '.pgn';
@@ -1329,6 +2493,7 @@ String _stripBom(String line) {
 }
 
 bool _updatePgnCommentState(String line, bool inComment) {
+  if (!inComment && !line.contains('{')) return false;
   var next = inComment;
   for (final codeUnit in line.codeUnits) {
     if (codeUnit == 0x7B) {
@@ -1433,6 +2598,18 @@ class _ParsedLocalChessGame {
       sourceByteEnd: end,
     );
   }
+}
+
+class _UniqueParsedLocalChessGame {
+  const _UniqueParsedLocalChessGame({
+    required this.sourceIndex,
+    required this.fingerprint,
+    required this.entry,
+  });
+
+  final int sourceIndex;
+  final String fingerprint;
+  final _ParsedLocalChessGame entry;
 }
 
 class _PgnParseResult {
