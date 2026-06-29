@@ -2,6 +2,7 @@
 set -euo pipefail
 
 platform="${1:-desktop}"
+event="${2:-finished}"
 
 if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
   echo "TELEGRAM_BOT_TOKEN is required"
@@ -15,13 +16,29 @@ fi
 
 version="$(awk '/^version:/ { print $2; exit }' pubspec.yaml 2>/dev/null || true)"
 version="${version:-unknown}"
-status="${CM_BUILD_STATUS:-${CM_BUILD_STEP_STATUS:-finished}}"
+success_marker="${CM_BUILD_DIR:-$PWD}/.codemagic_release_success"
+case "$event" in
+  started)
+    status="started"
+    ;;
+  finished)
+    if [ -f "$success_marker" ]; then
+      status="succeeded"
+    else
+      status="failed"
+    fi
+    ;;
+  *)
+    status="$event"
+    ;;
+esac
 workflow="${CM_WORKFLOW_NAME:-${CM_WORKFLOW_ID:-unknown}}"
 branch="${CM_BRANCH:-unknown}"
 commit="${CM_COMMIT:-$(git rev-parse HEAD 2>/dev/null || true)}"
 commit="${commit:-unknown}"
 short_commit="${commit:0:8}"
 build_id="${CM_BUILD_ID:-unknown}"
+build_url="${CM_BUILD_URL:-}"
 
 message=$(cat <<EOF
 ChessEver desktop ${platform} release ${status}
@@ -32,6 +49,11 @@ Commit: ${short_commit}
 Build: ${build_id}
 EOF
 )
+
+if [ -n "$build_url" ]; then
+  message="${message}
+URL: ${build_url}"
+fi
 
 jq -n \
   --arg chat_id "${TELEGRAM_CHAT_ID}" \

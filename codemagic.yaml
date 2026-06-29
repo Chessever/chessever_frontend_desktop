@@ -108,6 +108,9 @@ workflows:
         CHESSEVER_DEV_ID_IDENTITY: "Developer ID Application: ChessEver LLC (N8J7TUZMYR)"
         TELEGRAM_CHAT_ID: "-1003954728178"
     scripts:
+      - name: Notify Telegram release started
+        script: |
+          bash ./scripts/codemagic_notify_telegram.sh macOS started
       - name: Verify release environment
         script: |
           set -euo pipefail
@@ -207,15 +210,20 @@ workflows:
       - name: Publish macOS desktop archive
         script: |
           ./scripts/codemagic_publish_macos.sh
-      - name: Notify Telegram
+      - name: Mark macOS release succeeded
         script: |
-          bash ./scripts/codemagic_notify_telegram.sh macOS
+          touch "${CM_BUILD_DIR:-$PWD}/.codemagic_release_success"
     artifacts:
       - dist/*.dmg
       - dist/**/*.json
       - dist/**/*-macos/**
       - /tmp/xcodebuild_logs/*.log
       - build/macos/Build/Products/Release/*.app
+    publishing:
+      scripts:
+        - name: Notify Telegram release finished
+          script: |
+            bash ./scripts/codemagic_notify_telegram.sh macOS finished
 
   windows-desktop-release:
     name: Windows Desktop Release
@@ -228,6 +236,9 @@ workflows:
       vars:
         TELEGRAM_CHAT_ID: "-1003954728178"
     scripts:
+      - name: Notify Telegram release started
+        script: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_notify_telegram.ps1 -Platform Windows -Event started
       - name: Verify release environment
         script: |
           $required = @(
@@ -265,13 +276,19 @@ workflows:
       - name: Publish Windows desktop archive
         script: |
           powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_publish_windows.ps1
-      - name: Notify Telegram
+      - name: Mark Windows release succeeded
         script: |
-          powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_notify_telegram.ps1 -Platform Windows
+          $buildDir = if ($env:CM_BUILD_DIR) { $env:CM_BUILD_DIR } else { (Get-Location).Path }
+          New-Item -ItemType File -Path (Join-Path $buildDir '.codemagic_release_success') -Force | Out-Null
     artifacts:
       - dist\**\*
       - windows\installer\output\*.exe
       - build\windows\x64\runner\Release\**\*
+    publishing:
+      scripts:
+        - name: Notify Telegram release finished
+          script: |
+            powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_notify_telegram.ps1 -Platform Windows -Event finished
 
   linux-desktop-release:
     name: Linux Desktop Release
@@ -284,6 +301,9 @@ workflows:
       vars:
         TELEGRAM_CHAT_ID: "-1003954728178"
     scripts:
+      - name: Notify Telegram release started
+        script: |
+          bash ./scripts/codemagic_notify_telegram.sh Linux started
       - name: Verify release environment
         script: |
           set -euo pipefail
@@ -314,11 +334,16 @@ workflows:
       - name: Publish Linux desktop archive
         script: |
           bash ./scripts/codemagic_publish_linux.sh
-      - name: Notify Telegram
+      - name: Mark Linux release succeeded
         script: |
-          bash ./scripts/codemagic_notify_telegram.sh Linux
+          touch "${CM_BUILD_DIR:-$PWD}/.codemagic_release_success"
     artifacts:
       - dist/**/*.deb
       - dist/**/*.json
       - dist/**/*-linux/**
       - build/linux/x64/release/bundle/**
+    publishing:
+      scripts:
+        - name: Notify Telegram release finished
+          script: |
+            bash ./scripts/codemagic_notify_telegram.sh Linux finished

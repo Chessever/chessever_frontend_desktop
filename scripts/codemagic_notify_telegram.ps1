@@ -1,5 +1,6 @@
 param(
-    [string]$Platform = 'desktop'
+    [string]$Platform = 'desktop',
+    [string]$Event = 'finished'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,12 +21,25 @@ if (Test-Path 'pubspec.yaml') {
     }
 }
 
-$status = if ($env:CM_BUILD_STATUS) { $env:CM_BUILD_STATUS } elseif ($env:CM_BUILD_STEP_STATUS) { $env:CM_BUILD_STEP_STATUS } else { 'finished' }
+$buildDir = if ($env:CM_BUILD_DIR) { $env:CM_BUILD_DIR } else { (Get-Location).Path }
+$successMarker = Join-Path $buildDir '.codemagic_release_success'
+switch ($Event) {
+    'started' { $status = 'started' }
+    'finished' {
+        if (Test-Path $successMarker) {
+            $status = 'succeeded'
+        } else {
+            $status = 'failed'
+        }
+    }
+    default { $status = $Event }
+}
 $workflow = if ($env:CM_WORKFLOW_NAME) { $env:CM_WORKFLOW_NAME } elseif ($env:CM_WORKFLOW_ID) { $env:CM_WORKFLOW_ID } else { 'unknown' }
 $branch = if ($env:CM_BRANCH) { $env:CM_BRANCH } else { 'unknown' }
 $commit = if ($env:CM_COMMIT) { $env:CM_COMMIT } else { 'unknown' }
 $shortCommit = if ($commit.Length -gt 8) { $commit.Substring(0, 8) } else { $commit }
 $buildId = if ($env:CM_BUILD_ID) { $env:CM_BUILD_ID } else { 'unknown' }
+$buildUrl = if ($env:CM_BUILD_URL) { $env:CM_BUILD_URL } else { '' }
 
 $message = @"
 ChessEver desktop $Platform release $status
@@ -35,6 +49,10 @@ Branch: $branch
 Commit: $shortCommit
 Build: $buildId
 "@
+
+if ($buildUrl) {
+    $message = "$message`nURL: $buildUrl"
+}
 
 $payload = @{
     chat_id = $env:TELEGRAM_CHAT_ID
