@@ -14,11 +14,18 @@ import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 
+const String _legacySqfliteMigrationV1 = 'legacy_sqflite_local_chess_v1';
+const String _legacySqfliteMigrationV2 =
+    'legacy_sqflite_local_chess_v2_desktop_path_scan';
+
 void main() {
   late resqlite.Database db;
   late Directory temp;
 
-  setUpAll(sqfliteFfiInit);
+  setUpAll(() {
+    sqfliteFfiInit();
+    sqflite.databaseFactory = databaseFactoryFfiNoIsolate;
+  });
 
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('chessever-local-db-');
@@ -58,7 +65,7 @@ void main() {
     expect(await _count(db, 'local_chess_position_games'), 1);
     final marker = await db.select(
       'SELECT 1 FROM local_chess_migrations WHERE name = ?',
-      const <Object?>['legacy_sqflite_local_chess_v1'],
+      const <Object?>[_legacySqfliteMigrationV2],
     );
     expect(marker, isNotEmpty);
     final migrated =
@@ -132,6 +139,165 @@ void main() {
   });
 
   test(
+    'legacy migration recovers when an earlier empty attempt wrote the marker',
+    () async {
+      final pgnFile = File('${temp.path}/marked-legacy.pgn');
+      await pgnFile.writeAsString(_legacyPgn.trim());
+      final legacyDb = await databaseFactoryFfiNoIsolate.openDatabase(
+        '${temp.path}/marked_legacy_app.db',
+      );
+      addTearDown(legacyDb.close);
+      await legacyDb.execute('PRAGMA foreign_keys=ON');
+      await createLocalChessDatabaseSchema(legacyDb);
+      await _seedLegacyLocalChessCache(legacyDb, pgnFile);
+      await db.execute(
+        '''
+        INSERT OR REPLACE INTO local_chess_migrations(name, completed_at_ms)
+        VALUES (?, ?)
+        ''',
+        <Object?>[_legacySqfliteMigrationV1, 1],
+      );
+
+      await migrateLegacyLocalChessSqfliteCache(
+        db,
+        legacyDatabase: () async => legacyDb,
+      );
+
+      expect(await _count(db, 'local_chess_databases'), 1);
+      expect(await _count(db, 'local_chess_games'), 1);
+      expect(await _count(db, 'local_chess_tree_moves'), 2);
+      expect(
+        await db.select(
+          'SELECT 1 FROM local_chess_migrations WHERE name = ?',
+          const <Object?>[_legacySqfliteMigrationV2],
+        ),
+        isNotEmpty,
+      );
+    },
+  );
+
+  test(
+    'legacy migration marker skips retry after corrected empty pass',
+    () async {
+      final emptyLegacy = await databaseFactoryFfiNoIsolate.openDatabase(
+        '${temp.path}/empty_noop_legacy.db',
+      );
+      addTearDown(emptyLegacy.close);
+      await emptyLegacy.execute('PRAGMA foreign_keys=ON');
+      await createLocalChessDatabaseSchema(emptyLegacy);
+
+      var inspections = 0;
+      await migrateLegacyLocalChessSqfliteCache(
+        db,
+        legacyDatabaseCandidates: <LocalChessLegacySqfliteDatabaseFactory>[
+          () async {
+            inspections++;
+            return emptyLegacy;
+          },
+        ],
+        legacyDatabasePathCandidates: const <String>[],
+      );
+
+      expect(inspections, 1);
+      expect(await _count(db, 'local_chess_databases'), 0);
+      expect(
+        await db.select(
+          'SELECT 1 FROM local_chess_migrations WHERE name = ?',
+          const <Object?>[_legacySqfliteMigrationV2],
+        ),
+        isNotEmpty,
+      );
+
+      await migrateLegacyLocalChessSqfliteCache(
+        db,
+        legacyDatabaseCandidates: <LocalChessLegacySqfliteDatabaseFactory>[
+          () async {
+            inspections++;
+            throw StateError('migration should not retry after v2 marker');
+          },
+        ],
+        legacyDatabasePathCandidates: const <String>[],
+      );
+
+      expect(inspections, 1);
+      expect(await _count(db, 'local_chess_databases'), 0);
+    },
+  );
+
+  test(
+    'legacy migration scans later sqflite candidates when first path is empty',
+    () async {
+      final emptyLegacy = await databaseFactoryFfiNoIsolate.openDatabase(
+        '${temp.path}/empty_current_app.db',
+      );
+      addTearDown(emptyLegacy.close);
+      await emptyLegacy.execute('PRAGMA foreign_keys=ON');
+      await createLocalChessDatabaseSchema(emptyLegacy);
+
+      final pgnFile = File('${temp.path}/fallback-legacy.pgn');
+      await pgnFile.writeAsString(_legacyPgn.trim());
+      final fallbackLegacy = await databaseFactoryFfiNoIsolate.openDatabase(
+        '${temp.path}/fallback_legacy_app.db',
+      );
+      addTearDown(fallbackLegacy.close);
+      await fallbackLegacy.execute('PRAGMA foreign_keys=ON');
+      await createLocalChessDatabaseSchema(fallbackLegacy);
+      await _seedLegacyLocalChessCache(fallbackLegacy, pgnFile);
+
+      await migrateLegacyLocalChessSqfliteCache(
+        db,
+        legacyDatabaseCandidates: <LocalChessLegacySqfliteDatabaseFactory>[
+          () async => emptyLegacy,
+          () async => fallbackLegacy,
+        ],
+      );
+
+      expect(await _count(db, 'local_chess_databases'), 1);
+      final rows = await db.select(
+        'SELECT path FROM local_chess_databases LIMIT 1',
+      );
+      expect(rows.single['path'], pgnFile.path);
+    },
+  );
+
+  test(
+    'legacy migration opens sqflite cache from desktop path candidate',
+    () async {
+      final pgnFile = File('${temp.path}/windows-path-legacy.pgn');
+      await pgnFile.writeAsString(_legacyPgn.trim());
+      final legacyPath = p.join(
+        temp.path,
+        'AppData',
+        'Roaming',
+        'chessever',
+        'chessever_app.db',
+      );
+      await Directory(p.dirname(legacyPath)).create(recursive: true);
+      final legacyDb = await databaseFactoryFfiNoIsolate.openDatabase(
+        legacyPath,
+      );
+      await legacyDb.execute('PRAGMA foreign_keys=ON');
+      await createLocalChessDatabaseSchema(legacyDb);
+      await _seedLegacyLocalChessCache(legacyDb, pgnFile);
+      await legacyDb.close();
+
+      await migrateLegacyLocalChessSqfliteCache(
+        db,
+        legacyDatabasePathCandidates: <String>[
+          p.join(temp.path, 'missing', 'chessever_app.db'),
+          legacyPath,
+        ],
+      );
+
+      expect(await _count(db, 'local_chess_databases'), 1);
+      expect(await _count(db, 'local_chess_games'), 1);
+      expect(await _count(db, 'local_chess_tree_moves'), 2);
+      final rows = await db.select('SELECT path FROM local_chess_databases');
+      expect(rows.single['path'], pgnFile.path);
+    },
+  );
+
+  test(
     'legacy migration does not overwrite an existing resqlite cache',
     () async {
       final pgnFile = File('${temp.path}/current.pgn');
@@ -163,7 +329,7 @@ void main() {
       expect(paths.map((row) => row['path']), [pgnFile.path]);
       final marker = await db.select(
         'SELECT 1 FROM local_chess_migrations WHERE name = ?',
-        const <Object?>['legacy_sqflite_local_chess_v1'],
+        const <Object?>[_legacySqfliteMigrationV2],
       );
       expect(marker, isNotEmpty);
     },
@@ -190,7 +356,7 @@ void main() {
       expect(
         await db.select(
           'SELECT 1 FROM local_chess_migrations WHERE name = ?',
-          const <Object?>['legacy_sqflite_local_chess_v1'],
+          const <Object?>[_legacySqfliteMigrationV2],
         ),
         isNotEmpty,
       );
@@ -208,7 +374,7 @@ void main() {
       expect(
         await db.select(
           'SELECT 1 FROM local_chess_migrations WHERE name = ?',
-          const <Object?>['legacy_sqflite_local_chess_v1'],
+          const <Object?>[_legacySqfliteMigrationV2],
         ),
         isEmpty,
       );
@@ -448,6 +614,53 @@ void main() {
     ]) {
       expect(await File(path).exists(), isFalse);
     }
+  });
+
+  test('legacy sqflite path candidates are stable on desktop platforms', () {
+    expect(
+      localChessLegacySqfliteDatabasePathCandidates(
+        applicationSupportPath:
+            '/Users/u/Library/Application Support/chessever',
+        sqfliteDatabasesPath:
+            '/Users/u/app/.dart_tool/sqflite_common_ffi/databases',
+        documentsPath: '/Users/u/Documents',
+        pathContext: p.Context(style: p.Style.posix),
+      ),
+      <String>[
+        '/Users/u/Library/Application Support/chessever/chessever_app.db',
+        '/Users/u/app/.dart_tool/sqflite_common_ffi/databases/chessever_app.db',
+        '/Users/u/Documents/chessever_app.db',
+      ],
+    );
+
+    expect(
+      localChessLegacySqfliteDatabasePathCandidates(
+        applicationSupportPath: r'C:\Users\u\AppData\Roaming\chessever',
+        sqfliteDatabasesPath: r'C:\app\.dart_tool\sqflite_common_ffi\databases',
+        documentsPath: r'C:\Users\u\Documents',
+        pathContext: p.Context(style: p.Style.windows),
+      ),
+      <String>[
+        r'C:\Users\u\AppData\Roaming\chessever\chessever_app.db',
+        r'C:\app\.dart_tool\sqflite_common_ffi\databases\chessever_app.db',
+        r'C:\Users\u\Documents\chessever_app.db',
+      ],
+    );
+
+    expect(
+      localChessLegacySqfliteDatabasePathCandidates(
+        applicationSupportPath: '/home/u/.local/share/chessever',
+        sqfliteDatabasesPath:
+            '/home/u/app/.dart_tool/sqflite_common_ffi/databases',
+        documentsPath: '/home/u/Documents',
+        pathContext: p.Context(style: p.Style.posix),
+      ),
+      <String>[
+        '/home/u/.local/share/chessever/chessever_app.db',
+        '/home/u/app/.dart_tool/sqflite_common_ffi/databases/chessever_app.db',
+        '/home/u/Documents/chessever_app.db',
+      ],
+    );
   });
 
   test(

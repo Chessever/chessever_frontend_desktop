@@ -95,7 +95,7 @@ void main() {
     expect(desktopBoardResizeDragDelta(const Offset(-24, 96)), -96);
   });
 
-  test('board annotation clear hit-test ignores board squares', () {
+  test('board annotation clear hit-test sweeps clicks on board squares', () {
     const contentSize = Size(1000, 800);
     const boardSize = 600.0;
     const boardWithBar = 636.0;
@@ -106,7 +106,7 @@ void main() {
     // Column is centered: left = 182, board top = 76. Board itself starts
     // after the eval bar reservation and ends at x=818.
     expect(
-      shouldClearBoardAnnotationsForBoardMarginClick(
+      shouldClearBoardAnnotationsForBoardAreaClick(
         localPosition: const Offset(500, 350),
         contentSize: contentSize,
         boardSize: boardSize,
@@ -115,14 +115,14 @@ void main() {
         bottomRowHeight: bottomRowHeight,
         headerGap: headerGap,
       ),
-      isFalse,
-      reason: 'left-clicks inside the 8x8 board must not wipe annotations',
+      isTrue,
+      reason: 'left-clicks on the board sweep every drawn annotation',
     );
   });
 
   test('board annotation clear hit-test accepts empty board margin', () {
     expect(
-      shouldClearBoardAnnotationsForBoardMarginClick(
+      shouldClearBoardAnnotationsForBoardAreaClick(
         localPosition: const Offset(80, 350),
         contentSize: const Size(1000, 800),
         boardSize: 600,
@@ -138,7 +138,7 @@ void main() {
 
   test('board annotation clear hit-test ignores player/control rows', () {
     expect(
-      shouldClearBoardAnnotationsForBoardMarginClick(
+      shouldClearBoardAnnotationsForBoardAreaClick(
         localPosition: const Offset(80, 40),
         contentSize: const Size(1000, 800),
         boardSize: 600,

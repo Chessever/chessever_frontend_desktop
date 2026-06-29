@@ -27,6 +27,7 @@ class AppDatabase {
   Completer<Database>? _initCompleter;
   static const Duration _initTimeout = Duration(seconds: 4);
   static const String _dbFileName = 'chessever_app.db';
+  static String get dbFileName => _dbFileName;
   String? _cachedDbPath;
 
   /// Table for simple key-value storage (replaces SharedPreferences)

@@ -212,7 +212,7 @@ double desktopBoardResizeDragDelta(Offset offset) {
 }
 
 @visibleForTesting
-bool shouldClearBoardAnnotationsForBoardMarginClick({
+bool shouldClearBoardAnnotationsForBoardAreaClick({
   required Offset localPosition,
   required Size contentSize,
   required double boardSize,
@@ -226,25 +226,24 @@ bool shouldClearBoardAnnotationsForBoardMarginClick({
 
   final columnHeight =
       topRowHeight + headerGap + boardSize + headerGap + bottomRowHeight;
-  final columnLeft = math.max(0.0, (contentSize.width - boardWithBar) / 2);
   final columnTop = math.max(0.0, (contentSize.height - columnHeight) / 2);
   final boardTop = columnTop + topRowHeight + headerGap;
 
-  final nonClearBoardGroupRect = Rect.fromLTWH(
-    columnLeft,
-    boardTop,
-    boardWithBar,
-    boardSize,
-  );
-  final boardMarginBandRect = Rect.fromLTWH(
+  // A primary-button click anywhere in the board's vertical band — the 8x8
+  // squares, the eval-bar reservation, and the side margins level with the
+  // board — sweeps every user-drawn arrow/circle (Lichess / Chess.com
+  // convention). The ancestor Listener does not consume the event, so a click
+  // that lands on a square still reaches chessground to select / move the
+  // piece. The player-header and control rows above and below the band are
+  // excluded so clicking a name or button never wipes annotations.
+  final boardBandRect = Rect.fromLTWH(
     0,
     boardTop - headerGap,
     contentSize.width,
     boardSize + headerGap * 2,
   );
 
-  return boardMarginBandRect.contains(localPosition) &&
-      !nonClearBoardGroupRect.contains(localPosition);
+  return boardBandRect.contains(localPosition);
 }
 
 @visibleForTesting
@@ -5520,7 +5519,7 @@ class _BoardArea extends ConsumerWidget {
             onPointerDown: (event) {
               if (event.buttons & kPrimaryMouseButton == 0) return;
               final shouldClear =
-                  shouldClearBoardAnnotationsForBoardMarginClick(
+                  shouldClearBoardAnnotationsForBoardAreaClick(
                     localPosition: event.localPosition,
                     contentSize: constraints.biggest,
                     boardSize: boardSize,

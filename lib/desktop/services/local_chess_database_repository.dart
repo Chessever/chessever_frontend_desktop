@@ -225,12 +225,17 @@ const int _kCachedTreeRebuildPageSize = 2048;
 const int _kSingleWorkerTreeBuildBytes = 128 * 1024 * 1024;
 const int _kLegacyMigrationGamePageSize = 256;
 const int _kLegacyMigrationRowPageSize = 4096;
-const String _legacySqfliteMigrationName = 'legacy_sqflite_local_chess_v1';
+const String _legacySqfliteMigrationV1Name = 'legacy_sqflite_local_chess_v1';
+const String _legacySqfliteMigrationName =
+    'legacy_sqflite_local_chess_v2_desktop_path_scan';
 const String _localChessMigrationsTable = 'local_chess_migrations';
 const String _localChessCacheGenerationName =
     'local_chess_resqlite_cache_generation_20260628_safe_streaming_v1';
 const String _localChessTreeDepthGenerationName =
     'local_chess_tree_depth_50_v1';
+
+typedef LocalChessLegacySqfliteDatabaseFactory =
+    Future<sqflite.Database> Function();
 
 Future<void> createLocalChessResqliteDatabaseSchema(
   resqlite.Database db,
@@ -399,6 +404,10 @@ Future<void> _ensureLocalChessCacheGeneration(resqlite.Transaction tx) async {
   );
   await tx.execute(
     'DELETE FROM $_localChessMigrationsTable WHERE name = ?',
+    const <Object?>[_legacySqfliteMigrationV1Name],
+  );
+  await tx.execute(
+    'DELETE FROM $_localChessMigrationsTable WHERE name = ?',
     const <Object?>[_localChessTreeDepthGenerationName],
   );
   await tx.execute(
@@ -491,7 +500,9 @@ Future<void> _clearLocalChessTreeCache(resqlite.Transaction tx) async {
 
 Future<void> migrateLegacyLocalChessSqfliteCache(
   resqlite.Database target, {
-  Future<sqflite.Database> Function()? legacyDatabase,
+  LocalChessLegacySqfliteDatabaseFactory? legacyDatabase,
+  Iterable<LocalChessLegacySqfliteDatabaseFactory>? legacyDatabaseCandidates,
+  @visibleForTesting Iterable<String>? legacyDatabasePathCandidates,
 }) async {
   try {
     if (await _hasMigrationMarker(target, _legacySqfliteMigrationName)) {
@@ -502,58 +513,68 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
       return;
     }
 
-    final legacy =
-        await (legacyDatabase?.call() ?? AppDatabase.instance.database);
-    if (!await _legacyTableExists(legacy, localChessDatabasesTable)) {
+    final legacyCandidate = await _findLegacyLocalChessSqfliteCache(
+      legacyDatabase: legacyDatabase,
+      legacyDatabaseCandidates: legacyDatabaseCandidates,
+      legacyDatabasePathCandidates: legacyDatabasePathCandidates,
+    );
+    if (legacyCandidate == null) {
       await _markMigration(target, _legacySqfliteMigrationName);
       return;
     }
-    final legacyCountRows = await legacy.rawQuery(
-      'SELECT COUNT(*) AS count FROM $localChessDatabasesTable',
-    );
-    if (_readInt(legacyCountRows.single['count']) <= 0) {
-      await _markMigration(target, _legacySqfliteMigrationName);
-      return;
-    }
-    final legacyDatabaseCount = _readInt(legacyCountRows.single['count']);
-    localChessLog.info(
-      'Legacy sqflite local chess migration started',
-      context: <String, Object?>{'databases': legacyDatabaseCount},
-    );
+    try {
+      final legacy = legacyCandidate.database;
+      final legacyDatabaseCount = legacyCandidate.databaseCount;
+      localChessLog.info(
+        'Legacy sqflite local chess migration started',
+        context: <String, Object?>{
+          'databases': legacyDatabaseCount,
+          'source': legacyCandidate.label,
+        },
+      );
 
-    final gameColumns = await _legacyColumnNames(legacy, localChessGamesTable);
-    final positionColumns = await _legacyColumnNames(
-      legacy,
-      localChessPositionGamesTable,
-    );
+      final gameColumns = await _legacyColumnNames(
+        legacy,
+        localChessGamesTable,
+      );
+      final positionColumns = await _legacyColumnNames(
+        legacy,
+        localChessPositionGamesTable,
+      );
 
-    await target.transaction((tx) async {
-      await _copyLegacyTable(tx, legacy, localChessDatabasesTable);
-      await _copyLegacyTable(tx, legacy, localChessPlayersTable);
-      await _copyLegacyTable(tx, legacy, localChessEventsTable);
-      await _copyLegacyTable(tx, legacy, localChessSitesTable);
-      await _copyLegacyGames(tx, legacy, gameColumns);
-      await _copyLegacyTable(tx, legacy, localChessTreeNodesTable);
-      await _copyLegacyTable(tx, legacy, localChessTreeMovesTable);
-      await _copyLegacyPositionGames(tx, legacy, positionColumns);
-      await _copyLegacyTable(tx, legacy, localChessGameAnalysisTable);
-      await _backfillPositionGameNextUci(tx);
-      await _ensureLocalChessTreeDepthGeneration(tx);
-      await tx.execute(
-        '''
+      await target.transaction((tx) async {
+        await _copyLegacyTable(tx, legacy, localChessDatabasesTable);
+        await _copyLegacyTable(tx, legacy, localChessPlayersTable);
+        await _copyLegacyTable(tx, legacy, localChessEventsTable);
+        await _copyLegacyTable(tx, legacy, localChessSitesTable);
+        await _copyLegacyGames(tx, legacy, gameColumns);
+        await _copyLegacyTable(tx, legacy, localChessTreeNodesTable);
+        await _copyLegacyTable(tx, legacy, localChessTreeMovesTable);
+        await _copyLegacyPositionGames(tx, legacy, positionColumns);
+        await _copyLegacyTable(tx, legacy, localChessGameAnalysisTable);
+        await _backfillPositionGameNextUci(tx);
+        await _ensureLocalChessTreeDepthGeneration(tx);
+        await tx.execute(
+          '''
         INSERT OR REPLACE INTO $_localChessMigrationsTable(name, completed_at_ms)
         VALUES (?, ?)
         ''',
-        <Object?>[
-          _legacySqfliteMigrationName,
-          DateTime.now().millisecondsSinceEpoch,
-        ],
+          <Object?>[
+            _legacySqfliteMigrationName,
+            DateTime.now().millisecondsSinceEpoch,
+          ],
+        );
+      });
+      localChessLog.info(
+        'Legacy sqflite local chess migration finished',
+        context: <String, Object?>{
+          'databases': legacyDatabaseCount,
+          'source': legacyCandidate.label,
+        },
       );
-    });
-    localChessLog.info(
-      'Legacy sqflite local chess migration finished',
-      context: <String, Object?>{'databases': legacyDatabaseCount},
-    );
+    } finally {
+      await legacyCandidate.closeIfOwned();
+    }
   } catch (error, stackTrace) {
     localChessLog.warning(
       'Legacy sqflite local chess migration failed',
@@ -565,6 +586,143 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
     if (kDebugMode) {
       debugPrint('Legacy local chess migration failed: $error\n$stackTrace');
     }
+  }
+}
+
+Future<_LegacySqfliteCandidate?> _findLegacyLocalChessSqfliteCache({
+  LocalChessLegacySqfliteDatabaseFactory? legacyDatabase,
+  Iterable<LocalChessLegacySqfliteDatabaseFactory>? legacyDatabaseCandidates,
+  Iterable<String>? legacyDatabasePathCandidates,
+}) async {
+  final explicit = <LocalChessLegacySqfliteDatabaseFactory>[
+    if (legacyDatabase != null) legacyDatabase,
+    ...?legacyDatabaseCandidates,
+  ];
+  for (var i = 0; i < explicit.length; i++) {
+    final db = await explicit[i]();
+    final count = await _legacyLocalChessDatabaseCount(db);
+    if (count > 0) {
+      return _LegacySqfliteCandidate(
+        database: db,
+        databaseCount: count,
+        label: 'explicit:$i',
+        closeAfterUse: false,
+      );
+    }
+  }
+
+  final pathCandidates =
+      legacyDatabasePathCandidates ??
+      await _legacySqfliteDatabasePathCandidates();
+  for (final path in pathCandidates) {
+    if (!await File(path).exists()) continue;
+    sqflite.Database? db;
+    try {
+      db = await sqflite.openDatabase(
+        path,
+        readOnly: true,
+        singleInstance: false,
+      );
+      final count = await _legacyLocalChessDatabaseCount(db);
+      if (count > 0) {
+        return _LegacySqfliteCandidate(
+          database: db,
+          databaseCount: count,
+          label: path,
+          closeAfterUse: true,
+        );
+      }
+    } catch (error, stackTrace) {
+      localChessLog.warning(
+        'Failed to inspect legacy sqflite local chess database candidate',
+        error: error,
+        stackTrace: stackTrace,
+        context: <String, Object?>{'path': path},
+        tag: 'local-chess-legacy-migration-candidate',
+      );
+    }
+    await db?.close();
+  }
+
+  return null;
+}
+
+Future<int> _legacyLocalChessDatabaseCount(sqflite.Database db) async {
+  if (!await _legacyTableExists(db, localChessDatabasesTable)) return 0;
+  final rows = await db.rawQuery(
+    'SELECT COUNT(*) AS count FROM $localChessDatabasesTable',
+  );
+  return _readInt(rows.single['count']);
+}
+
+Future<List<String>> _legacySqfliteDatabasePathCandidates() async {
+  String? applicationSupportPath;
+  String? sqfliteDatabasesPath;
+  String? documentsPath;
+
+  try {
+    applicationSupportPath = (await getApplicationSupportDirectory()).path;
+  } catch (_) {
+    applicationSupportPath = null;
+  }
+  try {
+    sqfliteDatabasesPath = await sqflite.getDatabasesPath();
+  } catch (_) {
+    sqfliteDatabasesPath = null;
+  }
+  try {
+    documentsPath = (await getApplicationDocumentsDirectory()).path;
+  } catch (_) {
+    documentsPath = null;
+  }
+
+  return localChessLegacySqfliteDatabasePathCandidates(
+    applicationSupportPath: applicationSupportPath,
+    sqfliteDatabasesPath: sqfliteDatabasesPath,
+    documentsPath: documentsPath,
+  );
+}
+
+@visibleForTesting
+List<String> localChessLegacySqfliteDatabasePathCandidates({
+  required String? applicationSupportPath,
+  required String? sqfliteDatabasesPath,
+  required String? documentsPath,
+  p.Context? pathContext,
+}) {
+  final context = pathContext ?? p.context;
+  final paths = <String>[];
+  final seen = <String>{};
+
+  void add(String? directory) {
+    final trimmed = directory?.trim();
+    if (trimmed == null || trimmed.isEmpty) return;
+    final path = context.join(trimmed, AppDatabase.dbFileName);
+    final key = context.normalize(path).toLowerCase();
+    if (seen.add(key)) paths.add(path);
+  }
+
+  add(applicationSupportPath);
+  add(sqfliteDatabasesPath);
+  add(documentsPath);
+  return paths;
+}
+
+class _LegacySqfliteCandidate {
+  const _LegacySqfliteCandidate({
+    required this.database,
+    required this.databaseCount,
+    required this.label,
+    required this.closeAfterUse,
+  });
+
+  final sqflite.Database database;
+  final int databaseCount;
+  final String label;
+  final bool closeAfterUse;
+
+  Future<void> closeIfOwned() async {
+    if (closeAfterUse) await database.close();
   }
 }
 

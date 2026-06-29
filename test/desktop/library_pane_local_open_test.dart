@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
@@ -74,4 +75,35 @@ void main() {
 
     expect(localDatabaseWorkspacePath(source, source.root.path), filePath);
   });
+
+  testWidgets(
+    'folder rail remains usable when realtime folder sync times out',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: buildLibraryFolderRailForTest(
+              error: Exception(
+                'RealtimeSubscribeException(status: '
+                'RealtimeSubscribeStatus.timedOut, details: null)',
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.textContaining('Could not load folders'), findsNothing);
+      expect(find.textContaining('RealtimeSubscribeException'), findsNothing);
+      expect(find.text('Cloud folders unavailable'), findsOneWidget);
+      expect(
+        find.text('Sync timed out. Local databases are still available.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Create one below, or import a PGN to get started.'),
+        findsOneWidget,
+      );
+      expect(find.text('New folder'), findsOneWidget);
+    },
+  );
 }

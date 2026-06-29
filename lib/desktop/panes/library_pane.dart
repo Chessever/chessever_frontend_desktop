@@ -526,12 +526,12 @@ class _FolderRail extends StatelessWidget {
 
   Widget _body() {
     if (isLoading) return const _RailLoading();
-    if (error != null) return _RailError(error: error!);
     final folders = [kTwicFolder, ...ownedFolders, ...subscribedFolders];
     return ListView(
       physics: const DesktopScrollPhysics(),
       padding: const EdgeInsets.symmetric(vertical: 12),
       children: [
+        if (error != null) _RailSyncWarning(error: error!),
         if (ownedFolders.isNotEmpty) ...[
           _RailGroupHeader(label: 'My folders', count: ownedFolders.length),
           for (final folder in ownedFolders)
@@ -566,6 +566,34 @@ class _FolderRail extends StatelessWidget {
       ],
     );
   }
+}
+
+@visibleForTesting
+Widget buildLibraryFolderRailForTest({
+  List<LibraryFolder> ownedFolders = const <LibraryFolder>[],
+  List<LibraryFolder> subscribedFolders = const <LibraryFolder>[],
+  bool isLoading = false,
+  Object? error,
+  String? selectedId,
+  String? selectedLocalPath,
+}) {
+  return SizedBox(
+    width: 260,
+    height: 420,
+    child: _FolderRail(
+      ownedFolders: ownedFolders,
+      subscribedFolders: subscribedFolders,
+      isLoading: isLoading,
+      error: error,
+      selectedId: selectedId,
+      selectedLocalPath: selectedLocalPath,
+      onSelect: (_) {},
+      onOpen: (_) {},
+      onAction: (_, _) {},
+      onCreateRoot: () {},
+      onCollapse: () {},
+    ),
+  );
 }
 
 class _RailHeader extends StatelessWidget {
@@ -832,20 +860,81 @@ class _RailLoading extends StatelessWidget {
   }
 }
 
-class _RailError extends StatelessWidget {
-  const _RailError({required this.error});
+class _RailSyncWarning extends StatelessWidget {
+  const _RailSyncWarning({required this.error});
+
   final Object error;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
-      child: Text(
-        'Could not load folders.\nSign in to sync.\n\n$error',
-        style: const TextStyle(color: kLightGreyColor, fontSize: 11),
+      padding: const EdgeInsets.fromLTRB(14, 2, 14, 12),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+        decoration: BoxDecoration(
+          color: kBlack3Color.withValues(alpha: 0.65),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: const Color(0xFFFFC857).withValues(alpha: 0.26),
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(top: 1),
+              child: Icon(
+                Icons.cloud_off_rounded,
+                size: 14,
+                color: Color(0xFFFFC857),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Cloud folders unavailable',
+                    style: TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    libraryFolderSyncErrorMessage(error),
+                    style: const TextStyle(
+                      color: kWhiteColor70,
+                      fontSize: 11,
+                      height: 1.25,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
+}
+
+@visibleForTesting
+String libraryFolderSyncErrorMessage(Object error) {
+  final message = error.toString().toLowerCase();
+  if (message.contains('realtimesubscribestatus.timedout') ||
+      message.contains('timedout') ||
+      message.contains('timed out')) {
+    return 'Sync timed out. Local databases are still available.';
+  }
+  if (message.contains('not authenticated') ||
+      message.contains('sign in') ||
+      message.contains('signin')) {
+    return 'Sign in to sync cloud folders. Local databases are still available.';
+  }
+  return 'Cloud sync is unavailable. Local databases are still available.';
 }
 
 class _FolderRow extends ConsumerStatefulWidget {
