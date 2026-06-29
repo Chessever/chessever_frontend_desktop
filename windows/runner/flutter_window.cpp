@@ -4,6 +4,22 @@
 
 #include "desktop_multi_window/desktop_multi_window_plugin.h"
 #include "flutter/generated_plugin_registrant.h"
+#include "resource.h"
+
+namespace {
+
+void InstallNativeHelpMenu(HWND window) {
+  HMENU menu_bar = CreateMenu();
+  HMENU help_menu = CreatePopupMenu();
+  AppendMenu(help_menu, MF_STRING, ID_HELP_CHECK_FOR_UPDATES,
+             L"Check for Updates...");
+  AppendMenu(menu_bar, MF_POPUP, reinterpret_cast<UINT_PTR>(help_menu),
+             L"&Help");
+  SetMenu(window, menu_bar);
+  DrawMenuBar(window);
+}
+
+}  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -14,6 +30,8 @@ bool FlutterWindow::OnCreate() {
   if (!Win32Window::OnCreate()) {
     return false;
   }
+
+  InstallNativeHelpMenu(GetHandle());
 
   RECT frame = GetClientArea();
 
@@ -26,6 +44,11 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  native_update_menu_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(),
+          "chessever.desktop/native_update_menu",
+          &flutter::StandardMethodCodec::GetInstance());
   DesktopMultiWindowSetWindowCreatedCallback([](void* controller) {
     auto* flutter_view_controller =
         reinterpret_cast<flutter::FlutterViewController*>(controller);
@@ -46,6 +69,8 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  native_update_menu_channel_ = nullptr;
+
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -68,6 +93,17 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+    case WM_COMMAND:
+      if (LOWORD(wparam) == ID_HELP_CHECK_FOR_UPDATES) {
+        if (native_update_menu_channel_) {
+          native_update_menu_channel_->InvokeMethod(
+              "checkForUpdates",
+              std::make_unique<flutter::EncodableValue>());
+        }
+        return 0;
+      }
+      break;
+
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;

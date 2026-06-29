@@ -18,6 +18,9 @@ class MainFlutterWindow: NSWindow {
     installDesktopFileOpenChannel(
       binaryMessenger: flutterViewController.engine.binaryMessenger
     )
+    DesktopNativeUpdateMenuBridge.shared.attach(
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
 
     super.awakeFromNib()
   }

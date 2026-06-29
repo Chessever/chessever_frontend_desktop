@@ -3,9 +3,12 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_auth_gate.dart';
+import 'package:chessever/desktop/widgets/desktop_native_update_menu_bridge.dart';
 import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/responsive_helper.dart';
+
+final _desktopNavigatorKey = GlobalKey<NavigatorState>();
 
 /// Top-level widget for the desktop build of ChessEver.
 ///
@@ -24,6 +27,7 @@ class DesktopApp extends ConsumerWidget {
       theme: AppTheme.darkTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
+      navigatorKey: _desktopNavigatorKey,
       navigatorObservers: [AnalyticsService.instance.routeObserver],
       builder: (context, child) {
         // Init ResponsiveHelper so widgets that share with the mobile app
@@ -34,7 +38,12 @@ class DesktopApp extends ConsumerWidget {
         ResponsiveHelper.init(context);
         return FTheme(
           data: FThemes.zinc.dark,
-          child: FToaster(child: child ?? const SizedBox.shrink()),
+          child: FToaster(
+            child: DesktopNativeUpdateMenuBridge(
+              navigatorKey: _desktopNavigatorKey,
+              child: child ?? const SizedBox.shrink(),
+            ),
+          ),
         );
       },
       home: const DesktopAuthGate(),
