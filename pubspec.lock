@@ -1504,7 +1504,7 @@ packages:
     description:
       path: "."
       ref: "fix/windows-symbol-export"
-      resolved-ref: fe0b5532093612daced6bbae37cbeb76381036dd
+      resolved-ref: "5bb8ea6906e2de7fcaa51bbe3e6e1ad345127e41"
       url: "https://github.com/devberkay/resqlite.git"
     source: git
     version: "0.6.0"
