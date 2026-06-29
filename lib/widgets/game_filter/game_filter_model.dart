@@ -378,9 +378,9 @@ class GameFilterHelper {
         if (year < filter.minYear || year > filter.maxYear) return false;
       }
 
-      // Rating filter - use the game's top rating
-      final cardElo = game.cardElo;
-      if (cardElo < filter.minRating || cardElo > filter.maxRating) {
+      // Rating filter - use average game rating when available.
+      final avgRating = _averageRating(game);
+      if (avgRating < filter.minRating || avgRating > filter.maxRating) {
         return false;
       }
 
@@ -451,6 +451,18 @@ class GameFilterHelper {
     final lastMove = game.lastMove;
     if (lastMove == null || lastMove.isEmpty) return null;
     return _estimateMoveNumberFromPgn(lastMove);
+  }
+
+  static int _averageRating(GamesTourModel game) {
+    final explicit = game.avgElo;
+    if (explicit != null && explicit > 0) return explicit;
+
+    final white = game.whitePlayer.rating;
+    final black = game.blackPlayer.rating;
+    if (white <= 0 && black <= 0) return 0;
+    if (white <= 0) return black;
+    if (black <= 0) return white;
+    return (white + black) ~/ 2;
   }
 
   static int? _estimateMoveNumberFromPgn(String text) {

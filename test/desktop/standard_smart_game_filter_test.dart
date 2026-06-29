@@ -25,6 +25,26 @@ void main() {
     },
   );
 
+  test('shared rating filter uses average game rating', () {
+    final highTopLowAverage = _game(
+      'mixed',
+      whiteRating: 2600,
+      blackRating: 1800,
+    );
+    final highAverage = _game(
+      'high-average',
+      whiteRating: 2400,
+      blackRating: 2400,
+    );
+
+    final filtered = GameFilterHelper.applyFilter([
+      highTopLowAverage,
+      highAverage,
+    ], GameFilter(minRating: 2300));
+
+    expect(filtered.map((game) => game.gameId), ['high-average']);
+  });
+
   test('premium games filter tracks standard smart-game fields', () {
     const filter = PremiumGamesFilter(
       timeControl: GameTimeControlFilter.classical,
@@ -48,12 +68,17 @@ void main() {
   });
 }
 
-GamesTourModel _game(String id, {String? pgn}) {
+GamesTourModel _game(
+  String id, {
+  String? pgn,
+  int whiteRating = 2700,
+  int blackRating = 2700,
+}) {
   return GamesTourModel(
     gameId: id,
     source: GameSource.twic,
-    whitePlayer: _player('White'),
-    blackPlayer: _player('Black'),
+    whitePlayer: _player('White', rating: whiteRating),
+    blackPlayer: _player('Black', rating: blackRating),
     whiteTimeDisplay: '--:--',
     blackTimeDisplay: '--:--',
     whiteClockCentiseconds: 0,
@@ -66,12 +91,12 @@ GamesTourModel _game(String id, {String? pgn}) {
   );
 }
 
-PlayerCard _player(String name) {
+PlayerCard _player(String name, {required int rating}) {
   return PlayerCard(
     name: name,
     federation: '',
     title: '',
-    rating: 2700,
+    rating: rating,
     countryCode: '',
     team: null,
   );

@@ -141,10 +141,10 @@ class _DesktopGameFilterDialogState extends State<_DesktopGameFilterDialog> {
   late GameColorFilter _color;
   late GameTimeControlFilter _timeControl;
   late GameOnlineFilter _online;
+  late GameFinishFilter _finish;
   late int _minYear;
   late int _maxYear;
-  late int _minRating;
-  late int _maxRating;
+  late int? _selectedMinRating;
   late final TextEditingController _ecoController;
 
   @override
@@ -155,10 +155,10 @@ class _DesktopGameFilterDialogState extends State<_DesktopGameFilterDialog> {
     _color = filter.color;
     _timeControl = filter.timeControl;
     _online = filter.online;
+    _finish = filter.finish;
     _minYear = filter.minYear;
     _maxYear = filter.maxYear;
-    _minRating = filter.minRating;
-    _maxRating = filter.maxRating;
+    _selectedMinRating = _normalizeRatingPreset(filter.minRating);
     _ecoController = TextEditingController(text: filter.eco.code ?? '');
   }
 
@@ -198,6 +198,41 @@ class _DesktopGameFilterDialogState extends State<_DesktopGameFilterDialog> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         _FilterSection(
+                          title: 'Time control',
+                          child: _OptionGrid<GameTimeControlFilter>(
+                            value: _timeControl,
+                            values: GameTimeControlFilter.values,
+                            label: (v) => v.displayText,
+                            onChanged: (v) => setState(() => _timeControl = v),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        _FilterSection(
+                          title: 'Avg. Rating',
+                          child: _RatingPresetGrid(
+                            selectedMinRating: _selectedMinRating,
+                            onChanged:
+                                (value) =>
+                                    setState(() => _selectedMinRating = value),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        _FilterSection(
+                          title: 'ECO / Opening',
+                          child: _ecoEditor(),
+                        ),
+                        const SizedBox(height: 18),
+                        _FilterSection(
+                          title: 'Finish',
+                          child: _OptionGrid<GameFinishFilter>(
+                            value: _finish,
+                            values: GameFinishFilter.values,
+                            label: (v) => v.displayText,
+                            onChanged: (v) => setState(() => _finish = v),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        _FilterSection(
                           title: 'Result',
                           child: _OptionGrid<GameResultFilter>(
                             value: _result,
@@ -208,41 +243,7 @@ class _DesktopGameFilterDialogState extends State<_DesktopGameFilterDialog> {
                         ),
                         const SizedBox(height: 18),
                         _FilterSection(
-                          title: 'Color',
-                          child: _OptionGrid<GameColorFilter>(
-                            value: _color,
-                            values: GameColorFilter.values,
-                            label: (v) => v.displayText,
-                            onChanged: (v) => setState(() => _color = v),
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                        _FilterSection(
-                          title: 'Time control',
-                          child: _OptionGrid<GameTimeControlFilter>(
-                            value: _timeControl,
-                            values: GameTimeControlFilter.values,
-                            label: (v) => v.displayText,
-                            onChanged: (v) => setState(() => _timeControl = v),
-                          ),
-                        ),
-                        if (widget.showFormatFilter) ...[
-                          const SizedBox(height: 18),
-                          _FilterSection(
-                            title: 'Format',
-                            child: _OptionGrid<GameOnlineFilter>(
-                              value: _online,
-                              values: GameOnlineFilter.values,
-                              label: (v) => v.displayText,
-                              onChanged: (v) => setState(() => _online = v),
-                            ),
-                          ),
-                        ],
-                        const SizedBox(height: 18),
-                        _FilterSection(title: 'Opening', child: _ecoEditor()),
-                        const SizedBox(height: 18),
-                        _FilterSection(
-                          title: 'Year',
+                          title: 'Date range',
                           subtitle: '$_minYear - $_maxYear',
                           child: DesktopRangeSlider(
                             min: GameFilter.absoluteMinYear,
@@ -257,23 +258,28 @@ class _DesktopGameFilterDialogState extends State<_DesktopGameFilterDialog> {
                                 }),
                           ),
                         ),
-                        const SizedBox(height: 18),
-                        _FilterSection(
-                          title: 'Rating',
-                          subtitle: '$_minRating - $_maxRating',
-                          child: DesktopRangeSlider(
-                            min: GameFilter.absoluteMinRating,
-                            max: GameFilter.absoluteMaxRating,
-                            step: 50,
-                            start: _minRating,
-                            end: _maxRating,
-                            onChanged:
-                                (start, end) => setState(() {
-                                  _minRating = start;
-                                  _maxRating = end;
-                                }),
+                        if (widget.showFormatFilter) ...[
+                          const SizedBox(height: 18),
+                          _FilterSection(
+                            title: 'Color',
+                            child: _OptionGrid<GameColorFilter>(
+                              value: _color,
+                              values: GameColorFilter.values,
+                              label: (v) => v.displayText,
+                              onChanged: (v) => setState(() => _color = v),
+                            ),
                           ),
-                        ),
+                          const SizedBox(height: 18),
+                          _FilterSection(
+                            title: 'Format',
+                            child: _OptionGrid<GameOnlineFilter>(
+                              value: _online,
+                              values: GameOnlineFilter.values,
+                              label: (v) => v.displayText,
+                              onChanged: (v) => setState(() => _online = v),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -387,13 +393,44 @@ class _DesktopGameFilterDialogState extends State<_DesktopGameFilterDialog> {
     return GameFilter(
       result: _result,
       color: _color,
+      finish: _finish,
       timeControl: _timeControl,
       online: _online,
       eco: ecoText.isEmpty ? GameEcoFilter.all : GameEcoFilter.forCode(ecoText),
       minYear: _minYear,
       maxYear: _maxYear,
-      minRating: _minRating,
-      maxRating: _maxRating,
+      minRating: _selectedMinRating ?? GameFilter.defaultMinRating,
+      maxRating: GameFilter.absoluteMaxRating,
+    );
+  }
+}
+
+int? _normalizeRatingPreset(int minRating) {
+  if (minRating <= GameFilter.defaultMinRating) return null;
+  for (final preset in _ratingPresets.reversed) {
+    if (minRating >= preset) return preset;
+  }
+  return null;
+}
+
+const _ratingPresets = <int>[2200, 2300, 2400, 2500];
+
+class _RatingPresetGrid extends StatelessWidget {
+  const _RatingPresetGrid({
+    required this.selectedMinRating,
+    required this.onChanged,
+  });
+
+  final int? selectedMinRating;
+  final ValueChanged<int?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return _OptionGrid<int?>(
+      value: selectedMinRating,
+      values: const <int?>[null, ..._ratingPresets],
+      label: (value) => value == null ? 'Any' : '$value+',
+      onChanged: onChanged,
     );
   }
 }
