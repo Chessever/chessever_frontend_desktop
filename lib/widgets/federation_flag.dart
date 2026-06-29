@@ -1,5 +1,4 @@
 import 'package:chessever/utils/country_utils.dart';
-import 'package:chessever/utils/png_asset.dart';
 import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_country_flags/flutter_country_flags.dart' as fcf;
@@ -34,15 +33,15 @@ class FederationFlag extends StatelessWidget {
     final normalized = raw.toUpperCase();
 
     if (raw.isEmpty) {
-      return _fideFallback(context);
+      return _empty();
     }
 
     final lowerRaw = raw.toLowerCase();
 
     // Lichess emits literal "FIDE" (or "FID"/"?") when PGN carries no real
-    // federation. Render the FIDE logo as the fallback flag for those players.
+    // federation. Do not default to a placeholder flag; unknown means no flag.
     if (normalized == 'FID' || normalized == 'FIDE' || normalized == '?') {
-      return _fideFallback(context);
+      return _empty();
     }
 
     // Handle UK subdivisions (England, Scotland, Wales) with their own flags.
@@ -66,7 +65,7 @@ class FederationFlag extends StatelessWidget {
     }
 
     if (iso2 == null || iso2.length != 2) {
-      return _fideFallback(context);
+      return _empty();
     }
 
     final child = CountryFlag.fromCountryCode(
@@ -93,21 +92,5 @@ class FederationFlag extends StatelessWidget {
     );
   }
 
-  Widget _empty() => SizedBox(width: width, height: height);
-
-  Widget _fideFallback(BuildContext context) {
-    final radius = borderRadius ?? BorderRadius.circular(3);
-    final dpr = MediaQuery.devicePixelRatioOf(context);
-    return ClipRRect(
-      borderRadius: radius,
-      child: Image.asset(
-        PngAsset.fideLogo,
-        width: width,
-        height: height,
-        fit: BoxFit.contain,
-        cacheWidth: width == null ? null : (width! * dpr).round(),
-        cacheHeight: height == null ? null : (height! * dpr).round(),
-      ),
-    );
-  }
+  Widget _empty() => const SizedBox.shrink();
 }
