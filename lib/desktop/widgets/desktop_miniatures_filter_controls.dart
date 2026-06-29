@@ -6,13 +6,16 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/utils/eco_input_formatter.dart';
+import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/responsive_helper.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
+import 'package:chessever/widgets/game_filter/wheel_range_filter.dart';
 
 class DesktopMiniaturesFilterButton extends ConsumerWidget {
   const DesktopMiniaturesFilterButton({super.key});
@@ -27,9 +30,9 @@ class DesktopMiniaturesFilterButton extends ConsumerWidget {
       data: FThemes.zinc.dark,
       child: DesktopTooltip(
         message: hasActive ? 'Filters · $activeCount active' : 'Filters',
-        child: FButton.icon(
-          style: _filterTriggerStyle(hasActive),
-          onPress: () async {
+        child: _FilterTriggerButton(
+          activeCount: activeCount,
+          onTap: () async {
             final next = await showDesktopMiniaturesFilterDialog(
               context: context,
               currentFilter: filter,
@@ -43,40 +46,6 @@ class DesktopMiniaturesFilterButton extends ConsumerWidget {
                   .applyMiniatureFilter(next),
             );
           },
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Icon(
-                Icons.tune_rounded,
-                size: 16,
-                color: hasActive ? kPrimaryColor : kWhiteColor70,
-              ),
-              if (hasActive)
-                Positioned(
-                  right: -7,
-                  top: -7,
-                  child: Container(
-                    width: 15,
-                    height: 15,
-                    alignment: Alignment.center,
-                    decoration: const BoxDecoration(
-                      color: kPrimaryColor,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Text(
-                      '$activeCount',
-                      style: const TextStyle(
-                        color: kBackgroundColor,
-                        fontSize: 9,
-                        height: 1,
-                        fontWeight: FontWeight.w800,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
         ),
       ),
     );
@@ -98,9 +67,9 @@ class DesktopPremiumGamesFilterButton extends ConsumerWidget {
       data: FThemes.zinc.dark,
       child: DesktopTooltip(
         message: hasActive ? 'Filters · $activeCount active' : 'Filters',
-        child: FButton.icon(
-          style: _filterTriggerStyle(hasActive),
-          onPress: () async {
+        child: _FilterTriggerButton(
+          activeCount: activeCount,
+          onTap: () async {
             final next = await showDesktopPremiumGamesFilterDialog(
               context: context,
               currentFilter: filter,
@@ -108,40 +77,6 @@ class DesktopPremiumGamesFilterButton extends ConsumerWidget {
             if (next == null) return;
             ref.read(premiumGamesProvider(type).notifier).applyFilter(next);
           },
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Icon(
-                Icons.tune_rounded,
-                size: 16,
-                color: hasActive ? kPrimaryColor : kWhiteColor70,
-              ),
-              if (hasActive)
-                Positioned(
-                  right: -7,
-                  top: -7,
-                  child: Container(
-                    width: 15,
-                    height: 15,
-                    alignment: Alignment.center,
-                    decoration: const BoxDecoration(
-                      color: kPrimaryColor,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Text(
-                      '$activeCount',
-                      style: const TextStyle(
-                        color: kBackgroundColor,
-                        fontSize: 9,
-                        height: 1,
-                        fontWeight: FontWeight.w800,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
         ),
       ),
     );
@@ -169,20 +104,22 @@ class _PremiumGamesFilterDialog extends StatefulWidget {
 }
 
 class _PremiumGamesFilterDialogState extends State<_PremiumGamesFilterDialog> {
-  late PremiumGamesDateRange _dateRange;
   late PremiumGamesResult _result;
   late GameTimeControlFilter _timeControl;
   late GameFinishFilter _finish;
   late int? _selectedMinRating;
+  late int? _yearFrom;
+  late int? _yearTo;
   late final TextEditingController _ecoController;
 
   @override
   void initState() {
     super.initState();
-    _dateRange = widget.initialFilter.dateRange;
     _result = widget.initialFilter.result;
     _timeControl = widget.initialFilter.timeControl;
     _finish = widget.initialFilter.finish;
+    _yearFrom = widget.initialFilter.yearFrom;
+    _yearTo = widget.initialFilter.yearTo;
     _selectedMinRating = _normalizeMiniatureRatingPreset(
       widget.initialFilter.minElo,
     );
@@ -259,6 +196,7 @@ class _PremiumGamesFilterDialogState extends State<_PremiumGamesFilterDialog> {
                                       control == GameTimeControlFilter.all
                                           ? 'Any'
                                           : control.displayText,
+                                  icon: _timeControlIcon(control),
                                   selected: _timeControl == control,
                                   onPress:
                                       () => setState(
@@ -294,6 +232,7 @@ class _PremiumGamesFilterDialogState extends State<_PremiumGamesFilterDialog> {
                                       finish == GameFinishFilter.all
                                           ? 'Any'
                                           : finish.displayText,
+                                  icon: _finishIcon(finish),
                                   selected: _finish == finish,
                                   onPress:
                                       () => setState(() => _finish = finish),
@@ -308,7 +247,11 @@ class _PremiumGamesFilterDialogState extends State<_PremiumGamesFilterDialog> {
                             children: [
                               for (final result in PremiumGamesResult.values)
                                 _FilterChipButton(
-                                  label: result.displayText,
+                                  label:
+                                      result == PremiumGamesResult.all
+                                          ? 'Any'
+                                          : result.displayText,
+                                  icon: _premiumResultIcon(result),
                                   selected: _result == result,
                                   onPress:
                                       () => setState(() => _result = result),
@@ -318,17 +261,16 @@ class _PremiumGamesFilterDialogState extends State<_PremiumGamesFilterDialog> {
                         ),
                         const SizedBox(height: 16),
                         _FilterSection(
-                          title: 'Date range',
-                          child: _OptionGrid(
-                            children: [
-                              for (final range in PremiumGamesDateRange.values)
-                                _FilterChipButton(
-                                  label: range.displayText,
-                                  selected: _dateRange == range,
-                                  onPress:
-                                      () => setState(() => _dateRange = range),
-                                ),
-                            ],
+                          title: 'Year range',
+                          subtitle: _yearRangeSubtitle(_yearFrom, _yearTo),
+                          child: _YearRange(
+                            yearFrom: _yearFrom,
+                            yearTo: _yearTo,
+                            onChanged:
+                                (from, to) => setState(() {
+                                  _yearFrom = from;
+                                  _yearTo = to;
+                                }),
                           ),
                         ),
                       ],
@@ -378,7 +320,8 @@ class _PremiumGamesFilterDialogState extends State<_PremiumGamesFilterDialog> {
           children: [
             for (final code in const <String?>[null, 'A', 'B', 'C', 'D', 'E'])
               _FilterChipButton(
-                label: code ?? 'All',
+                label: code ?? 'Any',
+                icon: code == null ? Icons.apps_rounded : Icons.tag_rounded,
                 selected: code == null ? current.isEmpty : current == code,
                 onPress:
                     () => setState(() {
@@ -415,11 +358,12 @@ class _PremiumGamesFilterDialogState extends State<_PremiumGamesFilterDialog> {
 
   void _resetDraft() {
     setState(() {
-      _dateRange = PremiumGamesDateRange.allTime;
       _result = PremiumGamesResult.all;
       _timeControl = GameTimeControlFilter.all;
       _finish = GameFinishFilter.all;
       _selectedMinRating = null;
+      _yearFrom = null;
+      _yearTo = null;
       _ecoController.clear();
     });
   }
@@ -427,13 +371,14 @@ class _PremiumGamesFilterDialogState extends State<_PremiumGamesFilterDialog> {
   PremiumGamesFilter _buildFilter() {
     final eco = _ecoController.text.trim().toUpperCase();
     return PremiumGamesFilter(
-      dateRange: _dateRange,
       result: _result,
       timeControl: _timeControl,
       eco: eco.isEmpty ? GameEcoFilter.all : GameEcoFilter.forCode(eco),
       finish: _finish,
       minElo: _selectedMinRating,
       maxElo: null,
+      yearFrom: _yearFrom,
+      yearTo: _yearTo,
     );
   }
 }
@@ -458,14 +403,11 @@ class _MiniaturesFilterDialog extends StatefulWidget {
       _MiniaturesFilterDialogState();
 }
 
-class _MiniaturesFilterDialogState extends State<_MiniaturesFilterDialog>
-    with TickerProviderStateMixin {
+class _MiniaturesFilterDialogState extends State<_MiniaturesFilterDialog> {
   late MiniatureGamesFilter _draft;
   late final TextEditingController _ecoController;
   late final TextEditingController _openingController;
   late final TextEditingController _variationController;
-  late final FDateFieldController _dateFromController;
-  late final FDateFieldController _dateToController;
   late final TextEditingController _playerController;
 
   @override
@@ -475,14 +417,6 @@ class _MiniaturesFilterDialogState extends State<_MiniaturesFilterDialog>
     _ecoController = TextEditingController(text: _draft.eco ?? '');
     _openingController = TextEditingController(text: _draft.opening ?? '');
     _variationController = TextEditingController(text: _draft.variation ?? '');
-    _dateFromController = FDateFieldController(
-      vsync: this,
-      initialDate: _parseIsoDate(_draft.dateFrom),
-    );
-    _dateToController = FDateFieldController(
-      vsync: this,
-      initialDate: _parseIsoDate(_draft.dateTo),
-    );
     _playerController = TextEditingController(text: _draft.player ?? '');
   }
 
@@ -491,8 +425,6 @@ class _MiniaturesFilterDialogState extends State<_MiniaturesFilterDialog>
     _ecoController.dispose();
     _openingController.dispose();
     _variationController.dispose();
-    _dateFromController.dispose();
-    _dateToController.dispose();
     _playerController.dispose();
     super.dispose();
   }
@@ -547,8 +479,6 @@ class _MiniaturesFilterDialogState extends State<_MiniaturesFilterDialog>
                     ecoController: _ecoController,
                     openingController: _openingController,
                     variationController: _variationController,
-                    dateFromController: _dateFromController,
-                    dateToController: _dateToController,
                     onChanged: (next) => setState(() => _draft = next),
                   ),
                 ),
@@ -634,8 +564,6 @@ class _MiniaturesFilterDialogState extends State<_MiniaturesFilterDialog>
       _ecoController.text = filter.eco ?? '';
       _openingController.text = filter.opening ?? '';
       _variationController.text = filter.variation ?? '';
-      _dateFromController.value = _parseIsoDate(filter.dateFrom);
-      _dateToController.value = _parseIsoDate(filter.dateTo);
       _playerController.text = filter.player ?? '';
     });
   }
@@ -647,8 +575,6 @@ class _MiniaturesFilterBody extends StatelessWidget {
     required this.ecoController,
     required this.openingController,
     required this.variationController,
-    required this.dateFromController,
-    required this.dateToController,
     required this.onChanged,
   });
 
@@ -656,8 +582,6 @@ class _MiniaturesFilterBody extends StatelessWidget {
   final TextEditingController ecoController;
   final TextEditingController openingController;
   final TextEditingController variationController;
-  final FDateFieldController dateFromController;
-  final FDateFieldController dateToController;
   final ValueChanged<MiniatureGamesFilter> onChanged;
 
   @override
@@ -674,6 +598,7 @@ class _MiniaturesFilterBody extends StatelessWidget {
               children: [
                 _FilterChipButton(
                   label: 'Any',
+                  icon: Icons.apps_rounded,
                   selected: draft.timeControls.isEmpty,
                   onPress:
                       () => onChanged(
@@ -685,6 +610,7 @@ class _MiniaturesFilterBody extends StatelessWidget {
                 for (final control in MiniatureGameTimeControl.values)
                   _FilterChipButton(
                     label: control.label,
+                    icon: _miniatureTimeControlIcon(control),
                     selected: draft.timeControls.contains(control),
                     onPress:
                         () => onChanged(
@@ -720,7 +646,8 @@ class _MiniaturesFilterBody extends StatelessWidget {
                 _OptionGrid(
                   children: [
                     _FilterChipButton(
-                      label: 'All',
+                      label: 'Any',
+                      icon: Icons.apps_rounded,
                       selected:
                           draft.ecoCategories.isEmpty &&
                           ecoController.text.trim().isEmpty &&
@@ -743,6 +670,7 @@ class _MiniaturesFilterBody extends StatelessWidget {
                     for (final category in const ['A', 'B', 'C', 'D', 'E'])
                       _FilterChipButton(
                         label: category,
+                        icon: Icons.tag_rounded,
                         selected: draft.ecoCategories.contains(category),
                         onPress: () {
                           ecoController.clear();
@@ -812,12 +740,17 @@ class _MiniaturesFilterBody extends StatelessWidget {
               children: [
                 _FilterChipButton(
                   label: 'By move 25',
+                  icon: Icons.flag_outlined,
                   selected: draft.maxMoves == null || draft.maxMoves == 25,
                   onPress: () => onChanged(draft.copyWith(clearMoves: true)),
                 ),
                 for (final move in const [20, 15])
                   _FilterChipButton(
                     label: 'By move $move',
+                    icon:
+                        move == 20
+                            ? Icons.sports_score_outlined
+                            : Icons.bolt_rounded,
                     selected: draft.maxMoves == move,
                     onPress:
                         () => onChanged(
@@ -834,6 +767,7 @@ class _MiniaturesFilterBody extends StatelessWidget {
               children: [
                 _FilterChipButton(
                   label: 'Any',
+                  icon: Icons.apps_rounded,
                   selected: draft.results.isEmpty,
                   onPress:
                       () => onChanged(
@@ -843,6 +777,7 @@ class _MiniaturesFilterBody extends StatelessWidget {
                 for (final result in MiniatureGameResult.values)
                   _FilterChipButton(
                     label: result.label,
+                    icon: _miniatureResultIcon(result),
                     selected: draft.results.contains(result),
                     onPress:
                         () => onChanged(
@@ -856,48 +791,23 @@ class _MiniaturesFilterBody extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           _FilterSection(
-            title: 'Date range',
-            subtitle: _dateSubtitle(draft.dateFrom, draft.dateTo),
-            child: Row(
-              children: [
-                Expanded(
-                  child: FDateField.calendar(
-                    controller: dateFromController,
-                    hint: 'From',
-                    clearable: true,
-                    start: _minFilterDate,
-                    end: _maxFilterDate(),
-                    onChange:
-                        (date) => onChanged(
-                          draft
-                              .copyWith(clearDates: true)
-                              .copyWith(
-                                dateFrom: _formatIsoDate(date),
-                                dateTo: draft.dateTo,
-                              ),
+            title: 'Year range',
+            subtitle: _yearRangeSubtitle(
+              _yearFromDate(draft.dateFrom),
+              _yearFromDate(draft.dateTo),
+            ),
+            child: _YearRange(
+              yearFrom: _yearFromDate(draft.dateFrom),
+              yearTo: _yearFromDate(draft.dateTo),
+              onChanged:
+                  (from, to) => onChanged(
+                    draft
+                        .copyWith(clearDates: true)
+                        .copyWith(
+                          dateFrom: from == null ? null : '$from-01-01',
+                          dateTo: to == null ? null : '$to-12-31',
                         ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FDateField.calendar(
-                    controller: dateToController,
-                    hint: 'To',
-                    clearable: true,
-                    start: _minFilterDate,
-                    end: _maxFilterDate(),
-                    onChange:
-                        (date) => onChanged(
-                          draft
-                              .copyWith(clearDates: true)
-                              .copyWith(
-                                dateFrom: draft.dateFrom,
-                                dateTo: _formatIsoDate(date),
-                              ),
-                        ),
-                  ),
-                ),
-              ],
             ),
           ),
         ],
@@ -992,28 +902,29 @@ class _FilterSection extends StatelessWidget {
       children: [
         Row(
           children: [
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                ),
+            Text(
+              title.toUpperCase(),
+              style: const TextStyle(
+                color: kLightGreyColor,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.7,
               ),
             ),
+            const Spacer(),
             if (subtitle != null)
               Text(
                 subtitle!,
-                style: TextStyle(
-                  color: kWhiteColor.withValues(alpha: 0.56),
+                style: const TextStyle(
+                  color: kWhiteColor70,
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
+                  fontFeatures: [FontFeature.tabularFigures()],
                 ),
               ),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 9),
         child,
       ],
     );
@@ -1027,27 +938,79 @@ class _OptionGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(spacing: 8, runSpacing: 8, children: children);
+    return Wrap(spacing: 6, runSpacing: 6, children: children);
   }
 }
 
-class _FilterChipButton extends StatelessWidget {
+class _FilterChipButton extends StatefulWidget {
   const _FilterChipButton({
     required this.label,
     required this.selected,
     required this.onPress,
+    this.icon,
   });
 
   final String label;
   final bool selected;
   final VoidCallback onPress;
+  final IconData? icon;
+
+  @override
+  State<_FilterChipButton> createState() => _FilterChipButtonState();
+}
+
+class _FilterChipButtonState extends State<_FilterChipButton> {
+  bool _hovered = false;
 
   @override
   Widget build(BuildContext context) {
-    return FButton(
-      style: _chipButtonStyle(selected),
-      onPress: onPress,
-      child: Text(label),
+    final selected = widget.selected;
+    final accent = selected ? kPrimaryColor : kWhiteColor70;
+    final border =
+        selected
+            ? kPrimaryColor.withValues(alpha: 0.55)
+            : (_hovered
+                ? kWhiteColor.withValues(alpha: 0.30)
+                : kWhiteColor.withValues(alpha: 0.12));
+    final bg =
+        selected
+            ? kPrimaryColor.withValues(alpha: 0.12)
+            : (_hovered ? kBlack3Color : kBlack3Color.withValues(alpha: 0.55));
+    return ClickCursor(
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onPress,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 90),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: border),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.icon != null) ...[
+                  Icon(widget.icon, size: 12, color: accent),
+                  const SizedBox(width: 6),
+                ],
+                Text(
+                  widget.label,
+                  style: TextStyle(
+                    color: selected ? kWhiteColor : kWhiteColor70,
+                    fontSize: 11,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1065,93 +1028,225 @@ class _MiniatureRatingPresetGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return _OptionGrid(
       children: [
-        for (final rating in const <int?>[null, ..._miniatureRatingPresets])
+        _FilterChipButton(
+          label: 'Any',
+          icon: Icons.apps_rounded,
+          selected: selectedMinRating == null,
+          onPress: () => onChanged(null),
+        ),
+        for (final tier in _ratingTiers)
           _FilterChipButton(
-            label: rating == null ? 'Any' : '$rating+',
-            selected: selectedMinRating == rating,
-            onPress: () => onChanged(rating),
+            label: '${tier.label} ${tier.subtitle}',
+            icon: tier.icon,
+            selected: selectedMinRating == tier.minRating,
+            onPress: () => onChanged(tier.minRating),
           ),
       ],
     );
   }
 }
 
-FBaseButtonStyle Function(FButtonStyle style) _filterTriggerStyle(bool active) {
-  return FButtonStyle.outline(
-    (style) => style.copyWith(
-      decoration: FWidgetStateMap({
-        WidgetState.hovered | WidgetState.pressed: BoxDecoration(
-          color: active ? kPrimaryColor.withValues(alpha: 0.18) : kBlack3Color,
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(
-            color:
-                active
-                    ? kPrimaryColor.withValues(alpha: 0.55)
-                    : kWhiteColor.withValues(alpha: 0.16),
-          ),
-        ),
-        WidgetState.any: BoxDecoration(
-          color:
-              active
-                  ? kPrimaryColor.withValues(alpha: 0.12)
-                  : Colors.transparent,
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(color: active ? kPrimaryColor : kDividerColor),
-        ),
-      }),
-      contentStyle:
-          (content) => content.copyWith(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          ),
-    ),
-  );
+class _FilterTriggerButton extends StatefulWidget {
+  const _FilterTriggerButton({required this.activeCount, required this.onTap});
+
+  final int activeCount;
+  final VoidCallback onTap;
+
+  @override
+  State<_FilterTriggerButton> createState() => _FilterTriggerButtonState();
 }
 
-FBaseButtonStyle Function(FButtonStyle style) _chipButtonStyle(bool selected) {
-  return FButtonStyle.ghost(
-    (style) => style.copyWith(
-      decoration: FWidgetStateMap({
-        WidgetState.hovered | WidgetState.pressed: BoxDecoration(
-          color:
-              selected ? kPrimaryColor.withValues(alpha: 0.22) : kBlack3Color,
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(
-            color:
-                selected
-                    ? kPrimaryColor.withValues(alpha: 0.56)
-                    : kWhiteColor.withValues(alpha: 0.14),
-          ),
-        ),
-        WidgetState.any: BoxDecoration(
-          color:
-              selected
-                  ? kPrimaryColor.withValues(alpha: 0.15)
-                  : kBlack3Color.withValues(alpha: 0.58),
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(
-            color:
-                selected
-                    ? kPrimaryColor.withValues(alpha: 0.44)
-                    : kDividerColor,
-          ),
-        ),
-      }),
-      contentStyle:
-          (content) => content.copyWith(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-            textStyle: FWidgetStateMap({
-              WidgetState.any: TextStyle(
-                color: selected ? kWhiteColor : kWhiteColor70,
-                fontSize: 12,
-                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+class _FilterTriggerButtonState extends State<_FilterTriggerButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = widget.activeCount > 0;
+    return ClickCursor(
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 90),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color:
+                  active
+                      ? kPrimaryColor.withValues(alpha: 0.12)
+                      : (_hovered ? kBlack3Color : Colors.transparent),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color:
+                    active
+                        ? kPrimaryColor.withValues(alpha: 0.45)
+                        : (_hovered
+                            ? kWhiteColor.withValues(alpha: 0.18)
+                            : kDividerColor),
               ),
-            }),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.tune_rounded,
+                  size: 13,
+                  color: active ? kPrimaryColor : kWhiteColor70,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'Filters',
+                  style: TextStyle(
+                    color: active ? kWhiteColor : kWhiteColor70,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+                if (active) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: kPrimaryColor,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      '${widget.activeCount}',
+                      style: const TextStyle(
+                        color: kBackgroundColor,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
-    ),
-  );
+        ),
+      ),
+    );
+  }
+}
+
+class _YearRange extends StatefulWidget {
+  const _YearRange({
+    required this.yearFrom,
+    required this.yearTo,
+    required this.onChanged,
+  });
+
+  final int? yearFrom;
+  final int? yearTo;
+  final void Function(int? yearFrom, int? yearTo) onChanged;
+
+  @override
+  State<_YearRange> createState() => _YearRangeState();
+}
+
+class _YearRangeState extends State<_YearRange> {
+  static const double _absMin = 1800;
+
+  late RangeValues _range;
+
+  double get _absMax => DateTime.now().year.toDouble();
+
+  @override
+  void initState() {
+    super.initState();
+    _range = _valuesFromWidget();
+  }
+
+  @override
+  void didUpdateWidget(covariant _YearRange oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final next = _valuesFromWidget();
+    if (_range.start != next.start || _range.end != next.end) {
+      _range = next;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ResponsiveHelper.init(context);
+    final isDefault = _range.start == _absMin && _range.end == _absMax;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        if (!isDefault)
+          DesktopTooltip(
+            message: 'Reset year range',
+            child: ClickCursor(
+              child: GestureDetector(
+                onTap: () {
+                  final reset = RangeValues(_absMin, _absMax);
+                  setState(() => _range = reset);
+                  widget.onChanged(null, null);
+                },
+                child: const Padding(
+                  padding: EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    'Reset',
+                    style: TextStyle(
+                      color: kLightGreyColor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        WheelRangeFilter(
+          minValue: _absMin,
+          maxValue: _absMax,
+          currentStart: _range.start,
+          currentEnd: _range.end,
+          divisions: (_absMax - _absMin).round(),
+          onChanged: (value) {
+            setState(() => _range = value);
+            final from = value.start == _absMin ? null : value.start.round();
+            final to = value.end == _absMax ? null : value.end.round();
+            widget.onChanged(from, to);
+          },
+        ),
+      ],
+    );
+  }
+
+  RangeValues _valuesFromWidget() {
+    return RangeValues(
+      (widget.yearFrom?.toDouble() ?? _absMin).clamp(_absMin, _absMax),
+      (widget.yearTo?.toDouble() ?? _absMax).clamp(_absMin, _absMax),
+    );
+  }
 }
 
 const _miniatureRatingPresets = <int>[2200, 2300, 2400, 2500];
+
+const _ratingTiers = <_RatingTier>[
+  _RatingTier('CM', '+2200', 2200, Icons.school_outlined),
+  _RatingTier('FM', '+2300', 2300, Icons.shield_outlined),
+  _RatingTier('IM', '+2400', 2400, Icons.military_tech_rounded),
+  _RatingTier('GM', '+2500', 2500, Icons.workspace_premium_rounded),
+];
+
+class _RatingTier {
+  const _RatingTier(this.label, this.subtitle, this.minRating, this.icon);
+
+  final String label;
+  final String subtitle;
+  final int minRating;
+  final IconData icon;
+}
 
 int _premiumFilterActiveCount(PremiumGamesFilter filter) {
   var count = 0;
@@ -1161,6 +1256,7 @@ int _premiumFilterActiveCount(PremiumGamesFilter filter) {
   if (filter.finish != GameFinishFilter.all) count += 1;
   if (filter.result != PremiumGamesResult.all) count += 1;
   if (filter.dateRange != PremiumGamesDateRange.allTime) count += 1;
+  if (filter.yearFrom != null || filter.yearTo != null) count += 1;
   return count;
 }
 
@@ -1172,43 +1268,80 @@ int? _normalizeMiniatureRatingPreset(int? minRating) {
   return null;
 }
 
+IconData _timeControlIcon(GameTimeControlFilter value) {
+  switch (value) {
+    case GameTimeControlFilter.all:
+      return Icons.apps_rounded;
+    case GameTimeControlFilter.classical:
+      return Icons.hourglass_top_rounded;
+    case GameTimeControlFilter.rapid:
+      return Icons.timer_outlined;
+    case GameTimeControlFilter.blitz:
+      return Icons.bolt_rounded;
+  }
+}
+
+IconData _miniatureTimeControlIcon(MiniatureGameTimeControl value) {
+  switch (value) {
+    case MiniatureGameTimeControl.classical:
+      return Icons.hourglass_top_rounded;
+    case MiniatureGameTimeControl.rapid:
+      return Icons.timer_outlined;
+    case MiniatureGameTimeControl.blitz:
+      return Icons.bolt_rounded;
+  }
+}
+
+IconData _finishIcon(GameFinishFilter value) {
+  switch (value) {
+    case GameFinishFilter.all:
+      return Icons.apps_rounded;
+    case GameFinishFilter.byMove25:
+      return Icons.flag_outlined;
+    case GameFinishFilter.byMove20:
+      return Icons.sports_score_outlined;
+    case GameFinishFilter.byMove15:
+      return Icons.bolt_rounded;
+  }
+}
+
+IconData _premiumResultIcon(PremiumGamesResult value) {
+  switch (value) {
+    case PremiumGamesResult.all:
+      return Icons.apps_rounded;
+    case PremiumGamesResult.whiteWins:
+      return Icons.flag_outlined;
+    case PremiumGamesResult.blackWins:
+      return Icons.flag_rounded;
+    case PremiumGamesResult.draw:
+      return Icons.handshake_outlined;
+  }
+}
+
+IconData _miniatureResultIcon(MiniatureGameResult value) {
+  switch (value) {
+    case MiniatureGameResult.whiteWins:
+      return Icons.flag_outlined;
+    case MiniatureGameResult.blackWins:
+      return Icons.flag_rounded;
+  }
+}
+
 String _finishSubtitle(int? maxMoves) {
   return maxMoves == null || maxMoves == 25
       ? 'by move 25'
       : 'by move $maxMoves';
 }
 
-String _dateSubtitle(String? from, String? to) {
-  if (from == null && to == null) return 'any date';
-  return '${from ?? 'start'} – ${to ?? 'today'}';
+String _yearRangeSubtitle(int? from, int? to) {
+  if (from == null && to == null) return 'any year';
+  return '${from ?? 'start'} - ${to ?? DateTime.now().year}';
 }
 
-DateTime? _parseIsoDate(String? value) {
+int? _yearFromDate(String? value) {
   final text = value?.trim();
-  if (text == null || !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(text)) {
-    return null;
-  }
-  final parts = text.split('-');
-  return DateTime.utc(
-    int.parse(parts[0]),
-    int.parse(parts[1]),
-    int.parse(parts[2]),
-  );
-}
-
-String? _formatIsoDate(DateTime? value) {
-  if (value == null) return null;
-  final year = value.year.toString().padLeft(4, '0');
-  final month = value.month.toString().padLeft(2, '0');
-  final day = value.day.toString().padLeft(2, '0');
-  return '$year-$month-$day';
-}
-
-final DateTime _minFilterDate = DateTime.utc(1900);
-
-DateTime _maxFilterDate() {
-  final now = DateTime.now().toUtc();
-  return DateTime.utc(now.year, now.month, now.day);
+  if (text == null || text.length < 4) return null;
+  return int.tryParse(text.substring(0, 4));
 }
 
 String? _normalizedText(String value) {

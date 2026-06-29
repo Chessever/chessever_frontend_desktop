@@ -107,6 +107,8 @@ class PremiumGamesFilter {
     this.finish = GameFinishFilter.all,
     this.minElo,
     this.maxElo,
+    this.yearFrom,
+    this.yearTo,
   });
 
   final PremiumGamesDateRange dateRange;
@@ -116,6 +118,8 @@ class PremiumGamesFilter {
   final GameFinishFilter finish;
   final int? minElo;
   final int? maxElo;
+  final int? yearFrom;
+  final int? yearTo;
 
   bool get hasActiveFilters {
     return dateRange != PremiumGamesDateRange.allTime ||
@@ -124,7 +128,9 @@ class PremiumGamesFilter {
         !eco.isAll ||
         finish != GameFinishFilter.all ||
         minElo != null ||
-        maxElo != null;
+        maxElo != null ||
+        yearFrom != null ||
+        yearTo != null;
   }
 
   PremiumGamesFilter copyWith({
@@ -136,6 +142,9 @@ class PremiumGamesFilter {
     int? minElo,
     int? maxElo,
     bool clearElo = false,
+    int? yearFrom,
+    int? yearTo,
+    bool clearYears = false,
   }) {
     return PremiumGamesFilter(
       dateRange: dateRange ?? this.dateRange,
@@ -145,6 +154,8 @@ class PremiumGamesFilter {
       finish: finish ?? this.finish,
       minElo: clearElo ? null : (minElo ?? this.minElo),
       maxElo: clearElo ? null : (maxElo ?? this.maxElo),
+      yearFrom: clearYears ? null : (yearFrom ?? this.yearFrom),
+      yearTo: clearYears ? null : (yearTo ?? this.yearTo),
     );
   }
 
@@ -862,6 +873,14 @@ class PremiumGamesNotifier
             gameDate.isBefore(filter.dateRange.startDate!)) {
           return false;
         }
+      }
+
+      if (filter.yearFrom != null || filter.yearTo != null) {
+        final gameDate = game.lastMoveTime ?? game.bucketDate;
+        if (gameDate == null) return false;
+        final year = gameDate.year;
+        if (filter.yearFrom != null && year < filter.yearFrom!) return false;
+        if (filter.yearTo != null && year > filter.yearTo!) return false;
       }
 
       // Result filter
