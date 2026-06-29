@@ -1499,6 +1499,8 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       if (isDeletingLocalDatabase) return;
       final repository = ref.read(localChessDatabaseRepositoryProvider);
       var markedForDelete = false;
+      Object? cacheDeleteError;
+      StackTrace? cacheDeleteStackTrace;
       void updateDeleteProgress(LocalChessScanProgress progress) {
         onDeleteProgress(progress);
       }
@@ -1514,8 +1516,27 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             'label': entry.displayName,
           },
         );
-        final marked = await repository.markCachedSourceDeleted(entry.path);
-        markedForDelete = marked > 0;
+        var marked = 0;
+        try {
+          marked = await repository.markCachedSourceDeleted(entry.path);
+          markedForDelete = marked > 0;
+          if (markedForDelete) {
+            repository.scheduleDeletedCachePurge(sourcePath: entry.path);
+          }
+        } catch (e, st) {
+          cacheDeleteError = e;
+          cacheDeleteStackTrace = st;
+          localChessLog.warning(
+            'Local database cache delete mark failed; removing registry entry',
+            error: e,
+            stackTrace: st,
+            tag: 'library.remove_local_database.cache_mark',
+            context: <String, Object?>{
+              'path': entry.path,
+              'label': entry.displayName,
+            },
+          );
+        }
         await ref
             .read(localLibraryRegistryProvider.notifier)
             .unregister(entry.path);
@@ -1529,12 +1550,30 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             'path': entry.path,
             'label': entry.displayName,
             'marked': marked,
+            'cacheDeleteFailed': cacheDeleteError != null,
           },
         );
         if (context.mounted) {
-          showDesktopToast(context, 'Local database deleted.');
+          showDesktopToast(
+            context,
+            cacheDeleteError == null
+                ? 'Local database deleted.'
+                : 'Local database removed. Cache cleanup did not finish.',
+          );
         }
       } catch (e, st) {
+        if (cacheDeleteError != null) {
+          localChessLog.warning(
+            'Local database remove also failed after cache delete failure',
+            error: cacheDeleteError,
+            stackTrace: cacheDeleteStackTrace,
+            tag: 'library.remove_local_database.cache_mark',
+            context: <String, Object?>{
+              'path': entry.path,
+              'label': entry.displayName,
+            },
+          );
+        }
         localChessLog.error(
           'Local database remove failed',
           e,
