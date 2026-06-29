@@ -441,6 +441,41 @@ void main() {
       },
     );
 
+    test(
+      'openPaths surfaces cache migration progress while restore waits',
+      () async {
+        final file = File('${temp.path}/migration-progress.pgn');
+        await file.writeAsString(_samplePgn);
+        final source = await scanLocalChessPaths(<String>[
+          file.path,
+        ], buildOpeningTree: false);
+        final releaseRestore = Completer<void>();
+        final repo = _ProgressLocalChessDatabaseRepository(
+          source: source,
+          releaseRestore: releaseRestore,
+        );
+        final notifier = LocalChessLibraryNotifier(
+          localDatabaseRepository: repo,
+        );
+
+        final opened = notifier.openPaths(<String>[file.path]);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(notifier.state.isScanning, isTrue);
+        expect(
+          notifier.state.scanProgress?.message,
+          'Migrating existing local databases...',
+        );
+        expect(notifier.state.scanProgress?.fraction, 0.12);
+
+        releaseRestore.complete();
+        expect(await opened, isTrue);
+        expect(notifier.state.isScanning, isFalse);
+        expect(notifier.state.scanProgress, isNull);
+        notifier.clear();
+      },
+    );
+
     test('rebuildOpeningTree coalesces dense worker progress', () async {
       final db = await resqlite.Database.open('${temp.path}/progress_tree.db');
       await db.execute('PRAGMA foreign_keys=ON');
@@ -691,6 +726,7 @@ class _FailingLocalChessDatabaseRepository
   Future<LocalChessSource?> loadFreshSource(
     List<String> paths, {
     String? sourceLabel,
+    void Function(LocalChessScanProgress progress)? onProgress,
   }) async {
     loadFreshSourceCalls++;
     if (failLoadFreshSource) {
@@ -721,6 +757,7 @@ class _FailingLocalChessDatabaseRepository
   Future<LocalChessFileNode?> loadFreshFileNode(
     String path, {
     required String rootPath,
+    void Function(LocalChessScanProgress progress)? onProgress,
   }) async {
     loadFreshFileNodeCalls++;
     if (failLoadFreshFileNode) {
@@ -769,6 +806,33 @@ class _FailingLocalChessDatabaseRepository
       index: _fakeOpeningTreeIndex(databasePath),
       skippedGames: 0,
     );
+  }
+}
+
+class _ProgressLocalChessDatabaseRepository
+    extends LocalChessDatabaseRepository {
+  _ProgressLocalChessDatabaseRepository({
+    required this.source,
+    required this.releaseRestore,
+  }) : super(database: _unusedDatabase);
+
+  final LocalChessSource source;
+  final Completer<void> releaseRestore;
+
+  @override
+  Future<LocalChessSource?> loadFreshSource(
+    List<String> paths, {
+    String? sourceLabel,
+    void Function(LocalChessScanProgress progress)? onProgress,
+  }) async {
+    onProgress?.call(
+      LocalChessScanProgress(
+        fraction: 0.12,
+        message: 'Migrating existing local databases...',
+      ),
+    );
+    await releaseRestore.future;
+    return source;
   }
 }
 

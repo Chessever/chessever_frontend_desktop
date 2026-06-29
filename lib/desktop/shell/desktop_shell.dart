@@ -715,6 +715,7 @@ class _DesktopPgnLoadingOverlay extends StatelessWidget {
     final percentLabel =
         progress == null ? null : '${progress!.percent.clamp(0, 100)}%';
     final phase = progress?.message.trim();
+    final title = _localProgressTitle(phase);
     return Positioned.fill(
       child: ColoredBox(
         color: kBackgroundColor.withValues(alpha: 0.72),
@@ -757,8 +758,8 @@ class _DesktopPgnLoadingOverlay extends StatelessWidget {
                         children: [
                           Text(
                             percentLabel == null
-                                ? 'Loading PGN...'
-                                : 'Loading PGN... $percentLabel',
+                                ? title
+                                : '$title $percentLabel',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -806,6 +807,16 @@ class _DesktopPgnLoadingOverlay extends StatelessWidget {
       ),
     );
   }
+}
+
+String _localProgressTitle(String? phase) {
+  final lower = phase?.toLowerCase() ?? '';
+  if (lower.contains('cache') ||
+      lower.contains('migrat') ||
+      lower.contains('local database')) {
+    return 'Preparing local database...';
+  }
+  return 'Loading PGN...';
 }
 
 class _DesktopTabStack extends StatelessWidget {

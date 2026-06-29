@@ -185,6 +185,14 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       final cached = await _loadFreshSourceBestEffort(
         paths,
         sourceLabel: sourceLabel,
+        onProgress: (progress) {
+          if (_scanToken != token) return;
+          state = state.copyWith(
+            isScanning: true,
+            scanProgress: progress,
+            error: null,
+          );
+        },
       );
       final repository = localDatabaseRepository;
       final imported =
@@ -275,6 +283,14 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       final cached = await _loadFreshFileNodeBestEffort(
         existing.path,
         rootPath: rootPath,
+        onProgress: (progress) {
+          if (_scanToken != token) return;
+          state = state.copyWith(
+            isScanning: true,
+            scanProgress: progress,
+            error: null,
+          );
+        },
       );
       if (_scanToken != token) return false;
       if (cached != null) {
@@ -346,11 +362,16 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   Future<LocalChessSource?> _loadFreshSourceBestEffort(
     List<String> paths, {
     String? sourceLabel,
+    void Function(LocalChessScanProgress progress)? onProgress,
   }) async {
     final repository = localDatabaseRepository;
     if (repository == null) return null;
     try {
-      return await repository.loadFreshSource(paths, sourceLabel: sourceLabel);
+      return await repository.loadFreshSource(
+        paths,
+        sourceLabel: sourceLabel,
+        onProgress: onProgress,
+      );
     } catch (error, stackTrace) {
       _debugLocalChessCacheFailure(
         'load local source cache',
@@ -364,11 +385,16 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   Future<LocalChessFileNode?> _loadFreshFileNodeBestEffort(
     String path, {
     required String rootPath,
+    void Function(LocalChessScanProgress progress)? onProgress,
   }) async {
     final repository = localDatabaseRepository;
     if (repository == null) return null;
     try {
-      return await repository.loadFreshFileNode(path, rootPath: rootPath);
+      return await repository.loadFreshFileNode(
+        path,
+        rootPath: rootPath,
+        onProgress: onProgress,
+      );
     } catch (error, stackTrace) {
       _debugLocalChessCacheFailure('load local file cache', error, stackTrace);
       return null;

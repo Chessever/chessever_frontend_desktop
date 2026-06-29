@@ -40,6 +40,12 @@ class LocalChessResqliteDatabase {
   bool _didApplyDevelopmentPurge = false;
 
   Future<resqlite.Database> get database async {
+    return databaseWithProgress();
+  }
+
+  Future<resqlite.Database> databaseWithProgress({
+    LocalChessScanProgressSink? onProgress,
+  }) async {
     final opened = _database;
     if (opened != null) return opened;
 
@@ -48,7 +54,7 @@ class LocalChessResqliteDatabase {
 
     final completer = _initCompleter = Completer<resqlite.Database>();
     try {
-      final db = await _open();
+      final db = await _open(onProgress: onProgress);
       _database = db;
       completer.complete(db);
       return db;
@@ -69,9 +75,23 @@ class LocalChessResqliteDatabase {
 
   Future<String> get path async => _resolvePath();
 
-  Future<resqlite.Database> _open() async {
+  Future<resqlite.Database> _open({
+    LocalChessScanProgressSink? onProgress,
+  }) async {
+    onProgress?.call(
+      LocalChessScanProgress(
+        fraction: 0.02,
+        message: 'Opening local database cache...',
+      ),
+    );
     final path = await _resolvePath();
     final purgedForDevelopment = await _maybePurgeDevelopmentCacheOnOpen(path);
+    onProgress?.call(
+      LocalChessScanProgress(
+        fraction: 0.04,
+        message: 'Preparing local database cache...',
+      ),
+    );
     final db = await resqlite.Database.open(path);
     await _configure(db);
     await createLocalChessResqliteDatabaseSchema(db);
@@ -81,8 +101,14 @@ class LocalChessResqliteDatabase {
         context: <String, Object?>{'path': path},
       );
     } else {
-      await migrateLegacyLocalChessSqfliteCache(db);
+      await migrateLegacyLocalChessSqfliteCache(db, onProgress: onProgress);
     }
+    onProgress?.call(
+      LocalChessScanProgress(
+        fraction: 0.18,
+        message: 'Local database cache ready.',
+      ),
+    );
     return db;
   }
 
@@ -236,6 +262,12 @@ const String _localChessTreeDepthGenerationName =
 
 typedef LocalChessLegacySqfliteDatabaseFactory =
     Future<sqflite.Database> Function();
+typedef LocalChessScanProgressSink =
+    void Function(LocalChessScanProgress progress);
+typedef LocalChessDatabaseWithProgress =
+    Future<resqlite.Database> Function({
+      LocalChessScanProgressSink? onProgress,
+    });
 
 Future<void> createLocalChessResqliteDatabaseSchema(
   resqlite.Database db,
@@ -503,11 +535,19 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
   LocalChessLegacySqfliteDatabaseFactory? legacyDatabase,
   Iterable<LocalChessLegacySqfliteDatabaseFactory>? legacyDatabaseCandidates,
   @visibleForTesting Iterable<String>? legacyDatabasePathCandidates,
+  LocalChessScanProgressSink? onProgress,
 }) async {
+  void emit(double fraction, String message) {
+    onProgress?.call(
+      LocalChessScanProgress(fraction: fraction, message: message),
+    );
+  }
+
   try {
     if (await _hasMigrationMarker(target, _legacySqfliteMigrationName)) {
       return;
     }
+    emit(0.06, 'Checking for previous local databases...');
     if (await _targetHasLocalChessData(target)) {
       await _markMigration(target, _legacySqfliteMigrationName);
       return;
@@ -519,6 +559,7 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
       legacyDatabasePathCandidates: legacyDatabasePathCandidates,
     );
     if (legacyCandidate == null) {
+      emit(0.12, 'No previous local database cache found.');
       await _markMigration(target, _legacySqfliteMigrationName);
       return;
     }
@@ -532,6 +573,7 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
           'source': legacyCandidate.label,
         },
       );
+      emit(0.12, 'Migrating existing local databases...');
 
       final gameColumns = await _legacyColumnNames(
         legacy,
@@ -543,15 +585,71 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
       );
 
       await target.transaction((tx) async {
-        await _copyLegacyTable(tx, legacy, localChessDatabasesTable);
-        await _copyLegacyTable(tx, legacy, localChessPlayersTable);
-        await _copyLegacyTable(tx, legacy, localChessEventsTable);
-        await _copyLegacyTable(tx, legacy, localChessSitesTable);
-        await _copyLegacyGames(tx, legacy, gameColumns);
-        await _copyLegacyTable(tx, legacy, localChessTreeNodesTable);
-        await _copyLegacyTable(tx, legacy, localChessTreeMovesTable);
-        await _copyLegacyPositionGames(tx, legacy, positionColumns);
-        await _copyLegacyTable(tx, legacy, localChessGameAnalysisTable);
+        await _copyLegacyTable(
+          tx,
+          legacy,
+          localChessDatabasesTable,
+          onCopiedRows:
+              (rows) =>
+                  emit(0.20, 'Migrating local database list... $rows rows'),
+        );
+        await _copyLegacyTable(
+          tx,
+          legacy,
+          localChessPlayersTable,
+          onCopiedRows:
+              (rows) => emit(0.28, 'Migrating player index... $rows rows'),
+        );
+        await _copyLegacyTable(
+          tx,
+          legacy,
+          localChessEventsTable,
+          onCopiedRows:
+              (rows) => emit(0.34, 'Migrating event index... $rows rows'),
+        );
+        await _copyLegacyTable(
+          tx,
+          legacy,
+          localChessSitesTable,
+          onCopiedRows:
+              (rows) => emit(0.40, 'Migrating site index... $rows rows'),
+        );
+        await _copyLegacyGames(
+          tx,
+          legacy,
+          gameColumns,
+          onCopiedRows:
+              (rows) => emit(0.52, 'Migrating local games... $rows rows'),
+        );
+        await _copyLegacyTable(
+          tx,
+          legacy,
+          localChessTreeNodesTable,
+          onCopiedRows:
+              (rows) => emit(0.66, 'Migrating opening tree... $rows rows'),
+        );
+        await _copyLegacyTable(
+          tx,
+          legacy,
+          localChessTreeMovesTable,
+          onCopiedRows:
+              (rows) => emit(0.72, 'Migrating tree moves... $rows rows'),
+        );
+        await _copyLegacyPositionGames(
+          tx,
+          legacy,
+          positionColumns,
+          onCopiedRows:
+              (rows) => emit(0.80, 'Migrating positions... $rows rows'),
+        );
+        await _copyLegacyTable(
+          tx,
+          legacy,
+          localChessGameAnalysisTable,
+          onCopiedRows:
+              (rows) => emit(0.88, 'Migrating local analysis... $rows rows'),
+        );
+        emit(0.94, 'Finalizing local database migration...');
         await _backfillPositionGameNextUci(tx);
         await _ensureLocalChessTreeDepthGeneration(tx);
         await tx.execute(
@@ -565,6 +663,7 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
           ],
         );
       });
+      emit(0.98, 'Local database migration complete.');
       localChessLog.info(
         'Legacy sqflite local chess migration finished',
         context: <String, Object?>{
@@ -779,8 +878,9 @@ Future<Set<String>> _legacyColumnNames(
 Future<void> _copyLegacyTable(
   resqlite.Transaction tx,
   sqflite.Database legacy,
-  String table,
-) async {
+  String table, {
+  void Function(int copiedRows)? onCopiedRows,
+}) async {
   if (!await _legacyTableExists(legacy, table)) return;
   var offset = 0;
   while (true) {
@@ -796,6 +896,7 @@ Future<void> _copyLegacyTable(
       table,
       rows.map((row) => Map<String, Object?>.from(row)).toList(growable: false),
     );
+    onCopiedRows?.call(offset + rows.length);
     if (rows.length < _kLegacyMigrationRowPageSize) return;
     offset += rows.length;
     await _yieldAfterSqlBatch();
@@ -805,8 +906,9 @@ Future<void> _copyLegacyTable(
 Future<void> _copyLegacyGames(
   resqlite.Transaction tx,
   sqflite.Database legacy,
-  Set<String> legacyColumns,
-) async {
+  Set<String> legacyColumns, {
+  void Function(int copiedRows)? onCopiedRows,
+}) async {
   if (!await _legacyTableExists(legacy, localChessGamesTable)) return;
   var offset = 0;
   while (true) {
@@ -870,6 +972,7 @@ Future<void> _copyLegacyGames(
           )
           .toList(growable: false),
     );
+    onCopiedRows?.call(offset + rows.length);
     if (rows.length < _kLegacyMigrationGamePageSize) return;
     offset += rows.length;
     await _yieldAfterSqlBatch();
@@ -879,8 +982,9 @@ Future<void> _copyLegacyGames(
 Future<void> _copyLegacyPositionGames(
   resqlite.Transaction tx,
   sqflite.Database legacy,
-  Set<String> legacyColumns,
-) async {
+  Set<String> legacyColumns, {
+  void Function(int copiedRows)? onCopiedRows,
+}) async {
   if (!await _legacyTableExists(legacy, localChessPositionGamesTable)) return;
   var offset = 0;
   while (true) {
@@ -908,6 +1012,7 @@ Future<void> _copyLegacyPositionGames(
           )
           .toList(growable: false),
     );
+    onCopiedRows?.call(offset + rows.length);
     if (rows.length < _kLegacyMigrationRowPageSize) return;
     offset += rows.length;
     await _yieldAfterSqlBatch();
@@ -1223,14 +1328,17 @@ class _LocalTreeRebuildWorkerFailure {
 class LocalChessDatabaseRepository {
   LocalChessDatabaseRepository({
     required Future<resqlite.Database> Function() database,
+    LocalChessDatabaseWithProgress? databaseWithProgress,
     Future<resqlite.Database> Function()? purgeDatabase,
     this.eagerPositionRefLoadLimit = _kEagerPositionRefLoadLimit,
     this.eagerTreeMoveLoadLimit = _kEagerTreeMoveLoadLimit,
     this.cachedFileNodeGamePreviewLimit = _kCachedFileNodeGamePreviewLimit,
   }) : _database = database,
+       _databaseWithProgress = databaseWithProgress,
        _purgeDatabase = purgeDatabase;
 
   final Future<resqlite.Database> Function() _database;
+  final LocalChessDatabaseWithProgress? _databaseWithProgress;
   final Future<resqlite.Database> Function()? _purgeDatabase;
   final int eagerPositionRefLoadLimit;
   final int eagerTreeMoveLoadLimit;
@@ -1241,6 +1349,16 @@ class LocalChessDatabaseRepository {
       <String, Future<LocalChessSource?>>{};
   static Future<void> _backgroundPurgeQueue = Future<void>.value();
   final Set<String> _reusedImportedGameRows = <String>{};
+
+  Future<resqlite.Database> _openDatabase({
+    LocalChessScanProgressSink? onProgress,
+  }) {
+    final withProgress = _databaseWithProgress;
+    if (onProgress != null && withProgress != null) {
+      return withProgress(onProgress: onProgress);
+    }
+    return _database();
+  }
 
   Future<void> persistSource(LocalChessSource source) async {
     for (final file in _playableFiles(source.root)) {
@@ -1330,7 +1448,7 @@ class LocalChessDatabaseRepository {
       },
     );
 
-    final db = await _database();
+    final db = await _openDatabase(onProgress: onProgress);
     final databaseFilePath = await _databaseFilePath(db);
     if (databaseFilePath == null || databaseFilePath.trim().isEmpty) {
       return null;
@@ -1495,7 +1613,7 @@ class LocalChessDatabaseRepository {
       'Local tree rebuild started',
       context: <String, Object?>{'path': databasePath},
     );
-    final db = await _database();
+    final db = await _openDatabase(onProgress: onProgress);
     final databaseFilePath = await _databaseFilePath(db);
     if (databaseFilePath == null || databaseFilePath.isEmpty) {
       throw StateError('Local chess database file path is unavailable.');
@@ -1920,6 +2038,7 @@ class LocalChessDatabaseRepository {
   Future<LocalChessSource?> loadFreshSource(
     List<String> paths, {
     String? sourceLabel,
+    LocalChessScanProgressSink? onProgress,
   }) async {
     if (paths.isEmpty) return null;
     try {
@@ -1927,6 +2046,7 @@ class LocalChessDatabaseRepository {
         return await _loadFreshSingleSource(
           paths.single,
           sourceLabel: sourceLabel,
+          onProgress: onProgress,
         );
       }
 
@@ -1939,6 +2059,7 @@ class LocalChessDatabaseRepository {
               path,
               rootPath: path,
               force: true,
+              onProgress: onProgress,
             );
             children.add(node);
           case FileSystemEntityType.file:
@@ -1946,6 +2067,7 @@ class LocalChessDatabaseRepository {
             final node = await _loadFreshFileNodeOrUnsupported(
               path,
               rootPath: parent,
+              onProgress: onProgress,
             );
             if (node != null) children.add(node);
           case FileSystemEntityType.link:
@@ -1979,9 +2101,14 @@ class LocalChessDatabaseRepository {
   Future<LocalChessFileNode?> loadFreshFileNode(
     String path, {
     required String rootPath,
+    LocalChessScanProgressSink? onProgress,
   }) async {
     try {
-      return await _loadFreshFileNode(path, rootPath: rootPath);
+      return await _loadFreshFileNode(
+        path,
+        rootPath: rootPath,
+        onProgress: onProgress,
+      );
     } on _LocalChessCacheMiss {
       return null;
     }
@@ -3146,10 +3273,16 @@ class LocalChessDatabaseRepository {
   Future<LocalChessSource?> _loadFreshSingleSource(
     String path, {
     String? sourceLabel,
+    LocalChessScanProgressSink? onProgress,
   }) async {
     final type = await FileSystemEntity.type(path, followLinks: false);
     if (type == FileSystemEntityType.directory) {
-      final root = await _loadFreshDirectory(path, rootPath: path, force: true);
+      final root = await _loadFreshDirectory(
+        path,
+        rootPath: path,
+        force: true,
+        onProgress: onProgress,
+      );
       return LocalChessSource(
         id: _stableId(path),
         label: sourceLabel ?? localChessDatabaseDisplayNameForPath(path),
@@ -3161,7 +3294,11 @@ class LocalChessDatabaseRepository {
     }
     if (type != FileSystemEntityType.file) return null;
     final parent = p.dirname(path);
-    final node = await _loadFreshFileNode(path, rootPath: parent);
+    final node = await _loadFreshFileNode(
+      path,
+      rootPath: parent,
+      onProgress: onProgress,
+    );
     final label = sourceLabel ?? localChessDatabaseDisplayNameForPath(path);
     final root = LocalChessFolderNode.fromChildren(
       name: label,
@@ -3183,6 +3320,7 @@ class LocalChessDatabaseRepository {
     String path, {
     required String rootPath,
     bool force = false,
+    LocalChessScanProgressSink? onProgress,
   }) async {
     final children = <LocalChessNode>[];
     await for (final entity in Directory(path).list(followLinks: false)) {
@@ -3193,6 +3331,7 @@ class LocalChessDatabaseRepository {
             entity.path,
             rootPath: rootPath,
             force: true,
+            onProgress: onProgress,
           );
           if (child.children.isNotEmpty || child.scanError != null) {
             children.add(child);
@@ -3201,6 +3340,7 @@ class LocalChessDatabaseRepository {
           final node = await _loadFreshFileNodeOrUnsupported(
             entity.path,
             rootPath: rootPath,
+            onProgress: onProgress,
           );
           if (node != null) children.add(node);
         case FileSystemEntityType.link:
@@ -3223,6 +3363,7 @@ class LocalChessDatabaseRepository {
   Future<LocalChessNode?> _loadFreshFileNodeOrUnsupported(
     String path, {
     required String rootPath,
+    LocalChessScanProgressSink? onProgress,
   }) async {
     if (!looksLikeLocalChessFile(path)) return null;
     if (!isSupportedLocalChessFile(path)) {
@@ -3239,16 +3380,17 @@ class LocalChessDatabaseRepository {
         message: localChessUnsupportedFormatMessage,
       );
     }
-    return _loadFreshFileNode(path, rootPath: rootPath);
+    return _loadFreshFileNode(path, rootPath: rootPath, onProgress: onProgress);
   }
 
   Future<LocalChessFileNode> _loadFreshFileNode(
     String path, {
     required String rootPath,
+    LocalChessScanProgressSink? onProgress,
   }) async {
     final stat = await File(path).stat();
     final databaseId = _databaseId(path);
-    final db = await _database();
+    final db = await _openDatabase(onProgress: onProgress);
     final databaseRows = await db.select(
       '''
       SELECT *
@@ -4744,6 +4886,9 @@ final localChessDatabaseRepositoryProvider =
     Provider<LocalChessDatabaseRepository>((_) {
       return LocalChessDatabaseRepository(
         database: () => LocalChessResqliteDatabase.instance.database,
+        databaseWithProgress:
+            ({onProgress}) => LocalChessResqliteDatabase.instance
+                .databaseWithProgress(onProgress: onProgress),
         purgeDatabase:
             () => LocalChessResqliteDatabase.instance.openDedicatedConnection(),
       );
