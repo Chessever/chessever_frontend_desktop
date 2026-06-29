@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 19.4.2+196
+version: 19.4.3+197
 
 environment:
   sdk: ^3.7.2
@@ -206,6 +206,15 @@ dependency_overrides:
   meta: 1.17.0
   desktop_updater:
     path: third_party/desktop_updater
+  # Temporary: resqlite 0.6.0 does not export its FFI symbols from the Windows
+  # DLL (MSVC exports nothing by default), so resqlite_open fails with error
+  # 127 and local databases never open on Windows. This fork is v0.6.0 + a
+  # Windows symbol-export patch (PR'd upstream). Drop once a fixed resqlite
+  # is published.
+  resqlite:
+    git:
+      url: https://github.com/devberkay/resqlite.git
+      ref: fix/windows-symbol-export
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

@@ -1502,10 +1502,11 @@ packages:
   resqlite:
     dependency: "direct main"
     description:
-      name: resqlite
-      sha256: a193ec31867e827467d51243671fee1df7d31199f8fb42a15f3797ccc5a95174
-      url: "https://pub.dev"
-    source: hosted
+      path: "."
+      ref: "fix/windows-symbol-export"
+      resolved-ref: fe0b5532093612daced6bbae37cbeb76381036dd
+      url: "https://github.com/devberkay/resqlite.git"
+    source: git
     version: "0.6.0"
   retry:
     dependency: transitive
