@@ -581,9 +581,18 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
         // complete — leaving the marker unset lets it retry on the next launch
         // instead of permanently hiding the user's local databases.
         emit(0.12, 'Local database cache is busy; will retry on next launch.');
+        // Pass a concrete error so this reaches Sentry (the logger only
+        // forwards to Sentry when error != null). This is the Windows case
+        // where the legacy sqflite WAL cache is present but unreadable, so we
+        // want visibility into how often it happens and whether retries
+        // eventually recover the user's local databases.
         localChessLog.warning(
           'Deferring legacy sqflite local chess migration: existing cache '
           'could not be read',
+          error: StateError(
+            'Legacy sqflite local chess cache present but unreadable; '
+            'deferring migration to retry on next launch',
+          ),
           tag: 'local-chess-legacy-migration',
           report: true,
         );
