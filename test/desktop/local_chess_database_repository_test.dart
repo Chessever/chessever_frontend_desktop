@@ -108,6 +108,61 @@ void main() {
     expect(moves.single.white, 1);
   });
 
+  test(
+    'defers instead of marking complete when the legacy cache is unreadable, '
+    'then migrates once it can be read',
+    () async {
+      // First launch (Windows-style failure): the legacy sqflite cache exists
+      // but cannot be opened/read — e.g. a locked / read-only WAL file. The
+      // explicit source throws.
+      await migrateLegacyLocalChessSqfliteCache(
+        db,
+        legacyDatabase:
+            () async =>
+                throw Exception('unable to open database file (simulated)'),
+        legacyDatabasePathCandidates: const <String>[],
+      );
+
+      // The migration must NOT mark itself complete, so it retries next launch
+      // instead of permanently hiding the user's local databases.
+      expect(
+        await db.select(
+          'SELECT 1 FROM local_chess_migrations WHERE name = ?',
+          const <Object?>[_legacySqfliteMigrationV2],
+        ),
+        isEmpty,
+      );
+      expect(await _count(db, 'local_chess_databases'), 0);
+
+      // Next launch: the legacy cache is now readable and holds data.
+      final pgnFile = File('${temp.path}/legacy.pgn');
+      await pgnFile.writeAsString(_legacyPgn.trim());
+      final legacyDb = await databaseFactoryFfiNoIsolate.openDatabase(
+        '${temp.path}/legacy_app.db',
+      );
+      addTearDown(legacyDb.close);
+      await legacyDb.execute('PRAGMA foreign_keys=ON');
+      await createLocalChessDatabaseSchema(legacyDb);
+      await _seedLegacyLocalChessCache(legacyDb, pgnFile);
+
+      await migrateLegacyLocalChessSqfliteCache(
+        db,
+        legacyDatabase: () async => legacyDb,
+        legacyDatabasePathCandidates: const <String>[],
+      );
+
+      expect(await _count(db, 'local_chess_databases'), 1);
+      expect(await _count(db, 'local_chess_games'), 1);
+      expect(
+        await db.select(
+          'SELECT 1 FROM local_chess_migrations WHERE name = ?',
+          const <Object?>[_legacySqfliteMigrationV2],
+        ),
+        isNotEmpty,
+      );
+    },
+  );
+
   test('legacy migration copies large game tables in pages', () async {
     final pgnFile = File('${temp.path}/paged-legacy.pgn');
     await pgnFile.writeAsString(_legacyPgn.trim());

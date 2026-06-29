@@ -101,7 +101,11 @@ class LocalChessResqliteDatabase {
         context: <String, Object?>{'path': path},
       );
     } else {
-      await migrateLegacyLocalChessSqfliteCache(db, onProgress: onProgress);
+      await migrateLegacyLocalChessSqfliteCache(
+        db,
+        legacyDatabase: _defaultLegacyLocalChessSqfliteDatabase,
+        onProgress: onProgress,
+      );
     }
     onProgress?.call(
       LocalChessScanProgress(
@@ -268,6 +272,17 @@ typedef LocalChessDatabaseWithProgress =
     Future<resqlite.Database> Function({
       LocalChessScanProgressSink? onProgress,
     });
+
+/// Production legacy source for the sqflite→resqlite migration.
+///
+/// Reuses the already-open, WAL-mode [AppDatabase] connection instead of
+/// opening a second `readOnly` connection to the same file. A read-only open
+/// of a WAL database has to (re)create the `-wal`/`-shm` sidecars and collides
+/// with AppDatabase's `singleInstance` write handle; on Windows that fails with
+/// "unable to open database file", which previously aborted the migration
+/// silently. Reading through the live connection sidesteps that entirely.
+Future<sqflite.Database> _defaultLegacyLocalChessSqfliteDatabase() =>
+    AppDatabase.instance.database;
 
 Future<void> createLocalChessResqliteDatabaseSchema(
   resqlite.Database db,
@@ -553,12 +568,27 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
       return;
     }
 
-    final legacyCandidate = await _findLegacyLocalChessSqfliteCache(
+    final lookup = await _findLegacyLocalChessSqfliteCache(
       legacyDatabase: legacyDatabase,
       legacyDatabaseCandidates: legacyDatabaseCandidates,
       legacyDatabasePathCandidates: legacyDatabasePathCandidates,
     );
+    final legacyCandidate = lookup.candidate;
     if (legacyCandidate == null) {
+      if (lookup.hadUnreadableCandidate) {
+        // A legacy cache exists but could not be read (e.g. the sqflite WAL
+        // file is locked / unreadable on Windows). Do NOT mark the migration
+        // complete — leaving the marker unset lets it retry on the next launch
+        // instead of permanently hiding the user's local databases.
+        emit(0.12, 'Local database cache is busy; will retry on next launch.');
+        localChessLog.warning(
+          'Deferring legacy sqflite local chess migration: existing cache '
+          'could not be read',
+          tag: 'local-chess-legacy-migration',
+          report: true,
+        );
+        return;
+      }
       emit(0.12, 'No previous local database cache found.');
       await _markMigration(target, _legacySqfliteMigrationName);
       return;
@@ -688,24 +718,41 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
   }
 }
 
-Future<_LegacySqfliteCandidate?> _findLegacyLocalChessSqfliteCache({
+Future<_LegacySqfliteLookup> _findLegacyLocalChessSqfliteCache({
   LocalChessLegacySqfliteDatabaseFactory? legacyDatabase,
   Iterable<LocalChessLegacySqfliteDatabaseFactory>? legacyDatabaseCandidates,
   Iterable<String>? legacyDatabasePathCandidates,
 }) async {
+  var hadUnreadableCandidate = false;
   final explicit = <LocalChessLegacySqfliteDatabaseFactory>[
     if (legacyDatabase != null) legacyDatabase,
     ...?legacyDatabaseCandidates,
   ];
   for (var i = 0; i < explicit.length; i++) {
-    final db = await explicit[i]();
-    final count = await _legacyLocalChessDatabaseCount(db);
-    if (count > 0) {
-      return _LegacySqfliteCandidate(
-        database: db,
-        databaseCount: count,
-        label: 'explicit:$i',
-        closeAfterUse: false,
+    try {
+      final db = await explicit[i]();
+      final count = await _legacyLocalChessDatabaseCount(db);
+      if (count > 0) {
+        return _LegacySqfliteLookup(
+          _LegacySqfliteCandidate(
+            database: db,
+            databaseCount: count,
+            label: 'explicit:$i',
+            closeAfterUse: false,
+          ),
+        );
+      }
+    } catch (error, stackTrace) {
+      // The live/explicit connection could not be read. Remember it so the
+      // caller defers (rather than permanently marks-complete), then fall
+      // through to the path-scan candidates.
+      hadUnreadableCandidate = true;
+      localChessLog.warning(
+        'Failed to inspect explicit legacy sqflite local chess candidate',
+        error: error,
+        stackTrace: stackTrace,
+        context: <String, Object?>{'candidate': 'explicit:$i'},
+        tag: 'local-chess-legacy-migration-candidate',
       );
     }
   }
@@ -724,14 +771,20 @@ Future<_LegacySqfliteCandidate?> _findLegacyLocalChessSqfliteCache({
       );
       final count = await _legacyLocalChessDatabaseCount(db);
       if (count > 0) {
-        return _LegacySqfliteCandidate(
-          database: db,
-          databaseCount: count,
-          label: path,
-          closeAfterUse: true,
+        return _LegacySqfliteLookup(
+          _LegacySqfliteCandidate(
+            database: db,
+            databaseCount: count,
+            label: path,
+            closeAfterUse: true,
+          ),
         );
       }
     } catch (error, stackTrace) {
+      // An on-disk legacy cache exists but could not be opened/read (a locked
+      // or read-only WAL file on Windows is the common case). Flag it so the
+      // migration retries next launch instead of giving up.
+      hadUnreadableCandidate = true;
       localChessLog.warning(
         'Failed to inspect legacy sqflite local chess database candidate',
         error: error,
@@ -743,7 +796,26 @@ Future<_LegacySqfliteCandidate?> _findLegacyLocalChessSqfliteCache({
     await db?.close();
   }
 
-  return null;
+  return _LegacySqfliteLookup(
+    null,
+    hadUnreadableCandidate: hadUnreadableCandidate,
+  );
+}
+
+/// Result of scanning for a legacy sqflite local-chess cache.
+///
+/// [hadUnreadableCandidate] is true when a legacy cache was present but could
+/// not be read (locked/unreadable). The migration uses it to defer instead of
+/// marking itself complete, so transient failures never permanently hide a
+/// user's local databases.
+class _LegacySqfliteLookup {
+  const _LegacySqfliteLookup(
+    this.candidate, {
+    this.hadUnreadableCandidate = false,
+  });
+
+  final _LegacySqfliteCandidate? candidate;
+  final bool hadUnreadableCandidate;
 }
 
 Future<int> _legacyLocalChessDatabaseCount(sqflite.Database db) async {
