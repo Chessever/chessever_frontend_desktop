@@ -106,6 +106,7 @@ workflows:
         - chessever-desktop-release
       vars:
         CHESSEVER_DEV_ID_IDENTITY: "Developer ID Application: ChessEver LLC (N8J7TUZMYR)"
+        TELEGRAM_CHAT_ID: "-1003954728178"
     scripts:
       - name: Verify release environment
         script: |
@@ -120,6 +121,7 @@ workflows:
             APP_STORE_CONNECT_ISSUER_ID
             APP_STORE_CONNECT_PRIVATE_KEY
             CODEMAGIC_PUBLISHER_KEY
+            TELEGRAM_BOT_TOKEN
           )
           missing=0
           for name in "${required[@]}"; do
@@ -205,6 +207,9 @@ workflows:
       - name: Publish macOS desktop archive
         script: |
           ./scripts/codemagic_publish_macos.sh
+      - name: Notify Telegram
+        script: |
+          bash ./scripts/codemagic_notify_telegram.sh macOS
     artifacts:
       - dist/*.dmg
       - dist/**/*.json
@@ -220,6 +225,8 @@ workflows:
       flutter: stable
       groups:
         - chessever-desktop-release
+      vars:
+        TELEGRAM_CHAT_ID: "-1003954728178"
     scripts:
       - name: Verify release environment
         script: |
@@ -229,7 +236,8 @@ workflows:
             'GOOGLE_DESKTOP_CLIENT_ID',
             'GOOGLE_DESKTOP_CLIENT_SECRET',
             'SENTRY_FLUTTER',
-            'CODEMAGIC_PUBLISHER_KEY'
+            'CODEMAGIC_PUBLISHER_KEY',
+            'TELEGRAM_BOT_TOKEN'
           )
           $missing = @()
           foreach ($name in $required) {
@@ -257,6 +265,9 @@ workflows:
       - name: Publish Windows desktop archive
         script: |
           powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_publish_windows.ps1
+      - name: Notify Telegram
+        script: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_notify_telegram.ps1 -Platform Windows
     artifacts:
       - dist\**\*
       - windows\installer\output\*.exe
@@ -270,6 +281,8 @@ workflows:
       flutter: stable
       groups:
         - chessever-desktop-release
+      vars:
+        TELEGRAM_CHAT_ID: "-1003954728178"
     scripts:
       - name: Verify release environment
         script: |
@@ -282,6 +295,7 @@ workflows:
             SENTRY_FLUTTER
             CODEMAGIC_PUBLISHER_KEY
             CODEMAGIC_PUBLISH_REMOTE
+            TELEGRAM_BOT_TOKEN
           )
           missing=0
           for name in "${required[@]}"; do
@@ -300,6 +314,9 @@ workflows:
       - name: Publish Linux desktop archive
         script: |
           bash ./scripts/codemagic_publish_linux.sh
+      - name: Notify Telegram
+        script: |
+          bash ./scripts/codemagic_notify_telegram.sh Linux
     artifacts:
       - dist/**/*.deb
       - dist/**/*.json
