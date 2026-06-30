@@ -33,6 +33,7 @@ import 'package:chessever/desktop/widgets/tournament_games_view.dart'
     show LiveDesktopGameCard, openTournamentGameTab;
 import 'package:chessever/providers/for_you_games_logic.dart';
 import 'package:chessever/providers/for_you_games_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
@@ -58,14 +59,16 @@ import 'package:chessever/widgets/logo_pattern_fallback.dart';
 import 'package:chessever/widgets/search/enhanced_group_broadcast_local_storage.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
-LiveGamesBatchKey _desktopForYouLiveBatchKey({
+LiveGamesBatchKey? _desktopForYouLiveBatchKey({
   required String eventId,
   required String tourId,
   required List<GamesTourModel> games,
 }) {
+  final liveGames = games.where(shouldSubscribeToLiveGame).toList();
+  if (liveGames.isEmpty) return null;
   return LiveGamesBatchKey(
     scopeId: 'desktop_for_you:$eventId:$tourId',
-    gameIds: games.map((game) => game.gameId),
+    gameIds: liveGames.map((game) => game.gameId),
   );
 }
 
@@ -3567,7 +3570,7 @@ class _ForYouTeamMatchPanel extends StatelessWidget {
   final String? selectedGameId;
   final String tournamentTitle;
   final List<GamesTourModel> eventGames;
-  final LiveGamesBatchKey liveBatchKey;
+  final LiveGamesBatchKey? liveBatchKey;
   final bool streamingEnabled;
 
   @override
@@ -3600,7 +3603,7 @@ class _ForYouKnockoutMatchPanel extends StatelessWidget {
   final String? selectedGameId;
   final String tournamentTitle;
   final List<GamesTourModel> eventGames;
-  final LiveGamesBatchKey liveBatchKey;
+  final LiveGamesBatchKey? liveBatchKey;
   final bool streamingEnabled;
 
   @override
@@ -3633,7 +3636,7 @@ class _ForYouGroupedPanelFrame extends StatelessWidget {
   final String? selectedGameId;
   final String tournamentTitle;
   final List<GamesTourModel> eventGames;
-  final LiveGamesBatchKey liveBatchKey;
+  final LiveGamesBatchKey? liveBatchKey;
   final bool streamingEnabled;
 
   @override

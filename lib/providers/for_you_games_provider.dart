@@ -1735,8 +1735,14 @@ final forYouEventGamesWithAutoRefreshProvider = Provider.autoDispose.family<
           .toList(growable: false);
 
       if (displayedGames.isNotEmpty && ref.watch(shouldStreamProvider)) {
+        final displayedLiveGames = displayedGames
+            .where(shouldSubscribeToLiveGame)
+            .toList(growable: false);
+        if (displayedLiveGames.isEmpty) {
+          return AsyncValue.data(snapshot);
+        }
         final refreshOnFinishedGameIds =
-            displayedGames
+            displayedLiveGames
                 .where((game) => game.gameStatus == GameStatus.ongoing)
                 .map((game) => game.gameId)
                 .toSet();
@@ -1744,7 +1750,7 @@ final forYouEventGamesWithAutoRefreshProvider = Provider.autoDispose.family<
           gameUpdatesBatchStreamProvider(
             LiveGamesBatchKey(
               scopeId: 'for_you:$eventId:${snapshot.tourId}',
-              gameIds: displayedGames.map((game) => game.gameId),
+              gameIds: displayedLiveGames.map((game) => game.gameId),
             ),
           ).select(
             (async) => async.whenData(

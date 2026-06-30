@@ -182,8 +182,18 @@ void main() {
 
   test('event rail uses shown game ids for realtime tournament rows', () {
     final games = [
-      _summary(id: 'round-5-board-1', roundLabel: 'R5', tourId: 'tour-1'),
-      _summary(id: 'round-5-board-2', roundLabel: 'R5', tourId: 'tour-1'),
+      _summary(
+        id: 'round-5-board-1',
+        roundLabel: 'R5',
+        tourId: 'tour-1',
+        status: GameStatus.ongoing,
+      ),
+      _summary(
+        id: 'round-5-board-2',
+        roundLabel: 'R5',
+        tourId: 'tour-1',
+        status: GameStatus.ongoing,
+      ),
     ];
 
     final key = eventRailLiveBatchKeyForTesting(

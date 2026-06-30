@@ -13,6 +13,7 @@ import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card.dart'
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/game_card_wrapper_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/game_card_wrapper_widget.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/grid_game_card_wrapper_widget.dart';
+import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/games_tour_content_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/foreground_task_scheduler.dart';
@@ -37,14 +38,16 @@ double _forYouCacheExtentForMode(GamesListViewMode mode) {
       : _kForYouBoardCacheExtent;
 }
 
-LiveGamesBatchKey _forYouLiveBatchKey({
+LiveGamesBatchKey? _forYouLiveBatchKey({
   required String eventId,
   required String tourId,
   required List<GamesTourModel> games,
 }) {
+  final liveGames = games.where(shouldSubscribeToLiveGame).toList();
+  if (liveGames.isEmpty) return null;
   return LiveGamesBatchKey(
     scopeId: 'for_you:$eventId:$tourId',
-    gameIds: games.map((game) => game.gameId),
+    gameIds: liveGames.map((game) => game.gameId),
   );
 }
 
@@ -873,7 +876,7 @@ class _TabletGameCard extends ConsumerWidget {
   final String eventId;
   final List<String> pinnedIds;
   final bool isScrolling;
-  final LiveGamesBatchKey liveBatchKey;
+  final LiveGamesBatchKey? liveBatchKey;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1009,7 +1012,7 @@ class _ForYouEventGames extends ConsumerWidget {
     List<GamesTourModel> orderedGames,
     List<String> pinnedIds,
     bool isScrolling,
-    LiveGamesBatchKey liveBatchKey,
+    LiveGamesBatchKey? liveBatchKey,
   ) {
     final rows = <Widget>[];
 
@@ -1200,7 +1203,7 @@ class _ForYouGameCard extends ConsumerWidget {
   final Set<String> animatedGameIds;
   final GamesListViewMode viewMode;
   final bool isScrolling;
-  final LiveGamesBatchKey liveBatchKey;
+  final LiveGamesBatchKey? liveBatchKey;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
