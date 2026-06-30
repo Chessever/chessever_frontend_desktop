@@ -1,4 +1,5 @@
 import 'package:chessever/screens/chessboard/widgets/chess_board_from_fen_new.dart';
+import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:flutter/material.dart';
@@ -16,6 +17,7 @@ class BoardGameCardWrapperWidget extends ConsumerWidget {
   final int gameIndex;
   final List<String> pinnedIds;
   final void Function(GamesTourModel game) onPinToggle;
+  final LiveGamesBatchKey? liveBatchKey;
 
   const BoardGameCardWrapperWidget({
     super.key,
@@ -25,13 +27,25 @@ class BoardGameCardWrapperWidget extends ConsumerWidget {
     required this.gameIndex,
     required this.pinnedIds,
     required this.onPinToggle,
+    this.liveBatchKey,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final effectiveLiveBatchKey =
+        liveBatchKey ??
+        liveContextBatchKeyForGame(
+          game: game,
+          contextGames: orderedGames,
+          scopePrefix: 'desktop_board_context',
+        );
     // Watch live game updates for ongoing games
     // Use gameId as the stable key to prevent provider recreation
-    final liveGame = watchLiveGamePosition(ref, game);
+    final liveGame = watchLiveGamePosition(
+      ref,
+      game,
+      batchKey: effectiveLiveBatchKey,
+    );
 
     // Build updated games list with the live game data
     List<GamesTourModel> getUpdatedGamesList() {
@@ -48,6 +62,7 @@ class BoardGameCardWrapperWidget extends ConsumerWidget {
       onChanged: () => onChangedWithLiveGames(getUpdatedGamesList()),
       pinnedIds: pinnedIds,
       onPinToggle: onPinToggle,
+      liveBatchKey: effectiveLiveBatchKey,
     );
   }
 }

@@ -103,14 +103,12 @@ List<TournamentGameSummary> eventRailMergeFreshEventGamesForTesting(
 @visibleForTesting
 LiveGamesBatchKey? eventRailLiveBatchKeyForTesting({
   required String activeTabId,
-  required BoardTabGameArgs? activeArgs,
   required List<TournamentGameSummary> games,
   required bool isEventRail,
   required bool isDatabaseRail,
 }) {
   return _eventRailLiveBatchKey(
     activeTabId: activeTabId,
-    activeArgs: activeArgs,
     games: games,
     kind:
         isDatabaseRail
@@ -815,7 +813,6 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
     _pruneRowKeys(orderedGames);
     final liveBatchKey = _eventRailLiveBatchKey(
       activeTabId: activeTabId,
-      activeArgs: effectiveArgs,
       games: orderedGames,
       kind: resolved.kind,
     );
@@ -1525,7 +1522,6 @@ String? _eventRailTourId(
 
 LiveGamesBatchKey? _eventRailLiveBatchKey({
   required String activeTabId,
-  required BoardTabGameArgs? activeArgs,
   required List<TournamentGameSummary> games,
   required _GameListKind kind,
 }) {
@@ -1534,17 +1530,6 @@ LiveGamesBatchKey? _eventRailLiveBatchKey({
   }
 
   final scopeId = 'desktop-event-rail:$activeTabId:${kind.index}';
-  if (kind == _GameListKind.event && activeArgs != null) {
-    final tourId = _eventRailTourId(activeArgs, games);
-    if (tourId != null && tourId.isNotEmpty) {
-      return LiveGamesBatchKey(
-        scopeId: scopeId,
-        gameIds: games.map((game) => game.id),
-        tourId: tourId,
-      );
-    }
-  }
-
   return LiveGamesBatchKey(
     scopeId: scopeId,
     gameIds: games.map((game) => game.id),

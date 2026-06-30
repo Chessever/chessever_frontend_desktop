@@ -40,12 +40,19 @@ class GridGameCardWrapperWidget extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final effectiveLiveBatchKey =
+        liveBatchKey ??
+        liveContextBatchKeyForGame(
+          game: game,
+          contextGames: orderedGames,
+          scopePrefix: 'desktop_grid_context',
+        );
     // Watch live game updates for ongoing games
     // Use gameId as the stable key to prevent provider recreation
     final liveGame = watchLiveGamePosition(
       ref,
       game,
-      batchKey: liveBatchKey,
+      batchKey: effectiveLiveBatchKey,
       streamEnabled: streamEnabled,
     );
     final effectiveAllowStockfishFallback =
@@ -71,7 +78,7 @@ class GridGameCardWrapperWidget extends ConsumerWidget {
       onPinToggle: onPinToggle,
       fixedBottomSide: fixedBottomSide,
       allowStockfishFallback: effectiveAllowStockfishFallback,
-      liveBatchKey: liveBatchKey,
+      liveBatchKey: effectiveLiveBatchKey,
     );
   }
 }

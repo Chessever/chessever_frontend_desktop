@@ -117,10 +117,17 @@ class _LiveGameProbe extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final liveGame = watchLiveGame(ref, game);
+    final liveGame = watchLiveGame(ref, game, batchKey: _batchKey());
     onBuild(liveGame);
     return const SizedBox.shrink();
   }
+}
+
+LiveGamesBatchKey _batchKey([List<String> gameIds = const ['game-1']]) {
+  return LiveGamesBatchKey(
+    scopeId: 'test:${gameIds.join(',')}',
+    gameIds: gameIds,
+  );
 }
 
 void main() {
@@ -156,7 +163,9 @@ void main() {
       );
 
       final sub = container.listen(
-        liveGameCardProvider('game-1'),
+        scopedLiveGameCardProvider(
+          LiveGameWatchParams(gameId: 'game-1', batchKey: _batchKey()),
+        ),
         (_, __) {},
         fireImmediately: true,
       );
@@ -237,7 +246,11 @@ void main() {
 
       final sub = container.listen(
         scopedLiveGameCardProvider(
-          const LiveGameWatchParams(gameId: 'game-1', streamEnabled: false),
+          LiveGameWatchParams(
+            gameId: 'game-1',
+            batchKey: _batchKey(),
+            streamEnabled: false,
+          ),
         ),
         (_, __) {},
         fireImmediately: true,
@@ -273,7 +286,9 @@ void main() {
       };
 
       final sub = container.listen(
-        scopedLiveGameCardProvider(const LiveGameWatchParams(gameId: 'game-1')),
+        scopedLiveGameCardProvider(
+          LiveGameWatchParams(gameId: 'game-1', batchKey: _batchKey()),
+        ),
         (_, __) {},
         fireImmediately: true,
       );
@@ -292,7 +307,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(repository.subscribeToGameUpdatesCount, 0);
-      expect(repository.subscribeToRoundUpdatesCount, 1);
+      expect(repository.subscribeToBatchUpdatesCount, 1);
       expect(sub.read()?.fen, afterE4E5);
       expect(sub.read()?.lastMove, 'e7e5');
       expect(sub.read()?.whiteClockSeconds, 170);
@@ -332,6 +347,36 @@ void main() {
       expect(sub.read()?.fen, afterE4);
     });
 
+    test('supabase cards without context do not open round-wide channels', () {
+      final repository = _FakeGameStreamRepository(
+        const Stream<Map<String, dynamic>?>.empty(),
+      );
+
+      final container = ProviderContainer(
+        overrides: [gameStreamRepositoryProvider.overrideWithValue(repository)],
+      );
+      addTearDown(container.dispose);
+
+      container.read(baseGameProvider('game-1').notifier).state = _game(
+        id: 'game-1',
+        status: GameStatus.ongoing,
+        fen: afterE4,
+      );
+
+      final sub = container.listen(
+        scopedLiveGameCardProvider(const LiveGameWatchParams(gameId: 'game-1')),
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(sub.close);
+
+      expect(repository.subscribeToGameUpdatesCount, 0);
+      expect(repository.subscribeToBatchUpdatesCount, 0);
+      expect(repository.subscribeToRoundUpdatesCount, 0);
+      expect(repository.subscribeToTourUpdatesCount, 0);
+      expect(sub.read()?.fen, afterE4);
+    });
+
     test(
       'clock projection keeps position and move timestamp in sync',
       () async {
@@ -359,7 +404,9 @@ void main() {
         );
 
         final sub = container.listen(
-          liveGameClockProvider(const LiveGameWatchParams(gameId: 'game-1')),
+          liveGameClockProvider(
+            LiveGameWatchParams(gameId: 'game-1', batchKey: _batchKey()),
+          ),
           (_, __) {},
           fireImmediately: true,
         );

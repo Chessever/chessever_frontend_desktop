@@ -1090,7 +1090,12 @@ class _CountrymenLiveBoardGameCardState
   Widget build(BuildContext context) {
     // Watch live game updates for ongoing games
     // Use gameId as the stable key to prevent provider recreation
-    final liveGame = watchLiveGame(ref, widget.game);
+    final liveBatchKey = liveContextBatchKeyForGame(
+      game: widget.game,
+      contextGames: widget.allGames,
+      scopePrefix: 'desktop_countrymen_tab_board',
+    );
+    final liveGame = watchLiveGame(ref, widget.game, batchKey: liveBatchKey);
     final gameId = liveGame.gameId;
     final updatedGames = List<GamesTourModel>.from(widget.allGames);
     if (widget.gameIndex >= 0 && widget.gameIndex < updatedGames.length) {

@@ -1740,8 +1740,6 @@ GameTabDragPayload tournamentGameDragPayload(
   );
 }
 
-const int _kLiveDesktopContextBatchSize = 25;
-
 /// `DesktopGameCard` wrapper that subscribes to Supabase Realtime updates
 /// for [game] via [watchLiveGame] (the same provider mobile uses) and
 /// rebuilds the card whenever the broadcast pushes a new PGN, FEN,
@@ -1815,10 +1813,10 @@ class LiveDesktopGameCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final effectiveLiveBatchKey =
         liveBatchKey ??
-        _desktopContextLiveBatchKey(
+        liveContextBatchKeyForGame(
           game: game,
-          eventGames: eventGames,
-          routeGames: routeGames,
+          contextGames: eventGames.isNotEmpty ? eventGames : routeGames,
+          scopePrefix: 'desktop_context',
         );
     final liveGame = watchLiveGame(
       ref,
@@ -1907,42 +1905,6 @@ class LiveDesktopGameCard extends ConsumerWidget {
           !liveCardsPaused,
     );
   }
-}
-
-LiveGamesBatchKey? _desktopContextLiveBatchKey({
-  required GamesTourModel game,
-  required List<GamesTourModel> eventGames,
-  required List<GamesTourModel> routeGames,
-}) {
-  if (game.source != GameSource.supabase || game.gameId.isEmpty) return null;
-
-  final contextSource = eventGames.isNotEmpty ? eventGames : routeGames;
-  if (contextSource.isEmpty) return null;
-
-  final contextGames = contextSource
-      .where(
-        (candidate) =>
-            candidate.source == GameSource.supabase &&
-            candidate.gameId.isNotEmpty,
-      )
-      .toList(growable: false);
-  final index = contextGames.indexWhere(
-    (candidate) => candidate.gameId == game.gameId,
-  );
-  if (index < 0) return null;
-
-  final chunkIndex = index ~/ _kLiveDesktopContextBatchSize;
-  final start = chunkIndex * _kLiveDesktopContextBatchSize;
-  final rawEnd = start + _kLiveDesktopContextBatchSize;
-  final end = rawEnd > contextGames.length ? contextGames.length : rawEnd;
-  final chunkGames = contextGames.sublist(start, end);
-  if (chunkGames.isEmpty) return null;
-
-  return LiveGamesBatchKey(
-    scopeId:
-        'desktop_context:$chunkIndex:${chunkGames.first.gameId}:${chunkGames.last.gameId}',
-    gameIds: chunkGames.map((candidate) => candidate.gameId),
-  );
 }
 
 enum _LiveGameContextAction {

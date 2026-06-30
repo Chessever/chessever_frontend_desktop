@@ -180,7 +180,7 @@ void main() {
     },
   );
 
-  test('event rail uses tour-scoped realtime stream for tournament rows', () {
+  test('event rail uses shown game ids for realtime tournament rows', () {
     final games = [
       _summary(id: 'round-5-board-1', roundLabel: 'R5', tourId: 'tour-1'),
       _summary(id: 'round-5-board-2', roundLabel: 'R5', tourId: 'tour-1'),
@@ -188,31 +188,20 @@ void main() {
 
     final key = eventRailLiveBatchKeyForTesting(
       activeTabId: 'tournaments-default',
-      activeArgs: BoardTabGameArgs(
-        gameId: 'round-5-board-1',
-        pgn: '1. e4 e5 *',
-        label: 'Titled Tuesday game',
-        whiteName: 'White',
-        blackName: 'Black',
-        tournamentTitle: 'Titled Tuesday',
-        eventGames: games,
-        gameListSelectedId: 'round-5-board-1',
-      ),
       games: games,
       isEventRail: true,
       isDatabaseRail: false,
     );
 
     expect(key, isNotNull);
-    expect(key!.tourId, 'tour-1');
+    expect(key!.tourId, isNull);
     expect(key.gameIds, ['round-5-board-1', 'round-5-board-2']);
-    expect(key.contains('new-round-board-1'), isTrue);
+    expect(key.contains('new-round-board-1'), isFalse);
   });
 
   test('database rail does not subscribe to live tournament updates', () {
     final key = eventRailLiveBatchKeyForTesting(
       activeTabId: 'tournaments-default',
-      activeArgs: null,
       games: [_summary(id: 'local-game-1', roundLabel: '2026')],
       isEventRail: false,
       isDatabaseRail: true,
