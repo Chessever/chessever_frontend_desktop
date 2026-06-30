@@ -58,6 +58,8 @@ import 'package:chessever/widgets/logo_pattern_fallback.dart';
 import 'package:chessever/widgets/search/enhanced_group_broadcast_local_storage.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
+const Duration _kDesktopCurrentEventsRefreshInterval = Duration(minutes: 2);
+
 LiveGamesBatchKey _desktopForYouLiveBatchKey({
   required String eventId,
   required String tourId,
@@ -108,6 +110,11 @@ class TournamentsPane extends HookConsumerWidget {
             : currentPastFilterState;
     final activeFilterCount = _activeEventFilterCount(selectedFilterState);
     final globalSearchQuery = ref.watch(desktopGlobalSearchQueryProvider);
+    final searchQuery = globalSearchQuery?.trim() ?? '';
+    final hasQuery = searchQuery.length >= 2;
+    final activeTabId = ref.watch(
+      desktopTabsProvider.select((state) => state.activeId),
+    );
     // Stable per-tournament-id GlobalKeys so we can `Scrollable.ensureVisible`
     // the highlighted row when the user navigates with the arrow keys.
     final tileKeys = useRef(<String, GlobalKey>{});
@@ -133,6 +140,43 @@ class TournamentsPane extends HookConsumerWidget {
       }
       return null;
     }, [selectedCategory]);
+
+    // Live/current tournaments can cross from upcoming to started while the
+    // desktop app is already open. Do not leave the Current tab pinned to the
+    // SQLite cache until a full app restart; refresh quietly when this tab is
+    // active and then poll while the user stays here.
+    useEffect(() {
+      if (activeTabId != tabId ||
+          selectedCategory != ge.GroupEventCategory.current ||
+          hasQuery) {
+        return null;
+      }
+
+      var disposed = false;
+      var refreshing = false;
+      Future<void> refreshCurrentEvents() async {
+        if (disposed || refreshing) return;
+        refreshing = true;
+        try {
+          await ref
+              .read(groupEventScreenProvider.notifier)
+              .onRefresh(showLoading: false);
+        } finally {
+          refreshing = false;
+        }
+      }
+
+      unawaited(refreshCurrentEvents());
+      final timer = Timer.periodic(
+        _kDesktopCurrentEventsRefreshInterval,
+        (_) => unawaited(refreshCurrentEvents()),
+      );
+
+      return () {
+        disposed = true;
+        timer.cancel();
+      };
+    }, [activeTabId, tabId, selectedCategory, hasQuery]);
     useEffect(() {
       selectedTournamentId.value = null;
       return null;
@@ -147,9 +191,6 @@ class TournamentsPane extends HookConsumerWidget {
         openInNewTab: isNewTabModifierPressed(),
       );
     }
-
-    final searchQuery = globalSearchQuery?.trim() ?? '';
-    final hasQuery = searchQuery.length >= 2;
 
     void openFilters() {
       ref.read(filterPopupProvider.notifier).setState(selectedFilterState);

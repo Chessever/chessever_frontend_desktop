@@ -17,7 +17,7 @@ abstract class IGroupEventScreenController {
 
   Future<void> resetFilters();
 
-  Future<void> onRefresh();
+  Future<void> onRefresh({bool showLoading = true});
 
   void onSelectTournament({required BuildContext context, required String id});
 

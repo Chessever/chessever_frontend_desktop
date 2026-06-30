@@ -410,9 +410,11 @@ class _GroupEventScreenController
   }
 
   @override
-  Future<void> onRefresh() async {
+  Future<void> onRefresh({bool showLoading = true}) async {
     try {
-      state = const AsyncValue.loading();
+      if (showLoading) {
+        state = const AsyncValue.loading();
+      }
 
       final refreshed =
           await ref
