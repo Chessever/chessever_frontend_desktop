@@ -1529,15 +1529,12 @@ LiveGamesBatchKey? _eventRailLiveBatchKey({
     return null;
   }
 
-  final liveGames = games
-      .where((game) => !game.status.isFinished)
-      .toList(growable: false);
-  if (liveGames.isEmpty) return null;
+  if (!games.any((game) => !game.status.isFinished)) return null;
 
   final scopeId = 'desktop-event-rail:$activeTabId:${kind.index}';
   return LiveGamesBatchKey(
     scopeId: scopeId,
-    gameIds: liveGames.map((game) => game.id),
+    gameIds: games.map((game) => game.id),
   );
 }
 
