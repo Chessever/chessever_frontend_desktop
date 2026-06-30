@@ -2,6 +2,7 @@ import 'package:chessever/repository/library/library_repository.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/repository/library/models/saved_analysis.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
+import 'package:chessever/utils/pgn_link_rebrand.dart';
 
 /// Branded metadata headers appended to every exported game.
 const _kBrandSite = 'https://chessever.com';
@@ -198,7 +199,10 @@ String _serializeAnalysis(
   }
 
   final branded = analysis.chessGame.copyWith(metadata: md);
-  return exportGameToPgn(branded);
+  // `Site` is overridden above, but broadcast-sourced games also carry Lichess
+  // links in secondary tags (GameURL/BroadcastURL/ChapterURL/Annotator); strip
+  // those too so exported databases stay Lichess-free.
+  return rebrandPgnLinks(exportGameToPgn(branded));
 }
 
 /// Suggested filename for a folder export (safe ASCII, short).

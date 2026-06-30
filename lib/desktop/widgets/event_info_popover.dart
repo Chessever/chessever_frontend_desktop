@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/location_service_provider.dart';
 
 /// Forui-styled "i" button + popover that surfaces the PGN headers for
 /// the active game (event, site, date, round, players, ratings, ECO,
@@ -87,13 +90,13 @@ class _EventInfoPopoverState extends State<EventInfoPopover>
   }
 }
 
-class _Body extends StatelessWidget {
+class _Body extends ConsumerWidget {
   const _Body({required this.headers});
 
   final Map<String, String> headers;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final rows = <_HeaderRow>[];
 
     void addIfPresent(String label, String key) {
@@ -128,7 +131,32 @@ class _Body extends StatelessWidget {
     if (event != null) {
       rows.add(_HeaderRow(label: 'Event', value: event));
     }
-    addIfPresent('Site', 'Site');
+    // Online events carry a platform host (lichess.org, chess.com, ...) in
+    // `Site` rather than a physical place. Mirrors the mobile board's
+    // event-info sheet: never surface that raw third-party URL — show a
+    // clean "Online" + platform name row instead.
+    final site = headers['Site']?.trim() ?? '';
+    if (site.isNotEmpty && site != '?') {
+      final locationService = ref.read(locationServiceProvider);
+      final isLink = site.startsWith('http://') || site.startsWith('https://');
+      if (locationService.isOnlinePlatform(site)) {
+        rows.add(
+          _HeaderRow(
+            label: 'Online',
+            value: locationService.prettifyPlatformName(site),
+            trailing: isLink ? _CopyIconButton(value: site) : null,
+          ),
+        );
+      } else {
+        rows.add(
+          _HeaderRow(
+            label: 'Site',
+            value: site,
+            trailing: isLink ? _CopyIconButton(value: site) : null,
+          ),
+        );
+      }
+    }
     addIfPresent('Date', 'Date');
     addIfPresent('Round', 'Round');
     addIfPresent('Result', 'Result');
@@ -246,10 +274,11 @@ String? eventInfoSelectedText(TextEditingValue value) {
 }
 
 class _HeaderRow extends StatelessWidget {
-  const _HeaderRow({required this.label, required this.value});
+  const _HeaderRow({required this.label, required this.value, this.trailing});
 
   final String label;
   final String value;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -285,7 +314,43 @@ class _HeaderRow extends StatelessWidget {
             ),
           ),
         ),
+        if (trailing != null) ...[const SizedBox(width: 6), trailing!],
       ],
+    );
+  }
+}
+
+/// Tiny copy-to-clipboard affordance appended after a link value.
+class _CopyIconButton extends StatelessWidget {
+  const _CopyIconButton({required this.value});
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return DesktopTooltip(
+      message: 'Copy link',
+      child: SizedBox.square(
+        dimension: 18,
+        child: FButton.icon(
+          style: FButtonStyle.ghost(
+            (style) => style.copyWith(
+              contentStyle:
+                  (content) => content.copyWith(padding: EdgeInsets.zero),
+            ),
+          ),
+          onPress: () async {
+            await Clipboard.setData(ClipboardData(text: value));
+            if (!context.mounted) return;
+            showDesktopToast(context, 'Link copied to clipboard');
+          },
+          child: const Icon(
+            Icons.copy_rounded,
+            size: 12,
+            color: kWhiteColor70,
+          ),
+        ),
+      ),
     );
   }
 }
