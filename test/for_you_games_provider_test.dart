@@ -1,10 +1,12 @@
 import 'package:chessever/providers/event_pin_refresh_provider.dart';
 import 'package:chessever/providers/for_you_games_provider.dart';
 import 'package:chessever/providers/for_you_games_logic.dart';
+import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
 import 'package:chessever/repository/supabase/round/round.dart';
 import 'package:chessever/repository/supabase/round/round_repository.dart';
 import 'package:chessever/repository/supabase/tour/tour.dart';
+import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_pin_provider.dart';
@@ -81,7 +83,6 @@ class _FakeForYouPinStorage implements ForYouPinStorage {
   }
 }
 
-
 PlayerCard _player(String name) {
   return PlayerCard(
     name: name,
@@ -118,8 +119,11 @@ ForYouEventGamesSnapshot _snapshot(
   List<String> unpinnedOverrideIds = const <String>[],
   bool hasGames = true,
 }) {
-  final games = visibleGames ??
-      (hasGames ? [_game('mock-game', tourId: tourId)] : const <GamesTourModel>[]);
+  final games =
+      visibleGames ??
+      (hasGames
+          ? [_game('mock-game', tourId: tourId)]
+          : const <GamesTourModel>[]);
   return ForYouEventGamesSnapshot(
     eventId: eventId,
     tourId: tourId,
@@ -180,6 +184,20 @@ GroupBroadcast _broadcast(String id) {
     createdAt: DateTime(2026, 3, 25, 12),
     name: 'Broadcast $id',
     search: const <String>[],
+  );
+}
+
+GroupEventCardModel _event(String id, {required TourEventCategory category}) {
+  return GroupEventCardModel(
+    id: id,
+    title: 'Event $id',
+    dates: 'Jun 30, 2026',
+    maxAvgElo: 2700,
+    timeUntilStart: '',
+    tourEventCategory: category,
+    timeControl: 'Blitz',
+    endDate: DateTime.utc(2026, 6, 30, 16),
+    startDate: DateTime.utc(2026, 6, 30, 15),
   );
 }
 
@@ -372,6 +390,152 @@ void main() {
     expect(container.read(eventPinRefreshProvider('event-a')), 1);
     expect(container.read(eventPinRefreshProvider('event-b')), 0);
   });
+
+  test('live round id changes invalidate For You snapshots', () {
+    expect(
+      shouldRefreshForYouSnapshotsForLiveRoundIds(null, const <String>[]),
+      isFalse,
+    );
+    expect(
+      shouldRefreshForYouSnapshotsForLiveRoundIds(null, const ['round-2']),
+      isTrue,
+    );
+    expect(
+      shouldRefreshForYouSnapshotsForLiveRoundIds(
+        const ['round-2', 'round-3'],
+        const ['round-3', 'round-2'],
+      ),
+      isFalse,
+    );
+    expect(
+      shouldRefreshForYouSnapshotsForLiveRoundIds(
+        const ['round-2'],
+        const ['round-3'],
+      ),
+      isTrue,
+    );
+  });
+
+  test('removeForYouTopGameSnapshotFromCache evicts only the target event', () {
+    final eventOneSnapshot = _snapshot('event-1');
+    final eventTwoSnapshot = _snapshot('event-2');
+    final cache = <String, ForYouEventGamesSnapshot>{
+      'event-1': eventOneSnapshot,
+      'event-2': eventTwoSnapshot,
+    };
+
+    final updated = removeForYouTopGameSnapshotFromCache(cache, 'event-1');
+
+    expect(updated.keys, ['event-2']);
+    expect(updated['event-2'], same(eventTwoSnapshot));
+    expect(cache.keys, ['event-1', 'event-2']);
+    expect(
+      removeForYouTopGameSnapshotFromCache(cache, 'missing-event'),
+      same(cache),
+    );
+  });
+
+  test('isLiveRefreshingForYouEvent scopes automatic RPC refreshes', () {
+    expect(
+      isLiveRefreshingForYouEvent(
+        _event('live-event', category: TourEventCategory.live),
+      ),
+      isTrue,
+    );
+    expect(
+      isLiveRefreshingForYouEvent(
+        _event('ongoing-event', category: TourEventCategory.ongoing),
+      ),
+      isTrue,
+    );
+    expect(
+      isLiveRefreshingForYouEvent(
+        _event('upcoming-event', category: TourEventCategory.upcoming),
+      ),
+      isFalse,
+    );
+    expect(
+      isLiveRefreshingForYouEvent(
+        _event('completed-event', category: TourEventCategory.completed),
+      ),
+      isFalse,
+    );
+  });
+
+  test('mergeLiveUpdatesIntoForYouSnapshot patches visible game rows', () {
+    const afterE4 =
+        'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+    final baseSnapshot = _snapshot(
+      'event-1',
+      visibleGames: [_game('game-1'), _game('game-2')],
+    );
+
+    final updatedSnapshot = mergeLiveUpdatesIntoForYouSnapshot(
+      baseSnapshot,
+      const <String, LiveGameUpdate>{
+        'game-1': LiveGameUpdate(
+          gameId: 'game-1',
+          fen: afterE4,
+          lastMove: 'e2e4',
+          lastMoveTime: '2026-06-30T15:01:02.000Z',
+          lastClockWhite: 177,
+          lastClockBlack: 180,
+          status: '1-0',
+        ),
+      },
+    );
+
+    expect(updatedSnapshot, isNot(same(baseSnapshot)));
+    expect(updatedSnapshot.visibleGames[0].fen, afterE4);
+    expect(updatedSnapshot.visibleGames[0].lastMove, 'e2e4');
+    expect(updatedSnapshot.visibleGames[0].gameStatus, GameStatus.whiteWins);
+    expect(updatedSnapshot.visibleGames[0].whiteClockSeconds, 177);
+    expect(updatedSnapshot.visibleGames[1], same(baseSnapshot.visibleGames[1]));
+  });
+
+  test(
+    'mergeLiveUpdatesIntoForYouTopGameSnapshotCache preserves other events',
+    () {
+      const afterE4 =
+          'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+      final eventOneSnapshot = _snapshot(
+        'event-1',
+        visibleGames: [_game('game-1')],
+      );
+      final eventTwoSnapshot = _snapshot(
+        'event-2',
+        visibleGames: [_game('game-2')],
+      );
+      final cache = <String, ForYouEventGamesSnapshot>{
+        'event-1': eventOneSnapshot,
+        'event-2': eventTwoSnapshot,
+      };
+
+      final updatedCache = mergeLiveUpdatesIntoForYouTopGameSnapshotCache(
+        cache,
+        'event-1',
+        const <String, LiveGameUpdate>{
+          'game-1': LiveGameUpdate(
+            gameId: 'game-1',
+            fen: afterE4,
+            lastMove: 'e2e4',
+          ),
+        },
+      );
+
+      expect(updatedCache, isNot(same(cache)));
+      expect(updatedCache['event-1']?.visibleGames.single.fen, afterE4);
+      expect(updatedCache['event-2'], same(eventTwoSnapshot));
+      expect(
+        mergeLiveUpdatesIntoForYouTopGameSnapshotCache(
+          cache,
+          'event-3',
+          const <String, LiveGameUpdate>{},
+        ),
+        same(cache),
+      );
+    },
+  );
 
   test('mergeEffectivePins keeps legacy ordering when no overrides exist', () {
     final merged = mergeEffectivePins(

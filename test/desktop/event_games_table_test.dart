@@ -180,6 +180,47 @@ void main() {
     },
   );
 
+  test('event rail uses tour-scoped realtime stream for tournament rows', () {
+    final games = [
+      _summary(id: 'round-5-board-1', roundLabel: 'R5', tourId: 'tour-1'),
+      _summary(id: 'round-5-board-2', roundLabel: 'R5', tourId: 'tour-1'),
+    ];
+
+    final key = eventRailLiveBatchKeyForTesting(
+      activeTabId: 'tournaments-default',
+      activeArgs: BoardTabGameArgs(
+        gameId: 'round-5-board-1',
+        pgn: '1. e4 e5 *',
+        label: 'Titled Tuesday game',
+        whiteName: 'White',
+        blackName: 'Black',
+        tournamentTitle: 'Titled Tuesday',
+        eventGames: games,
+        gameListSelectedId: 'round-5-board-1',
+      ),
+      games: games,
+      isEventRail: true,
+      isDatabaseRail: false,
+    );
+
+    expect(key, isNotNull);
+    expect(key!.tourId, 'tour-1');
+    expect(key.gameIds, ['round-5-board-1', 'round-5-board-2']);
+    expect(key.contains('new-round-board-1'), isTrue);
+  });
+
+  test('database rail does not subscribe to live tournament updates', () {
+    final key = eventRailLiveBatchKeyForTesting(
+      activeTabId: 'tournaments-default',
+      activeArgs: null,
+      games: [_summary(id: 'local-game-1', roundLabel: '2026')],
+      isEventRail: false,
+      isDatabaseRail: true,
+    );
+
+    expect(key, isNull);
+  });
+
   test('event rail copy selection can span rounds', () {
     final games = [
       _summary(id: 'round-1-game-1', roundLabel: 'Round 1'),
@@ -1285,12 +1326,14 @@ TournamentGameSummary _summary({
   int? boardNumber,
   String whiteTitle = '',
   String blackTitle = '',
+  String tourId = '',
 }) {
   return TournamentGameSummary(
     id: id,
     name: '$whitePlayer vs $blackPlayer',
     whitePlayer: whitePlayer,
     blackPlayer: blackPlayer,
+    tourId: tourId,
     whiteTitle: whiteTitle,
     blackTitle: blackTitle,
     hasPgn: true,

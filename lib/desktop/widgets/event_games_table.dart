@@ -100,6 +100,27 @@ List<TournamentGameSummary> eventRailMergeFreshEventGamesForTesting(
   return _mergeFreshEventGameSummaries(fallbackGames, freshGames);
 }
 
+@visibleForTesting
+LiveGamesBatchKey? eventRailLiveBatchKeyForTesting({
+  required String activeTabId,
+  required BoardTabGameArgs? activeArgs,
+  required List<TournamentGameSummary> games,
+  required bool isEventRail,
+  required bool isDatabaseRail,
+}) {
+  return _eventRailLiveBatchKey(
+    activeTabId: activeTabId,
+    activeArgs: activeArgs,
+    games: games,
+    kind:
+        isDatabaseRail
+            ? _GameListKind.database
+            : isEventRail
+            ? _GameListKind.event
+            : _GameListKind.source,
+  );
+}
+
 /// Board-pane companion table for the event that produced the active game.
 ///
 /// The source of truth is the active Board tab's [BoardTabGameArgs]. The
@@ -792,13 +813,12 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
     final selectedGameId = resolved.selectedGameId;
     final activeSelectionId = _highlightedGameId ?? selectedGameId;
     _pruneRowKeys(orderedGames);
-    final liveBatchKey =
-        resolved.kind == _GameListKind.database || orderedGames.isEmpty
-            ? null
-            : LiveGamesBatchKey(
-              scopeId: 'desktop-event-rail:$activeTabId:${resolved.kind.index}',
-              gameIds: orderedGames.map((game) => game.id),
-            );
+    final liveBatchKey = _eventRailLiveBatchKey(
+      activeTabId: activeTabId,
+      activeArgs: effectiveArgs,
+      games: orderedGames,
+      kind: resolved.kind,
+    );
     final liveSummaries =
         liveBatchKey == null
             ? _EventLiveSummaries.empty
@@ -1501,6 +1521,34 @@ String? _eventRailTourId(
     if (tourId.isNotEmpty) return tourId;
   }
   return null;
+}
+
+LiveGamesBatchKey? _eventRailLiveBatchKey({
+  required String activeTabId,
+  required BoardTabGameArgs? activeArgs,
+  required List<TournamentGameSummary> games,
+  required _GameListKind kind,
+}) {
+  if (kind == _GameListKind.database || games.isEmpty) {
+    return null;
+  }
+
+  final scopeId = 'desktop-event-rail:$activeTabId:${kind.index}';
+  if (kind == _GameListKind.event && activeArgs != null) {
+    final tourId = _eventRailTourId(activeArgs, games);
+    if (tourId != null && tourId.isNotEmpty) {
+      return LiveGamesBatchKey(
+        scopeId: scopeId,
+        gameIds: games.map((game) => game.id),
+        tourId: tourId,
+      );
+    }
+  }
+
+  return LiveGamesBatchKey(
+    scopeId: scopeId,
+    gameIds: games.map((game) => game.id),
+  );
 }
 
 List<TournamentGameSummary> _mergeFreshEventGameSummaries(

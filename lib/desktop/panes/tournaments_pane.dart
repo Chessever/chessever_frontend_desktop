@@ -2748,16 +2748,28 @@ class _ForYouEventSection extends ConsumerWidget {
     final cachedSnapshot = ref.watch(
       forYouTopGamesSnapshotCacheProvider.select((cache) => cache[event.id]),
     );
-    // The homepage fast path is the batched top-games cache. Only fall back to
-    // the detailed per-event resolver before that cache is available.
-    final snapshotAsync =
-        cachedSnapshot != null
-            ? AsyncValue.data(cachedSnapshot)
-            : ref.watch(
-              streamingEnabled
-                  ? forYouEventSnapshotProvider(event.id)
-                  : eventGamesProvider(event.id),
-            );
+    final watchedSnapshotAsync = ref.watch(
+      streamingEnabled
+          ? forYouEventSnapshotProvider(event.id)
+          : eventGamesProvider(event.id),
+    );
+    // The batched top-games cache is only a fast fallback. Keep the live
+    // snapshot provider mounted while For You is active so visible games can
+    // refresh themselves on realtime row/status changes.
+    final AsyncValue<ForYouEventGamesSnapshot> snapshotAsync =
+        watchedSnapshotAsync.when<AsyncValue<ForYouEventGamesSnapshot>>(
+          data: AsyncValue.data,
+          loading:
+              () =>
+                  cachedSnapshot != null
+                      ? AsyncValue.data(cachedSnapshot)
+                      : const AsyncValue.loading(),
+          error:
+              (error, stack) =>
+                  cachedSnapshot != null
+                      ? AsyncValue.data(cachedSnapshot)
+                      : AsyncValue.error(error, stack),
+        );
     final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
 
     final shouldHide = snapshotAsync.maybeWhen(

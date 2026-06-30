@@ -38,14 +38,14 @@ final eventImageProvider = FutureProvider.autoDispose
           return const EventImageData();
         }
 
-        final tour = tours.first;
         final location = _firstLocation(tours);
         final playerCount = _uniquePlayerCount(tours);
+        final imageUrl = _firstImageUrl(tours);
 
-        // If tour has an image, return it
-        if (tour.image != null && tour.image!.isNotEmpty) {
+        // If any sibling tour has an image, use it for the whole event.
+        if (imageUrl != null) {
           return EventImageData(
-            imageUrl: tour.image,
+            imageUrl: imageUrl,
             location: location,
             playerCount: playerCount,
           );
@@ -55,6 +55,7 @@ final eventImageProvider = FutureProvider.autoDispose
         String? countryCode = extractCountryFromLocation(location);
 
         // If no location, try to find dominant player federation
+        final tour = tours.first;
         if (countryCode == null && tour.players.isNotEmpty) {
           countryCode = _getDominantFederation(tour.players);
         }
@@ -71,6 +72,16 @@ final eventImageProvider = FutureProvider.autoDispose
         return const EventImageData();
       }
     });
+
+String? _firstImageUrl(List<Tour> tours) {
+  for (final tour in tours) {
+    final image = tour.image?.trim();
+    if (image != null && image.isNotEmpty) {
+      return image;
+    }
+  }
+  return null;
+}
 
 String? _firstLocation(List<Tour> tours) {
   for (final tour in tours) {

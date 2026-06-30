@@ -2,6 +2,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 
 /// Lightweight summary of one game inside an event or database — just the
 /// fields the BoardPane side table needs to render a row and switch games.
@@ -42,7 +43,12 @@ class TournamentGameSummary {
     DateTime? roundStartsAt,
     String? roundName,
   }) {
-    final fen = game.fen?.trim();
+    final fen =
+        resolveFreshestGameFen(
+          fen: game.fen,
+          pgn: game.pgn,
+          lastMove: game.lastMove,
+        )?.trim();
     return TournamentGameSummary(
       id: game.gameId,
       name: _gameName(
@@ -84,7 +90,12 @@ class TournamentGameSummary {
     final players = game.players ?? const <Player>[];
     final white = players.isNotEmpty ? players.first : null;
     final black = players.length >= 2 ? players[1] : null;
-    final fen = game.fen?.trim();
+    final fen =
+        resolveFreshestGameFen(
+          fen: game.fen,
+          pgn: game.pgn,
+          lastMove: game.lastMove,
+        )?.trim();
     return TournamentGameSummary(
       id: game.id,
       name: _gameName(

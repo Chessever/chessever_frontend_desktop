@@ -38,6 +38,7 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_sc
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_mode_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/round_expansion_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
+import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
     show pgnHasMoves;
@@ -1325,9 +1326,10 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
   ChessboardView viewSource = ChessboardView.tour,
 }) {
   final pgn = pgnHasMoves(game.pgn) ? game.pgn!.trim() : '';
+  final normalizedGame = _withFreshestFen(game, pgnOverride: pgn);
   final eventSummaries = _summariesFromModels(
-    eventGames.isEmpty ? <GamesTourModel>[game] : eventGames,
-    fallbackGame: game,
+    eventGames.isEmpty ? <GamesTourModel>[normalizedGame] : eventGames,
+    fallbackGame: normalizedGame,
     roundStartsAtById: roundStartsAtById,
     roundNameById: roundNameById,
   );
@@ -1336,7 +1338,7 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
           ? const <TournamentGameSummary>[]
           : _summariesFromModels(
             routeGames,
-            fallbackGame: game,
+            fallbackGame: normalizedGame,
             roundStartsAtById: roundStartsAtById,
             roundNameById: roundNameById,
           );
@@ -1346,21 +1348,22 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
       eventSummaries.length <= 1 &&
       game.tourId.trim().isNotEmpty;
   return BoardTabGameArgs(
-    gameId: game.gameId,
+    gameId: normalizedGame.gameId,
     pgn: pgn,
-    label: '${game.whitePlayer.name} vs ${game.blackPlayer.name}',
-    whiteName: game.whitePlayer.name,
-    blackName: game.blackPlayer.name,
-    whiteFederation: game.whitePlayer.federation,
-    blackFederation: game.blackPlayer.federation,
-    whiteTitle: game.whitePlayer.title,
-    blackTitle: game.blackPlayer.title,
-    whiteRating: game.whitePlayer.rating,
-    blackRating: game.blackPlayer.rating,
-    whiteFideId: game.whitePlayer.fideId,
-    blackFideId: game.blackPlayer.fideId,
-    fenSeed: game.fen,
-    sourceGame: game.copyWith(pgn: pgn.isEmpty ? game.pgn : pgn),
+    label:
+        '${normalizedGame.whitePlayer.name} vs ${normalizedGame.blackPlayer.name}',
+    whiteName: normalizedGame.whitePlayer.name,
+    blackName: normalizedGame.blackPlayer.name,
+    whiteFederation: normalizedGame.whitePlayer.federation,
+    blackFederation: normalizedGame.blackPlayer.federation,
+    whiteTitle: normalizedGame.whitePlayer.title,
+    blackTitle: normalizedGame.blackPlayer.title,
+    whiteRating: normalizedGame.whitePlayer.rating,
+    blackRating: normalizedGame.blackPlayer.rating,
+    whiteFideId: normalizedGame.whitePlayer.fideId,
+    blackFideId: normalizedGame.blackPlayer.fideId,
+    fenSeed: normalizedGame.fen,
+    sourceGame: normalizedGame.copyWith(pgn: pgn.isEmpty ? game.pgn : pgn),
     viewSource: viewSource,
     tournamentTitle: tournamentTitle,
     eventGames: eventSummaries,
@@ -1369,7 +1372,7 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
     routeTitle: routeTitle,
     routeGames: routeSummaries,
     routeGamesContinuation: routeGamesContinuation,
-    gameListSelectedId: game.gameId,
+    gameListSelectedId: normalizedGame.gameId,
   );
 }
 
@@ -1402,9 +1405,10 @@ Future<void> openTournamentGameTab(
   final gameRepo = container.read(gameRepositoryProvider);
 
   final pgn = pgnHasMoves(game.pgn) ? game.pgn!.trim() : '';
+  final normalizedGame = _withFreshestFen(game, pgnOverride: pgn);
   final eventSummaries = _summariesFromModels(
-    eventGames.isEmpty ? <GamesTourModel>[game] : eventGames,
-    fallbackGame: game,
+    eventGames.isEmpty ? <GamesTourModel>[normalizedGame] : eventGames,
+    fallbackGame: normalizedGame,
     roundStartsAtById: roundStartsAtById,
     roundNameById: roundNameById,
   );
@@ -1413,7 +1417,7 @@ Future<void> openTournamentGameTab(
           ? const <TournamentGameSummary>[]
           : _summariesFromModels(
             routeGames,
-            fallbackGame: game,
+            fallbackGame: normalizedGame,
             roundStartsAtById: roundStartsAtById,
             roundNameById: roundNameById,
           );
@@ -1426,21 +1430,22 @@ Future<void> openTournamentGameTab(
       eventSummaries.length <= 1 &&
       game.tourId.trim().isNotEmpty;
   final args = BoardTabGameArgs(
-    gameId: game.gameId,
+    gameId: normalizedGame.gameId,
     pgn: pgn,
-    label: '${game.whitePlayer.name} vs ${game.blackPlayer.name}',
-    whiteName: game.whitePlayer.name,
-    blackName: game.blackPlayer.name,
-    whiteFederation: game.whitePlayer.federation,
-    blackFederation: game.blackPlayer.federation,
-    whiteTitle: game.whitePlayer.title,
-    blackTitle: game.blackPlayer.title,
-    whiteRating: game.whitePlayer.rating,
-    blackRating: game.blackPlayer.rating,
-    whiteFideId: game.whitePlayer.fideId,
-    blackFideId: game.blackPlayer.fideId,
-    fenSeed: game.fen,
-    sourceGame: game.copyWith(pgn: pgn.isEmpty ? game.pgn : pgn),
+    label:
+        '${normalizedGame.whitePlayer.name} vs ${normalizedGame.blackPlayer.name}',
+    whiteName: normalizedGame.whitePlayer.name,
+    blackName: normalizedGame.blackPlayer.name,
+    whiteFederation: normalizedGame.whitePlayer.federation,
+    blackFederation: normalizedGame.blackPlayer.federation,
+    whiteTitle: normalizedGame.whitePlayer.title,
+    blackTitle: normalizedGame.blackPlayer.title,
+    whiteRating: normalizedGame.whitePlayer.rating,
+    blackRating: normalizedGame.blackPlayer.rating,
+    whiteFideId: normalizedGame.whitePlayer.fideId,
+    blackFideId: normalizedGame.blackPlayer.fideId,
+    fenSeed: normalizedGame.fen,
+    sourceGame: normalizedGame.copyWith(pgn: pgn.isEmpty ? game.pgn : pgn),
     viewSource: viewSource,
     tournamentTitle: tournamentTitle,
     eventGames: eventSummaries,
@@ -1449,7 +1454,7 @@ Future<void> openTournamentGameTab(
     routeTitle: routeTitle,
     routeGames: routeSummaries,
     routeGamesContinuation: routeGamesContinuation,
-    gameListSelectedId: game.gameId,
+    gameListSelectedId: normalizedGame.gameId,
   );
   container.read(chessboardViewFromProviderNew.notifier).state = viewSource;
   final tabId = openBoardGameTabFromContainer(
@@ -1465,7 +1470,7 @@ Future<void> openTournamentGameTab(
       container: container,
       gameRepo: gameRepo,
       tabId: tabId,
-      openedGame: game,
+      openedGame: normalizedGame,
     ),
   );
 
@@ -1475,7 +1480,7 @@ Future<void> openTournamentGameTab(
         container: container,
         gameRepo: gameRepo,
         tabId: tabId,
-        game: game,
+        game: normalizedGame,
         eventGames: eventGames,
         roundStartsAtById: roundStartsAtById,
         roundNameById: roundNameById,
@@ -1495,7 +1500,7 @@ Future<void> _refreshOpenedBoardTabWithLatestLiveGame({
 
   try {
     final latestRow = await gameRepo.getGameById(gameId);
-    final fetched = GamesTourModel.fromGame(latestRow);
+    final fetched = _withFreshestFen(GamesTourModel.fromGame(latestRow));
 
     // A live card may already hold a newer realtime snapshot than this one-shot
     // REST read (the stream can be ahead of the games table). Seed the board
@@ -1644,6 +1649,16 @@ List<TournamentGameSummary> _summariesFromModels(
     ),
   );
   return byId.values.toList(growable: false);
+}
+
+GamesTourModel _withFreshestFen(GamesTourModel game, {String? pgnOverride}) {
+  final resolvedFen = resolveFreshestGameFen(
+    fen: game.fen,
+    pgn: pgnOverride?.trim().isNotEmpty == true ? pgnOverride : game.pgn,
+    lastMove: game.lastMove,
+  );
+  if (resolvedFen == null || resolvedFen == game.fen) return game;
+  return game.copyWith(fen: resolvedFen);
 }
 
 DateTime? _roundStartsAtForGame(

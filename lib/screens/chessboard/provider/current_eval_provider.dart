@@ -68,12 +68,14 @@ Future<CloudEval?> _readLocalEvalFast({
   required int multiPV,
   required String sourceTag,
   int minDepth = 0,
+  bool acceptCpOnly = false,
 }) async {
   try {
     final cached = await local
         .fetch(fen, multiPV: multiPV, minDepth: minDepth)
         .timeout(_localEvalLookupTimeout, onTimeout: () => null);
-    if (cached != null && _isValidEvaluation(cached)) {
+    if (cached != null &&
+        _isValidEvaluation(cached, acceptCpOnly: acceptCpOnly)) {
       final fenParts = fen.split(' ');
       final sideToMove = fenParts.length >= 2 ? fenParts[1] : 'w';
       final cp = cached.pvs.isNotEmpty ? cached.pvs.first.cp : 0;
@@ -115,13 +117,15 @@ Future<CloudEval?> _readGamebaseEvalFast({
   required PersistCloudEval persist,
   required String fen,
   required String sourceTag,
+  bool acceptCpOnly = false,
 }) async {
   try {
     final gamebaseEval = await gamebase
         .getEvalByFen(fen)
         .timeout(const Duration(milliseconds: 600), onTimeout: () => null);
 
-    if (gamebaseEval != null && _isValidEvaluation(gamebaseEval)) {
+    if (gamebaseEval != null &&
+        _isValidEvaluation(gamebaseEval, acceptCpOnly: acceptCpOnly)) {
       final fenParts = fen.split(' ');
       final sideToMove = fenParts.length >= 2 ? fenParts[1] : 'w';
       final cp = gamebaseEval.pvs.isNotEmpty ? gamebaseEval.pvs.first.cp : 0;
@@ -324,14 +328,14 @@ final cascadeEvalProvider = FutureProvider.family.autoDispose<
   }
 });
 
-/// Helper function to validate if an evaluation makes sense
-bool _isValidEvaluation(CloudEval cloud) {
+/// Helper function to validate if an evaluation makes sense.
+///
+/// Board PV surfaces need principal-variation moves. Game-card eval bars only
+/// need the numeric cp/mate score, so they can use cp-only Gamebase rows.
+bool _isValidEvaluation(CloudEval cloud, {bool acceptCpOnly = false}) {
   if (cloud.pvs.isEmpty) return false;
 
   final firstPv = cloud.pvs.first;
-
-  // If it's exactly 0 cp with no moves, it's likely invalid
-  if (firstPv.cp == 0 && firstPv.moves.isEmpty) return false;
 
   // Accept mate scores (high cp values >= 100000 are mate scores)
   if (firstPv.cp.abs() >= 100000) {
@@ -340,6 +344,10 @@ bool _isValidEvaluation(CloudEval cloud) {
 
   // Accept any evaluation with moves (including 0.0 - balanced positions are valid)
   if (firstPv.moves.isNotEmpty) return true;
+
+  if (acceptCpOnly && (cloud.depth > 0 || cloud.knodes > 0)) {
+    return true;
+  }
 
   return false;
 }
@@ -465,6 +473,7 @@ final gameCardEvalWithStockfishFallbackProvider = FutureProvider.family.autoDisp
     fen: fen,
     multiPV: multiPV,
     sourceTag: 'gameCard',
+    acceptCpOnly: true,
   );
   if (cachedLocal != null) {
     return cachedLocal;
@@ -475,6 +484,7 @@ final gameCardEvalWithStockfishFallbackProvider = FutureProvider.family.autoDisp
     persist: persist,
     fen: fen,
     sourceTag: 'gameCard',
+    acceptCpOnly: true,
   );
   if (gamebaseEval != null) {
     return gamebaseEval;
@@ -601,6 +611,7 @@ Future<CloudEval?> _readGameCardCacheOrRemoteEval({
     fen: fen,
     multiPV: multiPV,
     sourceTag: sourceTag,
+    acceptCpOnly: true,
   );
   if (cachedLocal != null) {
     return cachedLocal;
@@ -612,5 +623,6 @@ Future<CloudEval?> _readGameCardCacheOrRemoteEval({
     persist: persist,
     fen: fen,
     sourceTag: sourceTag,
+    acceptCpOnly: true,
   );
 }

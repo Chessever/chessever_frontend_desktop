@@ -32,6 +32,7 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/games_auto_pi
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_pin_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/live_rounds_id_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/live_tour_id_provider.dart';
@@ -48,6 +49,8 @@ const int kGamesPerEvent = 4;
 const int kDesktopForYouGamesPerEvent = 12;
 const int _kPageSize = 20;
 const Duration _kForYouStaleThreshold = Duration(minutes: 5);
+const Duration _kForYouLiveSnapshotRefreshInterval = Duration(seconds: 4);
+const Duration _kForYouLiveSnapshotRefreshFirstDelay = Duration(seconds: 2);
 
 int get _topGamesPerEventSnapshotLimit {
   if (kIsWeb) return kGamesPerEvent;
@@ -104,9 +107,12 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   final Map<String, int> _sessionEventOrder = <String, int>{};
   int _nextSessionEventOrder = 0;
   bool _pendingFavoritePlayerOrderHydration = false;
+  Timer? _liveSnapshotRefreshTimer;
+  bool _isRefreshingVisibleTopGameSnapshots = false;
 
   ForYouNotifier(this.ref) : super(const ForYouState(isLoading: true)) {
     _setupListeners();
+    _startLiveSnapshotRefreshTimer();
     _loadInitial();
   }
 
@@ -119,7 +125,26 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
       _,
       next,
     ) {
-      next.whenData(_refreshLiveCategories);
+      next.whenData((liveIds) {
+        _refreshLiveCategories(liveIds);
+        _refreshTopGameSnapshotsForLiveSignal();
+      });
+    });
+
+    ref.listen<AsyncValue<List<String>>>(liveRoundsIdProvider, (
+      previous,
+      next,
+    ) {
+      next.whenData((liveRoundIds) {
+        if (!shouldRefreshForYouSnapshotsForLiveRoundIds(
+          previous?.valueOrNull,
+          liveRoundIds,
+        )) {
+          return;
+        }
+
+        _refreshTopGameSnapshotsForLiveSignal();
+      });
     });
 
     ref.listen(favoritePlayersProviderNew, (_, next) {
@@ -167,13 +192,31 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     await _fetchPage(isInitial: true);
   }
 
+  void _startLiveSnapshotRefreshTimer() {
+    _liveSnapshotRefreshTimer?.cancel();
+    _liveSnapshotRefreshTimer = Timer(
+      _kForYouLiveSnapshotRefreshFirstDelay,
+      () {
+        if (!mounted) return;
+        _refreshTopGameSnapshotsForLiveSignal();
+        _liveSnapshotRefreshTimer = Timer.periodic(
+          _kForYouLiveSnapshotRefreshInterval,
+          (_) => _refreshTopGameSnapshotsForLiveSignal(),
+        );
+      },
+    );
+  }
+
   Future<void> refresh() async {
     _offset = 0;
+    _resetSessionOrderingForRefresh();
     state = state.copyWith(isLoading: true, error: null);
     ref.read(forYouTopGamesSnapshotCacheProvider.notifier).state =
         const <String, ForYouEventGamesSnapshot>{};
-    bumpForYouEventsRefreshSignal(ref);
     await _fetchPage(isInitial: true);
+    if (mounted) {
+      bumpForYouEventsRefreshSignal(ref);
+    }
   }
 
   Future<void> refreshIfStale({
@@ -376,6 +419,55 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     }
   }
 
+  void _refreshTopGameSnapshotsForLiveSignal() {
+    if (!ref.read(shouldStreamProvider)) return;
+
+    final visibleEvents = state.events
+        .where(isLiveRefreshingForYouEvent)
+        .toList(growable: false);
+    if (visibleEvents.isEmpty) return;
+    unawaited(_refreshVisibleTopGameSnapshots(visibleEvents));
+  }
+
+  Future<void> _refreshVisibleTopGameSnapshots(
+    List<GroupEventCardModel> visibleEvents,
+  ) async {
+    if (_isRefreshingVisibleTopGameSnapshots) return;
+
+    _isRefreshingVisibleTopGameSnapshots = true;
+    try {
+      final eventIds = visibleEvents
+          .map((model) => model.id)
+          .where((eventId) => eventId.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+      if (eventIds.isEmpty) return;
+
+      final gameRepository = ref.read(gameRepositoryProvider);
+      final gamesByEvent = await gameRepository
+          .getForYouTopGamesByEventIds(
+            eventIds: eventIds,
+            boardsPerEvent: _topGamesPerEventSnapshotLimit,
+          )
+          .timeout(const Duration(seconds: 6));
+
+      _writeTopGameSnapshots(
+        models: visibleEvents,
+        gamesByEvent: gamesByEvent,
+        replace: false,
+      );
+      if (mounted) {
+        bumpForYouEventsRefreshSignal(ref);
+      }
+    } catch (e, stack) {
+      debugPrint('[ForYou] Live top-game refresh failed: $e');
+      debugPrint('[ForYou] Live top-game stack: $stack');
+      _logErrorToSentry(e, stack);
+    } finally {
+      _isRefreshingVisibleTopGameSnapshots = false;
+    }
+  }
+
   void _writeTopGameSnapshots({
     required List<GroupEventCardModel> models,
     required Map<String, List<Games>> gamesByEvent,
@@ -462,6 +554,12 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
         events.indexed.map((entry) => MapEntry(entry.$2.id, entry.$1)),
       );
     _nextSessionEventOrder = events.length;
+  }
+
+  void _resetSessionOrderingForRefresh() {
+    _sessionEventOrder.clear();
+    _nextSessionEventOrder = 0;
+    _pendingFavoritePlayerOrderHydration = false;
   }
 
   Future<void> _refreshVisibleFavoritePlayerCounts({
@@ -587,6 +685,18 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
       _refreshVisibleFavoritePlayerCounts(finalizeOrderAfterRefresh: true),
     );
   }
+
+  @override
+  void dispose() {
+    _liveSnapshotRefreshTimer?.cancel();
+    super.dispose();
+  }
+}
+
+@visibleForTesting
+bool isLiveRefreshingForYouEvent(GroupEventCardModel event) {
+  return event.tourEventCategory == TourEventCategory.live ||
+      event.tourEventCategory == TourEventCategory.ongoing;
 }
 
 List<int> _favoriteFideIdsFrom(Iterable<FavoritePlayer> favorites) {
@@ -906,6 +1016,16 @@ class _ForYouEventGamesController
     debugPrint(
       '[ForYou] Game $gameId finished ($normalizedStatus), refreshing snapshot for event $eventId',
     );
+    final cacheNotifier = ref.read(
+      forYouTopGamesSnapshotCacheProvider.notifier,
+    );
+    final updatedCache = removeForYouTopGameSnapshotFromCache(
+      cacheNotifier.state,
+      eventId,
+    );
+    if (!identical(updatedCache, cacheNotifier.state)) {
+      cacheNotifier.state = updatedCache;
+    }
     requestRefresh();
   }
 
@@ -1610,26 +1730,16 @@ final forYouEventGamesWithAutoRefreshProvider = Provider.autoDispose.family<
 
   return snapshotAsync.when(
     data: (snapshot) {
-      final liveGames =
-          snapshot.visibleGames
-              .take(_topGamesPerEventSnapshotLimit)
-              .where((game) => game.gameStatus == GameStatus.ongoing)
-              .toList();
+      final displayedGames = snapshot.visibleGames
+          .take(_topGamesPerEventSnapshotLimit)
+          .toList(growable: false);
 
-      if (liveGames.isNotEmpty) {
-        final shouldWatchLiveFinishes =
-            ref.watch(shouldStreamProvider) &&
-            !ref.watch(liveGameCardsPausedProvider);
-        if (!shouldWatchLiveFinishes) {
-          return AsyncValue.data(snapshot);
-        }
-
-        final displayedGames = snapshot.visibleGames.take(
-          _topGamesPerEventSnapshotLimit,
-        );
-        final watchedGameIds = liveGames
-            .map((game) => game.gameId)
-            .toList(growable: false);
+      if (displayedGames.isNotEmpty && ref.watch(shouldStreamProvider)) {
+        final refreshOnFinishedGameIds =
+            displayedGames
+                .where((game) => game.gameStatus == GameStatus.ongoing)
+                .map((game) => game.gameId)
+                .toSet();
         final updatesAsync = ref.watch(
           gameUpdatesBatchStreamProvider(
             LiveGamesBatchKey(
@@ -1638,17 +1748,40 @@ final forYouEventGamesWithAutoRefreshProvider = Provider.autoDispose.family<
             ),
           ).select(
             (async) => async.whenData(
-              (updates) => _LiveGameStatusProjection.fromUpdates(
-                watchedGameIds,
+              (updates) => _ForYouLiveUpdatesProjection.fromUpdates(
+                displayedGames.map((game) => game.gameId),
                 updates,
               ),
             ),
           ),
         );
 
-        updatesAsync.whenData((updates) {
-          for (final status in updates.statuses) {
-            if (status.status != null && _isFinishedStatus(status.status!)) {
+        updatesAsync.whenData((projection) {
+          if (projection.updates.isNotEmpty) {
+            Future.microtask(() {
+              try {
+                final cacheNotifier = ref.read(
+                  forYouTopGamesSnapshotCacheProvider.notifier,
+                );
+                final updatedCache =
+                    mergeLiveUpdatesIntoForYouTopGameSnapshotCache(
+                      cacheNotifier.state,
+                      eventId,
+                      projection.updates,
+                    );
+                if (!identical(updatedCache, cacheNotifier.state)) {
+                  cacheNotifier.state = updatedCache;
+                }
+              } on StateError {
+                // The section can be disposed while a stream event is queued.
+              }
+            });
+          }
+
+          for (final status in projection.statuses) {
+            if (refreshOnFinishedGameIds.contains(status.gameId) &&
+                status.status != null &&
+                _isFinishedStatus(status.status!)) {
               Future.microtask(() {
                 try {
                   ref
@@ -1674,33 +1807,52 @@ final forYouEventGamesWithAutoRefreshProvider = Provider.autoDispose.family<
 });
 
 @immutable
-class _LiveGameStatusProjection {
-  const _LiveGameStatusProjection(this.statuses);
+class _ForYouLiveUpdatesProjection {
+  const _ForYouLiveUpdatesProjection({
+    required this.updates,
+    required this.statuses,
+  });
 
-  factory _LiveGameStatusProjection.fromUpdates(
-    List<String> gameIds,
+  factory _ForYouLiveUpdatesProjection.fromUpdates(
+    Iterable<String> gameIds,
     Map<String, LiveGameUpdate> updates,
   ) {
-    return _LiveGameStatusProjection(
-      List<_LiveGameStatus>.unmodifiable(
-        gameIds.map(
-          (gameId) => _LiveGameStatus(gameId, updates[gameId]?.status),
-        ),
-      ),
+    final relevantUpdates = <String, LiveGameUpdate>{};
+    final statuses = <_LiveGameStatus>[];
+    for (final gameId in gameIds) {
+      final update = updates[gameId];
+      if (update != null) {
+        relevantUpdates[gameId] = update;
+      }
+      statuses.add(_LiveGameStatus(gameId, update?.status));
+    }
+
+    return _ForYouLiveUpdatesProjection(
+      updates: Map<String, LiveGameUpdate>.unmodifiable(relevantUpdates),
+      statuses: List<_LiveGameStatus>.unmodifiable(statuses),
     );
   }
 
+  final Map<String, LiveGameUpdate> updates;
   final List<_LiveGameStatus> statuses;
 
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
-    if (other is! _LiveGameStatusProjection) return false;
-    return listEquals(statuses, other.statuses);
+    if (other is! _ForYouLiveUpdatesProjection) return false;
+    return mapEquals(updates, other.updates) &&
+        listEquals(statuses, other.statuses);
   }
 
   @override
-  int get hashCode => Object.hashAll(statuses);
+  int get hashCode {
+    return Object.hash(
+      Object.hashAll(
+        updates.entries.map((entry) => Object.hash(entry.key, entry.value)),
+      ),
+      Object.hashAll(statuses),
+    );
+  }
 }
 
 @immutable
@@ -1731,6 +1883,112 @@ final forYouEventSnapshotProvider = Provider.autoDispose
 
 bool _isFinishedStatus(String status) {
   return GameStatus.fromString(status).isFinished;
+}
+
+@visibleForTesting
+bool shouldRefreshForYouSnapshotsForLiveRoundIds(
+  List<String>? previousRoundIds,
+  List<String> nextRoundIds,
+) {
+  if (previousRoundIds == null) {
+    return nextRoundIds.isNotEmpty;
+  }
+
+  return !setEquals(previousRoundIds.toSet(), nextRoundIds.toSet());
+}
+
+@visibleForTesting
+Map<String, ForYouEventGamesSnapshot> removeForYouTopGameSnapshotFromCache(
+  Map<String, ForYouEventGamesSnapshot> cache,
+  String eventId,
+) {
+  if (eventId.isEmpty || !cache.containsKey(eventId)) {
+    return cache;
+  }
+
+  return <String, ForYouEventGamesSnapshot>{...cache}..remove(eventId);
+}
+
+@visibleForTesting
+Map<String, ForYouEventGamesSnapshot>
+mergeLiveUpdatesIntoForYouTopGameSnapshotCache(
+  Map<String, ForYouEventGamesSnapshot> cache,
+  String eventId,
+  Map<String, LiveGameUpdate> updates,
+) {
+  if (eventId.isEmpty || updates.isEmpty) {
+    return cache;
+  }
+
+  final snapshot = cache[eventId];
+  if (snapshot == null) {
+    return cache;
+  }
+
+  final updatedSnapshot = mergeLiveUpdatesIntoForYouSnapshot(snapshot, updates);
+  if (identical(updatedSnapshot, snapshot)) {
+    return cache;
+  }
+
+  return <String, ForYouEventGamesSnapshot>{...cache, eventId: updatedSnapshot};
+}
+
+@visibleForTesting
+ForYouEventGamesSnapshot mergeLiveUpdatesIntoForYouSnapshot(
+  ForYouEventGamesSnapshot snapshot,
+  Map<String, LiveGameUpdate> updates,
+) {
+  if (updates.isEmpty || snapshot.visibleGames.isEmpty) {
+    return snapshot;
+  }
+
+  var changed = false;
+  final visibleGames = <GamesTourModel>[];
+  for (final game in snapshot.visibleGames) {
+    final update = updates[game.gameId];
+    if (update == null) {
+      visibleGames.add(game);
+      continue;
+    }
+
+    final mergedGame = mergeLiveGameUpdateWithBase(
+      baseGame: game,
+      update: update,
+    );
+    if (hasForYouLiveGameChange(game, mergedGame)) {
+      changed = true;
+      visibleGames.add(mergedGame);
+    } else {
+      visibleGames.add(game);
+    }
+  }
+
+  if (!changed) {
+    return snapshot;
+  }
+
+  return ForYouEventGamesSnapshot(
+    eventId: snapshot.eventId,
+    tourId: snapshot.tourId,
+    visibleGames: visibleGames,
+    pinnedIds: snapshot.pinnedIds,
+    isGroupEvent: snapshot.isGroupEvent,
+    isKnockoutTournament: snapshot.isKnockoutTournament,
+    manualPinnedIds: snapshot.manualPinnedIds,
+    autoPinnedIds: snapshot.autoPinnedIds,
+    unpinnedOverrideIds: snapshot.unpinnedOverrideIds,
+  );
+}
+
+@visibleForTesting
+bool hasForYouLiveGameChange(GamesTourModel current, GamesTourModel incoming) {
+  return current.pgn != incoming.pgn ||
+      current.fen != incoming.fen ||
+      current.lastMove != incoming.lastMove ||
+      current.lastMoveTime != incoming.lastMoveTime ||
+      current.whiteClockSeconds != incoming.whiteClockSeconds ||
+      current.blackClockSeconds != incoming.blackClockSeconds ||
+      current.gameStatus != incoming.gameStatus;
 }
 
 // ============================================================================

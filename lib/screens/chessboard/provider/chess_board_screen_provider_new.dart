@@ -21,6 +21,7 @@ import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
 import 'package:chessever/screens/chessboard/widgets/nag_display.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/pgn_clock_utils.dart';
@@ -231,14 +232,15 @@ class ChessBoardScreenNotifierNew
 
     // For live games, seed the board with the current live FEN so it renders
     // the actual position immediately instead of flashing Chess.initial.
-    final liveFenPosition = _tryParseLiveFenPlaceholder();
+    final initialLiveFen = _resolvedLiveFenForGame(game);
+    final liveFenPosition = _tryParseLiveFenPlaceholder(initialLiveFen);
 
     state = AsyncValue.data(
       ChessBoardStateNew(
         game: game,
         pgnData: null,
         isLoadingMoves: true,
-        fenData: game.fen,
+        fenData: initialLiveFen ?? game.fen,
         evaluation: null,
         isEvaluating: false,
         isAnalysisMode: true,
@@ -727,12 +729,21 @@ class ChessBoardScreenNotifierNew
     final previousResolvedPgn = currentState.pgnData ?? game.pgn;
     final pgnChanged = newPgn != null && newPgn != previousResolvedPgn;
     final streamStatus = gameData['status'] as String?;
+    final liveLastMove = gameData['last_move'] as String? ?? game.lastMove;
+    final rawLiveFen = gameData['fen'] as String? ?? game.fen;
+    final resolvedLiveFen =
+        resolveFreshestGameFen(
+          fen: rawLiveFen,
+          pgn: newPgn ?? game.pgn,
+          lastMove: liveLastMove,
+        ) ??
+        rawLiveFen;
 
     // Update game data with ALL stream values including PGN
     game = game.copyWith(
       pgn: newPgn ?? game.pgn,
-      fen: gameData['fen'] as String? ?? game.fen,
-      lastMove: gameData['last_move'] as String? ?? game.lastMove,
+      fen: resolvedLiveFen,
+      lastMove: liveLastMove,
       lastMoveTime:
           gameData['last_move_time'] != null
               ? DateTime.tryParse(gameData['last_move_time'] as String)
@@ -753,18 +764,24 @@ class ChessBoardScreenNotifierNew
       _isFollowingLive = false;
     }
 
-    // Only update moves if PGN actually changed (new moves arrived)
-    if (pgnChanged) {
-      final liveFen = gameData['fen'] as String?;
-      final liveUci = gameData['last_move'] as String?;
+    final liveFenChanged =
+        resolvedLiveFen != null &&
+        resolvedLiveFen.trim().isNotEmpty &&
+        (currentState.position == null ||
+            _normalizeFen(currentState.position!.fen) !=
+                _normalizeFen(resolvedLiveFen));
+
+    // Update moves when PGN changes, or when the FEN/last_move pair reaches
+    // the next ply before the PGN column catches up.
+    if (pgnChanged || liveFenChanged) {
+      final liveFen = resolvedLiveFen;
+      final liveUci = liveLastMove;
       bool fastPathSuccess = false;
 
       // Audit Optimization: Fast-path incremental move application.
       // If we have a single new move (UCI) and its resulting FEN matches
       // the server's new FEN, we can just append it instead of reparsing the whole PGN.
-      if (liveFen != null &&
-          liveUci != null &&
-          currentState.allMoves.isNotEmpty) {
+      if (liveFen != null && liveUci != null) {
         try {
           // Find the actual final position from all moves
           Position finalPos =
@@ -787,6 +804,7 @@ class ChessBoardScreenNotifierNew
                 '⚡ FAST PATH[$source]: Appending incremental move '
                 '$liveUci without full PGN parse',
               );
+              final nextPgnData = newPgn ?? currentState.pgnData ?? game.pgn;
 
               final newAllMoves = [...currentState.allMoves, extraMove];
               final newMoveSans = [...currentState.moveSans, sanResult.$2];
@@ -839,7 +857,7 @@ class ChessBoardScreenNotifierNew
                 moveSans: newMoveSans,
                 moveTimes: newMoveTimes,
                 currentMoveIndex: newMoveIndex,
-                pgnData: newPgn,
+                pgnData: nextPgnData,
                 analysisState: currentState.analysisState.copyWith(
                   position: displayPosition,
                   lastMove: displayLastMove,
@@ -854,10 +872,28 @@ class ChessBoardScreenNotifierNew
 
               state = AsyncValue.data(newState);
 
-              _analysisNavigator?.updateWithLatestGame(
-                _createChessGameFromPgn(newPgn),
-                goToTail: isFollowing,
+              final changedPgn = pgnChanged ? newPgn : null;
+              final changedPgnPosition = resolveFinalPositionFromPgn(
+                changedPgn,
               );
+              if (changedPgn != null &&
+                  changedPgnPosition != null &&
+                  _normalizeFen(changedPgnPosition.fen) ==
+                      _normalizeFen(liveFen)) {
+                _analysisNavigator?.updateWithLatestGame(
+                  _createChessGameFromPgn(changedPgn),
+                  goToTail: isFollowing,
+                );
+              } else {
+                _appendFastPathMoveToNavigator(
+                  previousFinalPosition: finalPos,
+                  nextPosition: candidatePos,
+                  move: extraMove,
+                  san: sanResult.$2,
+                  clockTime: timeStr,
+                  goToTail: isFollowing,
+                );
+              }
 
               if (isFollowing) {
                 _updateLastSeenMoveCount(newMoveSans.length);
@@ -879,13 +915,46 @@ class ChessBoardScreenNotifierNew
       }
 
       if (!fastPathSuccess) {
+        final pgnToParse = newPgn;
+        if (!pgnChanged || pgnToParse == null) return;
         _releaseLog(
           '🆕 NEW MOVES[$source]: Reparsing PGN for game ${game.gameId}',
         );
         _hasParsedMoves = false;
-        unawaited(parseMoves(pgnOverride: newPgn));
+        unawaited(parseMoves(pgnOverride: pgnToParse));
       }
     }
+  }
+
+  void _appendFastPathMoveToNavigator({
+    required Position previousFinalPosition,
+    required Position nextPosition,
+    required Move move,
+    required String san,
+    required String clockTime,
+    required bool goToTail,
+  }) {
+    final navigator = _analysisNavigator;
+    final currentGame = navigator?.state.game ?? _analysisGame;
+    if (navigator == null || currentGame == null) return;
+
+    final clock = clockTime.trim();
+    final appendedMove = ChessMove(
+      num: previousFinalPosition.fullmoves,
+      fen: nextPosition.fen,
+      san: san,
+      uci: move.uci,
+      turn:
+          previousFinalPosition.turn == Side.white
+              ? ChessColor.white
+              : ChessColor.black,
+      clockTime: clock.isEmpty ? null : clock,
+    );
+    final latestGame = currentGame.copyWith(
+      mainline: <ChessMove>[...currentGame.mainline, appendedMove],
+    );
+    _analysisGame = latestGame;
+    navigator.updateWithLatestGame(latestGame, goToTail: goToTail);
   }
 
   void _setupPgnStreamListener() {
@@ -6980,9 +7049,16 @@ class ChessBoardScreenNotifierNew
 
   /// Parse the live game FEN into a display-only placeholder position.
   /// Returns null for non-live games, missing FEN, or parse failures.
-  Position? _tryParseLiveFenPlaceholder() {
+  String? _resolvedLiveFenForGame(GamesTourModel game) {
+    return resolveFreshestGameFen(
+      fen: game.fen,
+      pgn: game.pgn,
+      lastMove: game.lastMove,
+    );
+  }
+
+  Position? _tryParseLiveFenPlaceholder(String? fen) {
     if (!game.gameStatus.isOngoing) return null;
-    final fen = game.fen;
     if (fen == null || fen.trim().isEmpty) return null;
     try {
       final setup = Setup.parseFen(fen.trim());

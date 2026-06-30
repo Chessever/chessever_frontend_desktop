@@ -175,6 +175,37 @@ void main() {
       expect(state.analysisState.position.fen, fen);
     });
 
+    test(
+      'ongoing game placeholder matches card-resolved fresh PGN position',
+      () {
+        const afterE4 =
+            'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+        const afterE4E5 =
+            'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2';
+        const pgnAfterE4E5 = '''
+[Event "Live Test"]
+[Result "*"]
+
+1. e4 e5 *
+''';
+        final game = _dummyGame(
+          fen: afterE4,
+          pgn: pgnAfterE4E5,
+          lastMove: 'e7e5',
+        );
+        final container = _createContainer();
+        addTearDown(container.dispose);
+
+        final params = ChessBoardProviderParams(game: game, index: 0);
+        final state = container.read(chessBoardScreenProviderNew(params)).value;
+
+        expect(state, isNotNull);
+        expect(state!.position!.fen, afterE4E5);
+        expect(state.analysisState.position.fen, afterE4E5);
+        expect(state.fenData, afterE4E5);
+      },
+    );
+
     test('ongoing game with null FEN falls back to Chess.initial', () {
       final game = _dummyGame(fen: null);
       final container = _createContainer();
@@ -321,6 +352,76 @@ void main() {
         expect(state.analysisState.currentMoveIndex, 0);
         expect(state.analysisState.position.fen, afterE4);
         expect(state.hasUnseenMoves, isTrue);
+      },
+    );
+
+    test(
+      'streamed FEN advances board while PGN is still one update behind',
+      () async {
+        const afterE4E5 =
+            'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2';
+        const afterNf3 =
+            'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2';
+        const pgnAfterE4E5 = '''
+[Event "Live Test"]
+[Result "*"]
+
+1. e4 e5 *
+''';
+
+        final controller = StreamController<Map<String, dynamic>?>();
+        addTearDown(controller.close);
+
+        final game = _dummyGame(
+          fen: afterE4E5,
+          pgn: pgnAfterE4E5,
+          lastMove: 'e7e5',
+        );
+        final container = _createContainer(updates: controller.stream);
+
+        // Keep evaluation work out of this provider unit test.
+        container.read(currentlyVisiblePageIndexProvider.notifier).state = 99;
+
+        final params = ChessBoardProviderParams(game: game, index: 0);
+        final subscription = container.listen(
+          chessBoardScreenProviderNew(params),
+          (_, __) {},
+          fireImmediately: true,
+        );
+        addTearDown(() async {
+          subscription.close();
+          await Future<void>.delayed(Duration.zero);
+          container.dispose();
+        });
+
+        await _waitFor(container, params, () {
+          final state =
+              container.read(chessBoardScreenProviderNew(params)).valueOrNull;
+          return state != null &&
+              !state.isLoadingMoves &&
+              state.moveSans.length == 2 &&
+              state.position?.fen == afterE4E5;
+        });
+
+        controller.add({
+          'fen': afterNf3,
+          'pgn': pgnAfterE4E5,
+          'last_move': 'g1f3',
+          'status': '*',
+        });
+
+        await _waitFor(container, params, () {
+          final state =
+              container.read(chessBoardScreenProviderNew(params)).valueOrNull;
+          return state?.moveSans.length == 3;
+        });
+
+        final state =
+            container.read(chessBoardScreenProviderNew(params)).valueOrNull!;
+        expect(state.position!.fen, afterNf3);
+        expect(state.analysisState.position.fen, afterNf3);
+        expect(state.moveSans, ['e4', 'e5', 'Nf3']);
+        expect(state.analysisState.currentMoveIndex, 2);
       },
     );
   });

@@ -35,7 +35,28 @@ class TourRepository extends BaseRepository {
           .select()
           .eq('id', groupId);
 
-      return (byIdResponse as List).map((json) => Tour.fromJson(json)).toList();
+      final byIdTours =
+          (byIdResponse as List).map((json) => Tour.fromJson(json)).toList();
+      if (byIdTours.isEmpty) {
+        return byIdTours;
+      }
+
+      final siblingGroupId = byIdTours.first.groupBroadcastId?.trim();
+      if (siblingGroupId == null ||
+          siblingGroupId.isEmpty ||
+          siblingGroupId == groupId) {
+        return byIdTours;
+      }
+
+      final siblingResponse = await supabase
+          .from('tours')
+          .select()
+          .eq('group_broadcast_id', siblingGroupId)
+          .order('avg_elo', ascending: false);
+
+      final siblingTours =
+          (siblingResponse as List).map((json) => Tour.fromJson(json)).toList();
+      return siblingTours.isNotEmpty ? siblingTours : byIdTours;
     });
   }
 
@@ -56,7 +77,7 @@ class TourRepository extends BaseRepository {
   }
 
   /// Fetch tours for multiple group_broadcast IDs in a single query.
-  /// Returns a map of group_broadcast_id → List<Tour>.
+  /// Returns a map of `group_broadcast_id` to `List<Tour>`.
   Future<Map<String, List<Tour>>> getToursByGroupBroadcastIds(
     List<String> groupBroadcastIds,
   ) async {

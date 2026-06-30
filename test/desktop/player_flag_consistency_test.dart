@@ -127,6 +127,54 @@ void main() {
     expect(summary.blackFideId, 2200000);
   });
 
+  test('board rail summaries use the same fresh FEN as live game cards', () {
+    const afterE4 =
+        'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+    const afterE4E5 =
+        'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2';
+    const pgnAfterE4E5 = '''
+[Event "Live Test"]
+[Result "*"]
+
+1. e4 e5 *
+''';
+    final game = GamesTourModel(
+      gameId: 'live-1',
+      whitePlayer: PlayerCard(
+        name: 'White Player',
+        federation: 'USA',
+        title: '',
+        rating: 2300,
+        countryCode: 'USA',
+        team: null,
+      ),
+      blackPlayer: PlayerCard(
+        name: 'Black Player',
+        federation: 'NOR',
+        title: '',
+        rating: 2200,
+        countryCode: 'NOR',
+        team: null,
+      ),
+      whiteTimeDisplay: '--:--',
+      blackTimeDisplay: '--:--',
+      whiteClockCentiseconds: 0,
+      blackClockCentiseconds: 0,
+      gameStatus: GameStatus.ongoing,
+      roundId: 'round-1',
+      tourId: 'event-1',
+      fen: afterE4,
+      pgn: pgnAfterE4E5,
+      lastMove: 'e7e5',
+    );
+
+    final card = GameCardData.fromGamesTourModel(game);
+    final summary = TournamentGameSummary.fromGamesTourModel(game);
+
+    expect(card.fen, afterE4E5);
+    expect(summary.fen, afterE4E5);
+  });
+
   test('Gamebase position rows carry FIDE IDs for backfilled rail flags', () {
     final summary = gamebasePositionGameSummaryFromRow({
       'id': 'gamebase-1',
