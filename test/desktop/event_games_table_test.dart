@@ -196,28 +196,53 @@ void main() {
       ),
     ];
 
-    final key = eventRailLiveBatchKeyForTesting(
+    final keys = eventRailLiveBatchKeysForTesting(
       activeTabId: 'tournaments-default',
       games: games,
       isEventRail: true,
       isDatabaseRail: false,
     );
 
-    expect(key, isNotNull);
-    expect(key!.tourId, isNull);
+    expect(keys, hasLength(1));
+    final key = keys.single;
+    expect(key.tourId, isNull);
     expect(key.gameIds, ['round-5-board-1', 'round-5-board-2']);
     expect(key.contains('new-round-board-1'), isFalse);
   });
 
   test('database rail does not subscribe to live tournament updates', () {
-    final key = eventRailLiveBatchKeyForTesting(
+    final keys = eventRailLiveBatchKeysForTesting(
       activeTabId: 'tournaments-default',
       games: [_summary(id: 'local-game-1', roundLabel: '2026')],
       isEventRail: false,
       isDatabaseRail: true,
     );
 
-    expect(key, isNull);
+    expect(keys, isEmpty);
+  });
+
+  test('event rail chunks live ids and skips finished rows', () {
+    final games = [
+      for (var i = 0; i < 26; i++)
+        _summary(
+          id: 'live-${i.toString().padLeft(2, '0')}',
+          roundLabel: 'R5',
+          status: GameStatus.ongoing,
+        ),
+      _summary(id: 'finished-1', roundLabel: 'R5', status: GameStatus.draw),
+    ];
+
+    final keys = eventRailLiveBatchKeysForTesting(
+      activeTabId: 'tournaments-default',
+      games: games,
+      isEventRail: true,
+      isDatabaseRail: false,
+    );
+
+    expect(keys, hasLength(2));
+    expect(keys[0].gameIds.length, 25);
+    expect(keys[1].gameIds, ['live-25']);
+    expect(keys.any((key) => key.contains('finished-1')), isFalse);
   });
 
   test('event rail copy selection can span rounds', () {

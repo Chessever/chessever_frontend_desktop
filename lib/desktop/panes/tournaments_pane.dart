@@ -49,6 +49,7 @@ import 'package:chessever/screens/premium_games/providers/premium_games_provider
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/location_service_provider.dart';
@@ -65,7 +66,7 @@ LiveGamesBatchKey _desktopForYouLiveBatchKey({
 }) {
   return LiveGamesBatchKey(
     scopeId: 'desktop_for_you:$eventId:$tourId',
-    gameIds: games.map((game) => game.gameId),
+    gameIds: games.where(shouldSubscribeToLiveGame).map((game) => game.gameId),
   );
 }
 

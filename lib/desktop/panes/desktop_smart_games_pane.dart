@@ -20,11 +20,14 @@ import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
     show LiveDesktopGameCard, openTournamentGameTab;
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
+import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
+import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 class DesktopSmartGamesPane extends ConsumerStatefulWidget {
@@ -644,6 +647,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                         games: sections[sectionIndex].games,
                         routeTitle: widget.routeTitle,
                         routeGames: groupedGames,
+                        streamingEnabled: cardStreamingEnabled,
                         selectedGameId: selectedGameId,
                         onSelectGame: selectGame,
                         keyForGame: keyForGame,
@@ -1022,6 +1026,7 @@ class _SmartGamesTable extends ConsumerWidget {
     required this.games,
     required this.routeTitle,
     required this.routeGames,
+    required this.streamingEnabled,
     required this.selectedGameId,
     required this.onSelectGame,
     required this.keyForGame,
@@ -1030,12 +1035,48 @@ class _SmartGamesTable extends ConsumerWidget {
   final List<GamesTourModel> games;
   final String routeTitle;
   final List<GamesTourModel> routeGames;
+  final bool streamingEnabled;
   final String? selectedGameId;
   final ValueChanged<String> onSelectGame;
   final Key Function(String gameId) keyForGame;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final updatesById = <String, LiveGameUpdate>{};
+    if (streamingEnabled && ref.watch(shouldStreamProvider)) {
+      final batchKeys =
+          liveBatchKeysForGames(
+            games: games,
+            scopePrefix:
+                'desktop-smart-table:${routeTitle.hashCode}:${games.length}',
+          ).values.toSet();
+      for (final batchKey in batchKeys) {
+        final updates = ref.watch(
+          gameUpdatesBatchStreamProvider(
+            batchKey,
+          ).select((async) => async.valueOrNull),
+        );
+        if (updates != null) {
+          updatesById.addAll(updates);
+        }
+      }
+    }
+
+    final effectiveGames =
+        updatesById.isEmpty
+            ? games
+            : [
+              for (final game in games)
+                _mergeSmartTableLiveGame(game, updatesById[game.gameId]),
+            ];
+    final effectiveRouteGames =
+        updatesById.isEmpty
+            ? routeGames
+            : [
+              for (final game in routeGames)
+                _mergeSmartTableLiveGame(game, updatesById[game.gameId]),
+            ];
+
     return DecoratedBox(
       decoration: BoxDecoration(
         color: kBlack2Color,
@@ -1045,24 +1086,37 @@ class _SmartGamesTable extends ConsumerWidget {
       child: Column(
         children: [
           const _SmartGamesTableHeader(),
-          for (var i = 0; i < games.length; i++)
+          for (var i = 0; i < effectiveGames.length; i++)
             DesktopGameKeyboardItem(
-              itemKey: keyForGame(games[i].gameId),
-              gameId: games[i].gameId,
+              itemKey: keyForGame(effectiveGames[i].gameId),
+              gameId: effectiveGames[i].gameId,
               onSelect: onSelectGame,
               child: _SmartGamesTableRow(
-                game: games[i],
-                selected: selectedGameId == games[i].gameId,
-                showDivider: i < games.length - 1,
-                onSelect: () => onSelectGame(games[i].gameId),
+                game: effectiveGames[i],
+                selected: selectedGameId == effectiveGames[i].gameId,
+                showDivider: i < effectiveGames.length - 1,
+                onSelect: () => onSelectGame(effectiveGames[i].gameId),
                 onOpen:
-                    () => _openSmartGame(ref, games[i], routeTitle, routeGames),
+                    () => _openSmartGame(
+                      ref,
+                      effectiveGames[i],
+                      routeTitle,
+                      effectiveRouteGames,
+                    ),
               ),
             ),
         ],
       ),
     );
   }
+}
+
+GamesTourModel _mergeSmartTableLiveGame(
+  GamesTourModel game,
+  LiveGameUpdate? update,
+) {
+  if (update == null) return game;
+  return mergeLiveGameUpdateWithBase(baseGame: game, update: update);
 }
 
 class _SmartGamesTableHeader extends StatelessWidget {

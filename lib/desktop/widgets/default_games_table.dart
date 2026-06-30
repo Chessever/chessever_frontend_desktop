@@ -10,8 +10,12 @@ import 'package:chessever/desktop/widgets/adaptive_games_table.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
     show openTournamentGameTab;
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
+import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
+import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/country_utils.dart';
 import 'package:chessever/widgets/federation_flag.dart';
@@ -88,8 +92,11 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
     super.dispose();
   }
 
-  List<GamesTourModel> get _rows {
-    final rows = List<GamesTourModel>.of(widget.games, growable: false);
+  List<GamesTourModel> get _baseRows =>
+      List<GamesTourModel>.of(widget.games, growable: false);
+
+  List<GamesTourModel> _sortRows(List<GamesTourModel> source) {
+    final rows = List<GamesTourModel>.of(source, growable: false);
     final sort = _sortState;
     if (sort == null) return rows;
     rows.sort((a, b) {
@@ -196,6 +203,7 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
     FocusNode node,
     KeyEvent event,
     List<GamesTourModel> rows,
+    List<GamesTourModel> routeGames,
   ) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
@@ -228,7 +236,7 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         key == LogicalKeyboardKey.numpadEnter) {
       final index = currentIndex < 0 ? 0 : currentIndex;
       _highlight(rows[index]);
-      _openGame(rows[index], inNewTab: false);
+      _openGame(rows[index], inNewTab: false, routeGames: routeGames);
       return KeyEventResult.handled;
     } else {
       return KeyEventResult.ignored;
@@ -305,7 +313,61 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
     widget.onToggleSelection?.call(game.gameId);
   }
 
-  void _openGame(GamesTourModel game, {required bool inNewTab}) {
+  List<GamesTourModel> _mergeLiveRows(List<GamesTourModel> rows) {
+    if (!widget.active || !ref.watch(shouldStreamProvider)) return rows;
+
+    final updatesById = <String, LiveGameUpdate>{};
+    final batchKeys =
+        liveBatchKeysForGames(
+          games: rows,
+          scopePrefix: '${widget.rowKeyPrefix}:${rows.length}',
+        ).values.toSet();
+    for (final batchKey in batchKeys) {
+      final updates = ref.watch(
+        gameUpdatesBatchStreamProvider(
+          batchKey,
+        ).select((async) => async.valueOrNull),
+      );
+      if (updates != null) {
+        updatesById.addAll(updates);
+      }
+    }
+
+    if (updatesById.isEmpty) return rows;
+    return [
+      for (final row in rows)
+        _mergeDefaultTableLiveGame(row, updatesById[row.gameId]),
+    ];
+  }
+
+  List<GamesTourModel> _mergeLiveRouteGames(
+    List<GamesTourModel> routeGames,
+    List<GamesTourModel> visibleRows,
+  ) {
+    if (routeGames.isEmpty) return routeGames;
+
+    final visibleById = <String, GamesTourModel>{
+      for (final row in visibleRows) row.gameId: row,
+    };
+    var changed = false;
+    final merged = <GamesTourModel>[];
+    for (final game in routeGames) {
+      final visibleGame = visibleById[game.gameId];
+      if (visibleGame == null) {
+        merged.add(game);
+        continue;
+      }
+      if (visibleGame != game) changed = true;
+      merged.add(visibleGame);
+    }
+    return changed ? merged : routeGames;
+  }
+
+  void _openGame(
+    GamesTourModel game, {
+    required bool inNewTab,
+    required List<GamesTourModel> routeGames,
+  }) {
     final customOpen = widget.onOpenGame;
     if (customOpen != null) {
       customOpen(game, inNewTab: inNewTab);
@@ -317,7 +379,7 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         game,
         defaultGameEventLabel(game),
         routeTitle: widget.routeTitle ?? defaultGameEventLabel(game),
-        routeGames: widget.routeGames ?? widget.games,
+        routeGames: routeGames,
         routeGamesContinuation: widget.routeGamesContinuation,
         focus: widget.active,
         reuseExisting: !inNewTab,
@@ -329,12 +391,17 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
 
   @override
   Widget build(BuildContext context) {
-    final rows = _rows;
+    final liveRows = _mergeLiveRows(_baseRows);
+    final rows = _sortRows(liveRows);
+    final routeGames = _mergeLiveRouteGames(
+      widget.routeGames ?? widget.games,
+      liveRows,
+    );
     return Focus(
       focusNode: _focusNode,
       autofocus: widget.active,
       canRequestFocus: widget.active,
-      onKeyEvent: (node, event) => _handleKey(node, event, rows),
+      onKeyEvent: (node, event) => _handleKey(node, event, rows, routeGames),
       child: AdaptiveGamesTable<GamesTourModel>(
         columns: _buildColumns(rows),
         rows: rows,
@@ -384,7 +451,7 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
             return;
           }
           _highlight(game);
-          _openGame(game, inNewTab: inNewTab);
+          _openGame(game, inNewTab: inNewTab, routeGames: routeGames);
         },
         onRowSecondaryTap:
             widget.onContext == null
@@ -537,6 +604,14 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         if (!hiddenColumnIds.contains(column.id)) column,
     ];
   }
+}
+
+GamesTourModel _mergeDefaultTableLiveGame(
+  GamesTourModel game,
+  LiveGameUpdate? update,
+) {
+  if (update == null) return game;
+  return mergeLiveGameUpdateWithBase(baseGame: game, update: update);
 }
 
 class _DefaultGamesTextCell extends StatelessWidget {

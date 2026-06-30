@@ -38,6 +38,7 @@ import 'package:chessever/screens/player_profile/provider/player_profile_provide
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/time_utils.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
@@ -101,13 +102,13 @@ List<TournamentGameSummary> eventRailMergeFreshEventGamesForTesting(
 }
 
 @visibleForTesting
-LiveGamesBatchKey? eventRailLiveBatchKeyForTesting({
+List<LiveGamesBatchKey> eventRailLiveBatchKeysForTesting({
   required String activeTabId,
   required List<TournamentGameSummary> games,
   required bool isEventRail,
   required bool isDatabaseRail,
 }) {
-  return _eventRailLiveBatchKey(
+  return _eventRailLiveBatchKeys(
     activeTabId: activeTabId,
     games: games,
     kind:
@@ -811,19 +812,25 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
     final selectedGameId = resolved.selectedGameId;
     final activeSelectionId = _highlightedGameId ?? selectedGameId;
     _pruneRowKeys(orderedGames);
-    final liveBatchKey = _eventRailLiveBatchKey(
+    final liveBatchKeys = _eventRailLiveBatchKeys(
       activeTabId: activeTabId,
       games: orderedGames,
       kind: resolved.kind,
     );
-    final liveSummaries =
-        liveBatchKey == null
-            ? _EventLiveSummaries.empty
-            : ref.watch(
-              gameUpdatesBatchStreamProvider(
-                liveBatchKey,
-              ).select((async) => _EventLiveSummaries.from(async.valueOrNull)),
-            );
+    final liveUpdatesById = <String, LiveGameUpdate>{};
+    for (final batchKey in liveBatchKeys) {
+      final updates = ref.watch(
+        gameUpdatesBatchStreamProvider(
+          batchKey,
+        ).select((async) => async.valueOrNull),
+      );
+      if (updates != null) {
+        liveUpdatesById.addAll(updates);
+      }
+    }
+    final liveSummaries = _EventLiveSummaries.from(
+      liveUpdatesById.isEmpty ? null : liveUpdatesById,
+    );
 
     final scrollSignature =
         resolved.kind == _GameListKind.database
@@ -1520,22 +1527,41 @@ String? _eventRailTourId(
   return null;
 }
 
-LiveGamesBatchKey? _eventRailLiveBatchKey({
+List<LiveGamesBatchKey> _eventRailLiveBatchKeys({
   required String activeTabId,
   required List<TournamentGameSummary> games,
   required _GameListKind kind,
 }) {
   if (kind == _GameListKind.database || games.isEmpty) {
-    return null;
+    return const <LiveGamesBatchKey>[];
   }
 
-  if (!games.any((game) => !game.status.isFinished)) return null;
+  final liveGames = games
+      .where((game) => game.id.trim().isNotEmpty && !game.status.isFinished)
+      .toList(growable: false);
+  if (liveGames.isEmpty) return const <LiveGamesBatchKey>[];
 
   final scopeId = 'desktop-event-rail:$activeTabId:${kind.index}';
-  return LiveGamesBatchKey(
-    scopeId: scopeId,
-    gameIds: games.map((game) => game.id),
-  );
+  final keys = <LiveGamesBatchKey>[];
+  for (
+    var start = 0;
+    start < liveGames.length;
+    start += kLiveContextBatchSize
+  ) {
+    final end =
+        start + kLiveContextBatchSize > liveGames.length
+            ? liveGames.length
+            : start + kLiveContextBatchSize;
+    final chunk = liveGames.sublist(start, end);
+    keys.add(
+      LiveGamesBatchKey(
+        scopeId:
+            '$scopeId:${start ~/ kLiveContextBatchSize}:${chunk.first.id}:${chunk.last.id}',
+        gameIds: chunk.map((game) => game.id),
+      ),
+    );
+  }
+  return keys;
 }
 
 List<TournamentGameSummary> _mergeFreshEventGameSummaries(

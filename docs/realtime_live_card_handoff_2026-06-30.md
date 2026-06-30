@@ -72,6 +72,8 @@ File: `lib/screens/chessboard/provider/game_pgn_stream_provider.dart`
   so a board and any single-game consumer share one Riverpod family instance.
 - `LiveGamesBatchKey` equality is based on `scopeId`, optional round/tour, and
   sorted `gameIds`.
+- `liveBatchKeysForGames(...)` is the shared helper for card/table surfaces:
+  it filters to streamable live Supabase games and returns 25-game chunk keys.
 - `gameUpdatesBatchStreamProvider(batchKey)` subscribes to:
   - round only if `roundId` is explicitly set
   - tour only if `tourId` is explicitly set
@@ -151,11 +153,9 @@ rendered section/viewport IDs. Do not sacrifice board navigation context to save
 channels.
 
 The smart-pane table/list layout uses `_SmartGamesTableRow`, not
-`LiveDesktopGameCard`. It displays status/result/player/event text and opens the
-board on double click. It does not currently render a live board card. If table
-rows need realtime status/result freshness, add a lightweight batch listener at
-the table level and project each row from that same batch. Do not add per-row
-single-game streams.
+`LiveDesktopGameCard`. It now watches lightweight table-level
+`gameUpdatesBatchStreamProvider(...)` chunks and merges each row before
+render/open. Do not add per-row single-game streams here.
 
 ## Other Desktop Surfaces Checked
 
@@ -175,17 +175,19 @@ The main desktop card surfaces route through `LiveDesktopGameCard`:
   `lib/desktop/panes/countrymen_pane.dart`
 - Player profile game cards:
   `lib/desktop/widgets/player_profile_view.dart`
+- Player profile table rows:
+  `lib/desktop/widgets/default_games_table.dart`
 
-The event board side rail uses an explicit visible-game key:
+The event board side rail uses explicit visible-game chunk keys:
 
 ```dart
 LiveGamesBatchKey(
-  scopeId: 'desktop-event-rail:$activeTabId:${kind.index}',
-  gameIds: games.map((game) => game.id),
+  scopeId: 'desktop-event-rail:$activeTabId:${kind.index}:$chunkIndex:...',
+  gameIds: liveVisibleGamesInChunk.map((game) => game.id),
 )
 ```
 
-It returns `null` for database rows, empty lists, and finished-only lists.
+It returns no keys for database rows, empty lists, and finished-only lists.
 
 Desktop For You uses explicit visible-game keys:
 
