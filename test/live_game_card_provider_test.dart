@@ -14,6 +14,8 @@ class _FakeGameStreamRepository extends GameStreamRepository {
 
   final Stream<Map<String, dynamic>?> stream;
   int subscribeToGameUpdatesCount = 0;
+  int subscribeToRoundUpdatesCount = 0;
+  int subscribeToTourUpdatesCount = 0;
 
   // `subscribeToLiveGameUpdate` is the repository's stream primitive;
   // `subscribeToGameUpdates` is derived from it. Override the primitive so the
@@ -24,6 +26,34 @@ class _FakeGameStreamRepository extends GameStreamRepository {
     return stream.map(
       (row) => row == null ? null : LiveGameUpdate.fromLegacyMap(gameId, row),
     );
+  }
+
+  @override
+  Stream<Map<String, LiveGameUpdate>> subscribeToLiveGameUpdatesForRound(
+    String roundId,
+  ) {
+    subscribeToRoundUpdatesCount++;
+    return _liveGameUpdatesForIds(const ['game-1']);
+  }
+
+  @override
+  Stream<Map<String, LiveGameUpdate>> subscribeToLiveGameUpdatesForTour(
+    String tourId,
+  ) {
+    subscribeToTourUpdatesCount++;
+    return _liveGameUpdatesForIds(const ['game-1']);
+  }
+
+  Stream<Map<String, LiveGameUpdate>> _liveGameUpdatesForIds(
+    List<String> gameIds,
+  ) {
+    return stream.map((row) {
+      if (row == null) return const <String, LiveGameUpdate>{};
+      return {
+        for (final gameId in gameIds)
+          gameId: LiveGameUpdate.fromLegacyMap(gameId, row),
+      };
+    });
   }
 }
 
@@ -250,7 +280,8 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
 
-      expect(repository.subscribeToGameUpdatesCount, 1);
+      expect(repository.subscribeToGameUpdatesCount, 0);
+      expect(repository.subscribeToRoundUpdatesCount, 1);
       expect(sub.read()?.fen, afterE4E5);
       expect(sub.read()?.lastMove, 'e7e5');
       expect(sub.read()?.whiteClockSeconds, 170);

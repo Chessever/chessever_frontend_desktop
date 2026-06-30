@@ -1728,10 +1728,9 @@ GameTabDragPayload tournamentGameDragPayload(
 /// `DesktopGameCard` wrapper that subscribes to Supabase Realtime updates
 /// for [game] via [watchLiveGame] (the same provider mobile uses) and
 /// rebuilds the card whenever the broadcast pushes a new PGN, FEN,
-/// last_move, clock, or status. Each instance creates its own Realtime
-/// channel that auto-disposes when the card scrolls out of view, mirroring
-/// mobile's `liveGameCardProvider` autoDispose behaviour — so a list with
-/// 200 games doesn't keep 200 channels open once you scroll past them.
+/// last_move, clock, or status. Broadcast lists must pass [liveBatchKey] so
+/// visible cards share a scoped Realtime channel instead of opening one
+/// channel per board.
 ///
 /// Use this anywhere a tournament-feed game appears on the desktop — the
 /// static [DesktopGameCard] is reserved for non-live sources (Library
