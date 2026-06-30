@@ -7,6 +7,7 @@ import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
+import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/provider/current_eval_provider.dart';
@@ -17,8 +18,44 @@ import 'package:chessever/utils/responsive_helper.dart';
 const _kFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 class _FakeGameStreamRepository extends GameStreamRepository {
+  int individualSubscriptions = 0;
+  int batchSubscriptions = 0;
+  int roundSubscriptions = 0;
+  int tourSubscriptions = 0;
+
   @override
   Stream<Map<String, dynamic>?> subscribeToGameUpdates(String gameId) {
+    individualSubscriptions++;
+    return const Stream.empty();
+  }
+
+  @override
+  Stream<LiveGameUpdate?> subscribeToLiveGameUpdate(String gameId) {
+    individualSubscriptions++;
+    return const Stream.empty();
+  }
+
+  @override
+  Stream<Map<String, LiveGameUpdate>> subscribeToLiveGameUpdatesBatch(
+    List<String> gameIds,
+  ) {
+    batchSubscriptions++;
+    return const Stream.empty();
+  }
+
+  @override
+  Stream<Map<String, LiveGameUpdate>> subscribeToLiveGameUpdatesForRound(
+    String roundId,
+  ) {
+    roundSubscriptions++;
+    return const Stream.empty();
+  }
+
+  @override
+  Stream<Map<String, LiveGameUpdate>> subscribeToLiveGameUpdatesForTour(
+    String tourId,
+  ) {
+    tourSubscriptions++;
     return const Stream.empty();
   }
 }
@@ -68,6 +105,51 @@ void main() {
 
     expect(find.byType(EvaluationBarWidgetForGames), findsOneWidget);
   });
+
+  testWidgets('desktop context cards share one batch realtime stream', (
+    tester,
+  ) async {
+    final repository = _FakeGameStreamRepository();
+    final games = <GamesTourModel>[
+      _game(id: 'game-1', status: GameStatus.ongoing),
+      _game(id: 'game-2', status: GameStatus.ongoing),
+    ];
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          boardSettingsProviderNew.overrideWith(_EvaluationBarOnNotifier.new),
+          engineSettingsProviderNew.overrideWith(_EngineSettingsOnNotifier.new),
+          gameStreamRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                for (final game in games)
+                  SizedBox(
+                    width: 340,
+                    height: 150,
+                    child: LiveDesktopGameCard(
+                      game: game,
+                      tournamentTitle: 'Test Event',
+                      routeGames: games,
+                      layout: DesktopCardLayout.compact,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(repository.batchSubscriptions, 1);
+    expect(repository.individualSubscriptions, 0);
+    expect(repository.roundSubscriptions, 0);
+    expect(repository.tourSubscriptions, 0);
+  });
 }
 
 Future<void> _pumpCard(WidgetTester tester, GamesTourModel game) async {
@@ -75,6 +157,7 @@ Future<void> _pumpCard(WidgetTester tester, GamesTourModel game) async {
     ProviderScope(
       overrides: [
         boardSettingsProviderNew.overrideWith(_EvaluationBarOnNotifier.new),
+        engineSettingsProviderNew.overrideWith(_EngineSettingsOnNotifier.new),
         gameStreamRepositoryProvider.overrideWithValue(
           _FakeGameStreamRepository(),
         ),
@@ -107,6 +190,7 @@ Future<void> _pumpDesktopGameCard(
     ProviderScope(
       overrides: [
         boardSettingsProviderNew.overrideWith(createNotifier),
+        engineSettingsProviderNew.overrideWith(_EngineSettingsOnNotifier.new),
         gameCardEvalWithStockfishFallbackProvider.overrideWith(
           (ref, fen) async => _cloudEval(),
         ),
@@ -149,9 +233,9 @@ Future<void> _openContextMenu(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 250));
 }
 
-GamesTourModel _game({required GameStatus status}) {
+GamesTourModel _game({String? id, required GameStatus status}) {
   return GamesTourModel(
-    gameId: 'game-${status.name}',
+    gameId: id ?? 'game-${status.name}',
     whitePlayer: _player('White'),
     blackPlayer: _player('Black'),
     whiteTimeDisplay: '--:--',
@@ -217,6 +301,15 @@ class _EvaluationBarOnNotifier extends BoardSettingsNotifierNew {
   @override
   Future<BoardSettingsNew> build() async {
     const settings = BoardSettingsNew(showEvaluationBar: true);
+    state = const AsyncValue.data(settings);
+    return settings;
+  }
+}
+
+class _EngineSettingsOnNotifier extends EngineSettingsNotifierNew {
+  @override
+  Future<EngineSettings> build() async {
+    const settings = EngineSettings(showEngineGauge: true);
     state = const AsyncValue.data(settings);
     return settings;
   }

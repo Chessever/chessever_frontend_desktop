@@ -14,6 +14,7 @@ class _FakeGameStreamRepository extends GameStreamRepository {
 
   final Stream<Map<String, dynamic>?> stream;
   int subscribeToGameUpdatesCount = 0;
+  int subscribeToBatchUpdatesCount = 0;
   int subscribeToRoundUpdatesCount = 0;
   int subscribeToTourUpdatesCount = 0;
 
@@ -26,6 +27,14 @@ class _FakeGameStreamRepository extends GameStreamRepository {
     return stream.map(
       (row) => row == null ? null : LiveGameUpdate.fromLegacyMap(gameId, row),
     );
+  }
+
+  @override
+  Stream<Map<String, LiveGameUpdate>> subscribeToLiveGameUpdatesBatch(
+    List<String> gameIds,
+  ) {
+    subscribeToBatchUpdatesCount++;
+    return _liveGameUpdatesForIds(gameIds);
   }
 
   @override
@@ -71,6 +80,7 @@ PlayerCard _player(String name) {
 GamesTourModel _game({
   required String id,
   required GameStatus status,
+  GameSource source = GameSource.supabase,
   String? fen,
   String? pgn,
   String? lastMove,
@@ -80,6 +90,7 @@ GamesTourModel _game({
 }) {
   return GamesTourModel(
     gameId: id,
+    source: source,
     whitePlayer: _player('White'),
     blackPlayer: _player('Black'),
     whiteTimeDisplay: '--:--',
@@ -286,6 +297,39 @@ void main() {
       expect(sub.read()?.lastMove, 'e7e5');
       expect(sub.read()?.whiteClockSeconds, 170);
       expect(sub.read()?.blackClockSeconds, 160);
+    });
+
+    test('cards without a realtime context do not open per-game channels', () {
+      final repository = _FakeGameStreamRepository(
+        const Stream<Map<String, dynamic>?>.empty(),
+      );
+
+      final container = ProviderContainer(
+        overrides: [gameStreamRepositoryProvider.overrideWithValue(repository)],
+      );
+      addTearDown(container.dispose);
+
+      container.read(baseGameProvider('gamebase-1').notifier).state = _game(
+        id: 'gamebase-1',
+        source: GameSource.gamebase,
+        status: GameStatus.ongoing,
+        fen: afterE4,
+      );
+
+      final sub = container.listen(
+        scopedLiveGameCardProvider(
+          const LiveGameWatchParams(gameId: 'gamebase-1'),
+        ),
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(sub.close);
+
+      expect(repository.subscribeToGameUpdatesCount, 0);
+      expect(repository.subscribeToBatchUpdatesCount, 0);
+      expect(repository.subscribeToRoundUpdatesCount, 0);
+      expect(repository.subscribeToTourUpdatesCount, 0);
+      expect(sub.read()?.fen, afterE4);
     });
 
     test(
