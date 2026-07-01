@@ -1,11 +1,3 @@
-import 'package:hooks_riverpod/hooks_riverpod.dart';
-
-/// Top-level grouping shown in the tournaments rail (and the legacy mobile
-/// group-event screen).
-enum GroupEventCategory { past, current, forYou, search }
-
-/// Active category selection shared by the desktop tournaments pane and any
-/// remaining mobile entry points.
-final selectedGroupCategoryProvider = StateProvider<GroupEventCategory>(
-  (ref) => GroupEventCategory.forYou,
-);
+// Keep desktop imports wired to the mobile tournament category source of truth.
+export 'package:chessever/screens/group_event/group_event_screen.dart'
+    show GroupEventCategory, selectedGroupCategoryProvider;

@@ -1078,14 +1078,12 @@ class _DesktopEventVisual extends ConsumerWidget {
                     : (constraints.maxHeight.isFinite
                         ? constraints.maxHeight * 1.6
                         : 360.0);
-            final logicalHeight =
-                constraints.maxHeight.isFinite
-                    ? constraints.maxHeight
-                    : (logicalWidth / 1.6);
+            // Width-only: ResizeImage decodes to an exact width x height box
+            // when both are given, squashing the source photo to the card's
+            // aspect ratio before BoxFit.cover gets a chance to crop it. One
+            // free axis keeps the source aspect intact through decode.
             final cacheWidth =
                 (logicalWidth * dpr).round().clamp(96, 900).toInt();
-            final cacheHeight =
-                (logicalHeight * dpr).round().clamp(64, 640).toInt();
             final image = ref.watch(eventImageProvider(event.id));
 
             return image.when(
@@ -1096,7 +1094,6 @@ class _DesktopEventVisual extends ConsumerWidget {
                     imageUrl: data.imageUrl!,
                     fit: BoxFit.cover,
                     memCacheWidth: cacheWidth,
-                    memCacheHeight: cacheHeight,
                     fadeInDuration: const Duration(milliseconds: 180),
                     fadeOutDuration: const Duration(milliseconds: 120),
                     placeholder: (_, __) => const _EventImageSkeleton(),

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_tour_repository.dart';
@@ -71,47 +73,59 @@ class GroupBroadcastLocalStorage {
 
   Future<List<GroupBroadcast>> _fetchSaveAndReturnGroupBroadcasts() async {
     final broadcasts = await _fetchGroupBroadcastsFromSource();
-    final db = ref.read(appDatabaseProvider);
-    final encoded = _encodeGroupBroadcastsList(broadcasts);
-    await db.setCacheAndInt(
-      cacheKey: _cacheKey,
-      cacheValue: jsonEncode(encoded),
-      intKey: _cacheTimeKey,
-      intValue: DateTime.now().millisecondsSinceEpoch,
-    );
+    // Caching is strictly best-effort. A failed local write (a slow or locked
+    // SQLite file on desktop, a transient init timeout, ...) must never drop
+    // data we already fetched from Supabase — otherwise the caller falls back
+    // to an empty list even though the network succeeded.
+    try {
+      final db = ref.read(appDatabaseProvider);
+      final encoded = _encodeGroupBroadcastsList(broadcasts);
+      await db.setCacheAndInt(
+        cacheKey: _cacheKey,
+        cacheValue: jsonEncode(encoded),
+        intKey: _cacheTimeKey,
+        intValue: DateTime.now().millisecondsSinceEpoch,
+      );
+    } catch (error) {
+      debugPrint('GroupBroadcast cache write failed ($_cacheKey): $error');
+    }
     return broadcasts;
   }
 
   Future<List<GroupBroadcast>> fetchGroupBroadcasts() async {
+    // Supabase is the source of truth; the local cache is only an optimization
+    // layered on top. Read the cache defensively: if the shared local database
+    // is momentarily unavailable (cold-start init timeout, lock contention on
+    // the large desktop DB) we must still fall through to the network instead
+    // of silently returning an empty list. Returning empty here is what made
+    // Current/Past render "No tournaments in this view" while live data — and a
+    // perfectly valid on-disk cache — were both available.
+    int? lastFetched;
+    var cachedBroadcasts = const <GroupBroadcast>[];
     try {
       final db = ref.read(appDatabaseProvider);
-      final lastFetched = await db.getInt(_cacheTimeKey);
-      final cachedBroadcasts = await getGroupBroadcasts();
-      final shouldRefresh =
-          lastFetched == null ||
-          cachedBroadcasts.isEmpty ||
-          (DateTime.now().millisecondsSinceEpoch - lastFetched) >
-              25 * 60 * 1000;
+      lastFetched = await db.getInt(_cacheTimeKey);
+      cachedBroadcasts = await getGroupBroadcasts();
+    } catch (error) {
+      debugPrint('GroupBroadcast cache read failed ($_cacheKey): $error');
+    }
 
-      if (!shouldRefresh) {
-        return cachedBroadcasts;
-      }
+    final isStale =
+        lastFetched == null ||
+        (DateTime.now().millisecondsSinceEpoch - lastFetched) > 25 * 60 * 1000;
+    final shouldRefresh = isStale || cachedBroadcasts.isEmpty;
 
-      try {
-        final fresh = await _fetchSaveAndReturnGroupBroadcasts();
-        return fresh;
-      } catch (_) {
-        if (cachedBroadcasts.isNotEmpty) {
-          return cachedBroadcasts;
-        }
-        return <GroupBroadcast>[];
-      }
-    } catch (_) {
-      try {
-        return await getGroupBroadcasts();
-      } catch (_) {
-        return <GroupBroadcast>[];
-      }
+    if (!shouldRefresh) {
+      return cachedBroadcasts;
+    }
+
+    try {
+      return await _fetchSaveAndReturnGroupBroadcasts();
+    } catch (error) {
+      // Network failed too — serve whatever cache we managed to read (possibly
+      // empty). Both layers down is the only path that yields no events.
+      debugPrint('GroupBroadcast network fetch failed ($_cacheKey): $error');
+      return cachedBroadcasts;
     }
   }
 

@@ -556,10 +556,14 @@ class _EventImage extends ConsumerWidget {
 
     final imageWidth = phoneImageWidth(context);
     final imageHeight = phoneImageHeight(context);
+    // Only the width is given to ResizeImage. Passing both width and height
+    // makes Flutter decode the bitmap to that exact box (ResizeImagePolicy
+    // .exact), squashing the source image to the card's aspect ratio before
+    // BoxFit.cover ever runs — the actual cause of "distorted" event photos.
+    // One axis left free preserves the source aspect on decode; cover then
+    // crops it cleanly into the (unchanged) card footprint.
     final cacheWidth =
         (imageWidth * MediaQuery.devicePixelRatioOf(context)).toInt();
-    final cacheHeight =
-        (imageHeight * MediaQuery.devicePixelRatioOf(context)).toInt();
 
     final image = SizedBox(
       width: imageWidth,
@@ -577,7 +581,6 @@ class _EventImage extends ConsumerWidget {
                 imageUrl: imageData.imageUrl!,
                 fit: BoxFit.cover,
                 memCacheWidth: cacheWidth,
-                memCacheHeight: cacheHeight,
                 fadeInDuration: const Duration(milliseconds: 300),
                 fadeOutDuration: const Duration(milliseconds: 200),
                 placeholder:
@@ -769,13 +772,10 @@ class _TabletEventBackground extends ConsumerWidget {
             constraints.maxWidth.isFinite
                 ? constraints.maxWidth
                 : MediaQuery.sizeOf(context).width;
-        final logicalHeight =
-            constraints.maxHeight.isFinite
-                ? constraints.maxHeight
-                : logicalWidth * 0.56;
+        // Width-only: giving ResizeImage both width and height forces an
+        // exact-box decode that squashes the source photo to match before
+        // BoxFit.cover ever runs. One free axis preserves source aspect.
         final cacheWidth = (logicalWidth * dpr).round().clamp(160, 900).toInt();
-        final cacheHeight =
-            (logicalHeight * dpr).round().clamp(120, 640).toInt();
 
         return imageAsync.when(
           data: (imageData) {
@@ -784,7 +784,6 @@ class _TabletEventBackground extends ConsumerWidget {
                 imageUrl: imageData.imageUrl!,
                 fit: BoxFit.cover,
                 memCacheWidth: cacheWidth,
-                memCacheHeight: cacheHeight,
                 fadeInDuration: const Duration(milliseconds: 300),
                 fadeOutDuration: const Duration(milliseconds: 200),
                 placeholder: (context, url) => _buildLoadingBackground(),
