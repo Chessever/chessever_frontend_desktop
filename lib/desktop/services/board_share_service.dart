@@ -21,7 +21,8 @@ class BoardShareService {
   BoardShareService._();
 
   /// Capture [widget] off-screen and return its PNG bytes.
-  static Future<Uint8List?> captureWidget(Widget widget, {
+  static Future<Uint8List?> captureWidget(
+    Widget widget, {
     required double width,
     required double height,
     double pixelRatio = 2.0,
@@ -33,11 +34,7 @@ class BoardShareService {
         textDirection: TextDirection.ltr,
         child: MediaQuery(
           data: const MediaQueryData(size: Size(800, 800)),
-          child: SizedBox(
-            width: width,
-            height: height,
-            child: widget,
-          ),
+          child: SizedBox(width: width, height: height, child: widget),
         ),
       ),
     );
@@ -64,7 +61,8 @@ class BoardShareService {
   }
 
   /// Save PNG bytes to a user-chosen path (desktop Save dialog).
-  static Future<void> savePngBytesToDisk(Uint8List bytes, {
+  static Future<void> savePngBytesToDisk(
+    Uint8List bytes, {
     String defaultName = 'chessever_position.png',
   }) async {
     String? outputPath;
@@ -78,7 +76,8 @@ class BoardShareService {
     }
     if (outputPath == null) {
       // Fallback to Downloads / temp
-      final dir = await getDownloadsDirectory() ?? await getTemporaryDirectory();
+      final dir =
+          await getDownloadsDirectory() ?? await getTemporaryDirectory();
       outputPath = '${dir.path}/$defaultName';
     }
     final file = io.File(outputPath);
@@ -101,6 +100,12 @@ class BoardShareService {
     required List<({String fen, Move? lastMove})> frames,
     required List<int> durationsCs,
     required cg.ChessboardSettings boardSettings,
+    String? whiteName,
+    String? blackName,
+    String? event,
+    String? result,
+    bool flipped = false,
+    List<({String? whiteClock, String? blackClock})>? clocks,
   }) async {
     if (frames.isEmpty) return null;
 
@@ -109,26 +114,61 @@ class BoardShareService {
     final heights = <int>[];
 
     const boardSize = 400.0;
+    const cardWidth = boardSize;
     const pixelRatio = 1.5;
+    final includePlayerBars =
+        whiteName != null ||
+        blackName != null ||
+        (event != null && event.isNotEmpty);
+    final cardHeight =
+        includePlayerBars
+            ? boardShareCardHeight(boardSize: boardSize, event: event)
+            : boardSize;
 
     for (int i = 0; i < frames.length; i++) {
       final frame = frames[i];
-      final board = cg.StaticChessboard(
-        size: boardSize,
-        settings: cg.StaticChessboardSettings.fromBoardSettings(boardSettings.copyWith(animationDuration: Duration.zero)),
-        orientation: Side.white,
-        fen: frame.fen,
-        lastMove: frame.lastMove,
-      );
+      final clock = clocks != null && i < clocks.length ? clocks[i] : null;
+      final Widget board =
+          includePlayerBars
+              ? BoardShareCard(
+                fen: frame.fen,
+                boardSettings: boardSettings,
+                lastMove: frame.lastMove,
+                whiteName: whiteName,
+                blackName: blackName,
+                event: event,
+                result: result,
+                whiteClock: clock?.whiteClock,
+                blackClock: clock?.blackClock,
+                sideToMove: _sideToMoveFromFen(frame.fen),
+                flipped: flipped,
+                boardSize: boardSize,
+              )
+              : cg.StaticChessboard(
+                size: boardSize,
+                settings: cg.StaticChessboardSettings.fromBoardSettings(
+                  boardSettings.copyWith(animationDuration: Duration.zero),
+                ),
+                orientation: Side.white,
+                fen: frame.fen,
+                lastMove: frame.lastMove,
+              );
 
-      final bytes = await captureWidget(board, width: boardSize, height: boardSize, pixelRatio: pixelRatio);
+      final bytes = await captureWidget(
+        board,
+        width: includePlayerBars ? cardWidth : boardSize,
+        height: cardHeight,
+        pixelRatio: pixelRatio,
+      );
       if (bytes == null) continue;
 
       // Decode PNG to raw RGBA for the GIF encoder
       final codec = await ui.instantiateImageCodec(bytes);
       final frameInfo = await codec.getNextFrame();
       final image = frameInfo.image;
-      final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      final byteData = await image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      );
       final w = image.width;
       final h = image.height;
       image.dispose();
@@ -163,7 +203,8 @@ class BoardShareService {
   }
 
   /// Save GIF bytes to a user-chosen path.
-  static Future<void> saveGifBytesToDisk(Uint8List bytes, {
+  static Future<void> saveGifBytesToDisk(
+    Uint8List bytes, {
     String defaultName = 'chessever_game.gif',
   }) async {
     String? outputPath;
@@ -176,7 +217,8 @@ class BoardShareService {
       );
     }
     if (outputPath == null) {
-      final dir = await getDownloadsDirectory() ?? await getTemporaryDirectory();
+      final dir =
+          await getDownloadsDirectory() ?? await getTemporaryDirectory();
       outputPath = '${dir.path}/$defaultName';
     }
     final file = io.File(outputPath);
@@ -184,10 +226,20 @@ class BoardShareService {
   }
 }
 
+Side? _sideToMoveFromFen(String fen) {
+  final parts = fen.trim().split(RegExp(r'\s+'));
+  if (parts.length < 2) return null;
+  return parts[1] == 'w'
+      ? Side.white
+      : parts[1] == 'b'
+      ? Side.black
+      : null;
+}
+
 /// A share-card preview widget used for screenshot capture.
 ///
-/// Renders a clean board with optional metadata. Simpler than the mobile
-/// share overlay — no 3D tilt, no eval bar, just the board + names.
+/// Renders the board-image export as a clean copy of the board area: player
+/// bars + board, with interactive focus/resize/tool icons omitted.
 class BoardShareCard extends StatelessWidget {
   const BoardShareCard({
     super.key,
@@ -198,6 +250,18 @@ class BoardShareCard extends StatelessWidget {
     this.blackName,
     this.event,
     this.result,
+    this.whiteClock,
+    this.blackClock,
+    this.whiteTitle,
+    this.blackTitle,
+    this.whiteRating,
+    this.blackRating,
+    this.whiteFederation,
+    this.blackFederation,
+    this.whiteScore,
+    this.blackScore,
+    this.sideToMove,
+    this.flipped = false,
     this.boardSize = 320,
   });
 
@@ -208,88 +272,201 @@ class BoardShareCard extends StatelessWidget {
   final String? blackName;
   final String? event;
   final String? result;
+  final String? whiteClock;
+  final String? blackClock;
+  final String? whiteTitle;
+  final String? blackTitle;
+  final int? whiteRating;
+  final int? blackRating;
+  final String? whiteFederation;
+  final String? blackFederation;
+  final String? whiteScore;
+  final String? blackScore;
+  final Side? sideToMove;
+  final bool flipped;
   final double boardSize;
 
   @override
   Widget build(BuildContext context) {
+    final topIsWhite = flipped;
+    final bottomIsWhite = !flipped;
+    final orientation = flipped ? Side.black : Side.white;
     return Container(
-      width: boardSize + 32,
+      width: boardSize,
+      height: boardShareCardHeight(boardSize: boardSize, event: null),
       color: kBackgroundColor,
-      padding: const EdgeInsets.all(16),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (event != null && event!.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                event!,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: kWhiteColor70,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
+          _BoardSharePlayerBar(
+            name: topIsWhite ? (whiteName ?? 'White') : (blackName ?? 'Black'),
+            title: topIsWhite ? whiteTitle : blackTitle,
+            rating: topIsWhite ? whiteRating : blackRating,
+            federation: topIsWhite ? whiteFederation : blackFederation,
+            score: topIsWhite ? whiteScore : blackScore,
+            clock: topIsWhite ? whiteClock : blackClock,
+            isToMove: sideToMove == (topIsWhite ? Side.white : Side.black),
+          ),
           cg.StaticChessboard(
             size: boardSize,
-            settings: cg.StaticChessboardSettings.fromBoardSettings(boardSettings.copyWith(animationDuration: Duration.zero)),
-            orientation: Side.white,
+            settings: cg.StaticChessboardSettings.fromBoardSettings(
+              boardSettings.copyWith(animationDuration: Duration.zero),
+            ),
+            orientation: orientation,
             fen: fen,
             lastMove: lastMove,
           ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Flexible(
-                child: Text(
-                  whiteName ?? 'White',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: kWhiteColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8),
-                child: Text(
-                  'vs',
-                  style: TextStyle(color: kWhiteColor70, fontSize: 12),
-                ),
-              ),
-              Flexible(
-                child: Text(
-                  blackName ?? 'Black',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: kWhiteColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
+          _BoardSharePlayerBar(
+            name:
+                bottomIsWhite ? (whiteName ?? 'White') : (blackName ?? 'Black'),
+            title: bottomIsWhite ? whiteTitle : blackTitle,
+            rating: bottomIsWhite ? whiteRating : blackRating,
+            federation: bottomIsWhite ? whiteFederation : blackFederation,
+            score: bottomIsWhite ? whiteScore : blackScore,
+            clock: bottomIsWhite ? whiteClock : blackClock,
+            isToMove: sideToMove == (bottomIsWhite ? Side.white : Side.black),
           ),
-          if (result != null && result!.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                result!,
-                style: const TextStyle(
-                  color: kWhiteColor70,
-                  fontSize: 12,
-                ),
-              ),
-            ),
         ],
       ),
     );
   }
+}
+
+double boardShareCardHeight({required double boardSize, String? event}) {
+  return boardSize + 96;
+}
+
+class _BoardSharePlayerBar extends StatelessWidget {
+  const _BoardSharePlayerBar({
+    required this.name,
+    this.title,
+    this.rating,
+    this.federation,
+    this.score,
+    this.clock,
+    this.isToMove = false,
+  });
+
+  final String name;
+  final String? title;
+  final int? rating;
+  final String? federation;
+  final String? score;
+  final String? clock;
+  final bool isToMove;
+
+  @override
+  Widget build(BuildContext context) {
+    final clockText = clock?.trim();
+    final fedText = _flagEmoji(federation);
+    final titleText = title?.trim();
+    final ratingValue = rating ?? 0;
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        border: Border.symmetric(
+          horizontal: BorderSide(color: kWhiteColor.withValues(alpha: 0.10)),
+        ),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 18,
+            child: Text(
+              score?.trim().isNotEmpty == true ? score!.trim() : '',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: kWhiteColor,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                fontFeatures: [ui.FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (fedText != null) ...[
+            Text(fedText, style: const TextStyle(fontSize: 22)),
+            const SizedBox(width: 8),
+          ],
+          if (titleText != null && titleText.isNotEmpty) ...[
+            Text(
+              titleText,
+              style: const TextStyle(
+                color: kPrimaryColor,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
+          Expanded(
+            child: Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kWhiteColor,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          if (ratingValue > 0) ...[
+            const SizedBox(width: 8),
+            Text(
+              '$ratingValue',
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 12,
+                fontFeatures: [ui.FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+          if (clockText != null && clockText.isNotEmpty) ...[
+            const SizedBox(width: 10),
+            Container(
+              constraints: const BoxConstraints(minWidth: 58),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color:
+                    isToMove
+                        ? kPrimaryColor.withValues(alpha: 0.36)
+                        : kBlack3Color,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color:
+                      isToMove
+                          ? kPrimaryColor
+                          : kWhiteColor.withValues(alpha: 0.10),
+                ),
+              ),
+              child: Text(
+                clockText,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  fontFeatures: [ui.FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+String? _flagEmoji(String? raw) {
+  final code = raw?.trim().toUpperCase();
+  if (code == null ||
+      code.length != 2 ||
+      !RegExp(r'^[A-Z]{2}$').hasMatch(code)) {
+    return null;
+  }
+  const base = 0x1F1E6;
+  return String.fromCharCodes(code.codeUnits.map((unit) => base + unit - 65));
 }

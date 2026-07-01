@@ -27,6 +27,7 @@ class BoardShareDialog extends ConsumerStatefulWidget {
     required this.position,
     required this.lastMove,
     required this.pointer,
+    required this.flipped,
     this.shareUrl,
   });
 
@@ -35,6 +36,7 @@ class BoardShareDialog extends ConsumerStatefulWidget {
   final Position position;
   final Move? lastMove;
   final List<int> pointer;
+  final bool flipped;
   final String? shareUrl;
 
   @override
@@ -49,8 +51,47 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
   String get _blackName => widget.headers['Black']?.trim() ?? 'Black';
   String get _event => boardShareDisplayEvent(widget.headers) ?? '';
   String get _result => widget.headers['Result']?.trim() ?? '';
+  String get _whiteTitle => _header('WhiteTitle') ?? '';
+  String get _blackTitle => _header('BlackTitle') ?? '';
+  String get _whiteFederation =>
+      _header('WhiteFed') ??
+      _header('WhiteFederation') ??
+      _header('WhiteCountry') ??
+      '';
+  String get _blackFederation =>
+      _header('BlackFed') ??
+      _header('BlackFederation') ??
+      _header('BlackCountry') ??
+      '';
+  int? get _whiteRating => _headerInt('WhiteElo');
+  int? get _blackRating => _headerInt('BlackElo');
+  String? get _whiteScore => _scoreFor(isWhite: true);
+  String? get _blackScore => _scoreFor(isWhite: false);
 
   String get _pgn => exportGameToPgn(widget.chessGame);
+
+  String? _header(String key) {
+    final value = widget.headers[key]?.trim();
+    return value == null || value.isEmpty || value == '?' ? null : value;
+  }
+
+  int? _headerInt(String key) {
+    final value = int.tryParse(_header(key) ?? '');
+    return value == null || value <= 0 ? null : value;
+  }
+
+  String? _scoreFor({required bool isWhite}) {
+    switch (_result) {
+      case '1-0':
+        return isWhite ? '1' : '0';
+      case '0-1':
+        return isWhite ? '0' : '1';
+      case '1/2-1/2':
+        return '½';
+      default:
+        return null;
+    }
+  }
 
   bool get _hasMoves => widget.chessGame.mainline.isNotEmpty;
 
@@ -80,11 +121,23 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
         blackName: _blackName,
         event: _event,
         result: _result,
+        whiteClock: _clockAtPointer().whiteClock,
+        blackClock: _clockAtPointer().blackClock,
+        whiteTitle: _whiteTitle,
+        blackTitle: _blackTitle,
+        whiteRating: _whiteRating,
+        blackRating: _blackRating,
+        whiteFederation: _whiteFederation,
+        blackFederation: _blackFederation,
+        whiteScore: _whiteScore,
+        blackScore: _blackScore,
+        sideToMove: widget.position.turn,
+        flipped: widget.flipped,
       );
       final bytes = await BoardShareService.captureWidget(
         card,
-        width: 352,
-        height: 420,
+        width: 320,
+        height: boardShareCardHeight(boardSize: 320, event: null),
         pixelRatio: 2.5,
       );
       if (bytes == null) throw Exception('Capture returned null');
@@ -122,10 +175,14 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
 
       // Build frames by replaying mainline moves from the start.
       final frames = <({String fen, Move? lastMove})>[];
+      final frameClocks = <({String? whiteClock, String? blackClock})>[];
       final durations = <int>[];
+      String? whiteClock;
+      String? blackClock;
 
       // Initial position
       frames.add((fen: widget.chessGame.startingFen, lastMove: null));
+      frameClocks.add((whiteClock: whiteClock, blackClock: blackClock));
       durations.add(80); // 0.8s initial hold
 
       Position pos;
@@ -140,11 +197,20 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
         final move = pos.parseSan(moveData.san);
         if (move == null) continue;
         pos = pos.play(move);
+        final clockTime = moveData.clockTime?.trim();
+        if (clockTime != null && clockTime.isNotEmpty) {
+          if (moveData.turn == ChessColor.white) {
+            whiteClock = clockTime;
+          } else if (moveData.turn == ChessColor.black) {
+            blackClock = clockTime;
+          }
+        }
         final last =
             move is NormalMove
                 ? NormalMove(from: move.from, to: move.to)
                 : null;
         frames.add((fen: pos.fen, lastMove: last));
+        frameClocks.add((whiteClock: whiteClock, blackClock: blackClock));
         // Faster for middle moves, slower at the end
         final isLast = i == widget.chessGame.mainline.length - 1;
         durations.add(isLast ? 160 : 50);
@@ -154,6 +220,12 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
         frames: frames,
         durationsCs: durations,
         boardSettings: boardSettings,
+        whiteName: _whiteName,
+        blackName: _blackName,
+        event: _event,
+        result: _result,
+        flipped: widget.flipped,
+        clocks: frameClocks,
       );
 
       if (gifBytes == null) throw Exception('GIF generation returned null');
@@ -168,6 +240,55 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
     } finally {
       if (mounted) setState(() => _isGeneratingGif = false);
     }
+  }
+
+  ({String? whiteClock, String? blackClock}) _clockAtPointer() {
+    final path = _pathForCurrentPointer();
+    String? whiteClock;
+    String? blackClock;
+    for (var i = path.length - 1; i >= 0; i--) {
+      final move = path[i];
+      final clockTime = move.clockTime?.trim();
+      if (clockTime == null || clockTime.isEmpty) continue;
+      if (move.turn == ChessColor.white && whiteClock == null) {
+        whiteClock = clockTime;
+      } else if (move.turn == ChessColor.black && blackClock == null) {
+        blackClock = clockTime;
+      }
+      if (whiteClock != null && blackClock != null) break;
+    }
+    return (whiteClock: whiteClock, blackClock: blackClock);
+  }
+
+  List<ChessMove> _pathForCurrentPointer() {
+    final pointer = widget.pointer;
+    final path = <ChessMove>[];
+    if (pointer.isEmpty) return path;
+
+    ChessLine? currentLine = widget.chessGame.mainline;
+    ChessMove? currentMove;
+
+    for (var i = 0; i < pointer.length; i++) {
+      final index = pointer[i];
+      if (i.isEven) {
+        if (currentLine == null || index >= currentLine.length) break;
+        path.addAll(currentLine.take(index + 1));
+        currentMove = currentLine[index];
+        if (i == pointer.length - 1) break;
+      } else {
+        if (currentMove == null ||
+            currentMove.variations == null ||
+            index >= currentMove.variations!.length) {
+          break;
+        }
+        final variation = currentMove.variations![index];
+        if (variation.isNotEmpty && variation.first.turn == currentMove.turn) {
+          path.removeLast();
+        }
+        currentLine = variation;
+      }
+    }
+    return path;
   }
 
   Future<void> _copyPgn() async {
@@ -519,6 +640,7 @@ Future<void> showBoardShareDialog(
   required Position position,
   required Move? lastMove,
   required List<int> pointer,
+  required bool flipped,
   String? shareUrl,
 }) {
   return showDesktopDialog<void>(
@@ -530,6 +652,7 @@ Future<void> showBoardShareDialog(
           position: position,
           lastMove: lastMove,
           pointer: pointer,
+          flipped: flipped,
           shareUrl: shareUrl,
         ),
   );

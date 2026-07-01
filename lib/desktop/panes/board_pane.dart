@@ -2366,6 +2366,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         position: position,
         lastMove: lastMove,
         pointer: pointer.value,
+        flipped: flipped.value,
         shareUrl: shareUrl,
       );
     }
