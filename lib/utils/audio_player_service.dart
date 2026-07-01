@@ -52,6 +52,7 @@ class AudioPlayerService with WidgetsBindingObserver {
 
     if (themeChanged) {
       _assetsLoaded = false;
+      _initialized = false;
       if (player.isInitialized) {
         try {
           await player.disposeAllSources();

@@ -595,7 +595,7 @@ class _SoundVolumeField extends StatelessWidget {
                   ),
                   SizedBox(height: 2),
                   Text(
-                    'Default is 70%, matching Lichess without making every move too loud.',
+                    'Default is 70%, keeping move sounds present without getting too loud.',
                     style: TextStyle(color: kWhiteColor70, fontSize: 11),
                   ),
                 ],
