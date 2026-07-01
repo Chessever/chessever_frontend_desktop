@@ -95,14 +95,31 @@ class LibraryUpdateTarget {
   final Future<void> Function(ChessGame game) onUpdate;
 }
 
-enum LibrarySaveDestinationMode { cloudAndLocal, localOnly }
+enum LibrarySaveDestinationMode { cloudAndLocal, cloudOnly, localOnly }
+
+@visibleForTesting
+bool librarySaveAllowsCloudDestinations(LibrarySaveDestinationMode mode) =>
+    mode != LibrarySaveDestinationMode.localOnly;
+
+@visibleForTesting
+bool librarySaveAllowsLocalDestinations(LibrarySaveDestinationMode mode) =>
+    mode != LibrarySaveDestinationMode.cloudOnly;
+
+@visibleForTesting
+String librarySaveDialogTitle(LibrarySaveDestinationMode mode) {
+  return switch (mode) {
+    LibrarySaveDestinationMode.cloudOnly => 'Save database to cloud',
+    LibrarySaveDestinationMode.localOnly => 'Save to this computer',
+    LibrarySaveDestinationMode.cloudAndLocal => 'Save to library',
+  };
+}
 
 @visibleForTesting
 List<LibraryFolder> librarySaveWritableCloudFolders({
   required List<LibraryFolder> folders,
   required LibrarySaveDestinationMode destinationMode,
 }) {
-  if (destinationMode == LibrarySaveDestinationMode.localOnly) {
+  if (!librarySaveAllowsCloudDestinations(destinationMode)) {
     return const <LibraryFolder>[];
   }
   return folders
@@ -571,7 +588,9 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
         .where((f) => _selected.contains(f.id))
         .toList(growable: false);
 
-    final localEntries = ref.watch(localLibraryRegistryProvider).entries;
+    final localEntries = librarySaveAllowsLocalDestinations(widget.destinationMode)
+        ? ref.watch(localLibraryRegistryProvider).entries
+        : const <LocalLibraryEntry>[];
     final selectedLocalPaths = localEntries
         .map((e) => e.path)
         .where(
@@ -629,7 +648,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _Header(
-                    title: 'Save to library',
+                    title: librarySaveDialogTitle(widget.destinationMode),
                     subtitle:
                         '${widget.games.length} '
                         '${librarySaveEntryLabel(widget.games.length)} from '
@@ -649,7 +668,11 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                     ? null
                                     : () => _onCreateFolder(writable),
                             onAddLocal:
-                                (_isSaving || _isUpdatingOriginal)
+                                (_isSaving ||
+                                        _isUpdatingOriginal ||
+                                        !librarySaveAllowsLocalDestinations(
+                                          widget.destinationMode,
+                                        ))
                                     ? null
                                     : _onAddLocalPgnFile,
                           );
@@ -699,57 +722,61 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                 ),
                                 const SizedBox(height: 12),
                               ],
-                              _SectionHeader(
-                                icon:
-                                    Platform.isMacOS
-                                        ? Icons.computer_outlined
-                                        : Icons.storage_outlined,
-                                label:
-                                    Platform.isMacOS
-                                        ? 'ON THIS MAC'
-                                        : 'ON THIS PC',
-                              ),
-                              ...localEntries.map((entry) {
-                                final key = _normalizeLocalPath(entry.path);
-                                return _LocalFolderRow(
-                                  entry: entry,
-                                  selected: _selectedLocalPaths.contains(key),
-                                  disabled: _isSaving || _isUpdatingOriginal,
-                                  onToggle: () {
-                                    setState(() {
-                                      if (_selectedLocalPaths.contains(key)) {
-                                        _selectedLocalPaths.remove(key);
-                                      } else {
-                                        _selectedLocalPaths.add(key);
-                                      }
-                                    });
-                                  },
-                                  onForget:
-                                      (_isSaving || _isUpdatingOriginal)
-                                          ? null
-                                          : () async {
-                                            await ref
-                                                .read(
-                                                  localLibraryRegistryProvider
-                                                      .notifier,
-                                                )
-                                                .unregister(entry.path);
-                                            if (!mounted) return;
-                                            setState(() {
-                                              _selectedLocalPaths.remove(key);
-                                            });
-                                          },
-                                );
-                              }),
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: _AddLocalFolderTile(
-                                  onTap:
-                                      (_isSaving || _isUpdatingOriginal)
-                                          ? null
-                                          : _onAddLocalPgnFile,
+                              if (librarySaveAllowsLocalDestinations(
+                                widget.destinationMode,
+                              )) ...[
+                                _SectionHeader(
+                                  icon:
+                                      Platform.isMacOS
+                                          ? Icons.computer_outlined
+                                          : Icons.storage_outlined,
+                                  label:
+                                      Platform.isMacOS
+                                          ? 'ON THIS MAC'
+                                          : 'ON THIS PC',
                                 ),
-                              ),
+                                ...localEntries.map((entry) {
+                                  final key = _normalizeLocalPath(entry.path);
+                                  return _LocalFolderRow(
+                                    entry: entry,
+                                    selected: _selectedLocalPaths.contains(key),
+                                    disabled: _isSaving || _isUpdatingOriginal,
+                                    onToggle: () {
+                                      setState(() {
+                                        if (_selectedLocalPaths.contains(key)) {
+                                          _selectedLocalPaths.remove(key);
+                                        } else {
+                                          _selectedLocalPaths.add(key);
+                                        }
+                                      });
+                                    },
+                                    onForget:
+                                        (_isSaving || _isUpdatingOriginal)
+                                            ? null
+                                            : () async {
+                                              await ref
+                                                  .read(
+                                                    localLibraryRegistryProvider
+                                                        .notifier,
+                                                  )
+                                                  .unregister(entry.path);
+                                              if (!mounted) return;
+                                              setState(() {
+                                                _selectedLocalPaths.remove(key);
+                                              });
+                                            },
+                                  );
+                                }),
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: _AddLocalFolderTile(
+                                    onTap:
+                                        (_isSaving || _isUpdatingOriginal)
+                                            ? null
+                                            : _onAddLocalPgnFile,
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         );
@@ -1256,11 +1283,18 @@ class _EmptyHint extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            onCreate == null
-                ? 'No local destinations yet. Pick a PGN file on this '
-                    'computer to keep games locally.'
-                : 'No destinations yet. Save to the cloud library, or pick a '
+            switch ((onCreate != null, onAddLocal != null)) {
+              (true, true) =>
+                'No destinations yet. Save to the cloud library, or pick a '
                     'PGN file on this computer to keep games locally.',
+              (true, false) =>
+                'No cloud folders yet. Create a cloud folder to save this '
+                    'database to your cloud library.',
+              (false, true) =>
+                'No local destinations yet. Pick a PGN file on this '
+                    'computer to keep games locally.',
+              (false, false) => 'No destinations available yet.',
+            },
             style: const TextStyle(color: kWhiteColor70, fontSize: 13),
             textAlign: TextAlign.center,
           ),
@@ -1277,11 +1311,12 @@ class _EmptyHint extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
               ],
-              DesktopDialogButton(
-                label: 'PGN file',
-                icon: Icons.description_outlined,
-                onPress: onAddLocal,
-              ),
+              if (onAddLocal != null)
+                DesktopDialogButton(
+                  label: 'PGN file',
+                  icon: Icons.description_outlined,
+                  onPress: onAddLocal,
+                ),
             ],
           ),
         ],
