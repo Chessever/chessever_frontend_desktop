@@ -55,10 +55,12 @@ class TournamentGamesView extends ConsumerStatefulWidget {
     super.key,
     required this.tabId,
     required this.tournamentId,
+    this.onHeaderCollapsedChanged,
   });
 
   final String tabId;
   final String tournamentId;
+  final ValueChanged<bool>? onHeaderCollapsedChanged;
 
   @override
   ConsumerState<TournamentGamesView> createState() =>
@@ -72,6 +74,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   Timer? _debounce;
   Timer? _scrollIdleTimer;
   bool _liveCardsPausedForScroll = false;
+  bool _headerCollapsed = false;
   GroupedGamesData? _lastStableGrouped;
   String? _searchReplayInFlight;
 
@@ -112,6 +115,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     _searchController.dispose();
     _debounce?.cancel();
     _scrollIdleTimer?.cancel();
+    _setHeaderCollapsed(false);
     _setLiveCardsPausedForScroll(false);
     super.dispose();
   }
@@ -134,6 +138,8 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   bool _handleScrollNotification(ScrollNotification notification) {
     if (notification.metrics.axis != Axis.vertical) return false;
 
+    _setHeaderCollapsed(notification.metrics.pixels > 18);
+
     if (notification is ScrollEndNotification) {
       _scheduleLiveCardsIdle();
       return false;
@@ -147,6 +153,12 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     }
 
     return false;
+  }
+
+  void _setHeaderCollapsed(bool collapsed) {
+    if (_headerCollapsed == collapsed) return;
+    _headerCollapsed = collapsed;
+    widget.onHeaderCollapsedChanged?.call(collapsed);
   }
 
   void _markLiveCardsScrolling() {
@@ -251,38 +263,49 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
           ...(grouped.gamesByRound[round.id] ?? const <GamesTourModel>[]),
     ];
 
+    final searchField = Padding(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 4),
+      child: DesktopSearchField(
+        controller: _searchController,
+        hintText: 'Search games in this tournament (player, opening, ECO)…',
+        onChanged: _runSearch,
+        onClear: () {
+          _debounce?.cancel();
+          ref
+              .read(
+                tournamentDetailGamesSearchByTabIdProvider(
+                  widget.tabId,
+                ).notifier,
+              )
+              .state = '';
+          ref.read(gamesTourScreenProvider.notifier).clearSearch();
+        },
+      ),
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 12, 24, 4),
-          child: DesktopSearchField(
-            controller: _searchController,
-            hintText: 'Search games in this tournament (player, opening, ECO)…',
-            onChanged: _runSearch,
-            onClear: () {
-              _debounce?.cancel();
-              ref
-                  .read(
-                    tournamentDetailGamesSearchByTabIdProvider(
-                      widget.tabId,
-                    ).notifier,
-                  )
-                  .state = '';
-              ref.read(gamesTourScreenProvider.notifier).clearSearch();
-            },
-          ),
-        ),
         if ((watchedGrouped.isLoading || isRestoringSearch) &&
             _lastStableGrouped == null)
           const Expanded(child: _LoadingState())
         else if (grouped.filteredRounds.isEmpty &&
             grouped.matchFormatHeader == null)
           Expanded(
-            child:
-                _searchController.text.trim().isNotEmpty
-                    ? _NoSearchResults(query: _searchController.text.trim())
-                    : const _NoRoundsState(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                searchField,
+                Expanded(
+                  child:
+                      _searchController.text.trim().isNotEmpty
+                          ? _NoSearchResults(
+                            query: _searchController.text.trim(),
+                          )
+                          : const _NoRoundsState(),
+                ),
+              ],
+            ),
           )
         else ...[
           Expanded(
@@ -310,8 +333,10 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                         'tournament-detail-games:${widget.tabId}',
                       ),
                       physics: const DesktopScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
                       children: [
+                        searchField,
+                        const SizedBox(height: 4),
                         // Match-format tournaments (e.g. "12-game Match" — Carlsen vs
                         // Nepo) get a single match summary card on top of the rounds.
                         if (grouped.matchFormatHeader != null)
