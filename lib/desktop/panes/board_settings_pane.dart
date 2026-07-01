@@ -12,6 +12,7 @@ import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/local_storage/auto_pin_preferences/auto_pin_preferences_repository.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/board_customization_utils.dart';
+import 'package:chessever/utils/sound_preferences.dart';
 
 /// Desktop board preferences. Driven by the same providers as the mobile
 /// page (`engineSettingsProviderNew`, `boardSettingsProviderNew`,
@@ -524,6 +525,17 @@ class _DisplayCard extends StatelessWidget {
             value: settings.soundEnabled,
             onChange: notifier.toggleSound,
           ),
+          const SizedBox(height: 14),
+          _SoundVolumeField(settings: settings, notifier: notifier),
+          const SizedBox(height: 14),
+          _SegmentedField(
+            label: 'Sound set',
+            helpText:
+                'Standard keeps ChessEver’s current sound. Lichess and the other sets are imported from Lichess Mobile.',
+            options: SoundTheme.values.map((theme) => theme.label).toList(),
+            selectedIndex: settings.soundThemeIndex,
+            onSelect: notifier.setSoundThemeIndex,
+          ),
           const _RowDivider(),
           _SwitchRow(
             label: 'Figurine notation',
@@ -551,6 +563,78 @@ class _DisplayCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _SoundVolumeField extends StatelessWidget {
+  const _SoundVolumeField({required this.settings, required this.notifier});
+
+  final BoardSettingsNew settings;
+  final BoardSettingsNotifierNew notifier;
+
+  @override
+  Widget build(BuildContext context) {
+    final volumeLabel = '${(settings.soundVolume * 100).round()}%';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Move volume',
+                    style: TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'Default is 70%, matching Lichess without making every move too loud.',
+                    style: TextStyle(color: kWhiteColor70, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            Text(
+              volumeLabel,
+              style: const TextStyle(
+                color: kPrimaryColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            activeTrackColor: kPrimaryColor,
+            inactiveTrackColor: kDividerColor,
+            thumbColor: kPrimaryColor,
+            overlayColor: kPrimaryColor.withValues(alpha: 0.12),
+          ),
+          child: Slider(
+            value: settings.soundVolume,
+            min: 0,
+            max: 1,
+            divisions: 10,
+            label: volumeLabel,
+            onChanged:
+                settings.soundEnabled
+                    ? (value) => notifier.setSoundVolume(value)
+                    : null,
+            onChangeEnd:
+                settings.soundEnabled
+                    ? (value) => notifier.setSoundVolume(value, preview: true)
+                    : null,
+          ),
+        ),
+      ],
     );
   }
 }

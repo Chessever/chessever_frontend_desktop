@@ -244,6 +244,7 @@ flutter:
     - assets/pngs/
     - assets/play/achievements/
     - assets/sfx/
+    - assets/sounds/
     - assets/cursor/
     # Bundled Stockfish 17.1 binaries — engine "just works" out of the box.
     # The desktop driver (lib/desktop/services/engine/uci_engine.dart) copies

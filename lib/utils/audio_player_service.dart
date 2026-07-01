@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
+import 'package:chessever/utils/sound_preferences.dart';
 
 /// Sound effect types — used instead of raw AudioSource to avoid stale native
 /// handles after the SoLoud engine is torn down and reinitialized.
@@ -35,6 +36,40 @@ class AudioPlayerService with WidgetsBindingObserver {
   bool _assetsLoaded = false;
   Future<void>? _initializing;
   bool _audioSessionConfigured = false;
+  SoundTheme _soundTheme = SoundTheme.standard;
+  double _soundVolume = kDefaultSoundVolume;
+
+  /// Applies the user's move-sound theme and volume.
+  Future<void> applySoundPreferences({
+    required SoundTheme theme,
+    required double volume,
+    bool preview = false,
+  }) async {
+    final nextVolume = volume.clamp(0.0, 1.0).toDouble();
+    final themeChanged = _soundTheme != theme;
+    _soundTheme = theme;
+    _soundVolume = nextVolume;
+
+    if (themeChanged) {
+      _assetsLoaded = false;
+      if (player.isInitialized) {
+        try {
+          await player.disposeAllSources();
+        } catch (err, st) {
+          debugPrint(
+            '⚠️ Audio source disposal during theme switch failed: $err\n$st',
+          );
+        }
+      }
+    }
+
+    if (preview) {
+      await initializeAndLoadAllAssets(force: themeChanged);
+      if (player.isInitialized && _assetsLoaded) {
+        player.play(_resolve(SfxType.move), volume: _soundVolume);
+      }
+    }
+  }
 
   /// Configure iOS audio session to use ambient mode (doesn't interrupt other audio)
   Future<void> _configureAudioSession() async {
@@ -122,17 +157,76 @@ class AudioPlayerService with WidgetsBindingObserver {
     try {
       await initializeAndLoadAllAssets();
       // soloud 4.x: play() is sync — no await.
-      player.play(_resolve(type));
+      player.play(_resolve(type), volume: _soundVolume);
     } catch (e, s) {
       debugPrint('⚠️ Audio playback failed, recovering SoLoud: $e\n$s');
       _teardownPlayer();
       try {
         await initializeAndLoadAllAssets(force: true);
         // _resolve reads the freshly-loaded field — no stale handles.
-        player.play(_resolve(type));
+        player.play(_resolve(type), volume: _soundVolume);
       } catch (err, st) {
         debugPrint('⚠️ Audio playback failed after recovery: $err\n$st');
       }
+    }
+  }
+
+  Future<String> _assetPathFor(SfxType type) async {
+    if (_soundTheme == SoundTheme.standard) {
+      return _chesseverAssetPathFor(type);
+    }
+
+    final themedPath =
+        'assets/sounds/${_soundTheme.assetDirectory}/${_lichessSoundNameFor(type)}.mp3';
+    try {
+      await rootBundle.load(themedPath);
+      return themedPath;
+    } catch (_) {
+      // Lichess themes intentionally omit some event sounds; fall back to the
+      // imported Lichess standard bank before falling back to ChessEver's bank.
+      final fallbackPath =
+          'assets/sounds/standard/${_lichessSoundNameFor(type)}.mp3';
+      try {
+        await rootBundle.load(fallbackPath);
+        return fallbackPath;
+      } catch (_) {
+        return _chesseverAssetPathFor(type);
+      }
+    }
+  }
+
+  String _lichessSoundNameFor(SfxType type) {
+    switch (type) {
+      case SfxType.takeover:
+        return 'capture';
+      case SfxType.checkmate:
+        return 'dong';
+      case SfxType.draw:
+        return 'confirmation';
+      case SfxType.move:
+      case SfxType.castling:
+      case SfxType.check:
+      case SfxType.promotion:
+        return 'move';
+    }
+  }
+
+  String _chesseverAssetPathFor(SfxType type) {
+    switch (type) {
+      case SfxType.move:
+        return 'assets/sfx/piece_move.wav';
+      case SfxType.castling:
+        return 'assets/sfx/piece_castling.wav';
+      case SfxType.check:
+        return 'assets/sfx/piece_check.wav';
+      case SfxType.checkmate:
+        return 'assets/sfx/piece_checkmate.wav';
+      case SfxType.draw:
+        return 'assets/sfx/piece_draw.wav';
+      case SfxType.promotion:
+        return 'assets/sfx/piece_promotion.wav';
+      case SfxType.takeover:
+        return 'assets/sfx/piece_takeover.wav';
     }
   }
 
@@ -160,15 +254,7 @@ class AudioPlayerService with WidgetsBindingObserver {
     }
 
     if (!_assetsLoaded) {
-      final List<String> paths = [
-        "assets/sfx/piece_move.wav",
-        "assets/sfx/piece_castling.wav",
-        "assets/sfx/piece_check.wav",
-        "assets/sfx/piece_checkmate.wav",
-        "assets/sfx/piece_draw.wav",
-        "assets/sfx/piece_promotion.wav",
-        "assets/sfx/piece_takeover.wav",
-      ];
+      final paths = await Future.wait(SfxType.values.map(_assetPathFor));
 
       final results = <AudioSource>[];
 

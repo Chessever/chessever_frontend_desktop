@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/utils/board_customization_utils.dart';
 import 'package:chessever/utils/chessground_image_cache.dart';
+import 'package:chessever/utils/audio_player_service.dart';
+import 'package:chessever/utils/sound_preferences.dart';
 import 'package:chessground/chessground.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -26,6 +29,8 @@ class BoardSettingsNew {
     this.boardThemeIndex = 1, // New: chessground theme index
     this.showEvaluationBar = true,
     this.soundEnabled = true,
+    this.soundThemeIndex = 0,
+    this.soundVolume = kDefaultSoundVolume,
     this.chatEnabled = true,
     this.pieceStyleIndex = 0, // Now used for chessground PieceSet
     this.gamesListViewModeIndex = 0,
@@ -42,7 +47,11 @@ class BoardSettingsNew {
   final int boardThemeIndex;
   final bool showEvaluationBar;
   final bool soundEnabled;
+  final int soundThemeIndex;
+  final double soundVolume;
   final bool chatEnabled;
+
+  SoundTheme get soundTheme => SoundTheme.fromIndex(soundThemeIndex);
 
   /// Index into PieceSet.values (chessground piece sets)
   final int pieceStyleIndex;
@@ -125,6 +134,8 @@ class BoardSettingsNew {
     int? boardThemeIndex,
     bool? showEvaluationBar,
     bool? soundEnabled,
+    int? soundThemeIndex,
+    double? soundVolume,
     bool? chatEnabled,
     int? pieceStyleIndex,
     int? gamesListViewModeIndex,
@@ -137,6 +148,8 @@ class BoardSettingsNew {
       boardThemeIndex: boardThemeIndex ?? this.boardThemeIndex,
       showEvaluationBar: showEvaluationBar ?? this.showEvaluationBar,
       soundEnabled: soundEnabled ?? this.soundEnabled,
+      soundThemeIndex: soundThemeIndex ?? this.soundThemeIndex,
+      soundVolume: soundVolume ?? this.soundVolume,
       chatEnabled: chatEnabled ?? this.chatEnabled,
       pieceStyleIndex: pieceStyleIndex ?? this.pieceStyleIndex,
       gamesListViewModeIndex:
@@ -174,6 +187,7 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
         await _preloadPieceSet(settings.pieceSet, 'saved');
         ChessgroundImageCache.evictPieceSetAfterNextFrame(defaults.pieceSet);
       }
+      _applyAudioSettings(settings);
       return settings;
     } catch (e, st) {
       debugPrint('[BoardSettings] Error loading local settings: $e');
@@ -236,6 +250,24 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
     final newSettings = currentState.copyWith(soundEnabled: value);
     state = AsyncValue.data(newSettings);
     await _persist(newSettings);
+  }
+
+  /// Set the move-sound theme.
+  Future<void> setSoundThemeIndex(int index, {bool preview = true}) async {
+    final clamped = index.clamp(0, SoundTheme.values.length - 1);
+    final currentState = state.valueOrNull ?? const BoardSettingsNew();
+    final newSettings = currentState.copyWith(soundThemeIndex: clamped);
+    state = AsyncValue.data(newSettings);
+    await _persist(newSettings, previewSound: preview);
+  }
+
+  /// Set the master move-sound volume.
+  Future<void> setSoundVolume(double value, {bool preview = false}) async {
+    final clamped = value.clamp(0.0, 1.0).toDouble();
+    final currentState = state.valueOrNull ?? const BoardSettingsNew();
+    final newSettings = currentState.copyWith(soundVolume: clamped);
+    state = AsyncValue.data(newSettings);
+    await _persist(newSettings, previewSound: preview);
   }
 
   /// Toggle chat
@@ -344,13 +376,21 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
 
   // Private methods
 
-  Future<void> _persist(BoardSettingsNew settings) async {
+  Future<void> _persist(
+    BoardSettingsNew settings, {
+    bool previewSound = false,
+  }) async {
     try {
       // Cache locally first (fast, immediate). Board/UI preferences are
       // intentionally not synced across platforms because desktop and phone
       // users can choose different layouts, board themes, notation, sounds,
       // and other device-specific settings.
       await _cacheSettings(settings);
+      await AudioPlayerService.instance.applySoundPreferences(
+        theme: settings.soundTheme,
+        volume: settings.soundVolume,
+        preview: previewSound && settings.soundEnabled,
+      );
     } catch (e, st) {
       debugPrint('[BoardSettings] Error persisting settings: $e');
       debugPrint('[BoardSettings] Stack: $st');
@@ -366,6 +406,8 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
         'boardThemeIndex': settings.boardThemeIndex,
         'showEvaluationBar': settings.showEvaluationBar,
         'soundEnabled': settings.soundEnabled,
+        'soundThemeIndex': settings.soundThemeIndex,
+        'soundVolume': settings.soundVolume,
         'chatEnabled': settings.chatEnabled,
         'pieceStyleIndex': settings.pieceStyleIndex,
         'gamesListViewModeIndex': settings.gamesListViewModeIndex,
@@ -416,6 +458,10 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
         showEvaluationBar:
             map['showEvaluationBar'] as bool? ?? defaults.showEvaluationBar,
         soundEnabled: map['soundEnabled'] as bool? ?? defaults.soundEnabled,
+        soundThemeIndex:
+            map['soundThemeIndex'] as int? ?? defaults.soundThemeIndex,
+        soundVolume:
+            (map['soundVolume'] as num?)?.toDouble() ?? defaults.soundVolume,
         chatEnabled: map['chatEnabled'] as bool? ?? defaults.chatEnabled,
         pieceStyleIndex:
             map['pieceStyleIndex'] as int? ?? defaults.pieceStyleIndex,
@@ -434,6 +480,15 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
       debugPrint('[BoardSettings] Error getting cached settings: $e');
       return const BoardSettingsNew();
     }
+  }
+
+  void _applyAudioSettings(BoardSettingsNew settings) {
+    unawaited(
+      AudioPlayerService.instance.applySoundPreferences(
+        theme: settings.soundTheme,
+        volume: settings.soundVolume,
+      ),
+    );
   }
 
   /// Clear cache (useful on sign out)
