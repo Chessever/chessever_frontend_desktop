@@ -737,7 +737,10 @@ class ChessGameNavigator extends StateNotifier<ChessGameNavigatorState> {
           keptLength = 0;
           return line;
         }
-        final keepLength = trimIndex.clamp(0, line.length);
+        // Delete Remaining Moves should shorten the game *after* the
+        // selected move. `trimIndex` is zero-based, so keep the clicked
+        // move by retaining `trimIndex + 1` plies.
+        final keepLength = (trimIndex + 1).clamp(0, line.length);
         keptLength = keepLength;
         if (keepLength == line.length) {
           return line;

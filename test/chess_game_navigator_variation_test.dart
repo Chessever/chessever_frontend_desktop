@@ -6,6 +6,7 @@ ChessMove move(
   String san, {
   Number num = 1,
   ChessColor turn = ChessColor.white,
+  List<String>? comments,
   List<ChessLine>? variations,
 }) {
   return ChessMove(
@@ -14,6 +15,7 @@ ChessMove move(
     san: san,
     uci: san,
     turn: turn,
+    comments: comments,
     variations: variations,
   );
 }
@@ -95,6 +97,35 @@ void main() {
     expect(navigator.state.game.mainline, isEmpty);
     expect(navigator.state.movePointer, isEmpty);
   });
+
+  test(
+    'deleteContinuationAfterPointer keeps selected move and earlier PGN text',
+    () {
+      final game = ChessGame(
+        gameId: 'g1',
+        startingFen: 'fen',
+        metadata: const {'Event': 'Training Game', 'White': 'Vasif'},
+        mainline: [
+          move('e4', comments: const ['game intro']),
+          move('e5', turn: ChessColor.black),
+          move('Nf3', comments: const ['keep this move note']),
+          move('Nc6', turn: ChessColor.black),
+          move('Bb5'),
+        ],
+      );
+      final navigator = ChessGameNavigator(game)..goToMovePointerUnchecked([2]);
+
+      navigator.deleteContinuationAfterPointer([2]);
+
+      final updated = navigator.state.game;
+      expect(updated.metadata['Event'], 'Training Game');
+      expect(updated.metadata['White'], 'Vasif');
+      expect(updated.mainline.map((m) => m.san), ['e4', 'e5', 'Nf3']);
+      expect(updated.mainline[0].comments, ['game intro']);
+      expect(updated.mainline[2].comments, ['keep this move note']);
+      expect(navigator.state.movePointer, equals(<int>[2]));
+    },
+  );
 
   test(
     'gameEndingPlyIndex stays on original final ply after manual extension',
