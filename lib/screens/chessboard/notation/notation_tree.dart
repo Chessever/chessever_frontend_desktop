@@ -208,14 +208,37 @@ const _pgnHeaderOrder = <String>[
   'EventDate',
 ];
 
+const _pgnSevenTagDefaults = <String, String>{
+  'Event': '?',
+  'Site': '?',
+  'Date': '????.??.??',
+  'Round': '?',
+  'White': '?',
+  'Black': '?',
+  'Result': '*',
+};
+
+const _internalMetadataKeys = <String>{
+  ChessGame.metadataAllowMainlineExtensionKey,
+  ChessGame.metadataIsLiveKey,
+  ChessGame.metadataGameEndingPlyIndexKey,
+};
+
 Map<String, String> _buildPgnHeaders(ChessGame game) {
   final headers = <String, String>{};
 
   for (final entry in game.metadata.entries) {
-    headers[entry.key] = entry.value?.toString() ?? '';
+    final key = entry.key.trim();
+    if (key.isEmpty || _internalMetadataKeys.contains(key)) continue;
+    headers[key] = entry.value?.toString() ?? '';
   }
 
-  headers.putIfAbsent('Result', () => '*');
+  for (final entry in _pgnSevenTagDefaults.entries) {
+    final current = headers[entry.key]?.trim();
+    if (current == null || current.isEmpty) {
+      headers[entry.key] = entry.value;
+    }
+  }
 
   final hasCustomStart =
       game.startingFen.trim().isNotEmpty &&

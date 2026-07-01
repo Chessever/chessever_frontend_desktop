@@ -13,6 +13,30 @@ void main() {
     expect(pgn, contains('1. e4 e5 ( 1... c5 ) 2. Nf3 Nc6'));
   });
 
+  test('exportGameToPgn writes Seven Tag Roster for manual games', () {
+    final game = _sampleGame().copyWith(
+      metadata: const <String, dynamic>{
+        'Result': '*',
+        ChessGame.metadataAllowMainlineExtensionKey: true,
+        ChessGame.metadataIsLiveKey: false,
+      },
+    );
+
+    final pgn = exportGameToPgn(game);
+
+    expect(pgn.split('\n').take(7).toList(), [
+      '[Event "?"]',
+      '[Site "?"]',
+      '[Date "????.??.??"]',
+      '[Round "?"]',
+      '[White "?"]',
+      '[Black "?"]',
+      '[Result "*"]',
+    ]);
+    expect(pgn, isNot(contains('allowMainlineExtension')));
+    expect(pgn, isNot(contains('isLiveGame')));
+  });
+
   test('exportGameToPgn writes ChessBase-friendly header order', () {
     final game = _sampleGame().copyWith(
       metadata: const <String, dynamic>{

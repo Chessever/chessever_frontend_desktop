@@ -78,5 +78,25 @@ void main() {
       ]);
       expect(pgn, contains('\n\n1. e4 e5 0-1'));
     });
+    test('adds Seven Tag Roster defaults when Gamebase metadata is sparse', () {
+      final pgn = buildPgnFromGamebaseData({
+        'md': {'Result': '*'},
+        'm': [
+          {'u': 'e2e4'},
+          {'u': 'e7e5'},
+        ],
+      });
+
+      expect(pgn, isNotNull);
+      expect(pgn!.split('\n').take(7).toList(), [
+        '[Event "?"]',
+        '[Site "?"]',
+        '[Date "????.??.??"]',
+        '[Round "?"]',
+        '[White "?"]',
+        '[Black "?"]',
+        '[Result "*"]',
+      ]);
+    });
   });
 }
