@@ -22,7 +22,6 @@ import 'package:chessever/widgets/event_card/event_card.dart';
 import 'package:chessever/widgets/generic_error_widget.dart';
 import 'package:chessever/widgets/skeleton_widget.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
@@ -284,9 +283,7 @@ class _ForYouGamesWidgetState extends ConsumerState<ForYouGamesWidget>
         vertical: 16.sp,
       ),
       itemCount: itemCount,
-      scrollCacheExtent: ScrollCacheExtent.pixels(
-        _forYouCacheExtentForMode(viewMode),
-      ),
+      cacheExtent: _forYouCacheExtentForMode(viewMode),
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       physics: const AlwaysScrollableScrollPhysics(
@@ -357,9 +354,7 @@ class _ForYouGamesWidgetState extends ConsumerState<ForYouGamesWidget>
         vertical: 16.sp,
       ),
       itemCount: itemCount,
-      scrollCacheExtent: ScrollCacheExtent.pixels(
-        _forYouCacheExtentForMode(viewMode),
-      ),
+      cacheExtent: _forYouCacheExtentForMode(viewMode),
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       physics: const AlwaysScrollableScrollPhysics(
