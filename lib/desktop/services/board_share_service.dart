@@ -84,7 +84,7 @@ class BoardShareService {
           await getDownloadsDirectory() ?? await getTemporaryDirectory();
       outputPath = '${dir.path}/$defaultName';
     }
-    final file = io.File(outputPath);
+    final file = io.File(_ensureExtension(outputPath, 'png'));
     await file.writeAsBytes(bytes);
   }
 
@@ -134,7 +134,7 @@ class BoardShareService {
     final heights = <int>[];
 
     const boardSize = 400.0;
-    const pixelRatio = 1.5;
+    const pixelRatio = 1.0;
     final includePlayerBars =
         whiteName != null ||
         blackName != null ||
@@ -258,9 +258,17 @@ class BoardShareService {
           await getDownloadsDirectory() ?? await getTemporaryDirectory();
       outputPath = '${dir.path}/$defaultName';
     }
-    final file = io.File(outputPath);
+    final file = io.File(_ensureExtension(outputPath, 'gif'));
     await file.writeAsBytes(bytes);
   }
+}
+
+String _ensureExtension(String path, String extension) {
+  final normalizedExtension =
+      extension.startsWith('.') ? extension.toLowerCase() : '.$extension';
+  return path.toLowerCase().endsWith(normalizedExtension)
+      ? path
+      : '$path$normalizedExtension';
 }
 
 Side? _sideToMoveFromFen(String fen) {
