@@ -5,6 +5,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/location_service_provider.dart';
 
@@ -70,7 +71,7 @@ class _EventInfoPopoverState extends State<EventInfoPopover>
       data: FThemes.zinc.dark,
       child: FPopover(
         controller: _controller,
-        popoverBuilder: (context, _) => _Body(headers: widget.headers),
+        popoverBuilder: (context, _) => EventInfoBody(headers: widget.headers),
         child: DesktopTooltip(
           message: hasAny ? 'Event info (I)' : 'No event info available',
           child: FButton.icon(
@@ -90,8 +91,12 @@ class _EventInfoPopoverState extends State<EventInfoPopover>
   }
 }
 
-class _Body extends ConsumerWidget {
-  const _Body({required this.headers});
+/// Renders the full PGN header set for a game: curated, labeled rows for the
+/// well-known tags first, then a generic row per remaining tag so imported
+/// metadata is never silently invisible. Shared by the board's event-info
+/// popover and the Library "Game info" dialog.
+class EventInfoBody extends ConsumerWidget {
+  const EventInfoBody({super.key, required this.headers});
 
   final Map<String, String> headers;
 
@@ -166,6 +171,12 @@ class _Body extends ConsumerWidget {
     addIfPresent('Termination', 'Termination');
     addIfPresent('Annotator', 'Annotator');
 
+    for (final extra in eventInfoExtraHeaderEntries(headers)) {
+      rows.add(
+        _HeaderRow(label: eventInfoTagLabel(extra.key), value: extra.value),
+      );
+    }
+
     return Container(
       width: 360,
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
@@ -239,6 +250,88 @@ String? eventInfoDisplayBroadcastName(Map<String, String> headers) {
     if (value != null && value.isNotEmpty && value != '?') return value;
   }
   return null;
+}
+
+/// Tags already rendered by the curated rows above, so the generic
+/// "everything else" section doesn't repeat them.
+const _curatedHeaderKeys = <String>{
+  'White',
+  'Black',
+  'WhiteElo',
+  'BlackElo',
+  'WhiteTitle',
+  'BlackTitle',
+  'Event',
+  'Site',
+  'Date',
+  'Round',
+  'Result',
+  'Opening',
+  'ECO',
+  'TimeControl',
+  'Termination',
+  'Annotator',
+  'BroadcastName',
+  'Broadcast Name',
+  'GroupBroadcastName',
+  'Group Broadcast Name',
+};
+
+/// Board-state keys the app stores alongside real PGN tags; never PGN
+/// metadata the user wrote, so never shown.
+final _internalHeaderKeys = <String>{
+  ChessGame.metadataIsLiveKey,
+  ChessGame.metadataAllowMainlineExtensionKey,
+  ChessGame.metadataGameEndingPlyIndexKey,
+};
+
+/// Every header not covered by the curated rows and not app-internal,
+/// alphabetized. Placeholder values (`""`, `"?"`) are dropped.
+@visibleForTesting
+List<MapEntry<String, String>> eventInfoExtraHeaderEntries(
+  Map<String, String> headers,
+) {
+  final entries = <MapEntry<String, String>>[];
+  for (final entry in headers.entries) {
+    final key = entry.key.trim();
+    if (key.isEmpty ||
+        _curatedHeaderKeys.contains(key) ||
+        _internalHeaderKeys.contains(key) ||
+        key.startsWith('ChessEver')) {
+      continue;
+    }
+    final value = entry.value.trim();
+    if (value.isEmpty || value == '?') continue;
+    entries.add(MapEntry(key, value));
+  }
+  entries.sort((a, b) => a.key.toLowerCase().compareTo(b.key.toLowerCase()));
+  return entries;
+}
+
+final _tagWordBoundary = RegExp(
+  r'(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])',
+);
+
+/// "WhiteFideId" → "White FIDE ID", "UTCTime" → "UTC Time" — readable labels
+/// for tags without a curated row.
+@visibleForTesting
+String eventInfoTagLabel(String tag) {
+  return tag
+      .replaceAll('_', ' ')
+      .split(_tagWordBoundary)
+      .map(
+        (word) => switch (word.toLowerCase()) {
+          'fide' => 'FIDE',
+          'id' => 'ID',
+          'eco' => 'ECO',
+          'utc' => 'UTC',
+          'url' => 'URL',
+          'fen' => 'FEN',
+          'pgn' => 'PGN',
+          _ => word,
+        },
+      )
+      .join(' ');
 }
 
 @visibleForTesting
@@ -344,11 +437,7 @@ class _CopyIconButton extends StatelessWidget {
             if (!context.mounted) return;
             showDesktopToast(context, 'Link copied to clipboard');
           },
-          child: const Icon(
-            Icons.copy_rounded,
-            size: 12,
-            color: kWhiteColor70,
-          ),
+          child: const Icon(Icons.copy_rounded, size: 12, color: kWhiteColor70),
         ),
       ),
     );

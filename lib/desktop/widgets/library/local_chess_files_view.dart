@@ -22,6 +22,7 @@ import 'package:chessever/desktop/widgets/desktop_tappable.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
+import 'package:chessever/desktop/widgets/library/local_game_info_dialog.dart';
 import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
@@ -927,7 +928,7 @@ FBaseButtonStyle Function(FButtonStyle style) _localChildCardButtonStyle({
   );
 }
 
-enum _LocalGameRowAction { copyPgn, saveToCloud, delete }
+enum _LocalGameRowAction { gameInfo, copyPgn, saveToCloud, delete }
 
 class _LocalGamesTable extends HookConsumerWidget {
   const _LocalGamesTable({
@@ -1271,6 +1272,11 @@ class _LocalGamesTable extends HookConsumerWidget {
         width: 220,
         entries: [
           const DesktopContextMenuItem(
+            value: _LocalGameRowAction.gameInfo,
+            icon: Icons.info_outline_rounded,
+            label: 'Game info',
+          ),
+          const DesktopContextMenuItem(
             value: _LocalGameRowAction.copyPgn,
             icon: Icons.content_copy_rounded,
             label: 'Copy PGN',
@@ -1292,6 +1298,8 @@ class _LocalGamesTable extends HookConsumerWidget {
       );
       if (action == null || !context.mounted) return;
       switch (action) {
+        case _LocalGameRowAction.gameInfo:
+          unawaited(showLocalGameInfoDialog(context, game));
         case _LocalGameRowAction.copyPgn:
           unawaited(copySelectedGames(scope: rowScope));
         case _LocalGameRowAction.saveToCloud:
