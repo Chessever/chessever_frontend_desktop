@@ -23,6 +23,16 @@ const _pgnHeaderOrder = <String>[
   'EventDate',
 ];
 
+const _pgnSevenTagDefaults = <String, String>{
+  'Event': '?',
+  'Site': '?',
+  'Date': '????.??.??',
+  'Round': '?',
+  'White': '?',
+  'Black': '?',
+  'Result': '*',
+};
+
 /// Builds a PGN string from Gamebase `data` payloads.
 ///
 /// Gamebase game payloads commonly look like:
@@ -172,7 +182,8 @@ String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
   }
 
   final sb = StringBuffer();
-  for (final entry in _orderedPgnHeaders(headers).entries) {
+  final normalizedHeaders = _withSevenTagRoster(headers);
+  for (final entry in _orderedPgnHeaders(normalizedHeaders).entries) {
     sb.writeln('[${entry.key} "${entry.value}"]');
   }
   sb.writeln();
@@ -279,12 +290,24 @@ String buildHeaderOnlyPgn({
   }
 
   final sb = StringBuffer();
-  for (final entry in _orderedPgnHeaders(headers).entries) {
+  final normalizedHeaders = _withSevenTagRoster(headers);
+  for (final entry in _orderedPgnHeaders(normalizedHeaders).entries) {
     sb.writeln('[${entry.key} "${entry.value}"]');
   }
   sb.writeln();
   sb.write(normalizedResult);
   return sb.toString();
+}
+
+Map<String, String> _withSevenTagRoster(Map<String, String> headers) {
+  final normalized = <String, String>{...headers};
+  for (final entry in _pgnSevenTagDefaults.entries) {
+    final current = normalized[entry.key]?.trim();
+    if (current == null || current.isEmpty) {
+      normalized[entry.key] = entry.value;
+    }
+  }
+  return normalized;
 }
 
 Map<String, String> _orderedPgnHeaders(Map<String, String> headers) {
