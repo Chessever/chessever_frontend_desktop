@@ -31,6 +31,7 @@ class TournamentDetailPane extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final tournament = ref.watch(tournamentForTabProvider(tabId));
     final segment = ref.watch(tournamentDetailSegmentByTabIdProvider(tabId));
+    final gamesHeaderCollapsed = useState(false);
     final bodyFocusNode = useFocusNode(debugLabel: 'tournament-detail-body');
     final bodyKey = useMemoized(
       () => GlobalKey(debugLabel: 'tournament-detail-body-root'),
@@ -71,32 +72,53 @@ class TournamentDetailPane extends HookConsumerWidget {
       return const _EmptyState();
     }
 
+    final collapseTopChrome =
+        segment == TournamentDetailSegment.games && gamesHeaderCollapsed.value;
+
     return Container(
       color: kBackgroundColor,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _DetailHeader(title: tournament.title, dates: tournament.dates),
-          _SegmentBar(
-            segments: TournamentDetailSegment.values,
-            selected: segment,
-            info:
-                segment == TournamentDetailSegment.games
-                    ? const TournamentGamesCountLabel()
-                    : null,
-            trailing:
-                segment == TournamentDetailSegment.games
-                    ? const TournamentGamesHeaderControls()
-                    : null,
-            onSelect:
-                (next) =>
-                    ref
-                        .read(
-                          tournamentDetailSegmentByTabIdProvider(
-                            tabId,
-                          ).notifier,
-                        )
-                        .state = next,
+          ClipRect(
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 140),
+              curve: Curves.easeOut,
+              alignment: Alignment.topCenter,
+              child:
+                  collapseTopChrome
+                      ? const SizedBox.shrink()
+                      : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _DetailHeader(
+                            title: tournament.title,
+                            dates: tournament.dates,
+                          ),
+                          _SegmentBar(
+                            segments: TournamentDetailSegment.values,
+                            selected: segment,
+                            info:
+                                segment == TournamentDetailSegment.games
+                                    ? const TournamentGamesCountLabel()
+                                    : null,
+                            trailing:
+                                segment == TournamentDetailSegment.games
+                                    ? const TournamentGamesHeaderControls()
+                                    : null,
+                            onSelect:
+                                (next) =>
+                                    ref
+                                        .read(
+                                          tournamentDetailSegmentByTabIdProvider(
+                                            tabId,
+                                          ).notifier,
+                                        )
+                                        .state = next,
+                          ),
+                        ],
+                      ),
+            ),
           ),
           Expanded(
             child: Focus(
@@ -168,7 +190,11 @@ class TournamentDetailPane extends HookConsumerWidget {
                     duration: const Duration(milliseconds: 120),
                     child: KeyedSubtree(
                       key: ValueKey(segment),
-                      child: _segmentBody(segment, tournament.id),
+                      child: _segmentBody(
+                        segment,
+                        tournament.id,
+                        gamesHeaderCollapsed,
+                      ),
                     ),
                   ),
                 ),
@@ -180,12 +206,21 @@ class TournamentDetailPane extends HookConsumerWidget {
     );
   }
 
-  Widget _segmentBody(TournamentDetailSegment segment, String tournamentId) {
+  Widget _segmentBody(
+    TournamentDetailSegment segment,
+    String tournamentId,
+    ValueNotifier<bool> gamesHeaderCollapsed,
+  ) {
     switch (segment) {
       case TournamentDetailSegment.about:
         return TournamentAboutView(tabId: tabId, tournamentId: tournamentId);
       case TournamentDetailSegment.games:
-        return TournamentGamesView(tabId: tabId, tournamentId: tournamentId);
+        return TournamentGamesView(
+          tabId: tabId,
+          tournamentId: tournamentId,
+          onHeaderCollapsedChanged:
+              (collapsed) => gamesHeaderCollapsed.value = collapsed,
+        );
       case TournamentDetailSegment.standings:
         return TournamentStandingsView(
           tabId: tabId,
@@ -336,10 +371,7 @@ class _SegmentBar extends StatelessWidget {
             ),
           ],
           const Spacer(),
-          if (trailing != null) ...[
-            trailing!,
-            const SizedBox(width: 24),
-          ],
+          if (trailing != null) ...[trailing!, const SizedBox(width: 24)],
         ],
       ),
     );
@@ -394,8 +426,11 @@ class _SegmentTabState extends State<_SegmentTab> {
             value: _pressed ? 0.96 : (_hovered ? 1.01 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: Stack(
               children: [
                 Padding(

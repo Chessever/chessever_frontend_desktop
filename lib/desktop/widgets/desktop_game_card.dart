@@ -471,8 +471,6 @@ class _CleanPlayerRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
         children: [
-          _SideMarker(isWhite: isWhite, compact: false),
-          const SizedBox(width: 8),
           BackfilledFederationFlag(
             federation: fed,
             fideId: fideId,
@@ -1285,8 +1283,6 @@ class _PlayerRow extends StatelessWidget {
 
     return Row(
       children: [
-        _SideMarker(isWhite: isWhite, compact: compact),
-        SizedBox(width: compact ? 6 : 8),
         BackfilledFederationFlag(
           federation: fed,
           fideId: fideId,
@@ -1343,31 +1339,6 @@ class _PlayerRow extends StatelessWidget {
   }
 }
 
-/// Small circle that marks White vs Black — replaces the implicit "row 1
-/// is White, row 2 is Black" convention with an explicit, scannable cue.
-class _SideMarker extends StatelessWidget {
-  const _SideMarker({required this.isWhite, required this.compact});
-  final bool isWhite;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final size = compact ? 8.0 : 10.0;
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: isWhite ? kWhiteColor : Colors.black,
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: isWhite ? kWhiteColor70 : kWhiteColor.withValues(alpha: 0.4),
-          width: 1,
-        ),
-      ),
-    );
-  }
-}
-
 class _TitleChip extends StatelessWidget {
   const _TitleChip({required this.title, required this.compact});
   final String title;
@@ -1381,17 +1352,17 @@ class _TitleChip extends StatelessWidget {
         vertical: compact ? 1 : 1.5,
       ),
       decoration: BoxDecoration(
-        color: kLightYellowColor.withValues(alpha: 0.16),
+        color: kPrimaryColor.withValues(alpha: 0.14),
         borderRadius: BorderRadius.circular(3),
         border: Border.all(
-          color: kLightYellowColor.withValues(alpha: 0.45),
+          color: kPrimaryColor.withValues(alpha: 0.38),
           width: 0.7,
         ),
       ),
       child: Text(
         title,
         style: TextStyle(
-          color: kLightYellowColor,
+          color: kPrimaryColor,
           fontSize: compact ? 9.5 : 10.5,
           fontWeight: FontWeight.w800,
           letterSpacing: 0.4,
