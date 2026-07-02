@@ -82,8 +82,10 @@ class DesktopShell extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final tabsState = ref.watch(desktopTabsProvider);
     final tabsNotifier = ref.read(desktopTabsProvider.notifier);
-    final activeSidebarPane = sidebarPaneForActiveTabKind(
-      tabsState.active?.kind,
+    final boardArgsByTabId = ref.watch(boardTabGameArgsByTabIdProvider);
+    final activeSidebarPane = sidebarPaneForActiveTab(
+      tabsState.active,
+      boardArgsByTabId: boardArgsByTabId,
     );
     final shellDropZoneEnabled =
         activeSidebarPane != DesktopPane.library &&
