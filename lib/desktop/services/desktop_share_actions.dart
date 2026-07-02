@@ -131,6 +131,7 @@ Future<void> showDesktopGameShareDialog({
   required BuildContext context,
   required WidgetRef ref,
   required GamesTourModel game,
+  bool flipped = false,
 }) async {
   try {
     final pgn = await resolveGameSharePgn(
@@ -173,6 +174,7 @@ Future<void> showDesktopGameShareDialog({
       position: _positionFromFen(snapshot.positionFen),
       lastMove: snapshot.lastMove,
       pointer: const <int>[],
+      flipped: flipped,
       shareUrl: shareUrl,
     );
   } catch (_) {
@@ -184,6 +186,7 @@ Future<void> showDesktopGameShareDialog({
 Future<void> showSavedAnalysisShareDialog({
   required BuildContext context,
   required SavedAnalysis analysis,
+  bool flipped = false,
 }) async {
   final game = analysis.chessGame;
   final shareUrl = buildSavedAnalysisShareUrl(analysis);
@@ -201,6 +204,7 @@ Future<void> showSavedAnalysisShareDialog({
     position: _positionFromFen(fen),
     lastMove: lastMove,
     pointer: const <int>[],
+    flipped: flipped,
     shareUrl: shareUrl,
   );
 }
@@ -225,6 +229,12 @@ Map<String, String> _headersForGame(
   putIfEmpty('BlackFed', game.blackPlayer.federation);
   putIfEmpty('WhiteTitle', game.whitePlayer.title);
   putIfEmpty('BlackTitle', game.blackPlayer.title);
+  if ((game.whitePlayer.fideId ?? 0) > 0) {
+    putIfEmpty('WhiteFideId', game.whitePlayer.fideId.toString());
+  }
+  if ((game.blackPlayer.fideId ?? 0) > 0) {
+    putIfEmpty('BlackFideId', game.blackPlayer.fideId.toString());
+  }
   if (game.whitePlayer.rating > 0) {
     putIfEmpty('WhiteElo', game.whitePlayer.rating.toString());
   }

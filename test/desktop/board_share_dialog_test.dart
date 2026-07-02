@@ -1,6 +1,10 @@
+import 'package:chessground/chessground.dart' as cg;
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:chessever/desktop/services/board_share_service.dart';
 import 'package:chessever/desktop/widgets/board_share_dialog.dart';
+import 'package:chessever/providers/board_settings_provider_new.dart';
 
 void main() {
   group('boardShareDisplayEvent', () {
@@ -26,6 +30,39 @@ void main() {
         boardShareDisplayEvent({'BroadcastName': ' ', 'Event': '?'}),
         isNull,
       );
+    });
+  });
+
+  group('BoardShareCard', () {
+    testWidgets('renders player bars and real clocks when provided', (
+      tester,
+    ) async {
+      const settings = BoardSettingsNew();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: BoardShareCard(
+            fen: 'rn1qkbnr/pppbpppp/8/3p4/8/5NP1/PPPPPPBP/RNBQK2R b KQkq - 1 3',
+            boardSettings: cg.ChessboardSettings(
+              enableCoordinates: true,
+              animationDuration: Duration.zero,
+              colorScheme: settings.colorScheme,
+              pieceAssets: settings.pieceAssets,
+              borderRadius: BorderRadius.zero,
+              boxShadow: const [],
+            ),
+            whiteName: 'Hans Niemann',
+            blackName: 'Magnus Carlsen',
+            whiteClock: '1:23:45',
+            blackClock: '0:12:34',
+            event: '12th Cesme International Open Chess Tournament',
+          ),
+        ),
+      );
+
+      expect(find.text('Hans Niemann'), findsOneWidget);
+      expect(find.text('Magnus Carlsen'), findsOneWidget);
+      expect(find.text('1:23:45'), findsOneWidget);
+      expect(find.text('0:12:34'), findsOneWidget);
     });
   });
 
