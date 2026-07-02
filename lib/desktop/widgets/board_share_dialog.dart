@@ -161,8 +161,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       if (bytes == null) throw Exception('Capture returned null');
       await BoardShareService.savePngBytesToDisk(
         bytes,
-        defaultName:
-            'chessever_${_sanitizeFilename('$_whiteName vs $_blackName')}.png',
+        defaultName: _defaultExportName('png'),
       );
       _showToast('Image saved', isError: false);
     } catch (e) {
@@ -278,8 +277,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       if (gifBytes == null) throw Exception('GIF generation returned null');
       await BoardShareService.saveGifBytesToDisk(
         gifBytes,
-        defaultName:
-            'chessever_${_sanitizeFilename('$_whiteName vs $_blackName')}.gif',
+        defaultName: _defaultExportName('gif'),
       );
       _showToast('GIF saved', isError: false);
     } catch (e) {
@@ -307,6 +305,18 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
     final cp = double.tryParse(text);
     if (cp == null) return null;
     return (evaluation: cp, mate: null, isEvaluating: false);
+  }
+
+  String _defaultExportName(String extension) {
+    final date = _header('Date')?.replaceAll('.', '-');
+    final parts = [
+      'chessever',
+      _sanitizeFilename('$_whiteName vs $_blackName'),
+      if (date != null && date.isNotEmpty) _sanitizeFilename(date),
+    ].where((part) => part.isNotEmpty).join('_');
+    final normalizedExtension =
+        extension.startsWith('.') ? extension.substring(1) : extension;
+    return '$parts.$normalizedExtension';
   }
 
   ({String? whiteClock, String? blackClock}) _clockAtPointer() {

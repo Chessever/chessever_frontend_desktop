@@ -138,8 +138,8 @@ class GifWorkerError extends GifWorkerResponse {
 ///
 /// [moveCount] is the number of moves to animate. [currentMoveIndex] should be
 /// `moveCount - 1`, because [computeGifExportWindow] already trims the source
-/// moves to the user-selected end position. Every selected move is captured so
-/// the GIF reaches the exact current board position without dropping plies.
+/// moves to the user-selected end position. Every selected ply is captured so
+/// the GIF reaches the exact current board position without dropping half-moves.
 GifExportProfile planGifExport({
   required int moveCount,
   required int currentMoveIndex,
@@ -259,6 +259,8 @@ Uint8List? encodeGifFallback({
   required List<int> widths,
   required List<int> heights,
   required List<int> durationsCs,
+  int numColors = 256,
+  int samplingFactor = _gifNeuralSamplingFactor,
 }) {
   if (rgbaFrames.isEmpty) return null;
 
@@ -266,8 +268,8 @@ Uint8List? encodeGifFallback({
     delay: _gifMoveDelayCs,
     dither: img.DitherKernel.none,
     quantizerType: img.QuantizerType.neural,
-    numColors: 256,
-    samplingFactor: _gifNeuralSamplingFactor,
+    numColors: numColors,
+    samplingFactor: samplingFactor,
   );
 
   for (int i = 0; i < rgbaFrames.length; i++) {
