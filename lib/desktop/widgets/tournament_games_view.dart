@@ -263,25 +263,27 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
           ...(grouped.gamesByRound[round.id] ?? const <GamesTourModel>[]),
     ];
 
-    final searchField = Padding(
-      padding: const EdgeInsets.fromLTRB(24, 12, 24, 4),
-      child: DesktopSearchField(
-        controller: _searchController,
-        hintText: 'Search games in this tournament (player, opening, ECO)…',
-        onChanged: _runSearch,
-        onClear: () {
-          _debounce?.cancel();
-          ref
-              .read(
-                tournamentDetailGamesSearchByTabIdProvider(
-                  widget.tabId,
-                ).notifier,
-              )
-              .state = '';
-          ref.read(gamesTourScreenProvider.notifier).clearSearch();
-        },
-      ),
-    );
+    Widget searchField({required EdgeInsetsGeometry padding}) {
+      return Padding(
+        padding: padding,
+        child: DesktopSearchField(
+          controller: _searchController,
+          hintText: 'Search games in this tournament (player, opening, ECO)…',
+          onChanged: _runSearch,
+          onClear: () {
+            _debounce?.cancel();
+            ref
+                .read(
+                  tournamentDetailGamesSearchByTabIdProvider(
+                    widget.tabId,
+                  ).notifier,
+                )
+                .state = '';
+            ref.read(gamesTourScreenProvider.notifier).clearSearch();
+          },
+        ),
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -295,7 +297,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                searchField,
+                searchField(padding: const EdgeInsets.fromLTRB(24, 12, 24, 4)),
                 Expanded(
                   child:
                       _searchController.text.trim().isNotEmpty
@@ -335,7 +337,9 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                       physics: const DesktopScrollPhysics(),
                       padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
                       children: [
-                        searchField,
+                        searchField(
+                          padding: const EdgeInsets.fromLTRB(0, 12, 0, 4),
+                        ),
                         const SizedBox(height: 4),
                         // Match-format tournaments (e.g. "12-game Match" — Carlsen vs
                         // Nepo) get a single match summary card on top of the rounds.
