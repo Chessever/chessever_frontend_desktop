@@ -2359,6 +2359,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     );
 
     void shareGameAction() {
+      final shareEvalState = ref.read(boardEvalProvider(position.fen));
       showBoardShareDialog(
         context,
         chessGame: chessGame.value,
@@ -2367,6 +2368,9 @@ class _BoardPaneContent extends HookConsumerWidget {
         lastMove: lastMove,
         pointer: pointer.value,
         flipped: flipped.value,
+        evaluation: shareEvalState.evaluation,
+        mate: shareEvalState.mate,
+        isEvaluating: shareEvalState.isEvaluating,
         shareUrl: shareUrl,
       );
     }
@@ -5519,16 +5523,15 @@ class _BoardArea extends ConsumerWidget {
             behavior: HitTestBehavior.opaque,
             onPointerDown: (event) {
               if (event.buttons & kPrimaryMouseButton == 0) return;
-              final shouldClear =
-                  shouldClearBoardAnnotationsForBoardAreaClick(
-                    localPosition: event.localPosition,
-                    contentSize: constraints.biggest,
-                    boardSize: boardSize,
-                    boardWithBar: boardWithBar,
-                    topRowHeight: topRowHeight,
-                    bottomRowHeight: bottomRowHeight,
-                    headerGap: _BoardArea.headerGap,
-                  );
+              final shouldClear = shouldClearBoardAnnotationsForBoardAreaClick(
+                localPosition: event.localPosition,
+                contentSize: constraints.biggest,
+                boardSize: boardSize,
+                boardWithBar: boardWithBar,
+                topRowHeight: topRowHeight,
+                bottomRowHeight: bottomRowHeight,
+                headerGap: _BoardArea.headerGap,
+              );
               if (shouldClear) clearGraphicCommentaryForCurrentPosition();
             },
             child: Center(

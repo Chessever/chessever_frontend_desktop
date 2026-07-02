@@ -10,8 +10,12 @@ import 'package:path_provider/path_provider.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
 import 'package:chessever/screens/chessboard/widgets/gif_export_worker.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/pgn_clock_utils.dart';
+import 'package:chessever/widgets/federation_flag.dart';
+import 'package:chessever/widgets/player_initials_avatar.dart';
 
 /// Desktop-native sharing helpers for the board pane.
 ///
@@ -104,8 +108,24 @@ class BoardShareService {
     String? blackName,
     String? event,
     String? result,
+    String? whiteTitle,
+    String? blackTitle,
+    int? whiteRating,
+    int? blackRating,
+    String? whiteFederation,
+    String? blackFederation,
+    String? whiteScore,
+    String? blackScore,
+    String? whitePhotoUrl,
+    String? blackPhotoUrl,
+    double? evaluation,
+    int? mate,
+    bool isEvaluating = false,
+    bool showEvalBar = true,
     bool flipped = false,
     List<({String? whiteClock, String? blackClock})>? clocks,
+    List<({double? evaluation, int? mate, bool isEvaluating})>?
+    frameEvaluations,
   }) async {
     if (frames.isEmpty) return null;
 
@@ -114,7 +134,6 @@ class BoardShareService {
     final heights = <int>[];
 
     const boardSize = 400.0;
-    const cardWidth = boardSize;
     const pixelRatio = 1.5;
     final includePlayerBars =
         whiteName != null ||
@@ -128,6 +147,10 @@ class BoardShareService {
     for (int i = 0; i < frames.length; i++) {
       final frame = frames[i];
       final clock = clocks != null && i < clocks.length ? clocks[i] : null;
+      final frameEval =
+          frameEvaluations != null && i < frameEvaluations.length
+              ? frameEvaluations[i]
+              : null;
       final Widget board =
           includePlayerBars
               ? BoardShareCard(
@@ -140,9 +163,23 @@ class BoardShareService {
                 result: result,
                 whiteClock: clock?.whiteClock,
                 blackClock: clock?.blackClock,
+                whiteTitle: whiteTitle,
+                blackTitle: blackTitle,
+                whiteRating: whiteRating,
+                blackRating: blackRating,
+                whiteFederation: whiteFederation,
+                blackFederation: blackFederation,
+                whiteScore: whiteScore,
+                blackScore: blackScore,
+                whitePhotoUrl: whitePhotoUrl,
+                blackPhotoUrl: blackPhotoUrl,
                 sideToMove: _sideToMoveFromFen(frame.fen),
                 flipped: flipped,
                 boardSize: boardSize,
+                evaluation: frameEval?.evaluation ?? evaluation,
+                mate: frameEval?.mate ?? mate,
+                isEvaluating: frameEval?.isEvaluating ?? isEvaluating,
+                showEvalBar: showEvalBar,
               )
               : cg.StaticChessboard(
                 size: boardSize,
@@ -156,7 +193,7 @@ class BoardShareService {
 
       final bytes = await captureWidget(
         board,
-        width: includePlayerBars ? cardWidth : boardSize,
+        width: includePlayerBars ? boardShareCardWidth(boardSize) : boardSize,
         height: cardHeight,
         pixelRatio: pixelRatio,
       );
@@ -260,9 +297,15 @@ class BoardShareCard extends StatelessWidget {
     this.blackFederation,
     this.whiteScore,
     this.blackScore,
+    this.whitePhotoUrl,
+    this.blackPhotoUrl,
     this.sideToMove,
     this.flipped = false,
     this.boardSize = 320,
+    this.evaluation,
+    this.mate,
+    this.isEvaluating = false,
+    this.showEvalBar = true,
   });
 
   final String fen;
@@ -282,9 +325,18 @@ class BoardShareCard extends StatelessWidget {
   final String? blackFederation;
   final String? whiteScore;
   final String? blackScore;
+  final String? whitePhotoUrl;
+  final String? blackPhotoUrl;
   final Side? sideToMove;
   final bool flipped;
   final double boardSize;
+  final double? evaluation;
+  final int? mate;
+  final bool isEvaluating;
+  final bool showEvalBar;
+
+  static const double _evalBarWidth = 24.0;
+  static const double _evalBarGap = 12.0;
 
   @override
   Widget build(BuildContext context) {
@@ -292,7 +344,7 @@ class BoardShareCard extends StatelessWidget {
     final bottomIsWhite = !flipped;
     final orientation = flipped ? Side.black : Side.white;
     return Container(
-      width: boardSize,
+      width: boardShareCardWidth(boardSize),
       height: boardShareCardHeight(boardSize: boardSize, event: null),
       color: kBackgroundColor,
       child: Column(
@@ -305,16 +357,38 @@ class BoardShareCard extends StatelessWidget {
             federation: topIsWhite ? whiteFederation : blackFederation,
             score: topIsWhite ? whiteScore : blackScore,
             clock: topIsWhite ? whiteClock : blackClock,
+            photoUrl: topIsWhite ? whitePhotoUrl : blackPhotoUrl,
             isToMove: sideToMove == (topIsWhite ? Side.white : Side.black),
           ),
-          cg.StaticChessboard(
-            size: boardSize,
-            settings: cg.StaticChessboardSettings.fromBoardSettings(
-              boardSettings.copyWith(animationDuration: Duration.zero),
-            ),
-            orientation: orientation,
-            fen: fen,
-            lastMove: lastMove,
+          Row(
+            children: [
+              SizedBox(
+                width: _evalBarWidth,
+                height: boardSize,
+                child: Opacity(
+                  opacity: showEvalBar ? 1 : 0,
+                  child: DesktopEvalBar(
+                    width: _evalBarWidth,
+                    height: boardSize,
+                    isFlipped: flipped,
+                    evaluation: evaluation,
+                    mate: mate,
+                    isEvaluating: isEvaluating,
+                    positionKey: fen,
+                  ),
+                ),
+              ),
+              const SizedBox(width: _evalBarGap),
+              cg.StaticChessboard(
+                size: boardSize,
+                settings: cg.StaticChessboardSettings.fromBoardSettings(
+                  boardSettings.copyWith(animationDuration: Duration.zero),
+                ),
+                orientation: orientation,
+                fen: fen,
+                lastMove: lastMove,
+              ),
+            ],
           ),
           _BoardSharePlayerBar(
             name:
@@ -324,12 +398,17 @@ class BoardShareCard extends StatelessWidget {
             federation: bottomIsWhite ? whiteFederation : blackFederation,
             score: bottomIsWhite ? whiteScore : blackScore,
             clock: bottomIsWhite ? whiteClock : blackClock,
+            photoUrl: bottomIsWhite ? whitePhotoUrl : blackPhotoUrl,
             isToMove: sideToMove == (bottomIsWhite ? Side.white : Side.black),
           ),
         ],
       ),
     );
   }
+}
+
+double boardShareCardWidth(double boardSize) {
+  return boardSize + BoardShareCard._evalBarWidth + BoardShareCard._evalBarGap;
 }
 
 double boardShareCardHeight({required double boardSize, String? event}) {
@@ -344,6 +423,7 @@ class _BoardSharePlayerBar extends StatelessWidget {
     this.federation,
     this.score,
     this.clock,
+    this.photoUrl,
     this.isToMove = false,
   });
 
@@ -353,21 +433,25 @@ class _BoardSharePlayerBar extends StatelessWidget {
   final String? federation;
   final String? score;
   final String? clock;
+  final String? photoUrl;
   final bool isToMove;
 
   @override
   Widget build(BuildContext context) {
-    final clockText = clock?.trim();
-    final fedText = _flagEmoji(federation);
+    final clockText = formatPgnClockForDisplay(clock ?? '');
     final titleText = title?.trim();
     final ratingValue = rating ?? 0;
+    final hasPhoto = photoUrl?.trim().isNotEmpty == true;
     return Container(
       height: 48,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         color: kBlack2Color,
         border: Border.symmetric(
-          horizontal: BorderSide(color: kWhiteColor.withValues(alpha: 0.10)),
+          horizontal: BorderSide(
+            color: kWhiteColor.withValues(alpha: 0.10),
+            width: 0.75,
+          ),
         ),
       ),
       child: Row(
@@ -381,15 +465,38 @@ class _BoardSharePlayerBar extends StatelessWidget {
                 color: kWhiteColor,
                 fontSize: 13,
                 fontWeight: FontWeight.w800,
+                height: 1,
                 fontFeatures: [ui.FontFeature.tabularFigures()],
               ),
             ),
           ),
           const SizedBox(width: 8),
-          if (fedText != null) ...[
-            Text(fedText, style: const TextStyle(fontSize: 22)),
+          if (hasPhoto) ...[
+            Container(
+              width: 42,
+              height: 42,
+              padding: const EdgeInsets.all(1),
+              decoration: BoxDecoration(
+                color: kBlack3Color,
+                borderRadius: BorderRadius.circular(7),
+                border: Border.all(color: kWhiteColor.withValues(alpha: 0.24)),
+              ),
+              child: PlayerInitialsAvatarCompact(
+                photoUrl: photoUrl!.trim(),
+                initials: _playerInitials(name),
+                size: 40,
+                borderRadius: 6,
+              ),
+            ),
             const SizedBox(width: 8),
           ],
+          FederationFlag(
+            federation: federation,
+            width: 22,
+            height: 16,
+            borderRadius: BorderRadius.circular(2),
+          ),
+          const SizedBox(width: 8),
           if (titleText != null && titleText.isNotEmpty) ...[
             Text(
               titleText,
@@ -424,32 +531,39 @@ class _BoardSharePlayerBar extends StatelessWidget {
               ),
             ),
           ],
-          if (clockText != null && clockText.isNotEmpty) ...[
+          if (clockText.isNotEmpty) ...[
             const SizedBox(width: 10),
             Container(
-              constraints: const BoxConstraints(minWidth: 58),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
               decoration: BoxDecoration(
                 color:
                     isToMove
-                        ? kPrimaryColor.withValues(alpha: 0.36)
-                        : kBlack3Color,
-                borderRadius: BorderRadius.circular(6),
+                        ? kPrimaryColor.withValues(alpha: 0.18)
+                        : kBlack2Color,
+                borderRadius: BorderRadius.circular(5),
                 border: Border.all(
-                  color:
-                      isToMove
-                          ? kPrimaryColor
-                          : kWhiteColor.withValues(alpha: 0.10),
+                  color: isToMove ? kPrimaryColor : Colors.transparent,
                 ),
+                boxShadow:
+                    isToMove
+                        ? [
+                          BoxShadow(
+                            color: kPrimaryColor.withValues(alpha: 0.18),
+                            blurRadius: 6,
+                            offset: const Offset(0, 1),
+                          ),
+                        ]
+                        : null,
               ),
               child: Text(
                 clockText,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: kWhiteColor,
+                style: TextStyle(
+                  color: isToMove ? kWhiteColor : kWhiteColor70,
                   fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  fontFeatures: [ui.FontFeature.tabularFigures()],
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [ui.FontFeature.tabularFigures()],
+                  height: 1,
                 ),
               ),
             ),
@@ -460,13 +574,18 @@ class _BoardSharePlayerBar extends StatelessWidget {
   }
 }
 
-String? _flagEmoji(String? raw) {
-  final code = raw?.trim().toUpperCase();
-  if (code == null ||
-      code.length != 2 ||
-      !RegExp(r'^[A-Z]{2}$').hasMatch(code)) {
-    return null;
+String _playerInitials(String name) {
+  final parts =
+      name
+          .replaceAll(',', ' ')
+          .split(RegExp(r'\s+'))
+          .where((part) => part.isNotEmpty)
+          .toList();
+  if (parts.isEmpty) return '?';
+  if (parts.length == 1) {
+    final only = parts.first;
+    return only.substring(0, only.length < 2 ? only.length : 2).toUpperCase();
   }
-  const base = 0x1F1E6;
-  return String.fromCharCodes(code.codeUnits.map((unit) => base + unit - 65));
+  return '${parts.first.substring(0, 1)}${parts.last.substring(0, 1)}'
+      .toUpperCase();
 }

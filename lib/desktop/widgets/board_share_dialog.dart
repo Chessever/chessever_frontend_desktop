@@ -12,6 +12,7 @@ import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
+import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 /// Desktop-suitable share dialog for the board pane.
@@ -28,6 +29,10 @@ class BoardShareDialog extends ConsumerStatefulWidget {
     required this.lastMove,
     required this.pointer,
     required this.flipped,
+    this.evaluation,
+    this.mate,
+    this.isEvaluating = false,
+    this.showEvalBar = true,
     this.shareUrl,
   });
 
@@ -37,6 +42,10 @@ class BoardShareDialog extends ConsumerStatefulWidget {
   final Move? lastMove;
   final List<int> pointer;
   final bool flipped;
+  final double? evaluation;
+  final int? mate;
+  final bool isEvaluating;
+  final bool showEvalBar;
   final String? shareUrl;
 
   @override
@@ -65,6 +74,8 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       '';
   int? get _whiteRating => _headerInt('WhiteElo');
   int? get _blackRating => _headerInt('BlackElo');
+  int? get _whiteFideId => _headerInt('WhiteFideId');
+  int? get _blackFideId => _headerInt('BlackFideId');
   String? get _whiteScore => _scoreFor(isWhite: true);
   String? get _blackScore => _scoreFor(isWhite: false);
 
@@ -106,6 +117,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       final settings =
           ref.read(boardSettingsProviderNew).valueOrNull ??
           const BoardSettingsNew();
+      final photos = await _resolvePlayerPhotos();
       final card = BoardShareCard(
         fen: widget.position.fen,
         boardSettings: cg.ChessboardSettings(
@@ -131,12 +143,18 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
         blackFederation: _blackFederation,
         whiteScore: _whiteScore,
         blackScore: _blackScore,
+        whitePhotoUrl: photos.whitePhotoUrl,
+        blackPhotoUrl: photos.blackPhotoUrl,
         sideToMove: widget.position.turn,
         flipped: widget.flipped,
+        evaluation: widget.evaluation,
+        mate: widget.mate,
+        isEvaluating: widget.isEvaluating,
+        showEvalBar: widget.showEvalBar,
       );
       final bytes = await BoardShareService.captureWidget(
         card,
-        width: 320,
+        width: boardShareCardWidth(320),
         height: boardShareCardHeight(boardSize: 320, event: null),
         pixelRatio: 2.5,
       );
@@ -172,17 +190,26 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
         borderRadius: BorderRadius.zero,
         boxShadow: const [],
       );
+      final photos = await _resolvePlayerPhotos();
 
       // Build frames by replaying mainline moves from the start.
       final frames = <({String fen, Move? lastMove})>[];
       final frameClocks = <({String? whiteClock, String? blackClock})>[];
+      final frameEvaluations =
+          <({double? evaluation, int? mate, bool isEvaluating})>[];
       final durations = <int>[];
       String? whiteClock;
       String? blackClock;
+      ({double? evaluation, int? mate, bool isEvaluating})? lastEval;
 
       // Initial position
       frames.add((fen: widget.chessGame.startingFen, lastMove: null));
       frameClocks.add((whiteClock: whiteClock, blackClock: blackClock));
+      frameEvaluations.add((
+        evaluation: null,
+        mate: null,
+        isEvaluating: widget.isEvaluating,
+      ));
       durations.add(80); // 0.8s initial hold
 
       Position pos;
@@ -205,12 +232,17 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
             blackClock = clockTime;
           }
         }
+        lastEval = _parseMoveEval(moveData.eval) ?? lastEval;
         final last =
             move is NormalMove
                 ? NormalMove(from: move.from, to: move.to)
                 : null;
         frames.add((fen: pos.fen, lastMove: last));
         frameClocks.add((whiteClock: whiteClock, blackClock: blackClock));
+        frameEvaluations.add(
+          lastEval ??
+              (evaluation: null, mate: null, isEvaluating: widget.isEvaluating),
+        );
         // Faster for middle moves, slower at the end
         final isLast = i == widget.chessGame.mainline.length - 1;
         durations.add(isLast ? 160 : 50);
@@ -224,8 +256,23 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
         blackName: _blackName,
         event: _event,
         result: _result,
+        whiteTitle: _whiteTitle,
+        blackTitle: _blackTitle,
+        whiteRating: _whiteRating,
+        blackRating: _blackRating,
+        whiteFederation: _whiteFederation,
+        blackFederation: _blackFederation,
+        whiteScore: _whiteScore,
+        blackScore: _blackScore,
+        whitePhotoUrl: photos.whitePhotoUrl,
+        blackPhotoUrl: photos.blackPhotoUrl,
+        evaluation: widget.evaluation,
+        mate: widget.mate,
+        isEvaluating: widget.isEvaluating,
+        showEvalBar: widget.showEvalBar,
         flipped: widget.flipped,
         clocks: frameClocks,
+        frameEvaluations: frameEvaluations,
       );
 
       if (gifBytes == null) throw Exception('GIF generation returned null');
@@ -240,6 +287,26 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
     } finally {
       if (mounted) setState(() => _isGeneratingGif = false);
     }
+  }
+
+  ({double? evaluation, int? mate, bool isEvaluating})? _parseMoveEval(
+    String? raw,
+  ) {
+    final text = raw?.trim();
+    if (text == null || text.isEmpty) return null;
+    final mateMatch = RegExp(
+      r'^(?:#|M)([+-]?\d+)$',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (mateMatch != null) {
+      final mate = int.tryParse(mateMatch.group(1)!);
+      if (mate != null) {
+        return (evaluation: null, mate: mate, isEvaluating: false);
+      }
+    }
+    final cp = double.tryParse(text);
+    if (cp == null) return null;
+    return (evaluation: cp, mate: null, isEvaluating: false);
   }
 
   ({String? whiteClock, String? blackClock}) _clockAtPointer() {
@@ -258,6 +325,28 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       if (whiteClock != null && blackClock != null) break;
     }
     return (whiteClock: whiteClock, blackClock: blackClock);
+  }
+
+  Future<({String? whitePhotoUrl, String? blackPhotoUrl})>
+  _resolvePlayerPhotos() async {
+    Future<String?> photoFor(int? fideId) async {
+      if (fideId == null || fideId <= 0) return null;
+      final url = await FidePhotoService.getPhotoUrlOrNull('$fideId');
+      final trimmed = url?.trim();
+      if (trimmed == null || trimmed.isEmpty) return null;
+      if (mounted) {
+        try {
+          await precacheImage(NetworkImage(trimmed), context);
+        } catch (_) {
+          // Keep exporting with initials when the photo cannot be warmed.
+        }
+      }
+      return trimmed;
+    }
+
+    final whitePhotoUrl = await photoFor(_whiteFideId);
+    final blackPhotoUrl = await photoFor(_blackFideId);
+    return (whitePhotoUrl: whitePhotoUrl, blackPhotoUrl: blackPhotoUrl);
   }
 
   List<ChessMove> _pathForCurrentPointer() {
@@ -641,6 +730,10 @@ Future<void> showBoardShareDialog(
   required Move? lastMove,
   required List<int> pointer,
   required bool flipped,
+  double? evaluation,
+  int? mate,
+  bool isEvaluating = false,
+  bool showEvalBar = true,
   String? shareUrl,
 }) {
   return showDesktopDialog<void>(
@@ -653,6 +746,10 @@ Future<void> showBoardShareDialog(
           lastMove: lastMove,
           pointer: pointer,
           flipped: flipped,
+          evaluation: evaluation,
+          mate: mate,
+          isEvaluating: isEvaluating,
+          showEvalBar: showEvalBar,
           shareUrl: shareUrl,
         ),
   );
