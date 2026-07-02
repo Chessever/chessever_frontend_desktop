@@ -1,5 +1,6 @@
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 
 /// Identifier for the primary content pane shown in the desktop shell.
@@ -109,11 +110,44 @@ DesktopPane? sidebarPaneForActiveTabKind(TabKind? kind) {
   return paneForTabKind(kind) ?? DesktopPane.board;
 }
 
+/// Sidebar highlight derived from the foreground tab plus its source context.
+///
+/// Board tabs are special: if the board was opened from a database/list context,
+/// we keep the Library section highlighted so users don't lose their navigation
+/// context when opening a game from the table.
+DesktopPane? sidebarPaneForActiveTab(
+  DesktopTab? tab, {
+  Map<String, BoardTabGameArgs> boardArgsByTabId = const {},
+}) {
+  if (tab == null) return null;
+
+  if (tab.kind == TabKind.board) {
+    final args = boardArgsByTabId[tab.id];
+    if (args == null) return DesktopPane.board;
+
+    final openedFromDatabase =
+        args.databaseTitle.trim().isNotEmpty || args.databaseGames.isNotEmpty;
+    if (openedFromDatabase) {
+      return DesktopPane.library;
+    }
+
+    return DesktopPane.board;
+  }
+
+  return sidebarPaneForActiveTabKind(tab.kind);
+}
+
 /// Active pane derived from the foreground tab. Read-only — to *change* the
 /// active pane, open or activate a tab via `desktopTabsProvider.notifier`.
 /// Returns `DesktopPane.board` as a stable fallback when the foreground tab
 /// is one of the kinds the sidebar doesn't represent or the workspace is empty.
 final desktopPaneProvider = Provider<DesktopPane>((ref) {
-  return sidebarPaneForActiveTabKind(ref.watch(activeTabKindProvider)) ??
+  final tabsState = ref.watch(desktopTabsProvider);
+  final boardArgsByTabId = ref.watch(boardTabGameArgsByTabIdProvider);
+
+  return sidebarPaneForActiveTab(
+        tabsState.active,
+        boardArgsByTabId: boardArgsByTabId,
+      ) ??
       DesktopPane.board;
 });
