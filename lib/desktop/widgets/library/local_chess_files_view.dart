@@ -23,6 +23,7 @@ import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
 import 'package:chessever/desktop/widgets/library/local_game_info_dialog.dart';
+import 'package:chessever/desktop/widgets/library/local_game_player_cell.dart';
 import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
@@ -1964,12 +1965,18 @@ class _LocalGamesDataRow extends StatelessWidget {
               width: 54,
               child: _LocalNumberCell(value: game.indexInFile + 1),
             ),
-            Expanded(flex: 22, child: _LocalTextCell(_playerName(md, 'White'))),
+            Expanded(
+              flex: 22,
+              child: LocalGamePlayerCell(metadata: md, side: 'White'),
+            ),
             SizedBox(
               width: 64,
               child: _LocalNumberCell(value: _rating(md, 'WhiteElo')),
             ),
-            Expanded(flex: 22, child: _LocalTextCell(_playerName(md, 'Black'))),
+            Expanded(
+              flex: 22,
+              child: LocalGamePlayerCell(metadata: md, side: 'Black'),
+            ),
             SizedBox(
               width: 64,
               child: _LocalNumberCell(value: _rating(md, 'BlackElo')),
@@ -2430,8 +2437,8 @@ BoardTabGameArgs _boardArgsForLocalGame(
     label: localGame.title,
     whiteName: s('White'),
     blackName: s('Black'),
-    whiteFederation: _localPgnFederation(md, 'White'),
-    blackFederation: _localPgnFederation(md, 'Black'),
+    whiteFederation: localPgnFederation(md, 'White'),
+    blackFederation: localPgnFederation(md, 'Black'),
     whiteTitle: s('WhiteTitle'),
     blackTitle: s('BlackTitle'),
     whiteRating: rating('WhiteElo'),
@@ -2503,8 +2510,8 @@ TournamentGameSummary _summaryFromLocalGame(LocalChessGame localGame) {
     name: localGame.title,
     whitePlayer: s('White'),
     blackPlayer: s('Black'),
-    whiteFederation: _localPgnFederation(md, 'White'),
-    blackFederation: _localPgnFederation(md, 'Black'),
+    whiteFederation: localPgnFederation(md, 'White'),
+    blackFederation: localPgnFederation(md, 'Black'),
     whiteTitle: s('WhiteTitle'),
     blackTitle: s('BlackTitle'),
     whiteRating: rating('WhiteElo'),
@@ -2519,20 +2526,6 @@ TournamentGameSummary _summaryFromLocalGame(LocalChessGame localGame) {
     openingName: s('Opening').isNotEmpty ? s('Opening') : s('ECO'),
     hasStarted: localGame.hasMoves,
   );
-}
-
-String _localPgnFederation(Map<String, dynamic> metadata, String side) {
-  for (final suffix in const <String>[
-    'Federation',
-    'Fed',
-    'Country',
-    'TeamCountry',
-    'Flag',
-  ]) {
-    final value = metadata['$side$suffix']?.toString().trim() ?? '';
-    if (value.isNotEmpty && value != '?' && value != '-') return value;
-  }
-  return '';
 }
 
 GameStatus _statusFromResult(String result) {
