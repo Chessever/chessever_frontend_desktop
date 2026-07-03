@@ -36,6 +36,8 @@ class TournamentGameSummary {
     this.roundStartsAt,
     this.hasStarted = false,
     this.pgn,
+    this.whiteTeam = '',
+    this.blackTeam = '',
   });
 
   factory TournamentGameSummary.fromGamesTourModel(
@@ -83,6 +85,8 @@ class TournamentGameSummary {
       startsAt: game.dateStart,
       roundStartsAt: roundStartsAt,
       hasStarted: game.hasStarted,
+      whiteTeam: game.whitePlayer.team?.trim() ?? '',
+      blackTeam: game.blackPlayer.team?.trim() ?? '',
     );
   }
 
@@ -128,6 +132,8 @@ class TournamentGameSummary {
       lastMoveTime: game.lastMoveTime,
       startsAt: game.dateStart,
       hasStarted: game.lastMove?.trim().isNotEmpty == true,
+      whiteTeam: white?.team.trim() ?? '',
+      blackTeam: black?.team.trim() ?? '',
     );
   }
 
@@ -177,6 +183,12 @@ class TournamentGameSummary {
   final DateTime? roundStartsAt;
   final bool hasStarted;
 
+  /// Team labels for team events (Olympiad, leagues). Empty when the source
+  /// row carries no team info; the board event rail uses these to group a
+  /// round's boards into team matchups like the mobile Games tab.
+  final String whiteTeam;
+  final String blackTeam;
+
   /// Optional PGN payload for non-live database/library entries. Live event
   /// summaries usually omit this and let the board fetch the current PGN.
   final String? pgn;
@@ -217,6 +229,8 @@ class TournamentGameSummary {
       roundStartsAt: roundStartsAt,
       hasStarted: hasStarted ?? this.hasStarted,
       pgn: pgn ?? this.pgn,
+      whiteTeam: whiteTeam,
+      blackTeam: blackTeam,
     );
   }
 }

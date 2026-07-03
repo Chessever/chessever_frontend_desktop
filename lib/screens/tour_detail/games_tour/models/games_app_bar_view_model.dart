@@ -52,16 +52,22 @@ class GamesAppBarModel extends Equatable {
   }) {
     final now = DateTime.now();
 
-    if (startsAt == null) return RoundStatus.upcoming;
-
     if (liveRound.isNotEmpty && liveRound.contains(currentId)) {
       return RoundStatus.live;
     }
 
+    if (startsAt == null) return RoundStatus.upcoming;
+
     if (startsAt.isBefore(now) || startsAt.isAtSameMomentAs(now)) {
-      if (startsAt.day == now.day &&
-          startsAt.month == now.month &&
-          startsAt.year == now.year) {
+      // Day-boundary fix (mobile parity): a round that started at 23:50 must
+      // not flip to `completed` at local midnight while still in progress.
+      // Use a rolling 24h window instead of same-calendar-day. `liveRound`
+      // membership (checked above) is the authoritative live signal; this
+      // ongoing/completed classification is a fallback for rounds the backend
+      // has dropped from `live_round_ids` but that are still within a
+      // plausible play window for any time control.
+      final hoursSinceStart = now.difference(startsAt).inHours;
+      if (hoursSinceStart < 24) {
         return RoundStatus.ongoing;
       } else {
         return RoundStatus.completed;
