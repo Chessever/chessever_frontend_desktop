@@ -113,16 +113,229 @@ void main() {
         _summary(
           id: 'round-$round',
           roundLabel: 'Round $round',
-          roundStartsAt: DateTime.utc(2026, 6, 20, rankByRound[round]!),
+          roundStartsAt: DateTime.now().subtract(
+            Duration(days: 30, hours: 24 - rankByRound[round]!),
+          ),
         ),
     ];
 
     expect(eventRailOrderedIdsForTesting(games, preserveInputOrder: true), [
       for (final round in sourceOrder) 'round-$round',
     ]);
+    // Mobile `sortRoundsForDisplay` parity: all rounds completed and named
+    // "Round N", so the started rounds order by round number descending
+    // (focus round = most recent by that same order).
     expect(eventRailOrderedIdsForTesting(games), [
-      for (final round in timestampOrder) 'round-$round',
+      for (final round in sourceOrder.reversed) 'round-$round',
     ]);
+  });
+
+  test('event rail orders rounds like the mobile Games tab', () {
+    final now = DateTime.now();
+    final games = [
+      // Round 5 — tomorrow, resolved pairings without moves → pairing-only,
+      // pinned to the bottom with boards ascending.
+      _summary(
+        id: 'r5-g1',
+        roundLabel: 'Round 5',
+        roundStartsAt: now.add(const Duration(days: 1)),
+        pgn: '',
+        status: GameStatus.unknown,
+        hasStarted: false,
+        boardNumber: 2,
+      ),
+      _summary(
+        id: 'r5-g2',
+        roundLabel: 'Round 5',
+        roundStartsAt: now.add(const Duration(days: 1)),
+        pgn: '',
+        status: GameStatus.unknown,
+        hasStarted: false,
+        boardNumber: 1,
+      ),
+      // Round 4 — later today but all "?" placeholder pairings → hidden,
+      // even though the pre-created rows claim to be ongoing.
+      _summary(
+        id: 'r4-g1',
+        roundLabel: 'Round 4',
+        roundStartsAt: now.add(const Duration(hours: 3)),
+        whitePlayer: '?',
+        blackPlayer: '?',
+        pgn: '',
+        status: GameStatus.ongoing,
+        hasStarted: true,
+      ),
+      // Round 3 — live right now → focus round on top.
+      _summary(
+        id: 'r3-g1',
+        roundLabel: 'Round 3',
+        roundStartsAt: now.subtract(const Duration(hours: 1)),
+        status: GameStatus.ongoing,
+        hasStarted: true,
+        lastMoveTime: now.subtract(const Duration(minutes: 5)),
+      ),
+      // Rounds 2 and 1 — played, newest first below the focus round.
+      _summary(
+        id: 'r2-g1',
+        roundLabel: 'Round 2',
+        roundStartsAt: now.subtract(const Duration(days: 1, hours: 1)),
+        status: GameStatus.draw,
+      ),
+      _summary(
+        id: 'r1-g1',
+        roundLabel: 'Round 1',
+        roundStartsAt: now.subtract(const Duration(days: 2)),
+        status: GameStatus.whiteWins,
+      ),
+    ];
+
+    final groups = eventRailRoundGroupsForTesting(games);
+
+    expect(groups.map((group) => group.title).toList(), [
+      'Round 3',
+      'Round 2',
+      'Round 1',
+      'Round 5',
+    ]);
+    expect(groups.first.status, 'live');
+    expect(groups[1].status, 'completed');
+    expect(groups[2].status, 'completed');
+    expect(groups.last.status, 'upcoming');
+    expect(groups.last.pairingOnly, isTrue);
+    expect(groups.last.gameIds, ['r5-g2', 'r5-g1']);
+  });
+
+  test('event rail groups team rounds into matchups with running scores', () {
+    final started = DateTime.now().subtract(const Duration(hours: 2));
+    final games = [
+      _summary(
+        id: 'ab-b1',
+        roundLabel: 'Round 1',
+        roundStartsAt: started,
+        whitePlayer: 'Player A1',
+        blackPlayer: 'Player B1',
+        whiteTeam: 'Alpha',
+        blackTeam: 'Beta',
+        status: GameStatus.whiteWins,
+        boardNumber: 1,
+      ),
+      // Colors swap on board 2; the matchup still folds into Alpha vs Beta.
+      _summary(
+        id: 'ab-b2',
+        roundLabel: 'Round 1',
+        roundStartsAt: started,
+        whitePlayer: 'Player B2',
+        blackPlayer: 'Player A2',
+        whiteTeam: 'Beta',
+        blackTeam: 'Alpha',
+        status: GameStatus.draw,
+        boardNumber: 2,
+      ),
+      _summary(
+        id: 'cd-b1',
+        roundLabel: 'Round 1',
+        roundStartsAt: started,
+        whitePlayer: 'Player C1',
+        blackPlayer: 'Player D1',
+        whiteTeam: 'Gamma',
+        blackTeam: 'Delta',
+        status: GameStatus.blackWins,
+        boardNumber: 1,
+      ),
+      _summary(
+        id: 'cd-b2',
+        roundLabel: 'Round 1',
+        roundStartsAt: started,
+        whitePlayer: 'Player C2',
+        blackPlayer: 'Player D2',
+        whiteTeam: 'Gamma',
+        blackTeam: 'Delta',
+        status: GameStatus.ongoing,
+        hasStarted: true,
+        boardNumber: 2,
+      ),
+    ];
+
+    final segments = eventRailRoundSegmentsForTesting(games);
+
+    expect(segments.map((segment) => segment.title).toList(), [
+      'Alpha vs Beta',
+      'Gamma vs Delta',
+    ]);
+    expect(segments[0].score, '1½–½');
+    expect(segments[0].gameIds, ['ab-b1', 'ab-b2']);
+    expect(segments[1].score, '0–1');
+    expect(segments[1].gameIds, ['cd-b1', 'cd-b2']);
+  });
+
+  test('event rail groups knockout stages into per-matchup game lists', () {
+    final started = DateTime.now().subtract(const Duration(days: 1));
+    TournamentGameSummary stageGame({
+      required String id,
+      required String roundId,
+      required String roundSlug,
+      required String white,
+      required String black,
+      required GameStatus status,
+    }) => _summary(
+      id: id,
+      roundId: roundId,
+      roundSlug: roundSlug,
+      roundLabel: roundSlug,
+      roundName: 'Quarterfinals',
+      roundStartsAt: started,
+      whitePlayer: white,
+      blackPlayer: black,
+      status: status,
+    );
+
+    final games = [
+      stageGame(
+        id: 'ab-g2',
+        roundId: 'round-qf-2',
+        roundSlug: 'game-2',
+        white: 'Beck',
+        black: 'Adams',
+        status: GameStatus.draw,
+      ),
+      stageGame(
+        id: 'ab-g1',
+        roundId: 'round-qf-1',
+        roundSlug: 'game-1',
+        white: 'Adams',
+        black: 'Beck',
+        status: GameStatus.whiteWins,
+      ),
+      stageGame(
+        id: 'cd-g1',
+        roundId: 'round-qf-1',
+        roundSlug: 'game-1',
+        white: 'Card',
+        black: 'Dole',
+        status: GameStatus.draw,
+      ),
+      stageGame(
+        id: 'cd-g2',
+        roundId: 'round-qf-2',
+        roundSlug: 'game-2',
+        white: 'Dole',
+        black: 'Card',
+        status: GameStatus.draw,
+      ),
+    ];
+
+    final groups = eventRailRoundGroupsForTesting(games);
+    expect(groups, hasLength(1));
+    expect(groups.single.title, 'Quarterfinals');
+
+    final segments = eventRailRoundSegmentsForTesting(games);
+    expect(segments, hasLength(2));
+    expect(segments[0].title, 'Adams vs Beck');
+    expect(segments[0].score, '1½–½');
+    expect(segments[0].gameIds, ['ab-g1', 'ab-g2']);
+    expect(segments[1].title, 'Card vs Dole');
+    expect(segments[1].score, '1–1');
+    expect(segments[1].gameIds, ['cd-g1', 'cd-g2']);
   });
 
   test(
@@ -768,7 +981,7 @@ void main() {
     expect(board2Top, lessThan(board10Top));
   });
 
-  testWidgets('upcoming event rounds stay hidden until see more is toggled', (
+  testWidgets('upcoming event rounds render below played rounds', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -800,19 +1013,14 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('See 1 upcoming round'), findsOneWidget);
-    expect(find.text('1 game scheduled'), findsOneWidget);
+    // Mobile Games-tab parity: no upcoming toggle; future rounds are always
+    // rendered, sorted below the played rounds.
+    expect(find.textContaining('upcoming round'), findsNothing);
     expect(find.text('Round 2'), findsOneWidget);
-    expect(find.text('Round 4'), findsNothing);
-
-    await tester.tap(find.text('See 1 upcoming round'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Hide upcoming rounds'), findsOneWidget);
     expect(find.text('Round 4'), findsOneWidget);
     expect(
       tester.getTopLeft(find.text('Round 4')).dy,
-      lessThan(tester.getTopLeft(find.text('Round 2')).dy),
+      greaterThan(tester.getTopLeft(find.text('Round 2')).dy),
     );
   });
 
@@ -1346,10 +1554,14 @@ TournamentGameSummary _summary({
   DateTime? startsAt,
   DateTime? roundStartsAt,
   DateTime? lastMoveTime,
+  String roundId = '',
+  String roundSlug = '',
   String roundName = '',
   int? boardNumber,
   String whiteTitle = '',
   String blackTitle = '',
+  String whiteTeam = '',
+  String blackTeam = '',
   String tourId = '',
 }) {
   return TournamentGameSummary(
@@ -1362,6 +1574,8 @@ TournamentGameSummary _summary({
     blackTitle: blackTitle,
     hasPgn: true,
     pgn: pgn,
+    roundId: roundId,
+    roundSlug: roundSlug,
     roundLabel: roundLabel,
     roundName: roundName,
     boardNumber: boardNumber,
@@ -1370,5 +1584,7 @@ TournamentGameSummary _summary({
     startsAt: startsAt,
     roundStartsAt: roundStartsAt,
     hasStarted: hasStarted,
+    whiteTeam: whiteTeam,
+    blackTeam: blackTeam,
   );
 }

@@ -38,6 +38,7 @@ import 'package:chessever/screens/player_profile/provider/player_profile_provide
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/round_ordering.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/time_utils.dart';
@@ -47,9 +48,6 @@ const Duration _kSidebarLiveActivityWindow = Duration(minutes: 120);
 
 final _eventRoundExpandedProvider = StateProvider.autoDispose
     .family<bool, String>((ref, key) => true);
-
-final _eventUpcomingVisibleProvider = StateProvider.autoDispose
-    .family<bool, String>((ref, key) => false);
 
 final _gameRailTabProvider = StateProvider.autoDispose
     .family<_GameRailTab?, String>((ref, tabId) => null);
@@ -91,6 +89,43 @@ List<String> eventRailOrderedIdsForTesting(
       .expand((group) => group.games)
       .map((game) => game.id)
       .toList(growable: false);
+}
+
+@visibleForTesting
+List<
+  ({
+    String id,
+    String title,
+    String status,
+    bool pairingOnly,
+    List<String> gameIds,
+  })
+>
+eventRailRoundGroupsForTesting(List<TournamentGameSummary> games) {
+  return [
+    for (final group in _buildRoundGroups(games, groupByRound: true))
+      (
+        id: group.id,
+        title: group.title,
+        status: group.status.name,
+        pairingOnly: group.pairingOnly,
+        gameIds: [for (final game in group.games) game.id],
+      ),
+  ];
+}
+
+@visibleForTesting
+List<({String? title, String? score, List<String> gameIds})>
+eventRailRoundSegmentsForTesting(List<TournamentGameSummary> games) {
+  return [
+    for (final group in _buildRoundGroups(games, groupByRound: true))
+      for (final segment in group.displaySegments)
+        (
+          title: segment.title,
+          score: segment.score,
+          gameIds: [for (final game in segment.games) game.id],
+        ),
+  ];
 }
 
 @visibleForTesting
@@ -763,31 +798,10 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
               groupByRound: resolved.kind == _GameListKind.event,
               preserveInputOrder: preserveEventInputOrder,
             );
-    final showUpcoming =
-        resolved.kind == _GameListKind.event &&
-        ref.watch(_eventUpcomingVisibleProvider(railKey));
-    final upcomingGames =
-        resolved.kind == _GameListKind.event
-            ? resolved.games.where(_isUpcomingGameForRail).toList()
-            : const <TournamentGameSummary>[];
-    final upcomingGroups =
-        upcomingGames.isEmpty
-            ? const <_EventRoundGroup>[]
-            : _buildRoundGroups(
-              upcomingGames,
-              groupByRound: true,
-              preserveInputOrder: preserveEventInputOrder,
-            );
-    final roundGroups =
-        resolved.kind == _GameListKind.event && !showUpcoming
-            ? _buildRoundGroups(
-              resolved.games
-                  .where((game) => !_isUpcomingGameForRail(game))
-                  .toList(growable: false),
-              groupByRound: true,
-              preserveInputOrder: preserveEventInputOrder,
-            )
-            : allRoundGroups;
+    // Mobile Games-tab parity: every round group is rendered — the focus
+    // round leads, started rounds follow newest-first, upcoming rounds sit
+    // at the bottom (see `_buildRoundGroups`). No separate upcoming toggle.
+    final roundGroups = allRoundGroups;
     final showBoardColumn = resolved.kind == _GameListKind.event;
     final expandedByGroup = <String, bool>{
       for (final group in roundGroups)
@@ -1065,21 +1079,6 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
                           physics: const DesktopScrollPhysics(),
                           padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
                           children: [
-                            if (upcomingGroups.isNotEmpty)
-                              _UpcomingRoundsToggle(
-                                expanded: showUpcoming,
-                                roundCount: upcomingGroups.length,
-                                gameCount: upcomingGames.length,
-                                onToggle:
-                                    () =>
-                                        ref
-                                            .read(
-                                              _eventUpcomingVisibleProvider(
-                                                railKey,
-                                              ).notifier,
-                                            )
-                                            .state = !showUpcoming,
-                              ),
                             for (final group in roundGroups)
                               _EventRoundSection(
                                 group: group,
@@ -1280,12 +1279,7 @@ Future<void> navigateActiveEventGame(
       resolved.kind == _GameListKind.favorites
           ? _buildDateGroups(resolved.games)
           : _buildRoundGroups(
-            resolved.kind == _GameListKind.event &&
-                    !ref.read(_eventUpcomingVisibleProvider(activeTabId))
-                ? resolved.games
-                    .where((game) => !_isUpcomingGameForRail(game))
-                    .toList(growable: false)
-                : resolved.games,
+            resolved.games,
             groupByRound: resolved.kind == _GameListKind.event,
             preserveInputOrder: preserveEventInputOrder,
           );
@@ -1312,7 +1306,7 @@ Future<void> navigateActiveEventGame(
   // collapsed by the user; expand it so the row scrolls into view once
   // the active tab re-renders.
   if (resolved.kind == _GameListKind.event) {
-    final roundKey = _roundKey(nextGame);
+    final roundKey = _roundKeyResolverFor(resolved.games)(nextGame);
     if (!ref.read(_eventRoundExpandedProvider(roundKey))) {
       ref.read(_eventRoundExpandedProvider(roundKey).notifier).state = true;
     }
@@ -1777,12 +1771,40 @@ class _EventRoundGroup {
     required this.status,
     required this.startsAt,
     required this.games,
+    this.pairingOnly = false,
+    this.segments,
   });
 
   final String id;
   final String title;
   final RoundStatus status;
   final DateTime? startsAt;
+
+  /// Rows in render order. Always the flattened concatenation of
+  /// [displaySegments], so keyboard navigation and range selection walk the
+  /// exact order shown on screen.
+  final List<TournamentGameSummary> games;
+
+  /// True for upcoming rounds whose rows are published pairings with no
+  /// moves yet (mobile's pairing-only round cards). Always rendered last.
+  final bool pairingOnly;
+
+  /// Matchup slices for team / knockout rounds; null for plain rounds.
+  final List<_EventRoundSegment>? segments;
+
+  List<_EventRoundSegment> get displaySegments =>
+      segments ?? [_EventRoundSegment(games: games)];
+}
+
+/// A slice of a round's rows rendered under an optional matchup header.
+/// Regular events yield one header-less segment; team events group boards
+/// by team matchup; knockout match rounds group by player pairing —
+/// mirroring the mobile Games tab's team / knockout match cards.
+class _EventRoundSegment {
+  const _EventRoundSegment({this.title, this.score, required this.games});
+
+  final String? title;
+  final String? score;
   final List<TournamentGameSummary> games;
 }
 
@@ -1803,71 +1825,393 @@ List<_EventRoundGroup> _buildRoundGroups(
     ];
   }
 
+  final keyFor = _roundKeyResolverFor(games);
   final byRound = <String, List<TournamentGameSummary>>{};
   for (final game in games) {
     byRound
-        .putIfAbsent(_roundKey(game), () => <TournamentGameSummary>[])
+        .putIfAbsent(keyFor(game), () => <TournamentGameSummary>[])
         .add(game);
   }
 
-  final groups =
-      byRound.entries.map((entry) {
-        final roundGames = List<TournamentGameSummary>.from(entry.value);
-        if (!preserveInputOrder) {
-          roundGames.sort(_compareEventGamesInRound);
-        }
-        final first = roundGames.first;
-        return _EventRoundGroup(
+  if (preserveInputOrder) {
+    // Player-profile event rails mirror the source list's own ordering.
+    return [
+      for (final entry in byRound.entries)
+        _EventRoundGroup(
           id: entry.key,
-          title: _roundTitle(first),
-          status: _roundStatus(roundGames),
-          startsAt: _roundHeaderStartsAt(roundGames),
-          games: roundGames,
-        );
-      }).toList();
-
-  if (preserveInputOrder) return groups;
-
-  // Deterministic reverse chronological order. The mobile `sortRoundsForDisplay`
-  // rotates a "focus" round to the top based on `DateTime.now()` and
-  // live-status flips, so every parent rebuild (toggling a round card's
-  // expand/collapse triggers one) can produce a different order — the
-  // round cards and the games inside reshuffle as the focus round moves.
-  // The board-pane rail wants a stable linear list, so sort by start time
-  // with round-number / title tiebreakers and ignore the focus rotation.
-  groups.sort(_compareRoundGroupsForRail);
-  return groups;
-}
-
-int _compareRoundGroupsForRail(_EventRoundGroup a, _EventRoundGroup b) {
-  final aStart = a.startsAt;
-  final bStart = b.startsAt;
-  if (aStart != null && bStart != null) {
-    final c = bStart.compareTo(aStart);
-    if (c != 0) return c;
-  } else if (aStart != null) {
-    return -1;
-  } else if (bStart != null) {
-    return 1;
+          title: _roundGroupTitle(entry.value),
+          status: _roundStatus(entry.value),
+          startsAt: _roundHeaderStartsAt(entry.value),
+          games: List<TournamentGameSummary>.from(entry.value),
+        ),
+    ];
   }
 
-  final aNumber = _genericRoundNumberFromTitle(a.title);
-  final bNumber = _genericRoundNumberFromTitle(b.title);
-  if (aNumber != null && bNumber != null && aNumber != bNumber) {
-    return bNumber.compareTo(aNumber);
-  }
-  if (aNumber != null && bNumber == null) return -1;
-  if (aNumber == null && bNumber != null) return 1;
+  // Mobile Games-tab parity (mobile `gamesTourGroupedProvider` +
+  // `sortRoundsForDisplay`):
+  //  - a round shows its board-visible games (resolved players + a played
+  //    position);
+  //  - upcoming rounds with published pairings surface those pairings but
+  //    always render last, soonest first;
+  //  - rounds whose rows are all "?" placeholders stay hidden until real
+  //    pairings or moves arrive.
+  final playedGroups = <_EventRoundGroup>[];
+  final pairingGroups = <_EventRoundGroup>[];
+  for (final entry in byRound.entries) {
+    final visible =
+        entry.value.where(_isBoardVisibleEventGame).toList()
+          ..sort(_compareEventGamesInRound);
+    if (visible.isNotEmpty) {
+      playedGroups.add(_eventRoundGroupFor(entry.key, visible));
+      continue;
+    }
 
-  return a.title.compareTo(b.title);
+    final pairings =
+        entry.value.where(_hasResolvedPlayers).toList()
+          ..sort(_comparePairingGames);
+    if (pairings.isEmpty) continue;
+    final group = _eventRoundGroupFor(entry.key, pairings, pairingOnly: true);
+    if (group.status != RoundStatus.upcoming) continue;
+    pairingGroups.add(group);
+  }
+
+  // Played rounds ordered exactly like the mobile Games tab: focus round
+  // (live / just-started / next-up) first, other started rounds
+  // newest-first, not-yet-started rounds soonest-first at the bottom.
+  final models = [
+    for (final group in playedGroups)
+      GamesAppBarModel(
+        id: group.id,
+        name: group.title,
+        startsAt: group.startsAt,
+        roundStatus: group.status,
+      ),
+  ];
+  final sortedModels = sortRoundsForDisplay(
+    models,
+    resolveDate: (model) => model.startsAt,
+  );
+  final orderById = <String, int>{
+    for (var i = 0; i < sortedModels.length; i++) sortedModels[i].id: i,
+  };
+  playedGroups.sort(
+    (a, b) => (orderById[a.id] ?? 0).compareTo(orderById[b.id] ?? 0),
+  );
+
+  // Pairing-only rounds always come last, soonest first (mobile parity).
+  pairingGroups.sort((a, b) {
+    final aStart = a.startsAt;
+    final bStart = b.startsAt;
+    if (aStart == null && bStart == null) return a.title.compareTo(b.title);
+    if (aStart == null) return 1;
+    if (bStart == null) return -1;
+    final cmp = aStart.compareTo(bStart);
+    return cmp != 0 ? cmp : a.title.compareTo(b.title);
+  });
+
+  return [...playedGroups, ...pairingGroups];
 }
 
-int? _genericRoundNumberFromTitle(String title) {
-  final match = RegExp(
-    r'^round\s+(\d+)$',
-    caseSensitive: false,
-  ).firstMatch(title.trim());
-  return match == null ? null : int.tryParse(match.group(1)!);
+_EventRoundGroup _eventRoundGroupFor(
+  String id,
+  List<TournamentGameSummary> games, {
+  bool pairingOnly = false,
+}) {
+  final startsAt = _roundHeaderStartsAt(games);
+  final segments = _buildEventRoundSegments(games);
+  final orderedGames =
+      segments == null
+          ? games
+          : [for (final segment in segments) ...segment.games];
+  return _EventRoundGroup(
+    id: id,
+    title: _roundGroupTitle(games),
+    status: _eventRoundStatus(games, startsAt: startsAt),
+    startsAt: startsAt,
+    games: orderedGames,
+    pairingOnly: pairingOnly,
+    segments: segments,
+  );
+}
+
+/// Round-group key resolver. Knockout stages surface as several DB rounds
+/// (`game-1`, `game-2`, `tiebreak-…`) that all carry the same propagated
+/// stage `roundName`, so grouping prefers that name — a stage then renders
+/// as one section, mirroring the mobile Games tab's synthetic stage rounds.
+/// Games missing the name (fresh realtime rows) inherit it from siblings
+/// that share their `roundId`.
+String Function(TournamentGameSummary game) _roundKeyResolverFor(
+  List<TournamentGameSummary> games,
+) {
+  final nameByRoundId = <String, String>{};
+  for (final game in games) {
+    final roundId = game.roundId.trim();
+    final name = game.roundName.trim();
+    if (roundId.isEmpty || name.isEmpty) continue;
+    nameByRoundId.putIfAbsent(roundId, () => name);
+  }
+  return (game) {
+    var name = game.roundName.trim();
+    if (name.isEmpty) {
+      final roundId = game.roundId.trim();
+      name = roundId.isEmpty ? '' : (nameByRoundId[roundId] ?? '');
+    }
+    if (name.isNotEmpty) return 'round-name:${name.toLowerCase()}';
+    return _roundKey(game);
+  };
+}
+
+String _roundGroupTitle(List<TournamentGameSummary> games) {
+  for (final game in games) {
+    final name = game.roundName.trim();
+    if (name.isNotEmpty) return name;
+  }
+  return _roundTitle(games.first);
+}
+
+/// Team / knockout matchup slices for a round, mirroring the mobile Games
+/// tab: team events group boards into `Team A vs Team B` matchups, knockout
+/// match rounds group repeated head-to-head games (`game-1`, `game-2`,
+/// `tiebreak-*`) into player matchups. Returns null for plain rounds.
+List<_EventRoundSegment>? _buildEventRoundSegments(
+  List<TournamentGameSummary> games,
+) {
+  if (games.isEmpty) return null;
+  if (_isTeamEventRound(games)) {
+    return _matchupSegments(
+      games,
+      leftLabelOf: (game) => game.whiteTeam,
+      rightLabelOf: (game) => game.blackTeam,
+    );
+  }
+  if (_isKnockoutMatchRound(games)) {
+    final segments = _matchupSegments(
+      games,
+      leftLabelOf: (game) => game.whitePlayer,
+      rightLabelOf: (game) => game.blackPlayer,
+      compactLabels: true,
+    );
+    for (final segment in segments) {
+      segment.games.sort(
+        (a, b) => _compareMatchGameSlugs(a.roundSlug, b.roundSlug),
+      );
+    }
+    return segments;
+  }
+  return null;
+}
+
+bool _isTeamEventRound(List<TournamentGameSummary> games) {
+  return games.every(
+    (game) =>
+        game.whiteTeam.trim().isNotEmpty && game.blackTeam.trim().isNotEmpty,
+  );
+}
+
+/// Summary-model port of `KnockoutMatchDetector.isKnockoutMatchFormat`:
+/// ≥4 games, ≥30% of round slugs look like `game-N` / `tiebreak`, more than
+/// one distinct matchup, and most matchups have 2+ games.
+bool _isKnockoutMatchRound(List<TournamentGameSummary> games) {
+  if (games.length < 4) return false;
+
+  final patternCount =
+      games.where((game) {
+        final slug = game.roundSlug.toLowerCase();
+        return RegExp(r'game-\d+').hasMatch(slug) || slug.contains('tiebreak');
+      }).length;
+  if (patternCount / games.length < 0.3) return false;
+
+  final matchups = <String, int>{};
+  for (final game in games) {
+    final key = _normalizedPairKey(game.whitePlayer, game.blackPlayer);
+    matchups[key] = (matchups[key] ?? 0) + 1;
+  }
+  if (matchups.length <= 1) return false;
+  final multiGameMatchups = matchups.values.where((count) => count >= 2).length;
+  return multiGameMatchups / matchups.length > 0.5;
+}
+
+List<_EventRoundSegment> _matchupSegments(
+  List<TournamentGameSummary> games, {
+  required String Function(TournamentGameSummary game) leftLabelOf,
+  required String Function(TournamentGameSummary game) rightLabelOf,
+  bool compactLabels = false,
+}) {
+  final buckets = <String, List<TournamentGameSummary>>{};
+  final labels = <String, (String, String)>{};
+  for (final game in games) {
+    final left = leftLabelOf(game).trim();
+    final right = rightLabelOf(game).trim();
+    final key = _normalizedPairKey(left, right);
+    buckets.putIfAbsent(key, () => <TournamentGameSummary>[]).add(game);
+    labels.putIfAbsent(key, () => (left, right));
+  }
+  return [
+    for (final entry in buckets.entries)
+      _EventRoundSegment(
+        title:
+            compactLabels
+                ? '${_compactPlayerName(labels[entry.key]!.$1)} vs ${_compactPlayerName(labels[entry.key]!.$2)}'
+                : '${labels[entry.key]!.$1} vs ${labels[entry.key]!.$2}',
+        score: _matchupScoreDisplay(
+          entry.value,
+          isLeftSideWhite:
+              (game) =>
+                  leftLabelOf(game).trim().toLowerCase() ==
+                  labels[entry.key]!.$1.toLowerCase(),
+        ),
+        games: entry.value,
+      ),
+  ];
+}
+
+String _normalizedPairKey(String a, String b) {
+  final pair = [a.trim().toLowerCase(), b.trim().toLowerCase()]..sort();
+  return '${pair[0]}|${pair[1]}';
+}
+
+/// `game-N` before tiebreaks (rapid < blitz < armageddon), matching
+/// `KnockoutMatchDetector._compareRoundSlugs`.
+int _compareMatchGameSlugs(String a, String b) {
+  final aInfo = _parseMatchSlugInfo(a);
+  final bInfo = _parseMatchSlugInfo(b);
+  if (aInfo.$1 != bInfo.$1) return aInfo.$1.compareTo(bInfo.$1);
+  if (aInfo.$2 != bInfo.$2) return aInfo.$2.compareTo(bInfo.$2);
+  return aInfo.$3.compareTo(bInfo.$3);
+}
+
+(int, int, int) _parseMatchSlugInfo(String slug) {
+  final lower = slug.trim().toLowerCase();
+  if (lower.startsWith('game-')) {
+    final number = int.tryParse(lower.replaceAll('game-', '')) ?? 0;
+    return (0, number, 0);
+  }
+  if (lower.contains('tiebreak')) {
+    final tiebreakMatch = RegExp(r'tiebreak-(\d+)').firstMatch(lower);
+    final rapidMatch = RegExp(r'rapid-(\d+)').firstMatch(lower);
+    final blitzMatch = RegExp(r'blitz-(\d+)').firstMatch(lower);
+    final tiebreakNumber = int.tryParse(tiebreakMatch?.group(1) ?? '1') ?? 1;
+    final subNumber =
+        int.tryParse(rapidMatch?.group(1) ?? blitzMatch?.group(1) ?? '1') ?? 1;
+    var typePriority = 10;
+    if (blitzMatch != null) typePriority = 20;
+    if (lower.contains('armageddon')) typePriority = 30;
+    return (typePriority + tiebreakNumber, tiebreakNumber, subNumber);
+  }
+  return (999, 0, 0);
+}
+
+String _matchupScoreDisplay(
+  List<TournamentGameSummary> games, {
+  required bool Function(TournamentGameSummary game) isLeftSideWhite,
+}) {
+  var left = 0.0;
+  var right = 0.0;
+  var finished = 0;
+  for (final game in games) {
+    final leftIsWhite = isLeftSideWhite(game);
+    switch (game.status) {
+      case GameStatus.whiteWins:
+        if (leftIsWhite) {
+          left += 1;
+        } else {
+          right += 1;
+        }
+        finished++;
+      case GameStatus.blackWins:
+        if (leftIsWhite) {
+          right += 1;
+        } else {
+          left += 1;
+        }
+        finished++;
+      case GameStatus.draw:
+        left += 0.5;
+        right += 0.5;
+        finished++;
+      default:
+        break;
+    }
+  }
+  if (finished == 0) return '';
+  return '${_formatMatchPoints(left)}–${_formatMatchPoints(right)}';
+}
+
+String _formatMatchPoints(double value) {
+  final whole = value.truncate();
+  final hasHalf = (value - whole) >= 0.5;
+  if (whole == 0 && hasHalf) return '½';
+  return hasHalf ? '$whole½' : '$whole';
+}
+
+/// Round status with mobile semantics: any actually-live board marks the
+/// round LIVE (the rail's realtime stand-in for mobile's `live_round_ids`
+/// signal); otherwise classify from the round's scheduled start time via
+/// `GamesAppBarModel.status` — a future start is UPCOMING even when the
+/// pre-created game rows claim `hasStarted`.
+RoundStatus _eventRoundStatus(
+  List<TournamentGameSummary> games, {
+  required DateTime? startsAt,
+}) {
+  final hasLiveGame = games.any(
+    (game) => _isActualLiveGame(
+      status: game.status,
+      hasStarted: game.hasStarted,
+      lastMoveTime: game.lastMoveTime,
+    ),
+  );
+  if (hasLiveGame) return RoundStatus.live;
+  // Rounds with no propagated schedule (data-poor sources) fall back to the
+  // game-derived classification instead of reading as perpetually upcoming.
+  if (startsAt == null) return _roundStatus(games);
+  return GamesAppBarModel.status(
+    currentId: '',
+    startsAt: startsAt,
+    liveRound: const <String>[],
+  );
+}
+
+bool _isBoardVisibleEventGame(TournamentGameSummary game) {
+  return _hasResolvedPlayers(game) && _hasPlayedPosition(game);
+}
+
+bool _hasResolvedPlayers(TournamentGameSummary game) {
+  return _isResolvedPlayerName(game.whitePlayer) &&
+      _isResolvedPlayerName(game.blackPlayer);
+}
+
+bool _isResolvedPlayerName(String name) {
+  final normalized = name.trim().toLowerCase();
+  if (normalized.isEmpty) return false;
+  return normalized != '?' &&
+      normalized != '??' &&
+      normalized != 'tbd' &&
+      normalized != 'tba' &&
+      normalized != 'unknown';
+}
+
+bool _hasPlayedPosition(TournamentGameSummary game) {
+  if (game.lastMoveTime != null) return true;
+  if (pgnHasMoves(game.pgn)) return true;
+  final fen = game.fen?.trim();
+  if (fen == null || fen.isEmpty) return false;
+  return !_isInitialFen(fen);
+}
+
+bool _isInitialFen(String fen) {
+  final board = fen.split(RegExp(r'\s+')).first;
+  return board == 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
+}
+
+int _comparePairingGames(TournamentGameSummary a, TournamentGameSummary b) {
+  final aBoard = a.boardNumber;
+  final bBoard = b.boardNumber;
+  if (aBoard != null && bBoard != null && aBoard != bBoard) {
+    return aBoard.compareTo(bBoard);
+  }
+  if (aBoard != null) return -1;
+  if (bBoard != null) return 1;
+  return a.id.compareTo(b.id);
 }
 
 /// Groups favorites-rail games by their playing day rather than by round,
@@ -2145,10 +2489,6 @@ int _compareEventGamesInRound(
 
 DateTime? _eventGameDateTime(TournamentGameSummary game) {
   return game.startsAt ?? game.lastMoveTime;
-}
-
-bool _isUpcomingGameForRail(TournamentGameSummary game) {
-  return _roundStatus([game]) == RoundStatus.upcoming;
 }
 
 int? _parseGameNumber(String value) {
@@ -2534,143 +2874,6 @@ String _humanizeContextLabel(String value) {
         return '${lower[0].toUpperCase()}${lower.substring(1)}';
       })
       .join(' ');
-}
-
-class _UpcomingRoundsToggle extends StatefulWidget {
-  const _UpcomingRoundsToggle({
-    required this.expanded,
-    required this.roundCount,
-    required this.gameCount,
-    required this.onToggle,
-  });
-
-  final bool expanded;
-  final int roundCount;
-  final int gameCount;
-  final VoidCallback onToggle;
-
-  @override
-  State<_UpcomingRoundsToggle> createState() => _UpcomingRoundsToggleState();
-}
-
-class _UpcomingRoundsToggleState extends State<_UpcomingRoundsToggle> {
-  bool _hovered = false;
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final roundLabel =
-        widget.roundCount == 1
-            ? '1 upcoming round'
-            : '${widget.roundCount} upcoming rounds';
-    final gameLabel =
-        widget.gameCount == 1
-            ? '1 game scheduled'
-            : '${widget.gameCount} games scheduled';
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
-      child: ClickCursor(
-        child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit:
-              (_) => setState(() {
-                _hovered = false;
-                _pressed = false;
-              }),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.onToggle,
-            onTapDown: (_) => setState(() => _pressed = true),
-            onTapUp: (_) => setState(() => _pressed = false),
-            onTapCancel: () => setState(() => _pressed = false),
-            child: SingleMotionBuilder(
-              value: _pressed ? 0.985 : (_hovered ? 1.003 : 1.0),
-              motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-              builder:
-                  (context, scale, child) => Transform.scale(
-                    scale: scale,
-                    filterQuality: FilterQuality.medium,
-                    child: child,
-                  ),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 120),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 9,
-                ),
-                decoration: BoxDecoration(
-                  color:
-                      _hovered
-                          ? kPrimaryColor.withValues(alpha: 0.14)
-                          : kPrimaryColor.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(7),
-                  border: Border.all(
-                    color:
-                        _hovered
-                            ? kPrimaryColor.withValues(alpha: 0.42)
-                            : kPrimaryColor.withValues(alpha: 0.24),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      widget.expanded
-                          ? Icons.unfold_less_rounded
-                          : Icons.unfold_more_rounded,
-                      size: 17,
-                      color: kPrimaryColor,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            widget.expanded
-                                ? 'Hide upcoming rounds'
-                                : 'See $roundLabel',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: kWhiteColor,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            gameLabel,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: kWhiteColor70,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                              fontFeatures: [FontFeature.tabularFigures()],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Icon(
-                      widget.expanded
-                          ? Icons.keyboard_arrow_up_rounded
-                          : Icons.keyboard_arrow_down_rounded,
-                      size: 18,
-                      color: kWhiteColor70,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _DatabaseGamesList extends ConsumerWidget {
@@ -3321,51 +3524,62 @@ class _EventRoundSection extends ConsumerWidget {
                         .read(_eventRoundExpandedProvider(group.id).notifier)
                         .state = !expanded,
           ),
-          if (expanded) ...[
-            const SizedBox(height: 5),
-            _EventRoundTable(
-              games: group.games,
-              copyScopeGames: eventGames,
-              selectedGameId: selectedGameId,
-              selectedGameIds: selectedGameIds,
-              highlightedGameId: highlightedGameId,
-              selectedRowKey: selectedRowKey,
-              liveSummaries: liveSummaries,
-              showBoardColumn: showBoardColumn,
-              onHighlightGame: onHighlightGame,
-              onRangeHighlightGame: onRangeHighlightGame,
-              onOpenGame: (
-                game, {
-                required bool inNewTab,
-                bool inNewWindow = false,
-              }) async {
-                await _openEventGame(
-                  ref: ref,
-                  context: context,
-                  container: ProviderScope.containerOf(context, listen: false),
-                  kind: kind,
-                  game: game,
-                  eventGames: eventGames,
-                  tournamentTitle: tournamentTitle,
-                  activeArgs: activeArgs,
-                  inNewTab: inNewTab,
-                  inNewWindow: inNewWindow,
-                );
-              },
-              onInsertGame:
-                  (game) => _insertEventGame(
+          if (expanded)
+            for (final segment in group.displaySegments) ...[
+              if (segment.title != null) ...[
+                const SizedBox(height: 6),
+                _EventMatchupHeader(
+                  title: segment.title!,
+                  score: segment.score,
+                ),
+              ],
+              const SizedBox(height: 5),
+              _EventRoundTable(
+                games: segment.games,
+                copyScopeGames: eventGames,
+                selectedGameId: selectedGameId,
+                selectedGameIds: selectedGameIds,
+                highlightedGameId: highlightedGameId,
+                selectedRowKey: selectedRowKey,
+                liveSummaries: liveSummaries,
+                showBoardColumn: showBoardColumn,
+                onHighlightGame: onHighlightGame,
+                onRangeHighlightGame: onRangeHighlightGame,
+                onOpenGame: (
+                  game, {
+                  required bool inNewTab,
+                  bool inNewWindow = false,
+                }) async {
+                  await _openEventGame(
                     ref: ref,
-                    game: game,
-                    tournamentTitle: tournamentTitle,
-                  ),
-              onCopyGames:
-                  (games) => _copyEventGameSummariesAsPgn(
                     context: context,
-                    ref: ref,
-                    games: games,
-                  ),
-            ),
-          ],
+                    container: ProviderScope.containerOf(
+                      context,
+                      listen: false,
+                    ),
+                    kind: kind,
+                    game: game,
+                    eventGames: eventGames,
+                    tournamentTitle: tournamentTitle,
+                    activeArgs: activeArgs,
+                    inNewTab: inNewTab,
+                    inNewWindow: inNewWindow,
+                  );
+                },
+                onInsertGame:
+                    (game) => _insertEventGame(
+                      ref: ref,
+                      game: game,
+                      tournamentTitle: tournamentTitle,
+                    ),
+                onCopyGames:
+                    (games) => _copyEventGameSummariesAsPgn(
+                      context: context,
+                      ref: ref,
+                      games: games,
+                    ),
+              ),
+            ],
         ],
       ),
     );
@@ -3706,6 +3920,53 @@ class _EventRoundStatusChip extends StatelessWidget {
               letterSpacing: 0.4,
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Slim matchup label above a segment of rows: `Team A vs Team B  2½–1½`
+/// for team rounds, `Player 1 vs Player 2  1½–½` for knockout matches.
+class _EventMatchupHeader extends StatelessWidget {
+  const _EventMatchupHeader({required this.title, this.score});
+
+  final String title;
+  final String? score;
+
+  @override
+  Widget build(BuildContext context) {
+    final scoreText = score?.trim() ?? '';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.2,
+              ),
+            ),
+          ),
+          if (scoreText.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Text(
+              scoreText,
+              maxLines: 1,
+              style: const TextStyle(
+                color: kWhiteColor,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w800,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
         ],
       ),
     );
