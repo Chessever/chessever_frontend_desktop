@@ -20,6 +20,12 @@ class GroupedGamesData {
   final List<GamesTourModel> allGames;
   final int providerGameCount;
 
+  /// Upcoming rounds whose only content is future pairings (resolved player
+  /// names, no moves yet). At most one of them — the very next round, when it
+  /// starts in less than an hour — is pinned to the TOP of [filteredRounds];
+  /// the rest render below every played round.
+  final Set<String> upcomingPairingRoundIds;
+
   GroupedGamesData({
     required this.filteredRounds,
     required this.gamesByRound,
@@ -30,6 +36,7 @@ class GroupedGamesData {
     required this.rounds,
     required this.allGames,
     required this.providerGameCount,
+    this.upcomingPairingRoundIds = const {},
   });
 }
 
@@ -127,6 +134,9 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
   }
 
   bool addGameToRound(String roundId, GamesTourModel game) {
+    if (!isEventBoardGameVisible(game)) {
+      return false;
+    }
     ensureRoundEntry(roundId);
     if (seenGameIdsPerRound[roundId]!.add(game.gameId)) {
       gamesByRound[roundId]!.add(game);
@@ -165,7 +175,10 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
         final stageAsync = ref.read(gamesTourProvider(stageTourId));
         final rawStageGames = stageAsync.valueOrNull ?? [];
         stageTourGames[stageTourId] =
-            rawStageGames.map((g) => GamesTourModel.fromGame(g)).toList();
+            rawStageGames
+                .map((g) => GamesTourModel.fromGame(g))
+                .where(isEventBoardGameVisible)
+                .toList();
       }
 
       for (final round in rounds) {
@@ -234,10 +247,96 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
     }
   }
 
-  final filteredRounds =
+  // Future rounds: Lichess publishes pairings for upcoming rounds ahead of
+  // time. Those games never pass isEventBoardGameVisible (no played position),
+  // so their rounds would be dropped entirely. Surface them as pairing-only
+  // rounds instead — but only with resolved player names ("?" placeholder
+  // pairings stay hidden) and never for multi-stage knockouts, whose rounds
+  // are synthetic stage ids.
+  final upcomingPairingRoundIds = <String>{};
+  if (!isMultiStageKnockout) {
+    for (final round in rounds) {
+      if (gamesByRound[round.id]?.isNotEmpty ?? false) continue;
+      // Rounds that are conclusively over (completed) are excluded; a round
+      // that flips to ongoing at starts_at while its broadcast lags keeps
+      // showing its pairings instead of vanishing until the first moves.
+      if (round.roundStatus == RoundStatus.completed) continue;
+
+      final pairings =
+          allGamesScreenModel
+              .where(
+                (game) =>
+                    game.roundId == round.id &&
+                    (isKnockoutTournament ||
+                        _shouldIncludeGame(displayMode, game)) &&
+                    _hasResolvedPlayer(game.whitePlayer) &&
+                    _hasResolvedPlayer(game.blackPlayer),
+              )
+              .toList()
+            ..sort((a, b) {
+              final aBoard = a.boardNr;
+              final bBoard = b.boardNr;
+              if (aBoard != null && bBoard != null) {
+                return aBoard.compareTo(bBoard);
+              }
+              if (aBoard != null) return -1;
+              if (bBoard != null) return 1;
+              return a.gameId.compareTo(b.gameId);
+            });
+      if (pairings.isEmpty) continue;
+
+      ensureRoundEntry(round.id);
+      for (final game in pairings) {
+        if (seenGameIdsPerRound[round.id]!.add(game.gameId)) {
+          gamesByRound[round.id]!.add(game);
+        }
+      }
+      upcomingPairingRoundIds.add(round.id);
+    }
+  }
+
+  final playedRounds =
       rounds
-          .where((round) => (gamesByRound[round.id]?.isNotEmpty ?? false))
+          .where(
+            (round) =>
+                !upcomingPairingRoundIds.contains(round.id) &&
+                (gamesByRound[round.id]?.isNotEmpty ?? false),
+          )
           .toList();
+  final upcomingPairingRounds =
+      rounds
+          .where((round) => upcomingPairingRoundIds.contains(round.id))
+          .toList()
+        ..sort((a, b) {
+          final aStart = a.startsAt;
+          final bStart = b.startsAt;
+          if (aStart == null && bStart == null) return a.name.compareTo(b.name);
+          if (aStart == null) return 1;
+          if (bStart == null) return -1;
+          final cmp = aStart.compareTo(bStart);
+          return cmp != 0 ? cmp : a.name.compareTo(b.name);
+        });
+
+  // At most ONE pairing round may render on TOP of the (newest-first) list,
+  // and only when ALL of these hold:
+  //   1. it is the one-and-only very next round of this tour,
+  //   2. its boards/matchups are already published (it IS a pairing round),
+  //   3. we are 100% sure it starts in less than an hour (known startsAt).
+  // Every other future pairing round renders below all played rounds.
+  GamesAppBarModel? topPairingRound;
+  if (upcomingPairingRounds.isNotEmpty) {
+    final next = upcomingPairingRounds.first;
+    final startsAt = next.startsAt;
+    if (startsAt != null &&
+        startsAt.difference(DateTime.now()) < const Duration(hours: 1)) {
+      topPairingRound = next;
+    }
+  }
+  final filteredRounds = [
+    if (topPairingRound != null) topPairingRound,
+    ...playedRounds,
+    ...upcomingPairingRounds.where((round) => round != topPairingRound),
+  ];
 
   return GroupedGamesData(
     filteredRounds: filteredRounds,
@@ -249,8 +348,67 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
     rounds: rounds,
     allGames: allGamesScreenModel,
     providerGameCount: providerGameCount,
+    upcomingPairingRoundIds: upcomingPairingRoundIds,
   );
 });
+
+/// Whether a game row is renderable as an event board: placeholder rows
+/// (unresolved "?" players or an unstarted position) must never surface as
+/// boards. Keep in sync with the mobile app's predicate of the same name in
+/// chessever-frontend.
+bool isEventBoardGameVisible(GamesTourModel game) {
+  if (!_hasResolvedPlayer(game.whitePlayer) ||
+      !_hasResolvedPlayer(game.blackPlayer)) {
+    return false;
+  }
+
+  if (_hasPlayedPosition(game)) {
+    return true;
+  }
+
+  // Do not turn unstarted pairings/placeholders into playable event boards.
+  // Pairing-only rounds are surfaced separately via upcomingPairingRoundIds.
+  return false;
+}
+
+bool _hasResolvedPlayer(PlayerCard player) {
+  final normalized = player.name.trim().toLowerCase();
+  if (normalized.isEmpty) return false;
+  return normalized != '?' &&
+      normalized != '??' &&
+      normalized != 'tbd' &&
+      normalized != 'tba' &&
+      normalized != 'unknown';
+}
+
+bool _hasPlayedPosition(GamesTourModel game) {
+  if (game.lastMove?.trim().isNotEmpty == true) return true;
+  if (_pgnContainsMoves(game.pgn)) return true;
+  final fen = game.fen?.trim();
+  if (fen == null || fen.isEmpty) return false;
+  return !_isInitialFen(fen);
+}
+
+bool _pgnContainsMoves(String? pgn) {
+  final text = pgn?.trim();
+  if (text == null || text.isEmpty) return false;
+  final withoutHeaders =
+      text
+          .split('\n')
+          .where((line) => !line.trimLeft().startsWith('['))
+          .join(' ')
+          .trim();
+  return RegExp(r'\b\d+\s*\.').hasMatch(withoutHeaders) ||
+      RegExp(
+        r'\b[a-h][1-8][a-h][1-8][qrbn]?\b',
+        caseSensitive: false,
+      ).hasMatch(withoutHeaders);
+}
+
+bool _isInitialFen(String fen) {
+  final board = fen.split(RegExp(r'\s+')).first;
+  return board == 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
+}
 
 bool _shouldIncludeGame(GameDisplayMode mode, GamesTourModel game) {
   switch (mode) {
