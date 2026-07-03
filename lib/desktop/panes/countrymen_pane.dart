@@ -14,6 +14,7 @@ import 'package:chessever/desktop/widgets/desktop_event_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_game_filter_dialog.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
+import 'package:chessever/desktop/widgets/desktop_player_title_chip.dart';
 import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
 import 'package:chessever/desktop/widgets/desktop_hero_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
@@ -880,7 +881,7 @@ class _CountryPlayerTileState extends ConsumerState<_CountryPlayerTile> {
                           children: [
                             if (player.title != null &&
                                 player.title!.isNotEmpty) ...[
-                              _TitleBadge(title: player.title!),
+                              DesktopPlayerTitleChip(title: player.title!, compact: true),
                               const SizedBox(width: 6),
                             ],
                             Expanded(
@@ -1118,31 +1119,6 @@ class _MiniChip extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _TitleBadge extends StatelessWidget {
-  const _TitleBadge({required this.title});
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
-      decoration: BoxDecoration(
-        color: getTitleBadgeColor(title),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        title,
-        style: const TextStyle(
-          color: kWhiteColor,
-          fontSize: 9.5,
-          fontWeight: FontWeight.w800,
-        ),
       ),
     );
   }

@@ -9,6 +9,7 @@ import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/current_user_profile.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
+import 'package:chessever/desktop/widgets/desktop_player_title_chip.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_user_profile_button.dart';
 import 'package:chessever/desktop/widgets/list_keyboard_scroll.dart';
@@ -367,7 +368,7 @@ class _PlayerTileState extends State<_PlayerTile> {
                         Row(
                           children: [
                             if (title != null) ...[
-                              _TitlePill(title: title),
+                              DesktopPlayerTitleChip(title: title, compact: true),
                               const SizedBox(width: 6),
                             ],
                             Expanded(
@@ -553,34 +554,6 @@ class _PlayerRank extends StatelessWidget {
           fontSize: 12,
           fontWeight: FontWeight.w600,
           height: 1,
-        ),
-      ),
-    );
-  }
-}
-
-class _TitlePill extends StatelessWidget {
-  const _TitlePill({required this.title});
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 18,
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: kPrimaryColor.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: kPrimaryColor.withValues(alpha: 0.35)),
-      ),
-      child: Text(
-        title,
-        style: const TextStyle(
-          color: kPrimaryColor,
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
         ),
       ),
     );

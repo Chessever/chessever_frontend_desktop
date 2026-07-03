@@ -27,6 +27,7 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/desktop_play_from_here_button.dart';
+import 'package:chessever/desktop/widgets/desktop_player_title_chip.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_value_slider.dart';
@@ -1086,7 +1087,7 @@ class _PairingLine extends StatelessWidget {
           child: Row(
             children: [
               if ((part?.identity.title ?? '').isNotEmpty) ...[
-                _TitlePill(title: part!.identity.title!),
+                DesktopPlayerTitleChip(title: part!.identity.title!, compact: true),
                 const SizedBox(width: 6),
               ],
               Expanded(
@@ -1115,32 +1116,6 @@ class _PairingLine extends StatelessWidget {
           ),
         ],
       ],
-    );
-  }
-}
-
-class _TitlePill extends StatelessWidget {
-  const _TitlePill({required this.title});
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-      decoration: BoxDecoration(
-        color: kPrimaryColor.withValues(alpha: 0.16),
-        border: Border.all(color: kPrimaryColor.withValues(alpha: 0.38)),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        title,
-        style: const TextStyle(
-          color: kPrimaryColor,
-          fontSize: 9,
-          fontWeight: FontWeight.w900,
-        ),
-      ),
     );
   }
 }
@@ -1586,7 +1561,10 @@ class _ParticipantRow extends StatelessWidget {
               Row(
                 children: [
                   if ((participant?.identity.title ?? '').isNotEmpty) ...[
-                    _TitlePill(title: participant!.identity.title!),
+                    DesktopPlayerTitleChip(
+                      title: participant!.identity.title!,
+                      compact: true,
+                    ),
                     const SizedBox(width: 7),
                   ],
                   Flexible(
