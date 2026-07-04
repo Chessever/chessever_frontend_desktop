@@ -1187,14 +1187,15 @@ class _BoardPreview extends ConsumerWidget {
                 .valueOrNull
                 ?.trim()
             : null;
+    // No played position yet (e.g. an upcoming round's pairings) → render the
+    // natural starting position instead of an empty placeholder, matching the
+    // mobile game card. A gamebase game still resolves its real final FEN above.
     final resolvedFen =
         isValidGameFen(remoteFen)
             ? remoteFen!
-            : (hasLocalFen
-                ? localFen!
-                : (data.canResolveRemoteFen ? _kStartFen : null));
+            : (hasLocalFen ? localFen! : _kStartFen);
 
-    if (resolvedFen == null || resolvedFen.isEmpty) {
+    if (resolvedFen.isEmpty) {
       return Container(
         color: kBackgroundColor,
         alignment: Alignment.center,
