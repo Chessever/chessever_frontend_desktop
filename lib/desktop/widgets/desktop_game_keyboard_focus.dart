@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -97,6 +98,7 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
     debugLabel: 'desktop-keyboard-selected',
   );
   String? _selectedGameId;
+  ValueListenable<TickerModeData>? _tickerMode;
 
   @override
   void initState() {
@@ -109,13 +111,52 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
       if (!mounted) return;
       // Initial autofocus only — never steal focus from another input that
       // a higher-level pane (search field, etc.) may have already claimed.
-      if (FocusScope.of(context).focusedChild == null) {
+      if (_canClaimFocus()) {
         _focusNode.requestFocus();
       }
       if (widget.ensureInitialSelectionVisible) {
         _ensureSelectedVisible();
       }
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // PersistentIndexedStack wraps inactive tabs in TickerMode+ExcludeFocus,
+    // which strips our focus when the tab is hidden. Watch the TickerMode
+    // notifier so we can re-claim keyboard focus when the tab is shown again
+    // — nothing else restores it.
+    final notifier = TickerMode.getValuesNotifier(context);
+    if (!identical(notifier, _tickerMode)) {
+      _tickerMode?.removeListener(_handleTickerModeChanged);
+      _tickerMode = notifier..addListener(_handleTickerModeChanged);
+    }
+  }
+
+  void _handleTickerModeChanged() {
+    if (_tickerMode?.value.enabled != true) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_canClaimFocus()) {
+        _focusNode.requestFocus();
+      }
+    });
+  }
+
+  /// Whether grabbing keyboard focus would steal it from something that
+  /// meaningfully owns it.
+  ///
+  /// Claimable states: nothing focused, focus parked on an ancestor (the
+  /// shell's autofocused FocusableActionDetector or a scope), or focus stuck
+  /// on a node inside a hidden tab (ExcludeFocus flips its canRequestFocus to
+  /// false before the pending unfocus is applied). A focused sibling — a
+  /// search field, a dialog — keeps focus.
+  bool _canClaimFocus() {
+    final primary = FocusManager.instance.primaryFocus;
+    if (primary == null || primary == _focusNode) return true;
+    if (!primary.canRequestFocus) return true;
+    return _focusNode.ancestors.contains(primary);
   }
 
   @override
@@ -144,6 +185,7 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
 
   @override
   void dispose() {
+    _tickerMode?.removeListener(_handleTickerModeChanged);
     _focusNode.dispose();
     super.dispose();
   }

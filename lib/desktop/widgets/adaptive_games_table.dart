@@ -609,18 +609,22 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
   }
 
   TableRow _footerRow() {
+    // Footer paints across the full row via _SublineCell (zero intrinsic
+    // width) so pagination footers ("Load more" / spinner) never inflate
+    // column 0's IntrinsicColumnWidth — that used to shift every column
+    // whenever the footer widget swapped mid-scroll.
     return TableRow(
       children: [
-        for (var i = 0; i < widget.columns.length; i++)
-          if (i == 0)
-            Padding(
-              padding: widget.padding.add(
-                const EdgeInsets.symmetric(vertical: 6),
-              ),
-              child: widget.footer!,
-            )
-          else
-            const SizedBox.shrink(),
+        _SublineCell(
+          targetWidth: widget.sublineTargetWidth,
+          child: Padding(
+            padding: widget.padding.add(
+              const EdgeInsets.symmetric(vertical: 6),
+            ),
+            child: widget.footer!,
+          ),
+        ),
+        for (var i = 1; i < widget.columns.length; i++) const SizedBox.shrink(),
       ],
     );
   }
