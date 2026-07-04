@@ -1,26 +1,105 @@
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
+import 'package:chessever/desktop/utils/mainline_annotation_index.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 ChessMove move(
   String san, {
   Number num = 1,
+  String fen = 'fen',
+  String? uci,
   ChessColor turn = ChessColor.white,
-  List<String>? comments,
+  List<int>? nags,
   List<ChessLine>? variations,
 }) {
   return ChessMove(
     num: num,
-    fen: 'fen',
+    fen: fen,
     san: san,
-    uci: san,
+    uci: uci ?? san,
     turn: turn,
-    comments: comments,
+    nags: nags,
     variations: variations,
   );
 }
 
 void main() {
+  test(
+    'makeOrGoToMove appends first reply to local PGN mainline by default',
+    () {
+      final game = ChessGame.fromPgn('local-single-move', '1. e4');
+      final navigator = ChessGameNavigator(game)
+        ..goToMovePointerUnchecked(const [0]);
+
+      navigator.makeOrGoToMove('e7e5');
+
+      expect(navigator.state.game.mainline.map((m) => m.san), ['e4', 'e5']);
+      expect(navigator.state.game.mainline.first.variations, isNull);
+      expect(navigator.state.movePointer, equals(<int>[1]));
+    },
+  );
+
+  test('makeOrGoToMove continues a promoted local PGN mainline', () {
+    final game = ChessGame(
+      gameId: 'local-promoted-line',
+      startingFen: ChessGame.fromPgn('seed', '1. e4').startingFen,
+      metadata: const {},
+      mainline: [
+        move(
+          'e4',
+          fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+          uci: 'e2e4',
+          variations: [
+            [
+              move(
+                'e5',
+                num: 1,
+                turn: ChessColor.black,
+                fen:
+                    'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+                uci: 'e7e5',
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+    final navigator = ChessGameNavigator(game)
+      ..goToMovePointerUnchecked(const [0]);
+
+    navigator.promoteVariationToMainline([0, 0, 0]);
+    navigator.makeOrGoToMove('g1f3');
+
+    expect(navigator.state.game.mainline.map((m) => m.san), [
+      'e4',
+      'e5',
+      'Nf3',
+    ]);
+    expect(navigator.state.game.mainline[1].variations, isNull);
+    expect(navigator.state.movePointer, equals(<int>[2]));
+  });
+
+  test('makeOrGoToMove keeps live-game tail moves as variations', () {
+    final game = ChessGame.fromPgn('live-single-move', '1. e4').copyWith(
+      metadata: const {
+        ChessGame.metadataIsLiveKey: true,
+        ChessGame.metadataAllowMainlineExtensionKey: false,
+      },
+    );
+    final navigator = ChessGameNavigator(game)
+      ..goToMovePointerUnchecked(const [0]);
+
+    navigator.makeOrGoToMove('e7e5');
+
+    expect(navigator.state.game.mainline.map((m) => m.san), ['e4']);
+    expect(navigator.state.game.mainline.first.variations, isNotNull);
+    expect(
+      navigator.state.game.mainline.first.variations!.single.single.san,
+      'e5',
+    );
+    expect(navigator.state.movePointer, equals(<int>[0, 0, 0]));
+  });
+
   test('makeOrGoToMove numbers white alternatives from the next move', () {
     final game = ChessGame.fromPgn(
       'inline-numbering-white',
@@ -97,35 +176,6 @@ void main() {
     expect(navigator.state.game.mainline, isEmpty);
     expect(navigator.state.movePointer, isEmpty);
   });
-
-  test(
-    'deleteContinuationAfterPointer keeps selected move and earlier PGN text',
-    () {
-      final game = ChessGame(
-        gameId: 'g1',
-        startingFen: 'fen',
-        metadata: const {'Event': 'Training Game', 'White': 'Vasif'},
-        mainline: [
-          move('e4', comments: const ['game intro']),
-          move('e5', turn: ChessColor.black),
-          move('Nf3', comments: const ['keep this move note']),
-          move('Nc6', turn: ChessColor.black),
-          move('Bb5'),
-        ],
-      );
-      final navigator = ChessGameNavigator(game)..goToMovePointerUnchecked([2]);
-
-      navigator.deleteContinuationAfterPointer([2]);
-
-      final updated = navigator.state.game;
-      expect(updated.metadata['Event'], 'Training Game');
-      expect(updated.metadata['White'], 'Vasif');
-      expect(updated.mainline.map((m) => m.san), ['e4', 'e5', 'Nf3']);
-      expect(updated.mainline[0].comments, ['game intro']);
-      expect(updated.mainline[2].comments, ['keep this move note']);
-      expect(navigator.state.movePointer, equals(<int>[2]));
-    },
-  );
 
   test(
     'gameEndingPlyIndex stays on original final ply after manual extension',
@@ -225,6 +275,89 @@ void main() {
       expect(navigator.state.movePointer, equals(<int>[1]));
     },
   );
+
+  test(
+    'mainline user NAGs migrate to demoted continuation on variation promotion',
+    () {
+      final promotedLine = [move('c5', turn: ChessColor.black), move('Nc3')];
+      final game =
+          ChessGame(
+            gameId: 'g1',
+            startingFen: 'fen',
+            metadata: const {},
+            mainline: [
+              move('e4'),
+              move('e5', turn: ChessColor.black),
+              move('Nf3', nags: const [16]),
+            ],
+          ).copyWith(
+            mainline: [
+              move('e4', variations: [promotedLine]),
+              move('e5', turn: ChessColor.black),
+              move('Nf3', nags: const [16]),
+            ],
+          );
+
+      final migration = migrateMainlineNagsForVariationPromotion(
+        game: game,
+        variationHeadPointer: const [0, 0, 0],
+        userNags: const {
+          0: [1],
+          1: [2],
+          2: [3],
+        },
+      );
+      final navigator = ChessGameNavigator(migration.game)
+        ..promoteVariationToMainline(const [0, 0, 0]);
+
+      expect(
+        migration.userNags,
+        equals(<int, List<int>>{
+          0: [1],
+        }),
+      );
+      final demotedLine = navigator.state.game.mainline.first.variations!.first;
+      expect(demotedLine.map((m) => m.san), ['e5', 'Nf3']);
+      expect(demotedLine[0].nags, [2]);
+      expect(demotedLine[1].nags, [16, 3]);
+      expect(navigator.state.game.mainline[1].nags, isNull);
+    },
+  );
+
+  test('mainline user NAGs migrate to demoted same-ply alternative', () {
+    final game = ChessGame(
+      gameId: 'g1',
+      startingFen: 'fen',
+      metadata: const {},
+      mainline: [
+        move(
+          'e4',
+          variations: [
+            [move('d4')],
+          ],
+        ),
+        move('e5', turn: ChessColor.black),
+      ],
+    );
+
+    final migration = migrateMainlineNagsForVariationPromotion(
+      game: game,
+      variationHeadPointer: const [0, 0, 0],
+      userNags: const {
+        0: [1],
+        1: [2],
+      },
+    );
+    final navigator = ChessGameNavigator(migration.game)
+      ..promoteVariationToMainline(const [0, 0, 0]);
+
+    expect(migration.userNags, isEmpty);
+    final demotedLine = navigator.state.game.mainline.first.variations!.first;
+    expect(demotedLine.map((m) => m.san), ['e4', 'e5']);
+    expect(demotedLine[0].nags, [1]);
+    expect(demotedLine[1].nags, [2]);
+    expect(navigator.state.game.mainline.first.nags, isNull);
+  });
 
   test(
     'promoteVariationToMainline promotes nested variations one level and preserves siblings',

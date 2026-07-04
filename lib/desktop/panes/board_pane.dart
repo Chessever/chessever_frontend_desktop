@@ -1624,7 +1624,16 @@ class _BoardPaneContent extends HookConsumerWidget {
     void promoteVariation(ChessMovePointer head) {
       final beforeGame = chessGame.value;
       final beforePointer = pointer.value;
-      final nav = _LocalChessGameNavigator(chessGame.value);
+      final promotionTabId = activeTabId ?? 'board-default';
+      final currentUserNags =
+          ref.read(userMoveNagsProvider)[promotionTabId] ??
+          const <int, List<int>>{};
+      final nagMigration = migrateMainlineNagsForVariationPromotion(
+        game: beforeGame,
+        variationHeadPointer: head,
+        userNags: currentUserNags,
+      );
+      final nav = _LocalChessGameNavigator(nagMigration.game);
       nav.goToMovePointerUnchecked(pointer.value);
       nav.promoteVariationToMainline(head);
       final nextGame = nav.currentState.game;
@@ -1636,6 +1645,15 @@ class _BoardPaneContent extends HookConsumerWidget {
       pushUndoSnapshot();
       chessGame.value = nextGame;
       pointer.value = nextPointer;
+      if (!_nagMapsEqual(currentUserNags, nagMigration.userNags)) {
+        final undoDepthBeforeNagRestore = undoStack.value.length;
+        ref
+            .read(userMoveNagsProvider.notifier)
+            .restoreTab(promotionTabId, nagMigration.userNags);
+        if (undoStack.value.length > undoDepthBeforeNagRestore) {
+          undoStack.value.removeLast();
+        }
+      }
       dirtySinceLoad.value = true;
     }
 
