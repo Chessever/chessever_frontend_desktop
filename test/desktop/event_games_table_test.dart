@@ -64,7 +64,10 @@ void main() {
             _summary(
               id: 'event-game-1',
               roundLabel: 'Round 7',
-              roundStartsAt: DateTime(2026, 7, 3, 16, 52),
+              // Started ~2h ago so the derived round status is deterministically
+              // `ongoing` (within the rolling 24h window); a fixed past date
+              // would age into `completed` and stop exercising the suppression.
+              roundStartsAt: DateTime.now().subtract(const Duration(hours: 2)),
               status: GameStatus.unknown,
               hasStarted: false,
               pgn: '1. e4 e5 *',

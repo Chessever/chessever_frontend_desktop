@@ -146,9 +146,14 @@ class Games {
       avgElo ??=
           json['avg_elo'] != null ? (json['avg_elo'] as num).toInt() : null;
       avgElo ??= eventMaxAvgElo;
-      final rounds = json['rounds'];
+      // Aliased embed: the base select uses `round_schedule:rounds(...)` so it
+      // never collides with the `rounds!inner(...)` embed the current-smart feed
+      // appends to drive its join filter.
+      final roundSchedule = json['round_schedule'] ?? json['rounds'];
       final roundStartsAtRaw =
-          rounds is Map<String, dynamic> ? rounds['starts_at'] : null;
+          roundSchedule is Map<String, dynamic>
+              ? roundSchedule['starts_at']
+              : null;
 
       return Games(
         id: json['id'] as String,
@@ -243,7 +248,7 @@ class Games {
       if (dateStart != null)
         'date_start': dateStart!.toIso8601String().split('T').first,
       if (roundStartsAt != null)
-        'rounds': {'starts_at': roundStartsAt!.toIso8601String()},
+        'round_schedule': {'starts_at': roundStartsAt!.toIso8601String()},
       if (eco != null) 'eco': eco,
       if (openingName != null) 'opening_name': openingName,
       if (timeControl != null) 'time_control': timeControl,
