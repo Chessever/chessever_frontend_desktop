@@ -104,7 +104,8 @@ class FederationFlag extends StatelessWidget {
         'assets/pngs/fide_logo.webp',
         width: width,
         height: height,
-        fit: BoxFit.cover,
+        // Logo is roughly square; contain avoids cropping it in the flag slot.
+        fit: BoxFit.contain,
       ),
     );
   }
