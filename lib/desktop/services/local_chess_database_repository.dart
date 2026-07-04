@@ -2341,7 +2341,14 @@ class LocalChessDatabaseRepository {
       for (final row in rows) {
         final id = row['id']?.toString();
         if (id == null || id.isEmpty) continue;
-        final metadata = _jsonMap(row['headers_json']);
+        Map<String, dynamic> metadata;
+        try {
+          metadata = _jsonMap(row['headers_json']);
+        } on FormatException {
+          // One corrupt header bag must not wedge the whole pass into a
+          // retry loop; skip the row and let the marker complete.
+          continue;
+        }
         var needsWork = false;
         for (final side in const <String>['White', 'Black']) {
           if (!_sideNeedsPlayerEnrichment(metadata, side)) continue;
