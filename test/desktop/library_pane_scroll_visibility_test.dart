@@ -144,6 +144,8 @@ void main() {
     // the scroll math drifts and selected rows fall off screen again.
     expect(debugLibrarySavedRowExtent, 44.0);
     expect(debugLibraryTwicRowExtent, 44.0);
-    expect(debugLibraryLocalRowExtent, 40.0);
+    // Local mini-preview rows are two lines (White + Black player cells with
+    // flag + title), so they're taller than the single-line saved/TWIC rows.
+    expect(debugLibraryLocalRowExtent, 58.0);
   });
 }

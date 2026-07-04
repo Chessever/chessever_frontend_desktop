@@ -26,6 +26,7 @@ import 'package:chessever/desktop/services/library_quick_import.dart';
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_player_enrichment_service.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
@@ -58,6 +59,7 @@ import 'package:chessever/desktop/widgets/library/library_game_context_menu.dart
 import 'package:chessever/desktop/widgets/library/library_game_dialogs.dart';
 import 'package:chessever/desktop/widgets/library/library_database_drag_payload.dart';
 import 'package:chessever/desktop/widgets/library/local_chess_files_view.dart';
+import 'package:chessever/desktop/widgets/library/local_game_player_cell.dart';
 import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
 import 'package:chessever/desktop/widgets/library/library_pgn_preview_panel.dart';
 import 'package:chessever/desktop/widgets/library/twic_filter_dialog.dart';
@@ -2981,12 +2983,22 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final node = selectedNode;
     final scrollController = useScrollController();
+    final searchController = useTextEditingController();
+    final query = useState<String>('');
     final selectedIndex = useState<int>(0);
     final selectedIds = useState<Set<String>>(<String>{});
     final selectionAnchor = useState<int?>(null);
     final selectionExtent = useState<int?>(null);
     final plyIndex = useState<int>(0);
     final shortcutsFocusNode = useFocusNode(debugLabel: 'library-mini-local');
+    // Clear the query when the previewed database changes so a stale filter
+    // doesn't hide the next database's games.
+    useEffect(() {
+      searchController.clear();
+      query.value = '';
+      return null;
+    }, [selectedPath]);
+    final enrichmentEpoch = ref.watch(localPlayerEnrichmentEpochProvider);
     // Focus the table on entry (and when the previewed database changes) so
     // arrow-key navigation works immediately without a mouse click first.
     useEffect(() {
@@ -3030,6 +3042,8 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
           selectedDatabase?.gameCount,
           selectedDatabase?.sizeBytes,
           selectedDatabase?.modifiedAt?.millisecondsSinceEpoch,
+          enrichmentEpoch,
+          query.value,
         ).toString();
     final previewPageWindow = useState(
       _LocalMiniPreviewPageWindow(previewQueryKey, 0),
@@ -3053,6 +3067,18 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
       }
       return null;
     }, [previewQueryKey]);
+    // Backfill titles/federations for this database in the background so the
+    // preview rows and search pick them up (no-op once already enriched).
+    useEffect(() {
+      final path = selectedDatabase?.path;
+      if (path == null || previewEntryCount <= 0) return null;
+      Future<void>.microtask(
+        () => ref
+            .read(localPlayerEnrichmentServiceProvider)
+            .ensureDatabaseEnriched(path),
+      );
+      return null;
+    }, [selectedDatabase?.path, previewEntryCount]);
     final previewPageFuture = useMemoized<Future<LocalChessGameQueryPage?>?>(
       () {
         final database = selectedDatabase;
@@ -3060,6 +3086,7 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
         return _queryLocalMiniPreviewPage(
           ref.read(localChessDatabaseRepositoryProvider),
           databasePath: database.path,
+          search: query.value,
           pageNumber: effectivePreviewPageWindow.pageNumber,
           pageSize: _kLocalMiniPreviewGameQueryPageSize,
         );
@@ -3067,6 +3094,7 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
       [
         selectedDatabase?.path,
         previewEntryCount,
+        query.value,
         effectivePreviewPageWindow.queryKey,
         effectivePreviewPageWindow.pageNumber,
       ],
@@ -3091,7 +3119,10 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
       loaded: previewLoadedPages.value,
       livePage: previewPage,
     );
-    final visibleGames = previewRows?.games ?? games;
+    // Folder-subtree previews aren't DB-backed, so the SQL search never runs;
+    // filter those in memory with the same multi-term semantics.
+    final fallbackGames = _filterLocalMiniPreviewGames(games, query.value);
+    final visibleGames = previewRows?.games ?? fallbackGames;
     final previewTotalCount =
         previewRows?.totalCount ?? previewPage?.totalCount ?? previewEntryCount;
     final isLoadingPreviewPage =
@@ -3347,26 +3378,48 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
               selectedDatabase == null || openableLocalTreeIndex != null
                   ? null
                   : rebuildLocalTree,
-          child:
-              visibleGames.isEmpty && isLoadingPreviewPage
-                  ? const Center(
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation(kPrimaryColor),
-                      ),
-                    ),
-                  )
-                  : selectedGame == null
-                  ? const _LibraryEmpty(
-                    icon: Icons.description_outlined,
-                    title: 'No parsed games here',
-                    message:
-                        'Open the local database view to browse folders/files.',
-                  )
-                  : Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 10, 16, 6),
+                child: DesktopSearchField(
+                  controller: searchController,
+                  hintText:
+                      'Search this database — players, events, openings, ECO',
+                  onChanged: (value) => query.value = value,
+                  onClear: () => query.value = '',
+                ),
+              ),
+              Expanded(
+                child:
+                    visibleGames.isEmpty && isLoadingPreviewPage
+                        ? const Center(
+                          child: SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                            ),
+                          ),
+                        )
+                        : selectedGame == null
+                        ? _LibraryEmpty(
+                          icon:
+                              query.value.trim().isEmpty
+                                  ? Icons.description_outlined
+                                  : Icons.search_off_rounded,
+                          title:
+                              query.value.trim().isEmpty
+                                  ? 'No parsed games here'
+                                  : 'No games match "${query.value.trim()}"',
+                          message:
+                              query.value.trim().isEmpty
+                                  ? 'Open the local database view to browse folders/files.'
+                                  : 'Try another player, event, opening, or ECO.',
+                        )
+                        : Row(
                     children: [
                       Expanded(
                         flex: 5,
@@ -3416,7 +3469,7 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: 12,
-                                      vertical: 9,
+                                      vertical: 6,
                                     ),
                                     decoration: BoxDecoration(
                                       color:
@@ -3435,7 +3488,7 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                                     child: Row(
                                       children: [
                                         SizedBox(
-                                          width: 36,
+                                          width: 28,
                                           child: Text(
                                             '${index + 1}',
                                             style: const TextStyle(
@@ -3448,15 +3501,22 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                                           ),
                                         ),
                                         Expanded(
-                                          child: Text(
-                                            game.title,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              color: kWhiteColor,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w700,
-                                            ),
+                                          child: Column(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              LocalGamePlayerCell(
+                                                metadata: meta,
+                                                side: 'White',
+                                              ),
+                                              const SizedBox(height: 4),
+                                              LocalGamePlayerCell(
+                                                metadata: meta,
+                                                side: 'Black',
+                                              ),
+                                            ],
                                           ),
                                         ),
                                         const SizedBox(width: 10),
@@ -3507,6 +3567,9 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                       ),
                     ],
                   ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -5838,6 +5901,12 @@ double get debugLibraryTwicRowExtent => _kDatabaseWorkspaceTwicRowExtent;
 
 @visibleForTesting
 double get debugLibraryLocalRowExtent => _kLocalMiniPreviewRowExtent;
+
+@visibleForTesting
+List<LocalChessGame> debugFilterLocalMiniPreviewGames(
+  List<LocalChessGame> games,
+  String query,
+) => _filterLocalMiniPreviewGames(games, query);
 
 @visibleForTesting
 void debugScrollLibraryListToIndex(
@@ -8174,7 +8243,7 @@ class DatabaseWorkspacePane extends HookConsumerWidget {
 // every keystroke. The lists below pin each row to these heights via SizedBox.
 const double _kDatabaseWorkspaceSavedRowExtent = 44.0;
 const double _kDatabaseWorkspaceTwicRowExtent = 44.0;
-const double _kLocalMiniPreviewRowExtent = 40.0;
+const double _kLocalMiniPreviewRowExtent = 58.0;
 const int _kLocalMiniPreviewGameQueryPageSize = 1000;
 const double _kLocalMiniPreviewScrollLoadMoreThreshold = 420.0;
 
@@ -8287,15 +8356,44 @@ _LoadedLocalMiniPreviewPages? _visibleLocalMiniPreviewRows({
   );
 }
 
+// Multi-term in-memory filter mirroring the repository's SQL search: every
+// whitespace-separated term must match the file name, path, or a header value.
+List<LocalChessGame> _filterLocalMiniPreviewGames(
+  List<LocalChessGame> games,
+  String rawQuery,
+) {
+  final terms = rawQuery
+      .trim()
+      .toLowerCase()
+      .split(RegExp(r'\s+'))
+      .where((term) => term.isNotEmpty)
+      .toList(growable: false);
+  if (terms.isEmpty) return games;
+  bool matchesTerm(LocalChessGame game, String term) {
+    if (game.fileName.toLowerCase().contains(term)) return true;
+    if (game.sourceRelativePath.toLowerCase().contains(term)) return true;
+    for (final value in game.game.metadata.values) {
+      if (value is String && value.toLowerCase().contains(term)) return true;
+    }
+    return false;
+  }
+
+  return games
+      .where((game) => terms.every((term) => matchesTerm(game, term)))
+      .toList(growable: false);
+}
+
 Future<LocalChessGameQueryPage?> _queryLocalMiniPreviewPage(
   LocalChessDatabaseRepository repository, {
   required String databasePath,
+  required String search,
   required int pageNumber,
   required int pageSize,
 }) async {
   try {
     return await repository.localDatabaseGamesPage(
       databasePath: databasePath,
+      search: search,
       sortBy: LocalChessGameSortField.originalOrder,
       sortDirection: LocalChessGameSortDirection.asc,
       pageNumber: pageNumber,
