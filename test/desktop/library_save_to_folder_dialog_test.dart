@@ -24,6 +24,44 @@ void main() {
   });
 
   group('destination mode', () {
+    test('dialog titles match destination scope', () {
+      expect(
+        librarySaveDialogTitle(LibrarySaveDestinationMode.cloudOnly),
+        'Save database to cloud',
+      );
+      expect(
+        librarySaveDialogTitle(LibrarySaveDestinationMode.cloudAndLocal),
+        'Save to library',
+      );
+      expect(
+        librarySaveDialogTitle(LibrarySaveDestinationMode.localOnly),
+        'Save to this computer',
+      );
+    });
+
+    test('cloud-only mode hides local destinations but keeps cloud folders', () {
+      final folders = [
+        _folder(id: 'my-database', name: 'My Database'),
+        _folder(id: 'shared', name: 'Shared', isSubscribed: true),
+      ];
+
+      expect(
+        librarySaveAllowsCloudDestinations(LibrarySaveDestinationMode.cloudOnly),
+        isTrue,
+      );
+      expect(
+        librarySaveAllowsLocalDestinations(LibrarySaveDestinationMode.cloudOnly),
+        isFalse,
+      );
+      expect(
+        librarySaveWritableCloudFolders(
+          folders: folders,
+          destinationMode: LibrarySaveDestinationMode.cloudOnly,
+        ).map((folder) => folder.id),
+        ['my-database'],
+      );
+    });
+
     test('local-only mode hides every cloud folder', () {
       final folders = [
         _folder(id: 'my-database', name: 'My Database'),

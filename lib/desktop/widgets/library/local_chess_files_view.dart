@@ -235,7 +235,7 @@ class LocalChessFilesView extends HookConsumerWidget {
         ref: ref,
         games: hydrated,
         sourceLabel: databaseTitle,
-        destinationMode: LibrarySaveDestinationMode.localOnly,
+        destinationMode: LibrarySaveDestinationMode.cloudOnly,
       );
       if (outcome == null || !outcome.didSave || !context.mounted) return;
       showDesktopToast(context, outcome.toToastMessage());
@@ -1220,7 +1220,7 @@ class _LocalGamesTable extends HookConsumerWidget {
         ref: ref,
         games: hydrated,
         sourceLabel: databaseTitle,
-        destinationMode: LibrarySaveDestinationMode.localOnly,
+        destinationMode: LibrarySaveDestinationMode.cloudOnly,
       );
       if (outcome == null || !outcome.didSave || !context.mounted) return;
       showDesktopToast(context, outcome.toToastMessage());
