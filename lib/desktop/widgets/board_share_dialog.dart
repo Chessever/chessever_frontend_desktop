@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:chessground/chessground.dart' as cg;
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
@@ -106,66 +108,79 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
 
   bool get _hasMoves => widget.chessGame.mainline.isNotEmpty;
 
-  String? get _shareUrl {
-    final url = widget.shareUrl?.trim();
-    return url == null || url.isEmpty ? null : url;
+  Future<Uint8List> _captureImageBytes() async {
+    final settings =
+        ref.read(boardSettingsProviderNew).valueOrNull ??
+        const BoardSettingsNew();
+    final photos = await _resolvePlayerPhotos();
+    final card = BoardShareCard(
+      fen: widget.position.fen,
+      boardSettings: cg.ChessboardSettings(
+        enableCoordinates: true,
+        animationDuration: Duration.zero,
+        colorScheme: settings.colorScheme,
+        pieceAssets: settings.pieceAssets,
+        borderRadius: BorderRadius.zero,
+        boxShadow: const [],
+      ),
+      lastMove: widget.lastMove,
+      whiteName: _whiteName,
+      blackName: _blackName,
+      event: _event,
+      result: _result,
+      whiteClock: _clockAtPointer().whiteClock,
+      blackClock: _clockAtPointer().blackClock,
+      whiteTitle: _whiteTitle,
+      blackTitle: _blackTitle,
+      whiteRating: _whiteRating,
+      blackRating: _blackRating,
+      whiteFederation: _whiteFederation,
+      blackFederation: _blackFederation,
+      whiteScore: _whiteScore,
+      blackScore: _blackScore,
+      whitePhotoUrl: photos.whitePhotoUrl,
+      blackPhotoUrl: photos.blackPhotoUrl,
+      sideToMove: widget.position.turn,
+      flipped: widget.flipped,
+      evaluation: widget.evaluation,
+      mate: widget.mate,
+      isEvaluating: widget.isEvaluating,
+      showEvalBar: widget.showEvalBar,
+    );
+    final bytes = await BoardShareService.captureWidget(
+      card,
+      width: boardShareCardWidth(320, showEvalBar: widget.showEvalBar),
+      height: boardShareCardHeight(boardSize: 320, event: null),
+      pixelRatio: 2.5,
+    );
+    if (bytes == null) throw Exception('Capture returned null');
+    return bytes;
+  }
+
+  Future<void> _copyImage() async {
+    setState(() => _isCapturing = true);
+    try {
+      final bytes = await _captureImageBytes();
+      await BoardShareService.copyPngBytesToClipboard(bytes);
+      _showToast('Image copied', isError: false);
+    } catch (e) {
+      _showToast('Couldn’t copy image. Try Download PNG.', isError: true);
+    } finally {
+      if (mounted) setState(() => _isCapturing = false);
+    }
   }
 
   Future<void> _downloadImage() async {
     setState(() => _isCapturing = true);
     try {
-      final settings =
-          ref.read(boardSettingsProviderNew).valueOrNull ??
-          const BoardSettingsNew();
-      final photos = await _resolvePlayerPhotos();
-      final card = BoardShareCard(
-        fen: widget.position.fen,
-        boardSettings: cg.ChessboardSettings(
-          enableCoordinates: true,
-          animationDuration: Duration.zero,
-          colorScheme: settings.colorScheme,
-          pieceAssets: settings.pieceAssets,
-          borderRadius: BorderRadius.zero,
-          boxShadow: const [],
-        ),
-        lastMove: widget.lastMove,
-        whiteName: _whiteName,
-        blackName: _blackName,
-        event: _event,
-        result: _result,
-        whiteClock: _clockAtPointer().whiteClock,
-        blackClock: _clockAtPointer().blackClock,
-        whiteTitle: _whiteTitle,
-        blackTitle: _blackTitle,
-        whiteRating: _whiteRating,
-        blackRating: _blackRating,
-        whiteFederation: _whiteFederation,
-        blackFederation: _blackFederation,
-        whiteScore: _whiteScore,
-        blackScore: _blackScore,
-        whitePhotoUrl: photos.whitePhotoUrl,
-        blackPhotoUrl: photos.blackPhotoUrl,
-        sideToMove: widget.position.turn,
-        flipped: widget.flipped,
-        evaluation: widget.evaluation,
-        mate: widget.mate,
-        isEvaluating: widget.isEvaluating,
-        showEvalBar: widget.showEvalBar,
-      );
-      final bytes = await BoardShareService.captureWidget(
-        card,
-        width: boardShareCardWidth(320),
-        height: boardShareCardHeight(boardSize: 320, event: null),
-        pixelRatio: 2.5,
-      );
-      if (bytes == null) throw Exception('Capture returned null');
+      final bytes = await _captureImageBytes();
       await BoardShareService.savePngBytesToDisk(
         bytes,
         defaultName: _defaultExportName('png'),
       );
-      _showToast('Image saved', isError: false);
+      _showToast('PNG saved', isError: false);
     } catch (e) {
-      _showToast('Failed to save image', isError: true);
+      _showToast('Failed to save PNG', isError: true);
     } finally {
       if (mounted) setState(() => _isCapturing = false);
     }
@@ -399,63 +414,6 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
     }
   }
 
-  Future<void> _copyLink() async {
-    final url = _shareUrl;
-    if (url == null) {
-      _showToast('No shareable link for this game', isError: true);
-      return;
-    }
-    try {
-      await BoardShareService.copyToClipboard(url);
-      _showToast('Link copied to clipboard', isError: false);
-    } catch (e) {
-      _showToast('Failed to copy link', isError: true);
-    }
-  }
-
-  Widget _buildShareLinkBar() {
-    final url = _shareUrl;
-    if (url == null) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-      child: Container(
-        height: 40,
-        padding: const EdgeInsets.only(left: 12, right: 4),
-        decoration: BoxDecoration(
-          color: kBackgroundColor,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: kBlack3Color),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.link_rounded, size: 15, color: kWhiteColor70),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Text(
-                url,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            DesktopDialogIconButton(
-              icon: Icons.copy_rounded,
-              tooltip: 'Copy link',
-              tone: DesktopDialogButtonTone.secondary,
-              onPress: _copyLink,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   void _showToast(String message, {required bool isError}) {
     if (!mounted) return;
     showDesktopToast(context, message, error: isError);
@@ -466,8 +424,6 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
     final settings =
         ref.watch(boardSettingsProviderNew).valueOrNull ??
         const BoardSettingsNew();
-    final hasLink = _shareUrl != null;
-
     return FTheme(
       data: FThemes.zinc.dark,
       child: Center(
@@ -582,7 +538,6 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                   ],
                 ),
               ),
-              if (hasLink) _buildShareLinkBar(),
               const SizedBox(height: 16),
               // Actions
               if (_isCapturing || _isGeneratingGif)
@@ -624,7 +579,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                     alignment: WrapAlignment.center,
                     children:
                         boardShareActionDescriptors(
-                              copyLink: _copyLink,
+                              copyImage: _copyImage,
                               downloadGif: _downloadGif,
                               downloadImage: _downloadImage,
                               copyPgn: _copyPgn,
@@ -663,16 +618,16 @@ class BoardShareActionDescriptor {
 
 @visibleForTesting
 List<BoardShareActionDescriptor> boardShareActionDescriptors({
-  required VoidCallback copyLink,
+  required VoidCallback copyImage,
   required VoidCallback downloadGif,
   required VoidCallback downloadImage,
   required VoidCallback copyPgn,
 }) {
   return [
     BoardShareActionDescriptor(
-      icon: Icons.link_rounded,
-      label: 'Copy Link',
-      onTap: copyLink,
+      icon: Icons.image_rounded,
+      label: 'Copy Image',
+      onTap: copyImage,
     ),
     BoardShareActionDescriptor(
       icon: Icons.gif_box_outlined,
@@ -681,7 +636,7 @@ List<BoardShareActionDescriptor> boardShareActionDescriptors({
     ),
     BoardShareActionDescriptor(
       icon: Icons.download_rounded,
-      label: 'Download Image',
+      label: 'Download PNG',
       onTap: downloadImage,
     ),
     BoardShareActionDescriptor(
