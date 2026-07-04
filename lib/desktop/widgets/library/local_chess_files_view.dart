@@ -23,6 +23,7 @@ import 'package:chessever/desktop/widgets/desktop_tappable.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
+import 'package:chessever/desktop/widgets/library/library_table_row_style.dart';
 import 'package:chessever/desktop/widgets/library/local_game_info_dialog.dart';
 import 'package:chessever/desktop/widgets/library/local_game_player_cell.dart';
 import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
@@ -1351,20 +1352,34 @@ class _LocalGamesTable extends HookConsumerWidget {
           padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
           child: Column(
             children: [
-              _LocalGamesHeaderRow(sort: sort, onSortChange: onSortChange),
               Expanded(
-                child: Scrollbar(
-                  controller: controller,
-                  thumbVisibility: false,
-                  child: ListView.builder(
-                    key: const ValueKey('local-games-table-list'),
-                    controller: controller,
-                    physics: const DesktopScrollPhysics(),
-                    itemExtent: _kLocalGameRowHeight,
-                    itemCount: games.length,
-                    itemBuilder: (context, index) {
-                      final game = games[index];
-                      return _LocalGamesDataRow(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: kBlack2Color,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: kDividerColor),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    children: [
+                      _LocalGamesHeaderRow(
+                        sort: sort,
+                        onSortChange: onSortChange,
+                      ),
+                      const Divider(height: 1, color: kDividerColor),
+                      Expanded(
+                        child: Scrollbar(
+                          controller: controller,
+                          thumbVisibility: false,
+                          child: ListView.builder(
+                            key: const ValueKey('local-games-table-list'),
+                            controller: controller,
+                            physics: const DesktopScrollPhysics(),
+                            itemExtent: _kLocalGameRowHeight,
+                            itemCount: games.length,
+                            itemBuilder: (context, index) {
+                              final game = games[index];
+                              return _LocalGamesDataRow(
                         key: ValueKey('local-game-table-${game.id}'),
                         index: index,
                         game: game,
@@ -1400,8 +1415,12 @@ class _LocalGamesTable extends HookConsumerWidget {
                             (details) => unawaited(
                               openRowMenu(game, details.globalPosition),
                             ),
-                      );
-                    },
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -1422,7 +1441,7 @@ class _LocalGamesTable extends HookConsumerWidget {
   }
 }
 
-const double _kLocalGameRowHeight = 34;
+const double _kLocalGameRowHeight = 44;
 const int _kLocalDatabaseGameQueryPageSize = 1000;
 const double _kLocalDatabaseScrollLoadMoreThreshold = 420;
 const String _kLocalDatabaseTreeStartingFen =
@@ -1800,6 +1819,16 @@ List<LocalChessGame> _localGamesForSelection({
   return <LocalChessGame>[games[index]];
 }
 
+// Shared column geometry for the local database table — the header row and
+// every data row must use identical widths/flexes/gaps so columns line up, and
+// it matches the cloud/TWIC library tables' row shape.
+const double _kLocalColNumber = 44;
+const double _kLocalColElo = 56;
+const double _kLocalColResult = 56;
+const double _kLocalColEco = 62;
+const double _kLocalColDate = 88;
+const double _kLocalColGap = 12;
+
 class _LocalGamesHeaderRow extends StatelessWidget {
   const _LocalGamesHeaderRow({required this.sort, required this.onSortChange});
 
@@ -1811,54 +1840,82 @@ class _LocalGamesHeaderRow extends StatelessWidget {
     Widget header(
       String label,
       _LocalGamesSortKey key, {
-      bool alignEnd = false,
+      Alignment alignment = Alignment.centerLeft,
     }) {
       return _LocalHeaderCell(
         label,
         sortKey: key,
         sort: sort,
-        alignEnd: alignEnd,
+        alignment: alignment,
         onSortChange: onSortChange,
       );
     }
 
     return Container(
-      height: 27,
-      decoration: const BoxDecoration(
-        color: kBackgroundColor,
-        border: Border(bottom: BorderSide(color: kDividerColor, width: 1)),
-      ),
+      color: kBlack3Color.withValues(alpha: 0.4),
+      padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
       child: Row(
         children: [
           SizedBox(
-            width: 54,
+            width: _kLocalColNumber,
             child: header(
               '#',
               _LocalGamesSortKey.originalOrder,
-              alignEnd: true,
+              alignment: Alignment.centerRight,
             ),
           ),
-          Expanded(flex: 22, child: header('WHITE', _LocalGamesSortKey.white)),
+          const SizedBox(width: _kLocalColGap),
+          Expanded(flex: 5, child: header('WHITE', _LocalGamesSortKey.white)),
+          const SizedBox(width: _kLocalColGap),
           SizedBox(
-            width: 64,
-            child: header('ELO W', _LocalGamesSortKey.whiteElo, alignEnd: true),
+            width: _kLocalColElo,
+            child: header(
+              'ELO W',
+              _LocalGamesSortKey.whiteElo,
+              alignment: Alignment.centerRight,
+            ),
           ),
-          Expanded(flex: 22, child: header('BLACK', _LocalGamesSortKey.black)),
+          const SizedBox(width: _kLocalColGap),
           SizedBox(
-            width: 64,
-            child: header('ELO B', _LocalGamesSortKey.blackElo, alignEnd: true),
+            width: _kLocalColResult,
+            child: header(
+              'RESULT',
+              _LocalGamesSortKey.result,
+              alignment: Alignment.center,
+            ),
           ),
+          const SizedBox(width: _kLocalColGap),
+          Expanded(flex: 5, child: header('BLACK', _LocalGamesSortKey.black)),
+          const SizedBox(width: _kLocalColGap),
           SizedBox(
-            width: 70,
-            child: header('RESULT', _LocalGamesSortKey.result),
+            width: _kLocalColElo,
+            child: header(
+              'ELO B',
+              _LocalGamesSortKey.blackElo,
+              alignment: Alignment.centerRight,
+            ),
           ),
-          SizedBox(width: 62, child: header('ECO', _LocalGamesSortKey.eco)),
+          const SizedBox(width: _kLocalColGap),
+          Expanded(flex: 4, child: header('EVENT', _LocalGamesSortKey.event)),
+          const SizedBox(width: _kLocalColGap),
+          SizedBox(
+            width: _kLocalColEco,
+            child: header('ECO', _LocalGamesSortKey.eco),
+          ),
+          const SizedBox(width: _kLocalColGap),
           Expanded(
-            flex: 18,
+            flex: 4,
             child: header('OPENING', _LocalGamesSortKey.opening),
           ),
-          Expanded(flex: 16, child: header('EVENT', _LocalGamesSortKey.event)),
-          SizedBox(width: 92, child: header('DATE', _LocalGamesSortKey.date)),
+          const SizedBox(width: _kLocalColGap),
+          SizedBox(
+            width: _kLocalColDate,
+            child: header(
+              'DATE',
+              _LocalGamesSortKey.date,
+              alignment: Alignment.centerRight,
+            ),
+          ),
         ],
       ),
     );
@@ -1871,18 +1928,20 @@ class _LocalHeaderCell extends StatelessWidget {
     required this.sortKey,
     required this.sort,
     required this.onSortChange,
-    this.alignEnd = false,
+    this.alignment = Alignment.centerLeft,
   });
 
   final String label;
   final _LocalGamesSortKey sortKey;
   final _LocalGamesSortConfig sort;
   final ValueChanged<_LocalGamesSortConfig> onSortChange;
-  final bool alignEnd;
+  final Alignment alignment;
 
   @override
   Widget build(BuildContext context) {
     final active = sort.key == sortKey;
+    final alignEnd = alignment == Alignment.centerRight;
+    final center = alignment == Alignment.center;
     final nextDir =
         active && sort.dir == _LocalGamesSortDir.asc
             ? _LocalGamesSortDir.desc
@@ -1898,38 +1957,39 @@ class _LocalHeaderCell extends StatelessWidget {
       child: DesktopTappable(
         hoverColor: kWhiteColor.withValues(alpha: 0.04),
         onPress: () => onSortChange(_LocalGamesSortConfig(sortKey, nextDir)),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Align(
-            alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment:
-                  alignEnd ? MainAxisAlignment.end : MainAxisAlignment.start,
-              children: [
-                Flexible(
-                  child: Text(
-                    label,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: active ? kPrimaryColor : kWhiteColor70,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0,
-                    ),
+        child: Align(
+          alignment: alignment,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment:
+                alignEnd
+                    ? MainAxisAlignment.end
+                    : center
+                        ? MainAxisAlignment.center
+                        : MainAxisAlignment.start,
+            children: [
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: active ? kPrimaryColor : kLightGreyColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.4,
                   ),
                 ),
-                const SizedBox(width: 3),
-                Icon(
-                  active ? arrow : Icons.unfold_more_rounded,
-                  size: active ? 10 : 11,
-                  color:
-                      active
-                          ? kPrimaryColor
-                          : kWhiteColor.withValues(alpha: 0.35),
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 3),
+              Icon(
+                active ? arrow : Icons.unfold_more_rounded,
+                size: active ? 10 : 11,
+                color:
+                    active
+                        ? kPrimaryColor
+                        : kWhiteColor.withValues(alpha: 0.35),
+              ),
+            ],
           ),
         ),
       ),
@@ -1937,7 +1997,7 @@ class _LocalHeaderCell extends StatelessWidget {
   }
 }
 
-class _LocalGamesDataRow extends StatelessWidget {
+class _LocalGamesDataRow extends StatefulWidget {
   const _LocalGamesDataRow({
     super.key,
     required this.index,
@@ -1956,104 +2016,143 @@ class _LocalGamesDataRow extends StatelessWidget {
   final GestureTapUpCallback onSecondaryTapUp;
 
   @override
+  State<_LocalGamesDataRow> createState() => _LocalGamesDataRowState();
+}
+
+class _LocalGamesDataRowState extends State<_LocalGamesDataRow> {
+  bool _hovered = false;
+
+  String _ratingText(int? value) =>
+      value == null || value <= 0 ? '' : value.toString();
+
+  @override
   Widget build(BuildContext context) {
-    final md = game.game.metadata;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: onTapDown,
-      onSecondaryTapUp: onSecondaryTapUp,
-      onDoubleTap: onDoubleTap,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color:
-              selected
-                  ? kPrimaryColor.withValues(alpha: 0.16)
-                  : kBackgroundColor,
-          border: const Border(
-            bottom: BorderSide(color: kDividerColor, width: 0.5),
+    final md = widget.game.game.metadata;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: widget.onTapDown,
+        onSecondaryTapUp: widget.onSecondaryTapUp,
+        onDoubleTap: widget.onDoubleTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 100),
+          decoration: librarySelectedRowDecoration(
+            selected: widget.selected,
+            hovered: _hovered,
           ),
-        ),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 54,
-              child: _LocalNumberCell(value: game.indexInFile + 1),
-            ),
-            Expanded(
-              flex: 22,
-              child: LocalGamePlayerCell(metadata: md, side: 'White'),
-            ),
-            SizedBox(
-              width: 64,
-              child: _LocalNumberCell(value: _rating(md, 'WhiteElo')),
-            ),
-            Expanded(
-              flex: 22,
-              child: LocalGamePlayerCell(metadata: md, side: 'Black'),
-            ),
-            SizedBox(
-              width: 64,
-              child: _LocalNumberCell(value: _rating(md, 'BlackElo')),
-            ),
-            SizedBox(width: 70, child: _LocalTextCell(_result(md))),
-            SizedBox(width: 62, child: _LocalTextCell(_meta(md, 'ECO'))),
-            Expanded(flex: 18, child: _LocalTextCell(_opening(md))),
-            Expanded(flex: 16, child: _LocalTextCell(_event(md))),
-            SizedBox(width: 92, child: _LocalTextCell(_date(md))),
-          ],
+          padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
+          child: Row(
+            children: [
+              SizedBox(
+                width: _kLocalColNumber,
+                child: _LocalMonoRight('${widget.game.indexInFile + 1}'),
+              ),
+              const SizedBox(width: _kLocalColGap),
+              Expanded(
+                flex: 5,
+                child: LocalGamePlayerCell(
+                  metadata: md,
+                  side: 'White',
+                  padding: EdgeInsets.zero,
+                ),
+              ),
+              const SizedBox(width: _kLocalColGap),
+              SizedBox(
+                width: _kLocalColElo,
+                child: LibraryTableRatingCell(
+                  rating: _ratingText(_rating(md, 'WhiteElo')),
+                ),
+              ),
+              const SizedBox(width: _kLocalColGap),
+              SizedBox(
+                width: _kLocalColResult,
+                child: LibraryTableResultPill(result: _result(md)),
+              ),
+              const SizedBox(width: _kLocalColGap),
+              Expanded(
+                flex: 5,
+                child: LocalGamePlayerCell(
+                  metadata: md,
+                  side: 'Black',
+                  padding: EdgeInsets.zero,
+                ),
+              ),
+              const SizedBox(width: _kLocalColGap),
+              SizedBox(
+                width: _kLocalColElo,
+                child: LibraryTableRatingCell(
+                  rating: _ratingText(_rating(md, 'BlackElo')),
+                ),
+              ),
+              const SizedBox(width: _kLocalColGap),
+              Expanded(
+                flex: 4,
+                child: _LocalCellText(_event(md), color: kWhiteColor),
+              ),
+              const SizedBox(width: _kLocalColGap),
+              SizedBox(
+                width: _kLocalColEco,
+                child: LibraryTableEcoCell(eco: _meta(md, 'ECO')),
+              ),
+              const SizedBox(width: _kLocalColGap),
+              Expanded(
+                flex: 4,
+                child: _LocalCellText(_opening(md), color: kWhiteColor70),
+              ),
+              const SizedBox(width: _kLocalColGap),
+              SizedBox(
+                width: _kLocalColDate,
+                child: _LocalMonoRight(_date(md)),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _LocalTextCell extends StatelessWidget {
-  const _LocalTextCell(this.value);
+/// Left-aligned single-line text cell (`—` when blank).
+class _LocalCellText extends StatelessWidget {
+  const _LocalCellText(this.value, {required this.color});
+
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final display = value.trim();
+    return Text(
+      display.isEmpty || display == '?' ? '—' : display,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(color: color, fontSize: 12, height: 1.1),
+    );
+  }
+}
+
+/// Right-aligned tabular-figure text cell for the `#`, ELO and date columns.
+class _LocalMonoRight extends StatelessWidget {
+  const _LocalMonoRight(this.value);
 
   final String value;
 
   @override
   Widget build(BuildContext context) {
     final display = value.trim();
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Text(
-        display.isEmpty || display == '?' ? '-' : display,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
-          color: kWhiteColor,
-          fontSize: 12,
-          height: 1.1,
-          letterSpacing: 0,
-        ),
-      ),
-    );
-  }
-}
-
-class _LocalNumberCell extends StatelessWidget {
-  const _LocalNumberCell({required this.value});
-
-  final int? value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Align(
-        alignment: Alignment.centerRight,
-        child: Text(
-          value == null || value! <= 0 ? '-' : value.toString(),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: kWhiteColor,
-            fontSize: 12,
-            height: 1.1,
-            letterSpacing: 0,
-          ),
-        ),
+    return Text(
+      display.isEmpty || display == '?' ? '—' : display,
+      textAlign: TextAlign.right,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(
+        color: kLightGreyColor,
+        fontSize: 11,
+        height: 1.1,
+        fontFeatures: [FontFeature.tabularFigures()],
       ),
     );
   }

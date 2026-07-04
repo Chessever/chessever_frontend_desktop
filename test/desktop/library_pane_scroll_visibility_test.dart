@@ -144,8 +144,9 @@ void main() {
     // the scroll math drifts and selected rows fall off screen again.
     expect(debugLibrarySavedRowExtent, 44.0);
     expect(debugLibraryTwicRowExtent, 44.0);
-    // Local mini-preview rows are two lines (White + Black player cells with
-    // flag + title), so they're taller than the single-line saved/TWIC rows.
-    expect(debugLibraryLocalRowExtent, 58.0);
+    // Local mini-preview rows now render as a single-line columned table row
+    // (White | Result | Black | Event | ECO | Date) identical to the TWIC
+    // table, so they share the same 44px extent.
+    expect(debugLibraryLocalRowExtent, 44.0);
   });
 }

@@ -62,7 +62,8 @@ void main() {
     );
 
     expect(find.text('GM'), findsOneWidget);
-    expect(find.text('Carlsen,M'), findsOneWidget);
+    // Names render in the shared library-table abbreviated form (`Last, F.`).
+    expect(find.text('Carlsen, M.'), findsOneWidget);
     expect(find.byType(FederationFlag), findsOneWidget);
   });
 
@@ -79,7 +80,7 @@ void main() {
     );
 
     expect(find.byType(FederationFlag), findsOneWidget);
-    expect(find.text('Mueller, Hans'), findsOneWidget);
+    expect(find.text('Mueller, H.'), findsOneWidget);
   });
 
   testWidgets('normalizes malformed title tags', (tester) async {
@@ -107,7 +108,7 @@ void main() {
     );
 
     expect(find.byType(FederationFlag), findsNothing);
-    expect(find.text('Someone, Anon'), findsOneWidget);
+    expect(find.text('Someone, A.'), findsOneWidget);
   });
 
   testWidgets('falls back to side label for missing names', (tester) async {

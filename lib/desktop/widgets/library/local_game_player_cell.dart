@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/library/library_table_row_style.dart';
 import 'package:chessever/providers/player_backfill_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/chess_title_utils.dart';
@@ -9,27 +10,41 @@ import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:chessever/widgets/skeleton_widget.dart';
 
 const _kTitleStyle = TextStyle(
-  color: kPrimaryColor,
-  fontSize: 10,
-  fontWeight: FontWeight.w800,
+  color: kLightYellowColor,
+  fontSize: 11,
+  fontWeight: FontWeight.w700,
   height: 1.1,
 );
 
 /// Player cell for the local games table: federation flag + title + name.
 ///
-/// TWIC-style exports carry `WhiteTitle`/`WhiteFideId` but no country tag, so
-/// both the flag and the title resolve on demand through the chess_players
-/// FIDE-ID lookup (repo-level per-ID cache, negative hits included) while a
-/// shimmer holds the title slot. Import itself never waits on this.
+/// Renders identically to the shared library table player cell
+/// ([LibraryTablePlayerCell]) — same flag size, title style and abbreviated
+/// name format — so imported databases match the cloud/TWIC tables next to
+/// them. The one difference is that TWIC-style exports carry
+/// `WhiteTitle`/`WhiteFideId` but no country tag, so both the flag and the
+/// title resolve on demand through the chess_players FIDE-ID lookup (repo-level
+/// per-ID cache, negative hits included) while a shimmer holds the title slot.
+/// Import itself never waits on this.
 class LocalGamePlayerCell extends ConsumerWidget {
   const LocalGamePlayerCell({
     super.key,
     required this.metadata,
     required this.side,
+    this.padding = const EdgeInsets.symmetric(horizontal: 8),
+    this.rating = '',
   });
 
   final Map<String, dynamic> metadata;
   final String side;
+  final EdgeInsetsGeometry padding;
+
+  /// Optional trailing inline rating (e.g. `1774`). Rendered like the shared
+  /// [LibraryTablePlayerCell] so the compact mini-preview table — which folds
+  /// the Elo into the player column instead of a separate Elo column — matches
+  /// the cloud/TWIC mini previews. Blank hides it (the wide full-table view
+  /// keeps its dedicated Elo columns and leaves this empty).
+  final String rating;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -39,7 +54,7 @@ class LocalGamePlayerCell extends ConsumerWidget {
     final titleChip = _buildTitleChip(ref, fideId);
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      padding: padding,
       child: Row(
         children: [
           BackfilledFederationFlag(
@@ -47,27 +62,39 @@ class LocalGamePlayerCell extends ConsumerWidget {
             fideId: fideId,
             playerName: hasName ? rawName : null,
             width: 18,
-            height: 12,
+            height: 13,
             borderRadius: BorderRadius.circular(2),
           ),
+          const SizedBox(width: 8),
           if (titleChip != null) ...[
-            const SizedBox(width: 6),
             titleChip,
+            const SizedBox(width: 5),
           ],
-          const SizedBox(width: 6),
-          Flexible(
+          Expanded(
             child: Text(
-              hasName ? rawName : side,
+              hasName ? libraryStandardTablePlayerName(rawName) : side,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: kWhiteColor,
-                fontSize: 12,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w500,
                 height: 1.1,
                 letterSpacing: 0,
               ),
             ),
           ),
+          if (rating.trim().isNotEmpty) ...[
+            const SizedBox(width: 6),
+            Text(
+              rating.trim(),
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 11,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
         ],
       ),
     );

@@ -58,6 +58,9 @@ import 'package:chessever/desktop/widgets/library/library_folder_dialogs.dart';
 import 'package:chessever/desktop/widgets/library/library_game_context_menu.dart';
 import 'package:chessever/desktop/widgets/library/library_game_dialogs.dart';
 import 'package:chessever/desktop/widgets/library/library_database_drag_payload.dart';
+import 'package:chessever/desktop/widgets/library/library_table_row_style.dart';
+export 'package:chessever/desktop/widgets/library/library_table_row_style.dart'
+    show librarySelectedRowDecoration;
 import 'package:chessever/desktop/widgets/library/local_chess_files_view.dart';
 import 'package:chessever/desktop/widgets/library/local_game_player_cell.dart';
 import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
@@ -90,7 +93,6 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/number_format_utils.dart';
 import 'package:chessever/utils/time_utils.dart';
-import 'package:chessever/widgets/backfilled_federation_flag.dart';
 
 /// Desktop library: persistent two-pane layout (folder rail + content) with
 /// the forui actions toolbar at the top.
@@ -3425,122 +3427,69 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                         flex: 5,
                         child: Padding(
                           padding: const EdgeInsets.fromLTRB(20, 12, 10, 20),
-                          child: ListView.builder(
-                            controller: scrollController,
-                            physics: const DesktopScrollPhysics(),
-                            padding: EdgeInsets.zero,
-                            itemExtent: _kLocalMiniPreviewRowExtent,
-                            itemCount:
-                                visibleGames.length +
-                                (showPreviewLoadingRow ? 1 : 0),
-                            itemBuilder: (context, index) {
-                              if (index >= visibleGames.length) {
-                                return _LocalMiniPreviewLoadingRow(
-                                  loadedCount: visibleGames.length,
-                                  totalCount: previewTotalCount,
-                                  isLoading: isLoadingPreviewPage,
-                                );
-                              }
-                              final game = visibleGames[index];
-                              final meta = game.game.metadata;
-                              final selected =
-                                  clampedSelectedIds.contains(game.id) ||
-                                  (clampedSelectedIds.isEmpty &&
-                                      index == safeIndex);
-                              return ClickCursor(
-                                child: GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTap:
-                                      () =>
-                                          HardwareKeyboard
-                                                  .instance
-                                                  .isShiftPressed
-                                              ? rangeSelectLocalIndex(index)
-                                              : selectLocalIndex(index),
-                                  onDoubleTap:
-                                      () => _openLocalPreviewGame(
-                                        ref,
-                                        game,
-                                        databaseTitle: databaseTitle,
-                                        databaseGames: previewContextGames,
-                                        localOpeningTreeIndex:
-                                            openableLocalTreeIndex,
-                                      ),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 6,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color:
-                                          selected
-                                              ? kPrimaryColor.withValues(
-                                                alpha: 0.20,
-                                              )
-                                              : kBlack2Color,
-                                      border: const Border(
-                                        bottom: BorderSide(
-                                          color: kDividerColor,
-                                          width: 1,
-                                        ),
-                                      ),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        SizedBox(
-                                          width: 28,
-                                          child: Text(
-                                            '${index + 1}',
-                                            style: const TextStyle(
-                                              color: kLightGreyColor,
-                                              fontSize: 11,
-                                              fontFeatures: [
-                                                FontFeature.tabularFigures(),
-                                              ],
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: kBlack2Color,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: kDividerColor),
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: Column(
+                              children: [
+                                const _TwicTableHeader(),
+                                const Divider(height: 1, color: kDividerColor),
+                                Expanded(
+                                  child: ListView.builder(
+                                    controller: scrollController,
+                                    physics: const DesktopScrollPhysics(),
+                                    padding: EdgeInsets.zero,
+                                    itemExtent: _kLocalMiniPreviewRowExtent,
+                                    itemCount:
+                                        visibleGames.length +
+                                        (showPreviewLoadingRow ? 1 : 0),
+                                    itemBuilder: (context, index) {
+                                      if (index >= visibleGames.length) {
+                                        return _LocalMiniPreviewLoadingRow(
+                                          loadedCount: visibleGames.length,
+                                          totalCount: previewTotalCount,
+                                          isLoading: isLoadingPreviewPage,
+                                        );
+                                      }
+                                      final game = visibleGames[index];
+                                      final selected =
+                                          clampedSelectedIds.contains(
+                                            game.id,
+                                          ) ||
+                                          (clampedSelectedIds.isEmpty &&
+                                              index == safeIndex);
+                                      return _LocalMiniPreviewTableRow(
+                                        game: game,
+                                        selected: selected,
+                                        onTap:
+                                            () =>
+                                                HardwareKeyboard
+                                                        .instance
+                                                        .isShiftPressed
+                                                    ? rangeSelectLocalIndex(
+                                                      index,
+                                                    )
+                                                    : selectLocalIndex(index),
+                                        onDoubleTap:
+                                            () => _openLocalPreviewGame(
+                                              ref,
+                                              game,
+                                              databaseTitle: databaseTitle,
+                                              databaseGames:
+                                                  previewContextGames,
+                                              localOpeningTreeIndex:
+                                                  openableLocalTreeIndex,
                                             ),
-                                          ),
-                                        ),
-                                        Expanded(
-                                          child: Column(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              LocalGamePlayerCell(
-                                                metadata: meta,
-                                                side: 'White',
-                                              ),
-                                              const SizedBox(height: 4),
-                                              LocalGamePlayerCell(
-                                                metadata: meta,
-                                                side: 'Black',
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        const SizedBox(width: 10),
-                                        Text(
-                                          (meta['Result'] ?? '*').toString(),
-                                          style: const TextStyle(
-                                            color: kWhiteColor70,
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 10),
-                                        SizedBox(
-                                          width: 44,
-                                          child: _EcoCell(
-                                            eco: (meta['ECO'] ?? '').toString(),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
+                                      );
+                                    },
                                   ),
                                 ),
-                              );
-                            },
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -3631,6 +3580,134 @@ class _LocalMiniPreviewLoadingRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// One row of the local-database mini preview table.
+///
+/// Deliberately mirrors [_TwicTableRow] — same column geometry
+/// (`_kColW`/`_kColResult`/`_kColB`/`_kColEvent`/`_kColEco`/`_kTwicColDate`),
+/// same [_TwicTableHeader] above it, same hover/selection decoration — so an
+/// imported PGN database previews with the exact row shape as the cloud/TWIC
+/// databases sitting next to it. The Elo folds into the player column (inline
+/// rating) instead of a separate Elo column, matching the compact preview.
+class _LocalMiniPreviewTableRow extends StatefulWidget {
+  const _LocalMiniPreviewTableRow({
+    required this.game,
+    required this.selected,
+    required this.onTap,
+    required this.onDoubleTap,
+  });
+
+  final LocalChessGame game;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback onDoubleTap;
+
+  @override
+  State<_LocalMiniPreviewTableRow> createState() =>
+      _LocalMiniPreviewTableRowState();
+}
+
+class _LocalMiniPreviewTableRowState extends State<_LocalMiniPreviewTableRow> {
+  bool _hovered = false;
+
+  String _meta(Map<String, dynamic> md, String key) =>
+      md[key]?.toString().trim() ?? '';
+
+  String _ratingText(Map<String, dynamic> md, String key) {
+    final value = int.tryParse(_meta(md, key));
+    return value == null || value <= 0 ? '' : value.toString();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final md = widget.game.game.metadata;
+    final eventTag = _meta(md, 'Event');
+    final event =
+        eventTag.isEmpty || eventTag == '?' ? _meta(md, 'Site') : eventTag;
+    final dateTag = _meta(md, 'Date');
+    final date = dateTag.isEmpty || dateTag == '?' ? '' : dateTag;
+    final resultTag = _meta(md, 'Result').replaceAll('½', '1/2');
+    final result = resultTag.isEmpty ? '*' : resultTag;
+
+    return ClickCursor(
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          onDoubleTap: widget.onDoubleTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 100),
+            decoration: librarySelectedRowDecoration(
+              selected: widget.selected,
+              hovered: _hovered,
+            ),
+            padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: _kColW,
+                  child: LocalGamePlayerCell(
+                    metadata: md,
+                    side: 'White',
+                    padding: EdgeInsets.zero,
+                    rating: _ratingText(md, 'WhiteElo'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                SizedBox(
+                  width: _kColResult,
+                  child: LibraryTableResultPill(result: result),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: _kColB,
+                  child: LocalGamePlayerCell(
+                    metadata: md,
+                    side: 'Black',
+                    padding: EdgeInsets.zero,
+                    rating: _ratingText(md, 'BlackElo'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: _kColEvent,
+                  child: Text(
+                    event.isEmpty || event == '?' ? '—' : event,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: kWhiteColor, fontSize: 12),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                SizedBox(
+                  width: _kColEco,
+                  child: LibraryTableEcoCell(eco: _meta(md, 'ECO')),
+                ),
+                const SizedBox(width: 12),
+                SizedBox(
+                  width: _kTwicColDate,
+                  child: Text(
+                    date.isEmpty ? '—' : date,
+                    textAlign: TextAlign.right,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: kLightGreyColor,
+                      fontSize: 11,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -5616,181 +5693,13 @@ class _GamesTableRowState extends State<_GamesTableRow> {
   }
 }
 
-class _PlayerCell extends StatelessWidget {
-  const _PlayerCell({
-    required this.name,
-    required this.federation,
-    this.fideId,
-    required this.title,
-    this.rating = '',
-  });
-
-  final String name;
-  final String federation;
-  final int? fideId;
-  final String title;
-  final String rating;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        BackfilledFederationFlag(
-          federation: federation.isEmpty ? null : federation,
-          fideId: fideId,
-          width: 18,
-          height: 13,
-          borderRadius: BorderRadius.circular(2),
-        ),
-        const SizedBox(width: 8),
-        if (title.isNotEmpty) ...[
-          Text(
-            title,
-            style: const TextStyle(
-              color: kLightYellowColor,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(width: 5),
-        ],
-        Expanded(
-          child: Text(
-            _standardTablePlayerName(name),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: kWhiteColor,
-              fontSize: 12.5,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
-        if (rating.trim().isNotEmpty) ...[
-          const SizedBox(width: 6),
-          Text(
-            rating.trim(),
-            style: const TextStyle(
-              color: kWhiteColor70,
-              fontSize: 11,
-              fontFeatures: [FontFeature.tabularFigures()],
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-String _standardTablePlayerName(String raw) {
-  final name = raw.trim();
-  if (name.isEmpty) return '—';
-
-  String initial(String value) {
-    final trimmed = value.trim();
-    if (trimmed.isEmpty) return '';
-    return '${trimmed.characters.first.toUpperCase()}.';
-  }
-
-  if (name.contains(',')) {
-    final parts = name.split(',');
-    final last = parts.first.trim();
-    final first = parts.skip(1).join(',').trim();
-    final firstInitial = initial(first);
-    if (last.isEmpty) return firstInitial.isEmpty ? name : firstInitial;
-    return firstInitial.isEmpty ? last : '$last, $firstInitial';
-  }
-
-  final tokens = name.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
-  if (tokens.length < 2) return name;
-  final last = tokens.last;
-  final firstInitial = initial(tokens.first);
-  return firstInitial.isEmpty ? last : '$last, $firstInitial';
-}
-
-class _RatingCell extends StatelessWidget {
-  const _RatingCell({required this.rating});
-
-  final String rating;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      rating.trim().isEmpty ? '—' : rating.trim(),
-      textAlign: TextAlign.right,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: const TextStyle(
-        color: kWhiteColor70,
-        fontSize: 11,
-        fontFeatures: [FontFeature.tabularFigures()],
-      ),
-    );
-  }
-}
-
-class _EcoCell extends StatelessWidget {
-  const _EcoCell({required this.eco});
-
-  final String eco;
-
-  @override
-  Widget build(BuildContext context) {
-    final value = eco.trim();
-    if (value.isEmpty) {
-      return const Text(
-        '—',
-        style: TextStyle(color: kLightGreyColor, fontSize: 11),
-      );
-    }
-    return Container(
-      alignment: Alignment.center,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: kBlack3Color,
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: kDividerColor),
-      ),
-      child: Text(
-        value,
-        style: const TextStyle(
-          color: kWhiteColor,
-          fontSize: 11,
-          fontFeatures: [FontFeature.tabularFigures()],
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
-
-class _ResultPill extends StatelessWidget {
-  const _ResultPill({required this.result});
-  final String result;
-
-  @override
-  Widget build(BuildContext context) {
-    final r = result.trim();
-    final (label, color) = switch (r) {
-      '1-0' => ('1 – 0', kWhiteColor),
-      '0-1' => ('0 – 1', kWhiteColor),
-      '1/2-1/2' || '½-½' => ('½ – ½', kWhiteColor70),
-      '*' => ('•', kGreenColor),
-      _ => ('—', kLightGreyColor),
-    };
-    return Center(
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          fontFeatures: const [FontFeature.tabularFigures()],
-        ),
-      ),
-    );
-  }
-}
+// The library table cells now live in library_table_row_style.dart so the
+// imported-local-database table renders identical rows. These aliases keep the
+// existing private call-sites in this file unchanged.
+typedef _PlayerCell = LibraryTablePlayerCell;
+typedef _RatingCell = LibraryTableRatingCell;
+typedef _EcoCell = LibraryTableEcoCell;
+typedef _ResultPill = LibraryTableResultPill;
 
 class _RowDragFeedback extends StatelessWidget {
   const _RowDragFeedback({required this.label});
@@ -8243,7 +8152,7 @@ class DatabaseWorkspacePane extends HookConsumerWidget {
 // every keystroke. The lists below pin each row to these heights via SizedBox.
 const double _kDatabaseWorkspaceSavedRowExtent = 44.0;
 const double _kDatabaseWorkspaceTwicRowExtent = 44.0;
-const double _kLocalMiniPreviewRowExtent = 58.0;
+const double _kLocalMiniPreviewRowExtent = 44.0;
 const int _kLocalMiniPreviewGameQueryPageSize = 1000;
 const double _kLocalMiniPreviewScrollLoadMoreThreshold = 420.0;
 
@@ -9458,30 +9367,8 @@ class _DatabaseWorkspaceToolbar extends StatelessWidget {
 /// unselected/hover rows carry the same-width transparent left border so the
 /// row content never shifts horizontally when selection moves. This is the
 /// visible "selected row" indicator for the library page tables.
-@visibleForTesting
-BoxDecoration librarySelectedRowDecoration({
-  required bool selected,
-  required bool hovered,
-  bool bottomDivider = true,
-  double selectedTint = 0.20,
-}) {
-  return BoxDecoration(
-    color:
-        selected
-            ? kPrimaryColor.withValues(alpha: selectedTint)
-            : (hovered ? kBlack3Color.withValues(alpha: 0.55) : null),
-    border: Border(
-      left: BorderSide(
-        color: selected ? kPrimaryColor : Colors.transparent,
-        width: 3,
-      ),
-      bottom:
-          bottomDivider
-              ? const BorderSide(color: kDividerColor, width: 1)
-              : BorderSide.none,
-    ),
-  );
-}
+// librarySelectedRowDecoration now lives in library_table_row_style.dart and is
+// re-exported above so existing call-sites and tests keep resolving it here.
 
 class _DatabaseSavedGamesTable extends HookWidget {
   const _DatabaseSavedGamesTable({

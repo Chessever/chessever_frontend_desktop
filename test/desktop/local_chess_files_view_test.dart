@@ -72,15 +72,16 @@ void main() {
     expect(repository.queries, hasLength(1));
     expect(repository.queries.single.search, isEmpty);
     expect(repository.queries.single.pageSize, 1000);
-    expect(find.text('Database Only'), findsOneWidget);
-    expect(find.text('Hou, Yifan'), findsNothing);
+    // Row player names render in the shared library-table abbreviated form.
+    expect(find.text('Only, D.'), findsOneWidget);
+    expect(find.text('Hou, Y.'), findsNothing);
 
     await tester.enterText(find.byType(TextField), 'database only');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(repository.queries.last.search, 'database only');
-    expect(find.text('Database Only'), findsOneWidget);
+    expect(find.text('Only, D.'), findsOneWidget);
     expect(find.text('1 / 42 entries'), findsOneWidget);
   });
 
@@ -390,7 +391,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    final rowFinder = find.text('Metadata White');
+    final rowFinder = find.text('White, M.');
     expect(rowFinder, findsOneWidget);
     await tester.tap(rowFinder);
     await tester.pump(const Duration(milliseconds: 50));
