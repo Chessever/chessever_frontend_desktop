@@ -1,4 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:chessever/desktop/widgets/desktop_player_title_chip.dart';
 import 'package:chessever/repository/supabase/game/games.dart'
     show SearchPlayer;
 import 'package:chessever/screens/group_event/group_event_screen.dart'
@@ -11,8 +12,6 @@ import 'package:chessever/utils/app_typography.dart';
 import 'package:chessever/utils/country_utils.dart';
 import 'package:chessever/utils/haptic_feedback_service.dart';
 import 'package:chessever/utils/responsive_helper.dart';
-import 'package:chessever/widgets/player_initials_avatar.dart'
-    show getTitleBadgeColor;
 import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -212,38 +211,31 @@ class _PlayerSearchCard extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    // Title badge (GM, IM, etc)
-                    if (player.title != null && player.title!.isNotEmpty)
-                      Padding(
-                        padding: EdgeInsets.only(bottom: 4.sp),
-                        child: Container(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 5.sp,
-                            vertical: 2.sp,
+                    Row(
+                      children: [
+                        if (player.title != null &&
+                            player.title!.isNotEmpty) ...[
+                          DesktopPlayerTitleChip(
+                            title: player.title!,
+                            compact: isCompact,
                           ),
-                          decoration: BoxDecoration(
-                            color: getTitleBadgeColor(player.title!),
-                            borderRadius: BorderRadius.circular(4.br),
-                          ),
+                          SizedBox(width: 6.sp),
+                        ],
+                        Expanded(
                           child: Text(
-                            player.title!,
-                            style: AppTypography.textXsBold.copyWith(
-                              color: kWhiteColor,
-                              fontSize: isCompact ? 9.sp : 10.sp,
-                              letterSpacing: 0.5,
-                            ),
+                            _formatPlayerName(player.name),
+                            style: (isCompact
+                                    ? AppTypography.textMdBold
+                                    : AppTypography.textLgBold)
+                                .copyWith(
+                                  color: kWhiteColor,
+                                  letterSpacing: 0.3,
+                                ),
+                            maxLines: isCompact ? 1 : 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                      ),
-                    // Player name
-                    Text(
-                      _formatPlayerName(player.name),
-                      style: (isCompact
-                              ? AppTypography.textMdBold
-                              : AppTypography.textLgBold)
-                          .copyWith(color: kWhiteColor, letterSpacing: 0.3),
-                      maxLines: isCompact ? 1 : 2,
-                      overflow: TextOverflow.ellipsis,
+                      ],
                     ),
                     SizedBox(height: 2.sp),
                     // Subtitle: Rating + Country

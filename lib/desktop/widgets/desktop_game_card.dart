@@ -11,6 +11,7 @@ import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
+import 'package:chessever/desktop/widgets/desktop_player_title_chip.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
@@ -480,7 +481,7 @@ class _CleanPlayerRow extends StatelessWidget {
           ),
           if (title.isNotEmpty) ...[
             const SizedBox(width: 6),
-            _TitleChip(title: title, compact: true),
+            DesktopPlayerTitleChip(title: title, compact: true),
           ],
           const SizedBox(width: 8),
           Expanded(
@@ -554,7 +555,7 @@ class _CleanFaceOffBlock extends StatelessWidget {
       ),
       if (title.isNotEmpty) ...[
         const SizedBox(width: 5),
-        _TitleChip(title: title, compact: true),
+        DesktopPlayerTitleChip(title: title, compact: true),
       ],
       if (rating > 0) ...[
         const SizedBox(width: 6),
@@ -1292,7 +1293,7 @@ class _PlayerRow extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         if (title.isNotEmpty) ...[
-          _TitleChip(title: title, compact: compact),
+          DesktopPlayerTitleChip(title: title, compact: compact),
           const SizedBox(width: 6),
         ],
         Expanded(
@@ -1335,39 +1336,6 @@ class _PlayerRow extends StatelessWidget {
           _ResultBadge(label: result, compact: compact),
         ],
       ],
-    );
-  }
-}
-
-class _TitleChip extends StatelessWidget {
-  const _TitleChip({required this.title, required this.compact});
-  final String title;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: compact ? 4 : 5,
-        vertical: compact ? 1 : 1.5,
-      ),
-      decoration: BoxDecoration(
-        color: kPrimaryColor.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(3),
-        border: Border.all(
-          color: kPrimaryColor.withValues(alpha: 0.38),
-          width: 0.7,
-        ),
-      ),
-      child: Text(
-        title,
-        style: TextStyle(
-          color: kPrimaryColor,
-          fontSize: compact ? 9.5 : 10.5,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0.4,
-        ),
-      ),
     );
   }
 }

@@ -249,6 +249,20 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     final roundNameById = <String, String>{
       for (final round in grouped.rounds) round.id: round.name,
     };
+    // Knockout stages are synthetic rounds (`knockout-stage-*`) whose ids
+    // never match a game's real roundId. Map each game's roundId back to its
+    // owning stage so board-rail summaries inherit the stage name and
+    // schedule; direct id matches added above stay authoritative.
+    for (final round in grouped.rounds) {
+      final roundGames =
+          grouped.gamesByRound[round.id] ?? const <GamesTourModel>[];
+      for (final game in roundGames) {
+        final gameRoundId = game.roundId.trim();
+        if (gameRoundId.isEmpty) continue;
+        roundNameById.putIfAbsent(gameRoundId, () => round.name);
+        roundStartsAtById.putIfAbsent(gameRoundId, () => round.startsAt);
+      }
+    }
     // Keyboard nav must only step through games that are currently visible.
     // When a round is collapsed via `roundExpansionProvider` its games stay
     // in `grouped.allGames` but the rows aren't rendered — stepping into
