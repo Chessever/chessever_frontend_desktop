@@ -2656,6 +2656,20 @@ class _BoardPaneContent extends HookConsumerWidget {
         return;
       }
 
+      // Only guard when turning threats ON. The null-move probe needs the side
+      // to move to be able to "pass": illegal in check, meaningless once the
+      // game is decided.
+      if (!threatMode.value) {
+        if (boardPosition.isCheck) {
+          showToast('No threats — the side to move is in check.', error: true);
+          return;
+        }
+        if (boardPosition.isGameOver) {
+          showToast('No threats — the game is over.', error: true);
+          return;
+        }
+      }
+
       threatMode.value = !threatMode.value;
       showToast(threatMode.value ? 'Showing threats' : 'Threats hidden');
     }
@@ -5182,7 +5196,11 @@ class _BoardArea extends ConsumerWidget {
         ref.watch(engineSettingsProviderNew).valueOrNull ??
         const EngineSettings();
     final showEngineAnalysis = engineSettings.showEngineAnalysis;
-    final evalFen = threatMode ? threatFenForBoardEval(fen) : fen;
+    // A null-move threat FEN is illegal when the side to move is in check, so
+    // degrade to the real position there (also guards navigating into check
+    // while threat mode is already on) — never feed the engine an illegal FEN.
+    final threatActive = threatMode && !isCheck;
+    final evalFen = threatActive ? threatFenForBoardEval(fen) : fen;
     final evalState =
         showEngineAnalysis
             ? ref.watch(boardEvalProvider(evalFen))
@@ -5446,7 +5464,7 @@ class _BoardArea extends ConsumerWidget {
                     boardRenderKey: boardRenderKey,
                     boardSize: boardSize,
                     fen: fen,
-                    threatMode: threatMode,
+                    threatMode: threatActive,
                     flipped: flipped,
                     playerSide: playerSide,
                     sideToMove: sideToMove,
@@ -6077,7 +6095,11 @@ List<cg.Shape> _enginePvArrowShapes({
 
   final Position position;
   try {
-    position = Chess.fromSetup(Setup.parseFen(fen));
+    // Threat PVs are generated against the null-move FEN (opponent to move), so
+    // parse that same position or every threat move would fail the isLegal()
+    // gate below and no arrow would ever render.
+    final arrowFen = threatMode ? threatFenForBoardEval(fen) : fen;
+    position = Chess.fromSetup(Setup.parseFen(arrowFen));
   } catch (_) {
     return const <cg.Shape>[];
   }
@@ -6091,13 +6113,26 @@ List<cg.Shape> _enginePvArrowShapes({
     final arrow = _engineArrowFromUci(
       position: position,
       rawUci: firstMove,
-      color: threatMode ? const Color(0xFFE5484D) : enginePvArrowColor(i),
-      scale: threatMode ? 1.16 : enginePvArrowScale(i),
+      color: threatMode ? threatPvArrowColor : enginePvArrowColor(i),
+      scale: threatMode ? threatPvArrowScale : enginePvArrowScale(i),
     );
     if (arrow != null) out.add(arrow);
   }
   return out;
 }
+
+@visibleForTesting
+List<cg.Shape> debugEnginePvArrowShapes({
+  required String fen,
+  required List<BoardPv> pvs,
+  required EngineSettings settings,
+  bool threatMode = false,
+}) => _enginePvArrowShapes(
+  fen: fen,
+  pvs: pvs,
+  settings: settings,
+  threatMode: threatMode,
+);
 
 cg.Arrow? _engineArrowFromUci({
   required Position position,
