@@ -75,6 +75,7 @@ import 'package:chessever/desktop/widgets/variation_fork_chooser.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
+import 'package:chessever/providers/player_backfill_provider.dart';
 import 'package:chessever/e2e/e2e_ids.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/library/library_repository.dart';
@@ -106,6 +107,7 @@ import 'package:fast_immutable_collections/fast_immutable_collections.dart'
     as fic;
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/broadcast_custom_scoring.dart';
+import 'package:chessever/utils/chess_title_utils.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 
@@ -6184,6 +6186,21 @@ class _PlayerHeader extends ConsumerWidget {
                 ?.trim();
     final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
 
+    // Local PGNs (e.g. TWIC) often carry a FIDE ID but no title tag; resolve
+    // the title on demand from chess_players, same as the flag backfill.
+    final resolvedTitle =
+        title.isNotEmpty
+            ? title
+            : fideId == null
+            ? ''
+            : ChessTitleUtils.normalize(
+              ref
+                      .watch(chessPlayerByFideIdProvider(fideId!))
+                      .valueOrNull
+                      ?.title ??
+                  '',
+            );
+
     final hasName = name.isNotEmpty;
     final body = Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -6243,9 +6260,9 @@ class _PlayerHeader extends ConsumerWidget {
             borderRadius: BorderRadius.circular(2),
           ),
           const SizedBox(width: 8),
-          if (title.isNotEmpty) ...[
+          if (resolvedTitle.isNotEmpty) ...[
             Text(
-              title,
+              resolvedTitle,
               style: const TextStyle(
                 color: kPrimaryColor,
                 fontSize: 13,
