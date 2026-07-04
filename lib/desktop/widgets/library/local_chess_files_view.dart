@@ -10,6 +10,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_append.dart';
+import 'package:chessever/desktop/services/local_player_enrichment_service.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -29,6 +30,7 @@ import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/local_pgn_metadata.dart';
 
 class LocalChessFilesView extends HookConsumerWidget {
   const LocalChessFilesView({
@@ -115,12 +117,14 @@ class LocalChessFilesView extends HookConsumerWidget {
     final allGames = selectedDatabase?.games ?? const <LocalChessGame>[];
     final databaseEntryCount = selectedDatabase?.gameCount ?? allGames.length;
     final databaseTitle = selectedDatabase?.name ?? source.label;
+    final enrichmentEpoch = ref.watch(localPlayerEnrichmentEpochProvider);
     final databaseQueryKey =
         Object.hash(
           selectedDatabase?.path,
           selectedDatabase?.gameCount,
           selectedDatabase?.sizeBytes,
           selectedDatabase?.modifiedAt?.millisecondsSinceEpoch,
+          enrichmentEpoch,
           query.value,
           sort.value.key,
           sort.value.dir,
@@ -141,6 +145,16 @@ class LocalChessFilesView extends HookConsumerWidget {
       }
       return null;
     }, [databaseQueryKey]);
+    useEffect(() {
+      final path = selectedDatabase?.path;
+      if (path == null || databaseEntryCount <= 0) return null;
+      Future<void>.microtask(
+        () => ref
+            .read(localPlayerEnrichmentServiceProvider)
+            .ensureDatabaseEnriched(path),
+      );
+      return null;
+    }, [selectedDatabase?.path, databaseEntryCount]);
     final fallbackFiltered = useMemoized(() {
       final q = query.value.trim().toLowerCase();
       final base =
@@ -2247,11 +2261,21 @@ class _LocalLoading extends StatelessWidget {
   }
 }
 
+// Mirrors the repository's SQL search semantics: every whitespace-separated
+// term must match the file name, path, or some PGN header value.
 bool _matches(LocalChessGame game, String query) {
-  if (game.fileName.toLowerCase().contains(query)) return true;
-  if (game.sourceRelativePath.toLowerCase().contains(query)) return true;
+  final terms = query.split(RegExp(r'\s+')).where((term) => term.isNotEmpty);
+  for (final term in terms) {
+    if (!_matchesTerm(game, term)) return false;
+  }
+  return true;
+}
+
+bool _matchesTerm(LocalChessGame game, String term) {
+  if (game.fileName.toLowerCase().contains(term)) return true;
+  if (game.sourceRelativePath.toLowerCase().contains(term)) return true;
   for (final value in game.game.metadata.values) {
-    if (value is String && value.toLowerCase().contains(query)) return true;
+    if (value is String && value.toLowerCase().contains(term)) return true;
   }
   return false;
 }
@@ -2562,7 +2586,14 @@ List<ChessGame> _hydrateLocalGamesForSave(List<LocalChessGame> games) {
   final out = <ChessGame>[];
   for (final game in games) {
     try {
-      out.add(ChessGame.fromPgn(game.id, game.rawPgn));
+      final parsed = ChessGame.fromPgn(game.id, game.rawPgn);
+      // The stored header bag may carry backfilled tags (WhiteTitle/WhiteFed)
+      // the raw PGN never had; keep them when saving to the library.
+      out.add(
+        parsed.copyWith(
+          metadata: <String, dynamic>{...game.game.metadata, ...parsed.metadata},
+        ),
+      );
     } catch (_) {
       out.add(game.game);
     }

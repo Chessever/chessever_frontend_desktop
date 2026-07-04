@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:chessever/desktop/widgets/library/local_game_player_cell.dart';
 import 'package:chessever/providers/player_backfill_provider.dart';
 import 'package:chessever/repository/supabase/chess_player/chess_player_repository.dart';
 import 'package:chessever/widgets/federation_flag.dart';
+import 'package:chessever/widgets/skeleton_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -117,5 +120,75 @@ void main() {
     );
 
     expect(find.text('White'), findsOneWidget);
+  });
+
+  testWidgets('resolves a missing title on demand by FIDE ID', (tester) async {
+    // TWIC headers carry no title tag; the cell must fetch it per row
+    // instead of waiting for any import-time work.
+    await pumpCell(
+      tester,
+      metadata: const {'White': 'Carlsen, Magnus', 'WhiteFideId': '1503014'},
+      overrides: [
+        chessPlayerByFideIdProvider.overrideWith(
+          (ref, fideId) async => const ChessPlayer(
+            fideid: 1503014,
+            name: 'Carlsen, Magnus',
+            title: 'GM',
+            country: 'NOR',
+          ),
+        ),
+      ],
+    );
+
+    expect(find.text('GM'), findsOneWidget);
+    expect(find.byType(FederationFlag), findsOneWidget);
+  });
+
+  testWidgets('shows a shimmer while the on-demand title loads', (
+    tester,
+  ) async {
+    final gate = Completer<ChessPlayer?>();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          chessPlayerByFideIdProvider.overrideWith(
+            (ref, fideId) => gate.future,
+          ),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            body: Row(
+              children: [
+                Expanded(
+                  child: LocalGamePlayerCell(
+                    metadata: {
+                      'White': 'Carlsen, Magnus',
+                      'WhiteFideId': '1503014',
+                    },
+                    side: 'White',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(SkeletonWidget), findsOneWidget);
+
+    gate.complete(
+      const ChessPlayer(
+        fideid: 1503014,
+        name: 'Carlsen, Magnus',
+        title: 'GM',
+        country: 'NOR',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SkeletonWidget), findsNothing);
+    expect(find.text('GM'), findsOneWidget);
   });
 }

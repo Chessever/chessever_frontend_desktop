@@ -1,32 +1,27 @@
 import 'package:flutter/material.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/providers/player_backfill_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/chess_title_utils.dart';
+import 'package:chessever/utils/local_pgn_metadata.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
+import 'package:chessever/widgets/skeleton_widget.dart';
 
-/// Resolves the federation for one side ('White'/'Black') from a local PGN
-/// header bag. PGN has no standard country tag, so probe the suffixes seen in
-/// the wild.
-String localPgnFederation(Map<String, dynamic> metadata, String side) {
-  for (final suffix in const <String>[
-    'Federation',
-    'Fed',
-    'Country',
-    'TeamCountry',
-    'Flag',
-  ]) {
-    final value = metadata['$side$suffix']?.toString().trim() ?? '';
-    if (value.isNotEmpty && value != '?' && value != '-') return value;
-  }
-  return '';
-}
+const _kTitleStyle = TextStyle(
+  color: kPrimaryColor,
+  fontSize: 10,
+  fontWeight: FontWeight.w800,
+  height: 1.1,
+);
 
 /// Player cell for the local games table: federation flag + title + name.
 ///
 /// TWIC-style exports carry `WhiteTitle`/`WhiteFideId` but no country tag, so
-/// the flag resolves through [BackfilledFederationFlag]'s chess_players
-/// FIDE-ID (then exact-name) lookup and collapses to nothing when unknown.
-class LocalGamePlayerCell extends StatelessWidget {
+/// both the flag and the title resolve on demand through the chess_players
+/// FIDE-ID lookup (repo-level per-ID cache, negative hits included) while a
+/// shimmer holds the title slot. Import itself never waits on this.
+class LocalGamePlayerCell extends ConsumerWidget {
   const LocalGamePlayerCell({
     super.key,
     required this.metadata,
@@ -37,12 +32,11 @@ class LocalGamePlayerCell extends StatelessWidget {
   final String side;
 
   @override
-  Widget build(BuildContext context) {
-    String meta(String key) => metadata[key]?.toString().trim() ?? '';
-    final rawName = meta(side);
+  Widget build(BuildContext context, WidgetRef ref) {
+    final rawName = metadata[side]?.toString().trim() ?? '';
     final hasName = rawName.isNotEmpty && rawName != '?';
-    final title = ChessTitleUtils.normalize(meta('${side}Title'));
-    final fideId = int.tryParse(meta('${side}FideId'));
+    final fideId = localPgnFideId(metadata, side);
+    final titleChip = _buildTitleChip(ref, fideId);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -50,25 +44,15 @@ class LocalGamePlayerCell extends StatelessWidget {
         children: [
           BackfilledFederationFlag(
             federation: localPgnFederation(metadata, side),
-            fideId: fideId != null && fideId > 0 ? fideId : null,
+            fideId: fideId,
             playerName: hasName ? rawName : null,
             width: 18,
             height: 12,
             borderRadius: BorderRadius.circular(2),
           ),
-          if (title.isNotEmpty) ...[
+          if (titleChip != null) ...[
             const SizedBox(width: 6),
-            Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: kPrimaryColor,
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-                height: 1.1,
-              ),
-            ),
+            titleChip,
           ],
           const SizedBox(width: 6),
           Flexible(
@@ -86,6 +70,32 @@ class LocalGamePlayerCell extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  Widget? _buildTitleChip(WidgetRef ref, int? fideId) {
+    final tagTitle = ChessTitleUtils.normalize(localPgnTitle(metadata, side));
+    if (tagTitle.isNotEmpty) return _titleText(tagTitle);
+    if (fideId == null) return null;
+    return ref
+        .watch(chessPlayerByFideIdProvider(fideId))
+        .when<Widget?>(
+          data: (player) {
+            final resolved = ChessTitleUtils.normalize(player?.title ?? '');
+            return resolved.isEmpty ? null : _titleText(resolved);
+          },
+          error: (_, _) => null,
+          loading:
+              () => const SkeletonWidget(child: Text('GM', style: _kTitleStyle)),
+        );
+  }
+
+  Widget _titleText(String title) {
+    return Text(
+      title,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: _kTitleStyle,
     );
   }
 }

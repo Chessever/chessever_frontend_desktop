@@ -14,6 +14,7 @@ import 'package:sqflite/sqflite.dart' as sqflite;
 
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/utils/local_pgn_metadata.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
@@ -332,6 +333,12 @@ Future<void> createLocalChessResqliteDatabaseSchema(
       tx,
       table: localChessDatabasesTable,
       column: 'tree_max_ply',
+      ddl: 'INTEGER',
+    );
+    await _ensureColumn(
+      tx,
+      table: localChessDatabasesTable,
+      column: 'player_enrichment_at_ms',
       ddl: 'INTEGER',
     );
     await tx.execute(
@@ -1415,6 +1422,23 @@ class _LocalTreeRebuildWorkerFailure {
   final String stackTrace;
 }
 
+/// Player fields resolvable from the global FIDE ratings table, used to
+/// backfill header tags the source PGN omitted.
+class LocalPlayerEnrichment {
+  const LocalPlayerEnrichment({this.title, this.federation});
+
+  final String? title;
+  final String? federation;
+}
+
+const int _kEnrichmentScanPageSize = 2000;
+
+bool _sideNeedsPlayerEnrichment(Map<String, dynamic> metadata, String side) {
+  if (localPgnFideId(metadata, side) == null) return false;
+  return localPgnTitle(metadata, side).isEmpty ||
+      localPgnFederation(metadata, side).isEmpty;
+}
+
 class LocalChessDatabaseRepository {
   LocalChessDatabaseRepository({
     required Future<resqlite.Database> Function() database,
@@ -2260,6 +2284,118 @@ class LocalChessDatabaseRepository {
       pageNumber: page,
       pageSize: size,
     );
+  }
+
+  /// Fills missing `WhiteTitle`/`BlackTitle`/`WhiteFed`/`BlackFed` header
+  /// tags from the global FIDE player table for every game in the database
+  /// that carries a FIDE ID. Existing tags are never overwritten.
+  ///
+  /// Runs at most once per database (guarded by `player_enrichment_at_ms`,
+  /// which game inserts reset); pass [force] to rescan regardless. Returns
+  /// the number of games whose headers changed. If [resolve] throws, the
+  /// marker stays unset so a later call retries.
+  Future<int> enrichLocalDatabasePlayers({
+    required String databasePath,
+    required Future<Map<int, LocalPlayerEnrichment>> Function(
+      Set<int> fideIds,
+    )
+    resolve,
+    bool force = false,
+  }) async {
+    final databaseId = _databaseId(databasePath);
+    final db = await _database();
+    final databaseRows = await db.select(
+      '''
+      SELECT player_enrichment_at_ms
+      FROM $localChessDatabasesTable
+      WHERE id = ? AND deleted_at_ms IS NULL
+      LIMIT 1
+      ''',
+      <Object?>[databaseId],
+    );
+    if (databaseRows.isEmpty) return 0;
+    if (!force && databaseRows.single['player_enrichment_at_ms'] != null) {
+      return 0;
+    }
+
+    var updatedGames = 0;
+    var lastId = '';
+    while (true) {
+      final rows = await db.select(
+        '''
+        SELECT id, headers_json
+        FROM $localChessGamesTable
+        WHERE database_id = ?
+          AND id > ?
+          AND headers_json LIKE '%FideId%'
+        ORDER BY id
+        LIMIT ?
+        ''',
+        <Object?>[databaseId, lastId, _kEnrichmentScanPageSize],
+      );
+      if (rows.isEmpty) break;
+      lastId = rows.last['id']?.toString() ?? lastId;
+
+      final pending = <({String id, Map<String, dynamic> metadata})>[];
+      final fideIds = <int>{};
+      for (final row in rows) {
+        final id = row['id']?.toString();
+        if (id == null || id.isEmpty) continue;
+        final metadata = _jsonMap(row['headers_json']);
+        var needsWork = false;
+        for (final side in const <String>['White', 'Black']) {
+          if (!_sideNeedsPlayerEnrichment(metadata, side)) continue;
+          fideIds.add(localPgnFideId(metadata, side)!);
+          needsWork = true;
+        }
+        if (needsWork) pending.add((id: id, metadata: metadata));
+      }
+
+      if (pending.isNotEmpty) {
+        final resolved = await resolve(fideIds);
+        final updates = <List<Object?>>[];
+        for (final entry in pending) {
+          final metadata = Map<String, dynamic>.of(entry.metadata);
+          var changed = false;
+          for (final side in const <String>['White', 'Black']) {
+            final fideId = localPgnFideId(metadata, side);
+            final player = fideId == null ? null : resolved[fideId];
+            if (player == null) continue;
+            final title = player.title?.trim() ?? '';
+            if (title.isNotEmpty && localPgnTitle(metadata, side).isEmpty) {
+              metadata['${side}Title'] = title;
+              changed = true;
+            }
+            final federation = player.federation?.trim() ?? '';
+            if (federation.isNotEmpty &&
+                localPgnFederation(metadata, side).isEmpty) {
+              metadata['${side}Fed'] = federation;
+              changed = true;
+            }
+          }
+          if (!changed) continue;
+          updates.add(<Object?>[jsonEncode(metadata), databaseId, entry.id]);
+        }
+        if (updates.isNotEmpty) {
+          await db.transaction((txn) async {
+            await _executeBatchChunked(txn, '''
+              UPDATE $localChessGamesTable
+              SET headers_json = ?
+              WHERE database_id = ? AND id = ?
+              ''', updates);
+          });
+          updatedGames += updates.length;
+        }
+      }
+      if (rows.length < _kEnrichmentScanPageSize) break;
+    }
+
+    await db.execute(
+      'UPDATE $localChessDatabasesTable SET player_enrichment_at_ms = ? '
+      'WHERE id = ?',
+      <Object?>[DateTime.now().millisecondsSinceEpoch, databaseId],
+    );
+    return updatedGames;
   }
 
   Future<Set<String>?> localDatabasePgnFingerprints({
@@ -4091,6 +4227,13 @@ class LocalChessDatabaseRepository {
       }
     }
     await flushRows();
+    // New rows may reference players the FIDE backfill has never seen; clear
+    // the marker so the next enrichment pass rescans this database.
+    await txn.execute(
+      'UPDATE $localChessDatabasesTable SET player_enrichment_at_ms = NULL '
+      'WHERE id = ?',
+      <Object?>[databaseId],
+    );
   }
 
   Future<Map<String, int>> _idsForNames(
@@ -5682,10 +5825,17 @@ void _appendLocalGameSearch(
   List<Object?> parameters,
   String rawSearch,
 ) {
-  final query = rawSearch.trim().toLowerCase();
-  if (query.isEmpty) return;
-  final like = '%${_escapeSqlLike(query)}%';
-  where.write('''
+  // Every whitespace-separated term must match somewhere (file name, path,
+  // or any PGN header value), so "magnus carlsen", "carlsen 1-0", and
+  // "gm berlin 2024" all narrow the way users expect.
+  final terms = rawSearch
+      .trim()
+      .toLowerCase()
+      .split(RegExp(r'\s+'))
+      .where((term) => term.isNotEmpty);
+  for (final term in terms) {
+    final like = '%${_escapeSqlLike(term)}%';
+    where.write('''
     AND (
       LOWER(g.file_name) LIKE ? ESCAPE '\\'
       OR LOWER(g.source_relative_path) LIKE ? ESCAPE '\\'
@@ -5696,7 +5846,8 @@ void _appendLocalGameSearch(
       )
     )
   ''');
-  parameters.addAll(<Object?>[like, like, like]);
+    parameters.addAll(<Object?>[like, like, like]);
+  }
 }
 
 void _appendLocalMovePrefixFilter(
