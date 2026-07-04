@@ -61,6 +61,7 @@ const String _gameListSelectColumns = '''
           player_white,
           player_black,
           date_start,
+          round_schedule:rounds!games_round_id_fkey(starts_at),
           time_start,
           board_nr,
           last_move_time,

@@ -3826,7 +3826,8 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
               ),
               child: Row(
                 children: [
-                  if (group.status != RoundStatus.completed) ...[
+                  if (group.status == RoundStatus.live ||
+                      group.status == RoundStatus.upcoming) ...[
                     _EventRoundStatusChip(status: group.status),
                     const SizedBox(width: 7),
                   ],
@@ -3888,10 +3889,12 @@ class _EventRoundStatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final (label, color) = switch (status) {
       RoundStatus.live => ('LIVE', kRedColor),
-      RoundStatus.ongoing => ('ONGOING', kGreenColor),
+      RoundStatus.ongoing => ('', kGreenColor),
       RoundStatus.completed => ('DONE', kLightGreyColor),
       RoundStatus.upcoming => ('SOON', kPrimaryColor),
     };
+
+    if (label.isEmpty) return const SizedBox.shrink();
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),

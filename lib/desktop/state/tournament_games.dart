@@ -131,6 +131,7 @@ class TournamentGameSummary {
       openingName: game.openingName ?? game.eco,
       lastMoveTime: game.lastMoveTime,
       startsAt: game.dateStart,
+      roundStartsAt: game.roundStartsAt,
       hasStarted: game.lastMove?.trim().isNotEmpty == true,
       whiteTeam: white?.team.trim() ?? '',
       blackTeam: black?.team.trim() ?? '',

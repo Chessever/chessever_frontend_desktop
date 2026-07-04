@@ -9,6 +9,7 @@ import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/event_games_table.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
+import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
@@ -22,6 +23,64 @@ void main() {
     expect(gamebaseStatusFromResult('0–1'), GameStatus.blackWins);
     expect(gamebaseStatusFromResult('1—0'), GameStatus.whiteWins);
     expect(gamebaseStatusFromResult('½–½'), GameStatus.draw);
+  });
+
+  test('event rail summaries prefer canonical round start from game rows', () {
+    final game = Games.fromJson({
+      'id': 'game-1',
+      'round_id': 'round-7',
+      'round_slug': 'round-7',
+      'tour_id': 'tour-1',
+      'tour_slug': 'naroditsky-2026',
+      'players': [
+        {'name': 'Aravindh,C', 'title': 'GM', 'fed': 'IND', 'rating': 2584},
+        {'name': 'Sindarov,J', 'title': 'GM', 'fed': 'UZB', 'rating': 2718},
+      ],
+      'date_start': '2026-07-03',
+      'rounds': {'starts_at': '2026-07-03T16:52:00Z'},
+      'status': 'ONGOING',
+      'pgn': '1. e4 e5 *',
+      'last_move': 'e5',
+      'last_move_time': '2026-07-03T16:55:00Z',
+    });
+
+    final summary = TournamentGameSummary.fromGame(game);
+
+    expect(summary.startsAt, DateTime.parse('2026-07-03'));
+    expect(summary.roundStartsAt, DateTime.parse('2026-07-03T16:52:00Z'));
+  });
+
+  testWidgets('event rail omits ongoing status chip text', (tester) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'event-game-1',
+          pgn: '1. e4 e5 *',
+          label: 'Event game',
+          whiteName: 'White',
+          blackName: 'Black',
+          tournamentTitle: 'Naroditsky Memorial',
+          eventGames: [
+            _summary(
+              id: 'event-game-1',
+              roundLabel: 'Round 7',
+              // Started ~2h ago so the derived round status is deterministically
+              // `ongoing` (within the rolling 24h window); a fixed past date
+              // would age into `completed` and stop exercising the suppression.
+              roundStartsAt: DateTime.now().subtract(const Duration(hours: 2)),
+              status: GameStatus.unknown,
+              hasStarted: false,
+              pgn: '1. e4 e5 *',
+            ),
+          ],
+          gameListSelectedId: 'event-game-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Round 7'), findsOneWidget);
+    expect(find.text('ONGOING'), findsNothing);
   });
 
   test('event rail range selection follows visible row order', () {
