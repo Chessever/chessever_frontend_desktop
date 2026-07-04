@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:chessever/desktop/services/board_share_service.dart';
 import 'package:chessever/desktop/widgets/board_share_dialog.dart';
+import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 
 void main() {
@@ -62,28 +63,57 @@ void main() {
       expect(find.text('Hans Niemann'), findsOneWidget);
       expect(find.text('Magnus Carlsen'), findsOneWidget);
       expect(find.text('1:23:45'), findsOneWidget);
-      expect(find.text('0:12:34'), findsOneWidget);
+      expect(find.text('12:34'), findsOneWidget);
+    });
+
+    testWidgets('omits the eval bar completely when hidden', (tester) async {
+      const settings = BoardSettingsNew();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: BoardShareCard(
+            fen: 'rn1qkbnr/pppbpppp/8/3p4/8/5NP1/PPPPPPBP/RNBQK2R b KQkq - 1 3',
+            boardSettings: cg.ChessboardSettings(
+              enableCoordinates: true,
+              animationDuration: Duration.zero,
+              colorScheme: settings.colorScheme,
+              pieceAssets: settings.pieceAssets,
+              borderRadius: BorderRadius.zero,
+              boxShadow: const [],
+            ),
+            whiteName: 'Hans Niemann',
+            blackName: 'Magnus Carlsen',
+            showEvalBar: false,
+          ),
+        ),
+      );
+
+      expect(find.byType(DesktopEvalBar), findsNothing);
+      expect(boardShareCardWidth(320, showEvalBar: false), 320);
     });
   });
 
   group('boardShareActionDescriptors', () {
-    test('uses copy/download actions for desktop sharing', () {
+    test('uses copy-image/download actions for desktop sharing', () {
       final actions = boardShareActionDescriptors(
-        copyLink: () {},
+        copyImage: () {},
         downloadGif: () {},
         downloadImage: () {},
         copyPgn: () {},
       );
 
       expect(actions.map((action) => action.label), [
-        'Copy Link',
+        'Copy Image',
         'Download GIF',
-        'Download Image',
+        'Download PNG',
         'Copy PGN',
       ]);
       expect(
         actions.map((action) => action.label),
-        isNot(contains('Share Image')),
+        isNot(contains('Copy Link')),
+      );
+      expect(
+        actions.map((action) => action.label),
+        isNot(contains('Download Image')),
       );
       expect(
         actions.map((action) => action.label),

@@ -7,6 +7,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pasteboard/pasteboard.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -91,6 +92,51 @@ class BoardShareService {
   /// Copy [text] to the system clipboard and optionally show a toast.
   static Future<void> copyToClipboard(String text) async {
     await Clipboard.setData(ClipboardData(text: text));
+  }
+
+  /// Copy PNG bytes to the system clipboard.
+  static Future<void> copyPngBytesToClipboard(Uint8List bytes) async {
+    if (io.Platform.isLinux) {
+      await _copyPngBytesToLinuxClipboard(bytes);
+      return;
+    }
+    await Pasteboard.writeImage(bytes);
+  }
+
+  static Future<void> _copyPngBytesToLinuxClipboard(Uint8List bytes) async {
+    Future<bool> hasCommand(String command) async {
+      final result = await io.Process.run('which', [command]);
+      return result.exitCode == 0;
+    }
+
+    if (await hasCommand('wl-copy')) {
+      final process = await io.Process.start('wl-copy', [
+        '--type',
+        'image/png',
+      ]);
+      process.stdin.add(bytes);
+      await process.stdin.close();
+      final exitCode = await process.exitCode;
+      if (exitCode == 0) return;
+    }
+
+    if (await hasCommand('xclip')) {
+      final process = await io.Process.start('xclip', [
+        '-selection',
+        'clipboard',
+        '-t',
+        'image/png',
+        '-i',
+      ]);
+      process.stdin.add(bytes);
+      await process.stdin.close();
+      final exitCode = await process.exitCode;
+      if (exitCode == 0) return;
+    }
+
+    throw UnsupportedError(
+      'Image clipboard requires wl-copy or xclip on Linux',
+    );
   }
 
   /// Generate a GIF from a list of board positions.
@@ -193,7 +239,10 @@ class BoardShareService {
 
       final bytes = await captureWidget(
         board,
-        width: includePlayerBars ? boardShareCardWidth(boardSize) : boardSize,
+        width:
+            includePlayerBars
+                ? boardShareCardWidth(boardSize, showEvalBar: showEvalBar)
+                : boardSize,
         height: cardHeight,
         pixelRatio: pixelRatio,
       );
@@ -352,7 +401,7 @@ class BoardShareCard extends StatelessWidget {
     final bottomIsWhite = !flipped;
     final orientation = flipped ? Side.black : Side.white;
     return Container(
-      width: boardShareCardWidth(boardSize),
+      width: boardShareCardWidth(boardSize, showEvalBar: showEvalBar),
       height: boardShareCardHeight(boardSize: boardSize, event: null),
       color: kBackgroundColor,
       child: Column(
@@ -370,11 +419,10 @@ class BoardShareCard extends StatelessWidget {
           ),
           Row(
             children: [
-              SizedBox(
-                width: _evalBarWidth,
-                height: boardSize,
-                child: Opacity(
-                  opacity: showEvalBar ? 1 : 0,
+              if (showEvalBar) ...[
+                SizedBox(
+                  width: _evalBarWidth,
+                  height: boardSize,
                   child: DesktopEvalBar(
                     width: _evalBarWidth,
                     height: boardSize,
@@ -385,8 +433,8 @@ class BoardShareCard extends StatelessWidget {
                     positionKey: fen,
                   ),
                 ),
-              ),
-              const SizedBox(width: _evalBarGap),
+                const SizedBox(width: _evalBarGap),
+              ],
               cg.StaticChessboard(
                 size: boardSize,
                 settings: cg.StaticChessboardSettings.fromBoardSettings(
@@ -415,8 +463,11 @@ class BoardShareCard extends StatelessWidget {
   }
 }
 
-double boardShareCardWidth(double boardSize) {
-  return boardSize + BoardShareCard._evalBarWidth + BoardShareCard._evalBarGap;
+double boardShareCardWidth(double boardSize, {bool showEvalBar = true}) {
+  return boardSize +
+      (showEvalBar
+          ? BoardShareCard._evalBarWidth + BoardShareCard._evalBarGap
+          : 0);
 }
 
 double boardShareCardHeight({required double boardSize, String? event}) {
