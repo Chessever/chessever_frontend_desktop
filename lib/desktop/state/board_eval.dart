@@ -404,6 +404,17 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
   }
 }
 
+String threatFenForBoardEval(String fen) {
+  final parts = fen.split(' ');
+  if (parts.length < 4) return fen;
+
+  final turn = parts[1];
+  if (turn != 'w' && turn != 'b') return fen;
+  parts[1] = turn == 'w' ? 'b' : 'w';
+  parts[3] = '-';
+  return parts.join(' ');
+}
+
 bool _boardPvsEqual(List<BoardPv> a, List<BoardPv> b) {
   if (identical(a, b)) return true;
   if (a.length != b.length) return false;

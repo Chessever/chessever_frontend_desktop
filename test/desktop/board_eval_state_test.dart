@@ -106,6 +106,23 @@ void main() {
       expect(state, isNull);
     });
 
+    test('builds threat FEN by flipping turn and clearing en passant', () {
+      expect(
+        threatFenForBoardEval(
+          'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1',
+        ),
+        'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
+      );
+    });
+
+    test('leaves malformed threat FEN input unchanged', () {
+      expect(threatFenForBoardEval('not-a-fen'), 'not-a-fen');
+      expect(
+        threatFenForBoardEval('8/8/8/8/8/8/8/8 x - - 0 1'),
+        '8/8/8/8/8/8/8/8 x - - 0 1',
+      );
+    });
+
     test(
       'does not clear depth tracker while provider is initializing',
       () async {

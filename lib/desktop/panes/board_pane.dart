@@ -374,6 +374,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     final explorerPreviewLine = useState<List<String>>(const <String>[]);
     final explorerPreviewLineStep = useState<int>(0);
     final explorerPreviewLineAutoplay = useState<bool>(true);
+    final threatMode = useState<bool>(false);
     final explorerPreviewSoundKey = useRef<String?>(null);
     final loadedFrom = useState<String?>(restoredSession?.loadedFrom);
     final pgnHeaders = useState<Map<String, String>>(
@@ -2648,6 +2649,17 @@ class _BoardPaneContent extends HookConsumerWidget {
       playUci(directFirst);
     }
 
+    void toggleThreatModeAction() {
+      final settings = ref.read(engineSettingsProviderNew).valueOrNull;
+      if (settings?.showEngineAnalysis != true) {
+        showToast('Engine analysis is off.', error: true);
+        return;
+      }
+
+      threatMode.value = !threatMode.value;
+      showToast(threatMode.value ? 'Showing threats' : 'Threats hidden');
+    }
+
     // ---- Lichess move annotations -----------------------------------
     // Keyed off the *original* mainline SANs so the fetch signature
     // stays stable across variation switches; we just suppress display
@@ -3002,7 +3014,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           playTopEngineMoveAction();
           return true;
         case BoardActionKey.showThreat:
-          showUnsupportedReferenceShortcut('Threat calculation');
+          toggleThreatModeAction();
           return true;
         case BoardActionKey.calculateNextBestMove:
           showUnsupportedReferenceShortcut('Next-best-move calculation');
@@ -3449,6 +3461,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           tabId: activeTabId ?? 'board-default',
                           boardRenderKey: boardRenderKey,
                           fen: boardPosition.fen,
+                          threatMode: threatMode.value,
                           flipped: flipped.value,
                           sideToMove: boardPosition.turn,
                           playerSide: boardPlayerSide,
@@ -5034,6 +5047,7 @@ class _BoardArea extends ConsumerWidget {
     required this.tabId,
     required this.boardRenderKey,
     required this.fen,
+    required this.threatMode,
     required this.flipped,
     required this.sideToMove,
     required this.playerSide,
@@ -5071,6 +5085,7 @@ class _BoardArea extends ConsumerWidget {
   final String tabId;
   final String boardRenderKey;
   final String fen;
+  final bool threatMode;
   final bool flipped;
   final Side sideToMove;
   final cg.PlayerSide playerSide;
@@ -5167,9 +5182,10 @@ class _BoardArea extends ConsumerWidget {
         ref.watch(engineSettingsProviderNew).valueOrNull ??
         const EngineSettings();
     final showEngineAnalysis = engineSettings.showEngineAnalysis;
+    final evalFen = threatMode ? threatFenForBoardEval(fen) : fen;
     final evalState =
         showEngineAnalysis
-            ? ref.watch(boardEvalProvider(fen))
+            ? ref.watch(boardEvalProvider(evalFen))
             : const BoardEvalState(
               pvs: <BoardPv>[],
               isEvaluating: false,
@@ -5430,6 +5446,7 @@ class _BoardArea extends ConsumerWidget {
                     boardRenderKey: boardRenderKey,
                     boardSize: boardSize,
                     fen: fen,
+                    threatMode: threatMode,
                     flipped: flipped,
                     playerSide: playerSide,
                     sideToMove: sideToMove,
@@ -5827,6 +5844,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
     required this.boardRenderKey,
     required this.boardSize,
     required this.fen,
+    required this.threatMode,
     required this.flipped,
     required this.playerSide,
     required this.sideToMove,
@@ -5850,6 +5868,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
   final String boardRenderKey;
   final double boardSize;
   final String fen;
+  final bool threatMode;
   final bool flipped;
   final cg.PlayerSide playerSide;
   final Side sideToMove;
@@ -5887,6 +5906,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
       fen: fen,
       pvs: evalPvs,
       settings: engineSettings,
+      threatMode: threatMode,
     );
 
     // Merge user-drawn shapes (right-click overlay) with author-baked PGN
@@ -6049,6 +6069,7 @@ List<cg.Shape> _enginePvArrowShapes({
   required String fen,
   required List<BoardPv> pvs,
   required EngineSettings settings,
+  bool threatMode = false,
 }) {
   if (!settings.showEngineAnalysis || !settings.showPvArrows || pvs.isEmpty) {
     return const <cg.Shape>[];
@@ -6070,8 +6091,8 @@ List<cg.Shape> _enginePvArrowShapes({
     final arrow = _engineArrowFromUci(
       position: position,
       rawUci: firstMove,
-      color: enginePvArrowColor(i),
-      scale: enginePvArrowScale(i),
+      color: threatMode ? const Color(0xFFE5484D) : enginePvArrowColor(i),
+      scale: threatMode ? 1.16 : enginePvArrowScale(i),
     );
     if (arrow != null) out.add(arrow);
   }
