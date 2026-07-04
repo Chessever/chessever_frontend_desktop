@@ -376,6 +376,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     final explorerPreviewLine = useState<List<String>>(const <String>[]);
     final explorerPreviewLineStep = useState<int>(0);
     final explorerPreviewLineAutoplay = useState<bool>(true);
+    final threatMode = useState<bool>(false);
     final explorerPreviewSoundKey = useRef<String?>(null);
     final loadedFrom = useState<String?>(restoredSession?.loadedFrom);
     final pgnHeaders = useState<Map<String, String>>(
@@ -2650,6 +2651,31 @@ class _BoardPaneContent extends HookConsumerWidget {
       playUci(directFirst);
     }
 
+    void toggleThreatModeAction() {
+      final settings = ref.read(engineSettingsProviderNew).valueOrNull;
+      if (settings?.showEngineAnalysis != true) {
+        showToast('Engine analysis is off.', error: true);
+        return;
+      }
+
+      // Only guard when turning threats ON. The null-move probe needs the side
+      // to move to be able to "pass": illegal in check, meaningless once the
+      // game is decided.
+      if (!threatMode.value) {
+        if (boardPosition.isCheck) {
+          showToast('No threats — the side to move is in check.', error: true);
+          return;
+        }
+        if (boardPosition.isGameOver) {
+          showToast('No threats — the game is over.', error: true);
+          return;
+        }
+      }
+
+      threatMode.value = !threatMode.value;
+      showToast(threatMode.value ? 'Showing threats' : 'Threats hidden');
+    }
+
     // ---- Lichess move annotations -----------------------------------
     // Keyed off the *original* mainline SANs so the fetch signature
     // stays stable across variation switches; we just suppress display
@@ -3004,7 +3030,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           playTopEngineMoveAction();
           return true;
         case BoardActionKey.showThreat:
-          showUnsupportedReferenceShortcut('Threat calculation');
+          toggleThreatModeAction();
           return true;
         case BoardActionKey.calculateNextBestMove:
           showUnsupportedReferenceShortcut('Next-best-move calculation');
@@ -3451,6 +3477,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           tabId: activeTabId ?? 'board-default',
                           boardRenderKey: boardRenderKey,
                           fen: boardPosition.fen,
+                          threatMode: threatMode.value,
                           flipped: flipped.value,
                           sideToMove: boardPosition.turn,
                           playerSide: boardPlayerSide,
@@ -5036,6 +5063,7 @@ class _BoardArea extends ConsumerWidget {
     required this.tabId,
     required this.boardRenderKey,
     required this.fen,
+    required this.threatMode,
     required this.flipped,
     required this.sideToMove,
     required this.playerSide,
@@ -5073,6 +5101,7 @@ class _BoardArea extends ConsumerWidget {
   final String tabId;
   final String boardRenderKey;
   final String fen;
+  final bool threatMode;
   final bool flipped;
   final Side sideToMove;
   final cg.PlayerSide playerSide;
@@ -5169,9 +5198,14 @@ class _BoardArea extends ConsumerWidget {
         ref.watch(engineSettingsProviderNew).valueOrNull ??
         const EngineSettings();
     final showEngineAnalysis = engineSettings.showEngineAnalysis;
+    // A null-move threat FEN is illegal when the side to move is in check, so
+    // degrade to the real position there (also guards navigating into check
+    // while threat mode is already on) — never feed the engine an illegal FEN.
+    final threatActive = threatMode && !isCheck;
+    final evalFen = threatActive ? threatFenForBoardEval(fen) : fen;
     final evalState =
         showEngineAnalysis
-            ? ref.watch(boardEvalProvider(fen))
+            ? ref.watch(boardEvalProvider(evalFen))
             : const BoardEvalState(
               pvs: <BoardPv>[],
               isEvaluating: false,
@@ -5432,6 +5466,7 @@ class _BoardArea extends ConsumerWidget {
                     boardRenderKey: boardRenderKey,
                     boardSize: boardSize,
                     fen: fen,
+                    threatMode: threatActive,
                     flipped: flipped,
                     playerSide: playerSide,
                     sideToMove: sideToMove,
@@ -5829,6 +5864,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
     required this.boardRenderKey,
     required this.boardSize,
     required this.fen,
+    required this.threatMode,
     required this.flipped,
     required this.playerSide,
     required this.sideToMove,
@@ -5852,6 +5888,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
   final String boardRenderKey;
   final double boardSize;
   final String fen;
+  final bool threatMode;
   final bool flipped;
   final cg.PlayerSide playerSide;
   final Side sideToMove;
@@ -5889,6 +5926,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
       fen: fen,
       pvs: evalPvs,
       settings: engineSettings,
+      threatMode: threatMode,
     );
 
     // Merge user-drawn shapes (right-click overlay) with author-baked PGN
@@ -6051,6 +6089,7 @@ List<cg.Shape> _enginePvArrowShapes({
   required String fen,
   required List<BoardPv> pvs,
   required EngineSettings settings,
+  bool threatMode = false,
 }) {
   if (!settings.showEngineAnalysis || !settings.showPvArrows || pvs.isEmpty) {
     return const <cg.Shape>[];
@@ -6058,7 +6097,11 @@ List<cg.Shape> _enginePvArrowShapes({
 
   final Position position;
   try {
-    position = Chess.fromSetup(Setup.parseFen(fen));
+    // Threat PVs are generated against the null-move FEN (opponent to move), so
+    // parse that same position or every threat move would fail the isLegal()
+    // gate below and no arrow would ever render.
+    final arrowFen = threatMode ? threatFenForBoardEval(fen) : fen;
+    position = Chess.fromSetup(Setup.parseFen(arrowFen));
   } catch (_) {
     return const <cg.Shape>[];
   }
@@ -6072,13 +6115,26 @@ List<cg.Shape> _enginePvArrowShapes({
     final arrow = _engineArrowFromUci(
       position: position,
       rawUci: firstMove,
-      color: enginePvArrowColor(i),
-      scale: enginePvArrowScale(i),
+      color: threatMode ? threatPvArrowColor : enginePvArrowColor(i),
+      scale: threatMode ? threatPvArrowScale : enginePvArrowScale(i),
     );
     if (arrow != null) out.add(arrow);
   }
   return out;
 }
+
+@visibleForTesting
+List<cg.Shape> debugEnginePvArrowShapes({
+  required String fen,
+  required List<BoardPv> pvs,
+  required EngineSettings settings,
+  bool threatMode = false,
+}) => _enginePvArrowShapes(
+  fen: fen,
+  pvs: pvs,
+  settings: settings,
+  threatMode: threatMode,
+);
 
 cg.Arrow? _engineArrowFromUci({
   required Position position,

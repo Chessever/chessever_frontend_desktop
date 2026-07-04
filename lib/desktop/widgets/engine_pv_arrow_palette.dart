@@ -35,6 +35,12 @@ const List<double> enginePvArrowRankAlphas = <double>[
   0.18,
 ];
 
+/// Threat-mode PV arrows use a single alert red so they read distinctly from
+/// the ranked engine PV palette, at full scale for emphasis. Chessground's
+/// Arrow asserts `scale <= 1.0`, so this must never exceed 1.0.
+const Color threatPvArrowColor = Color(0xFFE5484D);
+const double threatPvArrowScale = 1.0;
+
 Color enginePvArrowColor(int index) {
   final safeIndex = index < 0 ? 0 : index;
   final color = enginePvArrowPalette[safeIndex % enginePvArrowPalette.length];

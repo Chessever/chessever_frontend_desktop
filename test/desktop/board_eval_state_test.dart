@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:chessever/desktop/panes/board_pane.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -106,6 +107,23 @@ void main() {
       expect(state, isNull);
     });
 
+    test('builds threat FEN by flipping turn and clearing en passant', () {
+      expect(
+        threatFenForBoardEval(
+          'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1',
+        ),
+        'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
+      );
+    });
+
+    test('leaves malformed threat FEN input unchanged', () {
+      expect(threatFenForBoardEval('not-a-fen'), 'not-a-fen');
+      expect(
+        threatFenForBoardEval('8/8/8/8/8/8/8/8 x - - 0 1'),
+        '8/8/8/8/8/8/8/8 x - - 0 1',
+      );
+    });
+
     test(
       'does not clear depth tracker while provider is initializing',
       () async {
@@ -184,6 +202,39 @@ void main() {
         expect(container.read(engineDepthTrackerProvider), isEmpty);
       },
     );
+  });
+
+  group('threat PV arrows', () {
+    // White to move; a black reply is illegal in the real position but becomes
+    // legal in the null-move threat position. This is exactly the case that
+    // silently dropped every threat arrow before the fix.
+    const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    const settings = EngineSettings(
+      showPvArrows: true,
+      showEngineAnalysis: true,
+    );
+    const opponentReplyPv = BoardPv(evaluation: 0.0, mate: null, moves: 'e7e5');
+
+    test('drops arrows whose first move is illegal in the real position', () {
+      final shapes = debugEnginePvArrowShapes(
+        fen: startFen,
+        pvs: const <BoardPv>[opponentReplyPv],
+        settings: settings,
+      );
+
+      expect(shapes, isEmpty);
+    });
+
+    test('renders arrows against the null-move threat position', () {
+      final shapes = debugEnginePvArrowShapes(
+        fen: startFen,
+        pvs: const <BoardPv>[opponentReplyPv],
+        settings: settings,
+        threatMode: true,
+      );
+
+      expect(shapes, hasLength(1));
+    });
   });
 }
 
