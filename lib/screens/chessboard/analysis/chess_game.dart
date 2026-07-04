@@ -70,8 +70,10 @@ class ChessGame {
     return false;
   }
 
-  bool get allowMainlineExtension =>
-      metadata[metadataAllowMainlineExtensionKey] == true;
+  bool get allowMainlineExtension {
+    if (isLiveGame) return false;
+    return metadata[metadataAllowMainlineExtensionKey] != false;
+  }
 
   bool get hasDecidedResult {
     final result = (metadata['Result']?.toString() ?? '')
