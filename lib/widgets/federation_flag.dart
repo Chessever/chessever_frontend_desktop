@@ -38,10 +38,14 @@ class FederationFlag extends StatelessWidget {
 
     final lowerRaw = raw.toLowerCase();
 
-    // Lichess emits literal "FIDE" (or "FID"/"?") when PGN carries no real
-    // federation. Do not default to a placeholder flag; unknown means no flag.
-    if (normalized == 'FID' || normalized == 'FIDE' || normalized == '?') {
+    // '?' still means unknown/missing and should not show a placeholder.
+    // Explicit FID/FIDE federation values are intentional PGN identity data and
+    // should render the bundled FIDE mark instead of disappearing.
+    if (normalized == '?') {
       return _empty();
+    }
+    if (normalized == 'FID' || normalized == 'FIDE') {
+      return _fideFlag();
     }
 
     // Handle UK subdivisions (England, Scotland, Wales) with their own flags.
@@ -88,6 +92,20 @@ class FederationFlag extends StatelessWidget {
         country: country,
         width: width,
         height: height,
+      ),
+    );
+  }
+
+  Widget _fideFlag() {
+    final radius = borderRadius ?? BorderRadius.circular(3);
+    return ClipRRect(
+      borderRadius: radius,
+      child: Image.asset(
+        'assets/pngs/fide_logo.webp',
+        width: width,
+        height: height,
+        // Logo is roughly square; contain avoids cropping it in the flag slot.
+        fit: BoxFit.contain,
       ),
     );
   }
