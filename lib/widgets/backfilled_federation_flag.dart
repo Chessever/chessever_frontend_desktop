@@ -7,9 +7,10 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 /// `chess_players` table when the supplied federation is missing.
 ///
 /// Event/broadcast federation remains the source of truth when present and
-/// valid. If the broadcast omits a flag (or sends a known placeholder such as
-/// FIDE/?), we fall back to the matched ChessEver player profile by FIDE ID and
-/// then by exact normalized name.
+/// valid. If the broadcast omits a flag (or sends a known unknown marker such
+/// as `?`), we fall back to the matched ChessEver player profile by FIDE ID and
+/// then by exact normalized name. Explicit `FID`/`FIDE` values are preserved so
+/// PGNs can intentionally display the FIDE mark.
 class BackfilledFederationFlag extends ConsumerWidget {
   const BackfilledFederationFlag({
     super.key,
@@ -31,9 +32,9 @@ class BackfilledFederationFlag extends ConsumerWidget {
   bool _needsBackfill(String value) {
     if (value.isEmpty) return true;
     final upper = value.toUpperCase();
-    // Lichess returns placeholders for some broadcast rows; treat them as
-    // missing so we backfill from ChessEver's player profile.
-    return upper == 'FID' || upper == 'FIDE' || upper == '?';
+    // '?' is unknown/missing. Explicit FID/FIDE values should remain visible as
+    // the FIDE mark instead of triggering profile-country backfill.
+    return upper == '?';
   }
 
   @override

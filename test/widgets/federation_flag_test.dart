@@ -28,15 +28,30 @@ void main() {
     expect(tester.getSize(find.byType(FederationFlag)), Size.zero);
   });
 
-  testWidgets('does not render a placeholder for FIDE federation values', (
+  testWidgets(
+    'renders the bundled FIDE mark for explicit FIDE federation values',
+    (tester) async {
+      for (final value in const ['FID', 'FIDE']) {
+        await pumpFlag(tester, value);
+
+        expect(find.byType(Image), findsOneWidget);
+        final image = tester.widget<Image>(find.byType(Image));
+        expect(image.image, isA<AssetImage>());
+        expect(
+          (image.image as AssetImage).assetName,
+          'assets/pngs/fide_logo.webp',
+        );
+      }
+    },
+  );
+
+  testWidgets('does not render a placeholder for unknown federation marker', (
     tester,
   ) async {
-    for (final value in const ['FID', 'FIDE', '?']) {
-      await pumpFlag(tester, value);
+    await pumpFlag(tester, '?');
 
-      expect(find.byType(Image), findsNothing);
-      expect(tester.getSize(find.byType(FederationFlag)), Size.zero);
-    }
+    expect(find.byType(Image), findsNothing);
+    expect(tester.getSize(find.byType(FederationFlag)), Size.zero);
   });
 
   testWidgets('does not render a placeholder for unresolvable federation', (
