@@ -666,24 +666,41 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
     }
   }
 
-  List<TournamentGameSummary>? _watchFreshTournamentEventGames(
+  ({List<TournamentGameSummary>? games, bool isLoading})
+  _watchFreshTournamentEventGames(
     BoardTabGameArgs? args, {
     required List<TournamentGameSummary> fallbackGames,
   }) {
-    if (args == null) return null;
-    if (args.viewSource == ChessboardView.favScorecard) return null;
+    if (args == null) return (games: null, isLoading: false);
+    if (args.viewSource == ChessboardView.favScorecard) {
+      return (games: null, isLoading: false);
+    }
     final tourId = _eventRailTourId(args, fallbackGames);
-    if (tourId == null || tourId.isEmpty) return null;
+    if (tourId == null || tourId.isEmpty) {
+      return (games: null, isLoading: false);
+    }
 
-    final freshGames = ref.watch(gamesTourProvider(tourId)).valueOrNull;
-    if (freshGames == null || freshGames.isEmpty) return null;
+    // `gamesTourProvider` is the authoritative full event list (same source
+    // the mobile Games tab and desktop `TournamentGamesView` use). Until it
+    // resolves we keep whatever seed we were opened with (often a capped
+    // For-You snapshot that only carries a couple of the current round's
+    // games) but surface its loading state so the rail shows a spinner and
+    // does not present that partial set as the complete round.
+    final async = ref.watch(gamesTourProvider(tourId));
+    final freshGames = async.valueOrNull;
+    if (freshGames == null || freshGames.isEmpty) {
+      return (games: null, isLoading: async.isLoading);
+    }
 
-    return _mergeFreshEventGameSummaries(
-      fallbackGames,
-      freshGames
-          .map(TournamentGameSummary.fromGame)
-          .map(_normalizeFreshEventGameSummary)
-          .toList(growable: false),
+    return (
+      games: _mergeFreshEventGameSummaries(
+        fallbackGames,
+        freshGames
+            .map(TournamentGameSummary.fromGame)
+            .map(_normalizeFreshEventGameSummary)
+            .toList(growable: false),
+      ),
+      isLoading: false,
     );
   }
 
@@ -765,10 +782,17 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
       fallbackGames:
           activeArgs?.databaseGames ?? const <TournamentGameSummary>[],
     );
+    final baseEventGamesLoading = activeArgs?.eventGamesLoading ?? false;
     final effectiveArgs = activeArgs?.copyWith(
       routeGames: routeContinuationSnapshot?.games,
-      eventGames: freshTournamentEventGames ?? eventContinuationSnapshot?.games,
+      eventGames:
+          freshTournamentEventGames.games ?? eventContinuationSnapshot?.games,
       databaseGames: databaseContinuationSnapshot?.games,
+      // Surface the authoritative full-list fetch so the rail shows its
+      // loading affordance instead of presenting the capped seed snapshot as
+      // the complete round. Cleared the moment `gamesTourProvider` resolves.
+      eventGamesLoading:
+          baseEventGamesLoading || freshTournamentEventGames.isLoading,
     );
     final legacy = ref.watch(tournamentGamesProvider);
     final rail = _resolveGameRail(effectiveArgs, legacy);
@@ -1074,58 +1098,101 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
                                 fallbackAnchorGameId: selectedGameId,
                               ),
                         )
-                        : ListView(
-                          controller: _scrollController,
-                          physics: const DesktopScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
-                          children: [
-                            for (final group in roundGroups)
-                              _EventRoundSection(
-                                group: group,
-                                selectedGameId: selectedGameId,
-                                selectedGameIds: _highlightedGameIds,
-                                highlightedGameId: _highlightedGameId,
-                                selectedRowKey:
-                                    (_highlightedGameId ?? selectedGameId) ==
-                                            null
-                                        ? null
-                                        : _rowKeyFor(
-                                          _highlightedGameId ?? selectedGameId!,
-                                        ),
-                                liveSummaries: liveSummaries,
-                                eventGames:
-                                    resolved.kind == _GameListKind.event
-                                        ? allOrderedGames
-                                        : orderedGames,
-                                tournamentTitle: resolved.title,
-                                kind: resolved.kind,
-                                activeArgs: effectiveArgs,
-                                showBoardColumn: showBoardColumn,
-                                onHighlightGame: _highlightGame,
-                                onRangeHighlightGame:
-                                    (game) => _highlightGameRange(
-                                      orderedGames,
-                                      game,
-                                      fallbackAnchorGameId: selectedGameId,
-                                    ),
-                              ),
-                            if (activeContinuation != null &&
-                                (isLoadingMoreContinuation ||
-                                    continuationSnapshot?.hasMore == true ||
-                                    continuationLoadError != null))
-                              _GamesPaginationSection(
-                                isLoading: isLoadingMoreContinuation,
-                                error: continuationLoadError,
-                              ),
-                            if (resolved.isLoading)
-                              const _EventGamesLoadingSection(),
-                          ],
+                        : _buildRoundGroupsList(
+                          roundGroups: roundGroups,
+                          selectedGameId: selectedGameId,
+                          liveSummaries: liveSummaries,
+                          eventGames:
+                              resolved.kind == _GameListKind.event
+                                  ? allOrderedGames
+                                  : orderedGames,
+                          orderedGames: orderedGames,
+                          resolved: resolved,
+                          effectiveArgs: effectiveArgs,
+                          showBoardColumn: showBoardColumn,
+                          activeContinuation: activeContinuation,
+                          isLoadingMoreContinuation: isLoadingMoreContinuation,
+                          continuationHasMore:
+                              continuationSnapshot?.hasMore == true,
+                          continuationLoadError: continuationLoadError,
                         ),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  /// Lazily renders the round-grouped rail (event/favorites kinds).
+  ///
+  /// Uses [ListView.builder] so a tournament round with an arbitrary number
+  /// of boards (a big open can publish hundreds) only instantiates the
+  /// round sections near the viewport instead of building every section up
+  /// front. Trailing pagination/loading affordances are appended after the
+  /// round sections.
+  Widget _buildRoundGroupsList({
+    required List<_EventRoundGroup> roundGroups,
+    required String? selectedGameId,
+    required _EventLiveSummaries liveSummaries,
+    required List<TournamentGameSummary> eventGames,
+    required List<TournamentGameSummary> orderedGames,
+    required _ResolvedEventGames resolved,
+    required BoardTabGameArgs? effectiveArgs,
+    required bool showBoardColumn,
+    required BoardTabGamesContinuation? activeContinuation,
+    required bool isLoadingMoreContinuation,
+    required bool continuationHasMore,
+    required String? continuationLoadError,
+  }) {
+    final trailing = <Widget>[
+      if (activeContinuation != null &&
+          (isLoadingMoreContinuation ||
+              continuationHasMore ||
+              continuationLoadError != null))
+        _GamesPaginationSection(
+          isLoading: isLoadingMoreContinuation,
+          error: continuationLoadError,
+        ),
+      if (resolved.isLoading) const _EventGamesLoadingSection(),
+    ];
+
+    final selectedRowKey =
+        (_highlightedGameId ?? selectedGameId) == null
+            ? null
+            : _rowKeyFor(_highlightedGameId ?? selectedGameId!);
+
+    return ListView.builder(
+      controller: _scrollController,
+      physics: const DesktopScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
+      itemCount: roundGroups.length + trailing.length,
+      itemBuilder: (context, index) {
+        if (index >= roundGroups.length) {
+          return trailing[index - roundGroups.length];
+        }
+        final group = roundGroups[index];
+        return _EventRoundSection(
+          group: group,
+          selectedGameId: selectedGameId,
+          selectedGameIds: _highlightedGameIds,
+          highlightedGameId: _highlightedGameId,
+          selectedRowKey: selectedRowKey,
+          liveSummaries: liveSummaries,
+          eventGames: eventGames,
+          tournamentTitle: resolved.title,
+          kind: resolved.kind,
+          activeArgs: effectiveArgs,
+          showBoardColumn: showBoardColumn,
+          onHighlightGame: _highlightGame,
+          onRangeHighlightGame:
+              (game) => _highlightGameRange(
+                orderedGames,
+                game,
+                fallbackAnchorGameId: selectedGameId,
+              ),
+        );
+      },
     );
   }
 }
