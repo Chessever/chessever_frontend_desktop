@@ -92,6 +92,17 @@ void main() {
     });
   });
 
+  group('boardShareVisibleUrl', () {
+    test('keeps trimmed game links visible under the title', () {
+      expect(
+        boardShareVisibleUrl(' https://chessever.com/games/game-123 '),
+        'https://chessever.com/games/game-123',
+      );
+      expect(boardShareVisibleUrl('   '), isNull);
+      expect(boardShareVisibleUrl(null), isNull);
+    });
+  });
+
   group('boardShareActionDescriptors', () {
     test('uses copy-image/download actions for desktop sharing', () {
       final actions = boardShareActionDescriptors(

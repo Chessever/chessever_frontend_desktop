@@ -80,6 +80,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
   int? get _blackFideId => _headerInt('BlackFideId');
   String? get _whiteScore => _scoreFor(isWhite: true);
   String? get _blackScore => _scoreFor(isWhite: false);
+  String? get _shareUrl => boardShareVisibleUrl(widget.shareUrl);
 
   String get _pgn => exportGameToPgn(widget.chessGame);
 
@@ -247,10 +248,9 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
           }
         }
         lastEval = _parseMoveEval(moveData.eval) ?? lastEval;
-        final last =
-            move is NormalMove
-                ? NormalMove(from: move.from, to: move.to)
-                : null;
+        final last = move is NormalMove
+            ? NormalMove(from: move.from, to: move.to)
+            : null;
         frames.add((fen: pos.fen, lastMove: last));
         frameClocks.add((whiteClock: whiteClock, blackClock: blackClock));
         frameEvaluations.add(
@@ -329,8 +329,9 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       _sanitizeFilename('$_whiteName vs $_blackName'),
       if (date != null && date.isNotEmpty) _sanitizeFilename(date),
     ].where((part) => part.isNotEmpty).join('_');
-    final normalizedExtension =
-        extension.startsWith('.') ? extension.substring(1) : extension;
+    final normalizedExtension = extension.startsWith('.')
+        ? extension.substring(1)
+        : extension;
     return '$parts.$normalizedExtension';
   }
 
@@ -414,6 +415,63 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
     }
   }
 
+  Future<void> _copyLink() async {
+    final url = _shareUrl;
+    if (url == null) {
+      _showToast('No shareable link for this game', isError: true);
+      return;
+    }
+    try {
+      await BoardShareService.copyToClipboard(url);
+      _showToast('Link copied to clipboard', isError: false);
+    } catch (e) {
+      _showToast('Failed to copy link', isError: true);
+    }
+  }
+
+  Widget _buildShareLinkBar() {
+    final url = _shareUrl;
+    if (url == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      child: Container(
+        height: 40,
+        padding: const EdgeInsets.only(left: 12, right: 4),
+        decoration: BoxDecoration(
+          color: kBackgroundColor,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: kBlack3Color),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.link_rounded, size: 15, color: kWhiteColor70),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                url,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            DesktopDialogIconButton(
+              icon: Icons.copy_rounded,
+              tooltip: 'Copy link',
+              tone: DesktopDialogButtonTone.secondary,
+              onPress: _copyLink,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showToast(String message, {required bool isError}) {
     if (!mounted) return;
     showDesktopToast(context, message, error: isError);
@@ -424,6 +482,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
     final settings =
         ref.watch(boardSettingsProviderNew).valueOrNull ??
         const BoardSettingsNew();
+    final hasLink = _shareUrl != null;
     return FTheme(
       data: FThemes.zinc.dark,
       child: Center(
@@ -538,6 +597,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                   ],
                 ),
               ),
+              if (hasLink) _buildShareLinkBar(),
               const SizedBox(height: 16),
               // Actions
               if (_isCapturing || _isGeneratingGif)
@@ -664,6 +724,12 @@ class _ActionChip extends StatelessWidget {
   }
 }
 
+@visibleForTesting
+String? boardShareVisibleUrl(String? shareUrl) {
+  final url = shareUrl?.trim();
+  return url == null || url.isEmpty ? null : url;
+}
+
 String _sanitizeFilename(String input) {
   return input
       .replaceAll(RegExp(r'[^\w\s-]'), '')
@@ -703,19 +769,18 @@ Future<void> showBoardShareDialog(
 }) {
   return showDesktopDialog<void>(
     context,
-    builder:
-        (_) => BoardShareDialog(
-          chessGame: chessGame,
-          headers: headers,
-          position: position,
-          lastMove: lastMove,
-          pointer: pointer,
-          flipped: flipped,
-          evaluation: evaluation,
-          mate: mate,
-          isEvaluating: isEvaluating,
-          showEvalBar: showEvalBar,
-          shareUrl: shareUrl,
-        ),
+    builder: (_) => BoardShareDialog(
+      chessGame: chessGame,
+      headers: headers,
+      position: position,
+      lastMove: lastMove,
+      pointer: pointer,
+      flipped: flipped,
+      evaluation: evaluation,
+      mate: mate,
+      isEvaluating: isEvaluating,
+      showEvalBar: showEvalBar,
+      shareUrl: shareUrl,
+    ),
   );
 }
