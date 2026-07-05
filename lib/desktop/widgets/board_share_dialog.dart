@@ -248,9 +248,10 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
           }
         }
         lastEval = _parseMoveEval(moveData.eval) ?? lastEval;
-        final last = move is NormalMove
-            ? NormalMove(from: move.from, to: move.to)
-            : null;
+        final last =
+            move is NormalMove
+                ? NormalMove(from: move.from, to: move.to)
+                : null;
         frames.add((fen: pos.fen, lastMove: last));
         frameClocks.add((whiteClock: whiteClock, blackClock: blackClock));
         frameEvaluations.add(
@@ -329,9 +330,8 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       _sanitizeFilename('$_whiteName vs $_blackName'),
       if (date != null && date.isNotEmpty) _sanitizeFilename(date),
     ].where((part) => part.isNotEmpty).join('_');
-    final normalizedExtension = extension.startsWith('.')
-        ? extension.substring(1)
-        : extension;
+    final normalizedExtension =
+        extension.startsWith('.') ? extension.substring(1) : extension;
     return '$parts.$normalizedExtension';
   }
 
@@ -769,18 +769,19 @@ Future<void> showBoardShareDialog(
 }) {
   return showDesktopDialog<void>(
     context,
-    builder: (_) => BoardShareDialog(
-      chessGame: chessGame,
-      headers: headers,
-      position: position,
-      lastMove: lastMove,
-      pointer: pointer,
-      flipped: flipped,
-      evaluation: evaluation,
-      mate: mate,
-      isEvaluating: isEvaluating,
-      showEvalBar: showEvalBar,
-      shareUrl: shareUrl,
-    ),
+    builder:
+        (_) => BoardShareDialog(
+          chessGame: chessGame,
+          headers: headers,
+          position: position,
+          lastMove: lastMove,
+          pointer: pointer,
+          flipped: flipped,
+          evaluation: evaluation,
+          mate: mate,
+          isEvaluating: isEvaluating,
+          showEvalBar: showEvalBar,
+          shareUrl: shareUrl,
+        ),
   );
 }
