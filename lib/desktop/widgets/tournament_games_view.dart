@@ -388,6 +388,16 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   }
 }
 
+final _desktopCardPgnProvider = FutureProvider.autoDispose
+    .family<String?, String>((ref, gameId) async {
+      final id = gameId.trim();
+      if (id.isEmpty) return null;
+
+      final pgn = await ref.read(gameRepositoryProvider).getGamePgn(id);
+      final trimmed = pgn?.trim();
+      return pgnHasMoves(trimmed) ? trimmed : null;
+    });
+
 class _NoSearchResults extends StatelessWidget {
   const _NoSearchResults({required this.query});
   final String query;
@@ -1704,6 +1714,27 @@ GamesTourModel _withFreshestFen(GamesTourModel game, {String? pgnOverride}) {
   return game.copyWith(fen: resolvedFen);
 }
 
+GamesTourModel _withHydratedCardPgn(GamesTourModel game, String? pgn) {
+  final trimmed = pgn?.trim();
+  if (!pgnHasMoves(trimmed)) return game;
+
+  final snapshot = resolveFinalPositionFromPgn(trimmed);
+  if (snapshot == null) return game.copyWith(pgn: trimmed);
+
+  return game.copyWith(
+    pgn: trimmed,
+    fen: snapshot.fen,
+    lastMove: snapshot.lastMoveUci ?? game.lastMove,
+  );
+}
+
+bool _needsDesktopCardPgnHydration(GamesTourModel game) {
+  if (game.source != GameSource.supabase || game.gameId.trim().isEmpty) {
+    return false;
+  }
+  return game.effectiveGameStatus.isFinished && !pgnHasMoves(game.pgn);
+}
+
 DateTime? _roundStartsAtForGame(
   GamesTourModel game,
   Map<String, DateTime?> roundStartsAtById,
@@ -1867,9 +1898,14 @@ class LiveDesktopGameCard extends ConsumerWidget {
       batchKey: effectiveLiveBatchKey,
       streamEnabled: streamingEnabled,
     );
+    final hydratedPgn =
+        _needsDesktopCardPgnHydration(liveGame)
+            ? ref.watch(_desktopCardPgnProvider(liveGame.gameId)).valueOrNull
+            : null;
+    final displayGame = _withHydratedCardPgn(liveGame, hydratedPgn);
     final liveCardsPaused = ref.watch(liveGameCardsPausedProvider);
     final shouldStream = ref.watch(shouldStreamProvider);
-    var data = GameCardData.fromGamesTourModel(liveGame);
+    var data = GameCardData.fromGamesTourModel(displayGame);
     final fallback = federationFallback?.trim();
     final fallbackName = federationFallbackForName?.trim();
     if (fallback != null &&
@@ -1894,7 +1930,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
           onTap ??
           () => openTournamentGameTab(
             ref,
-            liveGame,
+            displayGame,
             tournamentTitle,
             eventGames: eventGames,
             routeTitle: routeTitle,

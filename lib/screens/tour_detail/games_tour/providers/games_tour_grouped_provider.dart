@@ -23,9 +23,8 @@ class GroupedGamesData {
   final int providerGameCount;
 
   /// Upcoming rounds whose only content is future pairings (resolved player
-  /// names, no moves yet). At most one of them — the very next round, when it
-  /// starts in less than an hour — is pinned to the TOP of [filteredRounds];
-  /// the rest render below every played round.
+  /// names, no moves yet). They render as collapsible cards pinned to the
+  /// bottom of the Games tab, below every played round.
   final Set<String> upcomingPairingRoundIds;
 
   GroupedGamesData({
@@ -385,26 +384,9 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
           return cmp != 0 ? cmp : a.name.compareTo(b.name);
         });
 
-  // At most ONE pairing round may render on TOP of the (newest-first) list,
-  // and only when ALL of these hold:
-  //   1. it is the one-and-only very next round of this tour,
-  //   2. its boards/matchups are already published (it IS a pairing round),
-  //   3. we are 100% sure it starts in less than an hour (known startsAt).
-  // Every other future pairing round renders below all played rounds.
-  GamesAppBarModel? topPairingRound;
-  if (upcomingPairingRounds.isNotEmpty) {
-    final next = upcomingPairingRounds.first;
-    final startsAt = next.startsAt;
-    if (startsAt != null &&
-        startsAt.difference(DateTime.now()) < const Duration(hours: 1)) {
-      topPairingRound = next;
-    }
-  }
-  final filteredRounds = [
-    if (topPairingRound != null) topPairingRound,
-    ...playedRounds,
-    ...upcomingPairingRounds.where((round) => round != topPairingRound),
-  ];
+  // Match mobile: played rounds keep the app-bar order, while pairing-only
+  // rounds are always appended after them, soonest first.
+  final filteredRounds = [...playedRounds, ...upcomingPairingRounds];
 
   return GroupedGamesData(
     filteredRounds: filteredRounds,
