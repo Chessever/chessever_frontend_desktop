@@ -1875,21 +1875,12 @@ class _AboutBody extends ConsumerWidget {
       return const _EmptyAbout();
     }
 
-    final browseTotal =
-        isTwic ? analytics.resultStats.totalGames : state.allGames.length;
-
     return SingleChildScrollView(
       physics: const DesktopScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Cue.onMount(
-            motion: const CueMotion.smooth(),
-            acts: const [Act.fadeIn(), Act.slideY(from: 0.08)],
-            child: _BrowseGamesCta(total: browseTotal, onTap: onShowGames),
-          ),
-          const SizedBox(height: 16),
           Cue.onMount(
             motion: const CueMotion.smooth(),
             acts: const [Act.fadeIn(), Act.slideY(from: 0.1)],
@@ -1955,175 +1946,6 @@ class _AboutBody extends ConsumerWidget {
   }
 }
 
-class _BrowseGamesCta extends StatefulWidget {
-  const _BrowseGamesCta({required this.total, required this.onTap});
-
-  final int total;
-  final VoidCallback onTap;
-
-  @override
-  State<_BrowseGamesCta> createState() => _BrowseGamesCtaState();
-}
-
-class _BrowseGamesCtaState extends State<_BrowseGamesCta> {
-  bool _hover = false;
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final total = widget.total;
-    final headline =
-        total == 0 ? 'No games on record yet' : 'Step into the game history';
-    final detail =
-        total == 0
-            ? 'New games will appear here as they arrive.'
-            : total == 1
-            ? 'One game waits for you to relive.'
-            : 'Browse all $total games — every move, every result, every story.';
-    final glow = _hover || _pressed;
-    return ClickCursor(
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hover = true),
-        onExit:
-            (_) => setState(() {
-              _hover = false;
-              _pressed = false;
-            }),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: total == 0 ? null : widget.onTap,
-          onTapDown: (_) => setState(() => _pressed = true),
-          onTapUp: (_) => setState(() => _pressed = false),
-          onTapCancel: () => setState(() => _pressed = false),
-          child: SingleMotionBuilder(
-            value: _pressed ? 0.985 : (glow ? 1.004 : 1.0),
-            motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-            builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 140),
-              padding: const EdgeInsets.fromLTRB(18, 14, 16, 14),
-              decoration: BoxDecoration(
-                color:
-                    glow ? kPrimaryColor.withValues(alpha: 0.12) : kBlack2Color,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color:
-                      glow
-                          ? kPrimaryColor.withValues(alpha: 0.7)
-                          : kDividerColor,
-                ),
-                boxShadow:
-                    glow
-                        ? [
-                          BoxShadow(
-                            color: kPrimaryColor.withValues(alpha: 0.18),
-                            blurRadius: 18,
-                            offset: const Offset(0, 6),
-                          ),
-                        ]
-                        : null,
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 38,
-                    height: 38,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: kPrimaryColor.withValues(alpha: 0.14),
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: kPrimaryColor.withValues(alpha: 0.5),
-                      ),
-                    ),
-                    child: const Icon(
-                      Icons.history_rounded,
-                      size: 20,
-                      color: kPrimaryColor,
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          headline,
-                          style: const TextStyle(
-                            color: kWhiteColor,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.1,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          detail,
-                          style: const TextStyle(
-                            color: kWhiteColor70,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 140),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 7,
-                    ),
-                    decoration: BoxDecoration(
-                      color:
-                          glow
-                              ? kPrimaryColor.withValues(alpha: 0.22)
-                              : kPrimaryColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: kPrimaryColor.withValues(
-                          alpha: glow ? 0.9 : 0.6,
-                        ),
-                      ),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Open game history',
-                          style: TextStyle(
-                            color: kPrimaryColor,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.2,
-                          ),
-                        ),
-                        SizedBox(width: 6),
-                        Icon(
-                          Icons.arrow_forward_rounded,
-                          size: 14,
-                          color: kPrimaryColor,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _ResultDonut extends StatelessWidget {
   const _ResultDonut({
     required this.stats,
@@ -2150,7 +1972,7 @@ class _ResultDonut extends StatelessWidget {
         onTap: () => onSelect(PlayerResultFilter.win),
       ),
       _ResultPill(
-        label: 'Drew',
+        label: 'Draw',
         value: stats.draws,
         color: kLightGreyColor,
         pct: drawPct,
@@ -2176,24 +1998,33 @@ class _ResultDonut extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final pillWrap = Wrap(spacing: 10, runSpacing: 8, children: pills);
+          final pillRow = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < pills.length; i++) ...[
+                if (i > 0) const SizedBox(width: 8),
+                pills[i],
+              ],
+            ],
+          );
           final title = _SectionTitle(
             title: 'Results',
             subtitle: '$total completed games',
           );
-          if (constraints.maxWidth < 560) {
+          if (constraints.maxWidth < 620) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [title, const SizedBox(height: 12), pillWrap],
+              children: [title, const SizedBox(height: 12), pillRow],
             );
           }
           return Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              title,
-              const Spacer(),
-              Flexible(
-                child: Align(alignment: Alignment.centerRight, child: pillWrap),
+              Expanded(flex: 2, child: title),
+              const SizedBox(width: 16),
+              Expanded(
+                flex: 3,
+                child: Align(alignment: Alignment.centerRight, child: pillRow),
               ),
             ],
           );
