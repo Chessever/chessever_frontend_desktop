@@ -590,12 +590,19 @@ class CountrymenCombinedGamesNotifier
   }
 }
 
+/// A game counts as "live" for the countrymen pane only if it is unfinished
+/// AND belongs to today. Broadcasts routinely leave finished games with a
+/// null / '*' status (no result stamped), so a purely status-based check
+/// treats games that actually ended on a previous day as live forever. Those
+/// stale rows were leaking into today's live count / live filter, mixing
+/// "yesterday's leftover games" into today. Gating on the day removes them.
 bool _isUnfinishedGame(GamesTourModel game) {
-  return !game.effectiveGameStatus.isFinished;
+  return !game.effectiveGameStatus.isFinished && isCountrymenGameToday(game);
 }
 
-bool _isStartedOrToday(GamesTourModel game) {
-  if (game.hasStarted) return true;
+/// True when the game's bucket day (PGN date → last-move day → pairing day)
+/// is the local calendar today.
+bool isCountrymenGameToday(GamesTourModel game) {
   final bucket = game.bucketDate;
   if (bucket == null) return false;
   final now = DateTime.now();
@@ -603,4 +610,9 @@ bool _isStartedOrToday(GamesTourModel game) {
   return local.year == now.year &&
       local.month == now.month &&
       local.day == now.day;
+}
+
+bool _isStartedOrToday(GamesTourModel game) {
+  if (game.hasStarted) return true;
+  return isCountrymenGameToday(game);
 }

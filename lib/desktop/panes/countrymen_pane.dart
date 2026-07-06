@@ -69,9 +69,15 @@ class CountrymenPane extends HookConsumerWidget {
     final effectiveCountry = ref.watch(effectiveCountryProvider).valueOrNull;
     final temporaryCountry = ref.watch(temporaryCountryProvider);
 
-    final games = state.filteredGames;
+    // Hero pills summarise *today* only. `state.games` accumulates several
+    // day-batches (the feed loads 3 days at a time and grows on scroll), so
+    // counting the whole list mixed yesterday's — and older — games into the
+    // "Total" / "Live" numbers. Scope both to today; the day-grouped list
+    // below still shows the full browsable history with its own per-day counts.
+    final todayGames = state.games.where(isCountrymenGameToday).toList();
+    final totalCount = todayGames.length;
     final liveCount =
-        games.where((g) => !g.effectiveGameStatus.isFinished).length;
+        todayGames.where((g) => !g.effectiveGameStatus.isFinished).length;
 
     return Container(
       color: kBackgroundColor,
@@ -81,7 +87,7 @@ class CountrymenPane extends HookConsumerWidget {
           _CountrymenHero(
             countryName: effectiveCountry?.name ?? state.countryName,
             countryCode: effectiveCountry?.countryCode ?? state.countryCode,
-            totalCount: state.games.length,
+            totalCount: totalCount,
             liveCount: liveCount,
             liveOnly: state.liveOnly,
             onSelectLive:
