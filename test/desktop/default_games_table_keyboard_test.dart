@@ -6,6 +6,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/widgets/default_games_table.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/widgets/federation_flag.dart';
 
 void main() {
   test(
@@ -53,6 +54,38 @@ void main() {
     expect(find.text('SITE'), findsNothing);
     expect(find.text('EVENT'), findsOneWidget);
     expect(find.text('ECO'), findsOneWidget);
+  });
+
+  testWidgets('renders FIDE federation marks in compact game rows', (
+    tester,
+  ) async {
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _wrap(
+        controller: controller,
+        onOpen: (_) {},
+        games: [
+          _game(0).copyWith(
+            whitePlayer: _player('IM Polina Shuvalova', federation: 'FIDE'),
+            blackPlayer: _player('GM Dmitry Andreikin', federation: 'FID'),
+          ),
+        ],
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(FederationFlag), findsNWidgets(2));
+    final fideImages = tester
+        .widgetList<Image>(find.byType(Image))
+        .where(
+          (image) =>
+              image.image is AssetImage &&
+              (image.image as AssetImage).assetName ==
+                  'assets/pngs/fide_logo.webp',
+        );
+    expect(fideImages, hasLength(2));
   });
 
   testWidgets('single click highlights and arrows move highlighted game', (
@@ -144,6 +177,7 @@ Widget _wrap({
   ValueChanged<String>? onToggleSelection,
   ValueChanged<Set<String>>? onReplaceSelection,
   Set<String> hiddenColumnIds = const <String>{},
+  List<GamesTourModel>? games,
 }) {
   return ProviderScope(
     child: MaterialApp(
@@ -154,7 +188,7 @@ Widget _wrap({
           height: 180,
           child: DefaultGamesTable(
             active: true,
-            games: List.generate(24, _game),
+            games: games ?? List.generate(24, _game),
             controller: controller,
             selectionMode: selectionMode,
             selectedIds: selectedIds,
@@ -186,13 +220,13 @@ GamesTourModel _game(int index) {
   );
 }
 
-PlayerCard _player(String name) {
+PlayerCard _player(String name, {String federation = 'USA'}) {
   return PlayerCard(
     name: name,
-    federation: 'USA',
+    federation: federation,
     title: 'GM',
     rating: 2600,
-    countryCode: 'USA',
+    countryCode: federation,
     team: null,
   );
 }

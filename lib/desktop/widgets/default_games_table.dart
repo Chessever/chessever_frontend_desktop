@@ -705,16 +705,20 @@ class _DefaultGamesPlayerCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final federation = _playerFederation(player);
+    final normalizedFederation = federation.toUpperCase();
+    final isFideFederation =
+        normalizedFederation == 'FID' || normalizedFederation == 'FIDE';
     final iso2 = federation.isEmpty ? '' : CountryUtils.toIso2Code(federation);
+    final flagFederation = isFideFederation ? federation : iso2;
     final title = player.title.trim();
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 170),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (iso2.isNotEmpty) ...[
+          if (flagFederation.isNotEmpty) ...[
             FederationFlag(
-              federation: iso2,
+              federation: flagFederation,
               height: 14,
               width: 20,
               borderRadius: BorderRadius.circular(2),
