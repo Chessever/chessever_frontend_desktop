@@ -43,7 +43,7 @@ void main() {
     await tester.pumpWidget(
       _wrap(
         controller: controller,
-        onOpen: (_) {},
+        onOpen: (_, _) {},
         hiddenColumnIds: const {'round', 'site'},
       ),
     );
@@ -63,7 +63,10 @@ void main() {
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(
-      _wrap(controller: controller, onOpen: (game) => opened.add(game.gameId)),
+      _wrap(
+        controller: controller,
+        onOpen: (game, _) => opened.add(game.gameId),
+      ),
     );
     await tester.pump();
 
@@ -79,6 +82,27 @@ void main() {
     expect(opened, ['game-1']);
   });
 
+  testWidgets('ctrl click opens highlighted row in a new tab', (tester) async {
+    final opened = <String, bool>{};
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _wrap(
+        controller: controller,
+        onOpen: (game, inNewTab) => opened[game.gameId] = inNewTab,
+      ),
+    );
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.tap(find.text('White0'));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(opened, {'game-0': true});
+  });
+
   testWidgets('page down moves highlighted row by a fast visible chunk', (
     tester,
   ) async {
@@ -87,7 +111,10 @@ void main() {
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(
-      _wrap(controller: controller, onOpen: (game) => opened.add(game.gameId)),
+      _wrap(
+        controller: controller,
+        onOpen: (game, _) => opened.add(game.gameId),
+      ),
     );
     await tester.pump();
 
@@ -108,7 +135,7 @@ void main() {
     await tester.pumpWidget(
       _wrap(
         controller: controller,
-        onOpen: (_) {},
+        onOpen: (_, _) {},
         selectionMode: true,
         selectedIds: selected,
         onToggleSelection: (id) {
@@ -138,7 +165,7 @@ void main() {
 
 Widget _wrap({
   required ScrollController controller,
-  required ValueChanged<GamesTourModel> onOpen,
+  required void Function(GamesTourModel game, bool inNewTab) onOpen,
   bool selectionMode = false,
   Set<String> selectedIds = const <String>{},
   ValueChanged<String>? onToggleSelection,
@@ -161,7 +188,8 @@ Widget _wrap({
             onToggleSelection: onToggleSelection,
             onReplaceSelection: onReplaceSelection,
             hiddenColumnIds: hiddenColumnIds,
-            onOpenGame: (game, {required bool inNewTab}) => onOpen(game),
+            onOpenGame:
+                (game, {required bool inNewTab}) => onOpen(game, inNewTab),
           ),
         ),
       ),

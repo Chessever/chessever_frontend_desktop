@@ -440,10 +440,13 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
             _selectRowInSelectionMode(game, rows, shiftPressed: shiftPressed);
             return;
           }
-          // Table view: a single click only selects/highlights the row.
-          // Opening a game belongs to double-click (Cmd/Ctrl held opens a new
-          // tab) so accidental single clicks no longer swap the active board.
           _highlight(game);
+          // Table view: a normal single click only selects/highlights the row.
+          // Ctrl/Cmd-click is the desktop exception: it keeps the current board
+          // intact and opens the clicked game in a separate tab.
+          if (inNewTab) {
+            _openGame(game, inNewTab: true, routeGames: routeGames);
+          }
         },
         onRowDoubleTap: (game, {required bool inNewTab}) {
           if (widget.selectionMode) {
