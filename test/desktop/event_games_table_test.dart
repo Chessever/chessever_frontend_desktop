@@ -132,6 +132,52 @@ void main() {
     );
   });
 
+  test('event rail navigation context keeps games after a completed round', () {
+    final now = DateTime.now();
+    final fallback = [
+      _summary(
+        id: 'r9-g5',
+        roundLabel: 'Round 9',
+        roundStartsAt: now,
+        status: GameStatus.draw,
+        tourId: 'tour-1',
+      ),
+    ];
+    final fresh = [
+      _summary(
+        id: 'r9-g1',
+        roundLabel: 'Round 9',
+        roundStartsAt: now,
+        status: GameStatus.draw,
+        tourId: 'tour-1',
+      ),
+      _summary(
+        id: 'r9-g5',
+        roundLabel: 'Round 9',
+        roundStartsAt: now,
+        status: GameStatus.draw,
+        tourId: 'tour-1',
+      ),
+      _summary(
+        id: 'r8-g1',
+        roundLabel: 'Round 8',
+        roundStartsAt: now.subtract(const Duration(days: 1)),
+        status: GameStatus.draw,
+        tourId: 'tour-1',
+      ),
+    ];
+
+    final orderedIds = eventRailOrderedIdsForTesting(
+      eventRailMergeFreshEventGamesForTesting(fallback, fresh),
+    );
+
+    final lastRound9Index = orderedIds.lastIndexWhere(
+      (id) => id.startsWith('r9-'),
+    );
+    expect(lastRound9Index, isNonNegative);
+    expect(orderedIds[lastRound9Index + 1], 'r8-g1');
+  });
+
   test('event rail copy selection preserves highlighted row order', () {
     final games = [
       _summary(id: 'game-1', roundLabel: 'R1'),

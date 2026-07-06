@@ -1315,16 +1315,24 @@ Future<void> navigateActiveEventGame(
   if (activeTabId == null) return Future.value();
 
   final rawActiveArgs = ref.read(boardTabGameArgsByTabIdProvider)[activeTabId];
+  final continuedEventGames =
+      rawActiveArgs == null
+          ? const <TournamentGameSummary>[]
+          : _readContinuationGames(
+            ref,
+            rawActiveArgs.eventGamesContinuation,
+            fallbackGames: rawActiveArgs.eventGames,
+          );
   final activeArgs = rawActiveArgs?.copyWith(
     routeGames: _readContinuationGames(
       ref,
       rawActiveArgs.routeGamesContinuation,
       fallbackGames: rawActiveArgs.routeGames,
     ),
-    eventGames: _readContinuationGames(
+    eventGames: _readFreshTournamentEventGames(
       ref,
-      rawActiveArgs.eventGamesContinuation,
-      fallbackGames: rawActiveArgs.eventGames,
+      rawActiveArgs,
+      fallbackGames: continuedEventGames,
     ),
     databaseGames: _readContinuationGames(
       ref,
@@ -1552,6 +1560,29 @@ List<TournamentGameSummary>? _readContinuationGames(
   };
 
   return _mergeGameSummaries(fallbackGames, providerGames);
+}
+
+List<TournamentGameSummary>? _readFreshTournamentEventGames(
+  WidgetRef ref,
+  BoardTabGameArgs args, {
+  required List<TournamentGameSummary>? fallbackGames,
+}) {
+  final fallback = fallbackGames ?? args.eventGames;
+  if (args.viewSource == ChessboardView.favScorecard) return fallbackGames;
+
+  final tourId = _eventRailTourId(args, fallback);
+  if (tourId == null || tourId.isEmpty) return fallbackGames;
+
+  final freshGames = ref.read(gamesTourProvider(tourId)).valueOrNull;
+  if (freshGames == null || freshGames.isEmpty) return fallbackGames;
+
+  return _mergeFreshEventGameSummaries(
+    fallback,
+    freshGames
+        .map(TournamentGameSummary.fromGame)
+        .map(_normalizeFreshEventGameSummary)
+        .toList(growable: false),
+  );
 }
 
 List<TournamentGameSummary> _mergeGameSummaries(
