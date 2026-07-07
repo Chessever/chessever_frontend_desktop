@@ -2388,7 +2388,20 @@ class _BoardPaneContent extends HookConsumerWidget {
     );
 
     void shareGameAction() {
-      final shareEvalState = ref.read(boardEvalProvider(position.fen));
+      final shareEngineSettings =
+          ref.read(engineSettingsProviderNew).valueOrNull ??
+          const EngineSettings();
+      final shareShowEvalBar = shouldShowDesktopBoardEvalBar(
+        shareEngineSettings,
+      );
+      final shareEvalState =
+          shareShowEvalBar
+              ? ref.read(boardEvalProvider(position.fen))
+              : const BoardEvalState(
+                pvs: <BoardPv>[],
+                isEvaluating: false,
+                depth: 0,
+              );
       showBoardShareDialog(
         context,
         chessGame: chessGame.value,
@@ -2400,6 +2413,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         evaluation: shareEvalState.evaluation,
         mate: shareEvalState.mate,
         isEvaluating: shareEvalState.isEvaluating,
+        showEvalBar: shareShowEvalBar,
         shareUrl: shareUrl,
       );
     }

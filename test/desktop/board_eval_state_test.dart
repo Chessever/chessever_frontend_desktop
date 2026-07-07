@@ -179,6 +179,31 @@ void main() {
     });
 
     test(
+      'shows desktop board eval bar only when engine and gauge are enabled',
+      () {
+        expect(shouldShowDesktopBoardEvalBar(const EngineSettings()), isFalse);
+        expect(
+          shouldShowDesktopBoardEvalBar(
+            const EngineSettings(
+              showEngineAnalysis: true,
+              showEngineGauge: false,
+            ),
+          ),
+          isFalse,
+        );
+        expect(
+          shouldShowDesktopBoardEvalBar(
+            const EngineSettings(
+              showEngineAnalysis: true,
+              showEngineGauge: true,
+            ),
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
       'does not start board evaluation while engine settings are still loading',
       () async {
         final container = ProviderContainer(
