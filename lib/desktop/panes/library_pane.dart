@@ -1322,6 +1322,9 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _MyDatabasesHeader(
+              folders: folders,
+              currentFolderId: currentFolderId,
+              onNavigateToFolder: onNavigateToFolder,
               onNewFolder: onNewFolder,
               onOpenLocalFiles: onOpenLocalFiles,
               onImportPgnFiles: onImportPgnFiles,
@@ -1393,17 +1396,27 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
 
 class _MyDatabasesHeader extends StatelessWidget {
   const _MyDatabasesHeader({
+    required this.folders,
+    required this.currentFolderId,
+    required this.onNavigateToFolder,
     required this.onNewFolder,
     required this.onOpenLocalFiles,
     required this.onImportPgnFiles,
   });
 
+  final List<LibraryFolder> folders;
+  final String? currentFolderId;
+  final ValueChanged<String?> onNavigateToFolder;
   final VoidCallback onNewFolder;
   final VoidCallback onOpenLocalFiles;
   final VoidCallback onImportPgnFiles;
 
   @override
   Widget build(BuildContext context) {
+    final breadcrumb = libraryMyDatabasesBreadcrumbLabels(
+      folders,
+      currentFolderId,
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 18, 16, 14),
       child: Row(
@@ -1428,15 +1441,12 @@ class _MyDatabasesHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
-              children: const [
-                Text(
-                  'My Databases',
-                  style: TextStyle(
-                    color: kWhiteColor,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.2,
-                  ),
+              children: [
+                _MyDatabasesHeaderBreadcrumb(
+                  folders: folders,
+                  currentFolderId: currentFolderId,
+                  labels: breadcrumb,
+                  onNavigate: onNavigateToFolder,
                 ),
               ],
             ),
@@ -1447,6 +1457,102 @@ class _MyDatabasesHeader extends StatelessWidget {
             onImportPgnFiles: onImportPgnFiles,
           ),
         ],
+      ),
+    );
+  }
+}
+
+
+@visibleForTesting
+List<String> libraryMyDatabasesBreadcrumbLabels(
+  List<LibraryFolder> folders,
+  String? currentFolderId,
+) => [
+  'My Databases',
+  ...libraryFolderPath(folders, currentFolderId).map((folder) => folder.name),
+];
+
+class _MyDatabasesHeaderBreadcrumb extends StatelessWidget {
+  const _MyDatabasesHeaderBreadcrumb({
+    required this.folders,
+    required this.currentFolderId,
+    required this.labels,
+    required this.onNavigate,
+  });
+
+  final List<LibraryFolder> folders;
+  final String? currentFolderId;
+  final List<String> labels;
+  final ValueChanged<String?> onNavigate;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = libraryFolderPath(folders, currentFolderId);
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _MyDatabasesHeaderCrumb(
+            label: labels.first,
+            active: path.isEmpty,
+            onTap: currentFolderId == null ? null : () => onNavigate(null),
+          ),
+          for (var i = 0; i < path.length; i++) ...[
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 6),
+              child: Icon(
+                Icons.chevron_right_rounded,
+                color: kLightGreyColor,
+                size: 17,
+              ),
+            ),
+            _MyDatabasesHeaderCrumb(
+              label: labels[i + 1],
+              active: path[i].id == currentFolderId,
+              onTap:
+                  path[i].id == currentFolderId
+                      ? null
+                      : () => onNavigate(path[i].id),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _MyDatabasesHeaderCrumb extends StatelessWidget {
+  const _MyDatabasesHeaderCrumb({
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool active;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: active ? kWhiteColor : kWhiteColor70,
+        fontSize: 18,
+        fontWeight: active ? FontWeight.w800 : FontWeight.w700,
+        letterSpacing: -0.2,
+      ),
+    );
+    if (onTap == null) return text;
+    return InkWell(
+      borderRadius: BorderRadius.circular(4),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: text,
       ),
     );
   }
@@ -1858,14 +1964,8 @@ class _MyDatabasesBoard extends HookConsumerWidget {
                   : null,
           child: ListView(
             physics: const DesktopScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
             children: [
-              _LibraryFolderBreadcrumb(
-                folders: folders,
-                currentFolderId: currentFolderId,
-                onNavigate: onNavigateToFolder,
-              ),
-              const SizedBox(height: 10),
               Wrap(
                 spacing: 10,
                 runSpacing: 10,
@@ -1884,83 +1984,6 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           ),
         );
       },
-    );
-  }
-}
-
-class _LibraryFolderBreadcrumb extends StatelessWidget {
-  const _LibraryFolderBreadcrumb({
-    required this.folders,
-    required this.currentFolderId,
-    required this.onNavigate,
-  });
-
-  final List<LibraryFolder> folders;
-  final String? currentFolderId;
-  final ValueChanged<String?> onNavigate;
-
-  @override
-  Widget build(BuildContext context) {
-    final path = libraryFolderPath(folders, currentFolderId);
-    final current = path.isEmpty ? null : path.last;
-    return Row(
-      children: [
-        FButton(
-          style: FButtonStyle.ghost(),
-          onPress: currentFolderId == null ? null : () => onNavigate(null),
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.storage_rounded, size: 14),
-              SizedBox(width: 6),
-              Text('My Databases'),
-            ],
-          ),
-        ),
-        for (final folder in path) ...[
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 4),
-            child: Icon(
-              Icons.chevron_right_rounded,
-              color: kLightGreyColor,
-              size: 15,
-            ),
-          ),
-          FButton(
-            style: FButtonStyle.ghost(),
-            onPress:
-                folder.id == currentFolderId
-                    ? null
-                    : () => onNavigate(folder.id),
-            child: Text(
-              folder.name,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: folder.id == current?.id ? kWhiteColor : kWhiteColor70,
-                fontWeight:
-                    folder.id == current?.id
-                        ? FontWeight.w700
-                        : FontWeight.w500,
-              ),
-            ),
-          ),
-        ],
-        if (current != null) ...[
-          const Spacer(),
-          FButton(
-            style: FButtonStyle.ghost(),
-            onPress: () => onNavigate(current.parentId),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.arrow_upward_rounded, size: 14),
-                SizedBox(width: 6),
-                Text('Up'),
-              ],
-            ),
-          ),
-        ],
-      ],
     );
   }
 }
@@ -3783,17 +3806,6 @@ class _MiniDatabasePreviewFrame extends StatelessWidget {
                   progress: treeBuildProgress,
                   onOpen: onOpenTree,
                   onBuild: onBuildTree,
-                ),
-              ],
-              if (onOpen != null) ...[
-                const SizedBox(width: 10),
-                const DesktopTooltip(
-                  message: 'Double-click or press Enter to open this database',
-                  child: Icon(
-                    Icons.keyboard_return_rounded,
-                    size: 16,
-                    color: kLightGreyColor,
-                  ),
                 ),
               ],
             ],

@@ -52,6 +52,22 @@ void main() {
       ]);
     });
 
+    test('promotes My Databases breadcrumb labels into the top header', () {
+      final folders = [
+        _folder(id: 'students', name: 'Students'),
+        _folder(id: 'group-a', name: 'Group A', parentId: 'students'),
+      ];
+
+      expect(libraryMyDatabasesBreadcrumbLabels(folders, null), [
+        'My Databases',
+      ]);
+      expect(libraryMyDatabasesBreadcrumbLabels(folders, 'group-a'), [
+        'My Databases',
+        'Students',
+        'Group A',
+      ]);
+    });
+
     test(
       'honors hidden ids without leaking grandchildren into parent folder',
       () {
