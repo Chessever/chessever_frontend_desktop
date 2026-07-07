@@ -2414,6 +2414,12 @@ class _BoardPaneContent extends HookConsumerWidget {
     );
     final boardPosition =
         explorerLinePreview?.position ?? explorerPreview?.position ?? position;
+    final engineAnalysisFen = activeBoardEvalFen(
+      fen: boardPosition.fen,
+      threatMode: threatMode.value,
+      isCheck: boardPosition.isCheck,
+    );
+    final threatAnalysisActive = engineAnalysisFen != boardPosition.fen;
     final boardLastMove =
         explorerLinePreview?.move ?? explorerPreview?.move ?? lastMove;
     final boardPlayerSide =
@@ -3723,9 +3729,9 @@ class _BoardPaneContent extends HookConsumerWidget {
                       trailingActions: boardActionCluster,
                     ),
                     enginePanel: EnginePanel(
-                      fen: boardPosition.fen,
+                      fen: engineAnalysisFen,
                       sideToMove: boardPosition.turn == Side.white ? 'w' : 'b',
-                      onPlayUci: playUci,
+                      onPlayUci: threatAnalysisActive ? null : playUci,
                     ),
                   ),
                 ),
@@ -5216,11 +5222,13 @@ class _BoardArea extends ConsumerWidget {
         ref.watch(engineSettingsProviderNew).valueOrNull ??
         const EngineSettings();
     final showEngineAnalysis = engineSettings.showEngineAnalysis;
-    // A null-move threat FEN is illegal when the side to move is in check, so
-    // degrade to the real position there (also guards navigating into check
-    // while threat mode is already on) — never feed the engine an illegal FEN.
-    final threatActive = threatMode && !isCheck;
-    final evalFen = threatActive ? threatFenForBoardEval(fen) : fen;
+    // Keep the eval bar on the same provider key used by the engine PV panel.
+    final evalFen = activeBoardEvalFen(
+      fen: fen,
+      threatMode: threatMode,
+      isCheck: isCheck,
+    );
+    final threatActive = evalFen != fen;
     final evalState =
         showEngineAnalysis
             ? ref.watch(boardEvalProvider(evalFen))

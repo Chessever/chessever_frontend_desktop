@@ -415,6 +415,18 @@ String threatFenForBoardEval(String fen) {
   return parts.join(' ');
 }
 
+String activeBoardEvalFen({
+  required String fen,
+  required bool threatMode,
+  required bool isCheck,
+}) {
+  // A null-move threat FEN is illegal when the side to move is in check. Keep
+  // every engine consumer on the real position in that case so the eval bar,
+  // PV list, and arrows cannot drift onto different provider keys.
+  if (!threatMode || isCheck) return fen;
+  return threatFenForBoardEval(fen);
+}
+
 bool _boardPvsEqual(List<BoardPv> a, List<BoardPv> b) {
   if (identical(a, b)) return true;
   if (a.length != b.length) return false;

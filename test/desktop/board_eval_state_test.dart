@@ -124,6 +124,23 @@ void main() {
       );
     });
 
+    test('uses one active eval FEN for threat-mode engine consumers', () {
+      const fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
+
+      expect(
+        activeBoardEvalFen(fen: fen, threatMode: false, isCheck: false),
+        fen,
+      );
+      expect(
+        activeBoardEvalFen(fen: fen, threatMode: true, isCheck: false),
+        'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
+      );
+      expect(
+        activeBoardEvalFen(fen: fen, threatMode: true, isCheck: true),
+        fen,
+      );
+    });
+
     test(
       'does not clear depth tracker while provider is initializing',
       () async {
