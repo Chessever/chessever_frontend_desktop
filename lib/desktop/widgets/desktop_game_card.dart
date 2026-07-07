@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_endgame_board_overlay.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
@@ -281,7 +282,8 @@ class _ListLayout extends StatefulWidget {
   State<_ListLayout> createState() => _ListLayoutState();
 }
 
-class _ListLayoutState extends State<_ListLayout> {
+class _ListLayoutState extends State<_ListLayout>
+    with DeferredPointerStateMixin<_ListLayout> {
   bool _hovered = false;
 
   @override
@@ -303,8 +305,8 @@ class _ListLayoutState extends State<_ListLayout> {
     final isLive = widget.data.hasStarted && !widget.data.status.isFinished;
 
     return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+      onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: MotionCard(
         depressOnPress: false,
         borderRadius: 12,
@@ -845,7 +847,8 @@ class _CompactLayout extends StatefulWidget {
   State<_CompactLayout> createState() => _CompactLayoutState();
 }
 
-class _CompactLayoutState extends State<_CompactLayout> {
+class _CompactLayoutState extends State<_CompactLayout>
+    with DeferredPointerStateMixin<_CompactLayout> {
   bool _hovered = false;
 
   @override
@@ -868,8 +871,8 @@ class _CompactLayoutState extends State<_CompactLayout> {
     final isLive = widget.data.hasStarted && !widget.data.status.isFinished;
 
     return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+      onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: MotionCard(
         depressOnPress: false,
         borderRadius: 10,
@@ -983,15 +986,16 @@ class _GridLayout extends StatefulWidget {
   State<_GridLayout> createState() => _GridLayoutState();
 }
 
-class _GridLayoutState extends State<_GridLayout> {
+class _GridLayoutState extends State<_GridLayout>
+    with DeferredPointerStateMixin<_GridLayout> {
   bool _hovered = false;
 
   @override
   Widget build(BuildContext context) {
     final highlight = widget.selected || _hovered;
     return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+      onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: MotionCard(
         depressOnPress: false,
         borderRadius: 12,
@@ -1582,6 +1586,7 @@ class DesktopGameCardsFlow extends StatelessWidget {
     this.padding,
     this.scrollController,
     this.embedded = false,
+    this.onColumnsResolved,
   });
 
   final DesktopCardLayout layout;
@@ -1593,6 +1598,23 @@ class DesktopGameCardsFlow extends StatelessWidget {
   /// When true, render inside a parent scrollable: shrink-wrap and disable
   /// our own scroll physics so the outer view drives scrolling.
   final bool embedded;
+
+  /// Fired during layout with the column count this flow resolved for the
+  /// current width. Keyboard-focus hosts point this at a mutable field so
+  /// ArrowUp/ArrowDown can stride by exactly the on-screen column count —
+  /// the callback runs in the layout phase, so it must only stash the value,
+  /// never call setState.
+  final ValueChanged<int>? onColumnsResolved;
+
+  /// Column count this flow would render at [width] for [layout]. Mirrors the
+  /// `crossAxisCount` math in [build] so callers can compute the same grid
+  /// stride without waiting for a layout pass.
+  static int columnCountForWidth(DesktopCardLayout layout, double width) {
+    final metrics = metricsFor(layout);
+    if (!width.isFinite || width <= 0) return metrics.minCols;
+    final raw = (width / metrics.targetWidth).floor();
+    return raw.clamp(metrics.minCols, metrics.maxCols).toInt();
+  }
 
   static DesktopGameCardsFlowMetrics metricsFor(DesktopCardLayout layout) {
     switch (layout) {
@@ -1645,6 +1667,7 @@ class DesktopGameCardsFlow extends StatelessWidget {
 
         final rawCols = (innerWidth / metrics.targetWidth).floor();
         final columns = rawCols.clamp(metrics.minCols, metrics.maxCols).toInt();
+        onColumnsResolved?.call(columns);
 
         final delegate =
             mainAxisExtent != null

@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -58,7 +59,11 @@ class _CursorProximityScopeState extends State<CursorProximityScope> {
       opaque: false,
       hitTestBehavior: HitTestBehavior.translucent,
       onHover: (event) => _cursor.value = event.position,
-      onExit: (_) => _cursor.value = null,
+      onExit:
+          (_) => runAfterPointerEvent(() {
+            if (!mounted) return;
+            _cursor.value = null;
+          }),
       child: _CursorProximityInherited(cursor: _cursor, child: widget.child),
     );
   }
@@ -140,18 +145,18 @@ class MotionCard extends StatefulWidget {
   State<MotionCard> createState() => _MotionCardState();
 }
 
-class _MotionCardState extends State<MotionCard> {
+class _MotionCardState extends State<MotionCard>
+    with DeferredPointerStateMixin<MotionCard> {
   bool _hovered = false;
   bool _pressed = false;
 
   void _setInteractionState({bool? hovered, bool? pressed}) {
     if (!mounted) return;
 
-    final nextHovered = hovered ?? _hovered;
-    final nextPressed = pressed ?? _pressed;
-    if (nextHovered == _hovered && nextPressed == _pressed) return;
-
-    setState(() {
+    setStateAfterPointerEvent(() {
+      final nextHovered = hovered ?? _hovered;
+      final nextPressed = pressed ?? _pressed;
+      if (nextHovered == _hovered && nextPressed == _pressed) return;
       _hovered = nextHovered;
       _pressed = nextPressed;
     });

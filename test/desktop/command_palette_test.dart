@@ -55,6 +55,38 @@ void main() {
       isNot(contains('Open Opening Explorer')),
     );
   });
+
+  test('command palette route shortcuts match sidebar numbering', () {
+    expect(
+      debugCommandPaletteShortcutForTitle('Open Tournaments', isMacOS: false),
+      'Ctrl+1',
+    );
+    expect(
+      debugCommandPaletteShortcutForTitle('Open Player', isMacOS: false),
+      'Ctrl+4',
+    );
+    expect(
+      debugCommandPaletteShortcutForTitle('Open Rankings', isMacOS: false),
+      'Ctrl+5',
+    );
+    expect(
+      debugCommandPaletteShortcutForTitle('Open Calendar', isMacOS: false),
+      'Ctrl+6',
+    );
+    expect(
+      debugCommandPaletteShortcutForTitle('Open Board', isMacOS: false),
+      'Ctrl+8',
+    );
+    expect(
+      debugCommandPaletteShortcutForTitle('Open Play', isMacOS: false),
+      'Ctrl+9',
+    );
+    expect(
+      debugCommandPaletteShortcutForTitle('Open Board Editor', isMacOS: false),
+      isNull,
+    );
+  });
+
   test('command palette arrow navigation wraps one row at a time', () {
     expect(
       nextCommandPaletteHighlight(current: null, itemCount: 5, direction: 1),

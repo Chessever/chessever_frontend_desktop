@@ -9,6 +9,10 @@ import 'package:chessever/widgets/backfilled_federation_flag.dart';
 /// imported PGN database renders its rows *identically* to the cloud / TWIC
 /// databases sitting next to it in the Library.
 
+const double _kLibraryPlayerFlagGap = 6;
+const double _kLibraryPlayerTitleGap = 4;
+const double _kLibraryPlayerRatingGap = 5;
+
 /// Standard-table player name abbreviation: `Carlsen, Magnus` → `Carlsen, M.`.
 String libraryStandardTablePlayerName(String raw) {
   final name = raw.trim();
@@ -65,7 +69,7 @@ class LibraryTablePlayerCell extends StatelessWidget {
           height: 13,
           borderRadius: BorderRadius.circular(2),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: _kLibraryPlayerFlagGap),
         if (title.isNotEmpty) ...[
           Text(
             title,
@@ -75,7 +79,7 @@ class LibraryTablePlayerCell extends StatelessWidget {
               fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(width: 5),
+          const SizedBox(width: _kLibraryPlayerTitleGap),
         ],
         Expanded(
           child: Text(
@@ -90,7 +94,7 @@ class LibraryTablePlayerCell extends StatelessWidget {
           ),
         ),
         if (rating.trim().isNotEmpty) ...[
-          const SizedBox(width: 6),
+          const SizedBox(width: _kLibraryPlayerRatingGap),
           Text(
             rating.trim(),
             style: const TextStyle(

@@ -6,6 +6,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/desktop_updater.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/pressable_scale.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -27,7 +28,9 @@ class DesktopUpdateChip extends ConsumerStatefulWidget {
 }
 
 class _DesktopUpdateChipState extends ConsumerState<DesktopUpdateChip>
-    with SingleTickerProviderStateMixin {
+    with
+        SingleTickerProviderStateMixin,
+        DeferredPointerStateMixin<DesktopUpdateChip> {
   late final FPopoverController _controller = FPopoverController(vsync: this);
   Timer? _dismissTimer;
   bool _hoveringChip = false;
@@ -94,28 +97,36 @@ class _DesktopUpdateChipState extends ConsumerState<DesktopUpdateChip>
         hideRegion: FPopoverHideRegion.anywhere,
         popoverBuilder:
             (context, _) => MouseRegion(
-              onEnter: (_) {
-                _hoveringPopover = true;
-                _show();
-              },
-              onExit: (_) {
-                _hoveringPopover = false;
-                _scheduleDismiss();
-              },
+              onEnter:
+                  (_) => runAfterPointerEvent(() {
+                    if (!mounted) return;
+                    _hoveringPopover = true;
+                    _show();
+                  }),
+              onExit:
+                  (_) => runAfterPointerEvent(() {
+                    if (!mounted) return;
+                    _hoveringPopover = false;
+                    _scheduleDismiss();
+                  }),
               child: _PopoverBody(
                 state: state,
                 onApply: () => _handleAction(state),
               ),
             ),
         child: MouseRegion(
-          onEnter: (_) {
-            _hoveringChip = true;
-            _show();
-          },
-          onExit: (_) {
-            _hoveringChip = false;
-            _scheduleDismiss();
-          },
+          onEnter:
+              (_) => runAfterPointerEvent(() {
+                if (!mounted) return;
+                _hoveringChip = true;
+                _show();
+              }),
+          onExit:
+              (_) => runAfterPointerEvent(() {
+                if (!mounted) return;
+                _hoveringChip = false;
+                _scheduleDismiss();
+              }),
           child: ClickCursor(
             child: PressableScale(
               hoveredScale: 1.014,

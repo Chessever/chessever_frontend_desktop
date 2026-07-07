@@ -37,8 +37,8 @@ import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
 import 'package:chessever/screens/player_profile/provider/player_profile_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
-import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/round_ordering.dart';
+import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/time_utils.dart';
@@ -155,6 +155,21 @@ List<LiveGamesBatchKey> eventRailLiveBatchKeysForTesting({
   );
 }
 
+@visibleForTesting
+List<TournamentGameSummary> eventRailWindowContinuationGamesForTesting({
+  required List<TournamentGameSummary> fallbackGames,
+  required List<TournamentGameSummary> providerGames,
+  required String? selectedGameId,
+  required int visibleLimit,
+}) {
+  return _windowContinuationGames(
+    fallbackGames: fallbackGames,
+    providerGames: providerGames,
+    selectedGameId: selectedGameId,
+    visibleLimit: visibleLimit,
+  );
+}
+
 /// Board-pane companion table for the event that produced the active game.
 ///
 /// The source of truth is the active Board tab's [BoardTabGameArgs]. The
@@ -180,10 +195,14 @@ class EventGamesTable extends ConsumerStatefulWidget {
 class _EventGamesTableState extends ConsumerState<EventGamesTable> {
   static const double _databaseScrollPrefetchExtent = 360;
   static const double _databaseGameRowExtent = 38;
+  static const int _continuationInitialContextRadius = 30;
+  static const int _continuationVisiblePageSize =
+      _continuationInitialContextRadius * 2 + 1;
 
   final ScrollController _scrollController = ScrollController();
   final FocusNode _railFocusNode = FocusNode(debugLabel: 'event-games-rail');
   final Map<String, GlobalKey> _rowKeys = <String, GlobalKey>{};
+  final Map<String, int> _continuationVisibleLimits = <String, int>{};
   String? _lastScrollSignature;
   String? _loadingDatabaseTabId;
   String? _databaseLoadErrorTabId;
@@ -574,7 +593,6 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
     final loadKey = _continuationKey(activeTabId, continuation);
     if (_loadingContinuationKey == loadKey) return;
     if (!force && _continuationLoadErrorKey == loadKey) return;
-    if (!_canLoadMoreContinuation(continuation)) return;
 
     if (!force) {
       if (!_scrollController.hasClients) return;
@@ -593,9 +611,44 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
     });
 
     try {
+      final selectedGameId = _selectedGameIdForArgs(activeArgs);
+      final fallbackGames = _fallbackGamesForKind(activeArgs, resolved.kind);
+      final providerGames = _readContinuationProviderGames(ref, continuation);
+      final visibleLimit = _continuationVisibleLimit(
+        loadKey,
+        fallbackCount: fallbackGames.length,
+      );
+      final hasHiddenLoadedGames = _hasHiddenContinuationProviderGames(
+        providerGames: providerGames,
+        selectedGameId: selectedGameId,
+        visibleLimit: visibleLimit,
+      );
+
+      if (hasHiddenLoadedGames) {
+        setState(() {
+          _continuationVisibleLimits[loadKey] =
+              visibleLimit + _continuationVisiblePageSize;
+          if (_loadingContinuationKey == loadKey) {
+            _loadingContinuationKey = null;
+          }
+        });
+        return;
+      }
+
+      if (!_canLoadMoreContinuation(continuation)) {
+        setState(() {
+          if (_loadingContinuationKey == loadKey) {
+            _loadingContinuationKey = null;
+          }
+        });
+        return;
+      }
+
       await _loadMoreContinuation(continuation);
       if (!mounted) return;
       setState(() {
+        _continuationVisibleLimits[loadKey] =
+            visibleLimit + _continuationVisiblePageSize;
         if (_loadingContinuationKey == loadKey) _loadingContinuationKey = null;
       });
     } catch (e) {
@@ -611,55 +664,75 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
   _ContinuationSnapshot? _watchContinuationSnapshot(
     BoardTabGamesContinuation? continuation, {
     required List<TournamentGameSummary> fallbackGames,
+    required String? selectedGameId,
   }) {
     if (continuation == null) return null;
+    final continuationKey = _continuationKey(widget.tabId, continuation);
+    final visibleLimit = _continuationVisibleLimit(
+      continuationKey,
+      fallbackCount: fallbackGames.length,
+    );
+    _ContinuationSnapshot snapshot({
+      required List<TournamentGameSummary> providerGames,
+      required bool isLoading,
+      required bool providerHasMore,
+      int? totalCount,
+      String? error,
+    }) {
+      final games = _windowContinuationGames(
+        fallbackGames: fallbackGames,
+        providerGames: providerGames,
+        selectedGameId: selectedGameId,
+        visibleLimit: visibleLimit,
+      );
+      final hasHiddenLoadedGames = _hasHiddenContinuationProviderGames(
+        providerGames: providerGames,
+        selectedGameId: selectedGameId,
+        visibleLimit: visibleLimit,
+      );
+      return _ContinuationSnapshot(
+        games: games,
+        isLoading: isLoading,
+        hasMore: providerHasMore || hasHiddenLoadedGames,
+        totalCount: totalCount,
+        error: error,
+      );
+    }
 
     switch (continuation.kind) {
       case BoardTabGamesContinuationKind.favorites:
         final state = ref.watch(favoritesCombinedGamesProvider);
-        return _ContinuationSnapshot(
-          games: _mergeGameSummaries(
-            fallbackGames,
-            _summariesFromGameModels(state.filteredGames),
-          ),
+        return snapshot(
+          providerGames: _summariesFromGameModels(state.filteredGames),
           isLoading: state.isLoading,
-          hasMore: state.hasMore,
+          providerHasMore: state.hasMore,
           error: state.error,
         );
       case BoardTabGamesContinuationKind.countrymen:
         final state = ref.watch(countrymenCombinedGamesProvider);
-        return _ContinuationSnapshot(
-          games: _mergeGameSummaries(
-            fallbackGames,
-            _summariesFromGameModels(state.filteredGames),
-          ),
+        return snapshot(
+          providerGames: _summariesFromGameModels(state.filteredGames),
           isLoading: state.isLoading,
-          hasMore: state.hasMore,
+          providerHasMore: state.hasMore,
           error: state.error,
         );
       case BoardTabGamesContinuationKind.playerProfile:
         final argument = continuation.argument;
         if (argument is! PlayerProfileKey) return null;
         final state = ref.watch(playerProfileGamesKeyProvider(argument));
-        return _ContinuationSnapshot(
-          games: _mergeGameSummaries(
-            fallbackGames,
-            _summariesFromGameModels(state.filteredGames),
-          ),
+        return snapshot(
+          providerGames: _summariesFromGameModels(state.filteredGames),
           isLoading: state.isLoading || state.isLoadingMore,
-          hasMore: state.hasMorePages,
+          providerHasMore: state.hasMorePages,
           totalCount: state.totalCount,
           error: state.error,
         );
       case BoardTabGamesContinuationKind.twicDatabase:
         final state = ref.watch(gamebaseDatabaseGamesPaginatedProvider);
-        return _ContinuationSnapshot(
-          games: _mergeGameSummaries(
-            fallbackGames,
-            _summariesFromGameModels(state.games),
-          ),
+        return snapshot(
+          providerGames: _summariesFromGameModels(state.games),
           isLoading: state.isLoading,
-          hasMore: state.hasMore,
+          providerHasMore: state.hasMore,
           totalCount: state.totalCount > 0 ? state.totalCount : null,
           error: state.error,
         );
@@ -667,41 +740,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
   }
 
   ({List<TournamentGameSummary>? games, bool isLoading})
-  _watchFreshTournamentEventGames(
-    BoardTabGameArgs? args, {
-    required List<TournamentGameSummary> fallbackGames,
-  }) {
-    if (args == null) return (games: null, isLoading: false);
-    if (args.viewSource == ChessboardView.favScorecard) {
-      return (games: null, isLoading: false);
-    }
-    final tourId = _eventRailTourId(args, fallbackGames);
-    if (tourId == null || tourId.isEmpty) {
-      return (games: null, isLoading: false);
-    }
-
-    // `gamesTourProvider` is the authoritative full event list (same source
-    // the mobile Games tab and desktop `TournamentGamesView` use). Until it
-    // resolves we keep whatever seed we were opened with (often a capped
-    // For-You snapshot that only carries a couple of the current round's
-    // games) but surface its loading state so the rail shows a spinner and
-    // does not present that partial set as the complete round.
-    final async = ref.watch(gamesTourProvider(tourId));
-    final freshGames = async.valueOrNull;
-    if (freshGames == null || freshGames.isEmpty) {
-      return (games: null, isLoading: async.isLoading);
-    }
-
-    return (
-      games: _mergeFreshEventGameSummaries(
-        fallbackGames,
-        freshGames
-            .map(TournamentGameSummary.fromGame)
-            .map(_normalizeFreshEventGameSummary)
-            .toList(growable: false),
-      ),
-      isLoading: false,
-    );
+  _watchFreshTournamentEventGames() {
+    return (games: null, isLoading: false);
   }
 
   bool _canLoadMoreContinuation(BoardTabGamesContinuation continuation) {
@@ -721,6 +761,15 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
         final state = ref.read(gamebaseDatabaseGamesPaginatedProvider);
         return state.hasMore && !state.isLoading;
     }
+  }
+
+  int _continuationVisibleLimit(
+    String continuationKey, {
+    required int fallbackCount,
+  }) {
+    final initial = math.max(fallbackCount, _continuationVisiblePageSize);
+    final current = _continuationVisibleLimits[continuationKey];
+    return current == null || current < initial ? initial : current;
   }
 
   Future<void> _loadMoreContinuation(
@@ -762,25 +811,23 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
     final activeArgs = ref.watch(
       boardTabGameArgsByTabIdProvider.select((m) => m[activeTabId]),
     );
+    final activeSelectedGameId = _selectedGameIdForArgs(activeArgs);
     final routeContinuationSnapshot = _watchContinuationSnapshot(
       activeArgs?.routeGamesContinuation,
       fallbackGames: activeArgs?.routeGames ?? const <TournamentGameSummary>[],
+      selectedGameId: activeSelectedGameId,
     );
     final eventContinuationSnapshot = _watchContinuationSnapshot(
       activeArgs?.eventGamesContinuation,
       fallbackGames: activeArgs?.eventGames ?? const <TournamentGameSummary>[],
+      selectedGameId: activeSelectedGameId,
     );
-    final freshTournamentEventGames = _watchFreshTournamentEventGames(
-      activeArgs,
-      fallbackGames:
-          eventContinuationSnapshot?.games ??
-          activeArgs?.eventGames ??
-          const <TournamentGameSummary>[],
-    );
+    final freshTournamentEventGames = _watchFreshTournamentEventGames();
     final databaseContinuationSnapshot = _watchContinuationSnapshot(
       activeArgs?.databaseGamesContinuation,
       fallbackGames:
           activeArgs?.databaseGames ?? const <TournamentGameSummary>[],
+      selectedGameId: activeSelectedGameId,
     );
     final baseEventGamesLoading = activeArgs?.eventGamesLoading ?? false;
     final effectiveArgs = activeArgs?.copyWith(
@@ -788,9 +835,6 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
       eventGames:
           freshTournamentEventGames.games ?? eventContinuationSnapshot?.games,
       databaseGames: databaseContinuationSnapshot?.games,
-      // Surface the authoritative full-list fetch so the rail shows its
-      // loading affordance instead of presenting the capped seed snapshot as
-      // the complete round. Cleared the moment `gamesTourProvider` resolves.
       eventGamesLoading:
           baseEventGamesLoading || freshTournamentEventGames.isLoading,
     );
@@ -926,24 +970,6 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
         continuationKey != null && _continuationLoadErrorKey == continuationKey
             ? _continuationLoadError
             : null;
-    if (databasePagination?.hasMore == true &&
-        !isLoadingMoreDatabase &&
-        databaseLoadError == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        unawaited(_maybeLoadMoreDatabaseGames());
-      });
-    }
-    if (activeContinuation != null &&
-        continuationSnapshot?.hasMore == true &&
-        !isLoadingMoreContinuation &&
-        continuationLoadError == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        unawaited(_maybeLoadMoreContinuedGames());
-      });
-    }
-
     final countGames =
         resolved.kind == _GameListKind.event ? allOrderedGames : orderedGames;
     final countText = _railCountText(
@@ -1315,21 +1341,25 @@ Future<void> navigateActiveEventGame(
   if (activeTabId == null) return Future.value();
 
   final rawActiveArgs = ref.read(boardTabGameArgsByTabIdProvider)[activeTabId];
+  final selectedGameId = _selectedGameIdForArgs(rawActiveArgs);
   final activeArgs = rawActiveArgs?.copyWith(
     routeGames: _readContinuationGames(
       ref,
       rawActiveArgs.routeGamesContinuation,
       fallbackGames: rawActiveArgs.routeGames,
+      selectedGameId: selectedGameId,
     ),
     eventGames: _readContinuationGames(
       ref,
       rawActiveArgs.eventGamesContinuation,
       fallbackGames: rawActiveArgs.eventGames,
+      selectedGameId: selectedGameId,
     ),
     databaseGames: _readContinuationGames(
       ref,
       rawActiveArgs.databaseGamesContinuation,
       fallbackGames: rawActiveArgs.databaseGames,
+      selectedGameId: selectedGameId,
     ),
   );
   final legacy = ref.read(tournamentGamesProvider);
@@ -1497,6 +1527,26 @@ BoardTabGamesContinuation? _continuationForKind(
   };
 }
 
+List<TournamentGameSummary> _fallbackGamesForKind(
+  BoardTabGameArgs args,
+  _GameListKind kind,
+) {
+  return switch (kind) {
+    _GameListKind.event => args.eventGames,
+    _GameListKind.favorites => args.eventGames,
+    _GameListKind.source => args.routeGames,
+    _GameListKind.database => args.databaseGames,
+  };
+}
+
+String? _selectedGameIdForArgs(BoardTabGameArgs? args) {
+  final selected = args?.gameListSelectedId?.trim();
+  if (selected != null && selected.isNotEmpty) return selected;
+
+  final gameId = args?.gameId?.trim();
+  return gameId == null || gameId.isEmpty ? null : gameId;
+}
+
 _ContinuationSnapshot? _continuationSnapshotForKind(
   _GameListKind kind, {
   required _ContinuationSnapshot? routeSnapshot,
@@ -1527,10 +1577,26 @@ List<TournamentGameSummary>? _readContinuationGames(
   WidgetRef ref,
   BoardTabGamesContinuation? continuation, {
   required List<TournamentGameSummary> fallbackGames,
+  required String? selectedGameId,
 }) {
   if (continuation == null) return null;
 
-  final providerGames = switch (continuation.kind) {
+  return _windowContinuationGames(
+    fallbackGames: fallbackGames,
+    providerGames: _readContinuationProviderGames(ref, continuation),
+    selectedGameId: selectedGameId,
+    visibleLimit: math.max(
+      fallbackGames.length,
+      _EventGamesTableState._continuationVisiblePageSize,
+    ),
+  );
+}
+
+List<TournamentGameSummary> _readContinuationProviderGames(
+  WidgetRef ref,
+  BoardTabGamesContinuation continuation,
+) {
+  return switch (continuation.kind) {
     BoardTabGamesContinuationKind.favorites => _summariesFromGameModels(
       ref.read(favoritesCombinedGamesProvider).filteredGames,
     ),
@@ -1550,42 +1616,52 @@ List<TournamentGameSummary>? _readContinuationGames(
       ref.read(gamebaseDatabaseGamesPaginatedProvider).games,
     ),
   };
-
-  return _mergeGameSummaries(fallbackGames, providerGames);
 }
 
-List<TournamentGameSummary> _mergeGameSummaries(
-  List<TournamentGameSummary> fallbackGames,
-  List<TournamentGameSummary> providerGames,
-) {
+bool _hasHiddenContinuationProviderGames({
+  required List<TournamentGameSummary> providerGames,
+  required String? selectedGameId,
+  required int visibleLimit,
+}) {
+  if (providerGames.length <= visibleLimit) return false;
+  final selected = selectedGameId?.trim();
+  if (selected == null || selected.isEmpty) return true;
+  return providerGames.any((game) => game.id == selected);
+}
+
+List<TournamentGameSummary> _windowContinuationGames({
+  required List<TournamentGameSummary> fallbackGames,
+  required List<TournamentGameSummary> providerGames,
+  required String? selectedGameId,
+  required int visibleLimit,
+}) {
   if (providerGames.isEmpty) return fallbackGames;
-  if (fallbackGames.isEmpty) return providerGames;
 
-  final merged = List<TournamentGameSummary>.of(fallbackGames);
-  final seenIds = <String>{
-    for (final game in merged)
-      if (game.id.trim().isNotEmpty) game.id.trim(),
+  final limit = math.max(1, visibleLimit);
+  final selected = selectedGameId?.trim();
+  if (selected == null || selected.isEmpty) {
+    return providerGames.take(limit).toList(growable: false);
+  }
+
+  final selectedIndex = providerGames.indexWhere((game) => game.id == selected);
+  if (selectedIndex < 0) {
+    return fallbackGames.isNotEmpty
+        ? fallbackGames
+        : providerGames.take(limit).toList(growable: false);
+  }
+
+  final before = (limit - 1) ~/ 2;
+  var start = math.max(0, selectedIndex - before);
+  var end = math.min(providerGames.length, start + limit);
+  start = math.max(0, end - limit);
+  final window = providerGames.sublist(start, end);
+  if (fallbackGames.isEmpty) return window;
+
+  final fallbackById = <String, TournamentGameSummary>{
+    for (final game in fallbackGames)
+      if (game.id.trim().isNotEmpty) game.id: game,
   };
-  for (final game in providerGames) {
-    final id = game.id.trim();
-    if (id.isEmpty || seenIds.add(id)) {
-      merged.add(game);
-    }
-  }
-  return merged;
-}
-
-String? _eventRailTourId(
-  BoardTabGameArgs args,
-  List<TournamentGameSummary> fallbackGames,
-) {
-  final sourceTourId = args.sourceGame?.tourId.trim() ?? '';
-  if (sourceTourId.isNotEmpty) return sourceTourId;
-  for (final game in fallbackGames) {
-    final tourId = game.tourId.trim();
-    if (tourId.isNotEmpty) return tourId;
-  }
-  return null;
+  return [for (final game in window) fallbackById[game.id] ?? game];
 }
 
 List<LiveGamesBatchKey> _eventRailLiveBatchKeys({
@@ -1713,6 +1789,8 @@ TournamentGameSummary _mergeFreshEventGameSummary(
     roundStartsAt: fresh.roundStartsAt ?? current.roundStartsAt,
     hasStarted: fresh.hasStarted || current.hasStarted,
     pgn: fresh.pgn ?? current.pgn,
+    whiteTeam: fresh.whiteTeam.isNotEmpty ? fresh.whiteTeam : current.whiteTeam,
+    blackTeam: fresh.blackTeam.isNotEmpty ? fresh.blackTeam : current.blackTeam,
   );
 }
 
@@ -2317,19 +2395,28 @@ List<_EventRoundGroup> _buildDateGroups(List<TournamentGameSummary> games) {
 class _EventLiveSummary {
   const _EventLiveSummary({
     required this.status,
+    required this.pgn,
+    required this.fen,
     required this.lastMove,
     required this.lastMoveTime,
     required this.hasPgnMoves,
   });
 
   final String? status;
+  final String? pgn;
+  final String? fen;
   final String? lastMove;
   final DateTime? lastMoveTime;
   final bool hasPgnMoves;
 
+  bool get hasStarted =>
+      (lastMove != null && lastMove!.isNotEmpty) || hasPgnMoves;
+
   factory _EventLiveSummary.from(LiveGameUpdate update) {
     return _EventLiveSummary(
       status: update.status,
+      pgn: update.pgn?.trim(),
+      fen: update.fen?.trim(),
       lastMove: update.lastMove?.trim(),
       lastMoveTime: _parseDateTime(update.lastMoveTime),
       hasPgnMoves: pgnHasMoves(update.pgn),
@@ -2341,13 +2428,16 @@ class _EventLiveSummary {
     return identical(this, other) ||
         other is _EventLiveSummary &&
             other.status == status &&
+            other.pgn == pgn &&
+            other.fen == fen &&
             other.lastMove == lastMove &&
             other.lastMoveTime == lastMoveTime &&
             other.hasPgnMoves == hasPgnMoves;
   }
 
   @override
-  int get hashCode => Object.hash(status, lastMove, lastMoveTime, hasPgnMoves);
+  int get hashCode =>
+      Object.hash(status, pgn, fen, lastMove, lastMoveTime, hasPgnMoves);
 }
 
 class _EventLiveSummaries {
@@ -2682,6 +2772,189 @@ Future<bool> _confirmReplaceActiveBoardGameIfNeeded({
   ).whenComplete(() => _eventGameReplacementConfirmationOpen = false);
 }
 
+class _EventGameOpenSeed {
+  const _EventGameOpenSeed({required this.game, this.sourceGame});
+
+  final TournamentGameSummary game;
+  final GamesTourModel? sourceGame;
+}
+
+Future<_EventGameOpenSeed> _resolveEventGameOpenSeed({
+  required GameRepository gameRepository,
+  required TournamentGameSummary game,
+}) async {
+  final gameId = game.id.trim();
+  if (gameId.isEmpty) return _EventGameOpenSeed(game: game);
+
+  try {
+    final latestRow = await gameRepository.getGameWithPGN(gameId);
+    final latestModel = GamesTourModel.fromGame(latestRow);
+    final latestSummary = TournamentGameSummary.fromGamesTourModel(
+      latestModel,
+      roundStartsAt: game.roundStartsAt,
+      roundName: game.roundName,
+    );
+    final hydratedSummary = selectFreshestEventSummaryForOpen(
+      current: game,
+      incoming: latestSummary,
+    );
+    final sourceGame =
+        _summaryMatchesModelSnapshot(hydratedSummary, latestModel)
+            ? latestModel.copyWith(
+              pgn: hydratedSummary.pgn ?? latestModel.pgn,
+              fen: hydratedSummary.fen ?? latestModel.fen,
+            )
+            : null;
+    return _EventGameOpenSeed(game: hydratedSummary, sourceGame: sourceGame);
+  } catch (_) {
+    return _EventGameOpenSeed(game: game);
+  }
+}
+
+@visibleForTesting
+TournamentGameSummary selectFreshestEventSummaryForOpen({
+  required TournamentGameSummary current,
+  required TournamentGameSummary incoming,
+}) {
+  if (current.id != incoming.id) return current;
+  if (_shouldUseIncomingEventSummary(current, incoming) ||
+      _incomingSummaryHasRicherPgn(current, incoming)) {
+    return _mergeFreshEventGameSummary(current, incoming);
+  }
+  return current;
+}
+
+bool _shouldUseIncomingEventSummary(
+  TournamentGameSummary current,
+  TournamentGameSummary incoming,
+) {
+  final currentTime = current.lastMoveTime;
+  final incomingTime = incoming.lastMoveTime;
+  if (currentTime != null && incomingTime != null) {
+    if (incomingTime.isBefore(currentTime)) return false;
+    if (incomingTime.isAfter(currentTime)) return true;
+  } else if (currentTime != null && incomingTime == null) {
+    return false;
+  } else if (currentTime == null && incomingTime != null) {
+    return true;
+  }
+
+  if (current.status.isOngoing && incoming.status.isFinished) return true;
+  if (current.status.isFinished && incoming.status.isOngoing) return false;
+
+  final currentPly = _knownSummaryPly(current);
+  final incomingPly = _knownSummaryPly(incoming);
+  if (currentPly != null && incomingPly != null) {
+    if (incomingPly < currentPly) return false;
+    if (incomingPly > currentPly) return true;
+  } else if (currentPly != null && incomingPly == null) {
+    return false;
+  } else if (currentPly == null && incomingPly != null) {
+    return true;
+  }
+
+  final currentFen = current.fen?.trim();
+  final incomingFen = incoming.fen?.trim();
+  if ((currentFen == null || currentFen.isEmpty) &&
+      incomingFen != null &&
+      incomingFen.isNotEmpty) {
+    return true;
+  }
+
+  return current.status != incoming.status &&
+      incoming.status != GameStatus.unknown;
+}
+
+bool _incomingSummaryHasRicherPgn(
+  TournamentGameSummary current,
+  TournamentGameSummary incoming,
+) {
+  final incomingPgnLength = incoming.pgn?.trim().length ?? 0;
+  final currentPgnLength = current.pgn?.trim().length ?? 0;
+  if (incomingPgnLength <= currentPgnLength) return false;
+
+  final currentTime = current.lastMoveTime;
+  final incomingTime = incoming.lastMoveTime;
+  if (currentTime != null &&
+      incomingTime != null &&
+      incomingTime.isBefore(currentTime)) {
+    return false;
+  }
+
+  final currentPly = _knownSummaryPly(current);
+  final incomingPly = _knownSummaryPly(incoming);
+  if (currentPly != null && incomingPly != null && incomingPly < currentPly) {
+    return false;
+  }
+  if (currentPly != null && incomingPly == null) return false;
+
+  return true;
+}
+
+int? _knownSummaryPly(TournamentGameSummary game) {
+  final pgnPly = resolveFinalPositionFromPgn(game.pgn)?.moveCount;
+  final fenPly = plyFromFen(game.fen);
+  if (pgnPly == null) return fenPly;
+  if (fenPly == null) return pgnPly;
+  return pgnPly > fenPly ? pgnPly : fenPly;
+}
+
+bool _summaryMatchesModelSnapshot(
+  TournamentGameSummary summary,
+  GamesTourModel model,
+) {
+  if (summary.id != model.gameId) return false;
+  final summaryPly = _knownSummaryPly(summary);
+  final modelPgnPly = resolveFinalPositionFromPgn(model.pgn)?.moveCount;
+  final modelFenPly = plyFromFen(model.fen);
+  final modelPly =
+      modelPgnPly == null
+          ? modelFenPly
+          : modelFenPly == null
+          ? modelPgnPly
+          : math.max(modelPgnPly, modelFenPly);
+  if (summaryPly != null && modelPly != null && summaryPly > modelPly) {
+    return false;
+  }
+  final summaryTime = summary.lastMoveTime;
+  final modelTime = model.lastMoveTime;
+  return summaryTime == null ||
+      modelTime == null ||
+      !summaryTime.isAfter(modelTime);
+}
+
+List<TournamentGameSummary> _replaceEventSummary(
+  List<TournamentGameSummary> games,
+  TournamentGameSummary selected,
+) {
+  if (games.isEmpty) return games;
+  final index = games.indexWhere((game) => game.id == selected.id);
+  if (index < 0) return games;
+
+  final next = List<TournamentGameSummary>.from(games);
+  next[index] = selected;
+  return next;
+}
+
+GameRepository? _tryReadGameRepositoryForEventOpen({
+  required WidgetRef ref,
+  required BuildContext? context,
+  required ProviderContainer? container,
+}) {
+  try {
+    if (container != null) return container.read(gameRepositoryProvider);
+    if (context != null && context.mounted) {
+      return ProviderScope.containerOf(
+        context,
+        listen: false,
+      ).read(gameRepositoryProvider);
+    }
+    return ref.read(gameRepositoryProvider);
+  } catch (_) {
+    return null;
+  }
+}
+
 Future<void> _openEventGame({
   required WidgetRef ref,
   BuildContext? context,
@@ -2694,6 +2967,15 @@ Future<void> _openEventGame({
   bool inNewTab = false,
   bool inNewWindow = false,
 }) async {
+  final GameRepository? gameRepository =
+      kind == _GameListKind.database
+          ? null
+          : _tryReadGameRepositoryForEventOpen(
+            ref: ref,
+            context: context,
+            container: container,
+          );
+
   if (!await _confirmReplaceActiveBoardGameIfNeeded(
     ref: ref,
     context: context,
@@ -2703,34 +2985,44 @@ Future<void> _openEventGame({
     return;
   }
 
+  final openSeed =
+      gameRepository == null
+          ? _EventGameOpenSeed(game: game)
+          : await _resolveEventGameOpenSeed(
+            gameRepository: gameRepository,
+            game: game,
+          );
+  final openGame = openSeed.game;
+  final openEventGames = _replaceEventSummary(eventGames, openGame);
+
   if (kind == _GameListKind.database) {
-    final pgn = game.pgn?.trim() ?? '';
+    final pgn = openGame.pgn?.trim() ?? '';
     final hasPlayableLocalPgn = pgnHasMoves(pgn);
     final args = BoardTabGameArgs(
-      gameId: hasPlayableLocalPgn ? null : game.id,
+      gameId: hasPlayableLocalPgn ? null : openGame.id,
       pgn: pgn,
       label:
-          game.name.isEmpty
-              ? '${game.whitePlayer} vs ${game.blackPlayer}'
-              : game.name,
-      whiteName: game.whitePlayer,
-      blackName: game.blackPlayer,
-      whiteFederation: game.whiteFederation,
-      blackFederation: game.blackFederation,
-      whiteTitle: game.whiteTitle,
-      blackTitle: game.blackTitle,
-      whiteRating: game.whiteRating,
-      blackRating: game.blackRating,
-      whiteFideId: game.whiteFideId,
-      blackFideId: game.blackFideId,
-      fenSeed: game.fen,
-      initialFen: activeArgs?.initialFen ?? game.fen,
+          openGame.name.isEmpty
+              ? '${openGame.whitePlayer} vs ${openGame.blackPlayer}'
+              : openGame.name,
+      whiteName: openGame.whitePlayer,
+      blackName: openGame.blackPlayer,
+      whiteFederation: openGame.whiteFederation,
+      blackFederation: openGame.blackFederation,
+      whiteTitle: openGame.whiteTitle,
+      blackTitle: openGame.blackTitle,
+      whiteRating: openGame.whiteRating,
+      blackRating: openGame.blackRating,
+      whiteFideId: openGame.whiteFideId,
+      blackFideId: openGame.blackFideId,
+      fenSeed: openGame.fen,
+      initialFen: activeArgs?.initialFen ?? openGame.fen,
       viewSource: activeArgs?.viewSource ?? ChessboardView.tour,
       databaseTitle: tournamentTitle,
-      databaseGames: eventGames,
+      databaseGames: openEventGames,
       databaseGamesPagination: activeArgs?.databaseGamesPagination,
       databaseGamesContinuation: activeArgs?.databaseGamesContinuation,
-      gameListSelectedId: game.id,
+      gameListSelectedId: openGame.id,
     );
 
     if (inNewWindow) {
@@ -2749,38 +3041,40 @@ Future<void> _openEventGame({
   }
 
   if (kind == _GameListKind.source) {
-    final pgn = game.pgn?.trim() ?? '';
-    final eventSeed = _eventSeedForSourceGame(game, activeArgs);
-    final shouldHydrateEventGames =
-        game.tourId.trim().isNotEmpty && eventSeed.length <= 1;
+    final pgn = openGame.pgn?.trim() ?? '';
+    final eventSeed = _replaceEventSummary(
+      _eventSeedForSourceGame(openGame, activeArgs),
+      openGame,
+    );
     final args = BoardTabGameArgs(
-      gameId: game.id,
+      gameId: openGame.id,
       pgn: pgn,
       label:
-          game.name.isEmpty
-              ? '${game.whitePlayer} vs ${game.blackPlayer}'
-              : game.name,
-      whiteName: game.whitePlayer,
-      blackName: game.blackPlayer,
-      whiteFederation: game.whiteFederation,
-      blackFederation: game.blackFederation,
-      whiteTitle: game.whiteTitle,
-      blackTitle: game.blackTitle,
-      whiteRating: game.whiteRating,
-      blackRating: game.blackRating,
-      whiteFideId: game.whiteFideId,
-      blackFideId: game.blackFideId,
-      fenSeed: game.fen,
-      initialFen: activeArgs?.initialFen ?? game.fen,
+          openGame.name.isEmpty
+              ? '${openGame.whitePlayer} vs ${openGame.blackPlayer}'
+              : openGame.name,
+      whiteName: openGame.whitePlayer,
+      blackName: openGame.blackPlayer,
+      whiteFederation: openGame.whiteFederation,
+      blackFederation: openGame.blackFederation,
+      whiteTitle: openGame.whiteTitle,
+      blackTitle: openGame.blackTitle,
+      whiteRating: openGame.whiteRating,
+      blackRating: openGame.blackRating,
+      whiteFideId: openGame.whiteFideId,
+      blackFideId: openGame.blackFideId,
+      fenSeed: openGame.fen,
+      initialFen: activeArgs?.initialFen ?? openGame.fen,
+      sourceGame: openSeed.sourceGame,
       viewSource: activeArgs?.viewSource ?? ChessboardView.tour,
-      tournamentTitle: _eventTitleForGame(game, activeArgs),
+      tournamentTitle: _eventTitleForGame(openGame, activeArgs),
       eventGames: eventSeed,
-      eventGamesLoading: shouldHydrateEventGames,
+      eventGamesLoading: false,
       eventGamesContinuation: activeArgs?.eventGamesContinuation,
       routeTitle: tournamentTitle,
-      routeGames: eventGames,
+      routeGames: openEventGames,
       routeGamesContinuation: activeArgs?.routeGamesContinuation,
-      gameListSelectedId: game.id,
+      gameListSelectedId: openGame.id,
     );
 
     if (inNewWindow) {
@@ -2788,57 +3082,48 @@ Future<void> _openEventGame({
       return;
     }
 
-    final tabId = openBoardGameTab(
+    openBoardGameTab(
       ref,
       args,
       focus: true,
       reuseExisting: false,
       replaceActive: !inNewTab,
     );
-    if (shouldHydrateEventGames && container != null) {
-      unawaited(
-        _hydrateSourceGameEventContext(
-          container: container,
-          gameRepo: container.read(gameRepositoryProvider),
-          tabId: tabId,
-          game: game,
-        ),
-      );
-    }
     return;
   }
 
-  final pgn = game.pgn?.trim() ?? '';
+  final pgn = openGame.pgn?.trim() ?? '';
   if (!inNewTab && !inNewWindow) {
-    ref.read(tournamentGamesProvider.notifier).markActive(game.id);
+    ref.read(tournamentGamesProvider.notifier).markActive(openGame.id);
   }
 
   final args = BoardTabGameArgs(
-    gameId: game.id,
+    gameId: openGame.id,
     pgn: pgn,
     label:
-        game.name.isEmpty
-            ? '${game.whitePlayer} vs ${game.blackPlayer}'
-            : game.name,
-    whiteName: game.whitePlayer,
-    blackName: game.blackPlayer,
-    whiteFederation: game.whiteFederation,
-    blackFederation: game.blackFederation,
-    whiteTitle: game.whiteTitle,
-    blackTitle: game.blackTitle,
-    whiteRating: game.whiteRating,
-    blackRating: game.blackRating,
-    whiteFideId: game.whiteFideId,
-    blackFideId: game.blackFideId,
-    fenSeed: game.fen,
+        openGame.name.isEmpty
+            ? '${openGame.whitePlayer} vs ${openGame.blackPlayer}'
+            : openGame.name,
+    whiteName: openGame.whitePlayer,
+    blackName: openGame.blackPlayer,
+    whiteFederation: openGame.whiteFederation,
+    blackFederation: openGame.blackFederation,
+    whiteTitle: openGame.whiteTitle,
+    blackTitle: openGame.blackTitle,
+    whiteRating: openGame.whiteRating,
+    blackRating: openGame.blackRating,
+    whiteFideId: openGame.whiteFideId,
+    blackFideId: openGame.blackFideId,
+    fenSeed: openGame.fen,
+    sourceGame: openSeed.sourceGame,
     viewSource: activeArgs?.viewSource ?? ChessboardView.tour,
     tournamentTitle: tournamentTitle,
-    eventGames: eventGames,
+    eventGames: openEventGames,
     eventGamesContinuation: activeArgs?.eventGamesContinuation,
     routeTitle: activeArgs?.routeTitle ?? '',
     routeGames: activeArgs?.routeGames ?? const <TournamentGameSummary>[],
     routeGamesContinuation: activeArgs?.routeGamesContinuation,
-    gameListSelectedId: game.id,
+    gameListSelectedId: openGame.id,
   );
 
   if (inNewWindow) {
@@ -2881,52 +3166,6 @@ String _eventTitleForGame(
   if (slug.isNotEmpty) return _humanizeContextLabel(slug);
   final tourId = game.tourId.trim();
   return tourId.isEmpty ? '' : tourId;
-}
-
-Future<void> _hydrateSourceGameEventContext({
-  required ProviderContainer container,
-  required GameRepository gameRepo,
-  required String tabId,
-  required TournamentGameSummary game,
-}) async {
-  final tourId = game.tourId.trim();
-  if (tourId.isEmpty) return;
-
-  List<TournamentGameSummary> hydrated;
-  try {
-    final rows = await gameRepo.getGamesByTourId(tourId);
-    hydrated = [for (final row in rows) TournamentGameSummary.fromGame(row)];
-  } catch (_) {
-    hydrated = const <TournamentGameSummary>[];
-  }
-
-  container.read(boardTabGameArgsByTabIdProvider.notifier).update((m) {
-    final latest = m[tabId];
-    if (latest == null || latest.gameId != game.id) return m;
-    final nextEventGames = hydrated.isEmpty ? latest.eventGames : hydrated;
-    return <String, BoardTabGameArgs>{
-      ...m,
-      tabId: latest.copyWith(
-        tournamentTitle: _eventTitleForHydratedGames(
-          hydrated,
-          fallback: latest.tournamentTitle,
-        ),
-        eventGames: nextEventGames,
-        eventGamesLoading: false,
-      ),
-    };
-  });
-}
-
-String _eventTitleForHydratedGames(
-  List<TournamentGameSummary> games, {
-  required String fallback,
-}) {
-  for (final game in games) {
-    final title = _eventTitleForGame(game, null).trim();
-    if (title.isNotEmpty) return title;
-  }
-  return fallback;
 }
 
 String _humanizeContextLabel(String value) {
@@ -3357,6 +3596,31 @@ class _EventRoundTable extends StatelessWidget {
     return game.id == _activeSelectionId;
   }
 
+  bool _isShiftPressedForRowTap(bool shiftPressed) {
+    if (shiftPressed || HardwareKeyboard.instance.isShiftPressed) return true;
+    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+    return pressed.contains(LogicalKeyboardKey.shift) ||
+        pressed.contains(LogicalKeyboardKey.shiftLeft) ||
+        pressed.contains(LogicalKeyboardKey.shiftRight);
+  }
+
+  TournamentGameSummary _withLiveSummaryForOpen(TournamentGameSummary game) {
+    final live = liveSummaries[game.id];
+    if (live == null) return game;
+
+    final liveStatus = GameStatus.fromString(live.status);
+    final livePgn = pgnHasMoves(live.pgn) ? live.pgn!.trim() : null;
+    final liveFen =
+        live.fen == null || live.fen!.isEmpty ? null : live.fen!.trim();
+    return game.copyWith(
+      pgn: livePgn,
+      fen: liveFen,
+      lastMoveTime: live.lastMoveTime,
+      status: liveStatus == GameStatus.unknown ? null : liveStatus,
+      hasStarted: live.hasStarted || game.hasStarted,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final columns = <AdaptiveColumn<TournamentGameSummary>>[
@@ -3445,22 +3709,23 @@ class _EventRoundTable extends StatelessWidget {
       rowKeyBuilder:
           (game) => game.id == _activeSelectionId ? selectedRowKey : null,
       onRowTap: (game, {required bool inNewTab, required bool shiftPressed}) {
-        if (inNewTab) {
-          onHighlightGame(game);
-          unawaited(onOpenGame(game, inNewTab: true));
-          return;
-        }
-        final effectiveShiftPressed =
-            shiftPressed || HardwareKeyboard.instance.isShiftPressed;
+        final effectiveShiftPressed = _isShiftPressedForRowTap(shiftPressed);
         if (effectiveShiftPressed) {
           onRangeHighlightGame(game);
+          return;
+        }
+        if (inNewTab) {
+          onHighlightGame(game);
+          unawaited(onOpenGame(_withLiveSummaryForOpen(game), inNewTab: true));
           return;
         }
         onHighlightGame(game);
       },
       onRowDoubleTap: (game, {required bool inNewTab}) {
         onHighlightGame(game);
-        unawaited(onOpenGame(game, inNewTab: inNewTab));
+        unawaited(
+          onOpenGame(_withLiveSummaryForOpen(game), inNewTab: inNewTab),
+        );
       },
       onRowSecondaryTap: (game, position) async {
         final action = await showDesktopContextMenu<_GameRowAction>(
@@ -3495,9 +3760,13 @@ class _EventRoundTable extends StatelessWidget {
         if (action == null) return;
         switch (action) {
           case _GameRowAction.openInNewTab:
-            await onOpenGame(game, inNewTab: true);
+            await onOpenGame(_withLiveSummaryForOpen(game), inNewTab: true);
           case _GameRowAction.openInNewWindow:
-            await onOpenGame(game, inNewTab: false, inNewWindow: true);
+            await onOpenGame(
+              _withLiveSummaryForOpen(game),
+              inNewTab: false,
+              inNewWindow: true,
+            );
           case _GameRowAction.insertGame:
             await onInsertGame(game);
           case _GameRowAction.copyPgn:

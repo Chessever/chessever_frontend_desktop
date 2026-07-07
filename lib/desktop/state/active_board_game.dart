@@ -1,5 +1,4 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart' show BuildContext;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
@@ -392,7 +391,7 @@ String openBoardGameTab(
   bool replaceActive = false,
 }) {
   return openBoardGameTabFromContainer(
-    ProviderScope.containerOf(ref as BuildContext, listen: false),
+    ProviderScope.containerOf(ref.context, listen: false),
     args,
     reuseExisting: reuseExisting,
     focus: focus,

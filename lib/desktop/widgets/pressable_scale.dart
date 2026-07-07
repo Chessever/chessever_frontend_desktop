@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 
 /// Wraps any tappable surface with a near-imperceptible spring-based
@@ -39,7 +40,8 @@ class PressableScale extends StatefulWidget {
   State<PressableScale> createState() => _PressableScaleState();
 }
 
-class _PressableScaleState extends State<PressableScale> {
+class _PressableScaleState extends State<PressableScale>
+    with DeferredPointerStateMixin<PressableScale> {
   bool _hovered = false;
   bool _pressed = false;
 
@@ -54,28 +56,31 @@ class _PressableScaleState extends State<PressableScale> {
   Widget build(BuildContext context) {
     if (!widget.enabled) return widget.child;
     return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() {
-        _hovered = false;
-        _pressed = false;
-      }),
+      onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+      onExit:
+          (_) => setStateAfterPointerEvent(() {
+            _hovered = false;
+            _pressed = false;
+          }),
       child: Listener(
         behavior: HitTestBehavior.translucent,
-        onPointerDown: (_) => setState(() => _pressed = true),
-        onPointerUp: (_) => setState(() => _pressed = false),
-        onPointerCancel: (_) => setState(() => _pressed = false),
+        onPointerDown: (_) => setStateAfterPointerEvent(() => _pressed = true),
+        onPointerUp: (_) => setStateAfterPointerEvent(() => _pressed = false),
+        onPointerCancel:
+            (_) => setStateAfterPointerEvent(() => _pressed = false),
         child: SingleMotionBuilder(
           value: _target,
           motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-          builder: (context, scale, child) => Transform.scale(
-            scale: scale,
-            alignment: Alignment.center,
-            // Rasterize the child and scale the BITMAP so Impeller doesn't
-            // re-shape glyphs every frame (the press/hover "titreme",
-            // flutter#149652). Keeps text/colours steady through the scale.
-            filterQuality: FilterQuality.medium,
-            child: child,
-          ),
+          builder:
+              (context, scale, child) => Transform.scale(
+                scale: scale,
+                alignment: Alignment.center,
+                // Rasterize the child and scale the BITMAP so Impeller doesn't
+                // re-shape glyphs every frame (the press/hover "titreme",
+                // flutter#149652). Keeps text/colours steady through the scale.
+                filterQuality: FilterQuality.medium,
+                child: child,
+              ),
           child: widget.child,
         ),
       ),

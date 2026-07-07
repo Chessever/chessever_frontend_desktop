@@ -13,6 +13,7 @@ import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
+import 'package:chessever/screens/gamebase/models/gamebase_game.dart';
 
 const String _legacySqfliteMigrationV1 = 'legacy_sqflite_local_chess_v1';
 const String _legacySqfliteMigrationV2 =
@@ -1136,6 +1137,14 @@ void main() {
       expect(moves.map((move) => move.uci), contains('d2d4'));
       expect(moves.singleWhere((move) => move.uci == 'd2d4').total, 1);
 
+      final filteredMovesWithoutRefs = await repo.localMoveAggregatesForFen(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+        filters: const PlayerOpeningTreeFilterCriteria(result: 'D'),
+      );
+      expect(filteredMovesWithoutRefs.map((move) => move.uci), ['d2d4']);
+      expect(filteredMovesWithoutRefs.single.draws, 1);
+
       final filteredResponse = await repo.localPositionGamesResponse(
         databasePath: pgnFile.path,
         fen: Chess.initial.fen,
@@ -1187,6 +1196,16 @@ void main() {
         'g1f3',
       );
       expect(prefixResponse.data.single['pgn'], contains('[Event "Training"]'));
+
+      final filteredPrefixMovesWithoutRefs = await repo
+          .localMoveAggregatesForFen(
+            databasePath: pgnFile.path,
+            fen: afterSicilian,
+            moves: const <String>['e2e4', 'c7c5'],
+            filters: const PlayerOpeningTreeFilterCriteria(result: 'B'),
+          );
+      expect(filteredPrefixMovesWithoutRefs.map((move) => move.uci), ['g1f3']);
+      expect(filteredPrefixMovesWithoutRefs.single.black, 1);
     },
   );
 
@@ -1642,6 +1661,161 @@ void main() {
   );
 
   test(
+    'local position filters combine player side time result format year and rating in SQL',
+    () async {
+      final pgnFile = File('${temp.path}/filtered-local-tree.pgn');
+      await pgnFile.writeAsString(_filterPgn);
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(fileNode, sourceLabel: source.label);
+
+      final derivedRows = await db.select(
+        '''
+        SELECT
+          json_extract(headers_json, '\$.Event') AS event,
+          time_control_category,
+          is_online
+        FROM local_chess_games
+        WHERE database_id = ?
+        ORDER BY index_in_file ASC
+        ''',
+        <Object?>[pgnFile.path],
+      );
+      expect(derivedRows.map((row) => row['time_control_category']), [
+        'rapid',
+        'blitz',
+        'classical',
+      ]);
+      expect(derivedRows.map((row) => row['is_online']), [0, 1, 0]);
+
+      final sortedByEvent = await repo.localPositionGamesResponse(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+        filters: const PlayerOpeningTreeFilterCriteria(),
+        sortBy: GamebaseSortField.event,
+        sortDirection: GamebaseSortDirection.asc,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(sortedByEvent, isNotNull);
+      expect(sortedByEvent!.data.map((row) => row['event']), [
+        'Classical Local',
+        'Online Blitz',
+        'Rapid Local',
+      ]);
+
+      const carlsenWhiteRapid = PlayerOpeningTreeFilterCriteria(
+        playerFideIds: <String>['1503014'],
+        playerNames: <String>['Carlsen, Magnus'],
+        color: 'white',
+        timeControl: TimeControl.rapid,
+        result: 'W',
+        isOnline: false,
+        yearFrom: 2024,
+        yearTo: 2024,
+        minRating: 2800,
+        maxRating: 2900,
+      );
+      final rapidMoves = await repo.localMoveAggregatesForFen(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+        filters: carlsenWhiteRapid,
+      );
+      expect(rapidMoves.map((move) => move.uci), ['e2e4']);
+      expect(rapidMoves.single.white, 1);
+      expect(rapidMoves.single.total, 1);
+
+      final rapidGames = await repo.localPositionGamesResponse(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+        uci: 'e2e4',
+        filters: carlsenWhiteRapid,
+        sortBy: GamebaseSortField.date,
+        sortDirection: GamebaseSortDirection.asc,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(rapidGames, isNotNull);
+      expect(rapidGames!.metadata.totalCount, 1);
+      expect(rapidGames.data.single['event'], 'Rapid Local');
+      expect(rapidGames.data.single['white'], 'Carlsen, Magnus');
+
+      const carlsenBlackOnlineBlitz = PlayerOpeningTreeFilterCriteria(
+        playerFideIds: <String>['1503014'],
+        playerNames: <String>['Carlsen, Magnus'],
+        color: 'black',
+        timeControl: TimeControl.blitz,
+        result: 'B',
+        isOnline: true,
+        yearFrom: 2025,
+        yearTo: 2025,
+        minRating: 2800,
+        maxRating: 2900,
+      );
+      final blitzMoves = await repo.localMoveAggregatesForFen(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+        filters: carlsenBlackOnlineBlitz,
+      );
+      expect(blitzMoves.map((move) => move.uci), ['e2e4']);
+      expect(blitzMoves.single.black, 1);
+      expect(blitzMoves.single.total, 1);
+
+      final blitzGames = await repo.localPositionGamesResponse(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+        uci: 'e2e4',
+        filters: carlsenBlackOnlineBlitz,
+        sortBy: GamebaseSortField.date,
+        sortDirection: GamebaseSortDirection.asc,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(blitzGames, isNotNull);
+      expect(blitzGames!.metadata.totalCount, 1);
+      expect(blitzGames.data.single['event'], 'Online Blitz');
+      expect(blitzGames.data.single['black'], 'Carlsen, Magnus');
+
+      final nameOnlyBlitz = await repo.localPositionGamesResponse(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+        uci: 'e2e4',
+        filters: const PlayerOpeningTreeFilterCriteria(
+          playerNames: <String>['Carlsen, Magnus'],
+          color: 'black',
+          timeControl: TimeControl.blitz,
+          isOnline: true,
+        ),
+        sortBy: GamebaseSortField.date,
+        sortDirection: GamebaseSortDirection.asc,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(nameOnlyBlitz, isNotNull);
+      expect(nameOnlyBlitz!.metadata.totalCount, 1);
+
+      final impossibleSide = await repo.localPositionGamesResponse(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+        uci: 'e2e4',
+        filters: const PlayerOpeningTreeFilterCriteria(
+          playerNames: <String>['Carlsen, Magnus'],
+          color: 'white',
+          timeControl: TimeControl.blitz,
+          isOnline: true,
+        ),
+        sortBy: GamebaseSortField.date,
+        sortDirection: GamebaseSortDirection.asc,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(impossibleSide, isNotNull);
+      expect(impossibleSide!.metadata.totalCount, 0);
+    },
+  );
+
+  test(
     'rejects stale persisted PGN rows when the file fingerprint changes',
     () async {
       final pgnFile = File('${temp.path}/stale.pgn');
@@ -1660,6 +1834,136 @@ void main() {
       );
 
       expect(restored, isNull);
+    },
+  );
+
+  test(
+    'restores cached PGN rows and tree when only file timestamp changes',
+    () async {
+      final pgnFile = File('${temp.path}/timestamp-drift.pgn');
+      await pgnFile.writeAsString(_samplePgn);
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(fileNode, sourceLabel: source.label);
+
+      final beforeRows = await db.select(
+        '''
+        SELECT content_fingerprint, position_count
+        FROM local_chess_databases
+        WHERE id = ?
+        ''',
+        <Object?>[pgnFile.path],
+      );
+      final beforeFingerprint =
+          beforeRows.single['content_fingerprint']?.toString() ?? '';
+      expect(beforeFingerprint, isNotEmpty);
+      expect(beforeRows.single['position_count'], greaterThan(0));
+
+      await pgnFile.setLastModified(
+        pgnFile.lastModifiedSync().add(const Duration(seconds: 7)),
+      );
+      final changedStat = await pgnFile.stat();
+
+      final restored = await repo.loadFreshFileNode(
+        pgnFile.path,
+        rootPath: temp.path,
+      );
+
+      expect(restored, isNotNull);
+      expect(restored!.games, hasLength(2));
+      expect(restored.openingTreeIndex, isNotNull);
+      expect(restored.openingTreeIndex!.downloadedGameCount, 2);
+      final afterRows = await db.select(
+        '''
+        SELECT modified_at_ms, content_fingerprint, position_count
+        FROM local_chess_databases
+        WHERE id = ?
+        ''',
+        <Object?>[pgnFile.path],
+      );
+      expect(
+        afterRows.single['modified_at_ms'],
+        changedStat.modified.millisecondsSinceEpoch,
+      );
+      expect(afterRows.single['content_fingerprint'], beforeFingerprint);
+      expect(
+        afterRows.single['position_count'],
+        beforeRows.single['position_count'],
+      );
+    },
+  );
+
+  test(
+    'direct unchanged worker import preserves rebuilt opening tree cache',
+    () async {
+      final pgnFile = File('${temp.path}/reimport-preserve-tree.pgn');
+      await pgnFile.writeAsString(_bulkPgn(4));
+      final repo = LocalChessDatabaseRepository(
+        database: () async => db,
+        cachedFileNodeGamePreviewLimit: 2,
+      );
+      final firstImport = await repo.importSingleFileSource(path: pgnFile.path);
+      expect(firstImport, isNotNull);
+      final rebuilt = await repo.rebuildOpeningTreeFromCachedGames(
+        databasePath: pgnFile.path,
+      );
+      expect(rebuilt, isNotNull);
+      expect(rebuilt!.index.positionCount, greaterThan(0));
+      final beforeRows = await db.select(
+        '''
+        SELECT position_count, tree_max_ply
+        FROM local_chess_databases
+        WHERE id = ?
+        ''',
+        <Object?>[pgnFile.path],
+      );
+      final beforeNodeCount = await _count(db, 'local_chess_tree_nodes');
+      final beforeMoveCount = await _count(db, 'local_chess_tree_moves');
+      expect(beforeRows.single['position_count'], greaterThan(0));
+      expect(beforeNodeCount, greaterThan(0));
+      expect(beforeMoveCount, greaterThan(0));
+
+      await pgnFile.setLastModified(
+        pgnFile.lastModifiedSync().add(const Duration(seconds: 9)),
+      );
+      final progress = <LocalChessScanProgress>[];
+
+      final secondImport = await repo.importSingleFileSource(
+        path: pgnFile.path,
+        onProgress: progress.add,
+      );
+
+      expect(secondImport, isNotNull);
+      expect(
+        progress.map((event) => event.message),
+        contains('Using existing local cache...'),
+      );
+      final afterRows = await db.select(
+        '''
+        SELECT position_count, tree_max_ply
+        FROM local_chess_databases
+        WHERE id = ?
+        ''',
+        <Object?>[pgnFile.path],
+      );
+      expect(
+        afterRows.single['position_count'],
+        beforeRows.single['position_count'],
+      );
+      expect(
+        afterRows.single['tree_max_ply'],
+        beforeRows.single['tree_max_ply'],
+      );
+      expect(await _count(db, 'local_chess_tree_nodes'), beforeNodeCount);
+      expect(await _count(db, 'local_chess_tree_moves'), beforeMoveCount);
+      final restored = await repo.loadFreshFileNode(
+        pgnFile.path,
+        rootPath: temp.path,
+      );
+      expect(restored, isNotNull);
+      expect(restored!.openingTreeIndex, isNotNull);
+      expect(restored.openingTreeIndex!.downloadedGameCount, 4);
     },
   );
 
@@ -2645,6 +2949,51 @@ const _samplePgn = '''
 [Result "0-1"]
 
 1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 0-1
+''';
+
+const _filterPgn = '''
+[Event "Rapid Local"]
+[Site "Budapest"]
+[Date "2024.03.01"]
+[Round "1"]
+[White "Carlsen, Magnus"]
+[Black "Nakamura, Hikaru"]
+[WhiteFideId "1503014"]
+[BlackFideId "2016192"]
+[WhiteElo "2830"]
+[BlackElo "2802"]
+[TimeControl "600+0"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 1-0
+
+[Event "Online Blitz"]
+[Site "https://lichess.org/abc123"]
+[Date "2025.04.02"]
+[Round "2"]
+[White "Gukesh, D"]
+[Black "Carlsen, Magnus"]
+[WhiteFideId "46616543"]
+[BlackFideId "1503014"]
+[WhiteElo "2760"]
+[BlackElo "2830"]
+[TimeControl "300+0"]
+[Result "0-1"]
+
+1. e4 c5 2. Nf3 d6 0-1
+
+[Event "Classical Local"]
+[Site "Wijk aan Zee"]
+[Date "2024.05.03"]
+[Round "3"]
+[White "Polgar, Judit"]
+[Black "Anand, Viswanathan"]
+[WhiteElo "2675"]
+[BlackElo "2750"]
+[TimeControl "40/7200:20/3600:900+30"]
+[Result "1/2-1/2"]
+
+1. d4 d5 2. c4 e6 1/2-1/2
 ''';
 
 const _metadataPgn = '''

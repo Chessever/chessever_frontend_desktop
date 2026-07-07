@@ -12,6 +12,7 @@ import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/utils/list_keyboard_nav.dart';
 import 'package:chessever/desktop/widgets/desktop_opening_explorer.dart';
 import 'package:chessever/desktop/widgets/desktop_position_games_table.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/explorer_filter_bar.dart';
 import 'package:chessever/desktop/widgets/explorer_filters_popover.dart';
@@ -19,6 +20,8 @@ import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/widgets/variation_fork_chooser.dart';
 import 'package:chessever/screens/gamebase/models/move_aggregate.dart';
+import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart'
+    show GamebasePlayerColor;
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -905,7 +908,8 @@ class _RailIconButton extends StatefulWidget {
   State<_RailIconButton> createState() => _RailIconButtonState();
 }
 
-class _RailIconButtonState extends State<_RailIconButton> {
+class _RailIconButtonState extends State<_RailIconButton>
+    with DeferredPointerStateMixin<_RailIconButton> {
   bool _hovered = false;
 
   @override
@@ -918,8 +922,14 @@ class _RailIconButtonState extends State<_RailIconButton> {
             widget.enabled
                 ? SystemMouseCursors.click
                 : SystemMouseCursors.basic,
-        onEnter: widget.enabled ? (_) => setState(() => _hovered = true) : null,
-        onExit: widget.enabled ? (_) => setState(() => _hovered = false) : null,
+        onEnter:
+            widget.enabled
+                ? (_) => setStateAfterPointerEvent(() => _hovered = true)
+                : null,
+        onExit:
+            widget.enabled
+                ? (_) => setStateAfterPointerEvent(() => _hovered = false)
+                : null,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.enabled ? widget.onTap : null,
@@ -1798,6 +1808,22 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
                     value: _explorerSource,
                     localLabel: widget.localOpeningTreeTitle,
                     onChanged: _setExplorerSource,
+                    prepColor: ref.watch(
+                      gamebaseExplorerProvider.select(
+                        (s) => s.filters.playerColor,
+                      ),
+                    ),
+                    onPrepChanged: (color) {
+                      final notifier = ref.read(
+                        gamebaseExplorerProvider.notifier,
+                      );
+                      notifier.updateFilters(
+                        ref
+                            .read(gamebaseExplorerProvider)
+                            .filters
+                            .copyWith(playerColor: color),
+                      );
+                    },
                   ),
                 Expanded(
                   child: ResizableSplitView(
@@ -1854,15 +1880,24 @@ class _ExplorerSourceSwitcher extends StatelessWidget {
     required this.value,
     required this.localLabel,
     required this.onChanged,
+    this.prepColor,
+    this.onPrepChanged,
   });
 
   final _ExplorerSource value;
   final String localLabel;
   final ValueChanged<_ExplorerSource> onChanged;
 
+  /// Active prep colour filter (null = both). When [onPrepChanged] is provided
+  /// the switcher shows an inline "gear" to change which colour to prep against
+  /// without leaving the game — local trees carry per-colour buckets.
+  final GamebasePlayerColor? prepColor;
+  final ValueChanged<GamebasePlayerColor?>? onPrepChanged;
+
   @override
   Widget build(BuildContext context) {
     final title = localLabel.trim().isEmpty ? 'Local database' : localLabel;
+    final onPrep = onPrepChanged;
     return Container(
       height: 42,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -1890,6 +1925,30 @@ class _ExplorerSourceSwitcher extends StatelessWidget {
               ),
             ),
           ),
+          if (onPrep != null) ...[
+            const SizedBox(width: 8),
+            const Icon(Icons.tune_rounded, size: 14, color: kLightGreyColor),
+            const SizedBox(width: 6),
+            _PrepColorSegment(
+              label: 'Both',
+              tooltip: 'Prepare vs both colours',
+              selected: prepColor == null,
+              onTap: () => onPrep(null),
+            ),
+            _PrepColorSegment(
+              label: 'W',
+              tooltip: 'Prepare vs White',
+              selected: prepColor == GamebasePlayerColor.white,
+              onTap: () => onPrep(GamebasePlayerColor.white),
+            ),
+            _PrepColorSegment(
+              label: 'B',
+              tooltip: 'Prepare vs Black',
+              selected: prepColor == GamebasePlayerColor.black,
+              onTap: () => onPrep(GamebasePlayerColor.black),
+            ),
+            const SizedBox(width: 10),
+          ],
           const SizedBox(width: 8),
           _ExplorerSourceSegment(
             label: 'Global',
@@ -1902,6 +1961,58 @@ class _ExplorerSourceSwitcher extends StatelessWidget {
             onTap: () => onChanged(_ExplorerSource.local),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Compact segment in the in-game prep-colour "gear" (Both / W / B).
+class _PrepColorSegment extends StatelessWidget {
+  const _PrepColorSegment({
+    required this.label,
+    required this.tooltip,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final String tooltip;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = selected ? kPrimaryColor : kWhiteColor70;
+    return DesktopTooltip(
+      message: tooltip,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          height: 28,
+          constraints: const BoxConstraints(minWidth: 34),
+          margin: const EdgeInsets.only(left: 4),
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: selected ? kPrimaryColor.withValues(alpha: 0.12) : kBlack3Color,
+            border: Border.all(
+              color: selected
+                  ? kPrimaryColor.withValues(alpha: 0.42)
+                  : kDividerColor,
+            ),
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            style: TextStyle(
+              color: fg,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
       ),
     );
   }

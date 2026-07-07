@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:dartchess/dartchess.dart' show Chess;
@@ -265,6 +266,7 @@ const int _kCachedTreeRebuildPageSize = 2048;
 const int _kSingleWorkerTreeBuildBytes = 128 * 1024 * 1024;
 const int _kLegacyMigrationGamePageSize = 256;
 const int _kLegacyMigrationRowPageSize = 4096;
+const int _kLocalChessFileFingerprintSampleBytes = 64 * 1024;
 const String _legacySqfliteMigrationV1Name = 'legacy_sqflite_local_chess_v1';
 const String _legacySqfliteMigrationName =
     'legacy_sqflite_local_chess_v2_desktop_path_scan';
@@ -325,6 +327,43 @@ Future<void> createLocalChessResqliteDatabaseSchema(
     );
     await _ensureColumn(
       tx,
+      table: localChessGamesTable,
+      column: 'time_control_category',
+      ddl: 'TEXT',
+    );
+    await _ensureColumn(
+      tx,
+      table: localChessGamesTable,
+      column: 'is_online',
+      ddl: 'INTEGER',
+    );
+    await _backfillGameDerivedFilters(tx);
+    await tx.execute(
+      'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_result ON '
+      '$localChessGamesTable(database_id, result)',
+    );
+    await tx.execute(
+      'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_time_category ON '
+      '$localChessGamesTable(database_id, time_control_category)',
+    );
+    await tx.execute(
+      'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_online ON '
+      '$localChessGamesTable(database_id, is_online)',
+    );
+    await tx.execute(
+      'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_date ON '
+      '$localChessGamesTable(database_id, date)',
+    );
+    await tx.execute(
+      'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_white_elo ON '
+      '$localChessGamesTable(database_id, white_elo)',
+    );
+    await tx.execute(
+      'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_black_elo ON '
+      '$localChessGamesTable(database_id, black_elo)',
+    );
+    await _ensureColumn(
+      tx,
       table: localChessDatabasesTable,
       column: 'deleted_at_ms',
       ddl: 'INTEGER',
@@ -340,6 +379,12 @@ Future<void> createLocalChessResqliteDatabaseSchema(
       table: localChessDatabasesTable,
       column: 'player_enrichment_at_ms',
       ddl: 'INTEGER',
+    );
+    await _ensureColumn(
+      tx,
+      table: localChessDatabasesTable,
+      column: 'content_fingerprint',
+      ddl: 'TEXT',
     );
     await tx.execute(
       'CREATE INDEX IF NOT EXISTS idx_local_chess_databases_deleted ON '
@@ -410,6 +455,43 @@ Future<void> _backfillGamePgnHashes(resqlite.Transaction tx) async {
         for (final row in rows)
           <Object?>[
             localChessPgnFingerprint(row['raw_pgn']?.toString() ?? ''),
+            row['database_id'],
+            row['id'],
+          ],
+      ],
+    );
+    if (rows.length < 500) return;
+  }
+}
+
+Future<void> _backfillGameDerivedFilters(resqlite.Transaction tx) async {
+  while (true) {
+    final rows = await tx.select('''
+      SELECT database_id, id, time_control, headers_json
+      FROM $localChessGamesTable
+      WHERE time_control_category IS NULL
+        OR time_control_category = ''
+        OR is_online IS NULL
+      LIMIT 500
+    ''');
+    if (rows.isEmpty) return;
+    await tx.executeBatch(
+      '''
+      UPDATE $localChessGamesTable
+      SET time_control_category = ?,
+          is_online = ?
+      WHERE database_id = ? AND id = ?
+      ''',
+      <List<Object?>>[
+        for (final row in rows)
+          <Object?>[
+            _timeControlCategory(row['time_control']),
+            _inferLocalGameIsOnline(
+                  timeControl: row['time_control'],
+                  headersJson: row['headers_json'],
+                )
+                ? 1
+                : 0,
             row['database_id'],
             row['id'],
           ],
@@ -1037,6 +1119,19 @@ Future<void> _copyLegacyGames(
               'black_material': row['black_material'],
               'result': row['result'],
               'time_control': row['time_control'],
+              'time_control_category':
+                  legacyColumns.contains('time_control_category')
+                      ? row['time_control_category']
+                      : _timeControlCategory(row['time_control']),
+              'is_online':
+                  legacyColumns.contains('is_online')
+                      ? row['is_online']
+                      : _inferLocalGameIsOnline(
+                        timeControl: row['time_control'],
+                        headersJson: row['headers_json'],
+                      )
+                      ? 1
+                      : 0,
               'eco': row['eco'],
               'ply_count': row['ply_count'],
               'fen': row['fen'],
@@ -1138,7 +1233,8 @@ const List<String> _localChessSchemaStatements = <String>[
       tree_max_ply INTEGER,
       imported_at_ms INTEGER NOT NULL,
       updated_at_ms INTEGER NOT NULL,
-      deleted_at_ms INTEGER
+      deleted_at_ms INTEGER,
+      content_fingerprint TEXT
     )
   ''',
   '''
@@ -1177,6 +1273,8 @@ const List<String> _localChessSchemaStatements = <String>[
       black_material INTEGER NOT NULL DEFAULT 39,
       result TEXT,
       time_control TEXT,
+      time_control_category TEXT,
+      is_online INTEGER,
       eco TEXT,
       ply_count INTEGER NOT NULL DEFAULT 0,
       fen TEXT,
@@ -1264,8 +1362,14 @@ const List<String> _localChessSchemaStatements = <String>[
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_event ON $localChessGamesTable(event_id)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_site ON $localChessGamesTable(site_id)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_result ON $localChessGamesTable(result)',
+  'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_result ON $localChessGamesTable(database_id, result)',
+  'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_time_category ON $localChessGamesTable(database_id, time_control_category)',
+  'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_online ON $localChessGamesTable(database_id, is_online)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_white_elo ON $localChessGamesTable(white_elo)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_black_elo ON $localChessGamesTable(black_elo)',
+  'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_date ON $localChessGamesTable(database_id, date)',
+  'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_white_elo ON $localChessGamesTable(database_id, white_elo)',
+  'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_black_elo ON $localChessGamesTable(database_id, black_elo)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_plycount ON $localChessGamesTable(ply_count)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_eco ON $localChessGamesTable(database_id, eco)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_tree_nodes_fen ON $localChessTreeNodesTable(database_id, fen_key)',
@@ -1463,6 +1567,8 @@ class LocalChessDatabaseRepository {
       <String, Future<LocalChessSource?>>{};
   static Future<void> _backgroundPurgeQueue = Future<void>.value();
   final Set<String> _reusedImportedGameRows = <String>{};
+  final Map<String, String> _reusedImportedContentFingerprints =
+      <String, String>{};
 
   Future<resqlite.Database> _openDatabase({
     LocalChessScanProgressSink? onProgress,
@@ -2193,15 +2299,16 @@ class LocalChessDatabaseRepository {
       }
       if (children.isEmpty) return null;
       _sortNodes(children);
+      final label = sourceLabel ?? localChessDatabaseDisplayNameForPaths(paths);
       final root = LocalChessFolderNode.fromChildren(
-        name: sourceLabel ?? 'Dropped chess files',
+        name: label,
         path: 'local-batch:${_stableId(paths.join('|'))}',
         relativePath: '',
         children: children,
       );
       return LocalChessSource(
         id: _stableId(paths.join('|')),
-        label: sourceLabel ?? 'Dropped chess files',
+        label: label,
         paths: paths,
         rootPath: root.path,
         scannedAt: DateTime.now(),
@@ -2296,9 +2403,7 @@ class LocalChessDatabaseRepository {
   /// marker stays unset so a later call retries.
   Future<int> enrichLocalDatabasePlayers({
     required String databasePath,
-    required Future<Map<int, LocalPlayerEnrichment>> Function(
-      Set<int> fideIds,
-    )
+    required Future<Map<int, LocalPlayerEnrichment>> Function(Set<int> fideIds)
     resolve,
     bool force = false,
   }) async {
@@ -2478,6 +2583,29 @@ class LocalChessDatabaseRepository {
       }
     }
     return existing;
+  }
+
+  Future<DateTime?> latestLocalGameDate({required String databasePath}) async {
+    final databaseId = _databaseId(databasePath);
+    final db = await _database();
+    final rows = await db.select(
+      '''
+      SELECT g.date
+      FROM $localChessGamesTable g
+      INNER JOIN $localChessDatabasesTable d ON d.id = g.database_id
+      WHERE g.database_id = ?
+        AND d.deleted_at_ms IS NULL
+        AND TRIM(COALESCE(g.date, '')) NOT IN ('', '?', '-')
+      ORDER BY REPLACE(TRIM(g.date), '.', '-') DESC
+      LIMIT 256
+      ''',
+      <Object?>[databaseId],
+    );
+    for (final row in rows) {
+      final date = _dateFromLocalDate(row['date']);
+      if (date != null) return date;
+    }
+    return null;
   }
 
   Future<bool> persistAppendedPgnGames({
@@ -3117,6 +3245,7 @@ class LocalChessDatabaseRepository {
   Future<List<MoveAggregate>> localMoveAggregatesForFen({
     required String databasePath,
     required String fen,
+    List<String> moves = const <String>[],
     PlayerOpeningTreeFilterCriteria filters =
         const PlayerOpeningTreeFilterCriteria(),
   }) async {
@@ -3127,6 +3256,19 @@ class LocalChessDatabaseRepository {
         db,
         databaseId: databaseId,
         fen: fen,
+      );
+    }
+
+    final availableRefRows = await db.select(
+      'SELECT 1 FROM $localChessPositionGamesTable WHERE database_id = ? LIMIT 1',
+      <Object?>[databaseId],
+    );
+    if (availableRefRows.isEmpty) {
+      return _localMoveAggregatesForMovePrefix(
+        db,
+        databaseId: databaseId,
+        moves: moves,
+        filters: filters,
       );
     }
 
@@ -3156,6 +3298,68 @@ class LocalChessDatabaseRepository {
         FROM $localChessPositionGamesTable pg
         JOIN $localChessGamesTable g
           ON g.database_id = pg.database_id AND g.id = pg.game_id
+        WHERE $where
+      )
+      WHERE next_uci IS NOT NULL AND next_uci <> ''
+      GROUP BY next_uci
+      ORDER BY total DESC, next_uci ASC
+      ''', parameters);
+
+    return List<MoveAggregate>.unmodifiable(
+      rows
+          .map((row) {
+            return MoveAggregate(
+              uci: row['uci']?.toString().trim().toLowerCase() ?? '',
+              white: _readInt(row['white']),
+              black: _readInt(row['black']),
+              draws: _readInt(row['draws']),
+              total: _readInt(row['total']),
+              gameId: row['game_id']?.toString(),
+              lastPlayed: _dateFromLocalDate(row['last_played']),
+            );
+          })
+          .where((move) => move.uci.isNotEmpty && move.total > 0),
+    );
+  }
+
+  Future<List<MoveAggregate>> _localMoveAggregatesForMovePrefix(
+    resqlite.Database db, {
+    required String databaseId,
+    required List<String> moves,
+    required PlayerOpeningTreeFilterCriteria filters,
+  }) async {
+    final prefix = moves
+        .map((move) => move.trim().toLowerCase())
+        .where((move) => move.isNotEmpty)
+        .toList(growable: false);
+    final where = StringBuffer('g.database_id = ?');
+    final parameters = <Object?>[databaseId];
+    _appendLocalMovePrefixFilter(where, parameters, prefix);
+    _appendLocalPositionFilters(where, parameters, filters);
+
+    final nextMoveExpression =
+        "LOWER(TRIM(CAST(json_extract(g.moves, '\$[${prefix.length}]') AS TEXT)))";
+    final rows = await db.select('''
+      SELECT
+        next_uci AS uci,
+        SUM(CASE WHEN result = '1-0' THEN 1 ELSE 0 END) AS white,
+        SUM(CASE WHEN result = '0-1' THEN 1 ELSE 0 END) AS black,
+        SUM(
+          CASE
+            WHEN COALESCE(result, '') NOT IN ('1-0', '0-1') THEN 1
+            ELSE 0
+          END
+        ) AS draws,
+        COUNT(*) AS total,
+        CASE WHEN COUNT(*) = 1 THEN MAX(game_id) ELSE NULL END AS game_id,
+        MAX(date_key) AS last_played
+      FROM (
+        SELECT
+          $nextMoveExpression AS next_uci,
+          g.result AS result,
+          g.id AS game_id,
+          NULLIF(REPLACE(COALESCE(g.date, ''), '.', '-'), '') AS date_key
+        FROM $localChessGamesTable g
         WHERE $where
       )
       WHERE next_uci IS NOT NULL AND next_uci <> ''
@@ -3637,9 +3841,39 @@ class LocalChessDatabaseRepository {
     final databaseRow = databaseRows.single;
     final storedSize = _readInt(databaseRow['size_bytes']);
     final storedModified = _readNullableInt(databaseRow['modified_at_ms']);
+    final storedContentFingerprint =
+        databaseRow['content_fingerprint']?.toString().trim() ?? '';
     final modifiedMs = stat.modified.millisecondsSinceEpoch;
-    if (storedSize != stat.size || storedModified != modifiedMs) {
+    if (storedSize != stat.size) {
       throw const _LocalChessCacheMiss();
+    }
+    if (storedModified != modifiedMs) {
+      if (storedContentFingerprint.isEmpty) {
+        throw const _LocalChessCacheMiss();
+      }
+      final currentContentFingerprint = await _localChessFileContentFingerprint(
+        path,
+        stat: stat,
+      );
+      if (currentContentFingerprint != storedContentFingerprint) {
+        throw const _LocalChessCacheMiss();
+      }
+      await _refreshLocalChessDatabaseFileStat(
+        db,
+        databaseId: databaseId,
+        sizeBytes: stat.size,
+        modifiedAtMs: modifiedMs,
+        contentFingerprint: currentContentFingerprint,
+      );
+    } else if (storedContentFingerprint.isEmpty) {
+      unawaited(
+        _cacheLocalChessDatabaseContentFingerprint(
+          db,
+          databaseId: databaseId,
+          path: path,
+          stat: stat,
+        ),
+      );
     }
 
     final gameCount = _readInt(databaseRow['game_count']);
@@ -3716,6 +3950,7 @@ class LocalChessDatabaseRepository {
       'extension': file.extension,
       'size_bytes': file.sizeBytes,
       'modified_at_ms': file.modifiedAt?.millisecondsSinceEpoch,
+      'content_fingerprint': await _localChessFileContentFingerprint(file.path),
       'file_count': 1,
       'game_count': file.games.length,
       'position_count': index?.positionCount ?? 0,
@@ -3857,43 +4092,6 @@ class LocalChessDatabaseRepository {
       onDeletedRows?.call(localChessDatabasesTable, result.affectedRows);
     }
     return result.affectedRows > 0;
-  }
-
-  Future<void> _deleteGeneratedDatabaseRowsInChunks(
-    resqlite.Database db,
-    String databaseId, {
-    required int batchSize,
-    void Function(String table, int deletedRows)? onDeletedRows,
-  }) async {
-    final size = batchSize <= 0 ? 4096 : batchSize;
-    await _deleteDatabaseRowsInChunks(
-      db,
-      localChessPositionGamesTable,
-      databaseId,
-      batchSize: size,
-      onDeletedRows: onDeletedRows,
-    );
-    await _deleteDatabaseRowsInChunks(
-      db,
-      localChessTreeMovesTable,
-      databaseId,
-      batchSize: size,
-      onDeletedRows: onDeletedRows,
-    );
-    await _deleteDatabaseRowsInChunks(
-      db,
-      localChessTreeNodesTable,
-      databaseId,
-      batchSize: size,
-      onDeletedRows: onDeletedRows,
-    );
-    await _deleteDatabaseRowsInChunks(
-      db,
-      localChessGameAnalysisTable,
-      databaseId,
-      batchSize: size,
-      onDeletedRows: onDeletedRows,
-    );
   }
 
   Future<bool> _databaseIsMarkedDeleted(
@@ -4177,6 +4375,9 @@ class LocalChessDatabaseRepository {
       final black = _normalizedName(metadata['Black'] ?? treeRow?['black']);
       final event = _normalizedName(metadata['Event'] ?? treeRow?['event']);
       final site = _normalizedName(metadata['Site'] ?? treeRow?['site']);
+      final timeControl =
+          treeRow?['timeControl']?.toString() ??
+          metadata['TimeControl']?.toString();
       final rowLine = _lineFromRow(treeRow);
       final line =
           rowLine.isEmpty
@@ -4209,9 +4410,17 @@ class LocalChessDatabaseRepository {
         'black_material': 39,
         'result':
             treeRow?['result']?.toString() ?? metadata['Result']?.toString(),
-        'time_control':
-            treeRow?['timeControl']?.toString() ??
-            metadata['TimeControl']?.toString(),
+        'time_control': timeControl,
+        'time_control_category': _timeControlCategory(timeControl),
+        'is_online':
+            _inferLocalGameIsOnline(
+                  timeControl: timeControl,
+                  metadata: metadata,
+                  sourcePath: game.sourcePath,
+                  fileName: game.fileName,
+                )
+                ? 1
+                : 0,
         'eco': treeRow?['eco']?.toString() ?? metadata['ECO']?.toString(),
         'ply_count': line.length,
         'fen': game.game.startingFen,
@@ -4874,6 +5083,8 @@ class LocalChessDatabaseRepository {
       'result': row['result'] ?? '*',
       'date': row['date'] ?? meta('Date'),
       'timeControl': row['time_control'] ?? meta('TimeControl'),
+      'timeControlCategory': row['time_control_category'],
+      'isOnline': _readNullableInt(row['is_online']) == 1,
       'eco': row['eco'] ?? meta('ECO'),
       'opening': meta('Opening'),
       'variation': meta('Variation'),
@@ -4934,12 +5145,17 @@ class LocalChessDatabaseRepository {
   }) async {
     final databaseId = _databaseId(start.path);
     final now = DateTime.now().millisecondsSinceEpoch;
+    final contentFingerprint = await _localChessFileContentFingerprint(
+      start.path,
+    );
     final db = await _database();
     final existingRows = await db.select(
       '''
       SELECT
         d.size_bytes,
         d.modified_at_ms,
+        d.deleted_at_ms,
+        d.content_fingerprint,
         d.game_count,
         COUNT(g.id) AS row_count,
         COALESCE(MAX(g.file_game_count), 0) AS file_game_count
@@ -4956,13 +5172,49 @@ class LocalChessDatabaseRepository {
       final existingGameCount = _readInt(existing['game_count']);
       final existingRowCount = _readInt(existing['row_count']);
       final existingFileGameCount = _readInt(existing['file_game_count']);
+      final existingFingerprint =
+          existing['content_fingerprint']?.toString().trim() ?? '';
+      final statMatches =
+          _readInt(existing['size_bytes']) == start.sizeBytes &&
+          _readNullableInt(existing['modified_at_ms']) ==
+              start.modifiedAt?.millisecondsSinceEpoch;
+      final fingerprintMatches =
+          existingFingerprint.isNotEmpty &&
+          existingFingerprint == contentFingerprint;
       final canReuseGameRows =
+          existing['deleted_at_ms'] == null &&
           existingRowCount > 0 &&
           existingRowCount == existingGameCount &&
           existingFileGameCount == start.totalEntries &&
           _readInt(existing['size_bytes']) == start.sizeBytes &&
-          _readNullableInt(existing['modified_at_ms']) ==
-              start.modifiedAt?.millisecondsSinceEpoch;
+          (statMatches || fingerprintMatches);
+      if (canReuseGameRows) {
+        _reusedImportedGameRows.add(databaseId);
+        _reusedImportedContentFingerprints[databaseId] = contentFingerprint;
+        localChessLog.info(
+          'PGN import reusing unchanged cache',
+          context: <String, Object?>{
+            'path': start.path,
+            'games': existingGameCount,
+            'totalEntries': start.totalEntries,
+            'matchedBy': statMatches ? 'stat' : 'content_fingerprint',
+          },
+        );
+        onProgress?.call(
+          LocalChessScanProgress(
+            fraction: 0.30,
+            message: 'Using existing local cache...',
+          ),
+        );
+        await _refreshLocalChessDatabaseFileStat(
+          db,
+          databaseId: databaseId,
+          sizeBytes: start.sizeBytes,
+          modifiedAtMs: start.modifiedAt?.millisecondsSinceEpoch ?? now,
+          contentFingerprint: contentFingerprint,
+        );
+        return;
+      }
       onProgress?.call(
         LocalChessScanProgress(
           fraction: 0.30,
@@ -4970,51 +5222,23 @@ class LocalChessDatabaseRepository {
         ),
       );
       await markCachedSourceDeleted(start.path);
-      if (canReuseGameRows) {
-        _reusedImportedGameRows.add(databaseId);
-        localChessLog.info(
-          'PGN import reusing existing game rows',
-          context: <String, Object?>{
-            'path': start.path,
-            'games': existingGameCount,
-            'totalEntries': start.totalEntries,
-          },
-        );
-        await _deleteGeneratedDatabaseRowsInChunks(
-          db,
-          databaseId,
-          batchSize: _kSqlWriteBatchSize,
-          onDeletedRows:
-              onProgress == null
-                  ? null
-                  : (table, _) {
-                    onProgress(
-                      LocalChessScanProgress(
-                        fraction: 0.30,
-                        message:
-                            'Deleting ${_localChessPurgeTableLabel(table)}...',
-                      ),
-                    );
-                  },
-        );
-      } else {
-        _reusedImportedGameRows.remove(databaseId);
-        await purgeDeletedCaches(
-          sourcePath: start.path,
-          batchSize: _kSqlWriteBatchSize,
-          onProgress:
-              onProgress == null
-                  ? null
-                  : (progress) {
-                    onProgress(
-                      LocalChessScanProgress(
-                        fraction: 0.30,
-                        message: progress.message,
-                      ),
-                    );
-                  },
-        );
-      }
+      _reusedImportedGameRows.remove(databaseId);
+      _reusedImportedContentFingerprints.remove(databaseId);
+      await purgeDeletedCaches(
+        sourcePath: start.path,
+        batchSize: _kSqlWriteBatchSize,
+        onProgress:
+            onProgress == null
+                ? null
+                : (progress) {
+                  onProgress(
+                    LocalChessScanProgress(
+                      fraction: 0.30,
+                      message: progress.message,
+                    ),
+                  );
+                },
+      );
       onProgress?.call(
         LocalChessScanProgress(
           fraction: 0.30,
@@ -5030,6 +5254,7 @@ class LocalChessDatabaseRepository {
         'extension': start.extension,
         'size_bytes': start.sizeBytes,
         'modified_at_ms': start.modifiedAt?.millisecondsSinceEpoch,
+        'content_fingerprint': contentFingerprint,
         'file_count': 1,
         'game_count': 0,
         'position_count': 0,
@@ -5087,14 +5312,41 @@ class LocalChessDatabaseRepository {
 
   Future<void> _completeImportedFileNode(LocalChessFileNode file) async {
     final databaseId = _databaseId(file.path);
+    final reusedExistingRows = _reusedImportedGameRows.remove(databaseId);
+    final reusedContentFingerprint = _reusedImportedContentFingerprints.remove(
+      databaseId,
+    );
     final now = DateTime.now().millisecondsSinceEpoch;
     final db = await _database();
+    if (reusedExistingRows) {
+      await db.execute(
+        '''
+        UPDATE $localChessDatabasesTable
+        SET
+          size_bytes = ?,
+          modified_at_ms = ?,
+          content_fingerprint = COALESCE(?, content_fingerprint),
+          game_count = ?,
+          deleted_at_ms = NULL
+        WHERE id = ?
+        ''',
+        <Object?>[
+          file.sizeBytes,
+          file.modifiedAt?.millisecondsSinceEpoch,
+          reusedContentFingerprint,
+          file.gameCount,
+          databaseId,
+        ],
+      );
+      return;
+    }
     await db.execute(
       '''
       UPDATE $localChessDatabasesTable
       SET
         size_bytes = ?,
         modified_at_ms = ?,
+        content_fingerprint = ?,
         game_count = ?,
         position_count = 0,
         tree_snapshot = NULL,
@@ -5106,6 +5358,7 @@ class LocalChessDatabaseRepository {
       <Object?>[
         file.sizeBytes,
         file.modifiedAt?.millisecondsSinceEpoch,
+        await _localChessFileContentFingerprint(file.path),
         file.gameCount,
         now,
         databaseId,
@@ -5451,6 +5704,90 @@ class _LocalChessCacheMiss implements Exception {
 String _databaseId(String path) {
   final normalized = p.normalize(path.trim());
   return Platform.isWindows ? normalized.toLowerCase() : normalized;
+}
+
+Future<String> _localChessFileContentFingerprint(
+  String path, {
+  FileStat? stat,
+}) async {
+  final file = File(path);
+  final resolvedStat = stat ?? await file.stat();
+  final size = resolvedStat.size;
+  final bytes = BytesBuilder(copy: false)
+    ..add(utf8.encode('chessever-local-pgn-fingerprint-v1:$size;'));
+
+  if (size <= _kLocalChessFileFingerprintSampleBytes * 4) {
+    bytes.add(await file.readAsBytes());
+  } else {
+    final raf = await file.open();
+    try {
+      Future<void> addSample(int start) async {
+        final clampedStart = start.clamp(0, size).toInt();
+        final remaining = size - clampedStart;
+        if (remaining <= 0) return;
+        final length =
+            remaining < _kLocalChessFileFingerprintSampleBytes
+                ? remaining
+                : _kLocalChessFileFingerprintSampleBytes;
+        await raf.setPosition(clampedStart);
+        bytes.add(utf8.encode('$clampedStart:$length;'));
+        bytes.add(await raf.read(length));
+      }
+
+      await addSample(0);
+      await addSample(
+        (size ~/ 2) - (_kLocalChessFileFingerprintSampleBytes ~/ 2),
+      );
+      await addSample(size - _kLocalChessFileFingerprintSampleBytes);
+    } finally {
+      await raf.close();
+    }
+  }
+
+  return 'v1:$size:${sha256.convert(bytes.takeBytes())}';
+}
+
+Future<void> _cacheLocalChessDatabaseContentFingerprint(
+  resqlite.Database db, {
+  required String databaseId,
+  required String path,
+  required FileStat stat,
+}) async {
+  try {
+    final fingerprint = await _localChessFileContentFingerprint(
+      path,
+      stat: stat,
+    );
+    await _refreshLocalChessDatabaseFileStat(
+      db,
+      databaseId: databaseId,
+      sizeBytes: stat.size,
+      modifiedAtMs: stat.modified.millisecondsSinceEpoch,
+      contentFingerprint: fingerprint,
+    );
+  } catch (_) {
+    // The cache is still usable through exact stat matching. Fingerprinting is
+    // only an optimization for timestamp drift, so failures should be silent.
+  }
+}
+
+Future<void> _refreshLocalChessDatabaseFileStat(
+  resqlite.Database db, {
+  required String databaseId,
+  required int sizeBytes,
+  required int modifiedAtMs,
+  required String contentFingerprint,
+}) async {
+  await db.execute(
+    '''
+    UPDATE $localChessDatabasesTable
+    SET size_bytes = ?,
+        modified_at_ms = ?,
+        content_fingerprint = ?
+    WHERE id = ? AND deleted_at_ms IS NULL
+    ''',
+    <Object?>[sizeBytes, modifiedAtMs, contentFingerprint, databaseId],
+  );
 }
 
 Future<String?> _databaseFilePath(resqlite.Database db) async {
@@ -5943,14 +6280,11 @@ void _appendLocalPositionFilters(
 ) {
   final timeControl = filters.timeControl;
   if (timeControl != null) {
-    final name = timeControl.name.toLowerCase();
-    where.write(' AND LOWER(g.time_control) IN (?, ?, ?)');
-    parameters.addAll(<Object?>[
-      name,
-      timeControl.displayName.toLowerCase(),
-      'timecontrol.$name',
-    ]);
+    where.write(" AND LOWER(COALESCE(g.time_control_category, '')) = ?");
+    parameters.add(timeControl.name.toLowerCase());
   }
+
+  _appendLocalPlayerIdentityFilter(where, parameters, filters);
 
   final result = _sqlResultForFilter(filters.result);
   if (result != null) {
@@ -5961,9 +6295,8 @@ void _appendLocalPositionFilters(
   }
 
   if (filters.isOnline != null) {
-    // Imported PGNs are local/offline rows without an online discriminator.
-    // Match PlayerOpeningTreeFilterCriteria.matches(), which rejects null.
-    where.write(' AND 0 = 1');
+    where.write(' AND COALESCE(g.is_online, 0) = ?');
+    parameters.add(filters.isOnline! ? 1 : 0);
   }
 
   final yearFrom = filters.yearFrom;
@@ -5983,6 +6316,12 @@ void _appendLocalPositionFilters(
 
   final ratingExpression = _ratingSqlExpression(filters);
   if (filters.minRating != null || filters.maxRating != null) {
+    if (filters.hasPlayerIdentityFilters &&
+        filters.color?.trim().toLowerCase() != 'white' &&
+        filters.color?.trim().toLowerCase() != 'black') {
+      _appendLocalPlayerRatingFilter(where, parameters, filters);
+      return;
+    }
     where.write(' AND $ratingExpression > 0');
   }
   final minRating = filters.minRating;
@@ -5995,6 +6334,116 @@ void _appendLocalPositionFilters(
     where.write(' AND $ratingExpression <= ?');
     parameters.add(maxRating);
   }
+}
+
+void _appendLocalPlayerIdentityFilter(
+  StringBuffer where,
+  List<Object?> parameters,
+  PlayerOpeningTreeFilterCriteria filters,
+) {
+  if (!filters.hasPlayerIdentityFilters) return;
+
+  final sides = switch (filters.color?.trim().toLowerCase()) {
+    'white' => const <String>['white'],
+    'black' => const <String>['black'],
+    _ => const <String>['white', 'black'],
+  };
+  final clauses = <String>[];
+
+  for (final side in sides) {
+    final clause = _localSidePlayerIdentityClause(side, filters, parameters);
+    if (clause != null) clauses.add(clause);
+  }
+
+  if (clauses.isEmpty) {
+    where.write(' AND 0 = 1');
+    return;
+  }
+  where.write(' AND (${clauses.join(' OR ')})');
+}
+
+void _appendLocalPlayerRatingFilter(
+  StringBuffer where,
+  List<Object?> parameters,
+  PlayerOpeningTreeFilterCriteria filters,
+) {
+  final minRating = filters.minRating;
+  final maxRating = filters.maxRating;
+  if (minRating == null && maxRating == null) return;
+
+  final sideClauses = <String>[];
+  for (final side in const <String>['white', 'black']) {
+    final sideParams = <Object?>[];
+    final identityClause = _localSidePlayerIdentityClause(
+      side,
+      filters,
+      sideParams,
+    );
+    if (identityClause == null) continue;
+    final eloColumn = side == 'white' ? 'g.white_elo' : 'g.black_elo';
+    final ratingParts = <String>['($identityClause)', '$eloColumn > 0'];
+    if (minRating != null) {
+      ratingParts.add('$eloColumn >= ?');
+      sideParams.add(minRating);
+    }
+    if (maxRating != null) {
+      ratingParts.add('$eloColumn <= ?');
+      sideParams.add(maxRating);
+    }
+    sideClauses.add('(${ratingParts.join(' AND ')})');
+    parameters.addAll(sideParams);
+  }
+
+  if (sideClauses.isEmpty) {
+    where.write(' AND 0 = 1');
+    return;
+  }
+  where.write(' AND (${sideClauses.join(' OR ')})');
+}
+
+String? _localSidePlayerIdentityClause(
+  String side,
+  PlayerOpeningTreeFilterCriteria filters,
+  List<Object?> parameters,
+) {
+  final rawIds = _normalizedFilterValues(<Object?>[
+    filters.playerId,
+    ...filters.playerIds,
+  ]);
+  final localNumericIds =
+      rawIds.where((id) => int.tryParse(id) != null).toSet();
+  final fideIds = <String>{
+    ..._normalizedFilterValues(filters.playerFideIds),
+    // Imported files sometimes expose FIDE ids as the only player id.
+    ...rawIds.where((id) => int.tryParse(id) != null),
+  };
+  final names = _normalizedPlayerNames(filters.playerNames);
+
+  final columnPrefix = side == 'white' ? 'white' : 'black';
+  final jsonPrefix = side == 'white' ? 'White' : 'Black';
+  final clauses = <String>[];
+  if (localNumericIds.isNotEmpty) {
+    clauses.add(
+      'CAST(g.${columnPrefix}_id AS TEXT) IN (${_sqlPlaceholders(localNumericIds.length)})',
+    );
+    parameters.addAll(localNumericIds);
+  }
+  if (fideIds.isNotEmpty) {
+    clauses.add(
+      "LOWER(TRIM(COALESCE(json_extract(g.headers_json, '\$.${jsonPrefix}FideId'), ''))) "
+      'IN (${_sqlPlaceholders(fideIds.length)})',
+    );
+    parameters.addAll(fideIds);
+  }
+  if (names.isNotEmpty) {
+    clauses.add(
+      "LOWER(TRIM(COALESCE(json_extract(g.headers_json, '\$.$jsonPrefix'), ''))) "
+      'IN (${_sqlPlaceholders(names.length)})',
+    );
+    parameters.addAll(names);
+  }
+  if (clauses.isEmpty) return null;
+  return '(${clauses.join(' OR ')})';
 }
 
 String _localPositionGamesSortExpression(GamebaseSortField sortBy) {
@@ -6166,6 +6615,116 @@ Iterable<List<T>> _chunks<T>(List<T> values, int size) sync* {
     final end = start + size > values.length ? values.length : start + size;
     yield values.sublist(start, end);
   }
+}
+
+String _sqlPlaceholders(int count) =>
+    List<String>.filled(count, '?').join(', ');
+
+Set<String> _normalizedFilterValues(Iterable<Object?> values) {
+  return {
+    for (final value in values)
+      if (value?.toString().trim().isNotEmpty == true)
+        value!.toString().trim().toLowerCase(),
+  };
+}
+
+Set<String> _normalizedPlayerNames(Iterable<Object?> values) {
+  return {
+    for (final value in values)
+      if (_normalizePlayerName(value?.toString()) case final normalized?)
+        normalized,
+  };
+}
+
+String? _normalizePlayerName(String? value) {
+  final raw = value?.trim().toLowerCase();
+  if (raw == null || raw.isEmpty || raw == '?') return null;
+  return raw.replaceAll(RegExp(r'\s+'), ' ');
+}
+
+String? _timeControlCategory(Object? rawValue) {
+  final raw = rawValue?.toString().trim().toLowerCase();
+  if (raw == null || raw.isEmpty || raw == '?' || raw == '-') return null;
+  if (raw.contains('bullet') || raw.contains('blitz')) return 'blitz';
+  if (raw.contains('rapid')) return 'rapid';
+  if (raw.contains('classical') ||
+      raw.contains('classic') ||
+      raw.contains('standard')) {
+    return 'classical';
+  }
+  if (raw == 'timecontrol.blitz' || raw == 'time_control.blitz' || raw == 'b') {
+    return 'blitz';
+  }
+  if (raw == 'timecontrol.rapid' || raw == 'time_control.rapid' || raw == 'r') {
+    return 'rapid';
+  }
+  if (raw == 'timecontrol.classical' ||
+      raw == 'time_control.classical' ||
+      raw == 'c') {
+    return 'classical';
+  }
+
+  final baseSeconds = _timeControlBaseSeconds(raw);
+  if (baseSeconds == null) return null;
+  if (baseSeconds < 600) return 'blitz';
+  if (baseSeconds < 3600) return 'rapid';
+  return 'classical';
+}
+
+int? _timeControlBaseSeconds(String raw) {
+  var total = 0;
+  var found = false;
+  for (final segment in raw.split(':')) {
+    final clean = segment.trim();
+    if (clean.isEmpty) continue;
+    final slash = clean.indexOf('/');
+    var clock = slash >= 0 ? clean.substring(slash + 1) : clean;
+    final plus = clock.indexOf('+');
+    if (plus >= 0) clock = clock.substring(0, plus);
+    final seconds = int.tryParse(clock.trim());
+    if (seconds == null || seconds <= 0) continue;
+    total += seconds;
+    found = true;
+  }
+  return found ? total : null;
+}
+
+bool _inferLocalGameIsOnline({
+  Object? timeControl,
+  Object? headersJson,
+  Map<String, dynamic>? metadata,
+  String? sourcePath,
+  String? fileName,
+}) {
+  final data = metadata ?? _jsonMap(headersJson);
+  final haystack =
+      <String>[
+        for (final key in const <String>[
+          'Site',
+          'Event',
+          'Source',
+          'Annotator',
+          'WhiteTeam',
+          'BlackTeam',
+        ])
+          data[key]?.toString() ?? '',
+        timeControl?.toString() ?? '',
+        sourcePath ?? '',
+        fileName ?? '',
+      ].join(' ').toLowerCase();
+
+  if (haystack.contains('lichess') ||
+      haystack.contains('chess.com') ||
+      haystack.contains('chess24') ||
+      haystack.contains('playchess') ||
+      haystack.contains('fics') ||
+      haystack.contains('internet chess club') ||
+      haystack.contains('chessclub.com') ||
+      haystack.contains('tornelo') ||
+      haystack.contains('online')) {
+    return true;
+  }
+  return false;
 }
 
 String _extensionForPath(String path) {

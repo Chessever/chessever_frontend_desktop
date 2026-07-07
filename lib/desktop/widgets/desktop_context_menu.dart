@@ -5,6 +5,7 @@ import 'package:flutter/physics.dart';
 import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 abstract class DesktopContextMenuEntry<T> {
@@ -236,7 +237,8 @@ class _DesktopContextMenuSurface<T> extends StatefulWidget {
 }
 
 class _DesktopContextMenuSurfaceState<T>
-    extends State<_DesktopContextMenuSurface<T>> {
+    extends State<_DesktopContextMenuSurface<T>>
+    with DeferredPointerStateMixin<_DesktopContextMenuSurface<T>> {
   int? _activeSubmenuIndex;
 
   @override
@@ -267,11 +269,11 @@ class _DesktopContextMenuSurfaceState<T>
               onSelect: widget.onSelect,
               onSubmenuHover: (index) {
                 if (_activeSubmenuIndex == index) return;
-                setState(() => _activeSubmenuIndex = index);
+                setStateAfterPointerEvent(() => _activeSubmenuIndex = index);
               },
               onPlainItemHover: () {
                 if (_activeSubmenuIndex == null) return;
-                setState(() => _activeSubmenuIndex = null);
+                setStateAfterPointerEvent(() => _activeSubmenuIndex = null);
               },
             ),
             if (submenu != null) ...[
@@ -376,8 +378,18 @@ class _DesktopContextMenuRow<T> extends StatefulWidget {
       _DesktopContextMenuRowState<T>();
 }
 
-class _DesktopContextMenuRowState<T> extends State<_DesktopContextMenuRow<T>> {
+class _DesktopContextMenuRowState<T> extends State<_DesktopContextMenuRow<T>>
+    with DeferredPointerStateMixin<_DesktopContextMenuRow<T>> {
   bool _hovered = false;
+
+  void _handleEnter() {
+    runAfterPointerEvent(() {
+      if (!mounted) return;
+      widget.onHover?.call();
+      if (!mounted) return;
+      setState(() => _hovered = true);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -451,11 +463,8 @@ class _DesktopContextMenuRowState<T> extends State<_DesktopContextMenuRow<T>> {
 
     return ClickCursor(
       child: MouseRegion(
-        onEnter: (_) {
-          widget.onHover?.call();
-          setState(() => _hovered = true);
-        },
-        onExit: (_) => setState(() => _hovered = false),
+        onEnter: (_) => _handleEnter(),
+        onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: () => widget.onSelect(item.value),
@@ -478,8 +487,18 @@ class _DesktopContextSubmenuRow<T> extends StatefulWidget {
 }
 
 class _DesktopContextSubmenuRowState<T>
-    extends State<_DesktopContextSubmenuRow<T>> {
+    extends State<_DesktopContextSubmenuRow<T>>
+    with DeferredPointerStateMixin<_DesktopContextSubmenuRow<T>> {
   bool _hovered = false;
+
+  void _handleEnter() {
+    runAfterPointerEvent(() {
+      if (!mounted) return;
+      widget.onHover();
+      if (!mounted) return;
+      setState(() => _hovered = true);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -541,11 +560,8 @@ class _DesktopContextSubmenuRowState<T>
 
     return ClickCursor(
       child: MouseRegion(
-        onEnter: (_) {
-          widget.onHover();
-          setState(() => _hovered = true);
-        },
-        onExit: (_) => setState(() => _hovered = false),
+        onEnter: (_) => _handleEnter(),
+        onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onHover,

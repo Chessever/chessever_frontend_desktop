@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -31,7 +32,8 @@ class LocalTreeActionButton extends StatefulWidget {
   State<LocalTreeActionButton> createState() => _LocalTreeActionButtonState();
 }
 
-class _LocalTreeActionButtonState extends State<LocalTreeActionButton> {
+class _LocalTreeActionButtonState extends State<LocalTreeActionButton>
+    with DeferredPointerStateMixin<LocalTreeActionButton> {
   bool _hovered = false;
   bool _pressed = false;
 
@@ -141,19 +143,27 @@ class _LocalTreeActionButtonState extends State<LocalTreeActionButton> {
         mode: CursorMode.hover,
         enabled: enabled,
         child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
+          onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
           onExit:
-              (_) => setState(() {
+              (_) => setStateAfterPointerEvent(() {
                 _hovered = false;
                 _pressed = false;
               }),
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: onPress,
-            onTapDown: enabled ? (_) => setState(() => _pressed = true) : null,
-            onTapUp: enabled ? (_) => setState(() => _pressed = false) : null,
+            onTapDown:
+                enabled
+                    ? (_) => setStateAfterPointerEvent(() => _pressed = true)
+                    : null,
+            onTapUp:
+                enabled
+                    ? (_) => setStateAfterPointerEvent(() => _pressed = false)
+                    : null,
             onTapCancel:
-                enabled ? () => setState(() => _pressed = false) : null,
+                enabled
+                    ? () => setStateAfterPointerEvent(() => _pressed = false)
+                    : null,
             child: pill,
           ),
         ),

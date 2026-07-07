@@ -7,8 +7,10 @@ import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
+import 'package:chessever/desktop/shell/desktop_main_routes.dart';
 import 'package:chessever/desktop/shell/desktop_pane.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_feedback_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_sidebar_premium_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -251,7 +253,8 @@ class _SidebarHeaderButton extends StatefulWidget {
   State<_SidebarHeaderButton> createState() => _SidebarHeaderButtonState();
 }
 
-class _SidebarHeaderButtonState extends State<_SidebarHeaderButton> {
+class _SidebarHeaderButtonState extends State<_SidebarHeaderButton>
+    with DeferredPointerStateMixin<_SidebarHeaderButton> {
   bool _hovered = false;
   bool _pressed = false;
 
@@ -259,24 +262,27 @@ class _SidebarHeaderButtonState extends State<_SidebarHeaderButton> {
   Widget build(BuildContext context) {
     return ClickCursor(
       child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
+        onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
         onExit:
-            (_) => setState(() {
+            (_) => setStateAfterPointerEvent(() {
               _hovered = false;
               _pressed = false;
             }),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
-          onTapDown: (_) => setState(() => _pressed = true),
-          onTapUp: (_) => setState(() => _pressed = false),
-          onTapCancel: () => setState(() => _pressed = false),
+          onTapDown: (_) => setStateAfterPointerEvent(() => _pressed = true),
+          onTapUp: (_) => setStateAfterPointerEvent(() => _pressed = false),
+          onTapCancel: () => setStateAfterPointerEvent(() => _pressed = false),
           child: SingleMotionBuilder(
             value: _pressed ? 0.97 : (_hovered ? 1.012 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               decoration: BoxDecoration(
@@ -323,7 +329,8 @@ class _SidebarItem extends StatefulWidget {
   State<_SidebarItem> createState() => _SidebarItemState();
 }
 
-class _SidebarItemState extends State<_SidebarItem> {
+class _SidebarItemState extends State<_SidebarItem>
+    with DeferredPointerStateMixin<_SidebarItem> {
   bool _hovered = false;
   bool _pressed = false;
 
@@ -341,6 +348,7 @@ class _SidebarItemState extends State<_SidebarItem> {
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
+    final shortcut = _shortcutLabelForEntry(widget.entry);
     final fg =
         selected ? kPrimaryColor : (_hovered ? kWhiteColor : kWhiteColor70);
     final bg =
@@ -359,9 +367,9 @@ class _SidebarItemState extends State<_SidebarItem> {
       child: CursorAware(
         mode: CursorMode.hover,
         child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
+          onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
           onExit:
-              (_) => setState(() {
+              (_) => setStateAfterPointerEvent(() {
                 _hovered = false;
                 _pressed = false;
               }),
@@ -372,9 +380,11 @@ class _SidebarItemState extends State<_SidebarItem> {
                     : '${widget.entry.label} (${_modifierHintLabel()}-click for new tab)',
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTapDown: (_) => setState(() => _pressed = true),
-              onTapUp: (_) => setState(() => _pressed = false),
-              onTapCancel: () => setState(() => _pressed = false),
+              onTapDown:
+                  (_) => setStateAfterPointerEvent(() => _pressed = true),
+              onTapUp: (_) => setStateAfterPointerEvent(() => _pressed = false),
+              onTapCancel:
+                  () => setStateAfterPointerEvent(() => _pressed = false),
               onTap: () => widget.onTap(inNewTab: _modifierHeld()),
               child: Container(
                 height: 44,
@@ -423,9 +433,9 @@ class _SidebarItemState extends State<_SidebarItem> {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        if (widget.entry.shortcut != null)
+                        if (shortcut != null)
                           Text(
-                            widget.entry.shortcut!,
+                            shortcut,
                             style: const TextStyle(
                               color: kLightGreyColor,
                               fontSize: 11,
@@ -450,8 +460,14 @@ class _NavEntry {
     required this.label,
     required this.icon,
     this.pane,
-    this.shortcut,
+    this.primaryShortcutKey,
   });
+  _NavEntry.fromMainRoute(DesktopMainRoute route)
+    : pane = route.pane,
+      label = route.label,
+      icon = route.icon,
+      primaryShortcutKey = null;
+
   final DesktopPane? pane;
   final String label;
 
@@ -463,68 +479,18 @@ class _NavEntry {
   /// already use it (`account_tree_outlined`, `emoji_events_outlined`,
   /// `menu_book_outlined`, …) so the sidebar finally matches them.
   final IconData icon;
-  final String? shortcut;
+  final String? primaryShortcutKey;
 }
 
 const _NavEntry _searchEntry = _NavEntry(
   label: 'Search',
   icon: Icons.search,
-  shortcut: '⌘F',
+  primaryShortcutKey: 'F',
 );
 
-const List<_NavEntry> _primaryNav = [
-  _NavEntry(
-    pane: DesktopPane.tournaments,
-    label: 'Tournaments',
-    icon: Icons.emoji_events_outlined,
-    shortcut: '⌘1',
-  ),
-  _NavEntry(
-    pane: DesktopPane.library,
-    label: 'Library',
-    icon: Icons.menu_book_outlined,
-    shortcut: '⌘2',
-  ),
-  _NavEntry(
-    pane: DesktopPane.favorites,
-    label: 'Favorites',
-    icon: Icons.favorite_outline,
-    shortcut: '⌘3',
-  ),
-  _NavEntry(
-    pane: DesktopPane.players,
-    label: 'Players',
-    icon: Icons.groups_outlined,
-    shortcut: '⌘4',
-  ),
-  _NavEntry(
-    pane: DesktopPane.calendar,
-    label: 'Calendar',
-    icon: Icons.calendar_today_outlined,
-    shortcut: '⌘5',
-  ),
-  _NavEntry(
-    pane: DesktopPane.countrymen,
-    label: 'Countrymen',
-    icon: Icons.public_outlined,
-    shortcut: '⌘6',
-  ),
-  _NavEntry(
-    pane: DesktopPane.board,
-    label: 'Board',
-    icon: Icons.grid_4x4,
-    shortcut: '⌘7',
-  ),
-  // Play sits as a first-class sidebar pane — it's both the entry point
-  // for play-vs-bot sessions and the host for the local engine tournament
-  // browser (see lib/desktop/services/tournament_server/).
-  _NavEntry(
-    pane: DesktopPane.play,
-    label: 'Play',
-    icon: Icons.sports_esports_outlined,
-    shortcut: '⌘8',
-  ),
-];
+final List<_NavEntry> _primaryNav = desktopMainRoutes
+    .map(_NavEntry.fromMainRoute)
+    .toList(growable: false);
 
 const _NavEntry _feedbackEntry = _NavEntry(
   pane: DesktopPane.settings,
@@ -536,8 +502,19 @@ const _NavEntry _settingsEntry = _NavEntry(
   pane: DesktopPane.settings,
   label: 'Settings',
   icon: Icons.settings_outlined,
-  shortcut: '⌘,',
+  primaryShortcutKey: ',',
 );
+
+String? _shortcutLabelForEntry(_NavEntry entry, {bool? isMacOS}) {
+  final pane = entry.pane;
+  if (pane != null) {
+    final routeShortcut = desktopMainRouteShortcutLabel(pane, isMacOS: isMacOS);
+    if (routeShortcut != null) return routeShortcut;
+  }
+  final key = entry.primaryShortcutKey;
+  if (key == null) return null;
+  return desktopPrimaryShortcutLabel(key, isMacOS: isMacOS);
+}
 
 @visibleForTesting
 List<String> debugDesktopSidebarLabelsInOrder() {
@@ -560,6 +537,22 @@ DesktopPane? debugDesktopSidebarPaneForLabel(String label) {
     if (entry.label == label) return entry.pane;
   }
   if (_settingsEntry.label == label) return _settingsEntry.pane;
+  return null;
+}
+
+@visibleForTesting
+String? debugDesktopSidebarShortcutForLabel(String label, {bool? isMacOS}) {
+  if (_searchEntry.label == label) {
+    return _shortcutLabelForEntry(_searchEntry, isMacOS: isMacOS);
+  }
+  for (final entry in _primaryNav) {
+    if (entry.label == label) {
+      return _shortcutLabelForEntry(entry, isMacOS: isMacOS);
+    }
+  }
+  if (_settingsEntry.label == label) {
+    return _shortcutLabelForEntry(_settingsEntry, isMacOS: isMacOS);
+  }
   return null;
 }
 

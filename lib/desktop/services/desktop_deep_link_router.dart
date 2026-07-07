@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -338,7 +336,6 @@ class DesktopDeepLinkRouter {
         .getGameByAnyId(link.id)
         .timeout(const Duration(seconds: 12));
     final game = GamesTourModel.fromGame(gameRow);
-    final eventGames = await _eventGameSummariesForGame(container, game);
     final pgn = game.pgn?.trim() ?? '';
 
     final args = BoardTabGameArgs(
@@ -359,83 +356,19 @@ class DesktopDeepLinkRouter {
       sourceGame: game.copyWith(pgn: pgn.isEmpty ? game.pgn : pgn),
       viewSource: ChessboardView.tour,
       tournamentTitle: link.tour ?? game.tourSlug ?? game.tourId,
-      eventGames: eventGames,
-      eventGamesLoading:
-          eventGames.length <= 1 && game.tourId.trim().isNotEmpty,
+      eventGames: [TournamentGameSummary.fromGamesTourModel(game)],
       gameListSelectedId: game.gameId,
     );
 
     container.read(chessboardViewFromProviderNew.notifier).state =
         ChessboardView.tour;
-    final tabId = openBoardGameTabFromContainer(
+    openBoardGameTabFromContainer(
       container,
       args,
       focus: true,
       reuseExisting: true,
       replaceActive: false,
     );
-
-    if (args.eventGamesLoading) {
-      unawaited(_hydrateGameLinkEventContext(container, tabId, game));
-    }
-  }
-
-  Future<List<TournamentGameSummary>> _eventGameSummariesForGame(
-    ProviderContainer container,
-    GamesTourModel game,
-  ) async {
-    if (game.tourId.trim().isEmpty) {
-      return <TournamentGameSummary>[
-        TournamentGameSummary.fromGamesTourModel(game),
-      ];
-    }
-
-    try {
-      final rows = await container
-          .read(gameRepositoryProvider)
-          .getGamesByTourId(game.tourId, limit: 200)
-          .timeout(const Duration(seconds: 8));
-      final summaries = <TournamentGameSummary>[];
-      for (final row in rows) {
-        try {
-          summaries.add(
-            TournamentGameSummary.fromGamesTourModel(
-              GamesTourModel.fromGame(row),
-            ),
-          );
-        } catch (_) {
-          // Keep the active game usable even if a row is malformed.
-        }
-      }
-      if (summaries.isNotEmpty) return summaries;
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[desktop deeplink] event games hydrate skipped: $e');
-      }
-    }
-
-    return <TournamentGameSummary>[
-      TournamentGameSummary.fromGamesTourModel(game),
-    ];
-  }
-
-  Future<void> _hydrateGameLinkEventContext(
-    ProviderContainer container,
-    String tabId,
-    GamesTourModel game,
-  ) async {
-    final hydrated = await _eventGameSummariesForGame(container, game);
-    final current = container.read(boardTabGameArgsByTabIdProvider)[tabId];
-    if (current == null || current.gameId != game.gameId) return;
-
-    container.read(boardTabGameArgsByTabIdProvider.notifier).update((existing) {
-      final latest = existing[tabId];
-      if (latest == null || latest.gameId != game.gameId) return existing;
-      return <String, BoardTabGameArgs>{
-        ...existing,
-        tabId: latest.copyWith(eventGames: hydrated, eventGamesLoading: false),
-      };
-    });
   }
 }
 

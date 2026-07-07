@@ -221,7 +221,7 @@ List<TournamentGameSummary> _summariesFromGames(List<ChessGame> games) {
   return [for (final game in games) _summaryFromGame(game)];
 }
 
-const int _kPreviewBoardContextRadius = 100;
+const int _kPreviewBoardContextRadius = 30;
 
 List<ChessGame> _previewBoardContextGames(
   ChessGame selected,

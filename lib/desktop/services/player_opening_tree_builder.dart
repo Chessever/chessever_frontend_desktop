@@ -613,6 +613,9 @@ class PlayerOpeningTreeStats {
 class PlayerOpeningTreeFilterCriteria {
   const PlayerOpeningTreeFilterCriteria({
     this.playerId,
+    this.playerIds = const <String>[],
+    this.playerFideIds = const <String>[],
+    this.playerNames = const <String>[],
     this.timeControl,
     this.minRating,
     this.maxRating,
@@ -624,6 +627,9 @@ class PlayerOpeningTreeFilterCriteria {
   });
 
   final String? playerId;
+  final List<String> playerIds;
+  final List<String> playerFideIds;
+  final List<String> playerNames;
   final TimeControl? timeControl;
   final int? minRating;
   final int? maxRating;
@@ -634,6 +640,10 @@ class PlayerOpeningTreeFilterCriteria {
   final int? yearTo;
 
   bool get hasFilters =>
+      playerId?.trim().isNotEmpty == true ||
+      playerIds.any((value) => value.trim().isNotEmpty) ||
+      playerFideIds.any((value) => value.trim().isNotEmpty) ||
+      playerNames.any((value) => value.trim().isNotEmpty) ||
       timeControl != null ||
       minRating != null ||
       maxRating != null ||
@@ -648,12 +658,12 @@ class PlayerOpeningTreeFilterCriteria {
 
   bool matches(Map<String, dynamic> row) {
     final wantedColor = color?.trim().toLowerCase();
-    if (wantedColor == 'white' || wantedColor == 'black') {
-      final id = playerId?.trim();
-      if (id != null && id.isNotEmpty) {
-        final actualColor = _playerColorForRow(row, id);
-        if (actualColor != null && actualColor != wantedColor) return false;
-        if (actualColor == null) return false;
+    final actualPlayerColor = _playerColorForCriteria(row, this);
+    if (hasPlayerIdentityFilters) {
+      if (actualPlayerColor == null) return false;
+      if ((wantedColor == 'white' || wantedColor == 'black') &&
+          actualPlayerColor != wantedColor) {
+        return false;
       }
     }
 
@@ -677,7 +687,7 @@ class PlayerOpeningTreeFilterCriteria {
     if (yearFrom != null && (year == null || year < yearFrom!)) return false;
     if (yearTo != null && (year == null || year > yearTo!)) return false;
 
-    final rating = _ratingForFilter(row, playerId: playerId, color: color);
+    final rating = _ratingForFilter(row, filters: this);
     if (minRating != null && (rating == null || rating < minRating!)) {
       return false;
     }
@@ -686,6 +696,13 @@ class PlayerOpeningTreeFilterCriteria {
     }
 
     return true;
+  }
+
+  bool get hasPlayerIdentityFilters {
+    return playerId?.trim().isNotEmpty == true ||
+        playerIds.any((value) => value.trim().isNotEmpty) ||
+        playerFideIds.any((value) => value.trim().isNotEmpty) ||
+        playerNames.any((value) => value.trim().isNotEmpty);
   }
 }
 
@@ -996,7 +1013,11 @@ Map<String, dynamic> _normalizedRow(
         row['time_control'] ??
         row['timeControlType'] ??
         game.metadata['TimeControl'],
-    'isOnline': row['isOnline'] ?? row['is_online'] ?? row['online'],
+    'isOnline':
+        row['isOnline'] ??
+        row['is_online'] ??
+        row['online'] ??
+        _inferOnlineFromRow(row, game),
     'eco': pick('eco', pick('ECO', '')),
     'opening': pick('opening', pick('Opening', '')),
     'variation': pick('variation', pick('Variation', '')),
@@ -1176,12 +1197,7 @@ String? _playerColorForRow(Map<String, dynamic> row, String playerId) {
 }
 
 bool _timeControlMatches(Object? rawValue, TimeControl wanted) {
-  final raw = rawValue?.toString().trim().toLowerCase();
-  if (raw == null || raw.isEmpty) return false;
-  final wantedName = wanted.name.toLowerCase();
-  return raw == wantedName ||
-      raw == wanted.displayName.toLowerCase() ||
-      raw == 'timecontrol.$wantedName';
+  return _timeControlCategory(rawValue) == wanted.name.toLowerCase();
 }
 
 String _resultCode(Object? value) {
@@ -1207,10 +1223,9 @@ int? _yearForRow(Map<String, dynamic> row) {
 
 int? _ratingForFilter(
   Map<String, dynamic> row, {
-  String? playerId,
-  String? color,
+  required PlayerOpeningTreeFilterCriteria filters,
 }) {
-  final wantedColor = color?.trim().toLowerCase();
+  final wantedColor = filters.color?.trim().toLowerCase();
   if (wantedColor == 'white') {
     final rating = _readInt(row['whiteElo']);
     return rating > 0 ? rating : null;
@@ -1220,17 +1235,14 @@ int? _ratingForFilter(
     return rating > 0 ? rating : null;
   }
 
-  final id = playerId?.trim();
-  if (id != null && id.isNotEmpty) {
-    final playerColor = _playerColorForRow(row, id);
-    if (playerColor == 'white') {
-      final rating = _readInt(row['whiteElo']);
-      return rating > 0 ? rating : null;
-    }
-    if (playerColor == 'black') {
-      final rating = _readInt(row['blackElo']);
-      return rating > 0 ? rating : null;
-    }
+  final playerColor = _playerColorForCriteria(row, filters);
+  if (playerColor == 'white') {
+    final rating = _readInt(row['whiteElo']);
+    return rating > 0 ? rating : null;
+  }
+  if (playerColor == 'black') {
+    final rating = _readInt(row['blackElo']);
+    return rating > 0 ? rating : null;
   }
 
   final white = _readInt(row['whiteElo']);
@@ -1252,6 +1264,125 @@ bool? _readBool(Object? value) {
     return false;
   }
   return null;
+}
+
+bool _inferOnlineFromRow(Map<String, dynamic> row, ChessGame game) {
+  final haystack =
+      <String>[
+        row['site']?.toString() ?? '',
+        row['event']?.toString() ?? '',
+        row['sourcePath']?.toString() ?? '',
+        row['fileName']?.toString() ?? '',
+        game.metadata['Site']?.toString() ?? '',
+        game.metadata['Event']?.toString() ?? '',
+      ].join(' ').toLowerCase();
+  return haystack.contains('lichess') ||
+      haystack.contains('chess.com') ||
+      haystack.contains('chess24') ||
+      haystack.contains('playchess') ||
+      haystack.contains('fics') ||
+      haystack.contains('internet chess club') ||
+      haystack.contains('chessclub.com') ||
+      haystack.contains('tornelo') ||
+      haystack.contains('online');
+}
+
+String? _playerColorForCriteria(
+  Map<String, dynamic> row,
+  PlayerOpeningTreeFilterCriteria filters,
+) {
+  for (final id in _normalizedFilterValues([
+    filters.playerId,
+    ...filters.playerIds,
+  ])) {
+    final color = _playerColorForRow(row, id);
+    if (color != null) return color;
+  }
+
+  for (final fideId in _normalizedFilterValues(filters.playerFideIds)) {
+    final white = row['whiteFideId']?.toString().trim().toLowerCase();
+    if (white == fideId) return 'white';
+    final black = row['blackFideId']?.toString().trim().toLowerCase();
+    if (black == fideId) return 'black';
+  }
+
+  for (final name in _normalizedPlayerNames(filters.playerNames)) {
+    final white = _normalizePlayerName(row['white']?.toString());
+    if (white == name) return 'white';
+    final black = _normalizePlayerName(row['black']?.toString());
+    if (black == name) return 'black';
+  }
+
+  return null;
+}
+
+Set<String> _normalizedFilterValues(Iterable<Object?> values) {
+  return {
+    for (final value in values)
+      if (value?.toString().trim().isNotEmpty == true)
+        value!.toString().trim().toLowerCase(),
+  };
+}
+
+Set<String> _normalizedPlayerNames(Iterable<Object?> values) {
+  return {
+    for (final value in values)
+      if (_normalizePlayerName(value?.toString()) case final normalized?)
+        normalized,
+  };
+}
+
+String? _normalizePlayerName(String? value) {
+  final raw = value?.trim().toLowerCase();
+  if (raw == null || raw.isEmpty || raw == '?') return null;
+  return raw.replaceAll(RegExp(r'\s+'), ' ');
+}
+
+String? _timeControlCategory(Object? rawValue) {
+  final raw = rawValue?.toString().trim().toLowerCase();
+  if (raw == null || raw.isEmpty || raw == '?' || raw == '-') return null;
+  if (raw.contains('bullet') || raw.contains('blitz')) return 'blitz';
+  if (raw.contains('rapid')) return 'rapid';
+  if (raw.contains('classical') ||
+      raw.contains('classic') ||
+      raw.contains('standard')) {
+    return 'classical';
+  }
+  if (raw == 'timecontrol.blitz' || raw == 'time_control.blitz' || raw == 'b') {
+    return 'blitz';
+  }
+  if (raw == 'timecontrol.rapid' || raw == 'time_control.rapid' || raw == 'r') {
+    return 'rapid';
+  }
+  if (raw == 'timecontrol.classical' ||
+      raw == 'time_control.classical' ||
+      raw == 'c') {
+    return 'classical';
+  }
+
+  final baseSeconds = _timeControlBaseSeconds(raw);
+  if (baseSeconds == null) return null;
+  if (baseSeconds < 600) return 'blitz';
+  if (baseSeconds < 3600) return 'rapid';
+  return 'classical';
+}
+
+int? _timeControlBaseSeconds(String raw) {
+  var total = 0;
+  var found = false;
+  for (final segment in raw.split(':')) {
+    final clean = segment.trim();
+    if (clean.isEmpty) continue;
+    final slash = clean.indexOf('/');
+    var clock = slash >= 0 ? clean.substring(slash + 1) : clean;
+    final plus = clock.indexOf('+');
+    if (plus >= 0) clock = clock.substring(0, plus);
+    final seconds = int.tryParse(clock.trim());
+    if (seconds == null || seconds <= 0) continue;
+    total += seconds;
+    found = true;
+  }
+  return found ? total : null;
 }
 
 int _readInt(Object? value) {

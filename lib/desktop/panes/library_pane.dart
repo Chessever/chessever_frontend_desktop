@@ -41,6 +41,7 @@ import 'package:chessever/desktop/state/my_databases_focus.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/utils/library_multi_select.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
@@ -306,7 +307,10 @@ class LibraryPane extends HookConsumerWidget {
       // local-database open; folder import remains available on folder targets.
       final opened = await ref
           .read(localChessLibraryProvider.notifier)
-          .openPaths(paths, sourceLabel: 'Dropped local files');
+          .openPaths(
+            paths,
+            sourceLabel: localChessDatabaseDisplayNameForPaths(paths),
+          );
       if (!opened) return;
       final path = ref.read(localChessLibraryProvider).selectedPath;
       if (path != null) activateLocalPath(path);
@@ -662,7 +666,8 @@ class _PinnedSystemFolderRow extends StatefulWidget {
   State<_PinnedSystemFolderRow> createState() => _PinnedSystemFolderRowState();
 }
 
-class _PinnedSystemFolderRowState extends State<_PinnedSystemFolderRow> {
+class _PinnedSystemFolderRowState extends State<_PinnedSystemFolderRow>
+    with DeferredPointerStateMixin<_PinnedSystemFolderRow> {
   bool _hovered = false;
   bool _pressed = false;
 
@@ -681,18 +686,19 @@ class _PinnedSystemFolderRowState extends State<_PinnedSystemFolderRow> {
       padding: const EdgeInsets.fromLTRB(8, 1, 8, 1),
       child: ClickCursor(
         child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
+          onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
           onExit:
-              (_) => setState(() {
+              (_) => setStateAfterPointerEvent(() {
                 _hovered = false;
                 _pressed = false;
               }),
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: widget.onTap,
-            onTapDown: (_) => setState(() => _pressed = true),
-            onTapUp: (_) => setState(() => _pressed = false),
-            onTapCancel: () => setState(() => _pressed = false),
+            onTapDown: (_) => setStateAfterPointerEvent(() => _pressed = true),
+            onTapUp: (_) => setStateAfterPointerEvent(() => _pressed = false),
+            onTapCancel:
+                () => setStateAfterPointerEvent(() => _pressed = false),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               padding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
@@ -962,7 +968,8 @@ class _FolderRow extends ConsumerStatefulWidget {
   ConsumerState<_FolderRow> createState() => _FolderRowState();
 }
 
-class _FolderRowState extends ConsumerState<_FolderRow> {
+class _FolderRowState extends ConsumerState<_FolderRow>
+    with DeferredPointerStateMixin<_FolderRow> {
   bool _hovered = false;
   bool _pressed = false;
 
@@ -999,9 +1006,9 @@ class _FolderRowState extends ConsumerState<_FolderRow> {
           padding: const EdgeInsets.fromLTRB(8, 1, 8, 1),
           child: ClickCursor(
             child: MouseRegion(
-              onEnter: (_) => setState(() => _hovered = true),
+              onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
               onExit:
-                  (_) => setState(() {
+                  (_) => setStateAfterPointerEvent(() {
                     _hovered = false;
                     _pressed = false;
                   }),
@@ -1020,9 +1027,12 @@ class _FolderRowState extends ConsumerState<_FolderRow> {
                   behavior: HitTestBehavior.opaque,
                   onTap: widget.onTap,
                   onDoubleTap: widget.onOpen,
-                  onTapDown: (_) => setState(() => _pressed = true),
-                  onTapUp: (_) => setState(() => _pressed = false),
-                  onTapCancel: () => setState(() => _pressed = false),
+                  onTapDown:
+                      (_) => setStateAfterPointerEvent(() => _pressed = true),
+                  onTapUp:
+                      (_) => setStateAfterPointerEvent(() => _pressed = false),
+                  onTapCancel:
+                      () => setStateAfterPointerEvent(() => _pressed = false),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 120),
                     padding: EdgeInsets.fromLTRB(isChild ? 22 : 12, 8, 10, 8),
@@ -2275,7 +2285,8 @@ class _DatabaseBoardTile extends StatefulWidget {
   State<_DatabaseBoardTile> createState() => _DatabaseBoardTileState();
 }
 
-class _DatabaseBoardTileState extends State<_DatabaseBoardTile> {
+class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
+    with DeferredPointerStateMixin<_DatabaseBoardTile> {
   final FocusNode _focusNode = FocusNode(debugLabel: 'library-database-tile');
   bool _hovered = false;
 
@@ -2324,8 +2335,8 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile> {
         },
         child: ClickCursor(
           child: MouseRegion(
-            onEnter: (_) => setState(() => _hovered = true),
-            onExit: (_) => setState(() => _hovered = false),
+            onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+            onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _selectFromTile,
@@ -3422,100 +3433,114 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                                   : 'Try another player, event, opening, or ECO.',
                         )
                         : Row(
-                    children: [
-                      Expanded(
-                        flex: 5,
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 12, 10, 20),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: kBlack2Color,
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: kDividerColor),
-                            ),
-                            clipBehavior: Clip.antiAlias,
-                            child: Column(
-                              children: [
-                                const _TwicTableHeader(),
-                                const Divider(height: 1, color: kDividerColor),
-                                Expanded(
-                                  child: ListView.builder(
-                                    controller: scrollController,
-                                    physics: const DesktopScrollPhysics(),
-                                    padding: EdgeInsets.zero,
-                                    itemExtent: _kLocalMiniPreviewRowExtent,
-                                    itemCount:
-                                        visibleGames.length +
-                                        (showPreviewLoadingRow ? 1 : 0),
-                                    itemBuilder: (context, index) {
-                                      if (index >= visibleGames.length) {
-                                        return _LocalMiniPreviewLoadingRow(
-                                          loadedCount: visibleGames.length,
-                                          totalCount: previewTotalCount,
-                                          isLoading: isLoadingPreviewPage,
-                                        );
-                                      }
-                                      final game = visibleGames[index];
-                                      final selected =
-                                          clampedSelectedIds.contains(
-                                            game.id,
-                                          ) ||
-                                          (clampedSelectedIds.isEmpty &&
-                                              index == safeIndex);
-                                      return _LocalMiniPreviewTableRow(
-                                        game: game,
-                                        selected: selected,
-                                        onTap:
-                                            () =>
-                                                HardwareKeyboard
-                                                        .instance
-                                                        .isShiftPressed
-                                                    ? rangeSelectLocalIndex(
-                                                      index,
-                                                    )
-                                                    : selectLocalIndex(index),
-                                        onDoubleTap:
-                                            () => _openLocalPreviewGame(
-                                              ref,
-                                              game,
-                                              databaseTitle: databaseTitle,
-                                              databaseGames:
-                                                  previewContextGames,
-                                              localOpeningTreeIndex:
-                                                  openableLocalTreeIndex,
-                                            ),
-                                      );
-                                    },
+                          children: [
+                            Expanded(
+                              flex: 5,
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  20,
+                                  12,
+                                  10,
+                                  20,
+                                ),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: kBlack2Color,
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: kDividerColor),
+                                  ),
+                                  clipBehavior: Clip.antiAlias,
+                                  child: Column(
+                                    children: [
+                                      const _TwicTableHeader(),
+                                      const Divider(
+                                        height: 1,
+                                        color: kDividerColor,
+                                      ),
+                                      Expanded(
+                                        child: ListView.builder(
+                                          controller: scrollController,
+                                          physics: const DesktopScrollPhysics(),
+                                          padding: EdgeInsets.zero,
+                                          itemExtent:
+                                              _kLocalMiniPreviewRowExtent,
+                                          itemCount:
+                                              visibleGames.length +
+                                              (showPreviewLoadingRow ? 1 : 0),
+                                          itemBuilder: (context, index) {
+                                            if (index >= visibleGames.length) {
+                                              return _LocalMiniPreviewLoadingRow(
+                                                loadedCount:
+                                                    visibleGames.length,
+                                                totalCount: previewTotalCount,
+                                                isLoading: isLoadingPreviewPage,
+                                              );
+                                            }
+                                            final game = visibleGames[index];
+                                            final selected =
+                                                clampedSelectedIds.contains(
+                                                  game.id,
+                                                ) ||
+                                                (clampedSelectedIds.isEmpty &&
+                                                    index == safeIndex);
+                                            return _LocalMiniPreviewTableRow(
+                                              game: game,
+                                              selected: selected,
+                                              onTap:
+                                                  () =>
+                                                      HardwareKeyboard
+                                                              .instance
+                                                              .isShiftPressed
+                                                          ? rangeSelectLocalIndex(
+                                                            index,
+                                                          )
+                                                          : selectLocalIndex(
+                                                            index,
+                                                          ),
+                                              onDoubleTap:
+                                                  () => _openLocalPreviewGame(
+                                                    ref,
+                                                    game,
+                                                    databaseTitle:
+                                                        databaseTitle,
+                                                    databaseGames:
+                                                        previewContextGames,
+                                                    localOpeningTreeIndex:
+                                                        openableLocalTreeIndex,
+                                                  ),
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        flex: 5,
-                        child: _LocalPreviewPanel(
-                          game: selectedGame,
-                          previewGame: selectedPreviewGame,
-                          plyIndex: plyIndex.value,
-                          onPlyChanged: setSelectedLocalPly,
-                          onOpen:
-                              () => _openLocalPreviewGame(
-                                ref,
-                                selectedGame,
-                                databaseTitle: databaseTitle,
-                                databaseGames: previewContextGames,
-                                localOpeningTreeIndex: openableLocalTreeIndex,
-                                initialFen: _initialFenForPreviewPly(
-                                  selectedPreviewGame,
-                                  plyIndex.value,
-                                ),
                               ),
+                            ),
+                            Expanded(
+                              flex: 5,
+                              child: _LocalPreviewPanel(
+                                game: selectedGame,
+                                previewGame: selectedPreviewGame,
+                                plyIndex: plyIndex.value,
+                                onPlyChanged: setSelectedLocalPly,
+                                onOpen:
+                                    () => _openLocalPreviewGame(
+                                      ref,
+                                      selectedGame,
+                                      databaseTitle: databaseTitle,
+                                      databaseGames: previewContextGames,
+                                      localOpeningTreeIndex:
+                                          openableLocalTreeIndex,
+                                      initialFen: _initialFenForPreviewPly(
+                                        selectedPreviewGame,
+                                        plyIndex.value,
+                                      ),
+                                    ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ],
-                  ),
               ),
             ],
           ),
@@ -3587,8 +3612,9 @@ class _LocalMiniPreviewLoadingRow extends StatelessWidget {
 
 /// One row of the local-database mini preview table.
 ///
-/// Deliberately mirrors [_TwicTableRow] — same column geometry
-/// (`_kColW`/`_kColResult`/`_kColB`/`_kColEvent`/`_kColEco`/`_kTwicColDate`),
+/// Deliberately mirrors [_TwicTableRow] — same compact preview column geometry
+/// (`_kPreviewColWhite`/`_kPreviewColResult`/`_kPreviewColBlack`/
+/// `_kPreviewColEvent`/`_kPreviewColEco`/`_kPreviewColDate`),
 /// same [_TwicTableHeader] above it, same hover/selection decoration — so an
 /// imported PGN database previews with the exact row shape as the cloud/TWIC
 /// databases sitting next to it. The Elo folds into the player column (inline
@@ -3611,7 +3637,8 @@ class _LocalMiniPreviewTableRow extends StatefulWidget {
       _LocalMiniPreviewTableRowState();
 }
 
-class _LocalMiniPreviewTableRowState extends State<_LocalMiniPreviewTableRow> {
+class _LocalMiniPreviewTableRowState extends State<_LocalMiniPreviewTableRow>
+    with DeferredPointerStateMixin<_LocalMiniPreviewTableRow> {
   bool _hovered = false;
 
   String _meta(Map<String, dynamic> md, String key) =>
@@ -3635,8 +3662,8 @@ class _LocalMiniPreviewTableRowState extends State<_LocalMiniPreviewTableRow> {
 
     return ClickCursor(
       child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
+        onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+        onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
@@ -3647,11 +3674,11 @@ class _LocalMiniPreviewTableRowState extends State<_LocalMiniPreviewTableRow> {
               selected: widget.selected,
               hovered: _hovered,
             ),
-            padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
+            padding: _kPreviewTableCellPadding,
             child: Row(
               children: [
                 Expanded(
-                  flex: _kColW,
+                  flex: _kPreviewColWhite,
                   child: LocalGamePlayerCell(
                     metadata: md,
                     side: 'White',
@@ -3659,14 +3686,14 @@ class _LocalMiniPreviewTableRowState extends State<_LocalMiniPreviewTableRow> {
                     rating: _ratingText(md, 'WhiteElo'),
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: _kPreviewColGap),
                 SizedBox(
-                  width: _kColResult,
+                  width: _kPreviewColResult,
                   child: LibraryTableResultPill(result: result),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: _kPreviewColGap),
                 Expanded(
-                  flex: _kColB,
+                  flex: _kPreviewColBlack,
                   child: LocalGamePlayerCell(
                     metadata: md,
                     side: 'Black',
@@ -3674,9 +3701,9 @@ class _LocalMiniPreviewTableRowState extends State<_LocalMiniPreviewTableRow> {
                     rating: _ratingText(md, 'BlackElo'),
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: _kPreviewColGap),
                 Expanded(
-                  flex: _kColEvent,
+                  flex: _kPreviewColEvent,
                   child: Text(
                     event.isEmpty || event == '?' ? '—' : event,
                     maxLines: 1,
@@ -3684,14 +3711,14 @@ class _LocalMiniPreviewTableRowState extends State<_LocalMiniPreviewTableRow> {
                     style: const TextStyle(color: kWhiteColor, fontSize: 12),
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: _kPreviewColGap),
                 SizedBox(
-                  width: _kColEco,
+                  width: _kPreviewColEco,
                   child: LibraryTableEcoCell(eco: _meta(md, 'ECO')),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: _kPreviewColGap),
                 SizedBox(
-                  width: _kTwicColDate,
+                  width: _kPreviewColDate,
                   child: Text(
                     date.isEmpty ? '—' : date,
                     textAlign: TextAlign.right,
@@ -4356,7 +4383,8 @@ class _OverflowMenuButton extends StatefulWidget {
   State<_OverflowMenuButton> createState() => _OverflowMenuButtonState();
 }
 
-class _OverflowMenuButtonState extends State<_OverflowMenuButton> {
+class _OverflowMenuButtonState extends State<_OverflowMenuButton>
+    with DeferredPointerStateMixin<_OverflowMenuButton> {
   final GlobalKey _key = GlobalKey();
   bool _hovered = false;
 
@@ -4382,8 +4410,8 @@ class _OverflowMenuButtonState extends State<_OverflowMenuButton> {
       message: 'More actions',
       child: ClickCursor(
         child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit: (_) => setState(() => _hovered = false),
+          onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+          onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
           child: GestureDetector(
             key: _key,
             behavior: HitTestBehavior.opaque,
@@ -4536,7 +4564,8 @@ class _ViewModeButton extends StatefulWidget {
   State<_ViewModeButton> createState() => _ViewModeButtonState();
 }
 
-class _ViewModeButtonState extends State<_ViewModeButton> {
+class _ViewModeButtonState extends State<_ViewModeButton>
+    with DeferredPointerStateMixin<_ViewModeButton> {
   bool _hovered = false;
 
   @override
@@ -4553,8 +4582,8 @@ class _ViewModeButtonState extends State<_ViewModeButton> {
       message: widget.tooltip,
       child: ClickCursor(
         child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit: (_) => setState(() => _hovered = false),
+          onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+          onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: widget.onTap,
@@ -5057,11 +5086,8 @@ class _GamesTable extends HookWidget {
 // Shared column widths so header and rows always align. Every visible
 // games-table column is resizable, reorderable, hideable, and addable.
 const _kColNumber = 30.0;
-const _kColW = 5; // TWIC/player-summary table flex
 const _kColElo = 56.0;
 const _kColResult = 56.0;
-const _kColB = 5; // TWIC/player-summary table flex
-const _kColEvent = 4; // TWIC/player-summary table flex
 const _kColEco = 62.0;
 const _kColDate = 88.0;
 const _kColSaved = 78.0;
@@ -5428,7 +5454,8 @@ class _HeaderCell extends StatefulWidget {
   State<_HeaderCell> createState() => _HeaderCellState();
 }
 
-class _HeaderCellState extends State<_HeaderCell> {
+class _HeaderCellState extends State<_HeaderCell>
+    with DeferredPointerStateMixin<_HeaderCell> {
   bool _hovered = false;
 
   @override
@@ -5438,8 +5465,8 @@ class _HeaderCellState extends State<_HeaderCell> {
         active ? kPrimaryColor : (_hovered ? kWhiteColor : kLightGreyColor);
     return ClickCursor(
       child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
+        onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+        onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap:
@@ -5506,7 +5533,8 @@ class _GamesTableRow extends StatefulWidget {
   State<_GamesTableRow> createState() => _GamesTableRowState();
 }
 
-class _GamesTableRowState extends State<_GamesTableRow> {
+class _GamesTableRowState extends State<_GamesTableRow>
+    with DeferredPointerStateMixin<_GamesTableRow> {
   bool _hovered = false;
   bool _suppressNextTap = false;
 
@@ -5618,8 +5646,8 @@ class _GamesTableRowState extends State<_GamesTableRow> {
       onAction: widget.onAction,
       child: ClickCursor(
         child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit: (_) => setState(() => _hovered = false),
+          onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+          onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
           child: LongPressDraggable<GameTabDragPayload>(
             data: card,
             delay: const Duration(milliseconds: 220),
@@ -5976,7 +6004,7 @@ BoardTabGameArgs _boardArgsForLocalPreviewGame(
   );
 }
 
-const int _kLocalPreviewBoardContextRadius = 100;
+const int _kLocalPreviewBoardContextRadius = 30;
 
 List<LocalChessGame> _localPreviewBoardContextGames(
   LocalChessGame selected,
@@ -6973,11 +7001,10 @@ BoardTabGameArgs _buildTwicBoardArgs(
   GamesTourModel game, {
   String? initialFen,
 }) {
-  final summaries = ref
-      .read(gamebaseDatabaseGamesPaginatedProvider)
-      .games
-      .map(TournamentGameSummary.fromGamesTourModel)
-      .toList(growable: false);
+  final summaries = _twicBoardContextGames(
+    game,
+    ref.read(gamebaseDatabaseGamesPaginatedProvider).games,
+  ).map(TournamentGameSummary.fromGamesTourModel).toList(growable: false);
   return BoardTabGameArgs(
     gameId: game.gameId,
     pgn: game.pgn ?? '',
@@ -7000,6 +7027,30 @@ BoardTabGameArgs _buildTwicBoardArgs(
     databaseGamesContinuation: const BoardTabGamesContinuation.twicDatabase(),
     gameListSelectedId: game.gameId,
   );
+}
+
+const int _kTwicBoardContextRadius = 30;
+
+List<GamesTourModel> _twicBoardContextGames(
+  GamesTourModel selected,
+  List<GamesTourModel> games,
+) {
+  if (games.isEmpty) return <GamesTourModel>[selected];
+
+  final selectedIndex = games.indexWhere(
+    (game) => game.gameId == selected.gameId,
+  );
+  if (selectedIndex < 0) return <GamesTourModel>[selected];
+
+  final start =
+      selectedIndex - _kTwicBoardContextRadius < 0
+          ? 0
+          : selectedIndex - _kTwicBoardContextRadius;
+  final end =
+      selectedIndex + _kTwicBoardContextRadius + 1 > games.length
+          ? games.length
+          : selectedIndex + _kTwicBoardContextRadius + 1;
+  return games.sublist(start, end);
 }
 
 enum _TwicGameContextAction {
@@ -7400,7 +7451,8 @@ class _TwicChip extends StatefulWidget {
   State<_TwicChip> createState() => _TwicChipState();
 }
 
-class _TwicChipState extends State<_TwicChip> {
+class _TwicChipState extends State<_TwicChip>
+    with DeferredPointerStateMixin<_TwicChip> {
   bool _hovered = false;
 
   @override
@@ -7419,8 +7471,8 @@ class _TwicChipState extends State<_TwicChip> {
             : kDividerColor;
     return ClickCursor(
       child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
+        onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+        onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
@@ -7867,7 +7919,19 @@ class _TwicGamesTable extends StatelessWidget {
   }
 }
 
-const double _kTwicColDate = 88.0;
+const int _kPreviewColWhite = 6;
+const int _kPreviewColBlack = 6;
+const int _kPreviewColEvent = 3;
+const double _kPreviewColResult = 48.0;
+const double _kPreviewColEco = 52.0;
+const double _kPreviewColDate = 82.0;
+const double _kPreviewColGap = 8.0;
+const EdgeInsets _kPreviewTableCellPadding = EdgeInsets.fromLTRB(
+  10,
+  10,
+  10,
+  10,
+);
 
 class _TwicTableHeader extends StatelessWidget {
   const _TwicTableHeader();
@@ -7885,22 +7949,25 @@ class _TwicTableHeader extends StatelessWidget {
       textAlign: alignEnd ? TextAlign.right : TextAlign.left,
     );
     return Container(
-      padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
+      padding: _kPreviewTableCellPadding,
       color: kBlack3Color.withValues(alpha: 0.4),
       child: Row(
         children: [
-          Expanded(flex: _kColW, child: label('White')),
-          const SizedBox(width: 12),
-          SizedBox(width: _kColResult, child: Center(child: label('Result'))),
-          const SizedBox(width: 12),
-          Expanded(flex: _kColB, child: label('Black')),
-          const SizedBox(width: 12),
-          Expanded(flex: _kColEvent, child: label('Event')),
-          const SizedBox(width: 12),
-          SizedBox(width: _kColEco, child: label('ECO')),
-          const SizedBox(width: 12),
+          Expanded(flex: _kPreviewColWhite, child: label('White')),
+          const SizedBox(width: _kPreviewColGap),
           SizedBox(
-            width: _kTwicColDate,
+            width: _kPreviewColResult,
+            child: Center(child: label('Result')),
+          ),
+          const SizedBox(width: _kPreviewColGap),
+          Expanded(flex: _kPreviewColBlack, child: label('Black')),
+          const SizedBox(width: _kPreviewColGap),
+          Expanded(flex: _kPreviewColEvent, child: label('Event')),
+          const SizedBox(width: _kPreviewColGap),
+          SizedBox(width: _kPreviewColEco, child: label('ECO')),
+          const SizedBox(width: _kPreviewColGap),
+          SizedBox(
+            width: _kPreviewColDate,
             child: Align(
               alignment: Alignment.centerRight,
               child: label('Date', alignEnd: true),
@@ -7933,7 +8000,8 @@ class _TwicTableRow extends StatefulWidget {
   State<_TwicTableRow> createState() => _TwicTableRowState();
 }
 
-class _TwicTableRowState extends State<_TwicTableRow> {
+class _TwicTableRowState extends State<_TwicTableRow>
+    with DeferredPointerStateMixin<_TwicTableRow> {
   bool _hovered = false;
   bool _suppressNextTap = false;
 
@@ -7946,8 +8014,8 @@ class _TwicTableRowState extends State<_TwicTableRow> {
 
     return ClickCursor(
       child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
+        onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+        onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
         child: Listener(
           behavior: HitTestBehavior.opaque,
           onPointerDown: (event) {
@@ -7980,11 +8048,11 @@ class _TwicTableRowState extends State<_TwicTableRow> {
                 selected: widget.selected,
                 hovered: _hovered,
               ),
-              padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
+              padding: _kPreviewTableCellPadding,
               child: Row(
                 children: [
                   Expanded(
-                    flex: _kColW,
+                    flex: _kPreviewColWhite,
                     child: _PlayerCell(
                       name: game.whitePlayer.name,
                       federation: game.whitePlayer.federation,
@@ -7995,14 +8063,14 @@ class _TwicTableRowState extends State<_TwicTableRow> {
                               : '',
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: _kPreviewColGap),
                   SizedBox(
-                    width: _kColResult,
+                    width: _kPreviewColResult,
                     child: _ResultPill(result: result),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: _kPreviewColGap),
                   Expanded(
-                    flex: _kColB,
+                    flex: _kPreviewColBlack,
                     child: _PlayerCell(
                       name: game.blackPlayer.name,
                       federation: game.blackPlayer.federation,
@@ -8013,9 +8081,9 @@ class _TwicTableRowState extends State<_TwicTableRow> {
                               : '',
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: _kPreviewColGap),
                   Expanded(
-                    flex: _kColEvent,
+                    flex: _kPreviewColEvent,
                     child: Text(
                       game.tourId,
                       maxLines: 1,
@@ -8023,9 +8091,9 @@ class _TwicTableRowState extends State<_TwicTableRow> {
                       style: const TextStyle(color: kWhiteColor, fontSize: 12),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: _kPreviewColGap),
                   SizedBox(
-                    width: _kColEco,
+                    width: _kPreviewColEco,
                     child:
                         eco.isEmpty
                             ? const Text(
@@ -8057,9 +8125,9 @@ class _TwicTableRowState extends State<_TwicTableRow> {
                               ),
                             ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: _kPreviewColGap),
                   SizedBox(
-                    width: _kTwicColDate,
+                    width: _kPreviewColDate,
                     child: Text(
                       dateLabel,
                       textAlign: TextAlign.right,
@@ -8526,7 +8594,7 @@ void _scrollDatabaseWorkspaceListToIndex(
   );
 }
 
-final _localDatabaseWorkspaceSourceProvider = FutureProvider.autoDispose
+final localDatabaseWorkspaceSourceProvider = FutureProvider.autoDispose
     .family<LocalChessSource, String>((ref, path) async {
       final repository = ref.read(localChessDatabaseRepositoryProvider);
       final cached = await repository.loadFreshSource(<String>[path]);
@@ -8536,7 +8604,8 @@ final _localDatabaseWorkspaceSourceProvider = FutureProvider.autoDispose
         final imported = await repository.importSingleFileSource(path: path);
         if (imported != null) return imported;
       }
-      final source = await scanLocalChessPaths(<String>[path]);
+      final paths = <String>[path];
+      final source = await scanLocalChessPaths(paths, buildOpeningTree: false);
       await repository.persistSource(source);
       return source;
     });
@@ -8559,12 +8628,12 @@ class _LocalDatabaseWorkspace extends ConsumerWidget {
     }
 
     final sourceAsync = ref.watch(
-      _localDatabaseWorkspaceSourceProvider(localPath),
+      localDatabaseWorkspaceSourceProvider(localPath),
     );
 
     Future<void> refreshLocalSource() async {
-      ref.invalidate(_localDatabaseWorkspaceSourceProvider(localPath));
-      await ref.read(_localDatabaseWorkspaceSourceProvider(localPath).future);
+      ref.invalidate(localDatabaseWorkspaceSourceProvider(localPath));
+      await ref.read(localDatabaseWorkspaceSourceProvider(localPath).future);
     }
 
     void selectPath(String path) {
@@ -9474,7 +9543,8 @@ class _DatabaseSavedGameRow extends StatefulWidget {
   State<_DatabaseSavedGameRow> createState() => _DatabaseSavedGameRowState();
 }
 
-class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
+class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow>
+    with DeferredPointerStateMixin<_DatabaseSavedGameRow> {
   bool _hovered = false;
   bool _suppressNextTap = false;
 
@@ -9571,8 +9641,8 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow> {
 
     return ClickCursor(
       child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
+        onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+        onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
         child: Listener(
           behavior: HitTestBehavior.opaque,
           onPointerDown: (event) {

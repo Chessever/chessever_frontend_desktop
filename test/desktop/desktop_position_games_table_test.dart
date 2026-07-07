@@ -1049,7 +1049,45 @@ void main() {
     expect(focusedMoveIndex, isNotNull);
     expect(verticalScrollable.position.pixels, closeTo(beforeHover, 0.01));
   });
+
+  testWidgets(
+    'empty opening explorer fits a short board rail without overflow',
+    (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            gamebaseRepositoryProvider.overrideWithValue(
+              _FakeGamebaseRepository(moveAggregates: const []),
+            ),
+            boardSettingsProviderNew.overrideWith(
+              _TestBoardSettingsNotifier.new,
+            ),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              backgroundColor: kBackgroundColor,
+              body: SizedBox(
+                width: 840,
+                height: 120,
+                child: DesktopOpeningExplorer(
+                  onMove: _noopMove,
+                  compactColumns: true,
+                  showHeader: false,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('No games match this position'), findsOneWidget);
+    },
+  );
 }
+
+void _noopMove(String _) {}
 
 ScrollableState _verticalScrollableIn(WidgetTester tester, Finder ancestor) {
   final scrollables = find.descendant(
@@ -1141,6 +1179,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     this.rowDataJson,
     this.eventName = 'Freestyle Chess',
     this.site = 'Reykjavik',
+    this.moveAggregates,
   }) : super(Dio(), baseUrl: 'http://localhost');
 
   final int rowCount;
@@ -1150,6 +1189,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
   final String? rowDataJson;
   final String eventName;
   final String site;
+  final List<MoveAggregate>? moveAggregates;
   final List<_CapturedPositionGamesQuery> positionGameCalls = [];
 
   @override
@@ -1166,10 +1206,9 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     int? yearTo,
     bool? isOnline,
   }) async {
-    return GamebaseResponse(
-      status: 'success',
-      data: GamebaseData(
-        moves: [
+    final moves =
+        moveAggregates ??
+        [
           for (final (i, uci) in _legalFirstMoves.indexed)
             MoveAggregate(
               uci: uci,
@@ -1179,8 +1218,10 @@ class _FakeGamebaseRepository extends GamebaseRepository {
               total: 90 + i,
               lastPlayed: DateTime(2025, 1, 1 + (i % 20)),
             ),
-        ],
-      ),
+        ];
+    return GamebaseResponse(
+      status: 'success',
+      data: GamebaseData(moves: moves),
     );
   }
 

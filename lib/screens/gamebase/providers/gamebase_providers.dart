@@ -1434,6 +1434,18 @@ PlayerOpeningTreeFilterCriteria _localTreeCriteria(
 ) {
   return PlayerOpeningTreeFilterCriteria(
     playerId: playerId,
+    playerIds: <String>[
+      playerId,
+      ...filters.playerIds,
+    ],
+    playerFideIds: <String>[
+      for (final player in filters.selectedPlayers)
+        if (player.fideId.trim().isNotEmpty) player.fideId.trim(),
+    ],
+    playerNames: <String>[
+      for (final player in filters.selectedPlayers)
+        if (player.name.trim().isNotEmpty) player.name.trim(),
+    ],
     timeControl:
         filters.timeControls.isNotEmpty ? filters.timeControls.first : null,
     minRating: filters.minRating,
@@ -1565,6 +1577,9 @@ class PlayerOpeningTreeBuildController
       filters.yearFrom?.toString() ?? '',
       filters.yearTo?.toString() ?? '',
       filters.isOnline?.toString() ?? '',
+      filters.playerIds.join(','),
+      filters.playerFideIds.join(','),
+      filters.playerNames.join(','),
     ].join('|');
     if (!_priorityGameKeys.add(key)) return;
 

@@ -1,5 +1,7 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:chessever/desktop/shell/desktop_main_routes.dart';
 import 'package:chessever/desktop/shell/desktop_pane.dart';
 import 'package:chessever/desktop/shell/desktop_sidebar.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -50,6 +52,99 @@ void main() {
 
   test('Board sidebar entry opens the regular board pane', () {
     expect(debugDesktopSidebarPaneForLabel('Board'), DesktopPane.board);
+  });
+
+  test('Player sidebar entry opens the new Player workspace', () {
+    expect(debugDesktopSidebarPaneForLabel('Player'), DesktopPane.players);
+  });
+
+  test('Rankings sidebar entry keeps the old player index route', () {
+    expect(debugDesktopSidebarPaneForLabel('Rankings'), DesktopPane.rankings);
+  });
+
+  test('Player profile tabs highlight the Player workspace', () {
+    expect(
+      sidebarPaneForActiveTabKind(TabKind.playerProfile),
+      DesktopPane.players,
+    );
+    expect(
+      sidebarPaneForActiveTabKind(TabKind.playerScoreCard),
+      DesktopPane.players,
+    );
+    expect(
+      sidebarPaneForActiveTabKind(TabKind.userProfile),
+      DesktopPane.players,
+    );
+  });
+
+  test('Rankings tab highlights Rankings', () {
+    expect(sidebarPaneForActiveTabKind(TabKind.rankings), DesktopPane.rankings);
+  });
+
+  test('primary sidebar route shortcuts follow the visual route order', () {
+    expect(
+      debugDesktopSidebarShortcutForLabel('Tournaments', isMacOS: false),
+      'Ctrl+1',
+    );
+    expect(
+      debugDesktopSidebarShortcutForLabel('Library', isMacOS: false),
+      'Ctrl+2',
+    );
+    expect(
+      debugDesktopSidebarShortcutForLabel('Favorites', isMacOS: false),
+      'Ctrl+3',
+    );
+    expect(
+      debugDesktopSidebarShortcutForLabel('Player', isMacOS: false),
+      'Ctrl+4',
+    );
+    expect(
+      debugDesktopSidebarShortcutForLabel('Rankings', isMacOS: false),
+      'Ctrl+5',
+    );
+    expect(
+      debugDesktopSidebarShortcutForLabel('Calendar', isMacOS: false),
+      'Ctrl+6',
+    );
+    expect(
+      debugDesktopSidebarShortcutForLabel('Countrymen', isMacOS: false),
+      'Ctrl+7',
+    );
+    expect(
+      debugDesktopSidebarShortcutForLabel('Board', isMacOS: false),
+      'Ctrl+8',
+    );
+    expect(
+      debugDesktopSidebarShortcutForLabel('Play', isMacOS: false),
+      'Ctrl+9',
+    );
+  });
+
+  test('numbered route bindings include Rankings and shift later routes', () {
+    final bindings = desktopMainRouteShortcutBindings().toList();
+
+    expect(bindings.map((binding) => binding.pane), [
+      DesktopPane.tournaments,
+      DesktopPane.library,
+      DesktopPane.favorites,
+      DesktopPane.players,
+      DesktopPane.rankings,
+      DesktopPane.calendar,
+      DesktopPane.countrymen,
+      DesktopPane.board,
+      DesktopPane.play,
+    ]);
+    expect(bindings.map((binding) => binding.key), [
+      LogicalKeyboardKey.digit1,
+      LogicalKeyboardKey.digit2,
+      LogicalKeyboardKey.digit3,
+      LogicalKeyboardKey.digit4,
+      LogicalKeyboardKey.digit5,
+      LogicalKeyboardKey.digit6,
+      LogicalKeyboardKey.digit7,
+      LogicalKeyboardKey.digit8,
+      LogicalKeyboardKey.digit9,
+    ]);
   });
 
   test('Board Editor is launched from board context, not the sidebar', () {

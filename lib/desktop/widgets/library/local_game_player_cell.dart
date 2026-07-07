@@ -15,6 +15,9 @@ const _kTitleStyle = TextStyle(
   fontWeight: FontWeight.w700,
   height: 1.1,
 );
+const double _kLibraryPlayerFlagGap = 6;
+const double _kLibraryPlayerTitleGap = 4;
+const double _kLibraryPlayerRatingGap = 5;
 
 /// Player cell for the local games table: federation flag + title + name.
 ///
@@ -65,10 +68,10 @@ class LocalGamePlayerCell extends ConsumerWidget {
             height: 13,
             borderRadius: BorderRadius.circular(2),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: _kLibraryPlayerFlagGap),
           if (titleChip != null) ...[
             titleChip,
-            const SizedBox(width: 5),
+            const SizedBox(width: _kLibraryPlayerTitleGap),
           ],
           Expanded(
             child: Text(
@@ -85,7 +88,7 @@ class LocalGamePlayerCell extends ConsumerWidget {
             ),
           ),
           if (rating.trim().isNotEmpty) ...[
-            const SizedBox(width: 6),
+            const SizedBox(width: _kLibraryPlayerRatingGap),
             Text(
               rating.trim(),
               style: const TextStyle(
@@ -113,7 +116,8 @@ class LocalGamePlayerCell extends ConsumerWidget {
           },
           error: (_, _) => null,
           loading:
-              () => const SkeletonWidget(child: Text('GM', style: _kTitleStyle)),
+              () =>
+                  const SkeletonWidget(child: Text('GM', style: _kTitleStyle)),
         );
   }
 

@@ -887,7 +887,10 @@ class _CountryPlayerTileState extends ConsumerState<_CountryPlayerTile> {
                           children: [
                             if (player.title != null &&
                                 player.title!.isNotEmpty) ...[
-                              DesktopPlayerTitleChip(title: player.title!, compact: true),
+                              DesktopPlayerTitleChip(
+                                title: player.title!,
+                                compact: true,
+                              ),
                               const SizedBox(width: 6),
                             ],
                             Expanded(
@@ -1025,8 +1028,11 @@ class _FavoriteStarButtonState extends State<_FavoriteStarButton> {
             value: _pressed ? 0.97 : (_hovered ? 1.02 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: Padding(
               padding: const EdgeInsets.all(6),
               child: Icon(
@@ -1276,10 +1282,7 @@ class _CountrymenHero extends StatelessWidget {
           // spring tucked into the FlagBadge widget.
           Cue.onMount(
             motion: const CueMotion.bouncy(),
-            acts: [
-              const Act.fadeIn(),
-              const Act.slideY(from: 0.18),
-            ],
+            acts: [const Act.fadeIn(), const Act.slideY(from: 0.18)],
             child: _FlagBadge(countryCode: code, hasCountry: hasCountry),
           ),
           const SizedBox(width: 16),
@@ -1661,6 +1664,9 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
   final ScrollController _scrollController = ScrollController();
   Timer? _scrollIdleTimer;
   bool _liveCardsPausedForScroll = false;
+  // On-screen column count of the compact/list flow, stashed from its layout
+  // pass so ArrowUp/ArrowDown travel whole rows instead of single cards.
+  int _keyboardColumns = 1;
 
   String get _liveCardsPauseReason => 'desktop_countrymen_scroll';
 
@@ -1734,6 +1740,7 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
             scopeId: 'countrymen-games',
             games: widget.games,
             pageStride: columns * 3,
+            resolveColumnCount: () => columns,
             onActivateGame:
                 (game) => _openCountrymenGame(
                   ref,
@@ -1836,6 +1843,7 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
     return DesktopGameKeyboardFocus(
       scopeId: 'countrymen-games',
       games: widget.games,
+      resolveColumnCount: () => _keyboardColumns,
       onActivateGame:
           (game) =>
               _openCountrymenGame(ref, game, widget.routeTitle, widget.games),
@@ -1869,6 +1877,7 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                   child: DesktopGameCardsFlow(
                     layout: layout,
                     embedded: true,
+                    onColumnsResolved: (c) => _keyboardColumns = c,
                     itemCount: groups[groupIndex].games.length,
                     itemBuilder: (context, i) {
                       final flatIndex =
@@ -1891,10 +1900,7 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                           motion: const CueMotion.smooth(),
                           child: Actor(
                             delay: delay,
-                            acts: const [
-                              Act.fadeIn(),
-                              Act.slideY(from: 0.18),
-                            ],
+                            acts: const [Act.fadeIn(), Act.slideY(from: 0.18)],
                             child: LiveDesktopGameCard(
                               game: game,
                               tournamentTitle: game.tourSlug ?? 'Countrymen',

@@ -25,13 +25,13 @@ import 'package:chessever/widgets/auth/auth_upgrade_sheet.dart';
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 
-/// Desktop players route.
+/// Desktop rankings route.
 ///
 /// Uses the same player pagination/search provider as onboarding, but presents
 /// it as a persistent desktop main route: search, scroll, open a profile, and
 /// favorite/unfavorite directly from the list.
-class PlayersPane extends HookConsumerWidget {
-  const PlayersPane({super.key});
+class RankingsPane extends HookConsumerWidget {
+  const RankingsPane({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -42,7 +42,18 @@ class PlayersPane extends HookConsumerWidget {
     final favorites = ref.watch(favoritePlayersProviderNew);
 
     useEffect(() {
-      unawaited(ref.read(playerPaginationProvider.notifier).initFirstPage());
+      var disposed = false;
+
+      // Riverpod forbids synchronous provider mutations while this hook is
+      // mounted during build, so kick the initial load to the next event turn.
+      unawaited(
+        Future<void>(() {
+          if (disposed) return;
+          unawaited(
+            ref.read(playerPaginationProvider.notifier).initFirstPage(),
+          );
+        }),
+      );
 
       void onScroll() {
         if (!scrollController.hasClients) return;
@@ -58,6 +69,7 @@ class PlayersPane extends HookConsumerWidget {
 
       scrollController.addListener(onScroll);
       return () {
+        disposed = true;
         debounceTimer.value?.cancel();
         scrollController.removeListener(onScroll);
       };
@@ -104,7 +116,7 @@ class PlayersPane extends HookConsumerWidget {
                 ),
                 const SizedBox(width: 10),
                 const Text(
-                  'Players',
+                  'Rankings',
                   style: TextStyle(
                     color: kWhiteColor,
                     fontSize: 18,
@@ -343,8 +355,11 @@ class _PlayerTileState extends State<_PlayerTile> {
             value: _pressed ? 0.99 : (_hovered ? 1.003 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 140),
               curve: Curves.easeOut,
@@ -368,7 +383,10 @@ class _PlayerTileState extends State<_PlayerTile> {
                         Row(
                           children: [
                             if (title != null) ...[
-                              DesktopPlayerTitleChip(title: title, compact: true),
+                              DesktopPlayerTitleChip(
+                                title: title,
+                                compact: true,
+                              ),
                               const SizedBox(width: 6),
                             ],
                             Expanded(
@@ -485,8 +503,11 @@ class _FavoriteToggleState extends State<_FavoriteToggle> {
             value: _pressed ? 0.97 : (_hovered ? 1.02 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: Container(
               width: 30,
               height: 30,

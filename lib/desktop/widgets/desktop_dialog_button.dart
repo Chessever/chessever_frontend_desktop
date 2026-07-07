@@ -30,12 +30,21 @@ class DesktopDialogButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final buttonChild =
+        child ??
+        Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          softWrap: false,
+        );
+    final contentChild = fillWidth ? Flexible(child: buttonChild) : buttonChild;
     final button = FButton(
       style: desktopDialogButtonStyle(tone: tone),
       onPress: onPress,
       mainAxisSize: fillWidth ? MainAxisSize.max : MainAxisSize.min,
       prefix: prefix ?? (icon == null ? null : Icon(icon)),
-      child: child ?? Text(label),
+      child: contentChild,
     );
 
     final wrapped =

@@ -8,6 +8,37 @@
 List<T> selectPlayerScoreCardBoardRailGames<T>({
   required List<T> displayedGames,
   required List<T> resolvedGames,
+  T? selectedGame,
+  bool Function(T game, T selectedGame)? isSameGame,
+  int contextRadius = 30,
 }) {
-  return displayedGames.isNotEmpty ? displayedGames : resolvedGames;
+  final source = displayedGames.isNotEmpty ? displayedGames : resolvedGames;
+  if (selectedGame == null || isSameGame == null) return source;
+  return _selectedContextWindow(
+    selectedGame: selectedGame,
+    games: source,
+    isSameGame: isSameGame,
+    contextRadius: contextRadius,
+  );
+}
+
+List<T> _selectedContextWindow<T>({
+  required T selectedGame,
+  required List<T> games,
+  required bool Function(T game, T selectedGame) isSameGame,
+  required int contextRadius,
+}) {
+  if (games.isEmpty) return <T>[selectedGame];
+  final selectedIndex = games.indexWhere(
+    (game) => isSameGame(game, selectedGame),
+  );
+  if (selectedIndex < 0) return <T>[selectedGame];
+
+  final radius = contextRadius < 0 ? 0 : contextRadius;
+  final start = selectedIndex - radius < 0 ? 0 : selectedIndex - radius;
+  final end =
+      selectedIndex + radius + 1 > games.length
+          ? games.length
+          : selectedIndex + radius + 1;
+  return games.sublist(start, end);
 }

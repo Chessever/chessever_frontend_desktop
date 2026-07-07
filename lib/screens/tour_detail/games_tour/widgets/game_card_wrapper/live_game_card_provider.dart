@@ -371,6 +371,27 @@ GamesTourModel mergeLiveGameUpdateWithBase({
 bool shouldReplaceBaseGame(GamesTourModel? current, GamesTourModel incoming) =>
     _shouldUseIncomingGame(current, incoming, allowEqualFreshnessUpdate: true);
 
+/// Selects the game snapshot to hand to a newly opened board.
+///
+/// A card can already hold a newer realtime position than a one-shot REST fetch,
+/// while the REST fetch can carry a richer/full PGN than the card's list row.
+/// This helper keeps navigation monotonic: use the incoming row only when it is
+/// at least as fresh, or when it enriches PGN without moving the game backwards.
+GamesTourModel selectFreshestNavigationGame({
+  required GamesTourModel current,
+  required GamesTourModel incoming,
+}) {
+  if (current.gameId != incoming.gameId) return current;
+  if (_shouldUseIncomingGame(
+    current,
+    incoming,
+    allowEqualFreshnessUpdate: true,
+  )) {
+    return incoming;
+  }
+  return _incomingHasRicherPgn(current, incoming) ? incoming : current;
+}
+
 GamesTourModel _mergeLiveUpdate({
   required GamesTourModel baseGame,
   required LiveGameUpdate update,
@@ -649,6 +670,29 @@ bool _hasLiveFieldChanges(GamesTourModel current, GamesTourModel incoming) {
       current.whiteClockSeconds != incoming.whiteClockSeconds ||
       current.blackClockSeconds != incoming.blackClockSeconds ||
       current.gameStatus != incoming.gameStatus;
+}
+
+bool _incomingHasRicherPgn(GamesTourModel current, GamesTourModel incoming) {
+  final incomingPgnLength = incoming.pgn?.trim().length ?? 0;
+  final currentPgnLength = current.pgn?.trim().length ?? 0;
+  if (incomingPgnLength <= currentPgnLength) return false;
+
+  final currentTime = current.lastMoveTime;
+  final incomingTime = incoming.lastMoveTime;
+  if (currentTime != null &&
+      incomingTime != null &&
+      incomingTime.isBefore(currentTime)) {
+    return false;
+  }
+
+  final currentPly = _knownPly(current);
+  final incomingPly = _knownPly(incoming);
+  if (currentPly != null && incomingPly != null && incomingPly < currentPly) {
+    return false;
+  }
+  if (currentPly != null && incomingPly == null) return false;
+
+  return true;
 }
 
 int? _knownPly(GamesTourModel game) {

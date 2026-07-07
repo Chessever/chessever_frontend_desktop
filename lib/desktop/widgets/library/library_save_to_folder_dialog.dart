@@ -13,6 +13,7 @@ import 'package:chessever/desktop/services/local_library_writer.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tappable.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
@@ -588,9 +589,10 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
         .where((f) => _selected.contains(f.id))
         .toList(growable: false);
 
-    final localEntries = librarySaveAllowsLocalDestinations(widget.destinationMode)
-        ? ref.watch(localLibraryRegistryProvider).entries
-        : const <LocalLibraryEntry>[];
+    final localEntries =
+        librarySaveAllowsLocalDestinations(widget.destinationMode)
+            ? ref.watch(localLibraryRegistryProvider).entries
+            : const <LocalLibraryEntry>[];
     final selectedLocalPaths = localEntries
         .map((e) => e.path)
         .where(
@@ -1363,7 +1365,8 @@ class _AddLocalFolderTile extends StatefulWidget {
   State<_AddLocalFolderTile> createState() => _AddLocalFolderTileState();
 }
 
-class _AddLocalFolderTileState extends State<_AddLocalFolderTile> {
+class _AddLocalFolderTileState extends State<_AddLocalFolderTile>
+    with DeferredPointerStateMixin<_AddLocalFolderTile> {
   bool _hovered = false;
 
   @override
@@ -1374,8 +1377,14 @@ class _AddLocalFolderTileState extends State<_AddLocalFolderTile> {
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: ClickCursor(
         child: MouseRegion(
-          onEnter: enabled ? (_) => setState(() => _hovered = true) : null,
-          onExit: enabled ? (_) => setState(() => _hovered = false) : null,
+          onEnter:
+              enabled
+                  ? (_) => setStateAfterPointerEvent(() => _hovered = true)
+                  : null,
+          onExit:
+              enabled
+                  ? (_) => setStateAfterPointerEvent(() => _hovered = false)
+                  : null,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: widget.onTap,
@@ -1434,7 +1443,8 @@ class _LocalFolderRow extends StatefulWidget {
   State<_LocalFolderRow> createState() => _LocalFolderRowState();
 }
 
-class _LocalFolderRowState extends State<_LocalFolderRow> {
+class _LocalFolderRowState extends State<_LocalFolderRow>
+    with DeferredPointerStateMixin<_LocalFolderRow> {
   bool _hovered = false;
 
   @override
@@ -1451,8 +1461,8 @@ class _LocalFolderRowState extends State<_LocalFolderRow> {
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: ClickCursor(
         child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit: (_) => setState(() => _hovered = false),
+          onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+          onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: widget.disabled ? null : widget.onToggle,
@@ -1851,7 +1861,8 @@ class _FolderRow extends StatefulWidget {
   State<_FolderRow> createState() => _FolderRowState();
 }
 
-class _FolderRowState extends State<_FolderRow> {
+class _FolderRowState extends State<_FolderRow>
+    with DeferredPointerStateMixin<_FolderRow> {
   bool _hovered = false;
 
   @override
@@ -1868,8 +1879,8 @@ class _FolderRowState extends State<_FolderRow> {
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: ClickCursor(
         child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit: (_) => setState(() => _hovered = false),
+          onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+          onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: widget.disabled ? null : widget.onToggle,

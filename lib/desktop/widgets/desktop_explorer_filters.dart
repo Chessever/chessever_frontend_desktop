@@ -837,13 +837,6 @@ class _PlayerFilterField extends HookConsumerWidget {
     final debounced = useState<String>('');
     final debounceTimer = useRef<Timer?>(null);
     final focusNode = useFocusNode();
-    final isFocused = useState<bool>(false);
-
-    useEffect(() {
-      void onFocus() => isFocused.value = focusNode.hasFocus;
-      focusNode.addListener(onFocus);
-      return () => focusNode.removeListener(onFocus);
-    }, [focusNode]);
 
     useEffect(() {
       return () => debounceTimer.value?.cancel();
@@ -856,8 +849,11 @@ class _PlayerFilterField extends HookConsumerWidget {
       );
     }
 
+    final normalizedQuery = query.value.trim();
+    final isSearchable = normalizedQuery.length >= 2;
+    final isDebouncing = isSearchable && debounced.value != normalizedQuery;
     final results =
-        debounced.value.length >= 2
+        isSearchable && !isDebouncing
             ? ref.watch(playerSearchProvider(debounced.value))
             : const AsyncValue<List<GamebasePlayer>>.data([]);
 
@@ -868,16 +864,28 @@ class _PlayerFilterField extends HookConsumerWidget {
           controller: controller,
           focusNode: focusNode,
           hintText: 'Search players (min 2 chars)',
+          trailing:
+              isDebouncing
+                  ? const SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                    ),
+                  )
+                  : null,
           onChanged: (v) {
             query.value = v;
             debounceTimer.value?.cancel();
-            if (v.trim().length < 2) {
+            final normalized = v.trim();
+            if (normalized.length < 2) {
               debounced.value = '';
               return;
             }
             debounceTimer.value = Timer(
-              const Duration(milliseconds: 250),
-              () => debounced.value = v.trim(),
+              const Duration(milliseconds: 180),
+              () => debounced.value = normalized,
             );
           },
           onClear: () {
@@ -886,7 +894,7 @@ class _PlayerFilterField extends HookConsumerWidget {
             query.value = '';
           },
         ),
-        if (isFocused.value && query.value.trim().length >= 2)
+        if (isSearchable)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Container(
@@ -896,66 +904,97 @@ class _PlayerFilterField extends HookConsumerWidget {
                 borderRadius: BorderRadius.circular(6),
                 border: Border.all(color: kDividerColor),
               ),
-              child: results.when(
-                data: (players) {
-                  if (players.isEmpty) {
-                    return const Padding(
-                      padding: EdgeInsets.all(14),
-                      child: Text(
-                        'No players found',
-                        style: TextStyle(color: kLightGreyColor, fontSize: 11),
-                      ),
-                    );
-                  }
-                  return ListView.separated(
-                    shrinkWrap: true,
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    physics: const DesktopScrollPhysics(),
-                    itemCount: players.length,
-                    separatorBuilder:
-                        (_, __) =>
-                            const Divider(color: kDividerColor, height: 1),
-                    itemBuilder: (context, i) {
-                      final p = players[i];
-                      return _PlayerSearchHit(
-                        player: p,
-                        onTap: () {
-                          onAdd(p);
-                          controller.clear();
-                          query.value = '';
-                          debounced.value = '';
-                          focusNode.unfocus();
+              child:
+                  isDebouncing
+                      ? const _PlayerSearchStatus(
+                        message: 'Searching players...',
+                        loading: true,
+                      )
+                      : results.when(
+                        data: (players) {
+                          if (players.isEmpty) {
+                            return const _PlayerSearchStatus(
+                              message: 'No players found',
+                            );
+                          }
+                          return ListView.separated(
+                            shrinkWrap: true,
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            physics: const DesktopScrollPhysics(),
+                            itemCount: players.length,
+                            separatorBuilder:
+                                (_, __) => const Divider(
+                                  color: kDividerColor,
+                                  height: 1,
+                                ),
+                            itemBuilder: (context, i) {
+                              final p = players[i];
+                              return _PlayerSearchHit(
+                                player: p,
+                                onTap: () {
+                                  debounceTimer.value?.cancel();
+                                  onAdd(p);
+                                  controller.clear();
+                                  query.value = '';
+                                  debounced.value = '';
+                                  focusNode.unfocus();
+                                },
+                              );
+                            },
+                          );
                         },
-                      );
-                    },
-                  );
-                },
-                loading:
-                    () => const Padding(
-                      padding: EdgeInsets.all(14),
-                      child: Center(
-                        child: SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 1.6,
-                            valueColor: AlwaysStoppedAnimation(kPrimaryColor),
-                          ),
-                        ),
+                        loading:
+                            () => const _PlayerSearchStatus(
+                              message: 'Searching players...',
+                              loading: true,
+                            ),
+                        error:
+                            (_, __) => const _PlayerSearchStatus(
+                              message: 'Search failed',
+                              color: kRedColor,
+                            ),
                       ),
-                    ),
-                error:
-                    (_, __) => const Padding(
-                      padding: EdgeInsets.all(14),
-                      child: Text(
-                        'Search failed',
-                        style: TextStyle(color: kRedColor, fontSize: 11),
-                      ),
-                    ),
-              ),
             ),
           ),
       ],
+    );
+  }
+}
+
+class _PlayerSearchStatus extends StatelessWidget {
+  const _PlayerSearchStatus({
+    required this.message,
+    this.loading = false,
+    this.color = kLightGreyColor,
+  });
+
+  final String message;
+  final bool loading;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (loading) ...[
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.6,
+                valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+              ),
+            ),
+            const SizedBox(width: 10),
+          ],
+          Flexible(
+            child: Text(message, style: TextStyle(color: color, fontSize: 11)),
+          ),
+        ],
+      ),
     );
   }
 }

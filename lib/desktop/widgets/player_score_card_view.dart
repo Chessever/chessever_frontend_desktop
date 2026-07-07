@@ -16,7 +16,6 @@ import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart'
     show synthesizePlayerStandingModel;
-import 'package:chessever/desktop/services/tournament_pgn_loader.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
@@ -27,6 +26,7 @@ import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/providers/player_backfill_provider.dart';
+import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
@@ -43,6 +43,7 @@ import 'package:chessever/screens/standings/score_card_screen.dart'
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/screens/tour_detail/player_tour/player_tour_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
 import 'package:chessever/services/fide_photo_service.dart';
@@ -244,36 +245,32 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
     bool background = false,
     List<GamesTourModel> eventGames = const <GamesTourModel>[],
   }) async {
-    String? pgn = game.pgn;
-    if (pgn == null || pgn.trim().isEmpty) {
-      try {
-        pgn = await TournamentPgnLoader(ref).fetchPgnOnly(game.gameId);
-      } catch (_) {
-        pgn = null;
-      }
-    }
+    final openedGame = await _hydrateGameForBoardOpen(game);
+    final pgn = openedGame.pgn?.trim();
+    final contextGames = _replaceGameInContext(
+      eventGames.isEmpty ? <GamesTourModel>[game] : eventGames,
+      openedGame,
+    );
     final args = BoardTabGameArgs(
-      gameId: game.gameId,
+      gameId: openedGame.gameId,
       pgn: pgn ?? '',
-      label: '${game.whitePlayer.name} vs ${game.blackPlayer.name}',
-      whiteName: game.whitePlayer.name,
-      blackName: game.blackPlayer.name,
-      whiteFederation: game.whitePlayer.federation,
-      blackFederation: game.blackPlayer.federation,
-      whiteTitle: game.whitePlayer.title,
-      blackTitle: game.blackPlayer.title,
-      whiteRating: game.whitePlayer.rating,
-      blackRating: game.blackPlayer.rating,
-      whiteFideId: game.whitePlayer.fideId,
-      blackFideId: game.blackPlayer.fideId,
-      fenSeed: game.fen,
-      sourceGame: game.copyWith(pgn: pgn),
+      label: '${openedGame.whitePlayer.name} vs ${openedGame.blackPlayer.name}',
+      whiteName: openedGame.whitePlayer.name,
+      blackName: openedGame.blackPlayer.name,
+      whiteFederation: openedGame.whitePlayer.federation,
+      blackFederation: openedGame.blackPlayer.federation,
+      whiteTitle: openedGame.whitePlayer.title,
+      blackTitle: openedGame.blackPlayer.title,
+      whiteRating: openedGame.whitePlayer.rating,
+      blackRating: openedGame.blackPlayer.rating,
+      whiteFideId: openedGame.whitePlayer.fideId,
+      blackFideId: openedGame.blackPlayer.fideId,
+      fenSeed: openedGame.fen,
+      sourceGame: openedGame.copyWith(pgn: pgn),
       viewSource: ref.read(chessboardViewFromProviderNew),
       tournamentTitle: tournamentTitle,
-      eventGames: _summariesFromGames(
-        eventGames.isEmpty ? <GamesTourModel>[game] : eventGames,
-      ),
-      gameListSelectedId: game.gameId,
+      eventGames: _summariesFromGames(contextGames),
+      gameListSelectedId: openedGame.gameId,
     );
     // Set the chessboard view bucket so the underlying live-stream provider
     // resolves to the right context (favScorecard for For You-mode, otherwise
@@ -290,6 +287,35 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
       reuseExisting: false,
       replaceActive: !background,
     );
+  }
+
+  Future<GamesTourModel> _hydrateGameForBoardOpen(GamesTourModel game) async {
+    if (game.source != GameSource.supabase || game.gameId.trim().isEmpty) {
+      return game;
+    }
+
+    try {
+      final latestRow = await ref
+          .read(gameRepositoryProvider)
+          .getGameWithPGN(game.gameId);
+      final latest = GamesTourModel.fromGame(latestRow);
+      return selectFreshestNavigationGame(current: game, incoming: latest);
+    } catch (_) {
+      return game;
+    }
+  }
+
+  List<GamesTourModel> _replaceGameInContext(
+    List<GamesTourModel> games,
+    GamesTourModel selected,
+  ) {
+    if (games.isEmpty) return games;
+    final index = games.indexWhere((game) => game.gameId == selected.gameId);
+    if (index < 0) return games;
+
+    final next = List<GamesTourModel>.from(games);
+    next[index] = selected;
+    return next;
   }
 
   void _openOpponentScoreCard(GamesTourModel game, bool playerIsWhite) {
@@ -529,10 +555,15 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
       player: player,
       hasEventContext: hasEventContext,
     );
-    final boardRailGames = selectPlayerScoreCardBoardRailGames(
-      displayedGames: filtered,
-      resolvedGames: games.games,
-    );
+    List<GamesTourModel> boardRailGamesFor(GamesTourModel selectedGame) {
+      return selectPlayerScoreCardBoardRailGames<GamesTourModel>(
+        displayedGames: filtered,
+        resolvedGames: games.games,
+        selectedGame: selectedGame,
+        isSameGame:
+            (game, selected) => game.gameId.trim() == selected.gameId.trim(),
+      );
+    }
 
     return Container(
       color: kBackgroundColor,
@@ -585,14 +616,14 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
                         (g, isWhite) => _openGameTab(
                           g,
                           boardContextTitle,
-                          eventGames: boardRailGames,
+                          eventGames: boardRailGamesFor(g),
                         ),
                     onOpenBackground:
                         (g, isWhite) => _openGameTab(
                           g,
                           boardContextTitle,
                           background: true,
-                          eventGames: boardRailGames,
+                          eventGames: boardRailGamesFor(g),
                         ),
                     onContext:
                         (pos, g, isWhite) => _showRowContextMenu(
@@ -600,7 +631,7 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
                           game: g,
                           playerIsWhite: isWhite,
                           tournamentTitle: boardContextTitle,
-                          eventGames: boardRailGames,
+                          eventGames: boardRailGamesFor(g),
                         ),
                     onOpenOpponent: _openOpponentScoreCard,
                   ),

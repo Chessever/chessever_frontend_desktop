@@ -102,6 +102,26 @@ String localChessDatabaseDisplayNameForPath(String path) {
   return '${_polishLocalDatabaseStem(stem)}$extension';
 }
 
+String localChessDatabaseDisplayNameForPaths(List<String> paths) {
+  final cleaned = paths
+      .map((path) => path.trim())
+      .where((path) => path.isNotEmpty)
+      .toList(growable: false);
+  if (cleaned.isEmpty) return 'Local database';
+  if (cleaned.length == 1) {
+    return localChessDatabaseDisplayNameForPath(cleaned.single);
+  }
+
+  final allPgnLike = cleaned.every((path) {
+    final lower = path.toLowerCase();
+    return localChessSupportedExtensions.any(lower.endsWith);
+  });
+  if (allPgnLike) {
+    return '${cleaned.length} PGN files';
+  }
+  return '${cleaned.length} local databases';
+}
+
 @immutable
 class LocalChessSource {
   const LocalChessSource({
@@ -1248,15 +1268,16 @@ Future<LocalChessSource> _runScan(
     );
   }
   _sortNodes(children);
+  final label = sourceLabel ?? localChessDatabaseDisplayNameForPaths(paths);
   final root = LocalChessFolderNode.fromChildren(
-    name: sourceLabel ?? 'Dropped chess files',
+    name: label,
     path: 'local-batch:${_stableId(paths.join('|'))}',
     relativePath: '',
     children: children,
   );
   return LocalChessSource(
     id: _stableId(paths.join('|')),
-    label: sourceLabel ?? 'Dropped chess files',
+    label: label,
     paths: paths,
     rootPath: root.path,
     scannedAt: DateTime.now(),

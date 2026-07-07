@@ -375,6 +375,9 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
   Timer? _scrollIdleTimer;
   bool _liveCardsPausedForScroll = false;
   bool _emptyMiniaturesPageLoadQueued = false;
+  // On-screen column count of the compact flow, stashed from its layout pass
+  // so ArrowUp/ArrowDown travel whole rows instead of single cards.
+  int _keyboardColumns = 1;
 
   String get _liveCardsPauseReason =>
       'desktop_smart_games_scroll_${widget.routeTitle}';
@@ -560,6 +563,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
             scopeId: scopeId,
             games: keyboardGames,
             pageStride: columns * 3,
+            resolveColumnCount: () => columns,
             ensureInitialSelectionVisible: false,
             onActivateGame:
                 (game) =>
@@ -667,6 +671,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
     return DesktopGameKeyboardFocus(
       scopeId: scopeId,
       games: keyboardGames,
+      resolveColumnCount: () => _keyboardColumns,
       ensureInitialSelectionVisible: false,
       onActivateGame:
           (game) => _openSmartGame(ref, game, widget.routeTitle, groupedGames),
@@ -688,6 +693,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                     child: DesktopGameCardsFlow(
                       layout: layout,
                       embedded: true,
+                      onColumnsResolved: (c) => _keyboardColumns = c,
                       itemCount: sections[sectionIndex].games.length,
                       itemBuilder: (context, i) {
                         final game = sections[sectionIndex].games[i];

@@ -319,7 +319,7 @@ void main() {
     },
   );
 
-  testWidgets('tournament cards open the board before network hydration', (
+  testWidgets('tournament cards open without event-list hydration', (
     tester,
   ) async {
     final repository = _BlockingGameRepository();
@@ -357,9 +357,9 @@ void main() {
     );
     expect(argsByTab[activeId]?.gameId, 'game-1');
     expect(argsByTab[activeId]?.eventGames, hasLength(1));
-    expect(argsByTab[activeId]?.eventGamesLoading, isTrue);
+    expect(argsByTab[activeId]?.eventGamesLoading, isFalse);
     expect(repository.gamePgnFetches, 0);
-    expect(repository.eventFetches, 1);
+    expect(repository.eventFetches, 0);
 
     repository.complete();
   });
@@ -369,8 +369,7 @@ void main() {
   ) async {
     late Map<String, BoardTabGameArgs> argsByTab;
     final routeGames = [
-      _game(gameId: 'game-1', tourId: 'tour-1'),
-      _game(gameId: 'game-2', tourId: 'tour-2'),
+      for (var i = 0; i < 100; i++) _game(gameId: 'game-$i', tourId: 'tour-$i'),
     ];
 
     await tester.pumpWidget(
@@ -385,7 +384,7 @@ void main() {
                 onPressed: () {
                   openTournamentGameTab(
                     ref,
-                    routeGames.first,
+                    routeGames[50],
                     'Event',
                     routeTitle: 'Player games',
                     routeGames: routeGames,
@@ -405,8 +404,11 @@ void main() {
 
     final args = argsByTab.values.single;
     expect(args.routeTitle, 'Player games');
-    expect(args.routeGames.map((game) => game.id), ['game-1', 'game-2']);
-    expect(args.eventGames.map((game) => game.id), ['game-1']);
+    expect(args.routeGames, hasLength(61));
+    expect(args.routeGames.first.id, 'game-20');
+    expect(args.routeGames.last.id, 'game-80');
+    expect(args.routeGames.map((game) => game.id), contains('game-50'));
+    expect(args.eventGames.map((game) => game.id), ['game-50']);
   });
 }
 

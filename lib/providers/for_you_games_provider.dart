@@ -460,6 +460,9 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
         bumpForYouEventsRefreshSignal(ref);
       }
     } catch (e, stack) {
+      if (!shouldReportForYouLiveTopGameRefreshFailure(e)) {
+        return;
+      }
       debugPrint('[ForYou] Live top-game refresh failed: $e');
       debugPrint('[ForYou] Live top-game stack: $stack');
       _logErrorToSentry(e, stack);
@@ -697,6 +700,11 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
 bool isLiveRefreshingForYouEvent(GroupEventCardModel event) {
   return event.tourEventCategory == TourEventCategory.live ||
       event.tourEventCategory == TourEventCategory.ongoing;
+}
+
+@visibleForTesting
+bool shouldReportForYouLiveTopGameRefreshFailure(Object error) {
+  return error is! TimeoutException;
 }
 
 List<int> _favoriteFideIdsFrom(Iterable<FavoritePlayer> favorites) {

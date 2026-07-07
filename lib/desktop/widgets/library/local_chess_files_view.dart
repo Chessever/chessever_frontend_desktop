@@ -16,6 +16,7 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
@@ -1380,41 +1381,55 @@ class _LocalGamesTable extends HookConsumerWidget {
                             itemBuilder: (context, index) {
                               final game = games[index];
                               return _LocalGamesDataRow(
-                        key: ValueKey('local-game-table-${game.id}'),
-                        index: index,
-                        game: game,
-                        selected: effectiveSelectedIds.contains(game.id),
-                        onTapDown: (details) {
-                          final keys =
-                              HardwareKeyboard.instance.logicalKeysPressed;
-                          selectIndex(
-                            index,
-                            toggle:
-                                keys.contains(LogicalKeyboardKey.controlLeft) ||
-                                keys.contains(
-                                  LogicalKeyboardKey.controlRight,
-                                ) ||
-                                keys.contains(LogicalKeyboardKey.metaLeft) ||
-                                keys.contains(LogicalKeyboardKey.metaRight),
-                            range:
-                                keys.contains(LogicalKeyboardKey.shiftLeft) ||
-                                keys.contains(LogicalKeyboardKey.shiftRight),
-                          );
-                        },
-                        onDoubleTap: () {
-                          selectIndex(index);
-                          _openLocalGame(
-                            ref,
-                            game,
-                            sourceLabel: databaseTitle,
-                            databaseGames: databaseGames,
-                            localOpeningTreeIndex: openableTreeIndex,
-                          );
-                        },
-                        onSecondaryTapUp:
-                            (details) => unawaited(
-                              openRowMenu(game, details.globalPosition),
-                            ),
+                                key: ValueKey('local-game-table-${game.id}'),
+                                index: index,
+                                game: game,
+                                selected: effectiveSelectedIds.contains(
+                                  game.id,
+                                ),
+                                onTapDown: (details) {
+                                  final keys =
+                                      HardwareKeyboard
+                                          .instance
+                                          .logicalKeysPressed;
+                                  selectIndex(
+                                    index,
+                                    toggle:
+                                        keys.contains(
+                                          LogicalKeyboardKey.controlLeft,
+                                        ) ||
+                                        keys.contains(
+                                          LogicalKeyboardKey.controlRight,
+                                        ) ||
+                                        keys.contains(
+                                          LogicalKeyboardKey.metaLeft,
+                                        ) ||
+                                        keys.contains(
+                                          LogicalKeyboardKey.metaRight,
+                                        ),
+                                    range:
+                                        keys.contains(
+                                          LogicalKeyboardKey.shiftLeft,
+                                        ) ||
+                                        keys.contains(
+                                          LogicalKeyboardKey.shiftRight,
+                                        ),
+                                  );
+                                },
+                                onDoubleTap: () {
+                                  selectIndex(index);
+                                  _openLocalGame(
+                                    ref,
+                                    game,
+                                    sourceLabel: databaseTitle,
+                                    databaseGames: databaseGames,
+                                    localOpeningTreeIndex: openableTreeIndex,
+                                  );
+                                },
+                                onSecondaryTapUp:
+                                    (details) => unawaited(
+                                      openRowMenu(game, details.globalPosition),
+                                    ),
                               );
                             },
                           ),
@@ -1442,7 +1457,7 @@ class _LocalGamesTable extends HookConsumerWidget {
 }
 
 const double _kLocalGameRowHeight = 44;
-const int _kLocalDatabaseGameQueryPageSize = 1000;
+const int _kLocalDatabaseGameQueryPageSize = 200;
 const double _kLocalDatabaseScrollLoadMoreThreshold = 420;
 const String _kLocalDatabaseTreeStartingFen =
     'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -1965,8 +1980,8 @@ class _LocalHeaderCell extends StatelessWidget {
                 alignEnd
                     ? MainAxisAlignment.end
                     : center
-                        ? MainAxisAlignment.center
-                        : MainAxisAlignment.start,
+                    ? MainAxisAlignment.center
+                    : MainAxisAlignment.start,
             children: [
               Flexible(
                 child: Text(
@@ -2019,7 +2034,8 @@ class _LocalGamesDataRow extends StatefulWidget {
   State<_LocalGamesDataRow> createState() => _LocalGamesDataRowState();
 }
 
-class _LocalGamesDataRowState extends State<_LocalGamesDataRow> {
+class _LocalGamesDataRowState extends State<_LocalGamesDataRow>
+    with DeferredPointerStateMixin<_LocalGamesDataRow> {
   bool _hovered = false;
 
   String _ratingText(int? value) =>
@@ -2030,8 +2046,8 @@ class _LocalGamesDataRowState extends State<_LocalGamesDataRow> {
     final md = widget.game.game.metadata;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+      onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTapDown: widget.onTapDown,
@@ -2585,7 +2601,7 @@ BoardTabGameArgs _boardArgsForLocalGame(
   );
 }
 
-const int _kLocalBoardContextRadius = 100;
+const int _kLocalBoardContextRadius = 30;
 
 List<LocalChessGame> _localBoardContextGames(
   LocalChessGame selected,
@@ -2690,7 +2706,10 @@ List<ChessGame> _hydrateLocalGamesForSave(List<LocalChessGame> games) {
       // the raw PGN never had; keep them when saving to the library.
       out.add(
         parsed.copyWith(
-          metadata: <String, dynamic>{...game.game.metadata, ...parsed.metadata},
+          metadata: <String, dynamic>{
+            ...game.game.metadata,
+            ...parsed.metadata,
+          },
         ),
       );
     } catch (_) {

@@ -71,6 +71,27 @@ void main() {
       expect(localChessDatabaseDisplayNameForPath('/tmp/mini.pgn'), 'mini.pgn');
     });
 
+    test('database source labels are derived from local paths', () {
+      expect(
+        localChessDatabaseDisplayNameForPaths(<String>['/tmp/idc_2053.pgn']),
+        'IDC_2053.pgn',
+      );
+      expect(
+        localChessDatabaseDisplayNameForPaths(<String>[
+          r'C:\Users\Vasif\one.pgn',
+          '/tmp/two.pgn',
+        ]),
+        '2 PGN files',
+      );
+      expect(
+        localChessDatabaseDisplayNameForPaths(<String>[
+          '/tmp/archive.pgn.zst',
+          '/tmp/database-folder',
+        ]),
+        '2 local databases',
+      );
+    });
+
     test('input path identity follows Windows filesystem semantics', () {
       expect(
         localChessInputPathKey(r'C:\DB\Games\..\Round.PGN', windows: true),

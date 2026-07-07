@@ -17,6 +17,7 @@ import 'package:chessever/desktop/panes/notification_settings_pane.dart';
 import 'package:chessever/desktop/panes/placeholder_pane.dart';
 import 'package:chessever/desktop/panes/player_profile_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
+import 'package:chessever/desktop/panes/player_workspace_pane.dart';
 import 'package:chessever/desktop/panes/play_pane.dart';
 import 'package:chessever/desktop/panes/play_profile_pane.dart';
 import 'package:chessever/desktop/panes/players_pane.dart';
@@ -27,11 +28,12 @@ import 'package:chessever/desktop/panes/tournaments_pane.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart'
-    show LocalChessScanProgress;
+    show LocalChessScanProgress, localChessDatabaseDisplayNameForPaths;
 import 'package:chessever/desktop/widgets/paywall/desktop_billing_issue_dialog.dart';
 import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/services/pgn_file_picker.dart';
 import 'package:chessever/desktop/shell/command_palette.dart';
+import 'package:chessever/desktop/shell/desktop_main_routes.dart';
 import 'package:chessever/desktop/shell/desktop_pane.dart';
 import 'package:chessever/desktop/shell/desktop_pane_navigation.dart';
 import 'package:chessever/desktop/shell/desktop_shell_intents.dart';
@@ -72,9 +74,10 @@ const _sidebarAutoCollapseBreakpoint = 1500.0;
 /// Tabs live in `desktopTabsProvider`. The sidebar is still useful as a
 /// category rail — selecting an item navigates the foreground tab, while
 /// Cmd/Ctrl-clicking an item opens it in a new tab. Number shortcuts
-/// (`Cmd/Ctrl+1..8`) jump through sidebar panes in visual order, while tab
-/// management keeps the browser conventions for new/close tab, last tab,
-/// `Ctrl+Tab`, and bracket cycling.
+/// (`Cmd/Ctrl+1..9`) jump through sidebar panes in visual order. Tab
+/// management keeps new/close tab, `Ctrl+Tab`, and bracket cycling; the
+/// last-tab jump moves to `Cmd/Ctrl+Alt+9` because plain 9 now belongs to
+/// the ninth sidebar route.
 class DesktopShell extends HookConsumerWidget {
   const DesktopShell({super.key});
 
@@ -376,72 +379,16 @@ class DesktopShell extends HookConsumerWidget {
           const SingleActivator(LogicalKeyboardKey.keyV, control: true):
               const _PastePgnIntent(),
           const SingleActivator(
-            LogicalKeyboardKey.digit1,
-            meta: true,
-          ): const SwitchPaneIntent(DesktopPane.tournaments),
-          const SingleActivator(
-            LogicalKeyboardKey.digit2,
-            meta: true,
-          ): const SwitchPaneIntent(DesktopPane.library),
-          const SingleActivator(
-            LogicalKeyboardKey.digit3,
-            meta: true,
-          ): const SwitchPaneIntent(DesktopPane.favorites),
-          const SingleActivator(
-            LogicalKeyboardKey.digit4,
-            meta: true,
-          ): const SwitchPaneIntent(DesktopPane.players),
-          const SingleActivator(
-            LogicalKeyboardKey.digit5,
-            meta: true,
-          ): const SwitchPaneIntent(DesktopPane.calendar),
-          const SingleActivator(
-            LogicalKeyboardKey.digit6,
-            meta: true,
-          ): const SwitchPaneIntent(DesktopPane.countrymen),
-          const SingleActivator(
-            LogicalKeyboardKey.digit7,
-            meta: true,
-          ): const SwitchPaneIntent(DesktopPane.board),
-          const SingleActivator(
-            LogicalKeyboardKey.digit8,
-            meta: true,
-          ): const SwitchPaneIntent(DesktopPane.play),
-          const SingleActivator(LogicalKeyboardKey.digit9, meta: true):
+                LogicalKeyboardKey.digit9,
+                meta: true,
+                alt: true,
+              ):
               const _SwitchLastTabIntent(),
           const SingleActivator(
-            LogicalKeyboardKey.digit1,
-            control: true,
-          ): const SwitchPaneIntent(DesktopPane.tournaments),
-          const SingleActivator(
-            LogicalKeyboardKey.digit2,
-            control: true,
-          ): const SwitchPaneIntent(DesktopPane.library),
-          const SingleActivator(
-            LogicalKeyboardKey.digit3,
-            control: true,
-          ): const SwitchPaneIntent(DesktopPane.favorites),
-          const SingleActivator(
-            LogicalKeyboardKey.digit4,
-            control: true,
-          ): const SwitchPaneIntent(DesktopPane.players),
-          const SingleActivator(
-            LogicalKeyboardKey.digit5,
-            control: true,
-          ): const SwitchPaneIntent(DesktopPane.calendar),
-          const SingleActivator(
-            LogicalKeyboardKey.digit6,
-            control: true,
-          ): const SwitchPaneIntent(DesktopPane.countrymen),
-          const SingleActivator(
-            LogicalKeyboardKey.digit7,
-            control: true,
-          ): const SwitchPaneIntent(DesktopPane.board),
-          const SingleActivator(
-            LogicalKeyboardKey.digit8,
-            control: true,
-          ): const SwitchPaneIntent(DesktopPane.play),
-          const SingleActivator(LogicalKeyboardKey.digit9, control: true):
+                LogicalKeyboardKey.digit9,
+                control: true,
+                alt: true,
+              ):
               const _SwitchLastTabIntent(),
           const SingleActivator(LogicalKeyboardKey.tab, control: true):
               const _NextTabIntent(),
@@ -495,6 +442,16 @@ class DesktopShell extends HookConsumerWidget {
           const SingleActivator(LogicalKeyboardKey.keyB, meta: true):
               const _ToggleSidebarIntent(),
         };
+        for (final binding in desktopMainRouteShortcutBindings()) {
+          shellShortcuts[SingleActivator(
+            binding.key,
+            meta: true,
+          )] = SwitchPaneIntent(binding.pane);
+          shellShortcuts[SingleActivator(
+            binding.key,
+            control: true,
+          )] = SwitchPaneIntent(binding.pane);
+        }
         final dispatcher = foregroundBoardShortcutDispatcher;
         final boardBindings = boardShortcutMap;
         if (dispatcher != null && boardBindings != null) {
@@ -638,7 +595,10 @@ class DesktopShell extends HookConsumerWidget {
                               .read(localChessLibraryProvider.notifier)
                               .openPaths(
                                 paths,
-                                sourceLabel: 'Dropped local files',
+                                sourceLabel:
+                                    localChessDatabaseDisplayNameForPaths(
+                                      paths,
+                                    ),
                               );
                           if (!opened) return;
                           ref
@@ -885,7 +845,9 @@ Widget resolveDesktopTabContent(DesktopTab? tab) {
     case TabKind.favorites:
       return const FavoritesPane();
     case TabKind.players:
-      return const PlayersPane();
+      return const PlayerWorkspacePane();
+    case TabKind.rankings:
+      return const RankingsPane();
     case TabKind.calendar:
       return const CalendarPane();
     case TabKind.countrymen:

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import '../../theme/app_theme.dart';
 
@@ -761,7 +762,8 @@ class _Gutter extends StatefulWidget {
   State<_Gutter> createState() => _GutterState();
 }
 
-class _GutterState extends State<_Gutter> {
+class _GutterState extends State<_Gutter>
+    with DeferredPointerStateMixin<_Gutter> {
   bool _hovered = false;
   bool _dragging = false;
 
@@ -837,8 +839,8 @@ class _GutterState extends State<_Gutter> {
 
     return MouseRegion(
       cursor: cursor,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+      onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onHorizontalDragStart:
@@ -895,7 +897,8 @@ class _GutterChevron extends StatefulWidget {
   State<_GutterChevron> createState() => _GutterChevronState();
 }
 
-class _GutterChevronState extends State<_GutterChevron> {
+class _GutterChevronState extends State<_GutterChevron>
+    with DeferredPointerStateMixin<_GutterChevron> {
   bool _hover = false;
 
   @override
@@ -908,8 +911,8 @@ class _GutterChevronState extends State<_GutterChevron> {
     };
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
+      onEnter: (_) => setStateAfterPointerEvent(() => _hover = true),
+      onExit: (_) => setStateAfterPointerEvent(() => _hover = false),
       child: DesktopTooltip(
         message: widget.tooltip,
         child: GestureDetector(
@@ -952,7 +955,8 @@ class _CollapsedRail extends StatefulWidget {
   State<_CollapsedRail> createState() => _CollapsedRailState();
 }
 
-class _CollapsedRailState extends State<_CollapsedRail> {
+class _CollapsedRailState extends State<_CollapsedRail>
+    with DeferredPointerStateMixin<_CollapsedRail> {
   bool _hover = false;
 
   @override
@@ -962,8 +966,8 @@ class _CollapsedRailState extends State<_CollapsedRail> {
 
     final rail = MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
+      onEnter: (_) => setStateAfterPointerEvent(() => _hover = true),
+      onExit: (_) => setStateAfterPointerEvent(() => _hover = false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 140),
         curve: Curves.easeOutCubic,

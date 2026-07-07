@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/screens/library/widgets/library_gamebase_filter_dialog.dart'
     show GamebaseFilter;
@@ -322,7 +323,8 @@ class _SegmentChip extends StatefulWidget {
   State<_SegmentChip> createState() => _SegmentChipState();
 }
 
-class _SegmentChipState extends State<_SegmentChip> {
+class _SegmentChipState extends State<_SegmentChip>
+    with DeferredPointerStateMixin<_SegmentChip> {
   bool _hovered = false;
 
   @override
@@ -339,8 +341,8 @@ class _SegmentChipState extends State<_SegmentChip> {
         widget.selected ? kPrimaryColor.withValues(alpha: 0.55) : kDividerColor;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+      onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,

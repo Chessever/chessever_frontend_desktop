@@ -418,6 +418,9 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
   final ScrollController _scrollController = ScrollController();
   Timer? _scrollIdleTimer;
   bool _liveCardsPausedForScroll = false;
+  // On-screen column count of the compact/list flow, stashed from its layout
+  // pass so ArrowUp/ArrowDown travel whole rows instead of single cards.
+  int _keyboardColumns = 1;
 
   String get _liveCardsPauseReason => 'desktop_favorites_scroll';
 
@@ -488,6 +491,7 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
             scopeId: 'favorites-games',
             games: widget.games,
             pageStride: columns * 3,
+            resolveColumnCount: () => columns,
             onActivateGame:
                 (game) => _openFavoriteGame(ref, game, widget.games),
             builder: (context, selectedGameId, selectGame, keyForGame) {
@@ -550,6 +554,7 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
     return DesktopGameKeyboardFocus(
       scopeId: 'favorites-games',
       games: widget.games,
+      resolveColumnCount: () => _keyboardColumns,
       onActivateGame: (game) => _openFavoriteGame(ref, game, widget.games),
       builder: (context, selectedGameId, selectGame, keyForGame) {
         return CustomScrollView(
@@ -577,6 +582,7 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
                 child: DesktopGameCardsFlow(
                   layout: layout,
                   embedded: true,
+                  onColumnsResolved: (c) => _keyboardColumns = c,
                   itemCount: groups[groupIndex].games.length,
                   itemBuilder: (context, i) {
                     final game = groups[groupIndex].games[i];
@@ -1100,7 +1106,10 @@ class _PlayerTileState extends ConsumerState<_PlayerTile> {
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             if (p.title != null && p.title!.isNotEmpty) ...[
-                              DesktopPlayerTitleChip(title: p.title!, compact: true),
+                              DesktopPlayerTitleChip(
+                                title: p.title!,
+                                compact: true,
+                              ),
                               const SizedBox(width: 6),
                             ],
                             Expanded(
@@ -1345,8 +1354,11 @@ class _StarToggleState extends State<_StarToggle> {
               value: _pressed ? 0.97 : (_hovered ? 1.02 : 1.0),
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
               builder:
-                  (context, scale, child) =>
-                      Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                  (context, scale, child) => Transform.scale(
+                    scale: scale,
+                    filterQuality: FilterQuality.medium,
+                    child: child,
+                  ),
               child: Padding(
                 padding: const EdgeInsets.all(6),
                 child: Icon(

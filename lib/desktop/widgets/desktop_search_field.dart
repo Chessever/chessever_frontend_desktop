@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -102,14 +103,15 @@ class _DesktopSearchFieldState extends State<DesktopSearchField> {
                 color: Color.lerp(kDividerColor, kPrimaryColor, t)!,
                 width: 1 + 0.2 * t,
               ),
-              boxShadow: t > 0.02
-                  ? [
-                      BoxShadow(
-                        color: kPrimaryColor.withValues(alpha: 0.18 * t),
-                        blurRadius: 12 * t,
-                      ),
-                    ]
-                  : null,
+              boxShadow:
+                  t > 0.02
+                      ? [
+                        BoxShadow(
+                          color: kPrimaryColor.withValues(alpha: 0.18 * t),
+                          blurRadius: 12 * t,
+                        ),
+                      ]
+                      : null,
             ),
             child: child,
           );
@@ -123,8 +125,7 @@ class _DesktopSearchFieldState extends State<DesktopSearchField> {
                 shortcuts: const <ShortcutActivator, Intent>{
                   // Don't let Cmd+W / Cmd+T / Cmd+B etc. bubble while typing —
                   // matches what most apps do for inputs.
-                  SingleActivator(LogicalKeyboardKey.escape):
-                      DismissIntent(),
+                  SingleActivator(LogicalKeyboardKey.escape): DismissIntent(),
                 },
                 child: Actions(
                   actions: <Type, Action<Intent>>{
@@ -138,27 +139,27 @@ class _DesktopSearchFieldState extends State<DesktopSearchField> {
                       },
                     ),
                   },
-                  child: TextField(
-                    controller: widget.controller,
-                    focusNode: _focusNode,
-                    autofocus: widget.autofocus,
-                    onChanged: (v) {
-                      widget.onChanged(v);
-                      // Keep clear button in sync with text changes.
-                      setState(() {});
-                    },
-                    cursorColor: kPrimaryColor,
-                    style: const TextStyle(
-                      color: kWhiteColor,
-                      fontSize: 13,
-                    ),
-                    decoration: InputDecoration(
-                      isCollapsed: true,
-                      border: InputBorder.none,
-                      hintText: widget.hintText,
-                      hintStyle: const TextStyle(
-                        color: kLightGreyColor,
-                        fontSize: 13,
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: TextField(
+                      controller: widget.controller,
+                      focusNode: _focusNode,
+                      autofocus: widget.autofocus,
+                      onChanged: (v) {
+                        widget.onChanged(v);
+                        // Keep clear button in sync with text changes.
+                        setState(() {});
+                      },
+                      cursorColor: kPrimaryColor,
+                      style: const TextStyle(color: kWhiteColor, fontSize: 13),
+                      decoration: InputDecoration(
+                        isCollapsed: true,
+                        border: InputBorder.none,
+                        hintText: widget.hintText,
+                        hintStyle: const TextStyle(
+                          color: kLightGreyColor,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
                   ),
@@ -193,7 +194,8 @@ class _ClearButton extends StatefulWidget {
   State<_ClearButton> createState() => _ClearButtonState();
 }
 
-class _ClearButtonState extends State<_ClearButton> {
+class _ClearButtonState extends State<_ClearButton>
+    with DeferredPointerStateMixin<_ClearButton> {
   bool _hovered = false;
   bool _pressed = false;
 
@@ -201,22 +203,27 @@ class _ClearButtonState extends State<_ClearButton> {
   Widget build(BuildContext context) {
     return ClickCursor(
       child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() {
-          _hovered = false;
-          _pressed = false;
-        }),
+        onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+        onExit:
+            (_) => setStateAfterPointerEvent(() {
+              _hovered = false;
+              _pressed = false;
+            }),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
-          onTapDown: (_) => setState(() => _pressed = true),
-          onTapUp: (_) => setState(() => _pressed = false),
-          onTapCancel: () => setState(() => _pressed = false),
+          onTapDown: (_) => setStateAfterPointerEvent(() => _pressed = true),
+          onTapUp: (_) => setStateAfterPointerEvent(() => _pressed = false),
+          onTapCancel: () => setStateAfterPointerEvent(() => _pressed = false),
           child: SingleMotionBuilder(
             value: _pressed ? 0.97 : (_hovered ? 1.02 : 1.0),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-            builder: (context, scale, child) =>
-                Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+            builder:
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: Container(
               width: 18,
               height: 18,

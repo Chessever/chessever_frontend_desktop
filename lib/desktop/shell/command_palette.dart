@@ -6,6 +6,7 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/desktop/shell/desktop_main_routes.dart';
 import 'package:chessever/desktop/shell/desktop_pane.dart';
 import 'package:chessever/desktop/utils/list_keyboard_nav.dart';
 import 'package:chessever/desktop/state/active_player.dart';
@@ -1248,55 +1249,24 @@ enum CommandAction {
 
 List<_PaletteEntry> _buildPaneEntries() {
   return <_PaletteEntry>[
-    const _PaletteEntry.pane(
-      pane: DesktopPane.tournaments,
-      title: 'Open Tournaments',
-      subtitle: 'Live broadcasts and recent events',
-      icon: Icons.emoji_events_outlined,
-      shortcut: '⌘1',
-    ),
-    const _PaletteEntry.pane(
-      pane: DesktopPane.library,
-      title: 'Open Library',
-      subtitle: 'Search games, players, openings',
-      icon: Icons.menu_book_outlined,
-      shortcut: '⌘2',
-    ),
-    const _PaletteEntry.pane(
-      pane: DesktopPane.favorites,
-      title: 'Open Favorites',
-      icon: Icons.favorite_outline,
-      shortcut: '⌘3',
-    ),
-    const _PaletteEntry.pane(
-      pane: DesktopPane.players,
-      title: 'Open Players',
-      icon: Icons.people_outline,
-      shortcut: '⌘4',
-    ),
-    const _PaletteEntry.pane(
-      pane: DesktopPane.calendar,
-      title: 'Open Calendar',
-      icon: Icons.calendar_today_outlined,
-      shortcut: '⌘5',
-    ),
-    const _PaletteEntry.pane(
-      pane: DesktopPane.countrymen,
-      title: 'Open Countrymen',
-      icon: Icons.public_outlined,
-      shortcut: '⌘6',
-    ),
+    for (final route in desktopMainRoutes)
+      _PaletteEntry.pane(
+        pane: route.pane,
+        title: route.paletteTitle,
+        subtitle: route.paletteSubtitle,
+        icon: route.icon,
+        shortcut: desktopMainRouteShortcutLabel(route.pane),
+      ),
     const _PaletteEntry.pane(
       pane: DesktopPane.boardEditor,
       title: 'Open Board Editor',
       icon: Icons.edit_outlined,
-      shortcut: '⌘8',
     ),
-    const _PaletteEntry.pane(
+    _PaletteEntry.pane(
       pane: DesktopPane.settings,
       title: 'Open Settings',
       icon: Icons.settings_outlined,
-      shortcut: '⌘,',
+      shortcut: desktopPrimaryShortcutLabel(','),
     ),
     const _PaletteEntry.action(
       action: CommandAction.flipBoard,
@@ -1305,12 +1275,12 @@ List<_PaletteEntry> _buildPaneEntries() {
       icon: Icons.flip_camera_android_rounded,
       shortcut: 'F',
     ),
-    const _PaletteEntry.action(
+    _PaletteEntry.action(
       action: CommandAction.importPgn,
       title: 'Open PGN on Board…',
       subtitle: 'Load a single .pgn as an analysis tab',
       icon: Icons.file_open_rounded,
-      shortcut: '⌘O',
+      shortcut: desktopPrimaryShortcutLabel('O'),
     ),
     const _PaletteEntry.action(
       action: CommandAction.openLocalChessFiles,
@@ -1318,17 +1288,17 @@ List<_PaletteEntry> _buildPaneEntries() {
       subtitle: 'Add local PGN files from disk',
       icon: Icons.snippet_folder_outlined,
     ),
-    const _PaletteEntry.action(
+    _PaletteEntry.action(
       action: CommandAction.toggleSidebar,
       title: 'Toggle Sidebar',
       icon: Icons.menu_open_rounded,
-      shortcut: '⌘B',
+      shortcut: desktopPrimaryShortcutLabel('B'),
     ),
-    const _PaletteEntry.action(
+    _PaletteEntry.action(
       action: CommandAction.openPreferences,
       title: 'Preferences…',
       icon: Icons.tune_rounded,
-      shortcut: '⌘,',
+      shortcut: desktopPrimaryShortcutLabel(','),
     ),
   ];
 }
@@ -1376,6 +1346,19 @@ int? _bestCommandPaletteInitialHighlight(List<_PaletteRowData> rows) {
 @visibleForTesting
 List<String> debugCommandPaletteEntryTitles() {
   return _buildPaneEntries().map((entry) => entry.title).toList();
+}
+
+@visibleForTesting
+String? debugCommandPaletteShortcutForTitle(String title, {bool? isMacOS}) {
+  for (final route in desktopMainRoutes) {
+    if (route.paletteTitle == title) {
+      return desktopMainRouteShortcutLabel(route.pane, isMacOS: isMacOS);
+    }
+  }
+  for (final entry in _buildPaneEntries()) {
+    if (entry.title == title) return entry.shortcut;
+  }
+  return null;
 }
 
 @visibleForTesting

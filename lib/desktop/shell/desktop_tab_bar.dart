@@ -19,6 +19,7 @@ import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_update_chip.dart';
 import 'package:chessever/desktop/widgets/desktop_user_profile_button.dart';
@@ -447,7 +448,8 @@ class _TabChip extends ConsumerStatefulWidget {
   ConsumerState<_TabChip> createState() => _TabChipState();
 }
 
-class _TabChipState extends ConsumerState<_TabChip> {
+class _TabChipState extends ConsumerState<_TabChip>
+    with DeferredPointerStateMixin<_TabChip> {
   static const double _detachDragThreshold = 72;
 
   bool _hovered = false;
@@ -599,8 +601,8 @@ class _TabChipState extends ConsumerState<_TabChip> {
       padding: const EdgeInsets.only(top: 6, left: 4, right: 4),
       child: ClickCursor(
         child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit: (_) => setState(() => _hovered = false),
+          onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+          onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
           child: Listener(
             behavior: HitTestBehavior.opaque,
             onPointerDown: (event) {
@@ -1340,7 +1342,8 @@ class _CloseButton extends StatefulWidget {
   State<_CloseButton> createState() => _CloseButtonState();
 }
 
-class _CloseButtonState extends State<_CloseButton> {
+class _CloseButtonState extends State<_CloseButton>
+    with DeferredPointerStateMixin<_CloseButton> {
   bool _hovered = false;
   bool _pressed = false;
 
@@ -1352,9 +1355,9 @@ class _CloseButtonState extends State<_CloseButton> {
       child: ClickCursor(
         enabled: widget.visible,
         child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
+          onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
           onExit:
-              (_) => setState(() {
+              (_) => setStateAfterPointerEvent(() {
                 _hovered = false;
                 _pressed = false;
               }),
@@ -1362,17 +1365,26 @@ class _CloseButtonState extends State<_CloseButton> {
             behavior: HitTestBehavior.opaque,
             onTap: widget.visible ? widget.onTap : null,
             onTapDown:
-                widget.visible ? (_) => setState(() => _pressed = true) : null,
+                widget.visible
+                    ? (_) => setStateAfterPointerEvent(() => _pressed = true)
+                    : null,
             onTapUp:
-                widget.visible ? (_) => setState(() => _pressed = false) : null,
+                widget.visible
+                    ? (_) => setStateAfterPointerEvent(() => _pressed = false)
+                    : null,
             onTapCancel:
-                widget.visible ? () => setState(() => _pressed = false) : null,
+                widget.visible
+                    ? () => setStateAfterPointerEvent(() => _pressed = false)
+                    : null,
             child: SingleMotionBuilder(
               value: _pressed ? 0.97 : (_hovered ? 1.02 : 1.0),
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
               builder:
-                  (context, scale, child) =>
-                      Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                  (context, scale, child) => Transform.scale(
+                    scale: scale,
+                    filterQuality: FilterQuality.medium,
+                    child: child,
+                  ),
               child: Container(
                 width: 22,
                 height: 22,
@@ -1420,6 +1432,8 @@ IconData _iconFor(TabKind kind) {
     case TabKind.favorites:
       return Icons.star_outline_outlined;
     case TabKind.players:
+      return Icons.person_search_outlined;
+    case TabKind.rankings:
       return Icons.groups_outlined;
     case TabKind.calendar:
       return Icons.calendar_today_outlined;

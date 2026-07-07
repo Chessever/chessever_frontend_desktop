@@ -566,6 +566,8 @@ void main() {
 
   group('shouldReplaceBaseGame', () {
     const fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+    const afterE4E5 =
+        'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2';
     final t0 = DateTime.utc(2026, 5, 26, 12);
     final t1 = DateTime.utc(2026, 5, 26, 12, 3);
 
@@ -603,6 +605,67 @@ void main() {
         shouldReplaceBaseGame(at(t0, white: 120), at(t0, white: 100)),
         isTrue,
       );
+    });
+
+    test(
+      'navigation keeps a newer streamed card over an older fetched row',
+      () {
+        final current = _game(
+          id: 'game-1',
+          status: GameStatus.ongoing,
+          fen: afterE4E5,
+          pgn: '[Event "Test"]\n\n1. e4 e5 *',
+          lastMove: 'e7e5',
+          lastMoveTime: t1,
+        );
+        final fetched = _game(
+          id: 'game-1',
+          status: GameStatus.ongoing,
+          fen: fen,
+          pgn: '[Event "Test"]\n\n1. e4 *',
+          lastMove: 'e2e4',
+          lastMoveTime: t0,
+        );
+
+        final selected = selectFreshestNavigationGame(
+          current: current,
+          incoming: fetched,
+        );
+
+        expect(selected, same(current));
+      },
+    );
+
+    test('navigation accepts a richer PGN at the same live position', () {
+      final current = _game(
+        id: 'game-1',
+        status: GameStatus.ongoing,
+        fen: afterE4E5,
+        pgn: '1. e4 e5 *',
+        lastMove: 'e7e5',
+        lastMoveTime: t1,
+      );
+      final fetched = _game(
+        id: 'game-1',
+        status: GameStatus.ongoing,
+        fen: afterE4E5,
+        pgn: '''
+[Event "Test"]
+[White "White"]
+[Black "Black"]
+
+1. e4 e5 *
+''',
+        lastMove: 'e7e5',
+        lastMoveTime: t1,
+      );
+
+      final selected = selectFreshestNavigationGame(
+        current: current,
+        incoming: fetched,
+      );
+
+      expect(selected, same(fetched));
     });
   });
 

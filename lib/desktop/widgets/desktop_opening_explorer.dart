@@ -39,6 +39,7 @@ final _localOpeningTreeMoveAggregatesProvider = FutureProvider.autoDispose
           .localMoveAggregatesForFen(
             databasePath: query.databasePath,
             fen: query.fen,
+            moves: query.moves,
             filters: query.filters,
           );
     });
@@ -48,11 +49,13 @@ class _LocalOpeningTreeMoveQuery {
   const _LocalOpeningTreeMoveQuery({
     required this.databasePath,
     required this.fen,
+    required this.moves,
     required this.filters,
   });
 
   final String databasePath;
   final String fen;
+  final List<String> moves;
   final PlayerOpeningTreeFilterCriteria filters;
 
   @override
@@ -60,7 +63,11 @@ class _LocalOpeningTreeMoveQuery {
     return other is _LocalOpeningTreeMoveQuery &&
         other.databasePath == databasePath &&
         other.fen == fen &&
+        listEquals(other.moves, moves) &&
         other.filters.playerId == filters.playerId &&
+        listEquals(other.filters.playerIds, filters.playerIds) &&
+        listEquals(other.filters.playerFideIds, filters.playerFideIds) &&
+        listEquals(other.filters.playerNames, filters.playerNames) &&
         other.filters.timeControl == filters.timeControl &&
         other.filters.minRating == filters.minRating &&
         other.filters.maxRating == filters.maxRating &&
@@ -75,7 +82,11 @@ class _LocalOpeningTreeMoveQuery {
   int get hashCode => Object.hash(
     databasePath,
     fen,
+    Object.hashAll(moves),
     filters.playerId,
+    Object.hashAll(filters.playerIds),
+    Object.hashAll(filters.playerFideIds),
+    Object.hashAll(filters.playerNames),
     filters.timeControl,
     filters.minRating,
     filters.maxRating,
@@ -236,6 +247,7 @@ class DesktopOpeningExplorer extends ConsumerWidget {
                 _LocalOpeningTreeMoveQuery(
                   databasePath: localDatabasePath,
                   fen: localFen,
+                  moves: state.exploredMoves,
                   filters: localCriteria,
                 ),
               ),
@@ -288,6 +300,15 @@ PlayerOpeningTreeFilterCriteria _localTreeCriteriaForFilters(
   GamebaseFilters filters,
 ) {
   return PlayerOpeningTreeFilterCriteria(
+    playerIds: filters.playerIds,
+    playerFideIds: <String>[
+      for (final player in filters.selectedPlayers)
+        if (player.fideId.trim().isNotEmpty) player.fideId.trim(),
+    ],
+    playerNames: <String>[
+      for (final player in filters.selectedPlayers)
+        if (player.name.trim().isNotEmpty) player.name.trim(),
+    ],
     timeControl:
         filters.timeControls.isNotEmpty ? filters.timeControls.first : null,
     minRating: filters.minRating,
@@ -1726,32 +1747,62 @@ class _ExplorerEmpty extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 24, color: kLightGreyColor),
-            const SizedBox(height: 10),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: kWhiteColor70,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxHeight = constraints.maxHeight;
+        final hasBoundedHeight = maxHeight.isFinite;
+        final compact = hasBoundedHeight && maxHeight < 132;
+        final ultraCompact = hasBoundedHeight && maxHeight < 76;
+        final horizontalPadding = compact ? 16.0 : 24.0;
+        final verticalPadding = ultraCompact ? 6.0 : (compact ? 10.0 : 24.0);
+        final titleStyle = TextStyle(
+          color: kWhiteColor70,
+          fontSize: compact ? 12 : 13,
+          fontWeight: FontWeight.w600,
+          height: 1.2,
+        );
+        final messageStyle = TextStyle(
+          color: kLightGreyColor,
+          fontSize: compact ? 10.5 : 11,
+          height: 1.2,
+        );
+
+        return Center(
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: horizontalPadding,
+              vertical: verticalPadding,
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 360),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (!ultraCompact) ...[
+                    Icon(icon, size: compact ? 18 : 24, color: kLightGreyColor),
+                    SizedBox(height: compact ? 6 : 10),
+                  ],
+                  Text(
+                    title,
+                    maxLines: compact ? 1 : 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: titleStyle,
+                  ),
+                  SizedBox(height: compact ? 2 : 4),
+                  Text(
+                    message,
+                    maxLines: compact ? 1 : 3,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: messageStyle,
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: kLightGreyColor, fontSize: 11),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }

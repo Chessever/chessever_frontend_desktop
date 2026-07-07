@@ -20,6 +20,7 @@ enum TabKind {
   library,
   favorites,
   players,
+  rankings,
   calendar,
   countrymen,
   settings,
@@ -76,7 +77,9 @@ extension TabKindLabel on TabKind {
       case TabKind.favorites:
         return 'Favorites';
       case TabKind.players:
-        return 'Players';
+        return 'Player';
+      case TabKind.rankings:
+        return 'Rankings';
       case TabKind.calendar:
         return 'Calendar';
       case TabKind.countrymen:

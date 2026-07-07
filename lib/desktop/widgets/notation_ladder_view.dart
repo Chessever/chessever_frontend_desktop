@@ -7,6 +7,7 @@ import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/commentary_symbol_shortcuts.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_modal.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
@@ -1130,8 +1131,18 @@ class _LadderNagPaletteCell extends StatefulWidget {
   State<_LadderNagPaletteCell> createState() => _LadderNagPaletteCellState();
 }
 
-class _LadderNagPaletteCellState extends State<_LadderNagPaletteCell> {
+class _LadderNagPaletteCellState extends State<_LadderNagPaletteCell>
+    with DeferredPointerStateMixin<_LadderNagPaletteCell> {
   bool _hovered = false;
+
+  void _handleEnter() {
+    runAfterPointerEvent(() {
+      if (!mounted) return;
+      widget.onHover?.call();
+      if (!mounted) return;
+      setState(() => _hovered = true);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1189,11 +1200,8 @@ class _LadderNagPaletteCellState extends State<_LadderNagPaletteCell> {
 
     return ClickCursor(
       child: MouseRegion(
-        onEnter: (_) {
-          widget.onHover?.call();
-          setState(() => _hovered = true);
-        },
-        onExit: (_) => setState(() => _hovered = false),
+        onEnter: (_) => _handleEnter(),
+        onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap:
@@ -3341,7 +3349,8 @@ class _LadderChip extends StatefulWidget {
   State<_LadderChip> createState() => _LadderChipState();
 }
 
-class _LadderChipState extends State<_LadderChip> {
+class _LadderChipState extends State<_LadderChip>
+    with DeferredPointerStateMixin<_LadderChip> {
   bool _hovered = false;
 
   Future<void> _showContextMenu(BuildContext context, Offset globalPos) async {
@@ -3713,8 +3722,8 @@ class _LadderChipState extends State<_LadderChip> {
 
     final chip = ClickCursor(
       child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
+        onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+        onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
         child: GestureDetector(
           onTap: widget.onTap,
           onSecondaryTapUp:

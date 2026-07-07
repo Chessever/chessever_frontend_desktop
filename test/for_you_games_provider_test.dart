@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:chessever/providers/event_pin_refresh_provider.dart';
 import 'package:chessever/providers/for_you_games_provider.dart';
 import 'package:chessever/providers/for_you_games_logic.dart';
@@ -459,6 +461,19 @@ void main() {
         _event('completed-event', category: TourEventCategory.completed),
       ),
       isFalse,
+    );
+  });
+
+  test('live top-game refresh timeout is a non-reportable dropped poll', () {
+    expect(
+      shouldReportForYouLiveTopGameRefreshFailure(
+        TimeoutException('Future not completed'),
+      ),
+      isFalse,
+    );
+    expect(
+      shouldReportForYouLiveTopGameRefreshFailure(Exception('rpc failed')),
+      isTrue,
     );
   });
 

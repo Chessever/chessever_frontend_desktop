@@ -325,61 +325,83 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
           )
         else ...[
           Expanded(
-            child: DesktopGameKeyboardFocus(
-              scopeId: 'tournament:${widget.tournamentId}',
-              games: keyboardGames,
-              onActivateGame:
-                  (game) => openTournamentGameTab(
-                    ref,
-                    game,
-                    tournamentTitle,
-                    eventGames: grouped.allGames,
-                    roundNameById: roundNameById,
-                  ),
-              builder:
-                  (
-                    context,
-                    selectedGameId,
-                    selectGame,
-                    keyForGame,
-                  ) => NotificationListener<ScrollNotification>(
-                    onNotification: _handleScrollNotification,
-                    child: ListView(
-                      key: PageStorageKey<String>(
-                        'tournament-detail-games:${widget.tabId}',
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                // Row stride for ArrowUp/ArrowDown must match the on-screen
+                // grid. Grid/list/compact rounds all render at the same column
+                // count (the ListView eats 24px of padding on each side).
+                // Match/knockout/team rounds aren't a uniform grid, so keep the
+                // flat single-step walk there.
+                final isMatchStyle =
+                    grouped.isKnockoutTournament || isTeamEvent;
+                final keyboardColumns =
+                    isMatchStyle
+                        ? 1
+                        : DesktopGameCardsFlow.columnCountForWidth(
+                          layout,
+                          (constraints.maxWidth - 48).clamp(0, double.infinity),
+                        );
+                return DesktopGameKeyboardFocus(
+                  scopeId: 'tournament:${widget.tournamentId}',
+                  games: keyboardGames,
+                  resolveColumnCount: () => keyboardColumns,
+                  onActivateGame:
+                      (game) => openTournamentGameTab(
+                        ref,
+                        game,
+                        tournamentTitle,
+                        eventGames: grouped.allGames,
+                        roundNameById: roundNameById,
                       ),
-                      physics: const DesktopScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                      children: [
-                        searchField(
-                          padding: const EdgeInsets.fromLTRB(0, 12, 0, 4),
-                        ),
-                        const SizedBox(height: 4),
-                        // Match-format tournaments (e.g. "12-game Match" — Carlsen vs
-                        // Nepo) get a single match summary card on top of the rounds.
-                        if (grouped.matchFormatHeader != null)
-                          _MatchHeaderBanner(match: grouped.matchFormatHeader!),
-                        for (final round in grouped.filteredRounds)
-                          _RoundSection(
-                            key: ValueKey('round-${round.id}'),
-                            scopeId: 'tournament:${widget.tournamentId}',
-                            selectedGameId: selectedGameId,
-                            onSelectGame: selectGame,
-                            keyForGame: keyForGame,
-                            round: round,
-                            games: grouped.gamesByRound[round.id] ?? const [],
-                            eventGames: grouped.allGames,
-                            tournamentTitle: tournamentTitle,
-                            layout: layout,
-                            isKnockout: grouped.isKnockoutTournament,
-                            isTeamEvent: isTeamEvent,
-                            roundStartsAtById: roundStartsAtById,
-                            roundNameById: roundNameById,
-                            streamingEnabled: cardStreamingEnabled,
+                  builder:
+                      (
+                        context,
+                        selectedGameId,
+                        selectGame,
+                        keyForGame,
+                      ) => NotificationListener<ScrollNotification>(
+                        onNotification: _handleScrollNotification,
+                        child: ListView(
+                          key: PageStorageKey<String>(
+                            'tournament-detail-games:${widget.tabId}',
                           ),
-                      ],
-                    ),
-                  ),
+                          physics: const DesktopScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                          children: [
+                            searchField(
+                              padding: const EdgeInsets.fromLTRB(0, 12, 0, 4),
+                            ),
+                            const SizedBox(height: 4),
+                            // Match-format tournaments (e.g. "12-game Match" — Carlsen vs
+                            // Nepo) get a single match summary card on top of the rounds.
+                            if (grouped.matchFormatHeader != null)
+                              _MatchHeaderBanner(
+                                match: grouped.matchFormatHeader!,
+                              ),
+                            for (final round in grouped.filteredRounds)
+                              _RoundSection(
+                                key: ValueKey('round-${round.id}'),
+                                scopeId: 'tournament:${widget.tournamentId}',
+                                selectedGameId: selectedGameId,
+                                onSelectGame: selectGame,
+                                keyForGame: keyForGame,
+                                round: round,
+                                games:
+                                    grouped.gamesByRound[round.id] ?? const [],
+                                eventGames: grouped.allGames,
+                                tournamentTitle: tournamentTitle,
+                                layout: layout,
+                                isKnockout: grouped.isKnockoutTournament,
+                                isTeamEvent: isTeamEvent,
+                                roundStartsAtById: roundStartsAtById,
+                                roundNameById: roundNameById,
+                                streamingEnabled: cardStreamingEnabled,
+                              ),
+                          ],
+                        ),
+                      ),
+                );
+              },
             ),
           ),
         ],
@@ -1357,14 +1379,17 @@ class _MatchHeaderBanner extends StatelessWidget {
 
 /// Opens a tournament game in a Board tab.
 ///
-/// Opens a Board tab keyed to this game immediately from the tapped card's
-/// cached data. Slow PGN / event-list hydration happens after the tab is
-/// visible; the BoardPane already hydrates missing PGNs by `gameId`.
+/// Opens a Board tab keyed to this game after resolving the freshest available
+/// PGN/FEN snapshot. Event/source rail context is deliberately capped around the
+/// selected game so opening one card does not render or retain a whole large
+/// tournament.
 ///
 /// Plain clicks use [replaceActive] so a game opens in the tab the user is
 /// currently reading, even if another copy of that game is already open.
 /// Explicit new-tab gestures (Cmd/Ctrl-click, middle-click, tab-strip drop)
 /// pass `replaceActive: false` and `reuseExisting: false`.
+const int _kBoardRailContextRadius = 30;
+
 BoardTabGameArgs buildTournamentBoardTabArgs(
   WidgetRef ref,
   GamesTourModel game,
@@ -1380,8 +1405,18 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
 }) {
   final pgn = pgnHasMoves(game.pgn) ? game.pgn!.trim() : '';
   final normalizedGame = _withFreshestFen(game, pgnOverride: pgn);
+  final eventContextGames = _boardRailContextGames(
+    normalizedGame,
+    eventGames,
+    fallbackToSelected: true,
+  );
+  final routeContextGames = _boardRailContextGames(
+    normalizedGame,
+    routeGames,
+    fallbackToSelected: false,
+  );
   final eventSummaries = _summariesFromModels(
-    eventGames.isEmpty ? <GamesTourModel>[normalizedGame] : eventGames,
+    eventContextGames,
     fallbackGame: normalizedGame,
     roundStartsAtById: roundStartsAtById,
     roundNameById: roundNameById,
@@ -1390,16 +1425,11 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
       routeGames.isEmpty
           ? const <TournamentGameSummary>[]
           : _summariesFromModels(
-            routeGames,
+            routeContextGames,
             fallbackGame: normalizedGame,
             roundStartsAtById: roundStartsAtById,
             roundNameById: roundNameById,
           );
-  final isFavoritesView = viewSource == ChessboardView.favScorecard;
-  final shouldHydrateEventGames =
-      !isFavoritesView &&
-      eventSummaries.length <= 1 &&
-      game.tourId.trim().isNotEmpty;
   return BoardTabGameArgs(
     gameId: normalizedGame.gameId,
     pgn: pgn,
@@ -1420,7 +1450,7 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
     viewSource: viewSource,
     tournamentTitle: tournamentTitle,
     eventGames: eventSummaries,
-    eventGamesLoading: shouldHydrateEventGames,
+    eventGamesLoading: false,
     eventGamesContinuation: eventGamesContinuation,
     routeTitle: routeTitle,
     routeGames: routeSummaries,
@@ -1451,63 +1481,27 @@ Future<void> openTournamentGameTab(
   // and Riverpod asserts on `ref.read` once the underlying element is
   // unmounted — which used to swallow the click silently. The container
   // is held by the surrounding ProviderScope and survives card disposal.
-  final container = ProviderScope.containerOf(
-    ref as BuildContext,
-    listen: false,
-  );
+  final container = ProviderScope.containerOf(ref.context, listen: false);
   final gameRepo = container.read(gameRepositoryProvider);
 
-  final pgn = pgnHasMoves(game.pgn) ? game.pgn!.trim() : '';
-  final normalizedGame = _withFreshestFen(game, pgnOverride: pgn);
-  final eventSummaries = _summariesFromModels(
-    eventGames.isEmpty ? <GamesTourModel>[normalizedGame] : eventGames,
-    fallbackGame: normalizedGame,
+  final hydratedGame = await _hydrateTournamentGameForBoardOpen(
+    gameRepo: gameRepo,
+    game: game,
+  );
+  _seedBaseGameIfFresher(container, hydratedGame);
+
+  final args = buildTournamentBoardTabArgs(
+    ref,
+    hydratedGame,
+    tournamentTitle,
+    eventGames: _replaceGameInModels(eventGames, hydratedGame),
+    routeTitle: routeTitle,
+    routeGames: _replaceGameInModels(routeGames, hydratedGame),
+    eventGamesContinuation: eventGamesContinuation,
+    routeGamesContinuation: routeGamesContinuation,
     roundStartsAtById: roundStartsAtById,
     roundNameById: roundNameById,
-  );
-  final routeSummaries =
-      routeGames.isEmpty
-          ? const <TournamentGameSummary>[]
-          : _summariesFromModels(
-            routeGames,
-            fallbackGame: normalizedGame,
-            roundStartsAtById: roundStartsAtById,
-            roundNameById: roundNameById,
-          );
-  // Favorites open paths pass their own multi-tournament list; never
-  // overwrite it with the single-tournament hydrate. Otherwise the rail
-  // would flip back to "tournament games" the moment the fetch completed.
-  final isFavoritesView = viewSource == ChessboardView.favScorecard;
-  final shouldHydrateEventGames =
-      !isFavoritesView &&
-      eventSummaries.length <= 1 &&
-      game.tourId.trim().isNotEmpty;
-  final args = BoardTabGameArgs(
-    gameId: normalizedGame.gameId,
-    pgn: pgn,
-    label:
-        '${normalizedGame.whitePlayer.name} vs ${normalizedGame.blackPlayer.name}',
-    whiteName: normalizedGame.whitePlayer.name,
-    blackName: normalizedGame.blackPlayer.name,
-    whiteFederation: normalizedGame.whitePlayer.federation,
-    blackFederation: normalizedGame.blackPlayer.federation,
-    whiteTitle: normalizedGame.whitePlayer.title,
-    blackTitle: normalizedGame.blackPlayer.title,
-    whiteRating: normalizedGame.whitePlayer.rating,
-    blackRating: normalizedGame.blackPlayer.rating,
-    whiteFideId: normalizedGame.whitePlayer.fideId,
-    blackFideId: normalizedGame.blackPlayer.fideId,
-    fenSeed: normalizedGame.fen,
-    sourceGame: normalizedGame.copyWith(pgn: pgn.isEmpty ? game.pgn : pgn),
     viewSource: viewSource,
-    tournamentTitle: tournamentTitle,
-    eventGames: eventSummaries,
-    eventGamesLoading: shouldHydrateEventGames,
-    eventGamesContinuation: eventGamesContinuation,
-    routeTitle: routeTitle,
-    routeGames: routeSummaries,
-    routeGamesContinuation: routeGamesContinuation,
-    gameListSelectedId: normalizedGame.gameId,
   );
   container.read(chessboardViewFromProviderNew.notifier).state = viewSource;
   final tabId = openBoardGameTabFromContainer(
@@ -1523,23 +1517,86 @@ Future<void> openTournamentGameTab(
       container: container,
       gameRepo: gameRepo,
       tabId: tabId,
-      openedGame: normalizedGame,
+      openedGame: args.sourceGame ?? hydratedGame,
     ),
   );
+}
 
-  if (shouldHydrateEventGames) {
-    unawaited(
-      _hydrateTournamentGameTabEventContext(
-        container: container,
-        gameRepo: gameRepo,
-        tabId: tabId,
-        game: normalizedGame,
-        eventGames: eventGames,
-        roundStartsAtById: roundStartsAtById,
-        roundNameById: roundNameById,
+Future<GamesTourModel> _hydrateTournamentGameForBoardOpen({
+  required GameRepository gameRepo,
+  required GamesTourModel game,
+}) async {
+  final normalizedCurrent = _withFreshestFen(game);
+  if (game.source != GameSource.supabase || game.gameId.trim().isEmpty) {
+    return normalizedCurrent;
+  }
+
+  try {
+    final latestRow = await gameRepo.getGameWithPGN(game.gameId);
+    final latest = _withFreshestFen(GamesTourModel.fromGame(latestRow));
+    return _withFreshestFen(
+      selectFreshestNavigationGame(
+        current: normalizedCurrent,
+        incoming: latest,
       ),
     );
+  } catch (error) {
+    debugPrint(
+      '[DesktopBoard] Failed to hydrate game ${game.gameId} before open: $error',
+    );
+    return normalizedCurrent;
   }
+}
+
+void _seedBaseGameIfFresher(ProviderContainer container, GamesTourModel game) {
+  final gameId = game.gameId.trim();
+  if (gameId.isEmpty) return;
+
+  final currentBase = container.read(baseGameProvider(gameId));
+  if (!shouldReplaceBaseGame(currentBase, game)) return;
+  container.read(baseGameProvider(gameId).notifier).state = game;
+}
+
+List<GamesTourModel> _replaceGameInModels(
+  List<GamesTourModel> games,
+  GamesTourModel selected,
+) {
+  if (games.isEmpty) return games;
+  final index = games.indexWhere((game) => game.gameId == selected.gameId);
+  if (index < 0) return games;
+
+  final next = List<GamesTourModel>.from(games);
+  next[index] = selected;
+  return next;
+}
+
+List<GamesTourModel> _boardRailContextGames(
+  GamesTourModel selected,
+  List<GamesTourModel> games, {
+  required bool fallbackToSelected,
+}) {
+  if (games.isEmpty) {
+    return fallbackToSelected ? <GamesTourModel>[selected] : const [];
+  }
+  final selectedIndex = games.indexWhere(
+    (game) => game.gameId == selected.gameId,
+  );
+  if (selectedIndex < 0) return <GamesTourModel>[selected];
+
+  final start =
+      selectedIndex - _kBoardRailContextRadius < 0
+          ? 0
+          : selectedIndex - _kBoardRailContextRadius;
+  final end =
+      selectedIndex + _kBoardRailContextRadius + 1 > games.length
+          ? games.length
+          : selectedIndex + _kBoardRailContextRadius + 1;
+  final context = games.sublist(start, end);
+  final contextSelectedIndex = selectedIndex - start;
+  if (contextSelectedIndex >= 0 && contextSelectedIndex < context.length) {
+    context[contextSelectedIndex] = selected;
+  }
+  return context;
 }
 
 Future<void> _refreshOpenedBoardTabWithLatestLiveGame({
@@ -1552,7 +1609,7 @@ Future<void> _refreshOpenedBoardTabWithLatestLiveGame({
   if (gameId.isEmpty || openedGame.effectiveGameStatus.isFinished) return;
 
   try {
-    final latestRow = await gameRepo.getGameById(gameId);
+    final latestRow = await gameRepo.getGameWithPGN(gameId);
     final fetched = _withFreshestFen(GamesTourModel.fromGame(latestRow));
 
     // A live card may already hold a newer realtime snapshot than this one-shot
@@ -1602,81 +1659,6 @@ Future<void> _refreshOpenedBoardTabWithLatestLiveGame({
       '[DesktopBoard] Failed to refresh latest live game seed for $gameId: $error',
     );
   }
-}
-
-Future<List<TournamentGameSummary>> _resolveEventGameSummaries(
-  GameRepository gameRepo,
-  GamesTourModel game,
-  List<GamesTourModel> eventGames,
-  Map<String, DateTime?> roundStartsAtById,
-  Map<String, String> roundNameById,
-) async {
-  final supplied = _summariesFromModels(
-    eventGames.isEmpty ? <GamesTourModel>[game] : eventGames,
-    fallbackGame: game,
-    roundStartsAtById: roundStartsAtById,
-    roundNameById: roundNameById,
-  );
-  if (supplied.length > 1 || game.tourId.trim().isEmpty) {
-    return supplied;
-  }
-
-  try {
-    final rows = await gameRepo.getGamesByTourId(game.tourId);
-    final models = <GamesTourModel>[];
-    for (final row in rows) {
-      try {
-        models.add(GamesTourModel.fromGame(row));
-      } catch (_) {
-        // Skip malformed rows; the active game summary below remains enough
-        // to keep the board tab usable.
-      }
-    }
-    final fetched = _summariesFromModels(
-      models,
-      fallbackGame: game,
-      roundStartsAtById: roundStartsAtById,
-      roundNameById: roundNameById,
-    );
-    return fetched.isEmpty ? supplied : fetched;
-  } catch (_) {
-    return supplied;
-  }
-}
-
-Future<void> _hydrateTournamentGameTabEventContext({
-  required ProviderContainer container,
-  required GameRepository gameRepo,
-  required String tabId,
-  required GamesTourModel game,
-  required List<GamesTourModel> eventGames,
-  required Map<String, DateTime?> roundStartsAtById,
-  required Map<String, String> roundNameById,
-}) async {
-  final hydrated = await _resolveEventGameSummaries(
-    gameRepo,
-    game,
-    eventGames,
-    roundStartsAtById,
-    roundNameById,
-  );
-
-  final byTab = container.read(boardTabGameArgsByTabIdProvider);
-  final current = byTab[tabId];
-  if (current == null || current.gameId != game.gameId) return;
-  if (_sameGameSummaryIds(current.eventGames, hydrated) &&
-      !current.eventGamesLoading) {
-    return;
-  }
-
-  container.read(boardTabGameArgsByTabIdProvider.notifier).update((m) {
-    final latest = m[tabId];
-    if (latest == null || latest.gameId != game.gameId) return m;
-    return <String, BoardTabGameArgs>{
-      ...m,
-      tabId: latest.copyWith(eventGames: hydrated, eventGamesLoading: false),
-    };
-  });
 }
 
 List<TournamentGameSummary> _summariesFromModels(
@@ -1760,17 +1742,6 @@ String? _roundNameForGame(
     if (bySlug != null && bySlug.isNotEmpty) return bySlug;
   }
   return null;
-}
-
-bool _sameGameSummaryIds(
-  List<TournamentGameSummary> a,
-  List<TournamentGameSummary> b,
-) {
-  if (a.length != b.length) return false;
-  for (var i = 0; i < a.length; i++) {
-    if (a[i].id != b[i].id) return false;
-  }
-  return true;
 }
 
 /// Wraps a tournament-feed game into a [GameTabDragPayload] so it can be
@@ -2114,15 +2085,21 @@ Future<void> _showLiveGameContextMenu({
         viewSource: viewSource,
       );
     case _LiveGameContextAction.openNewWindow:
+      final container = ProviderScope.containerOf(context, listen: false);
+      final hydratedGame = await _hydrateTournamentGameForBoardOpen(
+        gameRepo: container.read(gameRepositoryProvider),
+        game: game,
+      );
+      _seedBaseGameIfFresher(container, hydratedGame);
       await openBoardGameWindow(
         ref,
         buildTournamentBoardTabArgs(
           ref,
-          game,
+          hydratedGame,
           tournamentTitle,
-          eventGames: eventGames,
+          eventGames: _replaceGameInModels(eventGames, hydratedGame),
           routeTitle: routeTitle,
-          routeGames: routeGames,
+          routeGames: _replaceGameInModels(routeGames, hydratedGame),
           eventGamesContinuation: eventGamesContinuation,
           routeGamesContinuation: routeGamesContinuation,
           roundStartsAtById: roundStartsAtById,

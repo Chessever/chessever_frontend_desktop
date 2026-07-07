@@ -50,6 +50,93 @@ void main() {
     expect(summary.roundStartsAt, DateTime.parse('2026-07-03T16:52:00Z'));
   });
 
+  test(
+    'event rail board opens keep newer live summaries over stale fetches',
+    () {
+      final liveTime = DateTime.utc(2026, 7, 7, 15, 2);
+      final staleTime = DateTime.utc(2026, 7, 7, 15);
+      final current = _summary(
+        id: 'game-1',
+        roundLabel: 'Round 1',
+        fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+        pgn: '[Event "Test"]\n\n1. e4 e5 *',
+        status: GameStatus.ongoing,
+        lastMoveTime: liveTime,
+      );
+      final fetched = _summary(
+        id: 'game-1',
+        roundLabel: 'Round 1',
+        fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+        pgn: '[Event "Test"]\n\n1. e4 *',
+        status: GameStatus.ongoing,
+        lastMoveTime: staleTime,
+      );
+
+      final selected = selectFreshestEventSummaryForOpen(
+        current: current,
+        incoming: fetched,
+      );
+
+      expect(selected, same(current));
+    },
+  );
+
+  test('event rail board opens accept richer PGN at the same position', () {
+    final moveTime = DateTime.utc(2026, 7, 7, 15, 2);
+    const fen = 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2';
+    final current = _summary(
+      id: 'game-1',
+      roundLabel: 'Round 1',
+      fen: fen,
+      pgn: '1. e4 e5 *',
+      status: GameStatus.ongoing,
+      lastMoveTime: moveTime,
+    );
+    final fetched = _summary(
+      id: 'game-1',
+      roundLabel: 'Round 1',
+      fen: fen,
+      pgn: '''
+[Event "Test"]
+[White "White"]
+[Black "Black"]
+
+1. e4 e5 *
+''',
+      status: GameStatus.ongoing,
+      lastMoveTime: moveTime,
+    );
+
+    final selected = selectFreshestEventSummaryForOpen(
+      current: current,
+      incoming: fetched,
+    );
+
+    expect(selected.pgn, fetched.pgn);
+    expect(selected.fen, fetched.fen);
+  });
+
+  test(
+    'continuation rail window centers provider games on the selected row',
+    () {
+      final providerGames = [
+        for (var i = 0; i < 100; i++)
+          _summary(id: 'game-$i', roundLabel: 'Round 1'),
+      ];
+
+      final visible = eventRailWindowContinuationGamesForTesting(
+        fallbackGames: const <TournamentGameSummary>[],
+        providerGames: providerGames,
+        selectedGameId: 'game-50',
+        visibleLimit: 61,
+      );
+
+      expect(visible.length, 61);
+      expect(visible.first.id, 'game-20');
+      expect(visible.last.id, 'game-80');
+    },
+  );
+
   testWidgets('event rail omits ongoing status chip text', (tester) async {
     await tester.pumpWidget(
       _wrap(
@@ -687,11 +774,20 @@ void main() {
     },
   );
 
-  testWidgets('database games rail loads the next position-games page', (
+  testWidgets('database games rail loads the next page only after scroll', (
     tester,
   ) async {
     final repository = _FakeGamebaseRepository();
     const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    final seedGames = [
+      for (var i = 0; i < 24; i++)
+        _summary(
+          id: 'seed-$i',
+          roundLabel: '2025',
+          whitePlayer: 'Seed White $i',
+          blackPlayer: 'Seed Black $i',
+        ),
+    ];
 
     await tester.pumpWidget(
       _wrap(
@@ -702,7 +798,7 @@ void main() {
           blackName: 'Black',
           initialFen: fen,
           databaseTitle: 'Continuation after 1.e4',
-          databaseGames: [_summary(id: 'gamebase-1', roundLabel: '2025')],
+          databaseGames: seedGames,
           databaseGamesPagination: const BoardTabDatabaseGamesPagination(
             query: GamebasePositionGamesQuery(
               fen: fen,
@@ -715,7 +811,7 @@ void main() {
             exactFenSearch: false,
             totalCount: 2,
           ),
-          gameListSelectedId: 'gamebase-1',
+          gameListSelectedId: 'seed-0',
         ),
         overrides: [gamebaseRepositoryProvider.overrideWithValue(repository)],
       ),
@@ -724,6 +820,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 20));
     await tester.pump();
 
+    expect(repository.requestedPages, isEmpty);
+
+    await tester.drag(find.byType(ListView), const Offset(0, -1200));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
     final container = ProviderScope.containerOf(
       tester.element(find.byType(EventGamesTable)),
     );
@@ -731,7 +835,7 @@ void main() {
 
     expect(repository.requestedPages, [1]);
     expect(args.databaseGames.map((game) => game.id), [
-      'gamebase-1',
+      ...seedGames.map((game) => game.id),
       'gamebase-2',
     ]);
     expect(args.databaseGamesPagination!.nextPageNumber, 2);
@@ -1608,6 +1712,7 @@ TournamentGameSummary _summary({
   String whitePlayer = 'White Player',
   String blackPlayer = 'Black Player',
   String pgn = '1. e4 e5 *',
+  String? fen,
   GameStatus status = GameStatus.draw,
   bool hasStarted = true,
   DateTime? startsAt,
@@ -1633,6 +1738,7 @@ TournamentGameSummary _summary({
     blackTitle: blackTitle,
     hasPgn: true,
     pgn: pgn,
+    fen: fen,
     roundId: roundId,
     roundSlug: roundSlug,
     roundLabel: roundLabel,

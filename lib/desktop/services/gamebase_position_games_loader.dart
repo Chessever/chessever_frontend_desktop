@@ -8,6 +8,8 @@ import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
+import 'package:chessever/screens/gamebase/models/gamebase_player.dart';
+import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
@@ -55,6 +57,10 @@ Future<DesktopPositionGamesPageResult> fetchDesktopPositionGamesPage(
 }) async {
   if (localOpeningTreeIndex != null) {
     final localDatabasePath = localOpeningTreeIndex.playerId?.trim();
+    final localCriteria = _localTreeCriteriaFromQuery(
+      query,
+      filters: ref.read(gamebaseExplorerProvider).filters,
+    );
     if (localOpeningTreeIndex.gamesByFen.isEmpty &&
         localDatabasePath != null &&
         localDatabasePath.isNotEmpty) {
@@ -65,7 +71,7 @@ Future<DesktopPositionGamesPageResult> fetchDesktopPositionGamesPage(
             fen: query.fen,
             moves: query.moves,
             uci: query.uci,
-            filters: _localTreeCriteriaFromQuery(query),
+            filters: localCriteria,
             sortBy: query.sortBy,
             sortDirection: query.sortDirection,
             pageNumber: query.pageNumber,
@@ -84,7 +90,7 @@ Future<DesktopPositionGamesPageResult> fetchDesktopPositionGamesPage(
         index: localOpeningTreeIndex,
         fen: query.fen,
         uci: query.uci,
-        filters: _localTreeCriteriaFromQuery(query),
+        filters: localCriteria,
         sortBy: query.sortBy,
         sortDirection: query.sortDirection,
         pageNumber: query.pageNumber,
@@ -220,9 +226,23 @@ Future<DesktopPositionGamesPageResult> fetchDesktopPositionGamesPage(
 }
 
 PlayerOpeningTreeFilterCriteria _localTreeCriteriaFromQuery(
-  GamebasePositionGamesQuery query,
-) {
+  GamebasePositionGamesQuery query, {
+  GamebaseFilters? filters,
+}) {
   return PlayerOpeningTreeFilterCriteria(
+    playerId: query.playerId,
+    playerIds: <String>[
+      if (query.playerId?.trim().isNotEmpty == true) query.playerId!.trim(),
+      ...?filters?.playerIds,
+    ],
+    playerFideIds: <String>[
+      for (final player in filters?.selectedPlayers ?? const <GamebasePlayer>[])
+        if (player.fideId.trim().isNotEmpty) player.fideId.trim(),
+    ],
+    playerNames: <String>[
+      for (final player in filters?.selectedPlayers ?? const <GamebasePlayer>[])
+        if (player.name.trim().isNotEmpty) player.name.trim(),
+    ],
     timeControl: query.timeControl,
     minRating: query.minRating,
     maxRating: query.maxRating,

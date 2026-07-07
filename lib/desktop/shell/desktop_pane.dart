@@ -16,6 +16,7 @@ enum DesktopPane {
   library,
   favorites,
   players,
+  rankings,
   calendar,
   countrymen,
   openingExplorer,
@@ -37,6 +38,8 @@ TabKind tabKindForPane(DesktopPane pane) {
       return TabKind.favorites;
     case DesktopPane.players:
       return TabKind.players;
+    case DesktopPane.rankings:
+      return TabKind.rankings;
     case DesktopPane.calendar:
       return TabKind.calendar;
     case DesktopPane.countrymen:
@@ -72,6 +75,8 @@ DesktopPane? paneForTabKind(TabKind kind) {
       return DesktopPane.favorites;
     case TabKind.players:
       return DesktopPane.players;
+    case TabKind.rankings:
+      return DesktopPane.rankings;
     case TabKind.calendar:
       return DesktopPane.calendar;
     case TabKind.countrymen:
@@ -89,9 +94,8 @@ DesktopPane? paneForTabKind(TabKind kind) {
     case TabKind.playerScoreCard:
     case TabKind.playerProfile:
     case TabKind.userProfile:
-      // Player tabs land under the Players sidebar category since that's
-      // closest in spirit; keeps the sidebar highlight sensible while a
-      // score card or profile is in the foreground.
+      // Player tabs land under the Player workspace since it is the prep hub
+      // for account imports, source databases, and profile study.
       return DesktopPane.players;
     case TabKind.boardSettings:
     case TabKind.notificationSettings:

@@ -4,6 +4,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/state/library_import_buffer.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/utils/pgn_multi_parser.dart';
@@ -120,7 +121,8 @@ class _IconAction extends StatefulWidget {
   State<_IconAction> createState() => _IconActionState();
 }
 
-class _IconActionState extends State<_IconAction> {
+class _IconActionState extends State<_IconAction>
+    with DeferredPointerStateMixin<_IconAction> {
   bool _hovered = false;
   bool _pressed = false;
 
@@ -141,18 +143,18 @@ class _IconActionState extends State<_IconAction> {
       message: widget.tooltip,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovered = true),
+        onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
         onExit:
-            (_) => setState(() {
+            (_) => setStateAfterPointerEvent(() {
               _hovered = false;
               _pressed = false;
             }),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onPress,
-          onTapDown: (_) => setState(() => _pressed = true),
-          onTapUp: (_) => setState(() => _pressed = false),
-          onTapCancel: () => setState(() => _pressed = false),
+          onTapDown: (_) => setStateAfterPointerEvent(() => _pressed = true),
+          onTapUp: (_) => setStateAfterPointerEvent(() => _pressed = false),
+          onTapCancel: () => setStateAfterPointerEvent(() => _pressed = false),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),
             curve: Curves.easeOutCubic,

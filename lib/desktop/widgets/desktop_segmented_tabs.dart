@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/theme/app_theme.dart';
+
+const double _kCompactExpandedSegmentWidth = 112;
 
 class DesktopSegmentedTab<T> {
   const DesktopSegmentedTab({
@@ -41,54 +44,98 @@ class DesktopSegmentedTabs<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (wrap) {
-      return FTheme(
-        data: FThemes.zinc.dark,
-        child: Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            for (final tab in tabs) _segmentButton(tab: tab),
-          ],
-        ),
-      );
-    }
     return FTheme(
       data: FThemes.zinc.dark,
-      child: Container(
-        height: 38,
-        padding: const EdgeInsets.all(3),
-        decoration: BoxDecoration(
-          color: kBlack2Color,
-          borderRadius: BorderRadius.circular(9),
-          border: Border.all(color: kDividerColor),
-        ),
-        child: Row(
-          mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
-          children: [
-            for (var i = 0; i < tabs.length; i++) ...[
-              if (i > 0) const SizedBox(width: 3),
-              if (expand)
-                Expanded(child: _segmentButton(tab: tabs[i]))
-              else
-                _segmentButton(tab: tabs[i]),
-            ],
-          ],
-        ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (wrap) return _wrappedTabs();
+
+          final tabCount = tabs.isEmpty ? 1 : tabs.length;
+          final compact =
+              expand &&
+              constraints.hasBoundedWidth &&
+              constraints.maxWidth.isFinite &&
+              constraints.maxWidth / tabCount < _kCompactExpandedSegmentWidth;
+
+          return _segmentedRow(compact: compact);
+        },
       ),
     );
   }
 
-  Widget _segmentButton({required DesktopSegmentedTab<T> tab}) {
+  Widget _wrappedTabs() {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [for (final tab in tabs) _segmentButton(tab: tab)],
+    );
+  }
+
+  Widget _segmentedRow({required bool compact}) {
+    return Container(
+      height: 38,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Row(
+        mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
+        children: [
+          for (var i = 0; i < tabs.length; i++) ...[
+            if (i > 0) const SizedBox(width: 3),
+            if (expand)
+              Expanded(child: _segmentButton(tab: tabs[i], compact: compact))
+            else
+              _segmentButton(tab: tabs[i]),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _segmentButton({
+    required DesktopSegmentedTab<T> tab,
+    bool compact = false,
+  }) {
     final isSelected = tab.value == selected;
     final icon = tab.icon;
+    if (compact && icon != null) {
+      return DesktopTooltip(
+        message: tab.label,
+        child: Semantics(
+          button: true,
+          label: tab.label,
+          child: FButton(
+            style: desktopSegmentButtonStyle(
+              selected: isSelected,
+              wrap: wrap,
+              compact: true,
+            ),
+            mainAxisSize: MainAxisSize.max,
+            onPress: () => onChanged(tab.value),
+            child: Icon(icon),
+          ),
+        ),
+      );
+    }
+
     return FButton(
-      style: desktopSegmentButtonStyle(selected: isSelected, wrap: wrap),
-      mainAxisSize:
-          (expand && !wrap) ? MainAxisSize.max : MainAxisSize.min,
+      style: desktopSegmentButtonStyle(
+        selected: isSelected,
+        wrap: wrap,
+        compact: compact,
+      ),
+      mainAxisSize: (expand && !wrap) ? MainAxisSize.max : MainAxisSize.min,
       onPress: () => onChanged(tab.value),
       prefix: icon == null ? null : Icon(icon),
-      child: Text(tab.label),
+      child: Text(
+        tab.label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        softWrap: false,
+      ),
     );
   }
 }
@@ -96,6 +143,7 @@ class DesktopSegmentedTabs<T> extends StatelessWidget {
 FBaseButtonStyle Function(FButtonStyle style) desktopSegmentButtonStyle({
   required bool selected,
   bool wrap = false,
+  bool compact = false,
 }) {
   return FButtonStyle.ghost(
     (style) => style.copyWith(
@@ -108,9 +156,17 @@ FBaseButtonStyle Function(FButtonStyle style) desktopSegmentButtonStyle({
             padding:
                 wrap
                     ? const EdgeInsets.symmetric(horizontal: 10, vertical: 6)
-                    : const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            spacing: wrap ? 6 : 7,
+                    : EdgeInsets.symmetric(
+                      horizontal: compact ? 8 : 12,
+                      vertical: 7,
+                    ),
+            spacing: compact ? 0 : (wrap ? 6 : 7),
             textStyle: _segmentTextStyle(selected: selected),
+            iconStyle: _segmentIconStyle(selected: selected),
+          ),
+      iconContentStyle:
+          (content) => content.copyWith(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
             iconStyle: _segmentIconStyle(selected: selected),
           ),
     ),
@@ -162,14 +218,10 @@ FWidgetStateMap<BoxDecoration> _segmentWrapDecoration({
       ),
     ),
     WidgetState.any: BoxDecoration(
-      color:
-          selected ? kPrimaryColor.withValues(alpha: 0.06) : kBlack2Color,
+      color: selected ? kPrimaryColor.withValues(alpha: 0.06) : kBlack2Color,
       borderRadius: BorderRadius.circular(999),
       border: Border.all(
-        color:
-            selected
-                ? kPrimaryColor.withValues(alpha: 0.18)
-                : kDividerColor,
+        color: selected ? kPrimaryColor.withValues(alpha: 0.18) : kDividerColor,
       ),
     ),
   });

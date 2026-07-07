@@ -26,7 +26,8 @@ Future<void> createLocalChessDatabaseSchema(DatabaseExecutor db) async {
       position_count INTEGER NOT NULL DEFAULT 0,
       tree_snapshot TEXT,
       imported_at_ms INTEGER NOT NULL,
-      updated_at_ms INTEGER NOT NULL
+      updated_at_ms INTEGER NOT NULL,
+      content_fingerprint TEXT
     )
   ''');
 
@@ -69,6 +70,8 @@ Future<void> createLocalChessDatabaseSchema(DatabaseExecutor db) async {
       black_material INTEGER NOT NULL DEFAULT 39,
       result TEXT,
       time_control TEXT,
+      time_control_category TEXT,
+      is_online INTEGER,
       eco TEXT,
       ply_count INTEGER NOT NULL DEFAULT 0,
       fen TEXT,
@@ -165,10 +168,28 @@ Future<void> createLocalChessDatabaseSchema(DatabaseExecutor db) async {
     'CREATE INDEX IF NOT EXISTS idx_local_chess_games_result ON $localChessGamesTable(result)',
   );
   await db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_result ON $localChessGamesTable(database_id, result)',
+  );
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_time_category ON $localChessGamesTable(database_id, time_control_category)',
+  );
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_online ON $localChessGamesTable(database_id, is_online)',
+  );
+  await db.execute(
     'CREATE INDEX IF NOT EXISTS idx_local_chess_games_white_elo ON $localChessGamesTable(white_elo)',
   );
   await db.execute(
     'CREATE INDEX IF NOT EXISTS idx_local_chess_games_black_elo ON $localChessGamesTable(black_elo)',
+  );
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_date ON $localChessGamesTable(database_id, date)',
+  );
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_white_elo ON $localChessGamesTable(database_id, white_elo)',
+  );
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_black_elo ON $localChessGamesTable(database_id, black_elo)',
   );
   await db.execute(
     'CREATE INDEX IF NOT EXISTS idx_local_chess_games_plycount ON $localChessGamesTable(ply_count)',

@@ -14,23 +14,39 @@ int nextDesktopGameKeyboardIndex({
   required int itemCount,
   required LogicalKeyboardKey key,
   int pageStride = kDesktopGameKeyboardDefaultPageStride,
+  int columnCount = 1,
 }) {
   if (itemCount <= 0) return -1;
   final hasSelection = currentIndex >= 0;
   final safeCurrent =
       hasSelection ? currentIndex.clamp(0, itemCount - 1).toInt() : 0;
   final safePageStride = math.max(1, pageStride);
+  // ArrowUp/ArrowDown walk whole rows in a multi-column grid; ArrowLeft/Right
+  // still step one card. `columnCount == 1` degrades to the old flat-list
+  // behavior (vertical lists, single-column tables), so callers that don't
+  // know their column count keep working unchanged.
+  final safeColumns = math.max(1, columnCount);
 
-  if (key == LogicalKeyboardKey.arrowRight ||
-      key == LogicalKeyboardKey.arrowDown) {
-    // When no item is selected, ArrowDown/Right lands on the first item.
+  // ArrowRight moves one card forward (wraps into the next row at a row edge).
+  if (key == LogicalKeyboardKey.arrowRight) {
     if (!hasSelection) return 0;
     return math.min(itemCount - 1, safeCurrent + 1);
   }
-  if (key == LogicalKeyboardKey.arrowLeft ||
-      key == LogicalKeyboardKey.arrowUp) {
+  // ArrowLeft moves one card back (wraps into the previous row at a row edge).
+  if (key == LogicalKeyboardKey.arrowLeft) {
     if (!hasSelection) return 0;
     return math.max(0, safeCurrent - 1);
+  }
+  // ArrowDown drops a full row; clamp onto the last card so a partial final
+  // row is still reachable instead of trapping focus on the last full row.
+  if (key == LogicalKeyboardKey.arrowDown) {
+    if (!hasSelection) return 0;
+    return math.min(itemCount - 1, safeCurrent + safeColumns);
+  }
+  // ArrowUp climbs a full row; clamp onto the first card.
+  if (key == LogicalKeyboardKey.arrowUp) {
+    if (!hasSelection) return 0;
+    return math.max(0, safeCurrent - safeColumns);
   }
   if (key == LogicalKeyboardKey.pageDown) {
     if (!hasSelection) return 0;
@@ -68,6 +84,7 @@ class DesktopGameKeyboardFocus extends StatefulWidget {
     this.pageStride = kDesktopGameKeyboardDefaultPageStride,
     this.onActivateGame,
     this.ensureInitialSelectionVisible = true,
+    this.resolveColumnCount,
   });
 
   final String scopeId;
@@ -75,6 +92,13 @@ class DesktopGameKeyboardFocus extends StatefulWidget {
   final int pageStride;
   final ValueChanged<GamesTourModel>? onActivateGame;
   final bool ensureInitialSelectionVisible;
+
+  /// Live column count of the grid that renders [games], read at key-press
+  /// time so ArrowUp/ArrowDown can travel whole rows. Return `1` (or leave
+  /// null) for single-column lists. Panes whose grid is responsive can point
+  /// this at a mutable field they update from the grid's own layout pass, so
+  /// the row stride always matches what's on screen.
+  final int Function()? resolveColumnCount;
   final Widget Function(
     BuildContext context,
     String? selectedGameId,
@@ -207,17 +231,22 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
     }
   }
 
-  void _selectGame(String gameId, {bool ensureVisible = false}) {
+  void _selectGame(
+    String gameId, {
+    bool ensureVisible = false,
+    ScrollPositionAlignmentPolicy alignment =
+        ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+  }) {
     if (_selectedGameId == gameId) {
       _focusNode.requestFocus();
-      if (ensureVisible) _ensureSelectedVisible();
+      if (ensureVisible) _ensureSelectedVisible(alignment: alignment);
       return;
     }
     setState(() => _selectedGameId = gameId);
     _focusNode.requestFocus();
     if (ensureVisible) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _ensureSelectedVisible();
+        if (mounted) _ensureSelectedVisible(alignment: alignment);
       });
     }
   }
@@ -273,17 +302,37 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
     final currentIndex = games.indexWhere(
       (game) => game.gameId == _selectedGameId,
     );
+    final columnCount = math.max(1, widget.resolveColumnCount?.call() ?? 1);
     final nextIndex = nextDesktopGameKeyboardIndex(
       currentIndex: currentIndex,
       itemCount: games.length,
       key: key,
       pageStride: widget.pageStride,
+      columnCount: columnCount,
     );
     if (nextIndex < 0 || nextIndex >= games.length) {
       return KeyEventResult.ignored;
     }
-    _selectGame(games[nextIndex].gameId, ensureVisible: true);
+    _selectGame(
+      games[nextIndex].gameId,
+      ensureVisible: true,
+      // Backward moves (up/left/pageUp/home) must reveal the target at the
+      // viewport's leading edge — keepVisibleAtEnd refuses to scroll backward
+      // (it clamps `target` to the current offset), so an upward step would
+      // otherwise never move the scroll position.
+      alignment:
+          _isBackwardNavigation(key)
+              ? ScrollPositionAlignmentPolicy.keepVisibleAtStart
+              : ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+    );
     return KeyEventResult.handled;
+  }
+
+  bool _isBackwardNavigation(LogicalKeyboardKey key) {
+    return key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.pageUp ||
+        key == LogicalKeyboardKey.home;
   }
 
   GamesTourModel? _selectedGame() {
@@ -295,14 +344,17 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
     return null;
   }
 
-  void _ensureSelectedVisible() {
+  void _ensureSelectedVisible({
+    ScrollPositionAlignmentPolicy alignment =
+        ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+  }) {
     final context = _selectedItemKey.currentContext;
     if (context == null) return;
     Scrollable.ensureVisible(
       context,
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOutCubic,
-      alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+      alignmentPolicy: alignment,
     );
   }
 
