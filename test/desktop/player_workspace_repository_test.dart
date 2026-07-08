@@ -2419,6 +2419,41 @@ $_mergeGameOne
         expect(localRepository.statsRequested, isTrue);
       },
     );
+
+    test(
+      'source import uses the open app cache when a path resolver is present',
+      () async {
+        final workspaceRepository = PlayerWorkspaceRepository();
+        final pathResolverUsed = Completer<void>();
+        final neverResolvesPath = Completer<String>();
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+          databaseFilePath: () {
+            if (!pathResolverUsed.isCompleted) pathResolverUsed.complete();
+            return neverResolvesPath.future;
+          },
+        );
+        final path = '${temp.path}/workspace/chessever-vasif.pgn';
+
+        final result = await workspaceRepository
+            .mergeIntoLocalDatabase(
+              localRepository: localRepository,
+              path: path,
+              sourceLabel: 'GM Vasif Durarbayli ChessEver',
+              pgn: '$_mergeGameOne\n\n$_mergeGameTwo',
+              playerAliases: const <String>['DrNykterstein'],
+              playerFideId: '1503014',
+              replaceExisting: true,
+            )
+            .timeout(const Duration(seconds: 2));
+
+        expect(result.stats.gameCount, 2);
+        expect(result.stats.newGameCount, 2);
+        expect(pathResolverUsed.isCompleted, isFalse);
+        expect(await _count(db, 'local_chess_databases'), 1);
+        expect(await _count(db, 'local_chess_games'), 2);
+      },
+    );
   });
 
   group('Player workspace public API profiles', () {

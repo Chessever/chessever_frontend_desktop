@@ -1002,7 +1002,7 @@ void main() {
   );
 
   test(
-    'queued import can use a cache path without opening app cache',
+    'queued import falls back to a cache path when app cache open fails',
     () async {
       final pgnFile = File('${temp.path}/worker-path-only.pgn');
       await pgnFile.writeAsString(_samplePgn);
@@ -1020,7 +1020,7 @@ void main() {
       final source = await repo.importSingleFileSource(path: pgnFile.path);
 
       expect(source, isNotNull);
-      expect(openedAppCache, isFalse);
+      expect(openedAppCache, isTrue);
       final fileNode = source!.root.singlePlayableDatabaseInSubtree!;
       expect(fileNode.gameCount, 2);
       expect(fileNode.games, hasLength(1));
@@ -1028,6 +1028,36 @@ void main() {
       addTearDown(workerDb.close);
       expect(await _count(workerDb, 'local_chess_databases'), 1);
       expect(await _count(workerDb, 'local_chess_games'), 2);
+    },
+  );
+
+  test(
+    'queued import prefers the open app cache over a path-only writer',
+    () async {
+      final pgnFile = File('${temp.path}/shared-cache-import.pgn');
+      await pgnFile.writeAsString(_samplePgn);
+      final pathResolverUsed = Completer<void>();
+      final neverResolvesPath = Completer<String>();
+      final repo = LocalChessDatabaseRepository(
+        database: () async => db,
+        databaseFilePath: () {
+          if (!pathResolverUsed.isCompleted) pathResolverUsed.complete();
+          return neverResolvesPath.future;
+        },
+        cachedFileNodeGamePreviewLimit: 1,
+      );
+
+      final source = await repo
+          .importSingleFileSource(path: pgnFile.path)
+          .timeout(const Duration(seconds: 2));
+
+      expect(source, isNotNull);
+      final fileNode = source!.root.singlePlayableDatabaseInSubtree!;
+      expect(fileNode.gameCount, 2);
+      expect(fileNode.games, hasLength(1));
+      expect(pathResolverUsed.isCompleted, isFalse);
+      expect(await _count(db, 'local_chess_databases'), 1);
+      expect(await _count(db, 'local_chess_games'), 2);
     },
   );
 
@@ -2357,6 +2387,36 @@ void main() {
     expect(await _count(db, 'local_chess_tree_nodes'), 0);
     expect(await _count(db, 'local_chess_tree_moves'), 0);
     expect(await _count(db, 'local_chess_position_games'), 0);
+  });
+
+  test('markCachedSourceDeleted waits for the local write queue', () async {
+    final pgnFile = File('${temp.path}/queued-mark-delete.pgn');
+    await pgnFile.writeAsString(_samplePgn);
+    final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+    final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+    final repo = LocalChessDatabaseRepository(database: () async => db);
+    await repo.persistFileNode(fileNode, sourceLabel: source.label);
+
+    final queueEntered = Completer<void>();
+    final releaseQueue = Completer<void>();
+    final held = LocalChessDatabaseRepository.debugRunWriteSerialized(() async {
+      queueEntered.complete();
+      await releaseQueue.future;
+    });
+    await queueEntered.future.timeout(const Duration(seconds: 5));
+
+    var completed = false;
+    final marked = repo.markCachedSourceDeleted(pgnFile.path).then((value) {
+      completed = true;
+      return value;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(completed, isFalse);
+    releaseQueue.complete();
+    expect(await marked.timeout(const Duration(seconds: 5)), 1);
+    await held.timeout(const Duration(seconds: 5));
+    expect(await repo.deletedCacheCount(), 1);
   });
 
   test('marked deleted cache stays hidden without startup purge', () async {

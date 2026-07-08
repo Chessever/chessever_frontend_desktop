@@ -1670,54 +1670,60 @@ class LocalChessDatabaseRepository {
     LocalChessScanProgressSink? onProgress,
   }) async {
     final resolver = _databaseFilePathResolver;
-    if (resolver != null) {
-      onProgress?.call(
-        LocalChessScanProgress(
-          fraction: 0.01,
-          message: 'Opening local database cache...',
-        ),
+    try {
+      await _openDatabase(onProgress: onProgress);
+      return _LocalChessInlineImportSession(repository: this);
+    } catch (error) {
+      if (resolver == null) rethrow;
+      localChessLog.warning(
+        'Falling back to path-only local import cache',
+        context: <String, Object?>{'error': error.toString()},
       );
-      final path = await resolver();
-      if (path == null || path.trim().isEmpty) return null;
-      final db = await resqlite.Database.open(path);
-      try {
-        onProgress?.call(
-          LocalChessScanProgress(
-            fraction: 0.02,
-            message: 'Preparing local database cache...',
-          ),
-        );
-        await _configureStandaloneLocalChessDatabase(db);
-        onProgress?.call(
-          LocalChessScanProgress(
-            fraction: 0.03,
-            message: 'Checking local database schema...',
-          ),
-        );
-        await createLocalChessResqliteDatabaseSchema(db);
-        onProgress?.call(
-          LocalChessScanProgress(
-            fraction: 0.04,
-            message: 'Local database cache ready.',
-          ),
-        );
-        return _LocalChessInlineImportSession(
-          repository: LocalChessDatabaseRepository(
-            database: () async => db,
-            eagerPositionRefLoadLimit: eagerPositionRefLoadLimit,
-            eagerTreeMoveLoadLimit: eagerTreeMoveLoadLimit,
-            cachedFileNodeGamePreviewLimit: cachedFileNodeGamePreviewLimit,
-          ),
-          ownedDatabase: db,
-        );
-      } catch (_) {
-        await db.close();
-        rethrow;
-      }
     }
 
-    await _openDatabase(onProgress: onProgress);
-    return _LocalChessInlineImportSession(repository: this);
+    onProgress?.call(
+      LocalChessScanProgress(
+        fraction: 0.01,
+        message: 'Opening local database cache...',
+      ),
+    );
+    final path = await resolver();
+    if (path == null || path.trim().isEmpty) return null;
+    final db = await resqlite.Database.open(path);
+    try {
+      onProgress?.call(
+        LocalChessScanProgress(
+          fraction: 0.02,
+          message: 'Preparing local database cache...',
+        ),
+      );
+      await _configureStandaloneLocalChessDatabase(db);
+      onProgress?.call(
+        LocalChessScanProgress(
+          fraction: 0.03,
+          message: 'Checking local database schema...',
+        ),
+      );
+      await createLocalChessResqliteDatabaseSchema(db);
+      onProgress?.call(
+        LocalChessScanProgress(
+          fraction: 0.04,
+          message: 'Local database cache ready.',
+        ),
+      );
+      return _LocalChessInlineImportSession(
+        repository: LocalChessDatabaseRepository(
+          database: () async => db,
+          eagerPositionRefLoadLimit: eagerPositionRefLoadLimit,
+          eagerTreeMoveLoadLimit: eagerTreeMoveLoadLimit,
+          cachedFileNodeGamePreviewLimit: cachedFileNodeGamePreviewLimit,
+        ),
+        ownedDatabase: db,
+      );
+    } catch (_) {
+      await db.close();
+      rethrow;
+    }
   }
 
   Future<String?> _workerDatabaseFilePath({
@@ -2404,7 +2410,13 @@ class LocalChessDatabaseRepository {
     unawaited(_backgroundPurgeQueue);
   }
 
-  Future<int> markCachedSourceDeleted(String path) async {
+  Future<int> markCachedSourceDeleted(String path) {
+    return _runLocalCacheWriteQueued(
+      () => _markCachedSourceDeletedUnlocked(path),
+    );
+  }
+
+  Future<int> _markCachedSourceDeletedUnlocked(String path) async {
     final trimmed = path.trim();
     if (trimmed.isEmpty) return 0;
     final stopwatch = Stopwatch()..start();
@@ -2483,6 +2495,24 @@ class LocalChessDatabaseRepository {
   }
 
   Future<int> purgeDeletedCaches({
+    String? sourcePath,
+    int batchSize = 1024,
+    bool cleanupOrphanMetadata = true,
+    bool checkpoint = true,
+    void Function(LocalChessScanProgress progress)? onProgress,
+  }) {
+    return _runLocalCacheWriteQueued(
+      () => _purgeDeletedCachesUnlocked(
+        sourcePath: sourcePath,
+        batchSize: batchSize,
+        cleanupOrphanMetadata: cleanupOrphanMetadata,
+        checkpoint: checkpoint,
+        onProgress: onProgress,
+      ),
+    );
+  }
+
+  Future<int> _purgeDeletedCachesUnlocked({
     String? sourcePath,
     int batchSize = 1024,
     bool cleanupOrphanMetadata = true,
@@ -6345,15 +6375,17 @@ Future<void> _refreshLocalChessDatabaseFileStat(
   required int modifiedAtMs,
   required String contentFingerprint,
 }) async {
-  await db.execute(
-    '''
-    UPDATE $localChessDatabasesTable
-    SET size_bytes = ?,
-        modified_at_ms = ?,
-        content_fingerprint = ?
-    WHERE id = ? AND deleted_at_ms IS NULL
-    ''',
-    <Object?>[sizeBytes, modifiedAtMs, contentFingerprint, databaseId],
+  await LocalChessDatabaseRepository._runLocalCacheWriteQueued(
+    () => db.execute(
+      '''
+      UPDATE $localChessDatabasesTable
+      SET size_bytes = ?,
+          modified_at_ms = ?,
+          content_fingerprint = ?
+      WHERE id = ? AND deleted_at_ms IS NULL
+      ''',
+      <Object?>[sizeBytes, modifiedAtMs, contentFingerprint, databaseId],
+    ),
   );
 }
 
