@@ -568,6 +568,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         PlayerWorkspaceSource.chesscom => await _workspaceRepository
             .fetchChessComAccount(existing.username),
         PlayerWorkspaceSource.chessever => await _refreshChessEverAccount(
+          player,
           existing,
         ),
         PlayerWorkspaceSource.manual =>
@@ -1157,6 +1158,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<PlayerWorkspaceAccount> _refreshChessEverAccount(
+    PlayerWorkspacePlayer owner,
     PlayerWorkspaceAccount account,
   ) async {
     final playerId = account.externalId?.trim();
@@ -1166,6 +1168,16 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     final player = await _gamebaseRepository.getPlayerById(playerId);
     if (player == null) {
       throw StateError('ChessEver player was not found.');
+    }
+    final lockedFideId = _normalizedPlayerFideId(owner.fideId);
+    final fetchedFideId = _normalizedPlayerFideId(player.fideId);
+    if (lockedFideId != null && fetchedFideId != lockedFideId) {
+      throw StateError(
+        'This player workspace is locked to FIDE $lockedFideId. '
+        '${player.titleAndName} resolved from ChessEver as '
+        '${fetchedFideId == null ? 'no FIDE id' : 'FIDE $fetchedFideId'}, '
+        'so refresh was blocked to protect this player profile.',
+      );
     }
     final workspacePlayer = _workspaceRepository.playerFromChessEver(player);
     final refreshed = workspacePlayer.account(PlayerWorkspaceSource.chessever);

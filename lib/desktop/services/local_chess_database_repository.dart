@@ -3196,8 +3196,7 @@ class LocalChessDatabaseRepository {
               ? aliases.contains(black)
               : blackFide == fideId ||
                   (blackFide == null && aliases.contains(black));
-      final hasAnyFide = whiteFide != null || blackFide != null;
-      if (!isWhite && !isBlack && (fideId == null || hasAnyFide)) continue;
+      if (!isWhite && !isBlack) continue;
       final hash = row['pgn_hash']?.toString().trim() ?? '';
       final dedupKey = hash.isEmpty ? 'id:${row['id']}' : 'hash:$hash';
       if (!seen.add(dedupKey)) continue;

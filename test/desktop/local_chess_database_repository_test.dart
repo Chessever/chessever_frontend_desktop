@@ -2763,9 +2763,26 @@ void main() {
           ),
         ],
       );
+      await _seedStatsDatabase(
+        db,
+        databaseId: 'srcWrongNoFide',
+        player: 'Completely Different',
+        games: const <_StatsGame>[
+          _StatsGame(
+            hash: 'mixed-wrong-no-fide-1',
+            opponent: 'Firouzja, Alireza',
+            result: '1-0',
+          ),
+        ],
+      );
 
       final stats = await repo.resultStatsForDatabases(
-        databasePaths: const <String>['srcFide', 'srcChessCom', 'srcWrongFide'],
+        databasePaths: const <String>[
+          'srcFide',
+          'srcChessCom',
+          'srcWrongFide',
+          'srcWrongNoFide',
+        ],
         playerAliases: const <String>['Vasif Durarbayli'],
         playerFideId: '13402935',
       );

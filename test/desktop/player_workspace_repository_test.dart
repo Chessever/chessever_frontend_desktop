@@ -1475,6 +1475,75 @@ void main() {
       },
     );
 
+    test(
+      'FIDE-locked player rejects ChessEver refresh identity drift',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final gamebaseRepository = _FakeGamebaseRepository(
+          const <String, String>{},
+          playersById: const <String, GamebasePlayer>{
+            'ce-vasif': GamebasePlayer(
+              id: 'ce-carlsen',
+              fideId: '1503014',
+              name: 'Carlsen, Magnus',
+              gender: PlayerGender.male,
+              fed: 'NOR',
+              title: 'GM',
+            ),
+          },
+        );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: gamebaseRepository,
+          localRepository: LocalChessDatabaseRepository(
+            database: () async => db,
+          ),
+        );
+        await notifier.load();
+        await notifier.addManualPlayer('GM Vasif Durarbayli');
+        await notifier.selectPlayer(notifier.state.players.single.id);
+        await notifier.connectChessEverPlayer(
+          const GamebasePlayer(
+            id: 'ce-vasif',
+            fideId: '13402935',
+            name: 'Durarbayli, Vasif',
+            gender: PlayerGender.male,
+            fed: 'AZE',
+            title: 'GM',
+          ),
+        );
+
+        final source =
+            notifier.state.selectedPlayer!.account(
+              PlayerWorkspaceSource.chessever,
+            )!;
+        await expectLater(
+          notifier.refreshAccountEntry(source),
+          throwsA(
+            isA<StateError>()
+                .having(
+                  (error) => error.message,
+                  'message',
+                  contains('locked to FIDE 13402935'),
+                )
+                .having(
+                  (error) => error.message,
+                  'message',
+                  contains('FIDE 1503014'),
+                ),
+          ),
+        );
+
+        final player = notifier.state.selectedPlayer!;
+        final chessever = player.account(PlayerWorkspaceSource.chessever)!;
+        expect(player.fideId, '13402935');
+        expect(player.chesseverPlayerId, 'ce-vasif');
+        expect(chessever.externalId, 'ce-vasif');
+        expect(chessever.displayName, 'GM Vasif Durarbayli');
+        expect(chessever.error, contains('locked to FIDE 13402935'));
+      },
+    );
+
     test('combined rebuild sums FIDE and no-FIDE player sources', () async {
       final workspaceRepository = _FakePlayerWorkspaceRepository(
         root: temp,
@@ -3487,18 +3556,30 @@ class _SequencedChessEverWorkspaceRepository
 }
 
 class _FakeGamebaseRepository extends GamebaseRepository {
-  _FakeGamebaseRepository(this.pgnById, {this.pgnExport}) : super(Dio());
+  _FakeGamebaseRepository(
+    this.pgnById, {
+    this.pgnExport,
+    this.playersById = const <String, GamebasePlayer>{},
+  }) : super(Dio());
 
   final Map<String, String> pgnById;
   final String? pgnExport;
+  final Map<String, GamebasePlayer> playersById;
   final exportPlayerIds = <String>[];
   final exportFideIds = <String?>[];
   final exportDateFrom = <String?>[];
+  final requestedProfileIds = <String>[];
   final requestedPlayerIds = <String>[];
   final requestedIncludeData = <bool>[];
   final requestedPageSizes = <int>[];
   final requestedDateFrom = <String?>[];
   final hydratedIds = <String>[];
+
+  @override
+  Future<GamebasePlayer?> getPlayerById(String id) async {
+    requestedProfileIds.add(id);
+    return playersById[id];
+  }
 
   @override
   Future<GamebasePlayerPgnExport?> getPlayerGamesPgn({
