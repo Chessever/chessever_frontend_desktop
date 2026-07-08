@@ -3,8 +3,10 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, if-none-match",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+  "Access-Control-Expose-Headers":
+    "X-Game-Count, X-PGN-Cache, ETag, Content-Disposition",
 };
 
 const DEFAULT_GAMEBASE_API_BASE = "https://service.chessever.com";
@@ -19,6 +21,8 @@ const allowedRoutes: AllowedRoute[] = [
   { method: "GET", pattern: /^\/api\/player$/ },
   { method: "GET", pattern: /^\/api\/player\/[^/]+$/ },
   { method: "GET", pattern: /^\/api\/player\/[^/]+\/(?:events|games|stats)$/ },
+  { method: "GET", pattern: /^\/api\/player\/[^/]+\/games\.pgn$/ },
+  { method: "GET", pattern: /^\/api\/player\/fide\/[^/]+\/games\.pgn$/ },
 
   { method: "POST", pattern: /^\/api\/player\/[^/]+\/opening-tree\/build$/ },
   { method: "GET", pattern: /^\/api\/player\/[^/]+\/opening-tree\/status$/ },
@@ -107,8 +111,10 @@ Deno.serve(async (req: Request) => {
   });
 
   const headers = new Headers();
-  headers.set("Accept", "application/json");
+  headers.set("Accept", req.headers.get("accept") ?? "application/json");
   headers.set("X-API-Key", apiKey);
+  const ifNoneMatch = req.headers.get("if-none-match");
+  if (ifNoneMatch) headers.set("If-None-Match", ifNoneMatch);
   const contentType = req.headers.get("content-type");
   if (contentType) headers.set("Content-Type", contentType);
 
@@ -129,6 +135,14 @@ Deno.serve(async (req: Request) => {
       "Content-Type",
       upstreamContentType ?? "application/json",
     );
+    const gameCount = upstream.headers.get("x-game-count");
+    if (gameCount) responseHeaders.set("X-Game-Count", gameCount);
+    const pgnCache = upstream.headers.get("x-pgn-cache");
+    if (pgnCache) responseHeaders.set("X-PGN-Cache", pgnCache);
+    const etag = upstream.headers.get("etag");
+    if (etag) responseHeaders.set("ETag", etag);
+    const disposition = upstream.headers.get("content-disposition");
+    if (disposition) responseHeaders.set("Content-Disposition", disposition);
     return new Response(upstream.body, {
       status: upstream.status,
       headers: responseHeaders,
