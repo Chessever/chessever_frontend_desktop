@@ -5,11 +5,16 @@ import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:intl/intl.dart';
 
+import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_explorer_scope.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
+import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/utils/list_keyboard_nav.dart';
+import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_opening_explorer.dart';
 import 'package:chessever/desktop/widgets/desktop_position_games_table.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
@@ -32,6 +37,14 @@ import 'package:chessever/theme/app_theme.dart';
 final rightRailActivePageProvider = StateProvider.family<int, String>(
   (ref, _) => 0,
 );
+
+final localOpeningTreeCatalogProvider =
+    FutureProvider.autoDispose<List<LocalOpeningTreeCatalogEntry>>((ref) async {
+      ref.watch(localChessLibraryProvider.select((state) => state.treeBuilds));
+      return ref
+          .read(localChessDatabaseRepositoryProvider)
+          .listBuiltOpeningTrees();
+    });
 
 class ExplorerContinuationInsertion {
   const ExplorerContinuationInsertion({required this.ucis, this.sourceLabel});
@@ -72,6 +85,7 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.explorerScope,
     this.localOpeningTreeIndex,
     this.localOpeningTreeTitle = '',
+    this.enableLocalOpeningTreePicker = false,
     this.onNotationVertical,
     this.onNotationStep,
     this.onNotationJumpToHead,
@@ -105,6 +119,7 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   final BoardExplorerScope? explorerScope;
   final PlayerOpeningTreeIndex? localOpeningTreeIndex;
   final String localOpeningTreeTitle;
+  final bool enableLocalOpeningTreePicker;
 
   /// The notation widget rendered on page 0. Built by the caller so this
   /// panel doesn't have to know about the desktop board's _Ply / history.
@@ -477,6 +492,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
       child:
           buildExplorerPage
               ? _OpeningExplorerPage(
+                tabId: widget.tabId,
                 active: explorerVisible,
                 activeSection: _page,
                 currentFen: widget.currentFen,
@@ -500,6 +516,8 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                 explorerScope: widget.explorerScope,
                 localOpeningTreeIndex: widget.localOpeningTreeIndex,
                 localOpeningTreeTitle: widget.localOpeningTreeTitle,
+                enableLocalOpeningTreePicker:
+                    widget.enableLocalOpeningTreePicker,
                 exactFenSearch: !_isInitialPositionFen(widget.startingFen),
               )
               : const ColoredBox(color: kBlack2Color),
@@ -972,6 +990,7 @@ class _RailIconButtonState extends State<_RailIconButton>
 /// right-rail sizes.
 class _OpeningExplorerPage extends ConsumerStatefulWidget {
   const _OpeningExplorerPage({
+    required this.tabId,
     required this.active,
     required this.activeSection,
     required this.currentFen,
@@ -992,9 +1011,11 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
     required this.explorerScope,
     required this.localOpeningTreeIndex,
     required this.localOpeningTreeTitle,
+    required this.enableLocalOpeningTreePicker,
     this.exactFenSearch = false,
   });
 
+  final String? tabId;
   final String currentFen;
   final String startingFen;
   final List<String> lineUcis;
@@ -1015,6 +1036,7 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
   final BoardExplorerScope? explorerScope;
   final PlayerOpeningTreeIndex? localOpeningTreeIndex;
   final String localOpeningTreeTitle;
+  final bool enableLocalOpeningTreePicker;
   final bool exactFenSearch;
 
   @override
@@ -1046,6 +1068,51 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
   PlayerOpeningTreeIndex? get _effectiveLocalOpeningTreeIndex {
     if (_explorerSource != _ExplorerSource.local) return null;
     return widget.localOpeningTreeIndex;
+  }
+
+  _ExplorerSource get _visibleExplorerSource {
+    if (_effectiveLocalOpeningTreeIndex == null) return _ExplorerSource.global;
+    return _explorerSource;
+  }
+
+  Future<void> _selectLocalOpeningTree(
+    LocalOpeningTreeCatalogEntry entry,
+  ) async {
+    final tabId = widget.tabId;
+    if (tabId == null) return;
+    setState(() {
+      _explorerSource = _ExplorerSource.local;
+      _pendingGamesFocus = false;
+      _activeTable = _ExplorerTableFocus.moves;
+      _focusedMoveIndex = -1;
+      _focusedGameIndex = -1;
+      _focusedGameMoveIndex = -1;
+      _focusedGameAutoplaying = false;
+      _moveCount = 0;
+      _lastSyncedKey = '';
+    });
+    final index = await ref
+        .read(localChessDatabaseRepositoryProvider)
+        .loadOpeningTreeIndexForDatabase(databasePath: entry.databasePath);
+    if (!mounted || index?.isUsable != true) return;
+    ref.read(boardTabGameArgsByTabIdProvider.notifier).update((tabs) {
+      final current = tabs[tabId];
+      if (current == null) return tabs;
+      return <String, BoardTabGameArgs>{
+        ...tabs,
+        tabId: current.copyWith(
+          localOpeningTreeIndex: index,
+          localOpeningTreeTitle: entry.title,
+          enableLocalOpeningTreePicker: true,
+        ),
+      };
+    });
+    widget.onClearPreviewUciMove?.call();
+    _gamesController.select(null);
+    _syncProvider(force: true);
+    if (widget.active && widget.activeSection > 0) {
+      _keepExplorerFocusAfterFrame();
+    }
   }
 
   void _syncProvider({bool force = false}) {
@@ -1726,6 +1793,20 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
     super.build(context);
     if (!widget.active) return const SizedBox.expand();
     final effectiveLocalTree = _effectiveLocalOpeningTreeIndex;
+    final localTreeCatalog =
+        widget.enableLocalOpeningTreePicker ||
+                widget.localOpeningTreeIndex != null
+            ? ref.watch(localOpeningTreeCatalogProvider)
+            : const AsyncValue<List<LocalOpeningTreeCatalogEntry>>.data(
+              <LocalOpeningTreeCatalogEntry>[],
+            );
+    final localTrees = _catalogWithCurrentLocalTree(
+      catalog:
+          localTreeCatalog.valueOrNull ??
+          const <LocalOpeningTreeCatalogEntry>[],
+      current: widget.localOpeningTreeIndex,
+      currentTitle: widget.localOpeningTreeTitle,
+    );
     final activeContinuationStep = _activeGameContinuationStep();
     final gamesPanelActive = debugShouldActivateExplorerGamesPanel(
       pageActive: widget.active,
@@ -1803,10 +1884,18 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (widget.localOpeningTreeIndex != null)
+                if (widget.localOpeningTreeIndex != null ||
+                    widget.enableLocalOpeningTreePicker)
                   _ExplorerSourceSwitcher(
-                    value: _explorerSource,
+                    value: _visibleExplorerSource,
                     localLabel: widget.localOpeningTreeTitle,
+                    localTrees: localTrees,
+                    selectedLocalTreeDatabaseId:
+                        widget.localOpeningTreeIndex?.playerId,
+                    localTreeLoading: localTreeCatalog.isLoading,
+                    localTreeError: localTreeCatalog.asError?.error,
+                    onSelectLocalTree:
+                        (entry) => unawaited(_selectLocalOpeningTree(entry)),
                     onChanged: _setExplorerSource,
                     prepColor: ref.watch(
                       gamebaseExplorerProvider.select(
@@ -1875,10 +1964,40 @@ enum _ExplorerTableFocus { moves, games }
 
 enum _ExplorerSource { global, local }
 
+List<LocalOpeningTreeCatalogEntry> _catalogWithCurrentLocalTree({
+  required List<LocalOpeningTreeCatalogEntry> catalog,
+  required PlayerOpeningTreeIndex? current,
+  required String currentTitle,
+}) {
+  final currentId = current?.playerId?.trim();
+  if (current == null || currentId == null || currentId.isEmpty) {
+    return catalog;
+  }
+  if (catalog.any((entry) => entry.databaseId == currentId)) return catalog;
+  final title = currentTitle.trim();
+  return <LocalOpeningTreeCatalogEntry>[
+    LocalOpeningTreeCatalogEntry(
+      databaseId: currentId,
+      databasePath: currentId,
+      title: title.isEmpty ? 'Local database' : title,
+      gameCount: current.downloadedGameCount,
+      positionCount: current.positionCount,
+      maxPly: current.maxPly,
+      updatedAt: current.generatedAt,
+    ),
+    ...catalog,
+  ];
+}
+
 class _ExplorerSourceSwitcher extends StatelessWidget {
   const _ExplorerSourceSwitcher({
     required this.value,
     required this.localLabel,
+    required this.localTrees,
+    required this.selectedLocalTreeDatabaseId,
+    required this.localTreeLoading,
+    required this.localTreeError,
+    required this.onSelectLocalTree,
     required this.onChanged,
     this.prepColor,
     this.onPrepChanged,
@@ -1886,6 +2005,11 @@ class _ExplorerSourceSwitcher extends StatelessWidget {
 
   final _ExplorerSource value;
   final String localLabel;
+  final List<LocalOpeningTreeCatalogEntry> localTrees;
+  final String? selectedLocalTreeDatabaseId;
+  final bool localTreeLoading;
+  final Object? localTreeError;
+  final ValueChanged<LocalOpeningTreeCatalogEntry> onSelectLocalTree;
   final ValueChanged<_ExplorerSource> onChanged;
 
   /// Active prep colour filter (null = both). When [onPrepChanged] is provided
@@ -1898,6 +2022,8 @@ class _ExplorerSourceSwitcher extends StatelessWidget {
   Widget build(BuildContext context) {
     final title = localLabel.trim().isEmpty ? 'Local database' : localLabel;
     final onPrep = onPrepChanged;
+    final canUseLocal =
+        selectedLocalTreeDatabaseId != null || localTrees.isNotEmpty;
     return Container(
       height: 42,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -1958,12 +2084,115 @@ class _ExplorerSourceSwitcher extends StatelessWidget {
           _ExplorerSourceSegment(
             label: 'Local',
             selected: value == _ExplorerSource.local,
-            onTap: () => onChanged(_ExplorerSource.local),
+            enabled: canUseLocal,
+            onTap: () {
+              if (selectedLocalTreeDatabaseId == null &&
+                  localTrees.isNotEmpty) {
+                onSelectLocalTree(localTrees.first);
+              }
+              onChanged(_ExplorerSource.local);
+            },
+          ),
+          _LocalTreePickerGear(
+            trees: localTrees,
+            selectedDatabaseId: selectedLocalTreeDatabaseId,
+            loading: localTreeLoading,
+            error: localTreeError,
+            onSelected: (entry) {
+              onSelectLocalTree(entry);
+              onChanged(_ExplorerSource.local);
+            },
           ),
         ],
       ),
     );
   }
+}
+
+class _LocalTreePickerGear extends StatelessWidget {
+  const _LocalTreePickerGear({
+    required this.trees,
+    required this.selectedDatabaseId,
+    required this.loading,
+    required this.error,
+    required this.onSelected,
+  });
+
+  final List<LocalOpeningTreeCatalogEntry> trees;
+  final String? selectedDatabaseId;
+  final bool loading;
+  final Object? error;
+  final ValueChanged<LocalOpeningTreeCatalogEntry> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = trees.isNotEmpty;
+    final tooltip =
+        loading
+            ? 'Loading local trees'
+            : error != null
+            ? 'Could not load local trees'
+            : enabled
+            ? 'Choose local tree'
+            : 'No local trees have been built yet';
+    return DesktopTooltip(
+      message: tooltip,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown:
+            enabled
+                ? (details) =>
+                    unawaited(_showTreeMenu(context, details.globalPosition))
+                : null,
+        child: Container(
+          height: 28,
+          width: 30,
+          margin: const EdgeInsets.only(left: 4),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: kBlack3Color,
+            border: Border.all(color: kDividerColor),
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: Icon(
+            Icons.settings_outlined,
+            size: 14,
+            color: enabled ? kWhiteColor70 : kLightGreyColor,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showTreeMenu(BuildContext context, Offset position) async {
+    final picked = await showDesktopContextMenu<String>(
+      context: context,
+      position: position,
+      width: 300,
+      entries: [
+        for (final tree in trees)
+          DesktopContextMenuItem<String>(
+            value: tree.databaseId,
+            icon:
+                tree.databaseId == selectedDatabaseId
+                    ? Icons.check_rounded
+                    : Icons.account_tree_outlined,
+            label: _treeMenuLabel(tree),
+          ),
+      ],
+    );
+    if (picked == null) return;
+    final tree = trees.firstWhere(
+      (entry) => entry.databaseId == picked,
+      orElse: () => trees.first,
+    );
+    onSelected(tree);
+  }
+}
+
+String _treeMenuLabel(LocalOpeningTreeCatalogEntry tree) {
+  final games = NumberFormat.decimalPattern().format(tree.gameCount);
+  return '${tree.title} · $games games';
 }
 
 /// Compact segment in the in-game prep-colour "gear" (Both / W / B).
@@ -1995,11 +2224,13 @@ class _PrepColorSegment extends StatelessWidget {
           alignment: Alignment.center,
           padding: const EdgeInsets.symmetric(horizontal: 8),
           decoration: BoxDecoration(
-            color: selected ? kPrimaryColor.withValues(alpha: 0.12) : kBlack3Color,
+            color:
+                selected ? kPrimaryColor.withValues(alpha: 0.12) : kBlack3Color,
             border: Border.all(
-              color: selected
-                  ? kPrimaryColor.withValues(alpha: 0.42)
-                  : kDividerColor,
+              color:
+                  selected
+                      ? kPrimaryColor.withValues(alpha: 0.42)
+                      : kDividerColor,
             ),
             borderRadius: BorderRadius.circular(7),
           ),
@@ -2023,20 +2254,27 @@ class _ExplorerSourceSegment extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.onTap,
+    this.enabled = true,
   });
 
   final String label;
   final bool selected;
   final VoidCallback onTap;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
-    final fg = selected ? kPrimaryColor : kWhiteColor70;
+    final fg =
+        !enabled
+            ? kLightGreyColor
+            : selected
+            ? kPrimaryColor
+            : kWhiteColor70;
     return DesktopTooltip(
       message: 'Use $label opening explorer data',
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: onTap,
+        onTap: enabled ? onTap : null,
         child: Container(
           height: 28,
           width: 64,

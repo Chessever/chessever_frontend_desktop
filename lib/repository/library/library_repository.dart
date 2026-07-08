@@ -12,6 +12,57 @@ final libraryRepositoryProvider = AutoDisposeProvider<LibraryRepository>(
   (ref) => LibraryRepository(),
 );
 
+/// Returns [rootFolderId] followed by every descendant folder id.
+///
+/// [folderRows] must contain at least `id` and `parent_id` keys. The helper is
+/// cycle-safe so malformed parent links cannot recurse forever.
+List<String> libraryFolderTreeIds(
+  String rootFolderId,
+  Iterable<Map<String, Object?>> folderRows,
+) {
+  final root = rootFolderId.trim();
+  if (root.isEmpty) return const <String>[];
+
+  final existingIds = <String>{};
+  final childrenByParentId = <String, List<String>>{};
+
+  for (final row in folderRows) {
+    final id = row['id']?.toString().trim();
+    if (id == null || id.isEmpty) continue;
+    existingIds.add(id);
+
+    final parentId = row['parent_id']?.toString().trim();
+    if (parentId == null || parentId.isEmpty) continue;
+    childrenByParentId.putIfAbsent(parentId, () => <String>[]).add(id);
+  }
+
+  if (!existingIds.contains(root)) return const <String>[];
+
+  final result = <String>[];
+  final seen = <String>{};
+  void visit(String id) {
+    if (!seen.add(id)) return;
+    result.add(id);
+    for (final childId in childrenByParentId[id] ?? const <String>[]) {
+      visit(childId);
+    }
+  }
+
+  visit(root);
+  return result;
+}
+
+List<Map<String, Object?>> _libraryFolderRowsFromResponse(Object? response) {
+  if (response is! Iterable) return const <Map<String, Object?>>[];
+  return <Map<String, Object?>>[
+    for (final row in response)
+      if (row is Map)
+        <String, Object?>{
+          for (final entry in row.entries) entry.key.toString(): entry.value,
+        },
+  ];
+}
+
 class LibraryRepository extends BaseRepository {
   // ============ FOLDER METHODS ============
 
@@ -142,31 +193,47 @@ class LibraryRepository extends BaseRepository {
         return LibraryFolder.fromSupabase(response);
       });
 
-  /// Delete a folder. FK is ON DELETE CASCADE — every analysis inside is
-  /// hard-deleted with the folder. Confirm with the user before calling.
+  /// Delete a folder tree. Every nested folder/database and saved analysis in
+  /// that tree is hard-deleted. Confirm with the user before calling.
   Future<void> deleteFolder(String folderId) => handleApiCall(() async {
     final userId = supabase.auth.currentUser?.id;
     if (userId == null) throw Exception('User not authenticated');
 
-    final current =
-        await supabase
-            .from('user_folders')
-            .select('name')
-            .eq('id', folderId)
-            .eq('user_id', userId)
-            .maybeSingle();
-    final currentName = current?['name'] as String?;
+    final rows = await _getOwnedFolderRows(userId);
+    final folderIds = libraryFolderTreeIds(folderId, rows);
+    if (folderIds.isEmpty) return;
+
+    final current = rows.firstWhere(
+      (row) => row['id']?.toString() == folderIds.first,
+      orElse: () => const <String, Object?>{},
+    );
+    final currentName = current['name']?.toString();
     if (currentName != null && isPermanentLibraryFolderName(currentName)) {
       throw StateError('Permanent library folders cannot be deleted.');
     }
-    if (current == null) return;
 
     await supabase
-        .from('user_folders')
+        .from('user_saved_analyses')
         .delete()
-        .eq('id', folderId)
-        .eq('user_id', userId);
+        .eq('user_id', userId)
+        .inFilter('folder_id', folderIds);
+
+    for (final id in folderIds.reversed) {
+      await supabase
+          .from('user_folders')
+          .delete()
+          .eq('id', id)
+          .eq('user_id', userId);
+    }
   });
+
+  Future<List<Map<String, Object?>>> _getOwnedFolderRows(String userId) async {
+    final response = await supabase
+        .from('user_folders')
+        .select('id,parent_id,name')
+        .eq('user_id', userId);
+    return _libraryFolderRowsFromResponse(response);
+  }
 
   /// Get the next available order index for folders
   Future<int> _getNextFolderOrder() async {
@@ -607,29 +674,19 @@ class LibraryRepository extends BaseRepository {
       });
 
   /// Get count of analyses in a folder (including sub-folders)
-  Future<int> getAnalysisCountInFolder(
-    String folderId,
-  ) => handleApiCall(() async {
-    // Fetch subfolder IDs - removed user_id filter to allow subscribers to count
-    final subfoldersResponse = await supabase
-        .from('user_folders')
-        .select('id')
-        .eq('parent_id', folderId);
+  Future<int> getAnalysisCountInFolder(String folderId) =>
+      handleApiCall(() async {
+        final folderIds = await _getVisibleFolderTreeIds(folderId);
 
-    final folderIds = [folderId];
-    for (final row in subfoldersResponse) {
-      final id = row['id'] as String?;
-      if (id != null) folderIds.add(id);
-    }
+        // Do not filter by user_id here; RLS lets subscribed users count shared
+        // folders they can read.
+        final count = await supabase
+            .from('user_saved_analyses')
+            .count(CountOption.exact)
+            .inFilter('folder_id', folderIds);
 
-    // Count analyses in these folders - removed user_id filter to allow subscribers to count
-    final count = await supabase
-        .from('user_saved_analyses')
-        .count(CountOption.exact)
-        .inFilter('folder_id', folderIds);
-
-    return count;
-  });
+        return count;
+      });
 
   // ============ PAGINATED QUERIES ============
 
@@ -677,17 +734,7 @@ class LibraryRepository extends BaseRepository {
   /// Count analyses in a shared folder (including sub-folders).
   Future<int> getSharedFolderAnalysisCount(String folderId) =>
       handleApiCall(() async {
-        // Fetch subfolder IDs
-        final subfoldersResponse = await supabase
-            .from('user_folders')
-            .select('id')
-            .eq('parent_id', folderId);
-
-        final folderIds = [folderId];
-        for (final row in subfoldersResponse) {
-          final id = row['id'] as String?;
-          if (id != null) folderIds.add(id);
-        }
+        final folderIds = await _getVisibleFolderTreeIds(folderId);
 
         final response =
             await supabase
@@ -698,6 +745,32 @@ class LibraryRepository extends BaseRepository {
 
         return response.count;
       });
+
+  Future<List<String>> _getVisibleFolderTreeIds(String rootFolderId) async {
+    final root = rootFolderId.trim();
+    if (root.isEmpty) return const <String>[];
+
+    final folderIds = <String>[root];
+    final seen = <String>{root};
+    var queue = <String>[root];
+
+    while (queue.isNotEmpty) {
+      final response = await supabase
+          .from('user_folders')
+          .select('id')
+          .inFilter('parent_id', queue);
+      final nextQueue = <String>[];
+      for (final row in _libraryFolderRowsFromResponse(response)) {
+        final id = row['id']?.toString();
+        if (id == null || id.isEmpty || !seen.add(id)) continue;
+        folderIds.add(id);
+        nextQueue.add(id);
+      }
+      queue = nextQueue;
+    }
+
+    return folderIds;
+  }
 
   // ============ STREAM SUBSCRIPTIONS ============
 

@@ -3644,6 +3644,8 @@ class _BoardPaneContent extends HookConsumerWidget {
                       localOpeningTreeIndex: boardArgs?.localOpeningTreeIndex,
                       localOpeningTreeTitle:
                           boardArgs?.localOpeningTreeTitle ?? '',
+                      enableLocalOpeningTreePicker:
+                          boardArgs?.enableLocalOpeningTreePicker ?? false,
                       notationChild: buildNotationLadder(
                         scrollController: notationScrollController,
                         activePointer: pointer.value,

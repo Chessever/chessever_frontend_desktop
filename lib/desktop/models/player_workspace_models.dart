@@ -484,6 +484,29 @@ class PlayerWorkspacePlayer {
     );
   }
 
+  PlayerWorkspacePlayer withoutCombinedDatabase() {
+    if ((combinedPgnPath == null || combinedPgnPath!.trim().isEmpty) &&
+        combinedGameCount == 0 &&
+        combinedWinCount == 0 &&
+        combinedDrawCount == 0 &&
+        combinedLossCount == 0 &&
+        combinedBuiltAtMs == null) {
+      return this;
+    }
+    return PlayerWorkspacePlayer(
+      id: id,
+      displayName: displayName,
+      createdAtMs: createdAtMs,
+      fideId: fideId,
+      chesseverPlayerId: chesseverPlayerId,
+      country: country,
+      title: title,
+      avatarUrl: avatarUrl,
+      accounts: accounts,
+      additionalAccounts: additionalAccounts,
+    );
+  }
+
   Map<String, Object?> toJson() {
     return <String, Object?>{
       'id': id,

@@ -1,5 +1,4 @@
 import 'package:dartchess/dartchess.dart';
-import 'package:flutter/foundation.dart';
 
 const _defaultStartingFen =
     'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -48,14 +47,7 @@ const _pgnSevenTagDefaults = <String, String>{
 /// Returns `null` if the payload doesn't include enough information.
 String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
   if (data == null || data.isEmpty) {
-    if (kDebugMode) {
-      debugPrint('[GamebasePgnBuilder] data is null or empty');
-    }
     return null;
-  }
-
-  if (kDebugMode) {
-    debugPrint('[GamebasePgnBuilder] data keys: ${data.keys.toList()}');
   }
 
   // Try to extract metadata from various possible locations
@@ -68,27 +60,16 @@ String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
   // Try to extract moves from various possible locations
   final movesRaw = data['m'] ?? data['moves'] ?? data['moveList'];
 
-  if (kDebugMode) {
-    debugPrint(
-      '[GamebasePgnBuilder] movesRaw type: ${movesRaw?.runtimeType}, isEmpty: ${movesRaw is List ? movesRaw.isEmpty : 'N/A'}',
-    );
-    if (movesRaw is List && movesRaw.isNotEmpty) {
-      debugPrint('[GamebasePgnBuilder] first move sample: ${movesRaw.first}');
-    }
-  }
-
   if (movesRaw is! List || movesRaw.isEmpty) {
-    if (kDebugMode) {
-      debugPrint('[GamebasePgnBuilder] No moves found in data');
-    }
     return null;
   }
 
-  final startingFen = (data['sf'] ?? data['fen'] ?? data['startFen'] as String?)
-      ?.trim();
-  final effectiveFen = (startingFen != null && startingFen.isNotEmpty)
-      ? startingFen
-      : _defaultStartingFen;
+  final startingFen =
+      (data['sf'] ?? data['fen'] ?? data['startFen'] as String?)?.trim();
+  final effectiveFen =
+      (startingFen != null && startingFen.isNotEmpty)
+          ? startingFen
+          : _defaultStartingFen;
 
   final headers = <String, String>{};
   for (final entry in md.entries) {
@@ -161,24 +142,12 @@ String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
       position = result.$1;
       moves.add(_RenderedGamebaseMove(result.$2, clock));
     }
-  } catch (e) {
-    if (kDebugMode) {
-      debugPrint('[GamebasePgnBuilder] Error parsing moves: $e');
-    }
+  } catch (_) {
     return null;
   }
 
   if (moves.isEmpty) {
-    if (kDebugMode) {
-      debugPrint('[GamebasePgnBuilder] No valid moves parsed');
-    }
     return null;
-  }
-
-  if (kDebugMode) {
-    debugPrint(
-      '[GamebasePgnBuilder] Successfully parsed ${moves.length} moves',
-    );
   }
 
   final sb = StringBuffer();

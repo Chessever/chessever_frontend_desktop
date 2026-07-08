@@ -5,7 +5,9 @@ import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_server.dart';
+import 'package:chessever/desktop/state/player_workspace.dart';
 
 /// Coordinates desktop process shutdown for services that own local resources.
 ///
@@ -60,7 +62,9 @@ class DesktopShutdownCoordinator with WidgetsBindingObserver, WindowListener {
     if (_shuttingDown) return;
     _shuttingDown = true;
     try {
+      await _cancelPlayerWorkspaceOperations();
       await _stopTournamentServer();
+      await LocalChessDatabaseRepository.closeLocalImportWriter();
       if (disposeContainer && !_containerDisposed) {
         _containerDisposed = true;
         _container.dispose();
@@ -94,7 +98,9 @@ class DesktopShutdownCoordinator with WidgetsBindingObserver, WindowListener {
     if (_shuttingDown) return;
     _shuttingDown = true;
     try {
+      await _cancelPlayerWorkspaceOperations();
       await _stopTournamentServer();
+      await LocalChessDatabaseRepository.closeLocalImportWriter();
       if (_supportsWindowManager) {
         await windowManager.setPreventClose(false);
       }
@@ -121,6 +127,20 @@ class DesktopShutdownCoordinator with WidgetsBindingObserver, WindowListener {
       debugPrint('[desktop] tournament server stop timed out during shutdown');
     } catch (e, st) {
       debugPrint('[desktop] tournament server stop failed: $e\n$st');
+    }
+  }
+
+  Future<void> _cancelPlayerWorkspaceOperations() async {
+    if (_containerDisposed) return;
+    try {
+      await _container
+          .read(playerWorkspaceProvider.notifier)
+          .cancelAllOperations()
+          .timeout(const Duration(seconds: 10));
+    } on TimeoutException {
+      debugPrint('[desktop] player workspace cancellation timed out');
+    } catch (e, st) {
+      debugPrint('[desktop] player workspace cancellation failed: $e\n$st');
     }
   }
 

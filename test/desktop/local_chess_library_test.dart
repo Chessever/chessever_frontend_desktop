@@ -8,6 +8,7 @@ import 'package:resqlite/resqlite.dart' as resqlite;
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_append.dart';
+import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 
@@ -677,6 +678,43 @@ void main() {
       },
     );
 
+    test(
+      'openPaths opens a warm persisted source without the loading popup',
+      () async {
+        final file = File('${temp.path}/mini.pgn');
+        await file.writeAsString(_samplePgn);
+        final source = await scanLocalChessPaths(<String>[
+          file.path,
+        ], buildOpeningTree: false);
+        final repo = _CachedLocalChessDatabaseRepository(source: source);
+        final notifier = LocalChessLibraryNotifier(
+          localDatabaseRepository: repo,
+        );
+        final scanningStates = <bool>[];
+        final removeListener = notifier.addListener(
+          (state) => scanningStates.add(state.isScanning),
+          fireImmediately: false,
+        );
+        addTearDown(removeListener);
+
+        final opened = await notifier.openPaths(<String>[file.path]);
+
+        expect(opened, isTrue);
+        expect(repo.loadFreshSourceCalls, 1);
+        expect(repo.persistSourceCalls, 0);
+        expect(
+          scanningStates,
+          everyElement(isFalse),
+          reason:
+              'a source that was already imported and persisted must open '
+              'instantly, never re-showing the loading popup',
+        );
+        expect(notifier.state.isScanning, isFalse);
+        expect(notifier.state.source, isNotNull);
+        notifier.clear();
+      },
+    );
+
     test('local open errors use user-facing messages', () {
       expect(
         localChessOpenErrorMessage(ArgumentError('Open a PGN file.')),
@@ -739,6 +777,7 @@ class _FailingLocalChessDatabaseRepository
   Future<LocalChessSource?> importSingleFileSource({
     required String path,
     String? sourceLabel,
+    OperationCancellationToken? cancellationToken,
     void Function(LocalChessScanProgress progress)? onProgress,
   }) async {
     importSingleFileSourceCalls++;
@@ -833,6 +872,33 @@ class _ProgressLocalChessDatabaseRepository
     );
     await releaseRestore.future;
     return source;
+  }
+}
+
+/// A warm cache hit: [loadFreshSource] returns the persisted source
+/// immediately and emits no progress, mirroring an already-open resqlite
+/// database. Opening it must not flip the notifier into its scanning state.
+class _CachedLocalChessDatabaseRepository extends LocalChessDatabaseRepository {
+  _CachedLocalChessDatabaseRepository({required this.source})
+    : super(database: _unusedDatabase);
+
+  final LocalChessSource source;
+  int loadFreshSourceCalls = 0;
+  int persistSourceCalls = 0;
+
+  @override
+  Future<LocalChessSource?> loadFreshSource(
+    List<String> paths, {
+    String? sourceLabel,
+    void Function(LocalChessScanProgress progress)? onProgress,
+  }) async {
+    loadFreshSourceCalls++;
+    return source;
+  }
+
+  @override
+  Future<void> persistSource(LocalChessSource source) async {
+    persistSourceCalls++;
   }
 }
 

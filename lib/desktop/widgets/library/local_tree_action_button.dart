@@ -1,22 +1,19 @@
 import 'package:flutter/material.dart';
 
 import 'package:chessever/desktop/state/local_chess_library.dart';
-import 'package:chessever/desktop/widgets/cursor_mode.dart';
-import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
-import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
-import 'package:chessever/desktop/widgets/spring_tokens.dart';
+import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/theme/app_theme.dart';
-import 'package:motor/motor.dart';
 
 /// Compact "open / build local opening tree" control that sits in the local
 /// database toolbar, just above the board.
 ///
-/// Styled to match the desktop sidebar buttons (`_SidebarItem`) rather than a
-/// stock forui button: a rounded-8 pill with a transparent→[kBlack3Color]
-/// hover fill, a spring micro-nudge on hover/press, and — when the tree is
-/// built and ready to open — the same [kPrimaryColor]-tinted "primary action"
-/// treatment a selected sidebar item gets. Build / retry stay neutral.
-class LocalTreeActionButton extends StatefulWidget {
+/// Thin mapper over [DesktopToolbarPillButton]: it translates the build
+/// progress state machine into the pill's label / tone / leading, so it stays
+/// pixel-identical to every other toolbar pill (e.g. the "Save to cloud"
+/// button beside it). When the tree is built and ready to open it wears the
+/// [DesktopToolbarPillTone.primary] treatment the way a selected sidebar item
+/// does; build / retry / building stay neutral.
+class LocalTreeActionButton extends StatelessWidget {
   const LocalTreeActionButton({
     super.key,
     this.progress,
@@ -29,27 +26,17 @@ class LocalTreeActionButton extends StatefulWidget {
   final VoidCallback? onBuild;
 
   @override
-  State<LocalTreeActionButton> createState() => _LocalTreeActionButtonState();
-}
-
-class _LocalTreeActionButtonState extends State<LocalTreeActionButton>
-    with DeferredPointerStateMixin<LocalTreeActionButton> {
-  bool _hovered = false;
-  bool _pressed = false;
-
-  @override
   Widget build(BuildContext context) {
-    final progress = widget.progress;
-    final isBuilding = progress?.isActive == true && widget.onOpen == null;
+    final progress = this.progress;
+    final isBuilding = progress?.isActive == true && onOpen == null;
     final isFailed = progress?.phase == LocalChessTreeBuildPhase.failed;
     // "Tree is built and ready to open" is the primary call to action — it
     // wears the accent, the way a selected sidebar item does.
-    final isPrimary = widget.onOpen != null;
-    final onPress = widget.onOpen ?? (isBuilding ? null : widget.onBuild);
-    final enabled = onPress != null;
+    final isPrimary = onOpen != null;
+    final onPress = onOpen ?? (isBuilding ? null : onBuild);
 
     final label =
-        widget.onOpen != null
+        onOpen != null
             ? 'Tree'
             : isBuilding
             ? 'Tree ${progress!.percent}%'
@@ -59,49 +46,19 @@ class _LocalTreeActionButtonState extends State<LocalTreeActionButton>
     final icon =
         isFailed ? Icons.restart_alt_rounded : Icons.account_tree_outlined;
 
-    // Foreground / background mirror the sidebar item state machine.
-    final Color fg;
-    final Color bg;
-    final Border? border;
-    if (!enabled && !isBuilding) {
-      fg = kLightGreyColor;
-      bg = Colors.transparent;
-      border = Border.all(color: kDividerColor);
-    } else if (isPrimary) {
-      fg = kPrimaryColor;
-      bg = kPrimaryColor.withValues(alpha: _hovered ? 0.16 : 0.10);
-      border = Border.all(color: kPrimaryColor.withValues(alpha: 0.35));
-    } else {
-      fg = _hovered ? kWhiteColor : kWhiteColor70;
-      bg = _hovered ? kBlack3Color : Colors.transparent;
-      border = Border.all(
-        color: _hovered ? kWhiteColor.withValues(alpha: 0.10) : kDividerColor,
-      );
-    }
-
-    // Same spring nudge as the sidebar: content reaches toward the cursor on
-    // hover, dips back on press; the pill itself stays put.
-    final nudgeX = _pressed ? -1.0 : (_hovered ? 2.0 : 0.0);
-
-    final pill = Container(
-      height: 34,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(8),
-        border: border,
-      ),
-      child: SingleMotionBuilder(
-        value: nudgeX,
-        motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-        builder:
-            (context, x, child) =>
-                Transform.translate(offset: Offset(x, 0), child: child),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (isBuilding)
-              SizedBox(
+    return DesktopToolbarPillButton(
+      label: label,
+      icon: icon,
+      onPress: onPress,
+      busy: isBuilding,
+      tabularFigures: true,
+      tone:
+          isPrimary
+              ? DesktopToolbarPillTone.primary
+              : DesktopToolbarPillTone.neutral,
+      leading:
+          isBuilding
+              ? SizedBox(
                 width: 14,
                 height: 14,
                 child: CircularProgressIndicator(
@@ -114,59 +71,13 @@ class _LocalTreeActionButtonState extends State<LocalTreeActionButton>
                   backgroundColor: kDividerColor,
                 ),
               )
-            else
-              Icon(icon, size: 16, color: fg),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: TextStyle(
-                color: fg,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    return DesktopTooltip(
-      message: _tooltipText(
+              : null,
+      tooltip: _tooltipText(
         progress: progress,
-        onOpen: widget.onOpen,
-        onBuild: widget.onBuild,
+        onOpen: onOpen,
+        onBuild: onBuild,
         isBuilding: isBuilding,
         isFailed: isFailed,
-      ),
-      child: CursorAware(
-        mode: CursorMode.hover,
-        enabled: enabled,
-        child: MouseRegion(
-          onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
-          onExit:
-              (_) => setStateAfterPointerEvent(() {
-                _hovered = false;
-                _pressed = false;
-              }),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: onPress,
-            onTapDown:
-                enabled
-                    ? (_) => setStateAfterPointerEvent(() => _pressed = true)
-                    : null,
-            onTapUp:
-                enabled
-                    ? (_) => setStateAfterPointerEvent(() => _pressed = false)
-                    : null,
-            onTapCancel:
-                enabled
-                    ? () => setStateAfterPointerEvent(() => _pressed = false)
-                    : null,
-            child: pill,
-          ),
-        ),
       ),
     );
   }

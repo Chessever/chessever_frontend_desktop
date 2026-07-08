@@ -23,13 +23,25 @@ class LibraryActionsToolbar extends ConsumerWidget {
     super.key,
     required this.onNewFolder,
     required this.onImportPgnFiles,
+    this.newFolderTooltip = 'New folder',
+    this.disabledNewFolderTooltip,
     this.suggestedFolderId,
+    this.buttonSize = 34,
+    this.iconSize = 17,
+    this.spacing = 6,
+    this.hitSize,
   });
 
   /// Opens the create-folder dialog. Routed through the pane so the call
   /// site can decide whether to lock the parent (when invoked from inside
   /// a folder context).
-  final VoidCallback onNewFolder;
+  final VoidCallback? onNewFolder;
+
+  /// Tooltip shown for the create-folder action while it is enabled.
+  final String newFolderTooltip;
+
+  /// Tooltip shown for the create-folder action while it is disabled.
+  final String? disabledNewFolderTooltip;
 
   /// Opens picked PGN files as a persistent local database. This action must
   /// not stage games in the temporary Library import preview.
@@ -39,6 +51,19 @@ class LibraryActionsToolbar extends ConsumerWidget {
   /// save-to-folder dialog (used when toolbar actions are invoked while
   /// a folder is selected in the sidebar).
   final String? suggestedFolderId;
+
+  /// Visible square size for each icon button.
+  final double buttonSize;
+
+  /// Icon size inside each action button.
+  final double iconSize;
+
+  /// Horizontal gap between action buttons.
+  final double spacing;
+
+  /// Optional pointer target size. When larger than [buttonSize], the
+  /// visible button stays compact while the hit area remains comfortable.
+  final double? hitSize;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -79,23 +104,35 @@ class LibraryActionsToolbar extends ConsumerWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           _IconAction(
-            tooltip: 'New folder',
+            tooltip:
+                onNewFolder == null
+                    ? disabledNewFolderTooltip ?? newFolderTooltip
+                    : newFolderTooltip,
             icon: Icons.create_new_folder_rounded,
             accent: const Color(0xFF60A5FA),
+            buttonSize: buttonSize,
+            iconSize: iconSize,
+            hitSize: hitSize,
             onPress: onNewFolder,
           ),
-          const SizedBox(width: 6),
+          SizedBox(width: spacing),
           _IconAction(
             tooltip: 'Import PGN file — pick .pgn files from disk',
             icon: Icons.file_upload_rounded,
             accent: const Color(0xFFFBBF24),
+            buttonSize: buttonSize,
+            iconSize: iconSize,
+            hitSize: hitSize,
             onPress: onImportPgnFiles,
           ),
-          const SizedBox(width: 6),
+          SizedBox(width: spacing),
           _IconAction(
             tooltip: 'Paste PGN from clipboard',
             icon: Icons.content_paste_go_rounded,
             accent: const Color(0xFF34D399),
+            buttonSize: buttonSize,
+            iconSize: iconSize,
+            hitSize: hitSize,
             onPress: handlePasteClipboard,
           ),
         ],
@@ -109,13 +146,19 @@ class _IconAction extends StatefulWidget {
     required this.tooltip,
     required this.icon,
     required this.accent,
+    required this.buttonSize,
+    required this.iconSize,
+    this.hitSize,
     required this.onPress,
   });
 
   final String tooltip;
   final IconData icon;
   final Color accent;
-  final VoidCallback onPress;
+  final double buttonSize;
+  final double iconSize;
+  final double? hitSize;
+  final VoidCallback? onPress;
 
   @override
   State<_IconAction> createState() => _IconActionState();
@@ -128,22 +171,37 @@ class _IconActionState extends State<_IconAction>
 
   @override
   Widget build(BuildContext context) {
+    final enabled = widget.onPress != null;
     final borderColor =
-        _hovered
-            ? widget.accent.withValues(alpha: 0.70)
-            : const Color(0xFF3F3F46);
+        enabled
+            ? (_hovered
+                ? widget.accent.withValues(alpha: 0.70)
+                : const Color(0xFF3F3F46))
+            : const Color(0xFF27272A);
     final background =
-        _pressed
-            ? widget.accent.withValues(alpha: 0.22)
-            : (_hovered
-                ? widget.accent.withValues(alpha: 0.14)
-                : const Color(0xFF18181B));
-    final iconColor = _hovered ? widget.accent : const Color(0xFFE4E4E7);
+        !enabled
+            ? const Color(0xFF141416)
+            : (_pressed
+                ? widget.accent.withValues(alpha: 0.22)
+                : (_hovered
+                    ? widget.accent.withValues(alpha: 0.14)
+                    : const Color(0xFF18181B)));
+    final iconColor =
+        !enabled
+            ? const Color(0xFF71717A)
+            : (_hovered ? widget.accent : const Color(0xFFE4E4E7));
+    final effectiveHitSize =
+        widget.hitSize == null || widget.hitSize! < widget.buttonSize
+            ? widget.buttonSize
+            : widget.hitSize!;
     return DesktopTooltip(
       message: widget.tooltip,
       child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+        cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+        onEnter:
+            enabled
+                ? (_) => setStateAfterPointerEvent(() => _hovered = true)
+                : null,
         onExit:
             (_) => setStateAfterPointerEvent(() {
               _hovered = false;
@@ -152,31 +210,47 @@ class _IconActionState extends State<_IconAction>
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onPress,
-          onTapDown: (_) => setStateAfterPointerEvent(() => _pressed = true),
-          onTapUp: (_) => setStateAfterPointerEvent(() => _pressed = false),
+          onTapDown:
+              enabled
+                  ? (_) => setStateAfterPointerEvent(() => _pressed = true)
+                  : null,
+          onTapUp:
+              enabled
+                  ? (_) => setStateAfterPointerEvent(() => _pressed = false)
+                  : null,
           onTapCancel: () => setStateAfterPointerEvent(() => _pressed = false),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            curve: Curves.easeOutCubic,
-            width: 34,
-            height: 34,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: background,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: borderColor),
-              boxShadow:
-                  _hovered
-                      ? [
-                        BoxShadow(
-                          color: widget.accent.withValues(alpha: 0.18),
-                          blurRadius: 10,
-                          offset: const Offset(0, 2),
-                        ),
-                      ]
-                      : null,
+          child: SizedBox(
+            width: effectiveHitSize,
+            height: effectiveHitSize,
+            child: Center(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                curve: Curves.easeOutCubic,
+                width: widget.buttonSize,
+                height: widget.buttonSize,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: background,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: borderColor),
+                  boxShadow:
+                      _hovered
+                          ? [
+                            BoxShadow(
+                              color: widget.accent.withValues(alpha: 0.18),
+                              blurRadius: 10,
+                              offset: const Offset(0, 2),
+                            ),
+                          ]
+                          : null,
+                ),
+                child: Icon(
+                  widget.icon,
+                  size: widget.iconSize,
+                  color: iconColor,
+                ),
+              ),
             ),
-            child: Icon(widget.icon, size: 17, color: iconColor),
           ),
         ),
       ),

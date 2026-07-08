@@ -7,14 +7,17 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:path/path.dart' as p;
 
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/panes/library_pane.dart'
     show
         DatabaseWorkspaceArgs,
+        LocalDatabaseWorkspaceKey,
         localDatabaseWorkspaceSourceProvider,
         openDatabaseWorkspaceTab;
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
+import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -24,6 +27,7 @@ import 'package:chessever/screens/gamebase/models/gamebase_player.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart'
     show GamebaseFilters;
 import 'package:chessever/desktop/state/local_chess_library.dart';
+import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/library/local_chess_files_view.dart';
@@ -40,6 +44,7 @@ import 'package:chessever/screens/favorites/tabs/favorites_players_tab.dart'
     show playerPhotoProvider;
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/png_asset.dart';
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 
@@ -47,14 +52,33 @@ const _startingFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 enum _PlayerWorkspaceTab { overview, accounts, games, buildTree }
 
+final _cachedPlayerWorkspaceTreeIndexProvider = FutureProvider.autoDispose
+    .family<PlayerOpeningTreeIndex?, String>((ref, path) async {
+      final clean = path.trim();
+      if (clean.isEmpty) return null;
+      final node = await ref
+          .read(localChessDatabaseRepositoryProvider)
+          .loadFreshFileNode(clean, rootPath: p.dirname(clean));
+      final index = node?.openingTreeIndex;
+      return index?.isUsable == true ? index : null;
+    });
+
 class PlayerWorkspacePane extends HookConsumerWidget {
   const PlayerWorkspacePane({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(playerWorkspaceProvider);
+    final players = ref.watch(
+      playerWorkspaceProvider.select((state) => state.players),
+    );
+    final isLoading = ref.watch(
+      playerWorkspaceProvider.select((state) => state.isLoading),
+    );
+    final error = ref.watch(
+      playerWorkspaceProvider.select((state) => state.error),
+    );
     final openedPlayerId = useState<String?>(null);
-    final selected = _playerById(state.players, openedPlayerId.value);
+    final selected = _playerById(players, openedPlayerId.value);
     final tab = useState(_PlayerWorkspaceTab.overview);
 
     void openPlayer(String playerId) {
@@ -74,20 +98,29 @@ class PlayerWorkspacePane extends HookConsumerWidget {
             player: selected,
             onBackToLibrary:
                 selected == null ? null : () => openedPlayerId.value = null,
-            onAddPlayer: () => unawaited(_showAddPlayerDialog(context, ref)),
+            onAddPlayer:
+                () => unawaited(
+                  _showAddPlayerDialog(context, ref, onOpenPlayer: openPlayer),
+                ),
           ),
           Expanded(
             child:
-                state.isLoading
+                isLoading
                     ? const Center(
                       child: CircularProgressIndicator(color: kPrimaryColor),
                     )
                     : selected == null
                     ? _PlayerLibraryHome(
-                      players: state.players,
-                      error: state.error,
+                      players: players,
+                      error: error,
                       onAddPlayer:
-                          () => unawaited(_showAddPlayerDialog(context, ref)),
+                          () => unawaited(
+                            _showAddPlayerDialog(
+                              context,
+                              ref,
+                              onOpenPlayer: openPlayer,
+                            ),
+                          ),
                       onOpenPlayer: openPlayer,
                       onRenamePlayer:
                           (player) => unawaited(
@@ -107,8 +140,7 @@ class PlayerWorkspacePane extends HookConsumerWidget {
                             width: 330,
                             child: _PlayerSourceRail(
                               player: selected,
-                              players: state.players,
-                              operations: state.operations,
+                              players: players,
                               onSelectPlayer: openPlayer,
                               onAddAccount:
                                   (source) => unawaited(
@@ -154,6 +186,14 @@ class PlayerWorkspacePane extends HookConsumerWidget {
                                       account,
                                     ),
                                   ),
+                              onCancelOperation:
+                                  (account) => unawaited(
+                                    _runCancelAccountOperation(
+                                      context,
+                                      ref,
+                                      account,
+                                    ),
+                                  ),
                               onRebuildCombined:
                                   () => unawaited(
                                     _runRebuildCombined(context, ref),
@@ -166,7 +206,6 @@ class PlayerWorkspacePane extends HookConsumerWidget {
                               selectedTab: tab.value,
                               onTabChanged: (value) => tab.value = value,
                               player: selected,
-                              operations: state.operations,
                               onGoToAccounts:
                                   () =>
                                       tab.value = _PlayerWorkspaceTab.accounts,
@@ -754,7 +793,7 @@ class _PlayerFacets extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final country = player.country?.trim();
-    final rating = _playerStandardRating(player);
+    final rating = _playerPrimaryRating(player);
     final fideId = player.fideId?.trim();
     final hasCountry = country != null && country.isNotEmpty;
     final hasFide = fideId != null && fideId.isNotEmpty;
@@ -793,10 +832,10 @@ class _PlayerFacets extends StatelessWidget {
         ],
         if (rating != null) ...[
           if (hasCountry) const _FacetDot(),
-          const Icon(Icons.equalizer_rounded, size: 12, color: kPrimaryColor),
+          _TempoIcon(label: rating.label, size: 13),
           const SizedBox(width: 4),
           Text(
-            rating.toString(),
+            rating.value.toString(),
             style: const TextStyle(
               color: kWhiteColor,
               fontSize: 11.5,
@@ -1143,11 +1182,10 @@ class _EmptyPlayerWorkspace extends StatelessWidget {
   }
 }
 
-class _PlayerSourceRail extends StatelessWidget {
+class _PlayerSourceRail extends ConsumerWidget {
   const _PlayerSourceRail({
     required this.player,
     required this.players,
-    required this.operations,
     required this.onSelectPlayer,
     required this.onAddAccount,
     required this.onEditAccount,
@@ -1155,12 +1193,12 @@ class _PlayerSourceRail extends StatelessWidget {
     required this.onRemoveAccount,
     required this.onSync,
     required this.onReinstall,
+    required this.onCancelOperation,
     required this.onRebuildCombined,
   });
 
   final PlayerWorkspacePlayer player;
   final List<PlayerWorkspacePlayer> players;
-  final Map<String, PlayerWorkspaceOperation> operations;
   final ValueChanged<String> onSelectPlayer;
   final ValueChanged<PlayerWorkspaceSource> onAddAccount;
   final ValueChanged<PlayerWorkspaceAccount> onEditAccount;
@@ -1168,10 +1206,14 @@ class _PlayerSourceRail extends StatelessWidget {
   final ValueChanged<PlayerWorkspaceAccount> onRemoveAccount;
   final ValueChanged<PlayerWorkspaceAccount> onSync;
   final ValueChanged<PlayerWorkspaceAccount> onReinstall;
+  final ValueChanged<PlayerWorkspaceAccount> onCancelOperation;
   final VoidCallback onRebuildCombined;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final operations = ref.watch(
+      playerWorkspaceProvider.select((state) => state.operations),
+    );
     return DecoratedBox(
       decoration: BoxDecoration(
         color: kBlack2Color,
@@ -1213,6 +1255,7 @@ class _PlayerSourceRail extends StatelessWidget {
                 onRemoveAccount: () => onRemoveAccount(account),
                 onSync: () => onSync(account),
                 onReinstall: () => onReinstall(account),
+                onCancelOperation: () => onCancelOperation(account),
               ),
             if (player.accountsFor(source).isEmpty)
               _SourceCard(
@@ -1225,6 +1268,7 @@ class _PlayerSourceRail extends StatelessWidget {
                 onRemoveAccount: null,
                 onSync: null,
                 onReinstall: null,
+                onCancelOperation: null,
               )
             else if (source.allowsMultipleAccounts)
               _AddSourceAccountButton(
@@ -1525,6 +1569,7 @@ class _SourceCard extends StatelessWidget {
     required this.onRemoveAccount,
     required this.onSync,
     required this.onReinstall,
+    required this.onCancelOperation,
   });
 
   final PlayerWorkspaceSource source;
@@ -1536,6 +1581,7 @@ class _SourceCard extends StatelessWidget {
   final VoidCallback? onRemoveAccount;
   final VoidCallback? onSync;
   final VoidCallback? onReinstall;
+  final VoidCallback? onCancelOperation;
 
   @override
   Widget build(BuildContext context) {
@@ -1633,7 +1679,9 @@ class _SourceCard extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              if (downloadProgress != null && currentAccount != null) ...[
+              if (!working &&
+                  downloadProgress != null &&
+                  currentAccount != null) ...[
                 const SizedBox(height: 7),
                 _DownloadProgress(account: currentAccount),
               ],
@@ -1641,6 +1689,16 @@ class _SourceCard extends StatelessWidget {
             if (operation != null) ...[
               const SizedBox(height: 10),
               _OperationProgress(operation: operation!),
+              if (onCancelOperation != null) ...[
+                const SizedBox(height: 8),
+                DesktopDialogButton(
+                  label: 'Stop',
+                  icon: Icons.stop_rounded,
+                  tone: DesktopDialogButtonTone.danger,
+                  fillWidth: true,
+                  onPress: onCancelOperation,
+                ),
+              ],
             ],
             if (error != null) ...[
               const SizedBox(height: 8),
@@ -1826,36 +1884,43 @@ class _OperationProgress extends StatelessWidget {
               ),
             ),
             const Spacer(),
-            Text(
-              status,
-              style: const TextStyle(
-                color: kWhiteColor,
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-                fontFeatures: [FontFeature.tabularFigures()],
-                height: 1.25,
+            SizedBox(
+              width: 58,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Text(
+                  status,
+                  maxLines: 1,
+                  overflow: TextOverflow.clip,
+                  style: const TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                    height: 1.25,
+                  ),
+                ),
               ),
             ),
           ],
         ),
         const SizedBox(height: 4),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              child: Text(
-                operation.message,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: kPrimaryColor,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                  height: 1.25,
-                ),
+        SizedBox(
+          height: 30,
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: Text(
+              operation.message,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kPrimaryColor,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                height: 1.25,
               ),
             ),
-          ],
+          ),
         ),
         const SizedBox(height: 7),
         ClipRRect(
@@ -2057,14 +2122,12 @@ class _PlayerWorkspaceMain extends StatelessWidget {
     required this.selectedTab,
     required this.onTabChanged,
     required this.player,
-    required this.operations,
     required this.onGoToAccounts,
   });
 
   final _PlayerWorkspaceTab selectedTab;
   final ValueChanged<_PlayerWorkspaceTab> onTabChanged;
   final PlayerWorkspacePlayer player;
-  final Map<String, PlayerWorkspaceOperation> operations;
   final VoidCallback onGoToAccounts;
 
   @override
@@ -2121,10 +2184,7 @@ class _PlayerWorkspaceMain extends StatelessWidget {
                 player: player,
                 onGoToAccounts: onGoToAccounts,
               ),
-              _PlayerWorkspaceTab.accounts => _AccountsTab(
-                player: player,
-                operations: operations,
-              ),
+              _PlayerWorkspaceTab.accounts => _AccountsTab(player: player),
               _PlayerWorkspaceTab.games => _GamesTab(player: player),
               _PlayerWorkspaceTab.buildTree => _BuildTreeTab(
                 player: player,
@@ -2197,13 +2257,15 @@ List<PlayerStatsSource> _statsSources(PlayerWorkspacePlayer player) {
 }
 
 class _AccountsTab extends ConsumerWidget {
-  const _AccountsTab({required this.player, required this.operations});
+  const _AccountsTab({required this.player});
 
   final PlayerWorkspacePlayer player;
-  final Map<String, PlayerWorkspaceOperation> operations;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final operations = ref.watch(
+      playerWorkspaceProvider.select((state) => state.operations),
+    );
     return ListView(
       padding: const EdgeInsets.all(18),
       children: [
@@ -2259,6 +2321,10 @@ class _AccountsTab extends ConsumerWidget {
                   () => unawaited(
                     _confirmReinstallAccount(context, ref, account),
                   ),
+              onCancelOperation:
+                  () => unawaited(
+                    _runCancelAccountOperation(context, ref, account),
+                  ),
             ),
           if (player.accountsFor(source).isEmpty)
             _AccountDetailCard(
@@ -2273,6 +2339,7 @@ class _AccountsTab extends ConsumerWidget {
               onRemoveAccount: null,
               onSyncAccount: null,
               onReinstallAccount: null,
+              onCancelOperation: null,
             )
           else if (source.allowsMultipleAccounts)
             Padding(
@@ -2357,6 +2424,7 @@ class _GamesTab extends HookConsumerWidget {
             key: ValueKey(source.path),
             path: source.path,
             title: source.label,
+            revision: source.gameCount,
           ),
         ),
       ],
@@ -2371,14 +2439,17 @@ class _EmbeddedLocalGames extends ConsumerWidget {
     super.key,
     required this.path,
     required this.title,
+    this.revision = 0,
   });
 
   final String path;
   final String title;
+  final int revision;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(localDatabaseWorkspaceSourceProvider(path));
+    final key = LocalDatabaseWorkspaceKey(path, revision: revision);
+    final async = ref.watch(localDatabaseWorkspaceSourceProvider(key));
     return async.when(
       loading:
           () => const Center(
@@ -2406,8 +2477,8 @@ class _EmbeddedLocalGames extends ConsumerWidget {
               selectedPath: path,
             ),
             onRefreshOverride: () async {
-              ref.invalidate(localDatabaseWorkspaceSourceProvider(path));
-              await ref.read(localDatabaseWorkspaceSourceProvider(path).future);
+              ref.invalidate(localDatabaseWorkspaceSourceProvider(key));
+              await ref.read(localDatabaseWorkspaceSourceProvider(key).future);
             },
           ),
     );
@@ -2658,6 +2729,7 @@ class _AccountDetailCard extends StatelessWidget {
     required this.onRemoveAccount,
     required this.onSyncAccount,
     required this.onReinstallAccount,
+    required this.onCancelOperation,
   });
 
   final PlayerWorkspaceSource source;
@@ -2669,6 +2741,7 @@ class _AccountDetailCard extends StatelessWidget {
   final VoidCallback? onRemoveAccount;
   final VoidCallback? onSyncAccount;
   final VoidCallback? onReinstallAccount;
+  final VoidCallback? onCancelOperation;
 
   @override
   Widget build(BuildContext context) {
@@ -2769,6 +2842,15 @@ class _AccountDetailCard extends StatelessWidget {
           if (operation != null) ...[
             const SizedBox(height: 12),
             _OperationProgress(operation: operation!),
+            if (onCancelOperation != null) ...[
+              const SizedBox(height: 8),
+              DesktopDialogButton(
+                label: 'Stop',
+                icon: Icons.stop_rounded,
+                tone: DesktopDialogButtonTone.danger,
+                onPress: onCancelOperation,
+              ),
+            ],
           ],
           if (ratings.isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -2830,6 +2912,8 @@ class _RatingPill extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          _TempoIcon(label: label, size: 15),
+          const SizedBox(width: 7),
           Text(
             label,
             style: const TextStyle(
@@ -2870,10 +2954,15 @@ class _TreeTargetCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final localState = ref.watch(localChessLibraryProvider);
     final node = localState.source?.nodeForPath(target.path);
-    final openable =
-        node is LocalChessFileNode &&
-        node.openingTreeIndex != null &&
-        node.openingTreeIndex!.isUsable;
+    final liveIndex =
+        node is LocalChessFileNode && node.openingTreeIndex?.isUsable == true
+            ? node.openingTreeIndex
+            : null;
+    final cachedIndex =
+        ref
+            .watch(_cachedPlayerWorkspaceTreeIndexProvider(target.path))
+            .valueOrNull;
+    final openingTreeIndex = liveIndex ?? cachedIndex;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: kBackgroundColor.withValues(alpha: 0.45),
@@ -2915,16 +3004,16 @@ class _TreeTargetCard extends ConsumerWidget {
             LocalTreeActionButton(
               progress: progress,
               onOpen:
-                  openable
+                  openingTreeIndex != null
                       ? () => _openLocalTree(
                         ref,
                         target,
-                        node.openingTreeIndex!,
+                        openingTreeIndex,
                         preparationSide: preparationSide,
                         player: player,
                       )
                       : null,
-              onBuild: () => unawaited(_buildLocalTree(ref, target)),
+              onBuild: () => unawaited(_buildLocalTree(ref, target, player)),
             ),
           ],
         ),
@@ -3139,9 +3228,17 @@ bool _matchesPlayerQuery(PlayerWorkspacePlayer player, String query) {
   return searchable.contains(clean);
 }
 
-/// Best available "standard" rating for the player, read from a linked source
-/// profile (ChessEver classical first, then rapid/blitz, then any other source).
-int? _playerStandardRating(PlayerWorkspacePlayer player) {
+@immutable
+class _RatingFact {
+  const _RatingFact({required this.label, required this.value});
+
+  final String label;
+  final int value;
+}
+
+/// Best available player rating, read from a linked source profile. Classical
+/// is preferred, then rapid/blitz/bullet, then any other source rating.
+_RatingFact? _playerPrimaryRating(PlayerWorkspacePlayer player) {
   for (final source in const [
     PlayerWorkspaceSource.chessever,
     PlayerWorkspaceSource.chesscom,
@@ -3149,16 +3246,94 @@ int? _playerStandardRating(PlayerWorkspacePlayer player) {
   ]) {
     for (final account in player.accountsFor(source)) {
       final ratings = account.ratings;
-      final value =
-          ratings['Classical'] ??
-          ratings['Rapid'] ??
-          ratings['Blitz'] ??
-          ratings['Bullet'] ??
-          (ratings.values.isEmpty ? null : ratings.values.first);
-      if (value != null && value > 0) return value;
+      for (final label in const ['Classical', 'Rapid', 'Blitz', 'Bullet']) {
+        final value = ratings[label];
+        if (value != null && value > 0) {
+          return _RatingFact(label: label, value: value);
+        }
+      }
+      for (final entry in ratings.entries) {
+        if (entry.value > 0) {
+          return _RatingFact(label: entry.key, value: entry.value);
+        }
+      }
     }
   }
   return null;
+}
+
+_RatingFact? _strongestAccountRating(PlayerWorkspaceAccount account) {
+  MapEntry<String, int>? top;
+  for (final entry in account.ratings.entries) {
+    if (entry.value <= 0) continue;
+    if (top == null || entry.value > top.value) top = entry;
+  }
+  return top == null ? null : _RatingFact(label: top.key, value: top.value);
+}
+
+String? _tempoIconAssetForLabel(String label) {
+  final normalized = label.trim().toLowerCase();
+  if (normalized.contains('classical') || normalized.contains('standard')) {
+    return PngAsset.classicalIcon;
+  }
+  if (normalized.contains('rapid')) return PngAsset.rapidIcon;
+  if (normalized.contains('blitz') || normalized.contains('bullet')) {
+    return PngAsset.blitzIcon;
+  }
+  return null;
+}
+
+class _TempoIcon extends StatelessWidget {
+  const _TempoIcon({required this.label, this.size = 14});
+
+  final String label;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final asset = _tempoIconAssetForLabel(label);
+    if (asset == null) {
+      return Icon(Icons.equalizer_rounded, size: size, color: kPrimaryColor);
+    }
+    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
+    return Image.asset(
+      asset,
+      width: size,
+      height: size,
+      cacheWidth: (size * pixelRatio).round(),
+      cacheHeight: (size * pixelRatio).round(),
+      filterQuality: FilterQuality.medium,
+    );
+  }
+}
+
+class _InlineRatingFact extends StatelessWidget {
+  const _InlineRatingFact({required this.rating});
+
+  final _RatingFact rating;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _TempoIcon(label: rating.label, size: 13),
+        const SizedBox(width: 4),
+        Text(
+          '${rating.value} ${rating.label}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: kWhiteColor70,
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+            height: 1.2,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 String _formatRelativeSync(int? ms) {
@@ -3310,11 +3485,22 @@ String _disabledTreeActionLabel(String reason) {
   return clean.endsWith('.') ? clean.substring(0, clean.length - 1) : clean;
 }
 
-Future<void> _buildLocalTree(WidgetRef ref, _DatabaseTarget target) async {
-  final opened = await ref.read(localChessLibraryProvider.notifier).openPaths(
-    <String>[target.path],
-    sourceLabel: target.title,
-  );
+Future<void> _buildLocalTree(
+  WidgetRef ref,
+  _DatabaseTarget target,
+  PlayerWorkspacePlayer player,
+) async {
+  final opened = await ref
+      .read(localChessLibraryProvider.notifier)
+      .openPaths(
+        <String>[target.path],
+        sourceLabel: target.title,
+        registryMetadata: LocalLibraryEntryMetadata.playerWorkspace(
+          playerId: player.id,
+          playerName: player.displayName,
+          gameCount: target.gameCount,
+        ),
+      );
   if (!opened) return;
   ref.read(localChessLibraryProvider.notifier).rebuildOpeningTree(target.path);
 }
@@ -3326,6 +3512,21 @@ void _openLocalTree(
   required PlayerBuildTreePreparationSide preparationSide,
   required PlayerWorkspacePlayer player,
 }) {
+  unawaited(
+    ref
+        .read(localLibraryRegistryProvider.notifier)
+        .registerAll(
+          <String>[target.path],
+          metadataByPath: <String, LocalLibraryEntryMetadata>{
+            target.path: LocalLibraryEntryMetadata.playerWorkspace(
+              playerId: player.id,
+              playerName: player.displayName,
+              gameCount: target.gameCount,
+              indexedAt: index.generatedAt,
+            ),
+          },
+        ),
+  );
   final tabId = openBoardGameTab(
     ref,
     BoardTabGameArgs(
@@ -3338,6 +3539,7 @@ void _openLocalTree(
       databaseTitle: target.title,
       localOpeningTreeIndex: index,
       localOpeningTreeTitle: target.title,
+      enableLocalOpeningTreePicker: true,
     ),
     reuseExisting: false,
   );
@@ -3422,6 +3624,23 @@ Future<void> _runAccountReinstall(
   }
 }
 
+Future<void> _runCancelAccountOperation(
+  BuildContext context,
+  WidgetRef ref,
+  PlayerWorkspaceAccount account,
+) async {
+  try {
+    await ref
+        .read(playerWorkspaceProvider.notifier)
+        .cancelAccountOperation(account);
+  } catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(error.toString())));
+  }
+}
+
 Future<void> _runRebuildCombined(BuildContext context, WidgetRef ref) async {
   try {
     await ref.read(playerWorkspaceProvider.notifier).rebuildCombinedDatabase();
@@ -3465,7 +3684,16 @@ Future<void> _confirmRemoveAccountEntry(
         ),
   );
   if (confirmed != true || !context.mounted) return;
-  await ref.read(playerWorkspaceProvider.notifier).removeAccountEntry(account);
+  try {
+    await ref
+        .read(playerWorkspaceProvider.notifier)
+        .removeAccountEntry(account);
+  } catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(error.toString())));
+  }
 }
 
 Future<void> _showRenamePlayerDialog(
@@ -3499,7 +3727,14 @@ Future<void> _confirmRemovePlayer(
             _ConfirmRemovePlayerDialog(player: player, animation: animation),
   );
   if (confirmed != true || !context.mounted) return;
-  await ref.read(playerWorkspaceProvider.notifier).removePlayer(player.id);
+  try {
+    await ref.read(playerWorkspaceProvider.notifier).removePlayer(player.id);
+  } catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(error.toString())));
+  }
 }
 
 Future<void> _showAddAccountChoiceDialog(
@@ -3528,27 +3763,48 @@ Future<void> _showAccountConnectFlow(
     ),
     PlayerWorkspaceSource.manual => _showManualPgnDialog(context, ref),
     PlayerWorkspaceSource.lichess || PlayerWorkspaceSource.chesscom =>
-      _showConnectAccountDialog(context, ref, source),
+      _showConnectAccountsDialog(context, ref, source),
     PlayerWorkspaceSource.combined => Future<void>.value(),
   };
 }
 
-Future<void> _showConnectAccountDialog(
+/// Opens the multi-username connect dialog for an online platform. One dialog
+/// stages several usernames — each verified against Lichess/Chess.com as it is
+/// added — then attaches every confirmed account to the selected player in a
+/// single write. Reached from the source rail, the Accounts tab, the "Add
+/// another username" button, and the add-player flow, so all four routes share
+/// the same "add one or many" surface.
+Future<void> _showConnectAccountsDialog(
   BuildContext context,
   WidgetRef ref,
   PlayerWorkspaceSource source,
 ) {
+  final player = ref.read(playerWorkspaceProvider).selectedPlayer;
+  final existing = <String>[
+    if (player != null)
+      for (final account in player.accountsFor(source)) account.username,
+  ];
+  final repository = ref.read(playerWorkspaceRepositoryProvider);
   return showFDialog<void>(
     context: context,
     builder:
-        (context, _, animation) => _ConnectAccountDialog(
+        (context, _, animation) => _ConnectAccountsDialog(
           source: source,
           animation: animation,
-          onConnect: (username) async {
-            await ref
-                .read(playerWorkspaceProvider.notifier)
-                .connectExternalAccount(source: source, username: username);
-          },
+          existingUsernames: existing,
+          onValidate:
+              (username) => switch (source) {
+                PlayerWorkspaceSource.lichess => repository.fetchLichessAccount(
+                  username,
+                ),
+                PlayerWorkspaceSource.chesscom => repository
+                    .fetchChessComAccount(username),
+                _ => throw StateError('Unsupported account source.'),
+              },
+          onConnect:
+              (accounts) => ref
+                  .read(playerWorkspaceProvider.notifier)
+                  .attachFetchedAccounts(accounts),
         ),
   );
 }
@@ -3928,8 +4184,8 @@ class _ConfirmRemoveAccountDialog extends StatelessWidget {
               const SizedBox(height: 12),
               Text(
                 source == PlayerWorkspaceSource.manual
-                    ? 'This removes the manual PGN from this player and clears the combined database summary. The generated PGN file remains on disk.'
-                    : 'This disconnects the account from the player and clears the combined database summary. Source PGN files remain on disk.',
+                    ? 'This removes the manual PGN from this player, deletes the generated PGN file and local cache, and rebuilds the combined database.'
+                    : 'This disconnects the account, deletes its generated PGN files and local cache, and rebuilds the combined database.',
                 style: const TextStyle(
                   color: kWhiteColor70,
                   fontSize: 12,
@@ -4219,7 +4475,7 @@ class _ConfirmRemovePlayerDialog extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               const Text(
-                'This removes the player from the Players workspace. Generated PGN files and any Library databases remain on disk.',
+                'This removes the player from the Players workspace and deletes generated PGN files, combined databases, and local cache from this computer.',
                 style: TextStyle(
                   color: kWhiteColor70,
                   fontSize: 12,
@@ -4387,13 +4643,612 @@ class _ConnectAccountDialogState extends State<_ConnectAccountDialog> {
   }
 }
 
-Future<void> _showAddPlayerDialog(BuildContext context, WidgetRef ref) {
-  return showFDialog<void>(
+enum _UsernameStageStatus { validating, ok, error }
+
+/// One username the user has staged in the multi-connect dialog, together with
+/// its live verification status. Distinct from [PlayerWorkspaceAccount] because
+/// it also carries the in-flight ("validating") and failed ("error") states
+/// that never reach the player model.
+class _StagedUsername {
+  _StagedUsername(this.input);
+
+  final String input;
+  _UsernameStageStatus status = _UsernameStageStatus.validating;
+  PlayerWorkspaceAccount? account;
+  String? error;
+
+  String get key => input.trim().toLowerCase();
+}
+
+/// Connect one *or several* usernames for a single online platform in one pass.
+///
+/// Each username is verified against Lichess/Chess.com the moment it is added
+/// (staged as a pill that resolves to the real profile name + rating, or shows
+/// why it failed), so the player model is only touched on "Add" — with every
+/// confirmed account attached in a single write. This is the surface the
+/// add-player flow, the source rail, and "Add another username" all open, which
+/// is what makes "add multiple usernames per platform" a first-class flow rather
+/// than a repeated one-at-a-time loop.
+class _ConnectAccountsDialog extends StatefulWidget {
+  const _ConnectAccountsDialog({
+    required this.source,
+    required this.animation,
+    required this.existingUsernames,
+    required this.onValidate,
+    required this.onConnect,
+  });
+
+  final PlayerWorkspaceSource source;
+  final Animation<double> animation;
+
+  /// Usernames already attached to this player for [source] — used to reject
+  /// duplicates before a needless network round-trip.
+  final List<String> existingUsernames;
+  final Future<PlayerWorkspaceAccount> Function(String username) onValidate;
+  final Future<void> Function(List<PlayerWorkspaceAccount> accounts) onConnect;
+
+  @override
+  State<_ConnectAccountsDialog> createState() => _ConnectAccountsDialogState();
+}
+
+class _ConnectAccountsDialogState extends State<_ConnectAccountsDialog> {
+  final TextEditingController _controller = TextEditingController();
+  final FocusNode _focusNode = FocusNode();
+  final List<_StagedUsername> _staged = <_StagedUsername>[];
+  late final Set<String> _existingKeys;
+  String? _inputError;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _existingKeys = <String>{
+      for (final username in widget.existingUsernames)
+        username.trim().toLowerCase(),
+    };
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  int get _okCount =>
+      _staged.where((s) => s.status == _UsernameStageStatus.ok).length;
+
+  bool get _anyValidating =>
+      _staged.any((s) => s.status == _UsernameStageStatus.validating);
+
+  void _add() {
+    if (_saving) return;
+    final raw = _controller.text.trim();
+    if (raw.isEmpty) return;
+    final key = raw.toLowerCase();
+    if (_existingKeys.contains(key)) {
+      setState(() => _inputError = '"$raw" is already connected.');
+      return;
+    }
+    if (_staged.any((s) => s.key == key)) {
+      setState(() => _inputError = '"$raw" is already in the list.');
+      return;
+    }
+    final staged = _StagedUsername(raw);
+    setState(() {
+      _staged.insert(0, staged);
+      _controller.clear();
+      _inputError = null;
+    });
+    _focusNode.requestFocus();
+    unawaited(_validate(staged));
+  }
+
+  Future<void> _validate(_StagedUsername staged) async {
+    try {
+      final account = await widget.onValidate(staged.input);
+      if (!mounted) return;
+      setState(() {
+        staged.status = _UsernameStageStatus.ok;
+        staged.account = account;
+        staged.error = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        staged.status = _UsernameStageStatus.error;
+        staged.error = _stageErrorText(error);
+      });
+    }
+  }
+
+  void _remove(_StagedUsername staged) {
+    setState(() => _staged.remove(staged));
+  }
+
+  void _retry(_StagedUsername staged) {
+    setState(() {
+      staged.status = _UsernameStageStatus.validating;
+      staged.error = null;
+    });
+    unawaited(_validate(staged));
+  }
+
+  Future<void> _submit() async {
+    // Preserve the order in which usernames were typed (newest is inserted at
+    // the top, so read the staged list in reverse when handing accounts over).
+    final accounts = <PlayerWorkspaceAccount>[
+      for (final staged in _staged.reversed)
+        if (staged.status == _UsernameStageStatus.ok && staged.account != null)
+          staged.account!,
+    ];
+    if (accounts.isEmpty || _saving) return;
+    setState(() => _saving = true);
+    try {
+      await widget.onConnect(accounts);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _inputError = error.toString();
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canAdd = _controller.text.trim().isNotEmpty && !_saving;
+    final okCount = _okCount;
+    final canSubmit = okCount > 0 && !_anyValidating && !_saving;
+    return FDialog.raw(
+      animation: widget.animation,
+      constraints: const BoxConstraints(maxWidth: 460),
+      builder: (context, _) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(22, 20, 22, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _SourceIcon(source: widget.source),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Connect ${widget.source.label}',
+                          style: const TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        const Text(
+                          'Add one or more usernames — each is verified as you go.',
+                          style: TextStyle(
+                            color: kLightGreyColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            height: 1.25,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _buildInput(canAdd),
+              if (_inputError != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _inputError!,
+                  style: const TextStyle(color: kRedColor, fontSize: 12),
+                ),
+              ],
+              const SizedBox(height: 14),
+              _buildStaged(),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  DesktopDialogButton(
+                    label: 'Cancel',
+                    icon: Icons.close_rounded,
+                    onPress: _saving ? null : () => Navigator.of(context).pop(),
+                  ),
+                  const SizedBox(width: 8),
+                  DesktopDialogButton(
+                    label:
+                        _saving
+                            ? 'Connecting'
+                            : okCount > 0
+                            ? (okCount == 1
+                                ? 'Add 1 username'
+                                : 'Add $okCount usernames')
+                            : 'Add usernames',
+                    icon: Icons.add_link_outlined,
+                    tone: DesktopDialogButtonTone.primary,
+                    onPress: canSubmit ? () => unawaited(_submit()) : null,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildInput(bool canAdd) {
+    return Row(
+      children: [
+        Expanded(
+          child: Container(
+            height: 38,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: kBlack2Color,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: kDividerColor),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.alternate_email_rounded,
+                  size: 16,
+                  color: kLightGreyColor,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: TextField(
+                      controller: _controller,
+                      focusNode: _focusNode,
+                      autofocus: true,
+                      cursorColor: kPrimaryColor,
+                      textInputAction: TextInputAction.done,
+                      onChanged: (_) => setState(() => _inputError = null),
+                      onSubmitted: (_) => _add(),
+                      style: const TextStyle(color: kWhiteColor, fontSize: 13),
+                      decoration: InputDecoration(
+                        isCollapsed: true,
+                        border: InputBorder.none,
+                        hintText: widget.source.accountLabel,
+                        hintStyle: const TextStyle(
+                          color: kLightGreyColor,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        DesktopDialogButton(
+          label: 'Add',
+          icon: Icons.add_rounded,
+          onPress: canAdd ? _add : null,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStaged() {
+    if (_staged.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 16),
+        decoration: BoxDecoration(
+          color: kBackgroundColor.withValues(alpha: 0.4),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: kDividerColor.withValues(alpha: 0.6)),
+        ),
+        child: const Column(
+          children: [
+            Icon(
+              Icons.person_add_alt_1_outlined,
+              size: 22,
+              color: kLightGreyColor,
+            ),
+            SizedBox(height: 8),
+            Text(
+              'No usernames yet',
+              style: TextStyle(
+                color: kWhiteColor70,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            SizedBox(height: 3),
+            Text(
+              'Type a username and press Enter to add it. '
+              'Repeat for as many as you like.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: kLightGreyColor,
+                fontSize: 11.5,
+                height: 1.3,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 264),
+      child: ListView.separated(
+        shrinkWrap: true,
+        padding: EdgeInsets.zero,
+        itemCount: _staged.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 8),
+        itemBuilder: (context, index) {
+          final staged = _staged[index];
+          return _StagedUsernameRow(
+            key: ValueKey(staged.key),
+            staged: staged,
+            onRemove: () => _remove(staged),
+            onRetry: () => _retry(staged),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _StagedUsernameRow extends StatelessWidget {
+  const _StagedUsernameRow({
+    super.key,
+    required this.staged,
+    required this.onRemove,
+    required this.onRetry,
+  });
+
+  final _StagedUsername staged;
+  final VoidCallback onRemove;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final account = staged.account;
+    final ok = staged.status == _UsernameStageStatus.ok;
+    final error = staged.status == _UsernameStageStatus.error;
+    final borderColor =
+        ok
+            ? kPrimaryColor.withValues(alpha: 0.30)
+            : error
+            ? kRedColor.withValues(alpha: 0.34)
+            : kDividerColor;
+    final title = ok && account != null ? account.username : staged.input;
+    final secondary =
+        error
+            ? (staged.error ?? 'Could not verify this username.')
+            : ok
+            ? 'Verified'
+            : 'Verifying…';
+
+    final row = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: kBlack2Color.withValues(alpha: 0.75),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(
+        children: [
+          _StageStatusDot(status: staged.status),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                if (ok && account != null)
+                  _AccountSummaryLine(account: account)
+                else
+                  Text(
+                    secondary,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: error ? kRedColor : kLightGreyColor,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w500,
+                      height: 1.2,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (error) ...[
+            const SizedBox(width: 6),
+            DesktopDialogIconButton(
+              icon: Icons.refresh_rounded,
+              tooltip: 'Try again',
+              onPress: onRetry,
+            ),
+          ],
+          const SizedBox(width: 2),
+          DesktopDialogIconButton(
+            icon: Icons.close_rounded,
+            tooltip: 'Remove',
+            tone: DesktopDialogButtonTone.danger,
+            onPress: onRemove,
+          ),
+        ],
+      ),
+    );
+
+    if (MediaQuery.of(context).disableAnimations) return row;
+    // Each pill slides + fades in once, when it is first staged. The tween end
+    // is fixed at 1, so later rebuilds (status resolving) don't re-trigger it.
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 190),
+      curve: Curves.easeOutCubic,
+      builder: (context, t, child) {
+        return Opacity(
+          opacity: t.clamp(0.0, 1.0),
+          child: Transform.translate(
+            offset: Offset(0, (1 - t) * 8),
+            child: child,
+          ),
+        );
+      },
+      child: row,
+    );
+  }
+}
+
+class _AccountSummaryLine extends StatelessWidget {
+  const _AccountSummaryLine({required this.account});
+
+  final PlayerWorkspaceAccount account;
+
+  @override
+  Widget build(BuildContext context) {
+    final username = account.username.trim();
+    final display = account.displayName?.trim();
+    final title = account.title?.trim();
+    final rating = _strongestAccountRating(account);
+    final identity = <String>[
+      if (title != null && title.isNotEmpty) title,
+      if (display != null &&
+          display.isNotEmpty &&
+          display.toLowerCase() != username.toLowerCase())
+        display,
+    ].join(' · ');
+
+    if (identity.isEmpty && rating == null) {
+      return const Text(
+        'Verified',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: kLightGreyColor,
+          fontSize: 11.5,
+          fontWeight: FontWeight.w500,
+          height: 1.2,
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        if (identity.isNotEmpty)
+          Flexible(
+            child: Text(
+              identity,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kLightGreyColor,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w500,
+                height: 1.2,
+              ),
+            ),
+          ),
+        if (identity.isNotEmpty && rating != null) const _FacetDot(),
+        if (rating != null) _InlineRatingFact(rating: rating),
+      ],
+    );
+  }
+}
+
+class _StageStatusDot extends StatelessWidget {
+  const _StageStatusDot({required this.status});
+
+  final _UsernameStageStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    switch (status) {
+      case _UsernameStageStatus.validating:
+        return const SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: kPrimaryColor,
+          ),
+        );
+      case _UsernameStageStatus.ok:
+        return const Icon(
+          Icons.check_circle_rounded,
+          size: 17,
+          color: kPrimaryColor,
+        );
+      case _UsernameStageStatus.error:
+        return const Icon(
+          Icons.error_outline_rounded,
+          size: 17,
+          color: kRedColor,
+        );
+    }
+  }
+}
+
+/// Strips Dart's exception-type prefixes so the raw thrown message (e.g.
+/// `Lichess user "x" was not found.`) reads cleanly inside a pill.
+String _stageErrorText(Object error) {
+  final text = error.toString();
+  for (final prefix in const <String>[
+    'Bad state: ',
+    'Invalid argument(s): ',
+    'Invalid argument: ',
+    'Exception: ',
+  ]) {
+    if (text.startsWith(prefix)) return text.substring(prefix.length);
+  }
+  return text;
+}
+
+/// Result of the add-player dialog: which player was created, and whether the
+/// user asked to jump straight into connecting online usernames afterwards.
+class _AddPlayerResult {
+  const _AddPlayerResult({
+    required this.playerId,
+    required this.connectUsernames,
+  });
+
+  final String playerId;
+  final bool connectUsernames;
+}
+
+Future<void> _showAddPlayerDialog(
+  BuildContext context,
+  WidgetRef ref, {
+  required void Function(String playerId) onOpenPlayer,
+}) async {
+  final result = await showFDialog<_AddPlayerResult>(
     context: context,
     builder:
         (context, _, animation) => _AddPlayerDialog(
           title: 'Add player',
           animation: animation,
+          offerConnect: true,
           onSearch:
               (query) => ref
                   .read(playerWorkspaceProvider.notifier)
@@ -4408,6 +5263,16 @@ Future<void> _showAddPlayerDialog(BuildContext context, WidgetRef ref) {
                   .addChessEverPlayer(player),
         ),
   );
+  if (result == null || !context.mounted) return;
+  onOpenPlayer(result.playerId);
+  if (!result.connectUsernames || !context.mounted) return;
+  // Make sure the just-created player is the selected one before the connect
+  // dialog attaches usernames to it.
+  await ref
+      .read(playerWorkspaceProvider.notifier)
+      .selectPlayer(result.playerId);
+  if (!context.mounted) return;
+  await _showAddAccountChoiceDialog(context, ref);
 }
 
 Future<void> _showConnectChessEverDialog(BuildContext context, WidgetRef ref) {
@@ -4421,10 +5286,12 @@ Future<void> _showConnectChessEverDialog(BuildContext context, WidgetRef ref) {
               (query) => ref
                   .read(playerWorkspaceProvider.notifier)
                   .searchChessEverPlayers(query),
-          onAddChessEver:
-              (player) => ref
-                  .read(playerWorkspaceProvider.notifier)
-                  .connectChessEverPlayer(player),
+          onAddChessEver: (player) async {
+            await ref
+                .read(playerWorkspaceProvider.notifier)
+                .connectChessEverPlayer(player);
+            return null;
+          },
         ),
   );
 }
@@ -4436,13 +5303,21 @@ class _AddPlayerDialog extends StatefulWidget {
     required this.onSearch,
     required this.onAddChessEver,
     this.onAddManual,
+    this.offerConnect = false,
   });
 
   final String title;
   final Animation<double> animation;
   final Future<List<GamebasePlayer>> Function(String query) onSearch;
-  final Future<void> Function(GamebasePlayer player) onAddChessEver;
-  final Future<void> Function(String name)? onAddManual;
+
+  /// Returns the new player's id when adding, or null when this dialog is being
+  /// reused to connect a ChessEver source to an already-open player.
+  final Future<String?> Function(GamebasePlayer player) onAddChessEver;
+  final Future<String?> Function(String name)? onAddManual;
+
+  /// When true, a successful add offers "Add & connect", which closes with a
+  /// request to open the connect-usernames flow for the new player.
+  final bool offerConnect;
 
   @override
   State<_AddPlayerDialog> createState() => _AddPlayerDialogState();
@@ -4484,16 +5359,23 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
     });
   }
 
-  Future<void> _addManual() async {
+  Future<void> _addManual({required bool connect}) async {
     final addManual = widget.onAddManual;
     if (addManual == null) return;
     final name = _controller.text.trim();
     if (name.isEmpty || _working) return;
     setState(() => _working = true);
     try {
-      await addManual(name);
+      final id = await addManual(name);
       if (!mounted) return;
-      Navigator.of(context).pop();
+      Navigator.of(context).pop(
+        id == null
+            ? null
+            : _AddPlayerResult(
+              playerId: id,
+              connectUsernames: connect && widget.offerConnect,
+            ),
+      );
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -4507,9 +5389,13 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
     if (_working) return;
     setState(() => _working = true);
     try {
-      await widget.onAddChessEver(player);
+      final id = await widget.onAddChessEver(player);
       if (!mounted) return;
-      Navigator.of(context).pop();
+      Navigator.of(context).pop(
+        widget.offerConnect && id != null
+            ? _AddPlayerResult(playerId: id, connectUsernames: false)
+            : null,
+      );
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -4625,14 +5511,32 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
                   if (widget.onAddManual != null) ...[
                     const SizedBox(width: 8),
                     DesktopDialogButton(
-                      label: 'Add manually',
-                      icon: Icons.edit_outlined,
-                      tone: DesktopDialogButtonTone.primary,
+                      label: widget.offerConnect ? 'Add only' : 'Add manually',
+                      icon: Icons.person_add_alt_1_outlined,
+                      tone:
+                          widget.offerConnect
+                              ? DesktopDialogButtonTone.secondary
+                              : DesktopDialogButtonTone.primary,
                       onPress:
                           !_working && _controller.text.trim().isNotEmpty
-                              ? () => unawaited(_addManual())
+                              ? () => unawaited(_addManual(connect: false))
                               : null,
                     ),
+                    if (widget.offerConnect) ...[
+                      const SizedBox(width: 8),
+                      DesktopDialogButton(
+                        label: 'Add & connect',
+                        icon: Icons.add_link_outlined,
+                        tone: DesktopDialogButtonTone.primary,
+                        tooltip:
+                            'Add this player, then connect lichess.org / '
+                            'chess.com usernames',
+                        onPress:
+                            !_working && _controller.text.trim().isNotEmpty
+                                ? () => unawaited(_addManual(connect: true))
+                                : null,
+                      ),
+                    ],
                   ],
                 ],
               ),

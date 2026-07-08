@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -11,6 +13,8 @@ import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
+import 'package:chessever/desktop/services/local_source_deletion.dart';
+import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
@@ -19,20 +23,31 @@ import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 const String _workspaceStorageKey = 'desktop_player_workspace_v1';
 const String _httpUserAgent =
     'ChessEverDesktop/1.0 (https://chessever.com; support@chessever.com)';
+const int _lichessRangeConcurrency = 4;
+const int _lichessParallelRangeMinExpectedGames = 1500;
+const int _lichessFirstFullExportYear = 2010;
 const int _chessComArchiveConcurrency = 8;
 const int _chessEverPageSize = 1000;
+const int _chessEverEmbeddedPgnBatchSize = 200;
 const int _chessEverHydrateConcurrency = 16;
+const Duration _chessEverHydrationTimeout = Duration(seconds: 20);
 
 typedef PlayerWorkspaceProgress =
     void Function(String message, double? progress);
 
 class PlayerWorkspaceRepository {
-  PlayerWorkspaceRepository({AppDatabase? appDatabase, http.Client? client})
-    : _appDatabase = appDatabase ?? AppDatabase.instance,
-      _client = client ?? http.Client();
+  PlayerWorkspaceRepository({
+    AppDatabase? appDatabase,
+    http.Client? client,
+    Duration? chessEverHydrationTimeout,
+  }) : chessEverHydrationTimeout =
+           chessEverHydrationTimeout ?? _chessEverHydrationTimeout,
+       _appDatabase = appDatabase ?? AppDatabase.instance,
+       _client = client ?? http.Client();
 
   final AppDatabase _appDatabase;
   final http.Client _client;
+  final Duration chessEverHydrationTimeout;
 
   Future<PlayerWorkspaceSnapshot> loadSnapshot() async {
     final raw = await _appDatabase.getJson<Object?>(_workspaceStorageKey);
@@ -45,18 +60,49 @@ class PlayerWorkspaceRepository {
 
   Future<String> sourcePgnPath({
     required String playerId,
+    String? playerName,
+    String? fideId,
     required PlayerWorkspaceSource source,
     String? username,
   }) async {
     final root = await _playerWorkspaceDirectory(playerId);
-    final sourceName = source.storageKey;
-    final suffix = _safeFilePart(username ?? source.label);
-    return p.join(root.path, '$sourceName-$suffix.pgn');
+    return p.join(
+      root.path,
+      playerWorkspaceSourceFileName(
+        source: source,
+        username: username,
+        playerName: playerName,
+        fideId: fideId,
+        playerId: playerId,
+      ),
+    );
   }
 
-  Future<String> combinedPgnPath({required String playerId}) async {
+  Future<String> combinedPgnPath({
+    required String playerId,
+    String? playerName,
+    String? fideId,
+  }) async {
     final root = await _playerWorkspaceDirectory(playerId);
-    return p.join(root.path, 'combined.pgn');
+    return p.join(
+      root.path,
+      playerWorkspaceCombinedFileName(
+        playerId: playerId,
+        playerName: playerName,
+        fideId: fideId,
+      ),
+    );
+  }
+
+  Future<bool> deleteSourcePgnFile(String path) {
+    return deleteLocalSourcePath(path);
+  }
+
+  Future<bool> deletePlayerWorkspaceDirectory(String playerId) async {
+    final root = await _playerWorkspaceDirectory(playerId, create: false);
+    if (!await root.exists()) return false;
+    await root.delete(recursive: true);
+    return true;
   }
 
   Future<PlayerWorkspaceAccount> fetchLichessAccount(String username) async {
@@ -203,7 +249,11 @@ class PlayerWorkspaceRepository {
       profileFetchedAtMs: now,
     );
     return PlayerWorkspacePlayer(
-      id: 'player-$now-${_safeFilePart(player.id)}',
+      id: _playerWorkspaceId(
+        createdAtMs: now,
+        displayName: player.titleAndName,
+        fallbackIdentity: player.id,
+      ),
       displayName: player.titleAndName,
       createdAtMs: now,
       fideId: player.fideId,
@@ -221,7 +271,7 @@ class PlayerWorkspaceRepository {
     if (clean.isEmpty) throw ArgumentError('Player name is required.');
     final now = DateTime.now().millisecondsSinceEpoch;
     return PlayerWorkspacePlayer(
-      id: 'player-$now-${_safeFilePart(clean)}',
+      id: _playerWorkspaceId(createdAtMs: now, displayName: clean),
       displayName: clean,
       createdAtMs: now,
     );
@@ -232,7 +282,19 @@ class PlayerWorkspaceRepository {
     int? sinceMs,
     int? expectedGameCount,
     PlayerWorkspaceProgress? onProgress,
+    OperationCancellationToken? cancellationToken,
   }) async {
+    cancellationToken?.throwIfCanceled();
+    if (sinceMs == null &&
+        expectedGameCount != null &&
+        expectedGameCount >= _lichessParallelRangeMinExpectedGames) {
+      return _downloadLichessGamesInRanges(
+        username: username,
+        expectedGameCount: expectedGameCount,
+        onProgress: onProgress,
+        cancellationToken: cancellationToken,
+      );
+    }
     final query = <String, String>{
       'perfType': 'ultraBullet,bullet,blitz,rapid,classical,correspondence',
       'sort': 'dateAsc',
@@ -254,12 +316,133 @@ class PlayerWorkspaceRepository {
       uri,
       accept: 'application/x-chess-pgn',
       onTextChunk: progress.addChunk,
+      cancellationToken: cancellationToken,
     );
+    cancellationToken?.throwIfCanceled();
     progress.finish();
     return PlayerWorkspaceDownloadedPgn(
       source: PlayerWorkspaceSource.lichess,
       pgn: pgn,
-      gameCount: splitPgnGames(pgn).length,
+      gameCount:
+          progress.receivedGames > 0
+              ? progress.receivedGames
+              : countPgnGames(pgn),
+    );
+  }
+
+  Future<PlayerWorkspaceDownloadedPgn> _downloadLichessGamesInRanges({
+    required String username,
+    required int expectedGameCount,
+    required PlayerWorkspaceProgress? onProgress,
+    required OperationCancellationToken? cancellationToken,
+  }) async {
+    final ranges = _lichessFullExportRanges(DateTime.now().toUtc());
+    if (ranges.length <= 1) {
+      return downloadLichessGames(
+        username: username,
+        expectedGameCount: null,
+        onProgress: onProgress,
+        cancellationToken: cancellationToken,
+      );
+    }
+
+    final rangeCounts = List<int>.filled(ranges.length, 0);
+    final completedRanges = <int>{};
+    final throttle = _ProgressThrottle();
+    void report({bool force = false}) {
+      final received = rangeCounts.fold<int>(0, (sum, count) => sum + count);
+      if (!force && !throttle.shouldReport(received)) return;
+      onProgress?.call(
+        'Receiving Lichess games: $received of about $expectedGameCount '
+        '(${completedRanges.length}/${ranges.length} date ranges done)...',
+        (received / expectedGameCount).clamp(0.0, 1.0).toDouble(),
+      );
+    }
+
+    onProgress?.call(
+      'Opening Lichess download: ${ranges.length} date ranges '
+      '(${_lichessRangeConcurrency.clamp(1, ranges.length)} at a time)...',
+      0,
+    );
+    late final List<_IndexedPgn> downloads;
+    try {
+      downloads =
+          await _mapConcurrentIndexed<_LichessDownloadRange, _IndexedPgn>(
+            ranges,
+            concurrency: _lichessRangeConcurrency,
+            mapper: (range, index) async {
+              cancellationToken?.throwIfCanceled();
+              final query = <String, String>{
+                'perfType':
+                    'ultraBullet,bullet,blitz,rapid,classical,correspondence',
+                'sort': 'dateAsc',
+                'tags': 'true',
+                'clocks': 'true',
+                'opening': 'true',
+                'since': range.sinceMs.toString(),
+                'until': range.untilMs.toString(),
+              };
+              final counter = _PgnStreamGameCounter();
+              final uri = Uri.https(
+                'lichess.org',
+                '/api/games/user/${username.trim()}',
+                query,
+              );
+              final pgn = await _downloadText(
+                uri,
+                accept: 'application/x-chess-pgn',
+                onTextChunk: (chunk) {
+                  counter.addChunk(chunk);
+                  rangeCounts[index] = counter.receivedGames;
+                  report();
+                },
+                cancellationToken: cancellationToken,
+              );
+              cancellationToken?.throwIfCanceled();
+              counter.finish();
+              rangeCounts[index] =
+                  counter.receivedGames > 0
+                      ? counter.receivedGames
+                      : countPgnGames(pgn);
+              completedRanges.add(index);
+              report(force: true);
+              return _IndexedPgn(index, pgn);
+            },
+          );
+    } on Object catch (error) {
+      if (!isOperationCanceled(error) && error.toString().contains('(429)')) {
+        onProgress?.call(
+          'Lichess limited parallel export; falling back to one stream...',
+          null,
+        );
+        return downloadLichessGames(
+          username: username,
+          expectedGameCount: null,
+          onProgress: onProgress,
+          cancellationToken: cancellationToken,
+        );
+      }
+      rethrow;
+    }
+    cancellationToken?.throwIfCanceled();
+    downloads.sort((a, b) => a.index.compareTo(b.index));
+    final buffer = StringBuffer();
+    for (final download in downloads) {
+      final pgn = download.pgn.trim();
+      if (pgn.isEmpty) continue;
+      if (buffer.isNotEmpty) buffer.writeln();
+      buffer.writeln(pgn);
+    }
+    final text = buffer.toString();
+    final gameCount = rangeCounts.fold<int>(0, (sum, count) => sum + count);
+    onProgress?.call(
+      'Lichess download complete: $gameCount games received.',
+      1,
+    );
+    return PlayerWorkspaceDownloadedPgn(
+      source: PlayerWorkspaceSource.lichess,
+      pgn: text,
+      gameCount: gameCount > 0 ? gameCount : countPgnGames(text),
     );
   }
 
@@ -267,13 +450,16 @@ class PlayerWorkspaceRepository {
     required String username,
     int? sinceMs,
     PlayerWorkspaceProgress? onProgress,
+    OperationCancellationToken? cancellationToken,
   }) async {
+    cancellationToken?.throwIfCanceled();
     final clean = username.trim().toLowerCase();
     final archivesUri = Uri.https(
       'api.chess.com',
       '/pub/player/$clean/games/archives',
     );
     onProgress?.call('Chess.com: loading monthly archive list...', null);
+    cancellationToken?.throwIfCanceled();
     final response = await _client.get(
       archivesUri,
       headers: const <String, String>{
@@ -304,6 +490,7 @@ class PlayerWorkspaceRepository {
       archives,
       concurrency: _chessComArchiveConcurrency,
       mapper: (archiveUrl, index) async {
+        cancellationToken?.throwIfCanceled();
         final pgnUrl =
             archiveUrl.endsWith('/pgn') ? archiveUrl : '$archiveUrl/pgn';
         onProgress?.call(
@@ -315,8 +502,10 @@ class PlayerWorkspaceRepository {
         final pgn = await _downloadText(
           Uri.parse(pgnUrl),
           accept: 'application/x-chess-pgn',
+          cancellationToken: cancellationToken,
         );
-        final gameCount = splitPgnGames(pgn).length;
+        cancellationToken?.throwIfCanceled();
+        final gameCount = countPgnGames(pgn);
         completedArchives += 1;
         downloadedGames += gameCount;
         onProgress?.call(
@@ -327,6 +516,7 @@ class PlayerWorkspaceRepository {
         return _IndexedPgn(index, pgn);
       },
     );
+    cancellationToken?.throwIfCanceled();
     downloads.sort((a, b) => a.index.compareTo(b.index));
     final buffer = StringBuffer();
     for (final download in downloads) {
@@ -345,79 +535,123 @@ class PlayerWorkspaceRepository {
     return PlayerWorkspaceDownloadedPgn(
       source: PlayerWorkspaceSource.chesscom,
       pgn: text,
-      gameCount: splitPgnGames(text).length,
+      gameCount: downloadedGames > 0 ? downloadedGames : countPgnGames(text),
     );
   }
 
   Future<PlayerWorkspaceDownloadedPgn> downloadChessEverGames({
     required GamebaseRepository repository,
     required String playerId,
+    String? fideId,
     DateTime? sinceDate,
+    int? expectedGameCount,
     PlayerWorkspaceProgress? onProgress,
+    OperationCancellationToken? cancellationToken,
   }) async {
     final buffer = StringBuffer();
+    final progress = _ChessEverDownloadProgress(
+      onProgress: onProgress,
+      expectedGameCount: expectedGameCount,
+    );
+    final dateFrom = _gamebaseDate(sinceDate);
+    final exported = await _downloadChessEverPgnExport(
+      repository: repository,
+      playerId: playerId,
+      fideId: fideId,
+      progress: progress,
+      cancellationToken: cancellationToken,
+    );
+    if (exported != null) return exported;
+
     var page = 0;
-    var total = 0;
     int? totalCount;
     while (true) {
-      onProgress?.call(
-        'ChessEver: loading page ${page + 1} '
-        '($_chessEverPageSize games per request)...',
-        totalCount == null || totalCount <= 0
-            ? null
-            : (total / totalCount).clamp(0.0, 1.0).toDouble(),
-      );
+      cancellationToken?.throwIfCanceled();
+      progress.loadingPage(page + 1);
       final response = await repository.getPlayerGames(
         playerId: playerId,
         pageNumber: page,
         pageSize: _chessEverPageSize,
         includeData: true,
-        dateFrom: _gamebaseDate(sinceDate),
+        dateFrom: dateFrom,
       );
+      cancellationToken?.throwIfCanceled();
       final rows = _rowsFromPlayerGamesResponse(response);
       if (rows.isEmpty) break;
       totalCount ??= _readTotalCount(response);
-      onProgress?.call(
-        'ChessEver: page ${page + 1} returned ${rows.length} games; '
-        'building PGNs...',
-        totalCount == null || totalCount <= 0
-            ? null
-            : (total / totalCount).clamp(0.0, 1.0).toDouble(),
+      progress.updateTotalCount(totalCount);
+      final hasMore = _readHasMore(response);
+      progress.pageReturned(
+        pageNumber: page + 1,
+        rowsOnPage: rows.length,
+        hasMore: hasMore,
       );
       final pgns = await _chessEverPgnsForRows(
         repository: repository,
         rows: rows,
-        pageNumber: page + 1,
-        onProgress: onProgress,
+        onPageProgress:
+            (pageProgress) => progress.pagePrepared(
+              pageNumber: page + 1,
+              pageProgress: pageProgress,
+            ),
+        cancellationToken: cancellationToken,
       );
       for (final pgn in pgns) {
         if (buffer.isNotEmpty) buffer.writeln();
         buffer.writeln(pgn.trim());
       }
-      total += rows.length;
-      onProgress?.call(
-        'ChessEver: fetched $total${_totalSuffix(totalCount)} games; '
-        '${splitPgnGames(buffer.toString()).length} PGNs ready...',
-        totalCount == null || totalCount <= 0
-            ? null
-            : (total / totalCount).clamp(0.0, 1.0).toDouble(),
+      progress.pageFinished(
+        rowsOnPage: rows.length,
+        readyOnPage: pgns.length,
+        hasMore: hasMore,
       );
-      final hasMore = _readHasMore(response);
       if (hasMore != true) break;
       page++;
     }
+    cancellationToken?.throwIfCanceled();
     final text = buffer.toString();
     return PlayerWorkspaceDownloadedPgn(
       source: PlayerWorkspaceSource.chessever,
       pgn: text,
-      gameCount: splitPgnGames(text).length,
+      gameCount: countPgnGames(text),
+    );
+  }
+
+  Future<PlayerWorkspaceDownloadedPgn?> _downloadChessEverPgnExport({
+    required GamebaseRepository repository,
+    required String playerId,
+    required String? fideId,
+    required _ChessEverDownloadProgress progress,
+    OperationCancellationToken? cancellationToken,
+  }) async {
+    cancellationToken?.throwIfCanceled();
+    progress.exportStarted();
+    final export = await repository.getPlayerGamesPgn(
+      playerId: playerId,
+      fideId: fideId,
+    );
+    cancellationToken?.throwIfCanceled();
+    if (export == null) return null;
+
+    final gameCount =
+        export.gameCount > 0 ? export.gameCount : countPgnGames(export.pgn);
+    if (export.pgn.trim().isEmpty && gameCount > 0) return null;
+
+    progress.exportFinished(gameCount);
+    return PlayerWorkspaceDownloadedPgn(
+      source: PlayerWorkspaceSource.chessever,
+      pgn: export.pgn,
+      gameCount: gameCount,
+      replaceExistingSource: true,
     );
   }
 
   Future<PlayerWorkspaceDownloadedPgn> readManualPgnPaths({
     required List<String> paths,
     PlayerWorkspaceProgress? onProgress,
+    OperationCancellationToken? cancellationToken,
   }) async {
+    cancellationToken?.throwIfCanceled();
     final cleaned = paths
         .map((path) => path.trim())
         .where((path) => path.isNotEmpty)
@@ -433,6 +667,7 @@ class PlayerWorkspaceRepository {
       onProgress:
           (progress) => onProgress?.call(progress.message, progress.fraction),
     );
+    cancellationToken?.throwIfCanceled();
     final chunks = <String>[
       for (final game in source.games)
         if (game.rawPgn.trim().isNotEmpty) game.rawPgn.trim(),
@@ -441,7 +676,7 @@ class PlayerWorkspaceRepository {
     return PlayerWorkspaceDownloadedPgn(
       source: PlayerWorkspaceSource.manual,
       pgn: pgn,
-      gameCount: splitPgnGames(pgn).length,
+      gameCount: countPgnGames(pgn),
     );
   }
 
@@ -453,27 +688,52 @@ class PlayerWorkspaceRepository {
     required Iterable<String> playerAliases,
     bool replaceExisting = false,
     PlayerWorkspaceProgress? onProgress,
+    OperationCancellationToken? cancellationToken,
   }) async {
-    final chunks = splitPgnGames(pgn);
     final file = File(path);
-    final unique = _dedupePgnChunks(chunks);
-    if (replaceExisting) {
-      await file.parent.create(recursive: true);
-      await file.writeAsString(_joinPgnChunks(unique), flush: true);
-      onProgress?.call('Reinstalling $sourceLabel...', null);
+    cancellationToken?.throwIfCanceled();
+    final fileExists = await file.exists();
+    final existingDatabase =
+        replaceExisting
+            ? null
+            : await localRepository.localDatabaseMatchingPgnFingerprints(
+              databasePath: path,
+              fingerprints: const <String>[],
+            );
+    cancellationToken?.throwIfCanceled();
+
+    if (replaceExisting || !fileExists || existingDatabase == null) {
+      await _writePgnText(file, pgn);
+      cancellationToken?.throwIfCanceled();
+      onProgress?.call(
+        replaceExisting
+            ? 'Reinstalling $sourceLabel...'
+            : 'Importing $sourceLabel...',
+        null,
+      );
       final source = await localRepository.importSingleFileSource(
         path: path,
         sourceLabel: sourceLabel,
+        cancellationToken: cancellationToken,
         onProgress:
             (progress) => onProgress?.call(progress.message, progress.fraction),
       );
-      final stats = analyzePgnStats(unique, playerAliases);
+      cancellationToken?.throwIfCanceled();
+      final stats = await _statsForImportedLocalDatabase(
+        localRepository: localRepository,
+        path: path,
+        playerAliases: playerAliases,
+        fallbackGameCount: _sourceGameCount(
+          source,
+          fallback: countPgnGames(pgn),
+        ),
+      );
       return PlayerWorkspaceImportResult(
         path: path,
         source: source,
         stats: PlayerWorkspaceImportStats(
-          gameCount: _sourceGameCount(source, fallback: unique.length),
-          newGameCount: unique.length,
+          gameCount: stats.gameCount,
+          newGameCount: stats.gameCount,
           winCount: stats.winCount,
           drawCount: stats.drawCount,
           lossCount: stats.lossCount,
@@ -481,37 +741,27 @@ class PlayerWorkspaceRepository {
       );
     }
 
-    if (unique.isEmpty) {
+    final prepared = await _preparePgnImport(
+      pgn: pgn,
+      playerAliases: playerAliases,
+    );
+    cancellationToken?.throwIfCanceled();
+
+    if (prepared.games.isEmpty) {
       final source = await localRepository.loadFreshSource(<String>[
         path,
       ], sourceLabel: sourceLabel);
-      return PlayerWorkspaceImportResult(
+      final stats = await _statsForImportedLocalDatabase(
+        localRepository: localRepository,
         path: path,
-        source: source,
-        stats: PlayerWorkspaceImportStats(gameCount: _sourceGameCount(source)),
-      );
-    }
-
-    if (!await file.exists()) {
-      await file.parent.create(recursive: true);
-      await file.writeAsString(_joinPgnChunks(unique), flush: true);
-      onProgress?.call('Importing $sourceLabel...', null);
-      final source = await localRepository.importSingleFileSource(
-        path: path,
-        sourceLabel: sourceLabel,
-        onProgress:
-            (progress) => onProgress?.call(progress.message, progress.fraction),
-      );
-      final stats = analyzePgnStats(
-        splitPgnGames(await file.readAsString()),
-        playerAliases,
+        playerAliases: playerAliases,
+        fallbackGameCount: _sourceGameCount(source),
       );
       return PlayerWorkspaceImportResult(
         path: path,
         source: source,
         stats: PlayerWorkspaceImportStats(
-          gameCount: _sourceGameCount(source, fallback: unique.length),
-          newGameCount: unique.length,
+          gameCount: stats.gameCount,
           winCount: stats.winCount,
           drawCount: stats.drawCount,
           lossCount: stats.lossCount,
@@ -519,69 +769,56 @@ class PlayerWorkspaceRepository {
       );
     }
 
-    final hashes = unique.map(localChessPgnFingerprint).toList(growable: false);
     final existingHashes = await localRepository
         .localDatabaseMatchingPgnFingerprints(
           databasePath: path,
-          fingerprints: hashes,
+          fingerprints: prepared.fingerprints,
         );
     if (existingHashes == null) {
-      await file.writeAsString(_joinPgnChunks(unique), flush: true);
-      final source = await localRepository.importSingleFileSource(
+      return mergeIntoLocalDatabase(
+        localRepository: localRepository,
         path: path,
         sourceLabel: sourceLabel,
-        onProgress:
-            (progress) => onProgress?.call(progress.message, progress.fraction),
-      );
-      final stats = analyzePgnStats(unique, playerAliases);
-      return PlayerWorkspaceImportResult(
-        path: path,
-        source: source,
-        stats: PlayerWorkspaceImportStats(
-          gameCount: _sourceGameCount(source, fallback: unique.length),
-          newGameCount: unique.length,
-          winCount: stats.winCount,
-          drawCount: stats.drawCount,
-          lossCount: stats.lossCount,
-        ),
+        pgn: pgn,
+        playerAliases: playerAliases,
+        replaceExisting: true,
+        onProgress: onProgress,
+        cancellationToken: cancellationToken,
       );
     }
 
-    final appended = <String>[];
     final seen = Set<String>.from(existingHashes);
-    for (final chunk in unique) {
-      final hash = localChessPgnFingerprint(chunk);
-      if (!seen.add(hash)) continue;
-      appended.add(chunk);
-    }
+    final appended = prepared.games
+        .where((game) => seen.add(game.fingerprint))
+        .toList(growable: false);
     if (appended.isNotEmpty) {
-      final sink = file.openWrite(mode: FileMode.append);
-      try {
-        for (final chunk in appended) {
-          sink.writeln();
-          sink.writeln(chunk.trim());
-        }
-      } finally {
-        await sink.close();
-      }
+      await _appendPreparedPgnGames(file, appended);
+      cancellationToken?.throwIfCanceled();
       await localRepository.persistAppendedPgnGames(
         databasePath: path,
         appendedPgns: [
-          for (final chunk in appended) LocalChessAppendedPgn(rawPgn: chunk),
+          for (final game in appended) LocalChessAppendedPgn(rawPgn: game.pgn),
         ],
       );
     }
+    cancellationToken?.throwIfCanceled();
     final source = await localRepository.loadFreshSource(<String>[
       path,
     ], sourceLabel: sourceLabel);
-    final allChunks =
-        await file.exists() ? splitPgnGames(await file.readAsString()) : unique;
-    final stats = analyzePgnStats(allChunks, playerAliases);
+    final stats = await _statsForImportedLocalDatabase(
+      localRepository: localRepository,
+      path: file.path,
+      playerAliases: playerAliases,
+      fallbackGameCount: prepared.stats.gameCount,
+    );
     return PlayerWorkspaceImportResult(
       path: path,
       source: source,
       stats: PlayerWorkspaceImportStats(
-        gameCount: _sourceGameCount(source, fallback: allChunks.length),
+        // Distinct games in this source (deduplicated by PGN fingerprint), the
+        // same method the Combined count uses over the union, so the per-source
+        // numbers partition Combined and sum to it.
+        gameCount: stats.gameCount,
         newGameCount: appended.length,
         winCount: stats.winCount,
         drawCount: stats.drawCount,
@@ -594,46 +831,73 @@ class PlayerWorkspaceRepository {
     required LocalChessDatabaseRepository localRepository,
     required String playerId,
     required String playerName,
+    String? playerFideId,
     required Iterable<String> sourcePaths,
     required Iterable<String> playerAliases,
     PlayerWorkspaceProgress? onProgress,
+    OperationCancellationToken? cancellationToken,
   }) async {
-    final chunks = <String>[];
-    for (final path in sourcePaths) {
-      final file = File(path);
-      if (!await file.exists()) continue;
-      chunks.addAll(splitPgnGames(await file.readAsString()));
-    }
-    final unique = _dedupePgnChunks(chunks);
-    final combinedPath = await combinedPgnPath(playerId: playerId);
-    await File(combinedPath).parent.create(recursive: true);
-    await File(combinedPath).writeAsString(_joinPgnChunks(unique), flush: true);
+    final paths = sourcePaths
+        .map((path) => path.trim())
+        .where((path) => path.isNotEmpty)
+        .toList(growable: false);
+    final combinedPath = await combinedPgnPath(
+      playerId: playerId,
+      playerName: playerName,
+      fideId: playerFideId,
+    );
+    onProgress?.call('Preparing combined database...', 0.02);
+    final prepared = await _prepareCombinedPgnImport(
+      sourcePaths: paths,
+      combinedPath: combinedPath,
+      playerAliases: playerAliases,
+    );
+    cancellationToken?.throwIfCanceled();
     final source = await localRepository.importSingleFileSource(
-      path: combinedPath,
+      path: prepared.path,
       sourceLabel: '$playerName Combined',
+      cancellationToken: cancellationToken,
       onProgress:
           (progress) => onProgress?.call(progress.message, progress.fraction),
     );
-    final stats = analyzePgnStats(unique, playerAliases);
+    cancellationToken?.throwIfCanceled();
+    // Compute the Combined numbers directly from the union of the player's
+    // source databases (deduplicated by PGN fingerprint) rather than from the
+    // freshly re-imported combined file. This is the same counting method the
+    // per-source cards use on a single database, so Combined always equals the
+    // number of distinct games across sources and — for disjoint sources —
+    // sums the per-source counts, regardless of whether the physical combined
+    // database is momentarily stale.
+    final combinedStats = await localRepository.resultStatsForDatabases(
+      databasePaths: paths,
+      playerAliases: playerAliases,
+    );
+    final combinedGameCount =
+        combinedStats.gameCount > 0
+            ? combinedStats.gameCount
+            : _sourceGameCount(source, fallback: prepared.stats.gameCount);
     return PlayerWorkspaceImportResult(
-      path: combinedPath,
+      path: prepared.path,
       source: source,
       stats: PlayerWorkspaceImportStats(
-        gameCount: _sourceGameCount(source, fallback: unique.length),
-        newGameCount: unique.length,
-        winCount: stats.winCount,
-        drawCount: stats.drawCount,
-        lossCount: stats.lossCount,
+        gameCount: combinedGameCount,
+        newGameCount: prepared.stats.gameCount,
+        winCount: combinedStats.winCount,
+        drawCount: combinedStats.drawCount,
+        lossCount: combinedStats.lossCount,
       ),
     );
   }
 
-  Future<Directory> _playerWorkspaceDirectory(String playerId) async {
+  Future<Directory> _playerWorkspaceDirectory(
+    String playerId, {
+    bool create = true,
+  }) async {
     final support = await getApplicationSupportDirectory();
     final dir = Directory(
       p.join(support.path, 'player-workspace', _safeFilePart(playerId)),
     );
-    if (!await dir.exists()) await dir.create(recursive: true);
+    if (create && !await dir.exists()) await dir.create(recursive: true);
     return dir;
   }
 
@@ -641,13 +905,16 @@ class PlayerWorkspaceRepository {
     Uri uri, {
     required String accept,
     void Function(String chunk)? onTextChunk,
+    OperationCancellationToken? cancellationToken,
   }) async {
+    cancellationToken?.throwIfCanceled();
     final request = http.Request('GET', uri)
       ..headers.addAll(<String, String>{
         'Accept': accept,
         'User-Agent': _httpUserAgent,
       });
     final response = await _client.send(request);
+    cancellationToken?.throwIfCanceled();
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final body = await response.stream.bytesToString();
       throw StateError(
@@ -655,39 +922,68 @@ class PlayerWorkspaceRepository {
       );
     }
     final buffer = StringBuffer();
-    await for (final chunk in response.stream.transform(utf8.decoder)) {
-      buffer.write(chunk);
-      onTextChunk?.call(chunk);
+    final completer = Completer<String>();
+    late final StreamSubscription<String> subscription;
+    VoidCallback? removeCancelListener;
+    subscription = response.stream
+        .transform(utf8.decoder)
+        .listen(
+          (chunk) {
+            if (cancellationToken?.isCanceled == true) {
+              unawaited(subscription.cancel());
+              if (!completer.isCompleted) {
+                completer.completeError(const OperationCanceledException());
+              }
+              return;
+            }
+            buffer.write(chunk);
+            onTextChunk?.call(chunk);
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            if (!completer.isCompleted) {
+              completer.completeError(error, stackTrace);
+            }
+          },
+          onDone: () {
+            if (!completer.isCompleted) completer.complete(buffer.toString());
+          },
+          cancelOnError: true,
+        );
+    removeCancelListener = cancellationToken?.addListener(() {
+      unawaited(subscription.cancel());
+      if (!completer.isCompleted) {
+        completer.completeError(const OperationCanceledException());
+      }
+    });
+    try {
+      return await completer.future;
+    } finally {
+      removeCancelListener?.call();
     }
-    return buffer.toString();
   }
 
   Future<List<String>> _chessEverPgnsForRows({
     required GamebaseRepository repository,
     required List<Map<String, dynamic>> rows,
-    required int pageNumber,
-    required PlayerWorkspaceProgress? onProgress,
+    required void Function(_ChessEverPageProgress progress) onPageProgress,
+    required OperationCancellationToken? cancellationToken,
   }) async {
-    final outputByIndex = <int, String>{};
-    final hydrateTargets = <_ChessEverHydrationTarget>[];
-    for (var i = 0; i < rows.length; i++) {
-      final row = rows[i];
-      final rowPgn = _pgnFromGamebase(null, row);
-      if (rowPgn != null && rowPgn.trim().isNotEmpty) {
-        outputByIndex[i] = rowPgn.trim();
-        continue;
-      }
-      final id = row['id']?.toString().trim() ?? '';
-      if (id.isEmpty) continue;
-      hydrateTargets.add(_ChessEverHydrationTarget(index: i, id: id, row: row));
-    }
+    final embedded = await _embeddedChessEverPgnsForRows(
+      rows: rows,
+      onPageProgress: onPageProgress,
+      cancellationToken: cancellationToken,
+    );
+    final outputByIndex = embedded.outputByIndex;
+    final hydrateTargets = embedded.hydrateTargets;
 
     final embeddedCount = outputByIndex.length;
     if (hydrateTargets.isEmpty) {
-      onProgress?.call(
-        'ChessEver: page $pageNumber has embedded PGN data for all '
-        '${rows.length} games.',
-        1,
+      onPageProgress(
+        _ChessEverPageProgress(
+          readyOnPage: embeddedCount,
+          processedWork: rows.length,
+          totalWork: rows.length,
+        ),
       );
       return <String>[
         for (var i = 0; i < rows.length; i++)
@@ -695,53 +991,50 @@ class PlayerWorkspaceRepository {
       ];
     }
 
-    onProgress?.call(
-      'ChessEver: $embeddedCount/${rows.length} PGNs embedded; hydrating '
-      '${hydrateTargets.length} missing PGNs '
-      '(${_chessEverHydrateConcurrency.clamp(1, hydrateTargets.length)} at a time)...',
-      rows.isEmpty ? null : embeddedCount / rows.length,
+    onPageProgress(
+      _ChessEverPageProgress(
+        readyOnPage: embeddedCount,
+        processedWork: rows.length,
+        totalWork: rows.length + hydrateTargets.length,
+      ),
     );
     var completedHydrations = 0;
     var hydratedPgnCount = 0;
-    final hydrated = await _mapConcurrentIndexed<
-      _ChessEverHydrationTarget,
-      _IndexedPgn?
-    >(
-      hydrateTargets,
-      concurrency: _chessEverHydrateConcurrency,
-      mapper: (target, _) async {
-        final full = await repository.getGameWithPgn(target.id);
-        final pgn = _pgnFromGamebase(full, target.row);
-        completedHydrations += 1;
-        if (pgn == null || pgn.trim().isEmpty) {
-          onProgress?.call(
-            'ChessEver: hydrated $completedHydrations/'
-            '${hydrateTargets.length} missing PGNs; '
-            '${embeddedCount + hydratedPgnCount}/${rows.length} ready on page '
-            '$pageNumber...',
-            rows.isEmpty
-                ? null
-                : ((embeddedCount + hydratedPgnCount) / rows.length)
-                    .clamp(0.0, 1.0)
-                    .toDouble(),
-          );
-          return null;
-        }
-        hydratedPgnCount += 1;
-        onProgress?.call(
-          'ChessEver: hydrated $completedHydrations/'
-          '${hydrateTargets.length} missing PGNs; '
-          '${embeddedCount + hydratedPgnCount}/${rows.length} ready on page '
-          '$pageNumber...',
-          rows.isEmpty
-              ? null
-              : ((embeddedCount + hydratedPgnCount) / rows.length)
-                  .clamp(0.0, 1.0)
-                  .toDouble(),
+    final hydrated =
+        await _mapConcurrentIndexed<_ChessEverHydrationTarget, _IndexedPgn?>(
+          hydrateTargets,
+          concurrency: _chessEverHydrateConcurrency,
+          mapper: (target, _) async {
+            cancellationToken?.throwIfCanceled();
+            final full = await _getChessEverHydratedGame(
+              repository: repository,
+              id: target.id,
+              cancellationToken: cancellationToken,
+            );
+            cancellationToken?.throwIfCanceled();
+            final pgn = _pgnFromGamebase(full, target.row);
+            completedHydrations += 1;
+            if (pgn == null || pgn.trim().isEmpty) {
+              onPageProgress(
+                _ChessEverPageProgress(
+                  readyOnPage: embeddedCount + hydratedPgnCount,
+                  processedWork: rows.length + completedHydrations,
+                  totalWork: rows.length + hydrateTargets.length,
+                ),
+              );
+              return null;
+            }
+            hydratedPgnCount += 1;
+            onPageProgress(
+              _ChessEverPageProgress(
+                readyOnPage: embeddedCount + hydratedPgnCount,
+                processedWork: rows.length + completedHydrations,
+                totalWork: rows.length + hydrateTargets.length,
+              ),
+            );
+            return _IndexedPgn(target.index, pgn.trim());
+          },
         );
-        return _IndexedPgn(target.index, pgn.trim());
-      },
-    );
     for (final item in hydrated) {
       if (item == null) continue;
       outputByIndex[item.index] = item.pgn;
@@ -752,6 +1045,87 @@ class PlayerWorkspaceRepository {
         if (outputByIndex[i] != null) outputByIndex[i]!,
     ];
   }
+
+  Future<GamebaseGameWithPgn?> _getChessEverHydratedGame({
+    required GamebaseRepository repository,
+    required String id,
+    required OperationCancellationToken? cancellationToken,
+  }) {
+    final request = repository
+        .getGameWithPgn(id)
+        .timeout(chessEverHydrationTimeout, onTimeout: () => null);
+    if (cancellationToken == null) return request;
+    return Future.any<GamebaseGameWithPgn?>(<Future<GamebaseGameWithPgn?>>[
+      request,
+      cancellationToken.whenCanceled.then<GamebaseGameWithPgn?>((_) {
+        throw const OperationCanceledException();
+      }),
+    ]);
+  }
+}
+
+Future<_ChessEverEmbeddedBuildResult> _embeddedChessEverPgnsForRows({
+  required List<Map<String, dynamic>> rows,
+  required void Function(_ChessEverPageProgress progress) onPageProgress,
+  required OperationCancellationToken? cancellationToken,
+}) async {
+  final outputByIndex = <int, String>{};
+  final hydrateTargets = <_ChessEverHydrationTarget>[];
+  var processedRows = 0;
+  final batches = <_ChessEverEmbeddedPgnBatch>[];
+  for (var start = 0; start < rows.length;) {
+    final end =
+        start + _chessEverEmbeddedPgnBatchSize < rows.length
+            ? start + _chessEverEmbeddedPgnBatchSize
+            : rows.length;
+    batches.add(
+      _ChessEverEmbeddedPgnBatch(start: start, rows: rows.sublist(start, end)),
+    );
+    start = end;
+  }
+
+  for (final batch in batches) {
+    cancellationToken?.throwIfCanceled();
+    final pgns = _buildEmbeddedChessEverPgnBatchSync(batch.rows);
+    cancellationToken?.throwIfCanceled();
+
+    for (var batchIndex = 0; batchIndex < pgns.length; batchIndex++) {
+      final rowIndex = batch.start + batchIndex;
+      final pgn = pgns[batchIndex]?.trim();
+      if (pgn != null && pgn.isNotEmpty) {
+        outputByIndex[rowIndex] = pgn;
+        continue;
+      }
+      final row = rows[rowIndex];
+      final id = row['id']?.toString().trim() ?? '';
+      if (id.isEmpty) continue;
+      hydrateTargets.add(
+        _ChessEverHydrationTarget(index: rowIndex, id: id, row: row),
+      );
+    }
+
+    processedRows += batch.rows.length;
+    onPageProgress(
+      _ChessEverPageProgress(
+        readyOnPage: outputByIndex.length,
+        processedWork: processedRows,
+        totalWork: rows.length * 2,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+  }
+  cancellationToken?.throwIfCanceled();
+
+  return _ChessEverEmbeddedBuildResult(
+    outputByIndex: outputByIndex,
+    hydrateTargets: hydrateTargets,
+  );
+}
+
+List<String?> _buildEmbeddedChessEverPgnBatchSync(
+  List<Map<String, dynamic>> rows,
+) {
+  return <String?>[for (final row in rows) _pgnFromGamebase(null, row)?.trim()];
 }
 
 Future<List<R>> _mapConcurrentIndexed<T, R>(
@@ -788,6 +1162,36 @@ class _IndexedPgn {
 }
 
 @immutable
+class _ChessEverEmbeddedPgnBatch {
+  const _ChessEverEmbeddedPgnBatch({required this.start, required this.rows});
+
+  final int start;
+  final List<Map<String, dynamic>> rows;
+}
+
+@immutable
+class _LichessDownloadRange {
+  const _LichessDownloadRange({required this.sinceMs, required this.untilMs});
+
+  final int sinceMs;
+  final int untilMs;
+}
+
+List<_LichessDownloadRange> _lichessFullExportRanges(DateTime nowUtc) {
+  final endMs = nowUtc.millisecondsSinceEpoch;
+  final ranges = <_LichessDownloadRange>[];
+  for (var year = _lichessFirstFullExportYear; year <= nowUtc.year; year++) {
+    final start = DateTime.utc(year).millisecondsSinceEpoch;
+    final next = DateTime.utc(year + 1).millisecondsSinceEpoch;
+    final until = (next - 1).clamp(start, endMs).toInt();
+    if (start <= endMs && until >= start) {
+      ranges.add(_LichessDownloadRange(sinceMs: start, untilMs: until));
+    }
+  }
+  return List<_LichessDownloadRange>.unmodifiable(ranges);
+}
+
+@immutable
 class _ChessEverHydrationTarget {
   const _ChessEverHydrationTarget({
     required this.index,
@@ -800,6 +1204,244 @@ class _ChessEverHydrationTarget {
   final Map<String, dynamic> row;
 }
 
+@immutable
+class _ChessEverEmbeddedBuildResult {
+  const _ChessEverEmbeddedBuildResult({
+    required this.outputByIndex,
+    required this.hydrateTargets,
+  });
+
+  final Map<int, String> outputByIndex;
+  final List<_ChessEverHydrationTarget> hydrateTargets;
+}
+
+@immutable
+class _ChessEverPageProgress {
+  const _ChessEverPageProgress({
+    required this.readyOnPage,
+    required this.processedWork,
+    required this.totalWork,
+  });
+
+  final int readyOnPage;
+  final int processedWork;
+  final int totalWork;
+
+  double get workFraction {
+    if (totalWork <= 0) return 0;
+    return (processedWork / totalWork).clamp(0.0, 1.0).toDouble();
+  }
+}
+
+class _ChessEverDownloadProgress {
+  _ChessEverDownloadProgress({
+    required this.onProgress,
+    required int? expectedGameCount,
+  }) : _expectedGameCount =
+           expectedGameCount != null && expectedGameCount > 0
+               ? expectedGameCount
+               : null;
+
+  final PlayerWorkspaceProgress? onProgress;
+  final int? _expectedGameCount;
+  final _ProgressThrottle _throttle = _ProgressThrottle();
+
+  int? _totalCount;
+  int _completedRows = 0;
+  int _readyPgns = 0;
+  int _currentPageRows = 0;
+  bool? _currentHasMore;
+  bool _finishedPages = false;
+
+  void updateTotalCount(int? totalCount) {
+    if (totalCount == null || totalCount <= 0) return;
+    final current = _totalCount;
+    _totalCount =
+        current == null || totalCount > current ? totalCount : current;
+  }
+
+  void exportStarted() {
+    _emit('ChessEver: downloading PGN export...', 0.02, force: true);
+  }
+
+  void exportFinished(int gameCount) {
+    _finishedPages = true;
+    _completedRows = gameCount;
+    _readyPgns = gameCount;
+    _emit('ChessEver: downloaded $gameCount games as PGN.', 1, force: true);
+  }
+
+  void loadingPage(int pageNumber) {
+    _currentPageRows = 0;
+    _currentHasMore = true;
+    _emit(
+      'ChessEver: loading page $pageNumber '
+      '($_chessEverPageSize games per request)...',
+      _fractionForPage(0),
+      force: true,
+    );
+  }
+
+  void pageReturned({
+    required int pageNumber,
+    required int rowsOnPage,
+    required bool? hasMore,
+  }) {
+    _currentPageRows = rowsOnPage;
+    _currentHasMore = hasMore;
+    if (hasMore != true) _finishedPages = true;
+    _emit(
+      'ChessEver: page $pageNumber returned $rowsOnPage games; '
+      'building PGNs...',
+      _fractionForPage(0),
+      force: true,
+    );
+  }
+
+  void pagePrepared({
+    required int pageNumber,
+    required _ChessEverPageProgress pageProgress,
+  }) {
+    final readyTotal = _readyPgns + pageProgress.readyOnPage;
+    final displayTotal = _displayTotalForReady(readyTotal);
+    _emit(
+      'ChessEver: page $pageNumber prepared '
+      '${pageProgress.readyOnPage}/$_currentPageRows games; '
+      '$readyTotal/$displayTotal ready...',
+      _fractionForPage(pageProgress.workFraction),
+    );
+  }
+
+  void pageFinished({
+    required int rowsOnPage,
+    required int readyOnPage,
+    required bool? hasMore,
+  }) {
+    _completedRows += rowsOnPage;
+    _readyPgns += readyOnPage;
+    _currentPageRows = 0;
+    _currentHasMore = hasMore;
+    if (hasMore != true) _finishedPages = true;
+    _emit(
+      'ChessEver: fetched $_completedRows'
+      '${_totalSuffix(_messageTotalCount)} games; '
+      '$_readyPgns PGNs ready...',
+      _fractionForPage(0),
+      force: true,
+    );
+  }
+
+  int? get _knownTotalCount {
+    var total = 0;
+    final expected = _expectedGameCount;
+    if (expected != null && expected > total) total = expected;
+    final responseTotal = _totalCount;
+    if (responseTotal != null && responseTotal > total) total = responseTotal;
+    return total > 0 ? total : null;
+  }
+
+  int? get _messageTotalCount {
+    if (_finishedPages) return _completedRows > 0 ? _completedRows : null;
+    return _knownTotalCount;
+  }
+
+  int? get _estimatedTotalCount {
+    final knownRows = _completedRows + _currentPageRows;
+    if (_finishedPages) return knownRows > 0 ? knownRows : null;
+    final known = _knownTotalCount;
+    if (known != null) return known > knownRows ? known : knownRows;
+    if (knownRows <= 0) return null;
+    if (_currentHasMore == false ||
+        (_currentPageRows > 0 && _currentPageRows < _chessEverPageSize)) {
+      return knownRows;
+    }
+    return knownRows + _chessEverPageSize;
+  }
+
+  int _displayTotalForReady(int ready) {
+    final total = _estimatedTotalCount;
+    if (total == null || total < ready) return ready;
+    return total;
+  }
+
+  double? _fractionForPage(double pageFraction) {
+    final total = _estimatedTotalCount;
+    if (total == null || total <= 0) return null;
+    final currentRows = _currentPageEquivalentRows(pageFraction);
+    return ((_completedRows + currentRows) / total).clamp(0.0, 1.0).toDouble();
+  }
+
+  double _currentPageEquivalentRows(double pageFraction) {
+    return _currentPageRows * pageFraction.clamp(0.0, 1.0);
+  }
+
+  void _emit(String message, double? progress, {bool force = false}) {
+    if (!force && progress != null) {
+      final scaled = (progress * 10000).round();
+      if (!_throttle.shouldReport(scaled)) return;
+    }
+    onProgress?.call(message, progress);
+  }
+}
+
+class _PgnStreamGameCounter {
+  var _pendingLine = '';
+  var _receivedGames = 0;
+  var _finished = false;
+
+  int get receivedGames => _receivedGames;
+
+  void addChunk(String chunk) {
+    final normalized = chunk.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    final text = _pendingLine + normalized;
+    final lines = text.split('\n');
+    _pendingLine = lines.removeLast();
+    for (final line in lines) {
+      if (line.trimLeft().startsWith('[Event "')) _receivedGames += 1;
+    }
+  }
+
+  void finish() {
+    if (_finished) return;
+    _finished = true;
+    if (_pendingLine.trimLeft().startsWith('[Event "')) {
+      _receivedGames += 1;
+    }
+    _pendingLine = '';
+  }
+}
+
+class _ProgressThrottle {
+  _ProgressThrottle() : _watch = Stopwatch()..start();
+
+  static const int _minDelta = 25;
+  static const Duration _minInterval = Duration(milliseconds: 180);
+  final Stopwatch _watch;
+  var _lastValue = -1;
+  var _lastMs = 0;
+
+  bool shouldReport(int value) {
+    if (_lastValue < 0) {
+      _lastValue = value;
+      _lastMs = _watch.elapsedMilliseconds;
+      return true;
+    }
+    final elapsed = _watch.elapsedMilliseconds;
+    if (value != _lastValue && (value - _lastValue).abs() >= _minDelta) {
+      _lastValue = value;
+      _lastMs = elapsed;
+      return true;
+    }
+    if (value != _lastValue &&
+        elapsed - _lastMs >= _minInterval.inMilliseconds) {
+      _lastValue = value;
+      _lastMs = elapsed;
+      return true;
+    }
+    return false;
+  }
+}
+
 class _LichessPgnStreamProgress {
   _LichessPgnStreamProgress({
     required this.expectedGameCount,
@@ -809,10 +1451,12 @@ class _LichessPgnStreamProgress {
   final int? expectedGameCount;
   final PlayerWorkspaceProgress? onProgress;
 
-  var _pendingLine = '';
-  var _receivedGames = 0;
+  final _counter = _PgnStreamGameCounter();
+  final _throttle = _ProgressThrottle();
   var _lastReportedGames = -1;
   var _finished = false;
+
+  int get receivedGames => _counter.receivedGames;
 
   void start() {
     final expected = expectedGameCount;
@@ -827,33 +1471,24 @@ class _LichessPgnStreamProgress {
   }
 
   void addChunk(String chunk) {
-    final normalized = chunk.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
-    final text = _pendingLine + normalized;
-    final lines = text.split('\n');
-    _pendingLine = lines.removeLast();
-    for (final line in lines) {
-      if (line.trimLeft().startsWith('[Event "')) _receivedGames += 1;
-    }
+    _counter.addChunk(chunk);
     _report();
   }
 
   void finish() {
     if (_finished) return;
     _finished = true;
-    if (_pendingLine.trimLeft().startsWith('[Event "')) {
-      _receivedGames += 1;
-      _pendingLine = '';
-    }
+    _counter.finish();
     final expected = expectedGameCount;
     if (expected != null && expected > 0) {
       onProgress?.call(
-        'Parsing Lichess PGN: $_receivedGames of about $expected games received...',
-        (_receivedGames / expected).clamp(0.0, 1.0).toDouble(),
+        'Parsing Lichess PGN: $receivedGames of about $expected games received...',
+        (receivedGames / expected).clamp(0.0, 1.0).toDouble(),
       );
     } else {
       onProgress?.call(
-        _receivedGames > 0
-            ? 'Parsing Lichess PGN: $_receivedGames games received...'
+        receivedGames > 0
+            ? 'Parsing Lichess PGN: $receivedGames games received...'
             : 'Parsing Lichess PGN...',
         null,
       );
@@ -861,18 +1496,19 @@ class _LichessPgnStreamProgress {
   }
 
   void _report() {
-    if (_receivedGames == _lastReportedGames) return;
-    _lastReportedGames = _receivedGames;
+    if (receivedGames == _lastReportedGames) return;
+    if (!_finished && !_throttle.shouldReport(receivedGames)) return;
+    _lastReportedGames = receivedGames;
     final expected = expectedGameCount;
     if (expected != null && expected > 0) {
       onProgress?.call(
-        'Receiving Lichess games: $_receivedGames of about $expected...',
-        (_receivedGames / expected).clamp(0.0, 1.0).toDouble(),
+        'Receiving Lichess games: $receivedGames of about $expected...',
+        (receivedGames / expected).clamp(0.0, 1.0).toDouble(),
       );
     } else {
       onProgress?.call(
-        _receivedGames > 0
-            ? 'Receiving Lichess games: $_receivedGames received...'
+        receivedGames > 0
+            ? 'Receiving Lichess games: $receivedGames received...'
             : 'Receiving Lichess games...',
         null,
       );
@@ -886,11 +1522,16 @@ class PlayerWorkspaceDownloadedPgn {
     required this.source,
     required this.pgn,
     required this.gameCount,
+    this.replaceExistingSource = false,
   });
 
   final PlayerWorkspaceSource source;
   final String pgn;
   final int gameCount;
+
+  /// True when the PGN is a complete source snapshot and should replace the
+  /// previous per-player source file/database instead of appending to it.
+  final bool replaceExistingSource;
 }
 
 @immutable
@@ -904,6 +1545,166 @@ class PlayerWorkspaceImportResult {
   final String path;
   final PlayerWorkspaceImportStats stats;
   final LocalChessSource? source;
+}
+
+@immutable
+class _PreparedPgnGame {
+  const _PreparedPgnGame({required this.pgn, required this.fingerprint});
+
+  final String pgn;
+  final String fingerprint;
+}
+
+@immutable
+class _PreparedPgnImport {
+  const _PreparedPgnImport({required this.games, required this.stats});
+
+  final List<_PreparedPgnGame> games;
+  final PlayerWorkspaceImportStats stats;
+
+  int get gameCount => games.length;
+
+  List<String> get fingerprints =>
+      games.map((game) => game.fingerprint).toList(growable: false);
+}
+
+@immutable
+class _PreparedCombinedPgnImport {
+  const _PreparedCombinedPgnImport({required this.path, required this.stats});
+
+  final String path;
+  final PlayerWorkspaceImportStats stats;
+}
+
+Future<_PreparedPgnImport> _preparePgnImport({
+  required String pgn,
+  required Iterable<String> playerAliases,
+}) {
+  final aliases = playerAliases.toList(growable: false);
+  return Isolate.run(() => _preparePgnImportSync(pgn, aliases));
+}
+
+_PreparedPgnImport _preparePgnImportSync(String pgn, List<String> aliases) {
+  final chunks = splitPgnGames(pgn);
+  final seen = <String>{};
+  final games = <_PreparedPgnGame>[];
+  for (final chunk in chunks) {
+    final trimmed = chunk.trim();
+    if (trimmed.isEmpty) continue;
+    final fingerprint = localChessPgnFingerprint(trimmed);
+    if (!seen.add(fingerprint)) continue;
+    games.add(_PreparedPgnGame(pgn: trimmed, fingerprint: fingerprint));
+  }
+  final stats = analyzePgnStats(games.map((game) => game.pgn), aliases);
+  return _PreparedPgnImport(
+    games: List<_PreparedPgnGame>.unmodifiable(games),
+    stats: stats,
+  );
+}
+
+Future<_PreparedCombinedPgnImport> _prepareCombinedPgnImport({
+  required Iterable<String> sourcePaths,
+  required String combinedPath,
+  required Iterable<String> playerAliases,
+}) {
+  final paths = sourcePaths.toList(growable: false);
+  final aliases = playerAliases.toList(growable: false);
+  return Isolate.run(
+    () => _prepareCombinedPgnImportSync(paths, combinedPath, aliases),
+  );
+}
+
+_PreparedCombinedPgnImport _prepareCombinedPgnImportSync(
+  List<String> paths,
+  String combinedPath,
+  List<String> aliases,
+) {
+  final output = File(combinedPath);
+  output.parent.createSync(recursive: true);
+  final tempPath =
+      '$combinedPath.tmp-${DateTime.now().microsecondsSinceEpoch}-${Isolate.current.hashCode}';
+  final temp = File(tempPath);
+  final writer = temp.openSync(mode: FileMode.write);
+  final seen = <String>{};
+  final stats = _PgnStatsCounter(aliases);
+  var wroteAny = false;
+  try {
+    for (final path in paths) {
+      for (final chunk in _readPgnGamesFromFileSync(path)) {
+        final trimmed = chunk.trim();
+        if (trimmed.isEmpty) continue;
+        final fingerprint = localChessPgnFingerprint(trimmed);
+        if (!seen.add(fingerprint)) continue;
+        if (wroteAny) writer.writeStringSync('\n\n');
+        writer.writeStringSync(trimmed);
+        stats.add(trimmed);
+        wroteAny = true;
+      }
+    }
+    if (wroteAny) writer.writeStringSync('\n');
+    writer.flushSync();
+    writer.closeSync();
+    if (output.existsSync()) output.deleteSync();
+    temp.renameSync(combinedPath);
+    return _PreparedCombinedPgnImport(
+      path: combinedPath,
+      stats: stats.toStats(),
+    );
+  } catch (_) {
+    try {
+      writer.closeSync();
+    } catch (_) {}
+    try {
+      temp.deleteSync();
+    } catch (_) {}
+    rethrow;
+  }
+}
+
+Future<PlayerWorkspaceImportStats> _statsForImportedLocalDatabase({
+  required LocalChessDatabaseRepository localRepository,
+  required String path,
+  required Iterable<String> playerAliases,
+  required int fallbackGameCount,
+}) async {
+  final stats = await localRepository.localDatabaseResultStats(
+    databasePath: path,
+    playerAliases: playerAliases,
+  );
+  if (stats.gameCount <= 0 && fallbackGameCount > 0) {
+    return PlayerWorkspaceImportStats(gameCount: fallbackGameCount);
+  }
+  return PlayerWorkspaceImportStats(
+    gameCount: stats.gameCount,
+    winCount: stats.winCount,
+    drawCount: stats.drawCount,
+    lossCount: stats.lossCount,
+  );
+}
+
+Future<void> _writePgnText(File file, String pgn) async {
+  await file.parent.create(recursive: true);
+  final normalized = pgn.trim();
+  await file.writeAsString(
+    normalized.isEmpty ? '' : '$normalized\n',
+    flush: true,
+  );
+}
+
+Future<void> _appendPreparedPgnGames(
+  File file,
+  List<_PreparedPgnGame> games,
+) async {
+  final sink = file.openWrite(mode: FileMode.append);
+  try {
+    for (final game in games) {
+      sink.writeln();
+      sink.writeln(game.pgn.trim());
+    }
+    await sink.flush();
+  } finally {
+    await sink.close();
+  }
 }
 
 List<String> splitPgnGames(String pgn) {
@@ -924,43 +1725,151 @@ List<String> splitPgnGames(String pgn) {
   return games;
 }
 
+int countPgnGames(String pgn) {
+  final normalized = pgn.replaceAll('\r\n', '\n').replaceAll('\r', '\n').trim();
+  if (normalized.isEmpty) return 0;
+  final starts = RegExp(
+    r'^\s*\[Event\s+"',
+    multiLine: true,
+  ).allMatches(normalized);
+  var count = 0;
+  for (final _ in starts) {
+    count++;
+  }
+  return count == 0 ? 1 : count;
+}
+
 PlayerWorkspaceImportStats analyzePgnStats(
   Iterable<String> chunks,
   Iterable<String> aliases,
 ) {
-  final normalizedAliases =
-      aliases
-          .map(_normalizePlayerName)
-          .where((name) => name.isNotEmpty)
-          .toSet();
-  var games = 0;
-  var wins = 0;
-  var draws = 0;
-  var losses = 0;
+  final counter = _PgnStatsCounter(aliases);
   for (final chunk in chunks) {
+    counter.add(chunk);
+  }
+  return counter.toStats();
+}
+
+class _PgnStatsCounter {
+  _PgnStatsCounter(Iterable<String> aliases)
+    : _normalizedAliases =
+          aliases
+              .map(_normalizePlayerName)
+              .where((name) => name.isNotEmpty)
+              .toSet();
+
+  final Set<String> _normalizedAliases;
+  var _games = 0;
+  var _wins = 0;
+  var _draws = 0;
+  var _losses = 0;
+
+  void add(String chunk) {
     final headers = _pgnHeaders(chunk);
     final result = headers['result'] ?? '';
     final white = _normalizePlayerName(headers['white']);
     final black = _normalizePlayerName(headers['black']);
-    if (white.isEmpty && black.isEmpty) continue;
-    games++;
+    if (white.isEmpty && black.isEmpty) return;
+    _games++;
     final isWhite =
-        normalizedAliases.isEmpty || normalizedAliases.contains(white);
-    final isBlack = normalizedAliases.contains(black);
+        _normalizedAliases.isEmpty || _normalizedAliases.contains(white);
+    final isBlack = _normalizedAliases.contains(black);
     if (result == '1/2-1/2' || result == '1/2' || result == '½-½') {
-      draws++;
+      _draws++;
     } else if ((result == '1-0' && isWhite) || (result == '0-1' && isBlack)) {
-      wins++;
+      _wins++;
     } else if ((result == '0-1' && isWhite) || (result == '1-0' && isBlack)) {
-      losses++;
+      _losses++;
     }
   }
-  return PlayerWorkspaceImportStats(
-    gameCount: games,
-    winCount: wins,
-    drawCount: draws,
-    lossCount: losses,
-  );
+
+  PlayerWorkspaceImportStats toStats() {
+    return PlayerWorkspaceImportStats(
+      gameCount: _games,
+      winCount: _wins,
+      drawCount: _draws,
+      lossCount: _losses,
+    );
+  }
+}
+
+Iterable<String> _readPgnGamesFromFileSync(String path) sync* {
+  final file = File(path);
+  if (!file.existsSync()) return;
+  final game = StringBuffer();
+  var firstLine = true;
+  var sawMoveText = false;
+  var inComment = false;
+  for (var line in _readUtf8LinesFromFileSync(file)) {
+    if (firstLine) {
+      firstLine = false;
+      if (line.startsWith('\uFEFF')) line = line.substring(1);
+    }
+    final wasInComment = inComment;
+    final isHeader = !wasInComment && _startsWithPgnHeader(line);
+    if (isHeader && sawMoveText) {
+      final current = game.toString().trim();
+      if (current.isNotEmpty) yield current;
+      game.clear();
+      sawMoveText = false;
+    } else if (!isHeader && line.trim().isNotEmpty) {
+      sawMoveText = true;
+    }
+    game.write(line);
+    inComment = _updatePgnCommentState(line, inComment);
+  }
+  final trailing = game.toString().trim();
+  if (trailing.isNotEmpty) yield trailing;
+}
+
+Iterable<String> _readUtf8LinesFromFileSync(File file) sync* {
+  const chunkSize = 64 * 1024;
+  final reader = file.openSync();
+  final pending = BytesBuilder(copy: false);
+  try {
+    while (true) {
+      final chunk = reader.readSync(chunkSize);
+      if (chunk.isEmpty) break;
+      var start = 0;
+      for (var i = 0; i < chunk.length; i++) {
+        if (chunk[i] != 0x0A) continue;
+        pending.add(chunk.sublist(start, i + 1));
+        yield utf8.decode(pending.takeBytes(), allowMalformed: true);
+        start = i + 1;
+      }
+      if (start < chunk.length) {
+        pending.add(chunk.sublist(start));
+      }
+    }
+    final trailing = pending.takeBytes();
+    if (trailing.isNotEmpty) {
+      yield utf8.decode(trailing, allowMalformed: true);
+    }
+  } finally {
+    reader.closeSync();
+  }
+}
+
+bool _startsWithPgnHeader(String line) {
+  for (var i = 0; i < line.length; i++) {
+    final code = line.codeUnitAt(i);
+    if (code == 0x20 || code == 0x09) continue;
+    return code == 0x5B;
+  }
+  return false;
+}
+
+bool _updatePgnCommentState(String line, bool inComment) {
+  var inside = inComment;
+  for (var i = 0; i < line.length; i++) {
+    final code = line.codeUnitAt(i);
+    if (code == 0x7B) {
+      inside = true;
+    } else if (code == 0x7D) {
+      inside = false;
+    }
+  }
+  return inside;
 }
 
 List<String> _dedupePgnChunks(Iterable<String> chunks) {
@@ -1064,6 +1973,10 @@ String? _pgnFromGamebase(GamebaseGameWithPgn? full, Map<String, dynamic> row) {
   final direct = full?.pgn?.trim();
   if (direct != null && direct.isNotEmpty && _pgnHasMoves(direct)) {
     return direct;
+  }
+  final rowDirect = row['pgn']?.toString().trim();
+  if (rowDirect != null && rowDirect.isNotEmpty && _pgnHasMoves(rowDirect)) {
+    return rowDirect;
   }
   final fullData = full?.data;
   if (fullData != null) {
@@ -1176,4 +2089,88 @@ String _safeFilePart(String value) {
       .replaceAll(RegExp(r'-+'), '-')
       .replaceAll(RegExp(r'^-|-$'), '');
   return cleaned.isEmpty ? 'player' : cleaned;
+}
+
+String _playerWorkspaceId({
+  required int createdAtMs,
+  required String displayName,
+  String? fallbackIdentity,
+}) {
+  final name = _safeFilePart(displayName);
+  final fallback = _safeFilePart(fallbackIdentity ?? '');
+  final identity = name == 'player' && fallback != 'player' ? fallback : name;
+  return 'player-$createdAtMs-$identity';
+}
+
+/// File name for the player's deduplicated combined database.
+String playerWorkspaceCombinedFileName({
+  String? playerId,
+  String? playerName,
+  String? fideId,
+}) {
+  final identity = _playerWorkspaceIdentityToken(
+    playerId: playerId,
+    playerName: playerName,
+    fideId: fideId,
+  );
+  return 'COMBINED_${identity}_CHESSEVER.pgn';
+}
+
+/// File name for a generated player-source PGN.
+///
+/// Every generated player database carries the app token plus the strongest
+/// available player identity: FIDE id first, then display name, then the
+/// internal player id. The account handle is appended only when it adds useful
+/// source-specific detail.
+String playerWorkspaceSourceFileName({
+  required PlayerWorkspaceSource source,
+  String? username,
+  String? playerId,
+  String? playerName,
+  String? fideId,
+}) {
+  final sourceToken = _workspaceFileToken(source.label);
+  final identity = _playerWorkspaceIdentityToken(
+    playerId: playerId,
+    playerName: playerName,
+    fideId: fideId,
+  );
+  final handle = _workspaceFileToken(username ?? '');
+  final parts = <String>[sourceToken, identity, 'CHESSEVER'];
+  if (handle.isNotEmpty && handle != sourceToken) parts.add(handle);
+  return '${parts.join('_')}.pgn';
+}
+
+/// Preserves human casing and spacing while removing characters that are
+/// illegal (Windows: `<>:"/\|?*` and control codes) or unsafe (trailing dots or
+/// spaces) in a file name, collapsing the whitespace it introduces.
+String _prettyWorkspaceFilePart(String value) {
+  return value
+      .replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1F]'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim()
+      .replaceAll(RegExp(r'[. ]+$'), '')
+      .trim();
+}
+
+String _playerWorkspaceIdentityToken({
+  String? playerId,
+  String? playerName,
+  String? fideId,
+}) {
+  final fide = _workspaceFileToken(fideId ?? '');
+  if (fide.isNotEmpty) return fide;
+  final name = _workspaceFileToken(playerName ?? '');
+  if (name.isNotEmpty) return name;
+  final id = _workspaceFileToken(playerId ?? '');
+  return id.isEmpty ? 'PLAYER' : id;
+}
+
+String _workspaceFileToken(String value) {
+  return _prettyWorkspaceFilePart(value)
+      .replaceAll(RegExp(r'[^A-Za-z0-9._ -]+'), ' ')
+      .replaceAll(RegExp(r'[\s-]+'), '_')
+      .replaceAll(RegExp(r'_+'), '_')
+      .replaceAll(RegExp(r'^_|_$'), '')
+      .toUpperCase();
 }

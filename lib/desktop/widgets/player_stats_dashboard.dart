@@ -383,7 +383,10 @@ class _HeroStripe extends StatelessWidget {
         accent: _scoreColor(winRate),
         value: winRate == null ? '—' : '${winRate.round()}%',
         label: 'Score',
-        sub: _wdlShort(snapshot.overall),
+        subWidget: _ResultBreakdownChips(
+          tally: snapshot.overall,
+          includeScore: false,
+        ),
       ),
       _StatCard(
         icon: Icons.trending_up_rounded,
@@ -422,6 +425,7 @@ class _StatCard extends StatelessWidget {
     required this.value,
     required this.label,
     this.sub,
+    this.subWidget,
   });
 
   final IconData icon;
@@ -429,6 +433,7 @@ class _StatCard extends StatelessWidget {
   final String value;
   final String label;
   final String? sub;
+  final Widget? subWidget;
 
   @override
   Widget build(BuildContext context) {
@@ -462,7 +467,10 @@ class _StatCard extends StatelessWidget {
               letterSpacing: 1,
             ),
           ),
-          if (sub != null) ...[
+          if (subWidget != null) ...[
+            const SizedBox(height: 6),
+            subWidget!,
+          ] else if (sub != null) ...[
             const SizedBox(height: 6),
             Text(
               sub!,
@@ -620,15 +628,7 @@ class _Legend extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      '${_formatInt(tally.wins)}–${_formatInt(tally.draws)}–${_formatInt(tally.losses)}',
-      style: const TextStyle(
-        color: kWhiteColor70,
-        fontSize: 12,
-        fontWeight: FontWeight.w800,
-        fontFeatures: [FontFeature.tabularFigures()],
-      ),
-    );
+    return _ResultBreakdownChips(tally: tally, includeScore: false);
   }
 }
 
@@ -794,16 +794,22 @@ class _ColorCard extends StatelessWidget {
           const SizedBox(height: 11),
           _ScoreBar(tally: tally, height: 9),
           const SizedBox(height: 9),
-          Text(
-            '${_formatInt(tally.games)} games · ${_formatInt(tally.wins)}W ${_formatInt(tally.draws)}D ${_formatInt(tally.losses)}L',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: kWhiteColor70,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              fontFeatures: [FontFeature.tabularFigures()],
-            ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                '${_formatInt(tally.games)} games',
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+              _ResultBreakdownChips(tally: tally, includeScore: false),
+            ],
           ),
         ],
       ),
@@ -848,82 +854,38 @@ class _OpeningRow extends StatelessWidget {
     final score = opening.tally.scorePercent;
     return Row(
       children: [
-        _EcoBadge(eco: opening.eco),
-        const SizedBox(width: 10),
         Expanded(
-          child: Text(
-            opening.name ?? 'ECO ${opening.eco}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: kWhiteColor,
-              fontSize: 12.5,
-              fontWeight: FontWeight.w700,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _openingTitle(opening),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+              _ResultBreakdownChips(tally: opening.tally, score: score),
+            ],
           ),
         ),
         const SizedBox(width: 12),
         SizedBox(width: 96, child: _ScoreBar(tally: opening.tally, height: 7)),
-        const SizedBox(width: 12),
-        SizedBox(
-          width: 62,
-          child: Text(
-            '${_formatInt(opening.tally.wins)}–${_formatInt(opening.tally.draws)}–${_formatInt(opening.tally.losses)}',
-            textAlign: TextAlign.right,
-            style: const TextStyle(
-              color: kWhiteColor70,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              fontFeatures: [FontFeature.tabularFigures()],
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        SizedBox(
-          width: 40,
-          child: Text(
-            score == null ? '—' : '${score.round()}%',
-            textAlign: TextAlign.right,
-            style: TextStyle(
-              color: _scoreColor(score),
-              fontSize: 12,
-              fontWeight: FontWeight.w900,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
-          ),
-        ),
       ],
     );
   }
 }
 
-class _EcoBadge extends StatelessWidget {
-  const _EcoBadge({required this.eco});
-
-  final String eco;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 42,
-      alignment: Alignment.center,
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      decoration: BoxDecoration(
-        color: kPrimaryColor.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: kPrimaryColor.withValues(alpha: 0.24)),
-      ),
-      child: Text(
-        eco,
-        style: const TextStyle(
-          color: kLightYellowColor,
-          fontSize: 11,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 0.3,
-        ),
-      ),
-    );
-  }
+String _openingTitle(PlayerOpeningStat opening) {
+  final name = opening.name?.trim();
+  final eco = opening.eco.trim();
+  if (name != null && name.isNotEmpty) return '$name ($eco)';
+  return 'Unknown opening ($eco)';
 }
 
 // ---------------------------------------------------------------------------
@@ -968,15 +930,23 @@ class _OpponentRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                _shortName(opponent.name),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                ),
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      _shortName(opponent.name),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: kWhiteColor,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _ResultBreakdownChips(tally: opponent.tally, score: score),
+                ],
               ),
               const SizedBox(height: 3),
               Text(
@@ -997,35 +967,105 @@ class _OpponentRow extends StatelessWidget {
         ),
         const SizedBox(width: 12),
         SizedBox(width: 96, child: _ScoreBar(tally: opponent.tally, height: 7)),
-        const SizedBox(width: 12),
-        SizedBox(
-          width: 62,
-          child: Text(
-            '${_formatInt(opponent.tally.wins)}–${_formatInt(opponent.tally.draws)}–${_formatInt(opponent.tally.losses)}',
-            textAlign: TextAlign.right,
-            style: const TextStyle(
-              color: kWhiteColor70,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              fontFeatures: [FontFeature.tabularFigures()],
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        SizedBox(
-          width: 40,
-          child: Text(
-            score == null ? '—' : '${score.round()}%',
-            textAlign: TextAlign.right,
-            style: TextStyle(
-              color: _scoreColor(score),
-              fontSize: 12,
-              fontWeight: FontWeight.w900,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
-          ),
-        ),
       ],
+    );
+  }
+}
+
+class _ResultBreakdownChips extends StatelessWidget {
+  const _ResultBreakdownChips({
+    required this.tally,
+    this.score,
+    this.includeScore = true,
+  });
+
+  final PlayerResultTally tally;
+  final double? score;
+  final bool includeScore;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _ResultStatChip(label: 'W', value: tally.wins, color: _kWin),
+        const SizedBox(width: 4),
+        _ResultStatChip(label: 'D', value: tally.draws, color: _kDraw),
+        const SizedBox(width: 4),
+        _ResultStatChip(label: 'L', value: tally.losses, color: _kLoss),
+        if (includeScore) ...[
+          const SizedBox(width: 6),
+          _ResultScoreChip(score: score),
+        ],
+      ],
+    );
+  }
+}
+
+class _ResultStatChip extends StatelessWidget {
+  const _ResultStatChip({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final int value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 19,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.11),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: color.withValues(alpha: 0.26)),
+      ),
+      child: Text(
+        '$label ${_formatInt(value)}',
+        style: TextStyle(
+          color: color,
+          fontSize: 9.5,
+          fontWeight: FontWeight.w900,
+          fontFeatures: const [FontFeature.tabularFigures()],
+          letterSpacing: 0.1,
+        ),
+      ),
+    );
+  }
+}
+
+class _ResultScoreChip extends StatelessWidget {
+  const _ResultScoreChip({required this.score});
+
+  final double? score;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _scoreColor(score);
+    return Container(
+      height: 19,
+      padding: const EdgeInsets.symmetric(horizontal: 7),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: score == null ? 0.06 : 0.11),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(
+          color: color.withValues(alpha: score == null ? 0.16 : 0.28),
+        ),
+      ),
+      child: Text(
+        score == null ? '—' : '${score!.round()}%',
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
     );
   }
 }
@@ -1559,10 +1599,6 @@ Color _scoreColor(double? percent) {
   if (percent >= 55) return kGreenColor;
   if (percent < 45) return kRedColor;
   return kWhiteColor;
-}
-
-String _wdlShort(PlayerResultTally tally) {
-  return '${_formatInt(tally.wins)}W · ${_formatInt(tally.draws)}D · ${_formatInt(tally.losses)}L';
 }
 
 String _shortName(String name) {

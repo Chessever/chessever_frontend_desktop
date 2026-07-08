@@ -23,6 +23,7 @@ import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_tappable.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
+import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
 import 'package:chessever/desktop/widgets/library/library_table_row_style.dart';
 import 'package:chessever/desktop/widgets/library/local_game_info_dialog.dart';
@@ -623,23 +624,15 @@ class _LocalHeader extends StatelessWidget {
             ),
             const SizedBox(width: 8),
           ],
-          DesktopTooltip(
-            message:
+          DesktopToolbarPillButton(
+            label: 'Save to cloud',
+            icon: Icons.library_add_outlined,
+            onPress: onSave,
+            tone: DesktopToolbarPillTone.primary,
+            tooltip:
                 onSave == null
                     ? 'No parsed local entries here'
                     : 'Save visible local entries to your cloud library',
-            child: FButton(
-              style: FButtonStyle.primary(),
-              onPress: onSave,
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.library_add_outlined, size: 14),
-                  SizedBox(width: 7),
-                  Text('Save To Cloud'),
-                ],
-              ),
-            ),
           ),
         ],
       ),
@@ -2324,18 +2317,19 @@ class _LocalEmpty extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     if (onOpenFolder != null)
-                      FButton(
-                        style: FButtonStyle.primary(),
+                      DesktopToolbarPillButton(
+                        label: 'Open folder',
+                        icon: Icons.folder_open_outlined,
                         onPress: onOpenFolder,
-                        child: const Text('Open folder'),
+                        tone: DesktopToolbarPillTone.primary,
                       ),
                     if (onOpenFolder != null && onOpenFiles != null)
                       const SizedBox(width: 8),
                     if (onOpenFiles != null)
-                      FButton(
-                        style: FButtonStyle.outline(),
+                      DesktopToolbarPillButton(
+                        label: 'Open files',
+                        icon: Icons.file_open_outlined,
                         onPress: onOpenFiles,
-                        child: const Text('Open files'),
                       ),
                   ],
                 ),
@@ -2504,6 +2498,7 @@ void _openLocalDatabaseTree(
       databaseTitle: sourceLabel,
       localOpeningTreeIndex: _localOpeningTreeHandle(index),
       localOpeningTreeTitle: sourceLabel,
+      enableLocalOpeningTreePicker: true,
     ),
     reuseExisting: false,
   );
@@ -2591,6 +2586,7 @@ BoardTabGameArgs _boardArgsForLocalGame(
     ),
     localOpeningTreeIndex: localOpeningTreeIndex,
     localOpeningTreeTitle: sourceLabel,
+    enableLocalOpeningTreePicker: true,
     gameListSelectedId: localGame.id,
     librarySaveOrigin: BoardTabLibrarySaveOrigin.localPgnFile(
       sourcePath: localGame.sourcePath,

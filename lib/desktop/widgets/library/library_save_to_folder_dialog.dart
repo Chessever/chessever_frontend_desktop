@@ -9,7 +9,9 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_library_writer.dart';
+import 'package:chessever/desktop/services/local_source_deletion.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -209,6 +211,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
   int _savedRows = 0;
   int _localWritten = 0;
   bool _isUpdatingOriginal = false;
+  bool _isDeletingLocalDestination = false;
 
   // Single-game metadata editor. Only allocated when [widget.games] holds
   // exactly one game, since editing 200 PGN headers from one form does not
@@ -360,6 +363,46 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     setState(() {
       _selectedLocalPaths.add(_normalizeLocalPath(registeredPath));
     });
+  }
+
+  Future<void> _deleteLocalDestination(LocalLibraryEntry entry) async {
+    if (_isSaving || _isUpdatingOriginal || _isDeletingLocalDestination) {
+      return;
+    }
+    final key = _normalizeLocalPath(entry.path);
+    setState(() => _isDeletingLocalDestination = true);
+    try {
+      final sourceDeleted = await deleteLocalSourcePath(entry.path);
+      ref
+          .read(localChessDatabaseRepositoryProvider)
+          .scheduleCachedSourceDelete(sourcePath: entry.path);
+      await ref
+          .read(localLibraryRegistryProvider.notifier)
+          .unregister(entry.path);
+      final activeSource = ref.read(localChessLibraryProvider).source;
+      if (activeSource != null && activeSource.paths.contains(entry.path)) {
+        ref.read(localChessLibraryProvider.notifier).clear();
+      }
+      if (!mounted) return;
+      setState(() {
+        _selectedLocalPaths.remove(key);
+      });
+      _showToast(
+        sourceDeleted
+            ? 'Local database deleted from this computer.'
+            : 'Local database removed. Source files were already gone.',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      _showToast(
+        'Could not delete local database from this computer: $e',
+        error: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isDeletingLocalDestination = false);
+      }
+    }
   }
 
   Future<void> _onCreateFolder(List<LibraryFolder> writableFolders) async {
@@ -607,13 +650,17 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
 
     final destinationCount = selectedFolders.length + selectedLocalPaths.length;
     final saveLabel =
-        _isSaving
+        _isDeletingLocalDestination
+            ? 'Deleting'
+            : _isSaving
             ? 'Saving'
             : destinationCount == 0
             ? 'Pick a destination'
             : 'Save to $destinationCount destination'
                 '${destinationCount == 1 ? '' : 's'}';
     final updateTarget = widget.updateTarget;
+    final busy =
+        _isSaving || _isUpdatingOriginal || _isDeletingLocalDestination;
 
     return FTheme(
       data: FThemes.zinc.dark,
@@ -638,7 +685,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
               onKeyEvent: (node, event) {
                 if (event is! KeyDownEvent) return KeyEventResult.ignored;
                 if (event.logicalKey == LogicalKeyboardKey.escape) {
-                  if (!_isSaving && !_isUpdatingOriginal) {
+                  if (!busy) {
                     Navigator.of(context).maybePop();
                   }
                   return KeyEventResult.handled;
@@ -670,8 +717,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                     ? null
                                     : () => _onCreateFolder(writable),
                             onAddLocal:
-                                (_isSaving ||
-                                        _isUpdatingOriginal ||
+                                (busy ||
                                         !librarySaveAllowsLocalDestinations(
                                           widget.destinationMode,
                                         ))
@@ -696,7 +742,8 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                 _UpdateOriginalTile(
                                   target: updateTarget,
                                   busy: _isUpdatingOriginal,
-                                  disabled: _isSaving,
+                                  disabled:
+                                      _isSaving || _isDeletingLocalDestination,
                                   onTap: _onUpdateOriginal,
                                 ),
                                 const SizedBox(height: 12),
@@ -710,7 +757,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                   (folder) => _FolderRow(
                                     folder: folder,
                                     selected: _selected.contains(folder.id),
-                                    disabled: _isSaving || _isUpdatingOriginal,
+                                    disabled: busy,
                                     onToggle: () {
                                       setState(() {
                                         if (_selected.contains(folder.id)) {
@@ -742,7 +789,10 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                   return _LocalFolderRow(
                                     entry: entry,
                                     selected: _selectedLocalPaths.contains(key),
-                                    disabled: _isSaving || _isUpdatingOriginal,
+                                    disabled:
+                                        _isSaving ||
+                                        _isUpdatingOriginal ||
+                                        _isDeletingLocalDestination,
                                     onToggle: () {
                                       setState(() {
                                         if (_selectedLocalPaths.contains(key)) {
@@ -753,29 +803,19 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                       });
                                     },
                                     onForget:
-                                        (_isSaving || _isUpdatingOriginal)
+                                        (_isSaving ||
+                                                _isUpdatingOriginal ||
+                                                _isDeletingLocalDestination)
                                             ? null
-                                            : () async {
-                                              await ref
-                                                  .read(
-                                                    localLibraryRegistryProvider
-                                                        .notifier,
-                                                  )
-                                                  .unregister(entry.path);
-                                              if (!mounted) return;
-                                              setState(() {
-                                                _selectedLocalPaths.remove(key);
-                                              });
-                                            },
+                                            : () => unawaited(
+                                              _deleteLocalDestination(entry),
+                                            ),
                                   );
                                 }),
                                 Padding(
                                   padding: const EdgeInsets.only(top: 4),
                                   child: _AddLocalFolderTile(
-                                    onTap:
-                                        (_isSaving || _isUpdatingOriginal)
-                                            ? null
-                                            : _onAddLocalPgnFile,
+                                    onTap: busy ? null : _onAddLocalPgnFile,
                                   ),
                                 ),
                               ],
@@ -898,9 +938,7 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
                                       )
                                       : null,
                               onPress:
-                                  (_isSaving ||
-                                          _isUpdatingOriginal ||
-                                          destinationCount == 0)
+                                  (busy || destinationCount == 0)
                                       ? null
                                       : () => _onSave(
                                         selectedFolders,
@@ -1526,7 +1564,7 @@ class _LocalFolderRowState extends State<_LocalFolderRow>
                   if (widget.onForget != null)
                     DesktopDialogIconButton(
                       icon: Icons.close_rounded,
-                      tooltip: 'Forget this destination',
+                      tooltip: 'Delete local database',
                       onPress: widget.onForget,
                     ),
                 ],

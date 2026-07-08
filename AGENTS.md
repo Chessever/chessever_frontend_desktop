@@ -80,6 +80,7 @@ When adding a desktop package:
 
 - `window_manager` (preferred) for window state, min size, hiding before first frame, fullscreen.
 - `hotkey_manager` for global hotkeys when needed; otherwise prefer `Shortcuts`/`Actions`/`Focus` Flutter primitives for in-app shortcuts.
+- Global search is always available: `Cmd+Shift+F` on macOS and `Ctrl+Shift+F` on Windows must open global search from every route, pane, and feature state. New Library/Players subviews, nested navigators, focus scopes, text fields, and feature shortcuts must not shadow or disable this shell-level shortcut.
 - **Use `forui` components for desktop chrome — this is mandatory, not a preference.** That includes: `FTooltip`, `FDialog`, `FPopover`, `FSelect`/`FSelectMenu`, `FButton`, `FSwitch`, `FSlider`, command palette host, sheets, dropdowns. Anywhere `lib/desktop/` would otherwise reach for a Material chrome widget, use forui instead.
   - **Banned in `lib/desktop/`:** `material.Tooltip`, `material.PopupMenuButton`, `material.Dialog`/`showDialog` for chrome dialogs, `material.DropdownButton`, `material.BottomSheet`, Material `IconButton`, Material `TextButton`, and button-like Material tap targets such as `InkWell` for desktop chrome (use a forui sheet, right-pane inspector, `FButton`, or a forui-backed helper instead).
   - **Why this matters concretely:** Flutter 3.41.9 rewrote Material `Tooltip` on top of an internal `RawTooltip`. Both share `SingleTickerProviderStateMixin`; the new lazy-controller path asserts ("multiple tickers were created") when chrome tooltips reparent during tab switches. forui's `FTooltip` uses an independent state tree and doesn't trip the assertion.
@@ -94,6 +95,7 @@ When adding a desktop package:
 - [ ] If you touched a domain repository: existing mobile path still compiles (`flutter analyze` covers this).
 - [ ] If you replaced a package: `pubspec.yaml` no longer references the old one; `pubspec.lock` regenerated.
 - [ ] If you added a UI surface: keyboard navigation works without using the mouse (reasoned from code, not a runtime check).
+- [ ] If you added or changed a route, pane, focus scope, text field, shortcut map, or nested Library/Players view: global search still works from that surface (`Cmd+Shift+F` on macOS, `Ctrl+Shift+F` on Windows).
 
 ## 9. Things to never do
 

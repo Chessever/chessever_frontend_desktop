@@ -169,18 +169,20 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     return openPaths(paths, sourceLabel: paths.length == 1 ? null : 'Files');
   }
 
-  Future<bool> openPaths(List<String> paths, {String? sourceLabel}) async {
+  Future<bool> openPaths(
+    List<String> paths, {
+    String? sourceLabel,
+    LocalLibraryEntryMetadata? registryMetadata,
+  }) async {
     final token = Object();
     _scanToken = token;
     _invalidateTreeBuilds();
-    state = state.copyWith(
-      isScanning: true,
-      scanProgress: LocalChessScanProgress(
-        fraction: 0,
-        message: 'Preparing PGN...',
-      ),
-      error: null,
-    );
+    // Do NOT enter the scanning state up front. A source that was already
+    // imported and persisted loads from its warm resqlite cache instantly and
+    // must open without ever re-showing the loading popup. Only a genuine cache
+    // miss (import/scan) or a slow restore/migration — which emits progress —
+    // flips `isScanning` on below.
+    state = state.copyWith(error: null);
     try {
       final cached = await _loadFreshSourceBestEffort(
         paths,
@@ -194,38 +196,52 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
           );
         },
       );
-      final repository = localDatabaseRepository;
-      final imported =
-          cached == null && paths.length == 1 && repository != null
-              ? await repository.importSingleFileSource(
-                path: paths.single,
-                sourceLabel: sourceLabel,
-                onProgress: (progress) {
-                  if (_scanToken != token) return;
-                  state = state.copyWith(
-                    isScanning: true,
-                    scanProgress: progress,
-                    error: null,
-                  );
-                },
-              )
-              : null;
-      final source =
-          cached ??
-          imported ??
-          await _scanPathsWithProgress(
-            paths,
-            sourceLabel: sourceLabel,
-            buildOpeningTree: false,
-            onProgress: (progress) {
-              if (_scanToken != token) return;
-              state = state.copyWith(
-                isScanning: true,
-                scanProgress: progress,
-                error: null,
-              );
-            },
-          );
+      if (_scanToken != token) return false;
+
+      LocalChessSource? source = cached;
+      LocalChessSource? imported;
+      if (source == null) {
+        // Genuine cache miss: now we truly import/scan, so surface the loading
+        // state (preserving any progress already emitted during the restore).
+        state = state.copyWith(
+          isScanning: true,
+          scanProgress:
+              state.scanProgress ??
+              LocalChessScanProgress(fraction: 0, message: 'Preparing PGN...'),
+          error: null,
+        );
+        final repository = localDatabaseRepository;
+        imported =
+            paths.length == 1 && repository != null
+                ? await repository.importSingleFileSource(
+                  path: paths.single,
+                  sourceLabel: sourceLabel,
+                  onProgress: (progress) {
+                    if (_scanToken != token) return;
+                    state = state.copyWith(
+                      isScanning: true,
+                      scanProgress: progress,
+                      error: null,
+                    );
+                  },
+                )
+                : null;
+        source =
+            imported ??
+            await _scanPathsWithProgress(
+              paths,
+              sourceLabel: sourceLabel,
+              buildOpeningTree: false,
+              onProgress: (progress) {
+                if (_scanToken != token) return;
+                state = state.copyWith(
+                  isScanning: true,
+                  scanProgress: progress,
+                  error: null,
+                );
+              },
+            );
+      }
       if (_scanToken != token) {
         return false;
       }
@@ -236,11 +252,13 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         scanProgress: null,
         error: null,
       );
-      await _registerAllBestEffort(paths);
-      if (cached == null) {
-        if (imported == null) {
-          await _persistSourceBestEffort(source);
-        }
+      await _registerAllBestEffort(
+        paths,
+        source: source,
+        registryMetadata: registryMetadata,
+      );
+      if (cached == null && imported == null) {
+        await _persistSourceBestEffort(source);
       }
       return true;
     } catch (e) {
@@ -299,6 +317,13 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
           state = state.copyWith(isScanning: false, scanProgress: null);
           return false;
         }
+        final refreshedSource = state.source;
+        if (refreshedSource != null) {
+          await _registerAllBestEffort(
+            refreshedSource.paths,
+            source: refreshedSource,
+          );
+        }
         return installed;
       }
 
@@ -325,6 +350,13 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       await _persistFileNodeBestEffort(refreshed, sourceLabel: source.label);
       if (_scanToken != token) return false;
 
+      final refreshedSource = state.source;
+      if (refreshedSource != null) {
+        await _registerAllBestEffort(
+          refreshedSource.paths,
+          source: refreshedSource,
+        );
+      }
       return installed;
     } catch (e) {
       if (_scanToken != token) return false;
@@ -432,14 +464,53 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     }
   }
 
-  Future<void> _registerAllBestEffort(List<String> paths) async {
+  Future<void> _registerAllBestEffort(
+    List<String> paths, {
+    LocalChessSource? source,
+    LocalLibraryEntryMetadata? registryMetadata,
+  }) async {
     final localRegistry = registry;
     if (localRegistry == null) return;
     try {
-      await localRegistry.registerAll(paths);
+      await localRegistry.registerAll(
+        paths,
+        metadataByPath:
+            source == null
+                ? const <String, LocalLibraryEntryMetadata>{}
+                : _registryMetadataByPath(
+                  source,
+                  paths,
+                  baseMetadata: registryMetadata,
+                ),
+      );
     } catch (error, stackTrace) {
       _debugLocalChessCacheFailure('register local files', error, stackTrace);
     }
+  }
+
+  Map<String, LocalLibraryEntryMetadata> _registryMetadataByPath(
+    LocalChessSource source,
+    List<String> paths, {
+    LocalLibraryEntryMetadata? baseMetadata,
+  }) {
+    return <String, LocalLibraryEntryMetadata>{
+      for (final path in paths)
+        path: LocalLibraryEntryMetadata(
+          gameCount: _sourceGameCountForPath(source, path),
+          indexedAt: source.scannedAt,
+          groupId: baseMetadata?.groupId,
+          groupLabel: baseMetadata?.groupLabel,
+        ),
+    };
+  }
+
+  int? _sourceGameCountForPath(LocalChessSource source, String path) {
+    final node = source.root.find(path);
+    return switch (node) {
+      LocalChessFolderNode(:final gameCount) => gameCount,
+      LocalChessFileNode(:final gameCount) => gameCount,
+      _ => source.paths.length == 1 ? source.root.gameCount : null,
+    };
   }
 
   bool _installRefreshedFile(

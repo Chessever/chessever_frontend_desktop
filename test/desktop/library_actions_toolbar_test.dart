@@ -34,4 +34,36 @@ void main() {
 
     expect(importCalls, 1);
   });
+
+  testWidgets('disabled New folder toolbar action does not fire', (
+    tester,
+  ) async {
+    var importCalls = 0;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: LibraryActionsToolbar(
+              onNewFolder: null,
+              disabledNewFolderTooltip:
+                  'Player folders can contain databases only, not subfolders.',
+              onImportPgnFiles: () => importCalls++,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byIcon(Icons.create_new_folder_rounded), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.create_new_folder_rounded));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(find.byIcon(Icons.file_upload_rounded));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(importCalls, 1);
+  });
 }

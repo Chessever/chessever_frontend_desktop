@@ -28,6 +28,7 @@ import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_player_enrichment_service.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_source_deletion.dart';
 import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -38,12 +39,14 @@ import 'package:chessever/desktop/state/library_import_buffer.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/desktop/state/my_databases_focus.dart';
+import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/utils/library_multi_select.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
+import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -997,7 +1000,7 @@ class _FolderRowState extends ConsumerState<_FolderRow>
           ),
       child: LibraryFolderContextMenu(
         folder: widget.folder,
-        canCreateSubfolder:
+        canCreateChildren:
             !widget.folder.isSubscribed &&
             widget.iconKind == _DatabaseBoardIconKind.folder,
         hasGames: true, // count is unknown at rail level; menu still useful.
@@ -1320,11 +1323,44 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
             ? _LibraryDatabaseKind.local
             : _LibraryDatabaseKind.cloud;
     final deleteProgress = useState<LocalChessScanProgress?>(null);
+    final currentLocalGroupId = useState<String?>(null);
+    final localEntries = ref.watch(localLibraryRegistryProvider).entries;
+    final localGroups = _localLibraryEntryGroups(localEntries);
+    final currentLocalGroup = localGroups.firstWhereOrNull(
+      (group) => group.id == currentLocalGroupId.value,
+    );
+    final localGroupIdsKey = localGroups.map((group) => group.id).join('|');
+    final currentLocalGroupIsPlayerWorkspace =
+        currentLocalGroup != null &&
+        localLibraryGroupBelongsToPlayerWorkspace(
+          groupId: currentLocalGroup.id,
+          entries: currentLocalGroup.entries,
+        );
+    final disabledNewFolderTooltip =
+        currentLocalGroup == null
+            ? null
+            : (currentLocalGroupIsPlayerWorkspace
+                ? 'Player folders can contain databases only, not subfolders.'
+                : 'Local database groups cannot contain subfolders.');
 
     void setDeleteProgress(LocalChessScanProgress? progress) {
       if (!context.mounted) return;
       deleteProgress.value = progress;
     }
+
+    useEffect(() {
+      if (currentFolderId != null && currentLocalGroupId.value != null) {
+        currentLocalGroupId.value = null;
+      }
+      return null;
+    }, [currentFolderId]);
+
+    useEffect(() {
+      if (currentLocalGroupId.value != null && currentLocalGroup == null) {
+        currentLocalGroupId.value = null;
+      }
+      return null;
+    }, [currentLocalGroupId.value, localGroupIdsKey]);
 
     return Stack(
       children: [
@@ -1332,7 +1368,9 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _MyDatabasesHeader(
-              onNewFolder: onNewFolder,
+              onNewFolder:
+                  disabledNewFolderTooltip == null ? onNewFolder : null,
+              disabledNewFolderTooltip: disabledNewFolderTooltip,
               onOpenLocalFiles: onOpenLocalFiles,
               onImportPgnFiles: onImportPgnFiles,
             ),
@@ -1343,13 +1381,14 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
                 storageKey: 'library_pane.my_databases.home_split',
                 children: [
                   SplitChild(
-                    minSize: 132,
-                    maxSize: 320,
-                    initialWeight: 0.30,
+                    minSize: 124,
+                    maxSize: 220,
+                    initialWeight: 0.24,
                     label: 'My Databases',
                     child: _MyDatabasesBoard(
                       folders: folders,
                       currentFolderId: currentFolderId,
+                      currentLocalGroupId: currentLocalGroupId.value,
                       localSource: localSource,
                       selectedFolderId: selectedFolderId,
                       selectedLocalPath: selectedLocalPath,
@@ -1359,6 +1398,8 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
                       onOpenFolder: onOpenFolder,
                       onOpenDatabase: onOpenDatabase,
                       onNavigateToFolder: onNavigateToFolder,
+                      onCurrentLocalGroupChanged:
+                          (value) => currentLocalGroupId.value = value,
                       onSelectLocalPath: onSelectLocalPath,
                       onOpenLocalPath: onOpenLocalPath,
                       onDropDatabase: onDropDatabase,
@@ -1392,7 +1433,7 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
         if (deleteProgress.value != null)
           Positioned.fill(
             child: _LibraryBlockingProgressOverlay(
-              title: 'Deleting local database',
+              title: 'Deleting local data',
               progress: deleteProgress.value!,
             ),
           ),
@@ -1404,36 +1445,38 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
 class _MyDatabasesHeader extends StatelessWidget {
   const _MyDatabasesHeader({
     required this.onNewFolder,
+    required this.disabledNewFolderTooltip,
     required this.onOpenLocalFiles,
     required this.onImportPgnFiles,
   });
 
-  final VoidCallback onNewFolder;
+  final VoidCallback? onNewFolder;
+  final String? disabledNewFolderTooltip;
   final VoidCallback onOpenLocalFiles;
   final VoidCallback onImportPgnFiles;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 18, 16, 14),
+      padding: const EdgeInsets.fromLTRB(20, 8, 16, 8),
       child: Row(
         children: [
           Container(
-            width: 42,
-            height: 42,
+            width: 32,
+            height: 32,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: kPrimaryColor.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(9),
+              borderRadius: BorderRadius.circular(8),
               border: Border.all(color: kPrimaryColor.withValues(alpha: 0.34)),
             ),
             child: const Icon(
               Icons.storage_rounded,
               color: kPrimaryColor,
-              size: 20,
+              size: 18,
             ),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1443,9 +1486,8 @@ class _MyDatabasesHeader extends StatelessWidget {
                   'My Databases',
                   style: TextStyle(
                     color: kWhiteColor,
-                    fontSize: 18,
+                    fontSize: 16,
                     fontWeight: FontWeight.w800,
-                    letterSpacing: -0.2,
                   ),
                 ),
               ],
@@ -1454,7 +1496,12 @@ class _MyDatabasesHeader extends StatelessWidget {
           const SizedBox(width: 12),
           LibraryActionsToolbar(
             onNewFolder: onNewFolder,
+            disabledNewFolderTooltip: disabledNewFolderTooltip,
             onImportPgnFiles: onImportPgnFiles,
+            buttonSize: 30,
+            iconSize: 15.5,
+            spacing: 5,
+            hitSize: 40,
           ),
         ],
       ),
@@ -1466,6 +1513,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
   const _MyDatabasesBoard({
     required this.folders,
     required this.currentFolderId,
+    required this.currentLocalGroupId,
     required this.localSource,
     required this.selectedFolderId,
     required this.selectedLocalPath,
@@ -1475,6 +1523,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
     required this.onOpenFolder,
     required this.onOpenDatabase,
     required this.onNavigateToFolder,
+    required this.onCurrentLocalGroupChanged,
     required this.onSelectLocalPath,
     required this.onOpenLocalPath,
     required this.onDropDatabase,
@@ -1482,6 +1531,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
 
   final List<LibraryFolder> folders;
   final String? currentFolderId;
+  final String? currentLocalGroupId;
   final LocalChessSource? localSource;
   final String? selectedFolderId;
   final String? selectedLocalPath;
@@ -1491,6 +1541,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
   final ValueChanged<LibraryFolder> onOpenFolder;
   final ValueChanged<LibraryFolder> onOpenDatabase;
   final ValueChanged<String?> onNavigateToFolder;
+  final ValueChanged<String?> onCurrentLocalGroupChanged;
   final ValueChanged<String> onSelectLocalPath;
   final ValueChanged<String> onOpenLocalPath;
   final Future<void> Function(LibraryDatabaseDragPayload payload)
@@ -1531,45 +1582,78 @@ class _MyDatabasesBoard extends HookConsumerWidget {
 
     int? localGameCount(LocalLibraryEntry entry) {
       final source = localSource;
-      if (source == null || !source.paths.contains(entry.path)) return null;
-      if (source.paths.length == 1) return source.root.gameCount;
+      if (source == null) return entry.gameCount;
       final node = source.root.find(entry.path);
       return switch (node) {
         LocalChessFolderNode(:final gameCount) => gameCount,
-        LocalChessFileNode(:final games) => games.length,
-        _ => null,
+        LocalChessFileNode(:final gameCount) => gameCount,
+        _ =>
+          source.paths.length == 1 && source.paths.contains(entry.path)
+              ? source.root.gameCount
+              : entry.gameCount,
       };
     }
 
+    final localGroups = _localLibraryEntryGroups(localEntries);
+    final currentLocalGroup = localGroups.firstWhereOrNull(
+      (group) => group.id == currentLocalGroupId,
+    );
+    final currentLocalGroupIsPlayerWorkspace =
+        currentLocalGroup != null &&
+        localLibraryGroupBelongsToPlayerWorkspace(
+          groupId: currentLocalGroup.id,
+          entries: currentLocalGroup.entries,
+        );
+    final groupedEntryPaths = <String>{
+      for (final group in localGroups)
+        for (final entry in group.entries) entry.path,
+    };
+    final visibleLocalEntries =
+        currentLocalGroup != null
+            ? currentLocalGroup.entries
+            : localEntries
+                .where((entry) => !groupedEntryPaths.contains(entry.path))
+                .toList(growable: false);
     final visibleCloudFolders = libraryVisibleCloudFolders(
       folders: folders,
-      parentId: currentFolderId,
+      parentId: currentLocalGroup == null ? currentFolderId : null,
       hiddenIds: hiddenCloudFolderIds,
     );
     final items = <_DatabaseBoardItem>[
-      if (currentFolderId == null)
+      if (currentFolderId == null && currentLocalGroup == null)
         _DatabaseBoardItem.cloud(
           folder: kTwicFolder,
           count: counts[kTwicBookId],
         ),
-      for (final folder in visibleCloudFolders)
-        _DatabaseBoardItem.cloud(folder: folder, count: counts[folder.id]),
+      if (currentLocalGroup == null)
+        for (final folder in visibleCloudFolders)
+          _DatabaseBoardItem.cloud(folder: folder, count: counts[folder.id]),
+      if (currentFolderId == null && currentLocalGroup == null)
+        for (final group in localGroups)
+          _DatabaseBoardItem.localGroup(
+            localGroup: group,
+            count: group.gameCount,
+          ),
       if (currentFolderId == null)
-        for (final entry in localEntries)
+        for (final entry in visibleLocalEntries)
           _DatabaseBoardItem.local(entry: entry, count: localGameCount(entry)),
     ];
     items.sort((a, b) {
       // Cloud databases (incl. TWIC) always sort ahead of local databases.
       final aLocal = a.entry != null;
       final bLocal = b.entry != null;
-      if (aLocal != bLocal) return aLocal ? 1 : -1;
+      final aGroup = a.localGroup != null;
+      final bGroup = b.localGroup != null;
+      final aLocalish = aLocal || aGroup;
+      final bLocalish = bLocal || bGroup;
+      if (aLocalish != bLocalish) return aLocalish ? 1 : -1;
 
       // Local order must stay stable across selection. `count` for a local
       // entry is only resolvable for the currently-open database (it reads
       // the active localSource), so sorting locals by count makes the list
       // reshuffle every time the user picks a different database. Order them
       // by name instead — a pure function of the registry entry.
-      if (aLocal) {
+      if (aLocalish) {
         return a.title.toLowerCase().compareTo(b.title.toLowerCase());
       }
 
@@ -1598,12 +1682,50 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       if (selected != null) onOpenLocalPath(selected);
     }
 
+    Future<({bool sourceDeleted})> deleteLocalEntryData(
+      LocalLibraryEntry entry, {
+      required ValueChanged<LocalChessScanProgress> onProgress,
+      bool syncPlayerWorkspace = true,
+    }) async {
+      final repository = ref.read(localChessDatabaseRepositoryProvider);
+      onProgress(
+        LocalChessScanProgress(
+          fraction: 0.20,
+          message: 'Deleting source files...',
+        ),
+      );
+      final sourceDeleted = await deleteLocalSourcePath(entry.path);
+      repository.scheduleCachedSourceDelete(sourcePath: entry.path);
+      onProgress(
+        LocalChessScanProgress(fraction: 0.82, message: 'Updating library...'),
+      );
+      await ref
+          .read(localLibraryRegistryProvider.notifier)
+          .unregister(entry.path);
+      if (syncPlayerWorkspace) {
+        await ref
+            .read(playerWorkspaceProvider.notifier)
+            .syncDeletedLibraryDatabasePath(
+              entry.path,
+              playerId: playerWorkspaceIdFromLocalLibraryGroupId(entry.groupId),
+            );
+      }
+      onProgress(
+        LocalChessScanProgress(fraction: 1, message: 'Delete complete.'),
+      );
+      return (sourceDeleted: sourceDeleted);
+    }
+
+    void clearOpenLocalSourceIfNeeded(Set<String> deletedPaths) {
+      final activeSource = ref.read(localChessLibraryProvider).source;
+      if (activeSource == null) return;
+      if (activeSource.paths.any(deletedPaths.contains)) {
+        ref.read(localChessLibraryProvider.notifier).clear();
+      }
+    }
+
     Future<void> removeLocalEntry(LocalLibraryEntry entry) async {
       if (isDeletingLocalDatabase) return;
-      final repository = ref.read(localChessDatabaseRepositoryProvider);
-      var markedForDelete = false;
-      Object? cacheDeleteError;
-      StackTrace? cacheDeleteStackTrace;
       void updateDeleteProgress(LocalChessScanProgress progress) {
         onDeleteProgress(progress);
       }
@@ -1619,64 +1741,29 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             'label': entry.displayName,
           },
         );
-        var marked = 0;
-        try {
-          marked = await repository.markCachedSourceDeleted(entry.path);
-          markedForDelete = marked > 0;
-          if (markedForDelete) {
-            repository.scheduleDeletedCachePurge(sourcePath: entry.path);
-          }
-        } catch (e, st) {
-          cacheDeleteError = e;
-          cacheDeleteStackTrace = st;
-          localChessLog.warning(
-            'Local database cache delete mark failed; removing registry entry',
-            error: e,
-            stackTrace: st,
-            tag: 'library.remove_local_database.cache_mark',
-            context: <String, Object?>{
-              'path': entry.path,
-              'label': entry.displayName,
-            },
-          );
-        }
-        await ref
-            .read(localLibraryRegistryProvider.notifier)
-            .unregister(entry.path);
-        final activeSource = ref.read(localChessLibraryProvider).source;
-        if (activeSource != null && activeSource.paths.contains(entry.path)) {
-          ref.read(localChessLibraryProvider.notifier).clear();
-        }
+        final result = await deleteLocalEntryData(
+          entry,
+          onProgress: updateDeleteProgress,
+        );
+        clearOpenLocalSourceIfNeeded(<String>{entry.path});
         localChessLog.info(
           'Local database remove finished',
           context: <String, Object?>{
             'path': entry.path,
             'label': entry.displayName,
-            'marked': marked,
-            'cacheDeleteFailed': cacheDeleteError != null,
+            'cacheDeleteQueued': true,
+            'sourceDeleted': result.sourceDeleted,
           },
         );
         if (context.mounted) {
           showDesktopToast(
             context,
-            cacheDeleteError == null
-                ? 'Local database deleted.'
-                : 'Local database removed. Cache cleanup did not finish.',
+            result.sourceDeleted
+                ? 'Local database deleted from this computer.'
+                : 'Local database removed. Source files were already gone.',
           );
         }
       } catch (e, st) {
-        if (cacheDeleteError != null) {
-          localChessLog.warning(
-            'Local database remove also failed after cache delete failure',
-            error: cacheDeleteError,
-            stackTrace: cacheDeleteStackTrace,
-            tag: 'library.remove_local_database.cache_mark',
-            context: <String, Object?>{
-              'path': entry.path,
-              'label': entry.displayName,
-            },
-          );
-        }
         localChessLog.error(
           'Local database remove failed',
           e,
@@ -1690,9 +1777,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         if (context.mounted) {
           showDesktopToast(
             context,
-            markedForDelete
-                ? 'Local database was removed, but cache cleanup did not finish.'
-                : 'Could not remove local database cache. Please try again.',
+            'Could not delete local database from this computer. Please try again.',
             error: true,
           );
         }
@@ -1700,6 +1785,141 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       } finally {
         onDeleteProgress(null);
       }
+    }
+
+    Future<void> confirmRemoveLocalEntry(LocalLibraryEntry entry) async {
+      if (isDeletingLocalDatabase) return;
+      final confirmed = await showDesktopDialog<bool>(
+        context,
+        barrierDismissible: true,
+        builder: (_) => _ConfirmDeleteLocalDatabaseDialog(entry: entry),
+      );
+      if (confirmed != true || !context.mounted) return;
+      await removeLocalEntry(entry);
+    }
+
+    Future<void> removeLocalGroup(_LocalLibraryEntryGroup group) async {
+      if (isDeletingLocalDatabase || group.entries.isEmpty) return;
+      final entries = group.entries.toList(growable: false);
+      final playerWorkspaceId = playerWorkspaceIdFromLocalLibraryGroupId(
+        group.id,
+      );
+      final deletedPaths = <String>{};
+      final parentDirs = <String>{};
+      var sourceDeleted = 0;
+
+      void updateDeleteProgress(LocalChessScanProgress progress) {
+        onDeleteProgress(progress);
+      }
+
+      try {
+        updateDeleteProgress(
+          LocalChessScanProgress(
+            fraction: 0,
+            message: 'Preparing folder delete...',
+          ),
+        );
+        localChessLog.info(
+          'Local database folder remove requested',
+          context: <String, Object?>{
+            'groupId': group.id,
+            'label': group.label,
+            'databases': entries.length,
+          },
+        );
+        for (var i = 0; i < entries.length; i++) {
+          final entry = entries[i];
+          deletedPaths.add(entry.path);
+          parentDirs.add(p.dirname(entry.path));
+          final start = i / entries.length;
+          final span = 0.92 / entries.length;
+          final result = await deleteLocalEntryData(
+            entry,
+            syncPlayerWorkspace: false,
+            onProgress:
+                (progress) => updateDeleteProgress(
+                  LocalChessScanProgress(
+                    fraction:
+                        (start + progress.fraction * span)
+                            .clamp(0.0, 0.94)
+                            .toDouble(),
+                    message:
+                        entries.length == 1
+                            ? progress.message
+                            : '${i + 1}/${entries.length}: ${progress.message}',
+                  ),
+                ),
+          );
+          if (result.sourceDeleted) sourceDeleted++;
+        }
+        updateDeleteProgress(
+          LocalChessScanProgress(
+            fraction: 0.96,
+            message: 'Removing empty player folder...',
+          ),
+        );
+        for (final directory in parentDirs) {
+          await deleteLocalSourcePath(directory);
+        }
+        await ref
+            .read(playerWorkspaceProvider.notifier)
+            .syncDeletedLibraryPlayerFolder(
+              playerWorkspaceId ?? '',
+              deletedPaths: deletedPaths,
+            );
+        clearOpenLocalSourceIfNeeded(deletedPaths);
+        if (currentLocalGroupId == group.id) {
+          onCurrentLocalGroupChanged(null);
+        }
+        localChessLog.info(
+          'Local database folder remove finished',
+          context: <String, Object?>{
+            'groupId': group.id,
+            'label': group.label,
+            'databases': entries.length,
+            'cacheDeleteQueued': true,
+            'sourceDeleted': sourceDeleted,
+          },
+        );
+        if (context.mounted) {
+          showDesktopToast(
+            context,
+            'Folder "${group.label}" deleted from this computer.',
+          );
+        }
+      } catch (e, st) {
+        localChessLog.error(
+          'Local database folder remove failed',
+          e,
+          st,
+          tag: 'library.remove_local_database_folder',
+          context: <String, Object?>{
+            'groupId': group.id,
+            'label': group.label,
+            'databases': entries.length,
+          },
+        );
+        if (context.mounted) {
+          showDesktopToast(
+            context,
+            'Could not delete local folder from this computer. Please try again.',
+            error: true,
+          );
+        }
+      } finally {
+        onDeleteProgress(null);
+      }
+    }
+
+    Future<void> confirmRemoveLocalGroup(_LocalLibraryEntryGroup group) async {
+      if (isDeletingLocalDatabase) return;
+      final confirmed = await showDesktopDialog<bool>(
+        context,
+        barrierDismissible: true,
+        builder: (_) => _ConfirmDeleteLocalFolderDialog(group: group),
+      );
+      if (confirmed != true || !context.mounted) return;
+      await removeLocalGroup(group);
     }
 
     Future<void> showLocalContextMenu(
@@ -1725,7 +1945,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           DesktopContextMenuItem(
             value: _DatabaseBoardAction.remove,
             icon: Icons.delete_outline_rounded,
-            label: 'Remove from My Databases',
+            label: 'Delete local database',
             destructive: true,
           ),
         ],
@@ -1737,7 +1957,41 @@ class _MyDatabasesBoard extends HookConsumerWidget {
         case _DatabaseBoardAction.open:
           await openLocalEntry(entry);
         case _DatabaseBoardAction.remove:
-          await removeLocalEntry(entry);
+          await confirmRemoveLocalEntry(entry);
+      }
+    }
+
+    Future<void> showLocalGroupContextMenu(
+      _LocalLibraryEntryGroup group,
+      Offset position,
+    ) async {
+      final picked = await showDesktopContextMenu<_DatabaseBoardAction>(
+        context: context,
+        position: position,
+        width: 230,
+        entries: const [
+          DesktopContextMenuItem(
+            value: _DatabaseBoardAction.open,
+            icon: Icons.folder_open_outlined,
+            label: 'Open folder',
+          ),
+          DesktopContextMenuDivider(),
+          DesktopContextMenuItem(
+            value: _DatabaseBoardAction.remove,
+            icon: Icons.delete_outline_rounded,
+            label: 'Delete folder',
+            destructive: true,
+          ),
+        ],
+      );
+      if (picked == null || !context.mounted) return;
+      switch (picked) {
+        case _DatabaseBoardAction.preview:
+          onCurrentLocalGroupChanged(group.id);
+        case _DatabaseBoardAction.open:
+          onCurrentLocalGroupChanged(group.id);
+        case _DatabaseBoardAction.remove:
+          await confirmRemoveLocalGroup(group);
       }
     }
 
@@ -1791,23 +2045,50 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       }
     }
 
+    void showCloudFolderContextMenu(LibraryFolder folder, Offset position) {
+      showLibraryFolderActionsMenu(
+        context: context,
+        anchor: position,
+        folder: folder,
+        canCreateChildren: !folder.isSubscribed,
+        hasGames: (counts[folder.id] ?? 0) > 0,
+        includeShowOnMyDatabases: false,
+        onAction:
+            (action) => unawaited(
+              _onFolderAction(
+                context: context,
+                ref: ref,
+                folder: folder,
+                action: action,
+                allFolders: folders,
+              ),
+            ),
+      );
+    }
+
     Widget buildBoardTile(_DatabaseBoardItem item) {
       final folder = item.folder;
       final entry = item.entry;
+      final localGroup = item.localGroup;
       final iconKind = item.iconKind(folders);
       final isFolder = iconKind == _DatabaseBoardIconKind.folder;
       final tile = _DatabaseBoardTile(
         title: item.title,
+        subtitle: item.subtitle,
         iconKind: iconKind,
         selected:
             folder != null
                 ? folder.id == selectedFolderId && selectedLocalPath == null
+                : localGroup != null
+                ? currentLocalGroup?.id == localGroup.id
                 : selectedLocalPath == entry!.path ||
                     (localSource?.paths.contains(entry.path) == true &&
                         selectedLocalPath == localSource?.root.path),
         onSelect:
             folder != null
                 ? () => onSelectFolder(folder)
+                : localGroup != null
+                ? () => onCurrentLocalGroupChanged(localGroup.id)
                 : () => unawaited(previewLocalEntry(entry!)),
         onOpen:
             folder != null
@@ -1818,21 +2099,22 @@ class _MyDatabasesBoard extends HookConsumerWidget {
                     onOpenDatabase(folder);
                   }
                 }
+                : localGroup != null
+                ? () => onCurrentLocalGroupChanged(localGroup.id)
                 : () => unawaited(openLocalEntry(entry!)),
         onContextMenu:
             folder != null
                 ? (folder.id == kTwicBookId
                     ? null
+                    : isFolder
+                    ? (position) => showCloudFolderContextMenu(folder, position)
                     : (position) =>
                         unawaited(showCloudContextMenu(folder, position)))
+                : localGroup != null
+                ? (position) =>
+                    unawaited(showLocalGroupContextMenu(localGroup, position))
                 : (position) =>
                     unawaited(showLocalContextMenu(entry!, position)),
-        onRemove:
-            folder != null
-                ? (folder.id == kTwicBookId
-                    ? null
-                    : () => unawaited(removeCloudFolderFromBoard(folder)))
-                : () => unawaited(removeLocalEntry(entry!)),
       );
       if (folder == null) return tile;
       return FolderDropTarget(
@@ -1872,8 +2154,17 @@ class _MyDatabasesBoard extends HookConsumerWidget {
             children: [
               _LibraryFolderBreadcrumb(
                 folders: folders,
-                currentFolderId: currentFolderId,
-                onNavigate: onNavigateToFolder,
+                currentFolderId:
+                    currentLocalGroup == null ? currentFolderId : null,
+                localGroupLabel: currentLocalGroup?.label,
+                onNavigate: (folderId) {
+                  onCurrentLocalGroupChanged(null);
+                  onNavigateToFolder(folderId);
+                },
+                onNavigateLocalRoot:
+                    currentLocalGroup == null
+                        ? null
+                        : () => onCurrentLocalGroupChanged(null),
               ),
               const SizedBox(height: 10),
               Wrap(
@@ -1882,12 +2173,17 @@ class _MyDatabasesBoard extends HookConsumerWidget {
                 children: [for (final item in items) buildBoardTile(item)],
               ),
               if (items.isEmpty)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.only(top: 36),
                   child: _LibraryEmpty(
                     icon: Icons.folder_open_outlined,
                     title: 'This folder is empty',
-                    message: 'Create a subfolder or import PGN files here.',
+                    message:
+                        currentLocalGroup == null
+                            ? 'Create a subfolder or import PGN files here.'
+                            : (currentLocalGroupIsPlayerWorkspace
+                                ? 'Import PGN files or add player sources from Players. Player folders cannot contain subfolders.'
+                                : 'Import PGN files here. Local database groups cannot contain subfolders.'),
                   ),
                 ),
             ],
@@ -1902,22 +2198,33 @@ class _LibraryFolderBreadcrumb extends StatelessWidget {
   const _LibraryFolderBreadcrumb({
     required this.folders,
     required this.currentFolderId,
+    required this.localGroupLabel,
     required this.onNavigate,
+    required this.onNavigateLocalRoot,
   });
 
   final List<LibraryFolder> folders;
   final String? currentFolderId;
+  final String? localGroupLabel;
   final ValueChanged<String?> onNavigate;
+  final VoidCallback? onNavigateLocalRoot;
 
   @override
   Widget build(BuildContext context) {
     final path = libraryFolderPath(folders, currentFolderId);
     final current = path.isEmpty ? null : path.last;
+    final localLabel = localGroupLabel?.trim();
     return Row(
       children: [
         FButton(
           style: FButtonStyle.ghost(),
-          onPress: currentFolderId == null ? null : () => onNavigate(null),
+          onPress:
+              currentFolderId == null && localLabel == null
+                  ? null
+                  : () {
+                    onNavigateLocalRoot?.call();
+                    onNavigate(null);
+                  },
           child: const Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -1927,6 +2234,28 @@ class _LibraryFolderBreadcrumb extends StatelessWidget {
             ],
           ),
         ),
+        if (localLabel != null && localLabel.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 4),
+            child: Icon(
+              Icons.chevron_right_rounded,
+              color: kLightGreyColor,
+              size: 15,
+            ),
+          ),
+          FButton(
+            style: FButtonStyle.ghost(),
+            onPress: null,
+            child: Text(
+              localLabel,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kWhiteColor,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
         for (final folder in path) ...[
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 4),
@@ -1955,11 +2284,14 @@ class _LibraryFolderBreadcrumb extends StatelessWidget {
             ),
           ),
         ],
-        if (current != null) ...[
+        if (current != null || localLabel != null) ...[
           const Spacer(),
           FButton(
             style: FButtonStyle.ghost(),
-            onPress: () => onNavigate(current.parentId),
+            onPress:
+                localLabel != null
+                    ? onNavigateLocalRoot
+                    : () => onNavigate(current!.parentId),
             child: const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -2069,26 +2401,308 @@ class _LibraryBlockingProgressOverlay extends StatelessWidget {
   }
 }
 
+class _ConfirmDeleteLocalDatabaseDialog extends StatelessWidget {
+  const _ConfirmDeleteLocalDatabaseDialog({required this.entry});
+
+  final LocalLibraryEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final isPlayerDatabase = localLibraryEntryBelongsToPlayerWorkspace(entry);
+    final playerLabel = entry.groupLabel?.trim();
+    final details =
+        isPlayerDatabase
+            ? 'This deletes the local database source and its generated cache from this computer. It also removes this source from ${playerLabel == null || playerLabel.isEmpty ? 'the player' : playerLabel} in Players.\n\nDeleting sources one by one leaves the player in Players. Only deleting the whole player folder removes the player.\n\n${entry.path}'
+            : 'This deletes the local database source and its generated cache from this computer. This cannot be undone.\n\n${entry.path}';
+    return Center(
+      child: Container(
+        width: 440,
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+        decoration: BoxDecoration(
+          color: kBlack2Color,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: kDividerColor),
+          boxShadow: [
+            BoxShadow(
+              color: kBlackColor.withValues(alpha: 0.42),
+              blurRadius: 24,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.delete_forever_outlined,
+                  color: kRedColor,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Delete ${entry.displayName}?',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              details,
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 12,
+                height: 1.45,
+              ),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                DesktopDialogButton(
+                  label: 'Cancel',
+                  icon: Icons.close_rounded,
+                  onPress: () => Navigator.of(context).pop(false),
+                ),
+                const SizedBox(width: 8),
+                DesktopDialogButton(
+                  label: 'Delete',
+                  icon: Icons.delete_outline_rounded,
+                  tone: DesktopDialogButtonTone.danger,
+                  onPress: () => Navigator.of(context).pop(true),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ConfirmDeleteLocalFolderDialog extends StatelessWidget {
+  const _ConfirmDeleteLocalFolderDialog({required this.group});
+
+  final _LocalLibraryEntryGroup group;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = group.entries.length;
+    final databaseLabel = count == 1 ? 'database' : 'databases';
+    final isPlayerFolder = localLibraryGroupBelongsToPlayerWorkspace(
+      groupId: group.id,
+      entries: group.entries,
+    );
+    final details =
+        isPlayerFolder
+            ? 'This is a Players folder. Deleting it removes ${group.label} from Players and deletes all $count local $databaseLabel, generated cache, and PGN files from this computer. This cannot be undone.'
+            : 'This deletes all $count local $databaseLabel in this folder, '
+                'their generated cache, and their PGN files from this computer. '
+                'This cannot be undone.';
+    return Center(
+      child: Container(
+        width: 460,
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+        decoration: BoxDecoration(
+          color: kBlack2Color,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: kDividerColor),
+          boxShadow: [
+            BoxShadow(
+              color: kBlackColor.withValues(alpha: 0.42),
+              blurRadius: 24,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.delete_forever_outlined,
+                  color: kRedColor,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Delete ${group.label}?',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              details,
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 12,
+                height: 1.45,
+              ),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                DesktopDialogButton(
+                  label: 'Cancel',
+                  icon: Icons.close_rounded,
+                  onPress: () => Navigator.of(context).pop(false),
+                ),
+                const SizedBox(width: 8),
+                DesktopDialogButton(
+                  label: 'Delete folder',
+                  icon: Icons.delete_outline_rounded,
+                  tone: DesktopDialogButtonTone.danger,
+                  onPress: () => Navigator.of(context).pop(true),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _DatabaseBoardItem {
   const _DatabaseBoardItem.cloud({required this.folder, required this.count})
-    : entry = null;
+    : entry = null,
+      localGroup = null;
 
   const _DatabaseBoardItem.local({required this.entry, required this.count})
-    : folder = null;
+    : folder = null,
+      localGroup = null;
+
+  const _DatabaseBoardItem.localGroup({
+    required this.localGroup,
+    required this.count,
+  }) : folder = null,
+       entry = null;
 
   final LibraryFolder? folder;
   final LocalLibraryEntry? entry;
+  final _LocalLibraryEntryGroup? localGroup;
   final int? count;
 
   bool get isTwic => folder?.id == kTwicBookId;
 
-  String get title => folder?.name ?? entry!.displayName;
+  String get title => folder?.name ?? localGroup?.label ?? entry!.displayName;
+
+  String? get subtitle {
+    final group = localGroup;
+    if (group != null) {
+      final databases = group.entries.length;
+      final databaseLabel = databases == 1 ? 'database' : 'databases';
+      final games = count;
+      if (games == null) return '$databases $databaseLabel';
+      return '$databases $databaseLabel · ${formatCompactCount(games)} games';
+    }
+    final localEntry = entry;
+    if (localEntry == null) return null;
+    return localLibraryEntryStatusLine(localEntry, count: count);
+  }
 
   _DatabaseBoardIconKind iconKind(List<LibraryFolder> folders) {
     final f = folder;
+    if (localGroup != null) return _DatabaseBoardIconKind.folder;
     if (f == null) return _DatabaseBoardIconKind.localDatabase;
     return _cloudFolderIconKind(f, folders, gameCount: count);
   }
+}
+
+class _LocalLibraryEntryGroup {
+  const _LocalLibraryEntryGroup({
+    required this.id,
+    required this.label,
+    required this.entries,
+  });
+
+  final String id;
+  final String label;
+  final List<LocalLibraryEntry> entries;
+
+  int? get gameCount {
+    var total = 0;
+    var hasAny = false;
+    for (final entry in entries) {
+      final count = entry.gameCount;
+      if (count == null) continue;
+      total += count;
+      hasAny = true;
+    }
+    return hasAny ? total : null;
+  }
+}
+
+List<_LocalLibraryEntryGroup> _localLibraryEntryGroups(
+  List<LocalLibraryEntry> entries,
+) {
+  final byId = <String, List<LocalLibraryEntry>>{};
+  final labels = <String, String>{};
+  for (final entry in entries) {
+    final groupId = entry.groupId?.trim();
+    if (groupId == null || groupId.isEmpty) continue;
+    byId.putIfAbsent(groupId, () => <LocalLibraryEntry>[]).add(entry);
+    final label = entry.groupLabel?.trim();
+    if (label != null && label.isNotEmpty) labels[groupId] = label;
+  }
+  final groups = <_LocalLibraryEntryGroup>[
+    for (final item in byId.entries)
+      _LocalLibraryEntryGroup(
+        id: item.key,
+        label: labels[item.key] ?? 'Player databases',
+        entries: item.value,
+      ),
+  ];
+  groups.sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+  return groups;
+}
+
+@visibleForTesting
+bool localLibraryEntryBelongsToPlayerWorkspace(LocalLibraryEntry entry) {
+  if (playerWorkspaceIdFromLocalLibraryGroupId(entry.groupId) != null) {
+    return true;
+  }
+  return localLibraryPathBelongsToPlayerWorkspace(entry.path);
+}
+
+@visibleForTesting
+bool localLibraryGroupBelongsToPlayerWorkspace({
+  required String groupId,
+  required List<LocalLibraryEntry> entries,
+}) {
+  if (playerWorkspaceIdFromLocalLibraryGroupId(groupId) != null) {
+    return true;
+  }
+  return entries.any(localLibraryEntryBelongsToPlayerWorkspace);
+}
+
+@visibleForTesting
+bool localLibraryPathBelongsToPlayerWorkspace(String path) {
+  final parts = p.split(p.normalize(path));
+  final index = parts.lastIndexWhere((part) => part == 'player-workspace');
+  return index >= 0 && index + 1 < parts.length;
 }
 
 _DatabaseBoardIconKind _cloudFolderIconKind(
@@ -2262,6 +2876,9 @@ class _ChessDatabaseGlyphPainter extends CustomPainter {
   }
 }
 
+const double _kDatabaseBoardTileWidth = 196;
+const double _kDatabaseBoardTileHeight = 100;
+
 class _DatabaseBoardTile extends StatefulWidget {
   const _DatabaseBoardTile({
     required this.title,
@@ -2269,17 +2886,17 @@ class _DatabaseBoardTile extends StatefulWidget {
     required this.selected,
     required this.onSelect,
     required this.onOpen,
+    this.subtitle,
     this.onContextMenu,
-    this.onRemove,
   });
 
   final String title;
+  final String? subtitle;
   final _DatabaseBoardIconKind iconKind;
   final bool selected;
   final VoidCallback onSelect;
   final VoidCallback onOpen;
   final ValueChanged<Offset>? onContextMenu;
-  final VoidCallback? onRemove;
 
   @override
   State<_DatabaseBoardTile> createState() => _DatabaseBoardTileState();
@@ -2315,7 +2932,8 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
             ? kPrimaryColor.withValues(alpha: 0.32)
             : kDividerColor;
     return SizedBox(
-      width: 164,
+      width: _kDatabaseBoardTileWidth,
+      height: _kDatabaseBoardTileHeight,
       child: Focus(
         focusNode: _focusNode,
         canRequestFocus: true,
@@ -2324,11 +2942,6 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
           if (event.logicalKey == LogicalKeyboardKey.enter ||
               event.logicalKey == LogicalKeyboardKey.numpadEnter) {
             _openFromTile();
-            return KeyEventResult.handled;
-          }
-          if (event.logicalKey == LogicalKeyboardKey.delete &&
-              widget.onRemove != null) {
-            widget.onRemove!();
             return KeyEventResult.handled;
           }
           return KeyEventResult.ignored;
@@ -2391,15 +3004,34 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
                       ),
                       const SizedBox(width: 9),
                       Expanded(
-                        child: Text(
-                          widget.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: kWhiteColor,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              widget.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: kWhiteColor,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            if (widget.subtitle != null) ...[
+                              const SizedBox(height: 3),
+                              Text(
+                                widget.subtitle!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: kWhiteColor70,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
                     ],
@@ -4319,6 +4951,18 @@ class _FolderHeader extends StatelessWidget {
             onNewFolder: onNewFolder,
             onImportPgnFiles: onOpenLocalFiles,
           ),
+          if (showOverflow &&
+              onAction != null &&
+              !folder.isSubscribed &&
+              !folder.isPermanentLibraryFolder) ...[
+            const SizedBox(width: 8),
+            DesktopDialogIconButton(
+              icon: Icons.delete_outline_rounded,
+              tooltip: isDatabase ? 'Delete database' : 'Delete folder',
+              tone: DesktopDialogButtonTone.danger,
+              onPress: () => onAction!(LibraryFolderAction.delete),
+            ),
+          ],
           if (showOverflow && onAction != null) ...[
             const SizedBox(width: 8),
             _OverflowMenuButton(
@@ -4398,7 +5042,7 @@ class _OverflowMenuButtonState extends State<_OverflowMenuButton>
       context: context,
       anchor: pos,
       folder: widget.folder,
-      canCreateSubfolder: widget.canCreateSubfolder,
+      canCreateChildren: widget.canCreateSubfolder,
       hasGames: widget.hasGames,
       onAction: widget.onAction,
     );
@@ -5920,6 +6564,7 @@ void _openLocalPreviewTree(
       databaseTitle: sourceLabel,
       localOpeningTreeIndex: index,
       localOpeningTreeTitle: sourceLabel,
+      enableLocalOpeningTreePicker: true,
     ),
     reuseExisting: false,
   );
@@ -5994,6 +6639,7 @@ BoardTabGameArgs _boardArgsForLocalPreviewGame(
     ],
     localOpeningTreeIndex: localOpeningTreeIndex,
     localOpeningTreeTitle: databaseTitle,
+    enableLocalOpeningTreePicker: true,
     gameListSelectedId: localGame.id,
     librarySaveOrigin: BoardTabLibrarySaveOrigin.localPgnFile(
       sourcePath: localGame.sourcePath,
@@ -8594,19 +9240,57 @@ void _scrollDatabaseWorkspaceListToIndex(
   );
 }
 
+/// Identifies a local database source to open in a workspace. [revision] bumps
+/// only when the underlying database's contents change (e.g. a player sync
+/// appended games). A stable [path]+[revision] lets the kept-alive source be
+/// re-served instantly on re-open, while a new revision forces one fresh reload
+/// so synced games appear.
+@immutable
+class LocalDatabaseWorkspaceKey {
+  const LocalDatabaseWorkspaceKey(this.path, {this.revision = 0});
+
+  final String path;
+  final int revision;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LocalDatabaseWorkspaceKey &&
+          other.path == path &&
+          other.revision == revision;
+
+  @override
+  int get hashCode => Object.hash(path, revision);
+}
+
+/// Loads a persisted local database source and keeps it cached for the session.
+///
+/// A source that was already imported and persisted loads from its warm
+/// resqlite cache and is then pinned with [KeepAliveLink] so re-opening the
+/// same database (Library tab, Players "Games" tab) is instant — never
+/// re-showing a loading indicator. Content changes flow through the key's
+/// [LocalDatabaseWorkspaceKey.revision]; explicit refresh invalidates the entry.
 final localDatabaseWorkspaceSourceProvider = FutureProvider.autoDispose
-    .family<LocalChessSource, String>((ref, path) async {
+    .family<LocalChessSource, LocalDatabaseWorkspaceKey>((ref, key) async {
+      final path = key.path;
       final repository = ref.read(localChessDatabaseRepositoryProvider);
       final cached = await repository.loadFreshSource(<String>[path]);
-      if (cached != null) return cached;
+      if (cached != null) {
+        ref.keepAlive();
+        return cached;
+      }
       final type = await FileSystemEntity.type(path, followLinks: false);
       if (type == FileSystemEntityType.file && looksLikeLocalChessFile(path)) {
         final imported = await repository.importSingleFileSource(path: path);
-        if (imported != null) return imported;
+        if (imported != null) {
+          ref.keepAlive();
+          return imported;
+        }
       }
       final paths = <String>[path];
       final source = await scanLocalChessPaths(paths, buildOpeningTree: false);
       await repository.persistSource(source);
+      ref.keepAlive();
       return source;
     });
 
@@ -8627,13 +9311,14 @@ class _LocalDatabaseWorkspace extends ConsumerWidget {
       );
     }
 
+    final workspaceKey = LocalDatabaseWorkspaceKey(localPath);
     final sourceAsync = ref.watch(
-      localDatabaseWorkspaceSourceProvider(localPath),
+      localDatabaseWorkspaceSourceProvider(workspaceKey),
     );
 
     Future<void> refreshLocalSource() async {
-      ref.invalidate(localDatabaseWorkspaceSourceProvider(localPath));
-      await ref.read(localDatabaseWorkspaceSourceProvider(localPath).future);
+      ref.invalidate(localDatabaseWorkspaceSourceProvider(workspaceKey));
+      await ref.read(localDatabaseWorkspaceSourceProvider(workspaceKey).future);
     }
 
     void selectPath(String path) {
@@ -10489,6 +11174,17 @@ String _formatSavedDate(DateTime date) {
   final m = date.month.toString().padLeft(2, '0');
   final d = date.day.toString().padLeft(2, '0');
   return '${date.year}-$m-$d';
+}
+
+@visibleForTesting
+String localLibraryEntryStatusLine(LocalLibraryEntry entry, {int? count}) {
+  final effectiveCount = count ?? entry.gameCount;
+  final countLabel =
+      effectiveCount == null
+          ? 'Not indexed'
+          : '${formatCompactCount(effectiveCount)} '
+              '${effectiveCount == 1 ? 'game' : 'games'}';
+  return '$countLabel - ${_formatSavedDate(entry.addedAt)}';
 }
 
 @visibleForTesting

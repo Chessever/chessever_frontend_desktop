@@ -26,16 +26,18 @@ void showLibraryFolderActionsMenu({
   required Offset anchor,
   required LibraryFolder folder,
   required ValueChanged<LibraryFolderAction> onAction,
-  bool canCreateSubfolder = true,
+  bool canCreateChildren = true,
   bool hasGames = true,
+  bool includeShowOnMyDatabases = true,
 }) {
   unawaited(
     _showFolderMenu(
       context: context,
       anchor: anchor,
       folder: folder,
-      canCreateSubfolder: canCreateSubfolder,
+      canCreateChildren: canCreateChildren,
       hasGames: hasGames,
+      includeShowOnMyDatabases: includeShowOnMyDatabases,
       onAction: onAction,
     ),
   );
@@ -50,25 +52,32 @@ class LibraryFolderContextMenu extends StatelessWidget {
     required this.folder,
     required this.onAction,
     required this.child,
-    this.canCreateSubfolder = true,
+    this.canCreateChildren = true,
     this.hasGames = true,
+    this.includeShowOnMyDatabases = true,
   });
 
   final LibraryFolder folder;
   final ValueChanged<LibraryFolderAction> onAction;
   final Widget child;
-  final bool canCreateSubfolder;
+
+  /// Whether this item can contain folder/database children.
+  final bool canCreateChildren;
 
   /// Disables the export entry when the folder has no direct games.
   final bool hasGames;
+
+  /// Shows the action that pins a hidden folder back to My Databases.
+  final bool includeShowOnMyDatabases;
 
   Future<void> _open(BuildContext context, Offset globalPos) {
     return _showFolderMenu(
       context: context,
       anchor: globalPos,
       folder: folder,
-      canCreateSubfolder: canCreateSubfolder,
+      canCreateChildren: canCreateChildren,
       hasGames: hasGames,
+      includeShowOnMyDatabases: includeShowOnMyDatabases,
       onAction: onAction,
     );
   }
@@ -89,8 +98,9 @@ Future<void> _showFolderMenu({
   required Offset anchor,
   required LibraryFolder folder,
   required ValueChanged<LibraryFolderAction> onAction,
-  required bool canCreateSubfolder,
+  required bool canCreateChildren,
   required bool hasGames,
+  required bool includeShowOnMyDatabases,
 }) async {
   final isSubscribed = folder.isSubscribed;
   final canRenameOrDelete = !isSubscribed && !folder.isPermanentLibraryFolder;
@@ -99,7 +109,7 @@ Future<void> _showFolderMenu({
     position: anchor,
     width: 236,
     entries: [
-      if (!isSubscribed) ...[
+      if (!isSubscribed && includeShowOnMyDatabases) ...[
         const DesktopContextMenuItem(
           value: LibraryFolderAction.showOnMyDatabases,
           icon: Icons.add_circle_outline_rounded,
@@ -115,17 +125,18 @@ Future<void> _showFolderMenu({
       ),
       if (!isSubscribed) ...[
         const DesktopContextMenuDivider(),
-        if (canCreateSubfolder)
+        if (canCreateChildren)
           const DesktopContextMenuItem(
             value: LibraryFolderAction.newSubfolder,
             icon: Icons.create_new_folder_outlined,
             label: 'New sub-folder...',
           ),
-        const DesktopContextMenuItem(
-          value: LibraryFolderAction.newDatabase,
-          icon: Icons.storage_rounded,
-          label: 'New database...',
-        ),
+        if (canCreateChildren)
+          const DesktopContextMenuItem(
+            value: LibraryFolderAction.newDatabase,
+            icon: Icons.storage_rounded,
+            label: 'New database...',
+          ),
         if (canRenameOrDelete) ...[
           const DesktopContextMenuItem(
             value: LibraryFolderAction.rename,

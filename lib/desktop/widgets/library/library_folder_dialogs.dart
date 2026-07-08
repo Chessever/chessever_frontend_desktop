@@ -114,8 +114,8 @@ Future<String?> showLibraryRenameFolderDialog(
 }
 
 /// Confirmation dialog for deleting a folder. Returns `true` on confirm.
-/// FK `ON DELETE CASCADE` — every game inside is hard-deleted with the
-/// folder. The copy below must communicate that.
+/// Every nested folder/database and game inside is hard-deleted. The copy below
+/// must communicate that.
 Future<bool> showLibraryDeleteFolderConfirmation(
   BuildContext context, {
   required LibraryFolder folder,
@@ -172,8 +172,9 @@ Future<bool> showLibraryDeleteFolderConfirmation(
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'This permanently deletes the folder and every game inside '
-                    'it. This cannot be undone.',
+                    'This permanently deletes the folder, all subfolders, '
+                    'databases, and every game inside them. This cannot be '
+                    'undone.',
                     style: TextStyle(
                       color: kWhiteColor70,
                       fontSize: 12,

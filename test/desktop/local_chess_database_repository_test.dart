@@ -992,6 +992,36 @@ void main() {
   );
 
   test(
+    'worker import can use a cache path without opening app cache',
+    () async {
+      final pgnFile = File('${temp.path}/worker-path-only.pgn');
+      await pgnFile.writeAsString(_samplePgn);
+      final workerDbPath = p.join(temp.path, 'worker-only-local-chess.db');
+      var openedAppCache = false;
+      final repo = LocalChessDatabaseRepository(
+        database: () async {
+          openedAppCache = true;
+          throw StateError('app cache should not be opened for worker import');
+        },
+        databaseFilePath: () async => workerDbPath,
+        cachedFileNodeGamePreviewLimit: 1,
+      );
+
+      final source = await repo.importSingleFileSource(path: pgnFile.path);
+
+      expect(source, isNotNull);
+      expect(openedAppCache, isFalse);
+      final fileNode = source!.root.singlePlayableDatabaseInSubtree!;
+      expect(fileNode.gameCount, 2);
+      expect(fileNode.games, hasLength(1));
+      final workerDb = await resqlite.Database.open(workerDbPath);
+      addTearDown(workerDb.close);
+      expect(await _count(workerDb, 'local_chess_databases'), 1);
+      expect(await _count(workerDb, 'local_chess_games'), 2);
+    },
+  );
+
+  test(
     'concurrent worker imports of the same PGN do not corrupt cache',
     () async {
       final pgnFile = File('${temp.path}/concurrent.pgn');
@@ -2169,6 +2199,71 @@ void main() {
     },
   );
 
+  test(
+    'deleteCachedSource retries transient sqlite busy while marking deleted',
+    () async {
+      final pgnFile = File('${temp.path}/retry-mark-delete.pgn');
+      await pgnFile.writeAsString(_samplePgn);
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(fileNode, sourceLabel: source.label);
+
+      var databaseCalls = 0;
+      final retryingRepo = LocalChessDatabaseRepository(
+        database: () async {
+          databaseCalls += 1;
+          if (databaseCalls == 1) {
+            throw StateError(
+              'ResqliteQueryException: database is locked\nSQLite code: 5',
+            );
+          }
+          return db;
+        },
+      );
+
+      final removed = await retryingRepo.deleteCachedSource(pgnFile.path);
+
+      expect(removed, 1);
+      expect(databaseCalls, greaterThanOrEqualTo(2));
+      expect(await _count(db, 'local_chess_databases'), 0);
+      expect(await _count(db, 'local_chess_games'), 0);
+    },
+  );
+
+  test(
+    'deleteCachedSource retries transient sqlite busy while purging cache',
+    () async {
+      final pgnFile = File('${temp.path}/retry-purge-delete.pgn');
+      await pgnFile.writeAsString(_samplePgn);
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(fileNode, sourceLabel: source.label);
+
+      var databaseCalls = 0;
+      final retryingRepo = LocalChessDatabaseRepository(
+        database: () async {
+          databaseCalls += 1;
+          if (databaseCalls == 2) {
+            throw StateError(
+              'ResqliteQueryException: database is locked\nSQLite code: 5',
+            );
+          }
+          return db;
+        },
+      );
+
+      final removed = await retryingRepo.deleteCachedSource(pgnFile.path);
+
+      expect(removed, 1);
+      expect(databaseCalls, greaterThanOrEqualTo(3));
+      expect(await retryingRepo.deletedCacheCount(), 0);
+      expect(await _count(db, 'local_chess_databases'), 0);
+      expect(await _count(db, 'local_chess_games'), 0);
+    },
+  );
+
   test('markCachedSourceDeleted hides cache before physical purge', () async {
     final pgnFile = File('${temp.path}/marked-delete.pgn');
     await pgnFile.writeAsString(_samplePgn);
@@ -2431,11 +2526,169 @@ void main() {
       isNotNull,
     );
   });
+
+  test(
+    'resultStatsForDatabases counts distinct games across sources so Combined '
+    'partitions the union and sums the per-source counts',
+    () async {
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      const aliases = <String>['Alice, A'];
+
+      // Lichess-style source: two of Alice's games (win as white, loss as
+      // black), each with its own PGN fingerprint.
+      await _seedStatsDatabase(
+        db,
+        databaseId: 'srcLichess',
+        player: 'Alice, A',
+        games: const <_StatsGame>[
+          _StatsGame(hash: 'h-1', opponent: 'Bob', result: '1-0'),
+          _StatsGame(
+            hash: 'h-2',
+            opponent: 'Cara',
+            result: '0-1',
+            aliasIsWhite: false,
+          ),
+        ],
+      );
+      // Chess.com-style source: one game duplicated from lichess (same
+      // fingerprint h-2) plus one genuinely new draw.
+      await _seedStatsDatabase(
+        db,
+        databaseId: 'srcChessCom',
+        player: 'Alice, A',
+        games: const <_StatsGame>[
+          _StatsGame(
+            hash: 'h-2',
+            opponent: 'Cara',
+            result: '0-1',
+            aliasIsWhite: false,
+          ),
+          _StatsGame(hash: 'h-3', opponent: 'Dan', result: '1/2-1/2'),
+        ],
+      );
+      // A disjoint OTB source with a single new game.
+      await _seedStatsDatabase(
+        db,
+        databaseId: 'srcOtb',
+        player: 'Alice, A',
+        games: const <_StatsGame>[
+          _StatsGame(hash: 'h-4', opponent: 'Eve', result: '1-0'),
+        ],
+      );
+
+      final lichess = await repo.localDatabaseResultStats(
+        databasePath: 'srcLichess',
+        playerAliases: aliases,
+      );
+      final chesscom = await repo.localDatabaseResultStats(
+        databasePath: 'srcChessCom',
+        playerAliases: aliases,
+      );
+      final otb = await repo.localDatabaseResultStats(
+        databasePath: 'srcOtb',
+        playerAliases: aliases,
+      );
+
+      expect(lichess.gameCount, 2);
+      expect(chesscom.gameCount, 2);
+      expect(otb.gameCount, 1);
+
+      // Combined over lichess+chesscom deduplicates the shared game h-2, so it
+      // is exactly the union: h-1, h-2, h-3 = 3, not 2 + 2 = 4.
+      final combined = await repo.resultStatsForDatabases(
+        databasePaths: const <String>['srcLichess', 'srcChessCom'],
+        playerAliases: aliases,
+      );
+      expect(combined.gameCount, 3);
+      expect(combined.winCount, 2); // h-1 (white win) + h-2 (black win)
+      expect(combined.drawCount, 1); // h-3
+
+      // Disjoint sources add exactly: lichess + otb share nothing.
+      final disjoint = await repo.resultStatsForDatabases(
+        databasePaths: const <String>['srcLichess', 'srcOtb'],
+        playerAliases: aliases,
+      );
+      expect(disjoint.gameCount, lichess.gameCount + otb.gameCount);
+    },
+  );
 }
 
 Future<int> _count(resqlite.Database db, String table) async {
   final rows = await db.select('SELECT COUNT(*) AS count FROM $table');
   return rows.single['count'] as int;
+}
+
+class _StatsGame {
+  const _StatsGame({
+    required this.hash,
+    required this.opponent,
+    required this.result,
+    this.aliasIsWhite = true,
+  });
+
+  final String hash;
+  final String opponent;
+  final String result;
+  final bool aliasIsWhite;
+}
+
+/// Seeds one local database (`databaseId`) with games between [player] and an
+/// opponent, tagging each row with a caller-supplied `pgn_hash` so tests can
+/// exercise cross-source deduplication directly.
+Future<void> _seedStatsDatabase(
+  resqlite.Database db, {
+  required String databaseId,
+  required String player,
+  required List<_StatsGame> games,
+}) async {
+  final now = DateTime.now().millisecondsSinceEpoch;
+  await db.execute(
+    'INSERT OR REPLACE INTO local_chess_databases'
+    '(id, path, label, extension, size_bytes, imported_at_ms, updated_at_ms) '
+    'VALUES (?, ?, ?, ?, ?, ?, ?)',
+    <Object?>[databaseId, databaseId, databaseId, 'pgn', 0, now, now],
+  );
+
+  Future<int> playerId(String name) async {
+    await db.execute(
+      'INSERT OR IGNORE INTO local_chess_players(name) VALUES (?)',
+      <Object?>[name],
+    );
+    final rows = await db.select(
+      'SELECT id FROM local_chess_players WHERE name = ?',
+      <Object?>[name],
+    );
+    return rows.single['id'] as int;
+  }
+
+  for (var i = 0; i < games.length; i++) {
+    final game = games[i];
+    final me = await playerId(player);
+    final opponent = await playerId(game.opponent);
+    final whiteId = game.aliasIsWhite ? me : opponent;
+    final blackId = game.aliasIsWhite ? opponent : me;
+    await db.execute(
+      'INSERT INTO local_chess_games'
+      '(id, database_id, white_id, black_id, result, raw_pgn, pgn_hash, '
+      'source_path, source_relative_path, file_name, index_in_file, '
+      'file_game_count) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      <Object?>[
+        '$databaseId-$i',
+        databaseId,
+        whiteId,
+        blackId,
+        game.result,
+        '[Event "seed"]',
+        game.hash,
+        databaseId,
+        '',
+        'seed.pgn',
+        i,
+        games.length,
+      ],
+    );
+  }
 }
 
 String _bulkPgn(int count) {

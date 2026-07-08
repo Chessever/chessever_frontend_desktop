@@ -1,9 +1,14 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/panes/player_workspace_pane.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/operation_cancellation.dart';
+import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_workspace_repository.dart';
+import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -52,6 +57,92 @@ void main() {
           'Chess.com: 1/2 archives done; 42 games received...',
     );
   });
+
+  testWidgets('shows persisted tree actions for multiple player sources', (
+    tester,
+  ) async {
+    final temp = Directory.systemTemp.createTempSync('chessever-player-pane-');
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    final lichessPath = '${temp.path}/lichess.pgn';
+    final chessComPath = '${temp.path}/chesscom.pgn';
+    File(lichessPath).writeAsStringSync(_paneTestPgn('lichess_user'));
+    File(chessComPath).writeAsStringSync(_paneTestPgn('chesscom_user'));
+
+    final repository = _PaneFakePlayerWorkspaceRepository(
+      snapshot: PlayerWorkspaceSnapshot(
+        players: [
+          PlayerWorkspacePlayer(
+            id: 'player-1',
+            displayName: 'Prep Target',
+            createdAtMs: 1,
+            accounts: {
+              PlayerWorkspaceSource.lichess: PlayerWorkspaceAccount(
+                source: PlayerWorkspaceSource.lichess,
+                username: 'lichess_user',
+                pgnPath: lichessPath,
+                gameCount: 2,
+              ),
+              PlayerWorkspaceSource.chesscom: PlayerWorkspaceAccount(
+                source: PlayerWorkspaceSource.chesscom,
+                username: 'chesscom_user',
+                pgnPath: chessComPath,
+                gameCount: 3,
+              ),
+            },
+          ),
+        ],
+      ),
+    );
+    final localRepository = _PaneFakeLocalChessDatabaseRepository({
+      lichessPath: _paneTreeIndex(path: lichessPath, gameCount: 2),
+      chessComPath: _paneTreeIndex(path: chessComPath, gameCount: 3),
+    });
+
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() async {
+      await tester.binding.setSurfaceSize(null);
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          playerWorkspaceRepositoryProvider.overrideWithValue(repository),
+          localChessDatabaseRepositoryProvider.overrideWithValue(
+            localRepository,
+          ),
+          localChessLibraryProvider.overrideWith(
+            (ref) => LocalChessLibraryNotifier(
+              localDatabaseRepository: localRepository,
+            ),
+          ),
+        ],
+        child: const MaterialApp(
+          home: SizedBox(
+            width: 1200,
+            height: 800,
+            child: PlayerWorkspacePane(),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump();
+    await tester.tap(find.text('Prep Target').first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.text('Build Tree').first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump();
+
+    expect(find.text('Opening trees'), findsOneWidget);
+    expect(find.text('Tree'), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Future<void> _expectOnlineAccountConnects(
@@ -94,7 +185,7 @@ Future<void> _expectOnlineDownloadShowsProgress(
   await tester.pump();
 
   expect(find.text(expectedProgressMessage), findsWidgets);
-  expect(find.text('50%'), findsWidgets);
+  expect(find.text('23%'), findsWidgets);
   expect(tester.takeException(), isNull);
 
   repository.finishOnlineDownload();
@@ -143,22 +234,29 @@ Future<void> _pumpAndConnectOnlineAccount(
   await tester.pump();
   expect(tester.takeException(), isNull);
 
-  await tester.tap(find.text('Connect'));
+  await tester.tap(find.text('Add').last);
+  await tester.pumpAndSettle();
+  expect(tester.takeException(), isNull);
+
+  await tester.tap(find.text('Add 1 username'));
   await tester.pumpAndSettle();
 }
 
 class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
-  _PaneFakePlayerWorkspaceRepository();
+  _PaneFakePlayerWorkspaceRepository({PlayerWorkspaceSnapshot? snapshot})
+    : snapshot =
+          snapshot ??
+          const PlayerWorkspaceSnapshot(
+            players: [
+              PlayerWorkspacePlayer(
+                id: 'manual-1',
+                displayName: 'Prep Target',
+                createdAtMs: 1,
+              ),
+            ],
+          );
 
-  PlayerWorkspaceSnapshot snapshot = const PlayerWorkspaceSnapshot(
-    players: [
-      PlayerWorkspacePlayer(
-        id: 'manual-1',
-        displayName: 'Prep Target',
-        createdAtMs: 1,
-      ),
-    ],
-  );
+  PlayerWorkspaceSnapshot snapshot;
   Completer<void> onlineDownloadStarted = Completer<void>();
   Completer<void> onlineImportFinished = Completer<void>();
   Completer<void>? _finishOnlineDownload;
@@ -210,6 +308,7 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     int? sinceMs,
     int? expectedGameCount,
     PlayerWorkspaceProgress? onProgress,
+    OperationCancellationToken? cancellationToken,
   }) {
     expect(expectedGameCount, 42);
     return _downloadOnlineGames(
@@ -225,6 +324,7 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     required String username,
     int? sinceMs,
     PlayerWorkspaceProgress? onProgress,
+    OperationCancellationToken? cancellationToken,
   }) {
     return _downloadOnlineGames(
       source: PlayerWorkspaceSource.chesscom,
@@ -256,6 +356,8 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   @override
   Future<String> sourcePgnPath({
     required String playerId,
+    String? playerName,
+    String? fideId,
     required PlayerWorkspaceSource source,
     String? username,
   }) async {
@@ -271,6 +373,7 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     required Iterable<String> playerAliases,
     bool replaceExisting = false,
     PlayerWorkspaceProgress? onProgress,
+    OperationCancellationToken? cancellationToken,
   }) async {
     onProgress?.call('Importing $sourceLabel...', 0.75);
     return PlayerWorkspaceImportResult(
@@ -284,9 +387,11 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     required LocalChessDatabaseRepository localRepository,
     required String playerId,
     required String playerName,
+    String? playerFideId,
     required Iterable<String> sourcePaths,
     required Iterable<String> playerAliases,
     PlayerWorkspaceProgress? onProgress,
+    OperationCancellationToken? cancellationToken,
   }) async {
     onProgress?.call('Combining and deduplicating games...', 1);
     if (!onlineImportFinished.isCompleted) {
@@ -297,6 +402,55 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
       stats: PlayerWorkspaceImportStats(gameCount: 1),
     );
   }
+}
+
+class _PaneFakeLocalChessDatabaseRepository
+    extends LocalChessDatabaseRepository {
+  _PaneFakeLocalChessDatabaseRepository(this.indexes)
+    : super(database: () async => throw StateError('unused test database'));
+
+  final Map<String, PlayerOpeningTreeIndex> indexes;
+
+  @override
+  Future<LocalChessFileNode?> loadFreshFileNode(
+    String path, {
+    required String rootPath,
+    LocalChessScanProgressSink? onProgress,
+  }) async {
+    final index = indexes[path];
+    if (index == null) return null;
+    return LocalChessFileNode(
+      name: path.split('/').last,
+      path: path,
+      relativePath: path,
+      extension: '.pgn',
+      status: LocalChessFileStatus.parsed,
+      games: const <LocalChessGame>[],
+      gameCount: index.downloadedGameCount,
+      sizeBytes: 1,
+      modifiedAt: DateTime.fromMillisecondsSinceEpoch(1),
+      openingTreeIndex: index,
+    );
+  }
+}
+
+PlayerOpeningTreeIndex _paneTreeIndex({
+  required String path,
+  required int gameCount,
+}) {
+  return PlayerOpeningTreeIndex(
+    treeId: 'local:$path',
+    playerId: path,
+    maxPly: 50,
+    rootNodeId: 0,
+    generatedAt: DateTime.fromMillisecondsSinceEpoch(1),
+    nodesById: const <int, PlayerOpeningTreeNode>{},
+    nodesByFenKey: const <String, PlayerOpeningTreeNode>{},
+    gamesByFen: const <String, List<PlayerOpeningTreeGameRef>>{},
+    gameRowsById: const <String, Map<String, dynamic>>{},
+    persistedPositionCount: 1,
+    persistedGameCount: gameCount,
+  );
 }
 
 String _paneTestPgn(String username) {

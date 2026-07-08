@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 
 import 'package:chessever/desktop/panes/library_pane.dart';
+import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 
 void main() {
@@ -113,6 +115,102 @@ void main() {
         isTrue,
       );
       expect(libraryFolderIsDatabase(folders.first, folders), isFalse);
+    });
+
+    test('formats local database count and installed date', () {
+      final entry = LocalLibraryEntry(
+        path: '/tmp/classical.pgn',
+        addedAt: DateTime(2026, 7, 7),
+        gameCount: 12,
+      );
+
+      expect(localLibraryEntryStatusLine(entry), '12 games - 2026-07-07');
+      expect(
+        localLibraryEntryStatusLine(entry, count: 1),
+        '1 game - 2026-07-07',
+      );
+    });
+
+    test('formats old local database entries without count metadata', () {
+      final entry = LocalLibraryEntry(
+        path: '/tmp/legacy.pgn',
+        addedAt: DateTime(2026, 7, 7),
+      );
+
+      expect(localLibraryEntryStatusLine(entry), 'Not indexed - 2026-07-07');
+    });
+
+    test('keeps local database registry metadata backward compatible', () {
+      final legacy = LocalLibraryEntry.fromJson({
+        'path': '/tmp/legacy.pgn',
+        'addedAt': '2026-07-07T00:00:00.000',
+      });
+      expect(legacy.gameCount, isNull);
+      expect(legacy.indexedAt, isNull);
+
+      final indexedAt = DateTime(2026, 7, 7, 12, 30);
+      final entry = LocalLibraryEntry(
+        path: '/tmp/current.pgn',
+        addedAt: DateTime(2026, 7, 6),
+        gameCount: 42,
+        indexedAt: indexedAt,
+      );
+      final roundTrip = LocalLibraryEntry.fromJson(entry.toJson());
+
+      expect(roundTrip.path, entry.path);
+      expect(roundTrip.addedAt, entry.addedAt);
+      expect(roundTrip.gameCount, 42);
+      expect(roundTrip.indexedAt, indexedAt);
+    });
+
+    test('identifies Players local database entries and groups', () {
+      final now = DateTime(2026, 7, 8);
+      final explicit = LocalLibraryEntry(
+        path: p.join('tmp', 'gm-vasif-durarbayli', 'chesscom.pgn'),
+        addedAt: now,
+        groupId: '${playerWorkspaceLocalLibraryGroupPrefix}player-1',
+        groupLabel: 'GM Vasif Durarbayli',
+      );
+      final legacyPath = p.join(
+        'tmp',
+        'player-workspace',
+        'player-2',
+        'lichess.pgn',
+      );
+      final legacy = LocalLibraryEntry.fromJson({
+        'path': legacyPath,
+        'addedAt': now.toIso8601String(),
+      });
+      final normal = LocalLibraryEntry(
+        path: p.join('tmp', 'opening-prep', 'repertoire.pgn'),
+        addedAt: now,
+        groupId: 'prep-folder',
+      );
+
+      expect(localLibraryEntryBelongsToPlayerWorkspace(explicit), isTrue);
+      expect(localLibraryEntryBelongsToPlayerWorkspace(legacy), isTrue);
+      expect(localLibraryEntryBelongsToPlayerWorkspace(normal), isFalse);
+      expect(localLibraryPathBelongsToPlayerWorkspace(legacyPath), isTrue);
+      expect(
+        localLibraryPathBelongsToPlayerWorkspace(
+          p.join('tmp', 'player-workspace'),
+        ),
+        isFalse,
+      );
+      expect(
+        localLibraryGroupBelongsToPlayerWorkspace(
+          groupId: explicit.groupId!,
+          entries: [explicit],
+        ),
+        isTrue,
+      );
+      expect(
+        localLibraryGroupBelongsToPlayerWorkspace(
+          groupId: normal.groupId!,
+          entries: [normal],
+        ),
+        isFalse,
+      );
     });
   });
 }

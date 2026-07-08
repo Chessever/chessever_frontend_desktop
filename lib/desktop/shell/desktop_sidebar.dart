@@ -410,40 +410,48 @@ class _SidebarItemState extends State<_SidebarItem>
                         offset: Offset(widget.expanded ? x : x * 0.35, 0),
                         child: child,
                       ),
-                  child: Row(
-                    mainAxisAlignment:
-                        widget.expanded
-                            ? MainAxisAlignment.start
-                            : MainAxisAlignment.center,
-                    children: [
-                      widget.entry.pane == DesktopPane.board
-                          ? _ChessboardIcon(size: 18, color: fg)
-                          : Icon(widget.entry.icon, size: 18, color: fg),
-                      if (widget.expanded) ...[
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            widget.entry.label,
-                            style: TextStyle(
-                              color: fg,
-                              fontSize: 13,
-                              fontWeight:
-                                  selected ? FontWeight.w600 : FontWeight.w500,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final showLabel =
+                          widget.expanded && constraints.maxWidth >= 112;
+                      return Row(
+                        mainAxisAlignment:
+                            showLabel
+                                ? MainAxisAlignment.start
+                                : MainAxisAlignment.center,
+                        children: [
+                          widget.entry.pane == DesktopPane.board
+                              ? _ChessboardIcon(size: 18, color: fg)
+                              : Icon(widget.entry.icon, size: 18, color: fg),
+                          if (showLabel) ...[
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                widget.entry.label,
+                                style: TextStyle(
+                                  color: fg,
+                                  fontSize: 13,
+                                  fontWeight:
+                                      selected
+                                          ? FontWeight.w600
+                                          : FontWeight.w500,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        if (shortcut != null)
-                          Text(
-                            shortcut,
-                            style: const TextStyle(
-                              color: kLightGreyColor,
-                              fontSize: 11,
-                              fontFeatures: [FontFeature.tabularFigures()],
-                            ),
-                          ),
-                      ],
-                    ],
+                            if (shortcut != null)
+                              Text(
+                                shortcut,
+                                style: const TextStyle(
+                                  color: kLightGreyColor,
+                                  fontSize: 11,
+                                  fontFeatures: [FontFeature.tabularFigures()],
+                                ),
+                              ),
+                          ],
+                        ],
+                      );
+                    },
                   ),
                 ),
               ),

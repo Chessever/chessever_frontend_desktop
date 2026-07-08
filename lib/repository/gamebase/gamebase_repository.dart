@@ -31,6 +31,13 @@ class GamebaseData with GamebaseDataMappable {
   static const fromJson = GamebaseDataMapper.fromJson;
 }
 
+class GamebasePlayerPgnExport {
+  const GamebasePlayerPgnExport({required this.pgn, required this.gameCount});
+
+  final String pgn;
+  final int gameCount;
+}
+
 enum MiniatureGamesWindow {
   today,
   week,
@@ -446,6 +453,7 @@ class GamebaseRepository {
   final Dio _dio;
   final String _baseUrl;
   static const Duration _aggregateReceiveTimeout = Duration(seconds: 75);
+  static const Duration _pgnExportReceiveTimeout = Duration(seconds: 120);
   static const Duration _aggregateTimeoutRetryDelay = Duration(
     milliseconds: 750,
   );
@@ -1307,6 +1315,56 @@ class GamebaseRepository {
     );
 
     return Map<String, dynamic>.from(response.data);
+  }
+
+  /// Fetch a player's games as one PGN blob.
+  ///
+  /// Maps to GET /api/player/fide/{fideId}/games.pgn when a FIDE ID is
+  /// available, otherwise GET /api/player/{playerId}/games.pgn. Returns null
+  /// when the deployed proxy/API does not support the endpoint yet so callers
+  /// can fall back to paged JSON.
+  Future<GamebasePlayerPgnExport?> getPlayerGamesPgn({
+    required String playerId,
+    String? fideId,
+    String? dateFrom,
+  }) async {
+    try {
+      final cleanFideId = fideId?.trim();
+      final path =
+          cleanFideId != null && cleanFideId.isNotEmpty
+              ? '$_baseUrl/api/player/fide/${Uri.encodeComponent(cleanFideId)}/games.pgn'
+              : '$_baseUrl/api/player/$playerId/games.pgn';
+      final response = await _dio.get<String>(
+        path,
+        queryParameters: <String, dynamic>{
+          if (dateFrom != null) 'dateFrom': dateFrom,
+        },
+        options: Options(
+          headers: <String, String>{
+            ..._headers,
+            'Accept': 'application/x-chess-pgn, text/plain, */*',
+          },
+          receiveTimeout: _pgnExportReceiveTimeout,
+          responseType: ResponseType.plain,
+        ),
+      );
+
+      final pgn = response.data ?? '';
+      final gameCount = int.tryParse(
+        response.headers.value('x-game-count') ?? '',
+      );
+
+      return GamebasePlayerPgnExport(pgn: pgn, gameCount: gameCount ?? 0);
+    } on DioException catch (e) {
+      final statusCode = e.response?.statusCode;
+      if (statusCode == 403 ||
+          statusCode == 404 ||
+          statusCode == 405 ||
+          statusCode == 501) {
+        return null;
+      }
+      rethrow;
+    }
   }
 
   /// Fetch exact aggregated stats for a specific player with server-side filters.

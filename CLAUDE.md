@@ -43,6 +43,7 @@ The mobile app navigates through pushed routes. The desktop app does not push ro
 - **Keyboard-first:**
   - `←` / `→` step through moves; `↑` / `↓` jump to first/last; `Space` toggle autoplay.
   - `Cmd/Ctrl+K` open command palette (jump to tournament/player/feature).
+  - `Cmd+Shift+F` on macOS / `Ctrl+Shift+F` on Windows opens global search from every pane, route, feature state, and nested Library/Players view. This is a shell-level invariant: new panes, route wrappers, focus scopes, shortcuts, text fields, and feature-level actions must not shadow or disable it.
   - `Cmd/Ctrl+O` open PGN; `Cmd/Ctrl+S` save current game; `Cmd/Ctrl+E` toggle engine; `Cmd/Ctrl+F` find in current view.
   - `F` flip board; `A` request analysis; `Esc` close active dialog/inspector.
 - **Mouse:**

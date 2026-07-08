@@ -7,9 +7,9 @@ final localChessLog = LocalChessDiagnostics._();
 class LocalChessDiagnostics {
   LocalChessDiagnostics._()
     : _logger = Logger(
-        filter: DevelopmentFilter(),
+        filter: ProductionFilter(),
         printer: SimplePrinter(printTime: true, colors: false),
-        level: Level.debug,
+        level: Level.info,
       );
 
   final Logger _logger;
