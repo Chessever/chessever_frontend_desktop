@@ -856,7 +856,7 @@ void main() {
   });
 
   test(
-    'worker import persists all PGN games while returning only preview rows',
+    'queued import persists all PGN games while returning only preview rows',
     () async {
       final pgnFile = File('${temp.path}/bulk.pgn');
       await pgnFile.writeAsString(_bulkPgn(5));
@@ -882,11 +882,11 @@ void main() {
       );
       expect(
         progress.map((event) => event.message),
-        contains('Opening local database writer...'),
+        contains('Saving local cache...'),
       );
       expect(
         progress.map((event) => event.message),
-        contains('Local database writer ready.'),
+        isNot(contains('Opening local database writer...')),
       );
       expect(await _count(db, 'local_chess_databases'), 1);
       expect(await _count(db, 'local_chess_games'), 5);
@@ -930,7 +930,7 @@ void main() {
   );
 
   test(
-    'worker import replaces stale same-path cache with chunked purge',
+    'queued import replaces stale same-path cache with chunked purge',
     () async {
       final pgnFile = File('${temp.path}/stale-reimport.pgn');
       await pgnFile.writeAsString(_bulkPgn(3));
@@ -1002,7 +1002,7 @@ void main() {
   );
 
   test(
-    'worker import can use a cache path without opening app cache',
+    'queued import can use a cache path without opening app cache',
     () async {
       final pgnFile = File('${temp.path}/worker-path-only.pgn');
       await pgnFile.writeAsString(_samplePgn);
@@ -1011,7 +1011,7 @@ void main() {
       final repo = LocalChessDatabaseRepository(
         database: () async {
           openedAppCache = true;
-          throw StateError('app cache should not be opened for worker import');
+          throw StateError('app cache should not be opened for queued import');
         },
         databaseFilePath: () async => workerDbPath,
         cachedFileNodeGamePreviewLimit: 1,
@@ -1032,7 +1032,7 @@ void main() {
   );
 
   test(
-    'canceled worker import does not poison same-path retry or write queue',
+    'canceled queued import does not poison same-path retry or write queue',
     () async {
       final pgnFile = File('${temp.path}/canceled-retry.pgn');
       await pgnFile.writeAsString(_samplePgn);
@@ -1079,7 +1079,7 @@ void main() {
   );
 
   test(
-    'concurrent worker imports of the same PGN do not corrupt cache',
+    'concurrent queued imports of the same PGN do not corrupt cache',
     () async {
       final pgnFile = File('${temp.path}/concurrent.pgn');
       await pgnFile.writeAsString(_bulkPgn(40));
@@ -1117,7 +1117,7 @@ void main() {
   );
 
   test(
-    'concurrent worker imports of different PGNs serialize writes',
+    'concurrent queued imports of different PGNs serialize writes',
     () async {
       final first = File('${temp.path}/concurrent-a.pgn');
       final second = File('${temp.path}/concurrent-b.pgn');
@@ -1982,7 +1982,7 @@ void main() {
   );
 
   test(
-    'direct unchanged worker import preserves rebuilt opening tree cache',
+    'direct unchanged queued import preserves rebuilt opening tree cache',
     () async {
       final pgnFile = File('${temp.path}/reimport-preserve-tree.pgn');
       await pgnFile.writeAsString(_bulkPgn(4));
