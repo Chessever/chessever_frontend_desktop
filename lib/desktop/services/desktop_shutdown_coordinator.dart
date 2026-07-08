@@ -5,7 +5,6 @@ import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 
-import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_server.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
 
@@ -64,7 +63,6 @@ class DesktopShutdownCoordinator with WidgetsBindingObserver, WindowListener {
     try {
       await _cancelPlayerWorkspaceOperations();
       await _stopTournamentServer();
-      await LocalChessDatabaseRepository.closeLocalImportWriter();
       if (disposeContainer && !_containerDisposed) {
         _containerDisposed = true;
         _container.dispose();
@@ -100,7 +98,6 @@ class DesktopShutdownCoordinator with WidgetsBindingObserver, WindowListener {
     try {
       await _cancelPlayerWorkspaceOperations();
       await _stopTournamentServer();
-      await LocalChessDatabaseRepository.closeLocalImportWriter();
       if (_supportsWindowManager) {
         await windowManager.setPreventClose(false);
       }
