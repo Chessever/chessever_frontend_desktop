@@ -1413,7 +1413,7 @@ class _FidePhotoAvatar extends ConsumerWidget {
       photoUrl: photoUrl,
       initials: initials,
       size: size,
-      borderRadius: borderRadius,
+      borderRadius: borderRadius ?? 8,
     );
   }
 }
@@ -5226,6 +5226,12 @@ String _stageErrorText(Object error) {
   return text;
 }
 
+String? _normalizedDialogFideId(String? fideId) {
+  final clean = fideId?.trim();
+  if (clean == null || clean.isEmpty || clean == '?') return null;
+  return clean;
+}
+
 /// Result of the add-player dialog: which player was created, and whether the
 /// user asked to jump straight into connecting online usernames afterwards.
 class _AddPlayerResult {
@@ -5277,12 +5283,16 @@ Future<void> _showAddPlayerDialog(
 }
 
 Future<void> _showConnectChessEverDialog(BuildContext context, WidgetRef ref) {
+  final lockedFideId = _normalizedDialogFideId(
+    ref.read(playerWorkspaceProvider).selectedPlayer?.fideId,
+  );
   return showFDialog<void>(
     context: context,
     builder:
         (context, _, animation) => _AddPlayerDialog(
           title: 'Connect ChessEver',
           animation: animation,
+          lockedFideId: lockedFideId,
           onSearch:
               (query) => ref
                   .read(playerWorkspaceProvider.notifier)
@@ -5304,6 +5314,7 @@ class _AddPlayerDialog extends StatefulWidget {
     required this.onSearch,
     required this.onAddChessEver,
     this.onAddManual,
+    this.lockedFideId,
     this.offerConnect = false,
   });
 
@@ -5319,6 +5330,10 @@ class _AddPlayerDialog extends StatefulWidget {
   /// When true, a successful add offers "Add & connect", which closes with a
   /// request to open the connect-usernames flow for the new player.
   final bool offerConnect;
+
+  /// When present, this dialog is connecting ChessEver to an existing
+  /// FIDE-backed workspace and must not offer other ChessEver players.
+  final String? lockedFideId;
 
   @override
   State<_AddPlayerDialog> createState() => _AddPlayerDialogState();
@@ -5354,10 +5369,21 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
     _debounce = Timer(const Duration(milliseconds: 240), () {
       if (!mounted) return;
       setState(() {
-        _results = widget.onSearch(query);
+        _results = _searchChessEver(query);
         _error = null;
       });
     });
+  }
+
+  Future<List<GamebasePlayer>> _searchChessEver(String query) async {
+    final players = await widget.onSearch(query);
+    final lockedFideId = _lockedFideId;
+    if (lockedFideId == null) return players;
+    return players
+        .where(
+          (player) => _normalizedDialogFideId(player.fideId) == lockedFideId,
+        )
+        .toList(growable: false);
   }
 
   Future<void> _addManual({required bool connect}) async {
@@ -5381,7 +5407,7 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
       if (!mounted) return;
       setState(() {
         _working = false;
-        _error = error.toString();
+        _error = _stageErrorText(error);
       });
     }
   }
@@ -5401,13 +5427,16 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
       if (!mounted) return;
       setState(() {
         _working = false;
-        _error = error.toString();
+        _error = _stageErrorText(error);
       });
     }
   }
 
+  String? get _lockedFideId => _normalizedDialogFideId(widget.lockedFideId);
+
   @override
   Widget build(BuildContext context) {
+    final lockedFideId = _lockedFideId;
     return FDialog.raw(
       animation: widget.animation,
       constraints: const BoxConstraints(maxWidth: 620, maxHeight: 640),
@@ -5442,9 +5471,24 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
               DesktopSearchField(
                 controller: _controller,
                 autofocus: true,
-                hintText: 'Search ChessEver player or type a name',
+                hintText:
+                    lockedFideId == null
+                        ? 'Search ChessEver player or type a name'
+                        : 'Search ChessEver FIDE $lockedFideId',
                 onChanged: _onQueryChanged,
               ),
+              if (lockedFideId != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Locked to FIDE $lockedFideId. Only this ChessEver player can be connected here.',
+                  style: const TextStyle(
+                    color: kWhiteColor70,
+                    fontSize: 11,
+                    height: 1.3,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
               if (_error != null) ...[
                 const SizedBox(height: 10),
                 Text(
@@ -5457,11 +5501,13 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
                 height: 330,
                 child:
                     _results == null
-                        ? const _InlineEmpty(
+                        ? _InlineEmpty(
                           icon: Icons.search_outlined,
                           title: 'Search ChessEver',
                           subtitle:
-                              'Use the global player index first, or add a manual prep target.',
+                              lockedFideId == null
+                                  ? 'Use the global player index first, or add a manual prep target.'
+                                  : 'This workspace only accepts ChessEver result with FIDE $lockedFideId.',
                         )
                         : FutureBuilder<List<GamebasePlayer>>(
                           future: _results,
@@ -5477,11 +5523,13 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
                             final players =
                                 snapshot.data ?? const <GamebasePlayer>[];
                             if (players.isEmpty) {
-                              return const _InlineEmpty(
+                              return _InlineEmpty(
                                 icon: Icons.person_off_outlined,
                                 title: 'No ChessEver match',
                                 subtitle:
-                                    'Add this name manually and connect online accounts next.',
+                                    lockedFideId == null
+                                        ? 'Add this name manually and connect online accounts next.'
+                                        : 'No result matched the locked FIDE $lockedFideId.',
                               );
                             }
                             return ListView.separated(

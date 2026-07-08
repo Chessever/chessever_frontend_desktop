@@ -11,6 +11,8 @@ import 'package:chessever/desktop/services/player_workspace_repository.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
+import 'package:chessever/screens/gamebase/models/models.dart';
+import 'package:chessever/utils/responsive_helper.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -126,10 +128,12 @@ void main() {
           ),
         ],
         child: const MaterialApp(
-          home: SizedBox(
-            width: 1200,
-            height: 800,
-            child: PlayerWorkspacePane(),
+          home: _ResponsiveTestHost(
+            child: SizedBox(
+              width: 1200,
+              height: 800,
+              child: PlayerWorkspacePane(),
+            ),
           ),
         ),
       ),
@@ -150,6 +154,89 @@ void main() {
     expect(find.text('Tree'), findsNWidgets(3));
     expect(find.text('Prep Target Combined'), findsOneWidget);
     expect(find.text('5 games · Both colours'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('filters ChessEver connect results to the locked FIDE id', (
+    tester,
+  ) async {
+    final repository = _PaneFakePlayerWorkspaceRepository(
+      snapshot: const PlayerWorkspaceSnapshot(
+        players: [
+          PlayerWorkspacePlayer(
+            id: 'player-1',
+            displayName: 'GM Vasif Durarbayli',
+            createdAtMs: 1,
+            fideId: '13402935',
+            title: 'GM',
+            country: 'AZE',
+          ),
+        ],
+      ),
+      chessEverSearchResults: const [
+        GamebasePlayer(
+          id: 'ce-carlsen',
+          fideId: '1503014',
+          name: 'Carlsen, Magnus',
+          gender: PlayerGender.male,
+          fed: 'NOR',
+          title: 'GM',
+        ),
+        GamebasePlayer(
+          id: 'ce-vasif',
+          fideId: '13402935',
+          name: 'Durarbayli, Vasif',
+          gender: PlayerGender.male,
+          fed: 'AZE',
+          title: 'GM',
+        ),
+      ],
+    );
+
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() async {
+      await tester.binding.setSurfaceSize(null);
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          playerWorkspaceRepositoryProvider.overrideWithValue(repository),
+          _playerWorkspaceOverride(repository),
+        ],
+        child: const MaterialApp(
+          home: SizedBox(
+            width: 1200,
+            height: 800,
+            child: PlayerWorkspacePane(),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('GM Vasif Durarbayli').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Accounts'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add account').first);
+    await tester.pumpAndSettle();
+    if (find
+        .text('Choose the source to connect to this player.')
+        .evaluate()
+        .isNotEmpty) {
+      await tester.tap(find.text('ChessEver').last);
+      await tester.pumpAndSettle();
+    }
+
+    expect(find.textContaining('Locked to FIDE 13402935'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'vasif');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+
+    expect(find.text('GM Vasif Durarbayli'), findsWidgets);
+    expect(find.text('GM Magnus Carlsen'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }
@@ -264,21 +351,36 @@ Override _playerWorkspaceOverride(
   );
 }
 
+class _ResponsiveTestHost extends StatelessWidget {
+  const _ResponsiveTestHost({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    ResponsiveHelper.init(context);
+    return child;
+  }
+}
+
 class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
-  _PaneFakePlayerWorkspaceRepository({PlayerWorkspaceSnapshot? snapshot})
-    : snapshot =
-          snapshot ??
-          const PlayerWorkspaceSnapshot(
-            players: [
-              PlayerWorkspacePlayer(
-                id: 'manual-1',
-                displayName: 'Prep Target',
-                createdAtMs: 1,
-              ),
-            ],
-          );
+  _PaneFakePlayerWorkspaceRepository({
+    PlayerWorkspaceSnapshot? snapshot,
+    this.chessEverSearchResults = const <GamebasePlayer>[],
+  }) : snapshot =
+           snapshot ??
+           const PlayerWorkspaceSnapshot(
+             players: [
+               PlayerWorkspacePlayer(
+                 id: 'manual-1',
+                 displayName: 'Prep Target',
+                 createdAtMs: 1,
+               ),
+             ],
+           );
 
   PlayerWorkspaceSnapshot snapshot;
+  final List<GamebasePlayer> chessEverSearchResults;
   Completer<void> onlineDownloadStarted = Completer<void>();
   Completer<void> onlineImportFinished = Completer<void>();
   Completer<void>? _finishOnlineDownload;
@@ -300,6 +402,14 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   @override
   Future<void> saveSnapshot(PlayerWorkspaceSnapshot snapshot) async {
     this.snapshot = snapshot;
+  }
+
+  @override
+  Future<List<GamebasePlayer>> searchChessEverPlayers(
+    GamebaseRepository repository,
+    String query,
+  ) async {
+    return chessEverSearchResults;
   }
 
   @override

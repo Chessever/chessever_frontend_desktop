@@ -1358,6 +1358,123 @@ void main() {
       },
     );
 
+    test(
+      'FIDE-locked player rejects a different ChessEver source after deletion',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: LocalChessDatabaseRepository(
+            database: () async => db,
+          ),
+        );
+        await notifier.load();
+        await notifier.addManualPlayer('GM Vasif Durarbayli');
+        await notifier.selectPlayer(notifier.state.players.single.id);
+        await notifier.connectChessEverPlayer(
+          const GamebasePlayer(
+            id: 'ce-vasif',
+            fideId: '13402935',
+            name: 'Durarbayli, Vasif',
+            gender: PlayerGender.male,
+            fed: 'AZE',
+            title: 'GM',
+          ),
+        );
+
+        final source =
+            notifier.state.selectedPlayer!.account(
+              PlayerWorkspaceSource.chessever,
+            )!;
+        await notifier.removeAccountEntry(source);
+
+        var player = notifier.state.selectedPlayer!;
+        expect(player.fideId, '13402935');
+        expect(player.account(PlayerWorkspaceSource.chessever), isNull);
+
+        await expectLater(
+          notifier.connectChessEverPlayer(
+            const GamebasePlayer(
+              id: 'ce-carlsen',
+              fideId: '1503014',
+              name: 'Carlsen, Magnus',
+              gender: PlayerGender.male,
+              fed: 'NOR',
+              title: 'GM',
+            ),
+          ),
+          throwsA(
+            isA<StateError>()
+                .having(
+                  (error) => error.message,
+                  'message',
+                  contains('locked to FIDE 13402935'),
+                )
+                .having(
+                  (error) => error.message,
+                  'message',
+                  contains('FIDE 1503014'),
+                ),
+          ),
+        );
+
+        player = notifier.state.selectedPlayer!;
+        expect(player.fideId, '13402935');
+        expect(player.account(PlayerWorkspaceSource.chessever), isNull);
+        expect(player.displayName, 'GM Vasif Durarbayli');
+      },
+    );
+
+    test(
+      'FIDE-locked player can reconnect the same ChessEver source after deletion',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: LocalChessDatabaseRepository(
+            database: () async => db,
+          ),
+        );
+        await notifier.load();
+        await notifier.addManualPlayer('GM Vasif Durarbayli');
+        await notifier.selectPlayer(notifier.state.players.single.id);
+        await notifier.connectChessEverPlayer(
+          const GamebasePlayer(
+            id: 'ce-vasif',
+            fideId: '13402935',
+            name: 'Durarbayli, Vasif',
+            gender: PlayerGender.male,
+            fed: 'AZE',
+            title: 'GM',
+          ),
+        );
+
+        final source =
+            notifier.state.selectedPlayer!.account(
+              PlayerWorkspaceSource.chessever,
+            )!;
+        await notifier.removeAccountEntry(source);
+        await notifier.connectChessEverPlayer(
+          const GamebasePlayer(
+            id: 'ce-vasif-reindexed',
+            fideId: '13402935',
+            name: 'Durarbayli, Vasif',
+            gender: PlayerGender.male,
+            fed: 'AZE',
+            title: 'GM',
+          ),
+        );
+
+        final player = notifier.state.selectedPlayer!;
+        final chessever = player.account(PlayerWorkspaceSource.chessever)!;
+        expect(player.fideId, '13402935');
+        expect(chessever.externalId, 'ce-vasif-reindexed');
+        expect(chessever.displayName, 'GM Vasif Durarbayli');
+      },
+    );
+
     test('combined rebuild sums FIDE and no-FIDE player sources', () async {
       final workspaceRepository = _FakePlayerWorkspaceRepository(
         root: temp,

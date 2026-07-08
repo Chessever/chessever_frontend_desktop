@@ -267,6 +267,16 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   Future<void> connectChessEverPlayer(GamebasePlayer gamebasePlayer) async {
     final player = state.selectedPlayer;
     if (player == null) return;
+    final lockedFideId = _normalizedPlayerFideId(player.fideId);
+    final incomingFideId = _normalizedPlayerFideId(gamebasePlayer.fideId);
+    if (lockedFideId != null && incomingFideId != lockedFideId) {
+      throw StateError(
+        'This player workspace is locked to FIDE $lockedFideId. '
+        '${gamebasePlayer.titleAndName} has '
+        '${incomingFideId == null ? 'no FIDE id' : 'FIDE $incomingFideId'}, '
+        'so create a separate player profile instead.',
+      );
+    }
     final gamebasePlayerWorkspace = _workspaceRepository.playerFromChessEver(
       gamebasePlayer,
     );
@@ -278,7 +288,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       player
           .copyWith(
             chesseverPlayerId: gamebasePlayer.id,
-            fideId: gamebasePlayer.fideId,
+            fideId: incomingFideId ?? player.fideId,
             country: gamebasePlayer.fed,
             title: gamebasePlayer.title,
           )
@@ -1839,6 +1849,12 @@ String _canonicalWorkspacePath(String? path) {
   if (clean == null || clean.isEmpty) return '';
   final normalized = p.normalize(clean);
   return Platform.isWindows ? normalized.toLowerCase() : normalized;
+}
+
+String? _normalizedPlayerFideId(String? fideId) {
+  final clean = fideId?.trim();
+  if (clean == null || clean.isEmpty || clean == '?') return null;
+  return clean;
 }
 
 int? _sinceMsFromGameDate(DateTime? date) {
