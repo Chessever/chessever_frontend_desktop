@@ -84,8 +84,8 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "method_not_allowed" }, 405);
   }
 
-  const hasClientAuth =
-    req.headers.has("authorization") || req.headers.has("apikey");
+  const hasClientAuth = req.headers.has("authorization") ||
+    req.headers.has("apikey");
   if (!hasClientAuth) {
     return jsonResponse({ error: "unauthorized" }, 401);
   }
@@ -101,8 +101,8 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "gamebase_key_not_configured" }, 500);
   }
 
-  const upstreamBase =
-    Deno.env.get("GAMEBASE_API_BASE")?.trim() || DEFAULT_GAMEBASE_API_BASE;
+  const upstreamBase = Deno.env.get("GAMEBASE_API_BASE")?.trim() ||
+    DEFAULT_GAMEBASE_API_BASE;
   const upstreamUrl = new URL(
     `${upstreamBase.replace(/\/$/, "")}${apiPath}`,
   );
@@ -135,6 +135,12 @@ Deno.serve(async (req: Request) => {
       "Content-Type",
       upstreamContentType ?? "application/json",
     );
+    const contentEncoding = upstream.headers.get("content-encoding");
+    if (contentEncoding) {
+      responseHeaders.set("Content-Encoding", contentEncoding);
+    }
+    const vary = upstream.headers.get("vary");
+    if (vary) responseHeaders.set("Vary", vary);
     const gameCount = upstream.headers.get("x-game-count");
     if (gameCount) responseHeaders.set("X-Game-Count", gameCount);
     const pgnCache = upstream.headers.get("x-pgn-cache");
