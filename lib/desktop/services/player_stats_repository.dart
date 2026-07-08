@@ -18,17 +18,15 @@ import 'package:chessever/repository/sqlite/local_chess_schema.dart'
 /// are pulled into Dart — SQLite does the counting, so a 6k-game database
 /// resolves in a few milliseconds.
 ///
-/// "The player" is identified by matching the game's White / Black name against
-/// a normalized alias set, mirroring [analyzePgnStats] so the numbers agree
-/// with the per-source import stats the user already sees.
+/// "The player" is identified by FIDE id when available, with normalized aliases
+/// only for rows whose PGN side has no FIDE header.
 class PlayerStatsRepository {
   PlayerStatsRepository({
     Future<resqlite.Database> Function()? database,
     LocalChessDatabaseRepository? localRepository,
-  })
-    : _database =
-          database ?? (() => LocalChessResqliteDatabase.instance.database),
-      _localRepository = localRepository;
+  }) : _database =
+           database ?? (() => LocalChessResqliteDatabase.instance.database),
+       _localRepository = localRepository;
 
   final Future<resqlite.Database> Function() _database;
   final LocalChessDatabaseRepository? _localRepository;
@@ -36,43 +34,52 @@ class PlayerStatsRepository {
   Future<PlayerStatsSnapshot> computePlayerStats({
     required String databasePath,
     required Iterable<String> aliases,
+    String? playerFideId,
     int? windowDays,
   }) async {
-    final normalizedAliases = aliases
-        .map(_normalizeName)
-        .where((name) => name.isNotEmpty)
-        .toSet();
+    final normalizedFideId = _normalizeFideId(playerFideId);
+    final normalizedAliases =
+        aliases.map(_normalizeName).where((name) => name.isNotEmpty).toSet();
 
     final databaseId = _databaseId(databasePath);
     final db = await _database();
     await _ensureLocalCache(databasePath: databasePath, databaseId: databaseId);
 
-    // The workspace database is built exclusively from this player's games, so
-    // the player is the single most frequent name across White + Black. Folding
-    // that dominant name into the alias set makes matching robust to name
-    // spelling / word-order differences (e.g. "Durarbayli, Vasif" vs
-    // "Vasif Durarbayli") that would otherwise leave the dashboard empty.
     final aliasSet = normalizedAliases.toSet();
-    final dominant = await _dominantPlayerName(db, databaseId);
-    if (dominant != null) aliasSet.add(dominant);
+    if (normalizedFideId == null) {
+      // Fallback only for sources without a stable FIDE id. The workspace
+      // database is built from one player's games, so the most frequent name
+      // rescues spelling / word-order differences.
+      final dominant = await _dominantPlayerName(db, databaseId);
+      if (dominant != null) aliasSet.add(dominant);
+      if (aliasSet.isEmpty) return PlayerStatsSnapshot.empty;
+    }
     final matchAliases = aliasSet.toList(growable: false);
-    if (matchAliases.isEmpty) return PlayerStatsSnapshot.empty;
 
-    // The base params repeat the alias list twice (white CASE + black CASE)
-    // then the scoping database_id — identical for every query below. When a
-    // date window is active the CTE gains a subquery that resolves the cutoff
-    // relative to the newest game in this database, so the trailing params are
-    // the SQLite date modifier ('-90 days') plus the database_id again.
-    final aliasPlaceholders = List.filled(matchAliases.length, '?').join(', ');
+    // The base params identify the player, then scope to database_id —
+    // identical for every query below. FIDE is primary when present, with an
+    // alias fallback only for rows whose PGN side has no FIDE header.
     final dateModifier =
         (windowDays != null && windowDays > 0) ? '-$windowDays days' : null;
+    final hasAliasFallback = matchAliases.isNotEmpty;
     final baseParams = <Object?>[
-      ...matchAliases,
-      ...matchAliases,
+      if (normalizedFideId != null) ...[
+        normalizedFideId,
+        normalizedFideId,
+        if (hasAliasFallback) ...[...matchAliases, ...matchAliases],
+      ] else ...[
+        ...matchAliases,
+        ...matchAliases,
+      ],
       databaseId,
       if (dateModifier != null) ...[dateModifier, databaseId],
     ];
-    final cte = _cte(aliasPlaceholders, windowed: dateModifier != null);
+    final cte = _cte(
+      aliasPlaceholders: List.filled(matchAliases.length, '?').join(', '),
+      fideScoped: normalizedFideId != null,
+      hasAliasFallback: hasAliasFallback,
+      windowed: dateModifier != null,
+    );
 
     final results = await Future.wait(<Future<List<Map<String, Object?>>>>[
       db.select('$cte\n$_overallSql', baseParams),
@@ -95,14 +102,17 @@ class PlayerStatsRepository {
     final auxRows = results[7];
 
     final tallies = _talliesFromRows(overallRows);
-    final ratingSeries = _ratingSeriesFromRows(ratingRows);
+    final rating = _ratingSeriesFromRows(ratingRows);
+    final ratingSeries = rating.spots;
 
     final peak =
         ratingSeries.isEmpty
             ? null
             : ratingSeries.map((s) => s.rating).reduce(math.max);
     final latest = ratingSeries.isEmpty ? null : ratingSeries.last.rating;
-    final avgOpponent = _intOrNull(auxRows.isEmpty ? null : auxRows.first['avg_opp']);
+    final avgOpponent = _intOrNull(
+      auxRows.isEmpty ? null : auxRows.first['avg_opp'],
+    );
 
     return PlayerStatsSnapshot(
       overall: tallies.overall,
@@ -114,6 +124,7 @@ class PlayerStatsRepository {
       years: _yearsFromRows(yearRows),
       lengthBuckets: _lengthBucketsFromRows(lengthRows),
       timeControls: _timeControlsFromRows(timeControlRows),
+      ratingTimeControlCategory: rating.timeControlCategory,
       peakRating: peak,
       latestRating: latest,
       averageOpponentRating: avgOpponent,
@@ -153,8 +164,7 @@ class PlayerStatsRepository {
     }
 
     final repository =
-        _localRepository ??
-        LocalChessDatabaseRepository(database: _database);
+        _localRepository ?? LocalChessDatabaseRepository(database: _database);
     await repository.importSingleFileSource(path: databasePath);
   }
 
@@ -190,7 +200,11 @@ class PlayerStatsRepository {
   // Row → model mapping
   // ------------------------------------------------------------------
 
-  ({PlayerResultTally overall, PlayerResultTally white, PlayerResultTally black})
+  ({
+    PlayerResultTally overall,
+    PlayerResultTally white,
+    PlayerResultTally black,
+  })
   _talliesFromRows(List<Map<String, Object?>> rows) {
     var wWins = 0, wDraws = 0, wLosses = 0;
     var bWins = 0, bDraws = 0, bLosses = 0;
@@ -208,26 +222,40 @@ class PlayerStatsRepository {
         if (presult == 'loss') bLosses += count;
       }
     }
-    final white = PlayerResultTally(wins: wWins, draws: wDraws, losses: wLosses);
-    final black = PlayerResultTally(wins: bWins, draws: bDraws, losses: bLosses);
+    final white = PlayerResultTally(
+      wins: wWins,
+      draws: wDraws,
+      losses: wLosses,
+    );
+    final black = PlayerResultTally(
+      wins: bWins,
+      draws: bDraws,
+      losses: bLosses,
+    );
     return (overall: white + black, white: white, black: black);
   }
 
-  List<PlayerRatingSpot> _ratingSeriesFromRows(List<Map<String, Object?>> rows) {
+  ({List<PlayerRatingSpot> spots, String? timeControlCategory})
+  _ratingSeriesFromRows(List<Map<String, Object?>> rows) {
     // Keep the latest rating per calendar day (rows already ordered ascending),
     // preserving order, then cap the series so the chart stays crisp.
     final byDay = <String, PlayerRatingSpot>{};
+    String? category;
     for (final row in rows) {
       final date = _dateFromDot(row['d']?.toString());
       final rating = _int(row['elo']);
       if (date == null || rating <= 0) continue;
+      category ??= row['tc']?.toString().trim().toLowerCase();
       final key =
           '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
       byDay[key] = PlayerRatingSpot(date: date, rating: rating);
     }
     final spots = byDay.values.toList(growable: false)
       ..sort((a, b) => a.date.compareTo(b.date));
-    return _downsample(spots, 400);
+    return (
+      spots: _downsample(spots, 400),
+      timeControlCategory: category?.isEmpty == true ? null : category,
+    );
   }
 
   List<PlayerOpeningStat> _openingsFromRows(List<Map<String, Object?>> rows) {
@@ -278,10 +306,11 @@ class PlayerStatsRepository {
               draws: _int(row['d']),
               losses: _int(row['l']),
             ),
+            total: _int(row['total']),
           );
         })
         .whereType<PlayerYearStat>()
-        .where((year) => year.tally.games > 0)
+        .where((year) => year.games > 0)
         .toList(growable: false);
   }
 
@@ -304,9 +333,10 @@ class PlayerStatsRepository {
     return rows
         .map(
           (row) => PlayerTimeControlStat(
-            category: row['cat']?.toString().trim().isEmpty ?? true
-                ? 'Unknown'
-                : row['cat']!.toString().trim(),
+            category:
+                row['cat']?.toString().trim().isEmpty ?? true
+                    ? 'Unknown'
+                    : row['cat']!.toString().trim(),
             count: _int(row['c']),
           ),
         )
@@ -318,7 +348,12 @@ class PlayerStatsRepository {
   // SQL
   // ------------------------------------------------------------------
 
-  String _cte(String aliasPlaceholders, {bool windowed = false}) {
+  String _cte({
+    required String aliasPlaceholders,
+    required bool fideScoped,
+    required bool hasAliasFallback,
+    bool windowed = false,
+  }) {
     // Chronological window relative to the newest game in this database. PGN
     // dates are stored as 'YYYY.MM.DD' strings; converting the dots to dashes
     // yields ISO dates whose lexicographic order matches chronological order,
@@ -334,6 +369,22 @@ class PlayerStatsRepository {
       WHERE g2.database_id = ? AND g2.date LIKE '____.__.__'
     )'''
             : '';
+    final sideSql =
+        fideScoped
+            ? '''
+      WHEN LOWER(TRIM(COALESCE(json_extract(g.headers_json, '\$.WhiteFideId'), ''))) = ? THEN 'w'
+      WHEN LOWER(TRIM(COALESCE(json_extract(g.headers_json, '\$.BlackFideId'), ''))) = ? THEN 'b'
+      ${hasAliasFallback ? '''
+      WHEN TRIM(COALESCE(json_extract(g.headers_json, '\$.WhiteFideId'), '')) = ''
+        AND ${_normalizedNameSql('wp.name')} IN ($aliasPlaceholders) THEN 'w'
+      WHEN TRIM(COALESCE(json_extract(g.headers_json, '\$.BlackFideId'), '')) = ''
+        AND ${_normalizedNameSql('bp.name')} IN ($aliasPlaceholders) THEN 'b'
+      ''' : ''}
+    '''
+            : '''
+      WHEN ${_normalizedNameSql('wp.name')} IN ($aliasPlaceholders) THEN 'w'
+      WHEN ${_normalizedNameSql('bp.name')} IN ($aliasPlaceholders) THEN 'b'
+    ''';
     return '''
 WITH base AS (
   SELECT
@@ -348,8 +399,7 @@ WITH base AS (
     bp.name AS black_name,
     json_extract(g.headers_json, '\$.Opening') AS opening,
     CASE
-      WHEN TRIM(LOWER(REPLACE(wp.name, ',', ''))) IN ($aliasPlaceholders) THEN 'w'
-      WHEN TRIM(LOWER(REPLACE(bp.name, ',', ''))) IN ($aliasPlaceholders) THEN 'b'
+      $sideSql
     END AS side
   FROM $localChessGamesTable g
   LEFT JOIN $localChessPlayersTable wp ON wp.id = g.white_id
@@ -381,10 +431,27 @@ WHERE presult IS NOT NULL
 GROUP BY side, presult''';
 
   static const _ratingSql = '''
-SELECT date AS d, my_elo AS elo
+, rating_bucket AS (
+  SELECT LOWER(TRIM(tcc)) AS tc, COUNT(*) AS c
+  FROM pv
+  WHERE my_elo IS NOT NULL AND my_elo > 0
+    AND date IS NOT NULL AND date LIKE '____.__.__'
+    AND LOWER(TRIM(COALESCE(tcc, ''))) IN ('classical', 'rapid', 'blitz')
+  GROUP BY tc
+  ORDER BY c DESC,
+    CASE tc
+      WHEN 'classical' THEN 0
+      WHEN 'rapid' THEN 1
+      WHEN 'blitz' THEN 2
+      ELSE 3
+    END ASC
+  LIMIT 1
+)
+SELECT date AS d, my_elo AS elo, LOWER(TRIM(tcc)) AS tc
 FROM pv
 WHERE my_elo IS NOT NULL AND my_elo > 0
   AND date IS NOT NULL AND date LIKE '____.__.__'
+  AND LOWER(TRIM(COALESCE(tcc, ''))) = (SELECT tc FROM rating_bucket)
 ORDER BY date ASC''';
 
   static const _openingsSql = '''
@@ -417,7 +484,8 @@ LIMIT 10''';
 SELECT substr(date, 1, 4) AS yr,
   SUM(CASE WHEN presult = 'win' THEN 1 ELSE 0 END) AS w,
   SUM(CASE WHEN presult = 'draw' THEN 1 ELSE 0 END) AS d,
-  SUM(CASE WHEN presult = 'loss' THEN 1 ELSE 0 END) AS l
+  SUM(CASE WHEN presult = 'loss' THEN 1 ELSE 0 END) AS l,
+  COUNT(*) AS total
 FROM pv
 WHERE date IS NOT NULL AND length(date) >= 4
 GROUP BY yr
@@ -448,11 +516,24 @@ FROM pv''';
 // Helpers
 // ------------------------------------------------------------------
 
-/// Normalization must match [PlayerStatsRepository._cte]'s SQL side
-/// (`TRIM(LOWER(REPLACE(name, ',', '')))`) so aliases and stored names compare
-/// on equal footing.
+/// Normalization must match [PlayerStatsRepository._cte]'s SQL side so aliases
+/// and stored names compare on equal footing.
 String _normalizeName(String value) {
-  return value.toLowerCase().replaceAll(',', '').trim();
+  return value.toLowerCase().replaceAll(RegExp(r'[\s,._-]+'), '').trim();
+}
+
+String _normalizedNameSql(String expression) {
+  var sql = 'LOWER(TRIM(COALESCE($expression, \'\')))';
+  for (final token in const <String>[',', ' ', '_', '.', '-']) {
+    sql = "REPLACE($sql, '$token', '')";
+  }
+  return sql;
+}
+
+String? _normalizeFideId(String? value) {
+  final clean = value?.trim().toLowerCase();
+  if (clean == null || clean.isEmpty) return null;
+  return clean;
 }
 
 /// Mirrors `LocalChessDatabaseRepository`'s path→id normalization so a query
@@ -475,7 +556,10 @@ DateTime? _dateFromDot(String? raw) {
   return DateTime(year, month, day);
 }
 
-List<PlayerRatingSpot> _downsample(List<PlayerRatingSpot> spots, int maxPoints) {
+List<PlayerRatingSpot> _downsample(
+  List<PlayerRatingSpot> spots,
+  int maxPoints,
+) {
   if (spots.length <= maxPoints) return spots;
   final step = spots.length / maxPoints;
   final out = <PlayerRatingSpot>[];
@@ -510,11 +594,105 @@ int? _intOrNull(Object? raw) {
 
 /// FIDE "dp" rating-difference lookup indexed by score percentage (0..100).
 const List<int> _dpTable = [
-  -800, -677, -589, -538, -501, -470, -444, -422, -401, -383, -366, -351, -336,
-  -322, -309, -296, -284, -273, -262, -251, -240, -230, -220, -211, -202, -193,
-  -184, -175, -166, -158, -149, -141, -133, -125, -117, -110, -102, -95, -87,
-  -80, -72, -65, -57, -50, -43, -36, -29, -21, -14, -7, 0, 7, 14, 21, 29, 36,
-  43, 50, 57, 65, 72, 80, 87, 95, 102, 110, 117, 125, 133, 141, 149, 158, 166,
-  175, 184, 193, 202, 211, 220, 230, 240, 251, 262, 273, 284, 296, 309, 322,
-  336, 351, 366, 383, 401, 422, 444, 470, 501, 538, 589, 677, 800,
+  -800,
+  -677,
+  -589,
+  -538,
+  -501,
+  -470,
+  -444,
+  -422,
+  -401,
+  -383,
+  -366,
+  -351,
+  -336,
+  -322,
+  -309,
+  -296,
+  -284,
+  -273,
+  -262,
+  -251,
+  -240,
+  -230,
+  -220,
+  -211,
+  -202,
+  -193,
+  -184,
+  -175,
+  -166,
+  -158,
+  -149,
+  -141,
+  -133,
+  -125,
+  -117,
+  -110,
+  -102,
+  -95,
+  -87,
+  -80,
+  -72,
+  -65,
+  -57,
+  -50,
+  -43,
+  -36,
+  -29,
+  -21,
+  -14,
+  -7,
+  0,
+  7,
+  14,
+  21,
+  29,
+  36,
+  43,
+  50,
+  57,
+  65,
+  72,
+  80,
+  87,
+  95,
+  102,
+  110,
+  117,
+  125,
+  133,
+  141,
+  149,
+  158,
+  166,
+  175,
+  184,
+  193,
+  202,
+  211,
+  220,
+  230,
+  240,
+  251,
+  262,
+  273,
+  284,
+  296,
+  309,
+  322,
+  336,
+  351,
+  366,
+  383,
+  401,
+  422,
+  444,
+  470,
+  501,
+  538,
+  589,
+  677,
+  800,
 ];

@@ -15,16 +15,17 @@ import 'package:sqflite/sqflite.dart' as sqflite;
 
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
-import 'package:chessever/utils/local_pgn_metadata.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
-import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/time_control_classifier.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/repository/sqlite/local_chess_schema.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
+import 'package:chessever/utils/local_pgn_metadata.dart';
 
 export 'package:chessever/repository/sqlite/local_chess_schema.dart'
     show createLocalChessDatabaseSchema;
@@ -295,6 +296,8 @@ const int _kSingleWorkerTreeBuildBytes = 128 * 1024 * 1024;
 const int _kLegacyMigrationGamePageSize = 256;
 const int _kLegacyMigrationRowPageSize = 4096;
 const int _kLocalChessFileFingerprintSampleBytes = 64 * 1024;
+const Duration _kLocalImportWriterStartupTimeout = Duration(seconds: 20);
+const Duration _kLocalImportWriterCommandTimeout = Duration(seconds: 20);
 const String _legacySqfliteMigrationV1Name = 'legacy_sqflite_local_chess_v1';
 const String _legacySqfliteMigrationName =
     'legacy_sqflite_local_chess_v2_desktop_path_scan';
@@ -313,6 +316,29 @@ typedef LocalChessDatabaseWithProgress =
       LocalChessScanProgressSink? onProgress,
     });
 typedef LocalChessDatabaseFilePathResolver = Future<String?> Function();
+
+class _LocalChessSingleFileImport {
+  const _LocalChessSingleFileImport(this.future, this.cancellationToken);
+
+  final Future<LocalChessSource?> future;
+  final OperationCancellationToken? cancellationToken;
+
+  bool get isCanceled => cancellationToken?.isCanceled == true;
+}
+
+Future<T> _cancelableLocalChessFuture<T>(
+  Future<T> future,
+  OperationCancellationToken? cancellationToken,
+) {
+  if (cancellationToken == null) return future;
+  cancellationToken.throwIfCanceled();
+  return Future.any<T>(<Future<T>>[
+    future,
+    cancellationToken.whenCanceled.then<T>((_) {
+      throw const OperationCanceledException();
+    }),
+  ]);
+}
 
 /// Production legacy source for the sqflite→resqlite migration.
 ///
@@ -514,7 +540,10 @@ Future<void> _backfillGameDerivedFilters(resqlite.Transaction tx) async {
       <List<Object?>>[
         for (final row in rows)
           <Object?>[
-            _timeControlCategory(row['time_control']),
+            _localGameTimeControlCategory(
+              timeControl: row['time_control'],
+              headersJson: row['headers_json'],
+            ),
             _inferLocalGameIsOnline(
                   timeControl: row['time_control'],
                   headersJson: row['headers_json'],
@@ -1149,9 +1178,17 @@ Future<void> _copyLegacyGames(
               'result': row['result'],
               'time_control': row['time_control'],
               'time_control_category':
-                  legacyColumns.contains('time_control_category')
+                  legacyColumns.contains('time_control_category') &&
+                          row['time_control_category']
+                                  ?.toString()
+                                  .trim()
+                                  .isNotEmpty ==
+                              true
                       ? row['time_control_category']
-                      : _timeControlCategory(row['time_control']),
+                      : _localGameTimeControlCategory(
+                        timeControl: row['time_control'],
+                        headersJson: row['headers_json'],
+                      ),
               'is_online':
                   legacyColumns.contains('is_online')
                       ? row['is_online']
@@ -1751,8 +1788,8 @@ class LocalChessDatabaseRepository {
 
   static Future<void> _localCacheWriteQueue = Future<void>.value();
   static final Object _localCacheWriteQueueZoneKey = Object();
-  static final Map<String, Future<LocalChessSource?>> _singleFileImportsByPath =
-      <String, Future<LocalChessSource?>>{};
+  static final Map<String, _LocalChessSingleFileImport>
+  _singleFileImportsByPath = <String, _LocalChessSingleFileImport>{};
   static Future<void> _backgroundPurgeQueue = Future<void>.value();
   static _LocalChessImportWriterClient? _localImportWriter;
   static Future<_LocalChessImportWriterClient>? _localImportWriterStarting;
@@ -1781,6 +1818,10 @@ class LocalChessDatabaseRepository {
     _localImportWriterStarting = future;
     try {
       final writer = await future;
+      if (!identical(_localImportWriterStarting, future)) {
+        await writer.close();
+        throw const OperationCanceledException();
+      }
       _localImportWriter = writer;
       return writer;
     } finally {
@@ -1795,6 +1836,16 @@ class LocalChessDatabaseRepository {
     _localImportWriter = null;
     _localImportWriterStarting = null;
     await writer?.close();
+  }
+
+  static void _forgetLocalImportWriter(_LocalChessImportWriterClient writer) {
+    if (identical(_localImportWriter, writer)) {
+      _localImportWriter = null;
+    }
+  }
+
+  static void _cancelLocalImportWriterStartup() {
+    _localImportWriterStarting = null;
   }
 
   Future<resqlite.Database> _openDatabase({
@@ -1934,12 +1985,14 @@ class LocalChessDatabaseRepository {
     }
     final importKey = _databaseId(trimmed);
     final existingImport = _singleFileImportsByPath[importKey];
-    if (existingImport != null) {
+    if (existingImport?.isCanceled == true) {
+      _singleFileImportsByPath.remove(importKey);
+    } else if (existingImport != null) {
       localChessLog.info(
         'PGN import joined existing worker',
         context: <String, Object?>{'path': trimmed},
       );
-      return existingImport;
+      return existingImport.future;
     }
 
     // The import runs in a dedicated writer isolate on its own connection, so
@@ -1956,11 +2009,15 @@ class LocalChessDatabaseRepository {
         onProgress: onProgress,
       ),
     );
-    _singleFileImportsByPath[importKey] = importFuture;
+    final importRecord = _LocalChessSingleFileImport(
+      importFuture,
+      cancellationToken,
+    );
+    _singleFileImportsByPath[importKey] = importRecord;
     try {
       return await importFuture;
     } finally {
-      if (identical(_singleFileImportsByPath[importKey], importFuture)) {
+      if (identical(_singleFileImportsByPath[importKey], importRecord)) {
         _singleFileImportsByPath.remove(importKey);
       }
     }
@@ -1990,14 +2047,24 @@ class LocalChessDatabaseRepository {
       },
     );
 
-    final databaseFilePath = await _workerDatabaseFilePath(
-      onProgress: onProgress,
+    final databaseFilePath = await _cancelableLocalChessFuture(
+      _workerDatabaseFilePath(onProgress: onProgress),
+      cancellationToken,
     );
     if (databaseFilePath == null || databaseFilePath.trim().isEmpty) {
       return null;
     }
     cancellationToken?.throwIfCanceled();
-    final writer = await _localImportWriterFor(databaseFilePath);
+    late final _LocalChessImportWriterClient writer;
+    try {
+      writer = await _cancelableLocalChessFuture(
+        _localImportWriterFor(databaseFilePath),
+        cancellationToken,
+      );
+    } on OperationCanceledException {
+      _cancelLocalImportWriterStartup();
+      rethrow;
+    }
 
     final receivePort = ReceivePort();
     final completer = Completer<LocalChessSource>();
@@ -2092,6 +2159,7 @@ class LocalChessDatabaseRepository {
       canceled = true;
       commandPort?.send(const _LocalChessImportWorkerCancel());
       isolate?.kill(priority: Isolate.immediate);
+      unawaited(closeLocalImportWriter());
       completeCanceled();
     });
 
@@ -3215,10 +3283,12 @@ class LocalChessDatabaseRepository {
   Future<LocalChessDatabaseResultStats> localDatabaseResultStats({
     required String databasePath,
     required Iterable<String> playerAliases,
+    String? playerFideId,
   }) {
     return resultStatsForDatabases(
       databasePaths: <String>[databasePath],
       playerAliases: playerAliases,
+      playerFideId: playerFideId,
     );
   }
 
@@ -3235,6 +3305,7 @@ class LocalChessDatabaseRepository {
   Future<LocalChessDatabaseResultStats> resultStatsForDatabases({
     required Iterable<String> databasePaths,
     required Iterable<String> playerAliases,
+    String? playerFideId,
   }) async {
     final databaseIds = databasePaths
         .map(_databaseId)
@@ -3254,6 +3325,7 @@ class LocalChessDatabaseRepository {
             .map(_normalizePlayerAliasForStats)
             .where((name) => name.isNotEmpty)
             .toSet();
+    final fideId = _normalizeFideIdForStats(playerFideId);
     final db = await _database();
     final placeholders = List.filled(databaseIds.length, '?').join(', ');
     final rows = await db.select(
@@ -3262,6 +3334,8 @@ class LocalChessDatabaseRepository {
         g.id AS id,
         g.pgn_hash AS pgn_hash,
         g.result AS result,
+        json_extract(g.headers_json, '\$.WhiteFideId') AS white_fide_id,
+        json_extract(g.headers_json, '\$.BlackFideId') AS black_fide_id,
         wp.name AS white,
         bp.name AS black
       FROM $localChessGamesTable g
@@ -3282,16 +3356,29 @@ class LocalChessDatabaseRepository {
     for (final row in rows) {
       final white = _normalizePlayerAliasForStats(row['white']?.toString());
       final black = _normalizePlayerAliasForStats(row['black']?.toString());
-      if (white.isEmpty && black.isEmpty) continue;
+      final whiteFide = _normalizeFideIdForStats(row['white_fide_id']);
+      final blackFide = _normalizeFideIdForStats(row['black_fide_id']);
+      final isWhite =
+          fideId == null
+              ? aliases.isEmpty || aliases.contains(white)
+              : whiteFide == fideId ||
+                  (whiteFide == null && aliases.contains(white));
+      final isBlack =
+          fideId == null
+              ? aliases.contains(black)
+              : blackFide == fideId ||
+                  (blackFide == null && aliases.contains(black));
+      final hasAnyFide = whiteFide != null || blackFide != null;
+      if (!isWhite && !isBlack && (fideId == null || hasAnyFide)) continue;
       final hash = row['pgn_hash']?.toString().trim() ?? '';
       final dedupKey = hash.isEmpty ? 'id:${row['id']}' : 'hash:$hash';
       if (!seen.add(dedupKey)) continue;
       games++;
       final result = row['result']?.toString().trim() ?? '';
-      final isWhite = aliases.isEmpty || aliases.contains(white);
-      final isBlack = aliases.contains(black);
       if (result == '1/2-1/2' || result == '1/2' || result == '½-½') {
         draws++;
+      } else if (!isWhite && !isBlack) {
+        continue;
       } else if ((result == '1-0' && isWhite) || (result == '0-1' && isBlack)) {
         wins++;
       } else if ((result == '0-1' && isWhite) || (result == '1-0' && isBlack)) {
@@ -5133,7 +5220,10 @@ class LocalChessDatabaseRepository {
         'result':
             treeRow?['result']?.toString() ?? metadata['Result']?.toString(),
         'time_control': timeControl,
-        'time_control_category': _timeControlCategory(timeControl),
+        'time_control_category': _localGameTimeControlCategory(
+          timeControl: timeControl,
+          metadata: metadata,
+        ),
         'is_online':
             _inferLocalGameIsOnline(
                   timeControl: timeControl,
@@ -6161,7 +6251,15 @@ class _LocalChessImportWriterClient {
         ),
         errorsAreFatal: true,
       );
-      final (responses, commands) = await connection.future;
+      final (responses, commands) = await connection.future.timeout(
+        _kLocalImportWriterStartupTimeout,
+        onTimeout: () {
+          throw TimeoutException(
+            'Local import writer startup hung >'
+            '${_kLocalImportWriterStartupTimeout.inSeconds}s',
+          );
+        },
+      );
       return _LocalChessImportWriterClient._(
         databaseFilePath: databaseFilePath,
         isolate: isolate,
@@ -6260,7 +6358,19 @@ class _LocalChessImportWriterClient {
           path: request.path,
         ),
     });
-    return completer.future;
+    return completer.future.timeout(
+      _kLocalImportWriterCommandTimeout,
+      onTimeout: () {
+        _progressHandlers.remove(id);
+        _pending.remove(id);
+        LocalChessDatabaseRepository._forgetLocalImportWriter(this);
+        unawaited(close());
+        throw TimeoutException(
+          'Local import writer command hung >'
+          '${_kLocalImportWriterCommandTimeout.inSeconds}s',
+        );
+      },
+    );
   }
 
   void _handleResponse(Object? message) {
@@ -6288,6 +6398,7 @@ class _LocalChessImportWriterClient {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    LocalChessDatabaseRepository._forgetLocalImportWriter(this);
     _commands.send(const _LocalChessImportWriterShutdown());
     for (final completer in _pending.values) {
       if (!completer.isCompleted) {
@@ -6306,90 +6417,189 @@ Future<void> _localChessImportWriterWorker(
   _LocalChessImportWriterRequest request,
 ) async {
   resqlite.Database? db;
-  try {
-    db = await resqlite.Database.open(request.databaseFilePath);
-    await _configureStandaloneLocalChessDatabase(db);
-    await createLocalChessResqliteDatabaseSchema(db);
-    final repository = LocalChessDatabaseRepository(database: () async => db!);
+  LocalChessDatabaseRepository? repository;
+  final receivePort = ReceivePort();
+  request.sendPort.send(_LocalChessImportWriterReady(receivePort.sendPort));
+  var queue = Future<void>.value();
+  late final StreamSubscription<dynamic> subscription;
 
-    final receivePort = ReceivePort();
-    request.sendPort.send(_LocalChessImportWriterReady(receivePort.sendPort));
-    var queue = Future<void>.value();
-    late final StreamSubscription<dynamic> subscription;
+  void sendStartupProgress(
+    _LocalChessImportWorkerWriteRequest message,
+    double fraction,
+    String text,
+  ) {
+    message.replyPort.send(
+      _LocalChessImportWriterProgress(
+        message.id,
+        LocalChessScanProgress(fraction: fraction, message: text),
+      ),
+    );
+  }
 
-    Future<void> handle(_LocalChessImportWorkerWriteRequest message) async {
-      try {
-        switch (message) {
-          case _LocalChessImportWorkerBeginWrite():
-            await LocalChessDatabaseRepository._retryWhenSqliteBusy(
-              operation: 'begin imported PGN file',
-              context: <String, Object?>{'path': message.start.path},
-              action:
-                  () => repository._beginImportedFileNode(
-                    message.start,
-                    sourceLabel: message.sourceLabel,
-                    onProgress:
-                        (progress) => message.replyPort.send(
-                          _LocalChessImportWriterProgress(message.id, progress),
-                        ),
-                  ),
-            );
-          case _LocalChessImportWorkerBatchWrite():
-            await LocalChessDatabaseRepository._retryWhenSqliteBusy(
-              operation: 'persist imported PGN game batch',
-              context: <String, Object?>{
-                'path': message.databasePath,
-                'games': message.games.length,
-              },
-              action:
-                  () => repository._persistImportedGameBatch(
-                    message.databasePath,
-                    message.games,
-                  ),
-            );
-          case _LocalChessImportWorkerCompleteWrite():
-            await LocalChessDatabaseRepository._retryWhenSqliteBusy(
-              operation: 'complete imported PGN file',
-              context: <String, Object?>{'path': message.node.path},
-              action: () => repository._completeImportedFileNode(message.node),
-            );
-          case _LocalChessImportWorkerDiscardWrite():
-            await LocalChessDatabaseRepository._retryWhenSqliteBusy(
-              operation: 'discard imported PGN file',
-              context: <String, Object?>{'path': message.path},
-              action: () => repository._discardImportedFileNode(message.path),
-            );
-        }
-        message.replyPort.send(_LocalChessImportWorkerWriteAck(message.id));
-      } catch (error, stackTrace) {
-        message.replyPort.send(
-          _LocalChessImportWorkerWriteFailure(
-            message.id,
-            error.toString(),
-            stackTrace.toString(),
-          ),
-        );
-      }
+  Future<void> ensureWriterSchema(resqlite.Database database) async {
+    Future<bool> tableExists(String table) async {
+      final rows = await database.select(
+        '''
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+        LIMIT 1
+        ''',
+        <Object?>[table],
+      );
+      return rows.isNotEmpty;
     }
 
-    subscription = receivePort.listen((message) {
-      if (message is _LocalChessImportWriterShutdown) {
-        queue = queue.whenComplete(() async {
-          await subscription.cancel();
-          receivePort.close();
-          await db?.close();
-          db = null;
-        });
+    Future<bool> tableHasColumns(String table, Set<String> columns) async {
+      final rows = await database.select(
+        'PRAGMA table_info($table)',
+        const <Object?>[],
+      );
+      final existing =
+          rows
+              .map((row) => row['name']?.toString().toLowerCase())
+              .whereType<String>()
+              .toSet();
+      return columns.every((column) => existing.contains(column.toLowerCase()));
+    }
+
+    const requiredTables = <String>[
+      _localChessMigrationsTable,
+      localChessDatabasesTable,
+      localChessPlayersTable,
+      localChessEventsTable,
+      localChessSitesTable,
+      localChessGamesTable,
+      localChessTreeNodesTable,
+      localChessTreeMovesTable,
+      localChessPositionGamesTable,
+      localChessGameAnalysisTable,
+    ];
+    for (final table in requiredTables) {
+      if (!await tableExists(table)) {
+        await createLocalChessResqliteDatabaseSchema(database);
         return;
       }
-      if (message is _LocalChessImportWorkerWriteRequest) {
-        queue = queue.then((_) => handle(message));
-      }
-    });
-  } catch (_) {
-    await db?.close();
-    rethrow;
+    }
+    if (!await tableHasColumns(localChessDatabasesTable, const <String>{
+          'deleted_at_ms',
+          'tree_max_ply',
+          'player_enrichment_at_ms',
+          'content_fingerprint',
+        }) ||
+        !await tableHasColumns(localChessGamesTable, const <String>{
+          'pgn_hash',
+          'source_byte_start',
+          'source_byte_end',
+          'time_control_category',
+          'is_online',
+        }) ||
+        !await tableHasColumns(localChessPositionGamesTable, const <String>{
+          'next_uci',
+        })) {
+      await createLocalChessResqliteDatabaseSchema(database);
+      return;
+    }
   }
+
+  Future<LocalChessDatabaseRepository> writerRepositoryFor(
+    _LocalChessImportWorkerWriteRequest message,
+  ) async {
+    final ready = repository;
+    if (ready != null) return ready;
+
+    try {
+      sendStartupProgress(message, 0.01, 'Opening local database writer...');
+      final opened = await resqlite.Database.open(request.databaseFilePath);
+      db = opened;
+      sendStartupProgress(message, 0.02, 'Preparing local database writer...');
+      await _configureStandaloneLocalChessDatabase(opened);
+      sendStartupProgress(message, 0.03, 'Checking local database schema...');
+      await ensureWriterSchema(opened);
+      final next = LocalChessDatabaseRepository(database: () async => opened);
+      repository = next;
+      sendStartupProgress(message, 0.04, 'Local database writer ready.');
+      return next;
+    } catch (_) {
+      repository = null;
+      await db?.close();
+      db = null;
+      rethrow;
+    }
+  }
+
+  Future<void> handle(_LocalChessImportWorkerWriteRequest message) async {
+    try {
+      final writerRepository = await writerRepositoryFor(message);
+      switch (message) {
+        case _LocalChessImportWorkerBeginWrite():
+          await LocalChessDatabaseRepository._retryWhenSqliteBusy(
+            operation: 'begin imported PGN file',
+            context: <String, Object?>{'path': message.start.path},
+            action:
+                () => writerRepository._beginImportedFileNode(
+                  message.start,
+                  sourceLabel: message.sourceLabel,
+                  onProgress:
+                      (progress) => message.replyPort.send(
+                        _LocalChessImportWriterProgress(message.id, progress),
+                      ),
+                ),
+          );
+        case _LocalChessImportWorkerBatchWrite():
+          await LocalChessDatabaseRepository._retryWhenSqliteBusy(
+            operation: 'persist imported PGN game batch',
+            context: <String, Object?>{
+              'path': message.databasePath,
+              'games': message.games.length,
+            },
+            action:
+                () => writerRepository._persistImportedGameBatch(
+                  message.databasePath,
+                  message.games,
+                ),
+          );
+        case _LocalChessImportWorkerCompleteWrite():
+          await LocalChessDatabaseRepository._retryWhenSqliteBusy(
+            operation: 'complete imported PGN file',
+            context: <String, Object?>{'path': message.node.path},
+            action:
+                () => writerRepository._completeImportedFileNode(message.node),
+          );
+        case _LocalChessImportWorkerDiscardWrite():
+          await LocalChessDatabaseRepository._retryWhenSqliteBusy(
+            operation: 'discard imported PGN file',
+            context: <String, Object?>{'path': message.path},
+            action:
+                () => writerRepository._discardImportedFileNode(message.path),
+          );
+      }
+      message.replyPort.send(_LocalChessImportWorkerWriteAck(message.id));
+    } catch (error, stackTrace) {
+      message.replyPort.send(
+        _LocalChessImportWorkerWriteFailure(
+          message.id,
+          error.toString(),
+          stackTrace.toString(),
+        ),
+      );
+    }
+  }
+
+  subscription = receivePort.listen((message) {
+    if (message is _LocalChessImportWriterShutdown) {
+      queue = queue.whenComplete(() async {
+        await subscription.cancel();
+        receivePort.close();
+        await db?.close();
+        db = null;
+      });
+      return;
+    }
+    if (message is _LocalChessImportWorkerWriteRequest) {
+      queue = queue.then((_) => handle(message));
+    }
+  });
 }
 
 Future<void> _importSingleLocalChessFileWorker(
@@ -6514,6 +6724,12 @@ Future<void> _importSingleLocalChessFileWorker(
           ),
         );
       }
+      emit(
+        LocalChessScanProgress(
+          fraction: 0.985,
+          message: 'Saving local cache...',
+        ),
+      );
       await sendWrite(
         (id, replyPort) => _LocalChessImportWorkerCompleteWrite(
           id: id,
@@ -7729,51 +7945,17 @@ String? _normalizePlayerName(String? value) {
   return raw.replaceAll(RegExp(r'\s+'), ' ');
 }
 
-String? _timeControlCategory(Object? rawValue) {
-  final raw = rawValue?.toString().trim().toLowerCase();
-  if (raw == null || raw.isEmpty || raw == '?' || raw == '-') return null;
-  if (raw.contains('bullet') || raw.contains('blitz')) return 'blitz';
-  if (raw.contains('rapid')) return 'rapid';
-  if (raw.contains('classical') ||
-      raw.contains('classic') ||
-      raw.contains('standard')) {
-    return 'classical';
-  }
-  if (raw == 'timecontrol.blitz' || raw == 'time_control.blitz' || raw == 'b') {
-    return 'blitz';
-  }
-  if (raw == 'timecontrol.rapid' || raw == 'time_control.rapid' || raw == 'r') {
-    return 'rapid';
-  }
-  if (raw == 'timecontrol.classical' ||
-      raw == 'time_control.classical' ||
-      raw == 'c') {
-    return 'classical';
-  }
-
-  final baseSeconds = _timeControlBaseSeconds(raw);
-  if (baseSeconds == null) return null;
-  if (baseSeconds < 600) return 'blitz';
-  if (baseSeconds < 3600) return 'rapid';
-  return 'classical';
-}
-
-int? _timeControlBaseSeconds(String raw) {
-  var total = 0;
-  var found = false;
-  for (final segment in raw.split(':')) {
-    final clean = segment.trim();
-    if (clean.isEmpty) continue;
-    final slash = clean.indexOf('/');
-    var clock = slash >= 0 ? clean.substring(slash + 1) : clean;
-    final plus = clock.indexOf('+');
-    if (plus >= 0) clock = clock.substring(0, plus);
-    final seconds = int.tryParse(clock.trim());
-    if (seconds == null || seconds <= 0) continue;
-    total += seconds;
-    found = true;
-  }
-  return found ? total : null;
+String? _localGameTimeControlCategory({
+  Object? timeControl,
+  Object? headersJson,
+  Map<String, dynamic>? metadata,
+}) {
+  final data = metadata ?? _jsonMap(headersJson);
+  return classifyTimeControlCategory(
+    timeControl,
+    event: data['Event'],
+    site: data['Site'],
+  );
 }
 
 bool _inferLocalGameIsOnline({
@@ -7831,9 +8013,14 @@ String? _normalizedName(String? value) {
 String _normalizePlayerAliasForStats(String? value) {
   return (value ?? '')
       .toLowerCase()
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .replaceAll(',', '')
+      .replaceAll(RegExp(r'[\s,._-]+'), '')
       .trim();
+}
+
+String? _normalizeFideIdForStats(Object? value) {
+  final clean = value?.toString().trim().toLowerCase();
+  if (clean == null || clean.isEmpty) return null;
+  return clean;
 }
 
 String _firstMetadata(Map<String, dynamic> metadata, List<String> keys) {

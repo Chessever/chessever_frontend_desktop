@@ -13,6 +13,7 @@ import 'package:chessever/theme/app_theme.dart';
 const Color _kWin = kGreenColor;
 const Color _kDraw = Color(0xFF8B93A7);
 const Color _kLoss = kRedColor;
+const Color _kUnclassified = Color(0xFF465160);
 
 /// One selectable data source feeding the dashboard — a connected account's
 /// local PGN database or the deduped combined set. Selecting one re-scopes the
@@ -67,12 +68,14 @@ class PlayerStatsDashboard extends ConsumerStatefulWidget {
     super.key,
     required this.sources,
     required this.aliases,
+    this.playerFideId,
     this.revision = 0,
     this.onDownloadGames,
   });
 
   final List<PlayerStatsSource> sources;
   final List<String> aliases;
+  final String? playerFideId;
   final int revision;
   final VoidCallback? onDownloadGames;
 
@@ -104,6 +107,7 @@ class _PlayerStatsDashboardState extends ConsumerState<PlayerStatsDashboard> {
     final request = PlayerStatsRequest(
       databasePath: source.path,
       aliases: widget.aliases,
+      playerFideId: widget.playerFideId,
       revision: widget.revision,
       windowDays: _window.days,
     );
@@ -123,11 +127,12 @@ class _PlayerStatsDashboardState extends ConsumerState<PlayerStatsDashboard> {
         Expanded(
           child: async.when(
             loading: () => const _StatsMessage(spinner: true),
-            error: (error, _) => _StatsMessage(
-              icon: Icons.error_outline_rounded,
-              title: 'Could not compute statistics',
-              subtitle: '$error',
-            ),
+            error:
+                (error, _) => _StatsMessage(
+                  icon: Icons.error_outline_rounded,
+                  title: 'Could not compute statistics',
+                  subtitle: '$error',
+                ),
             data: (snapshot) {
               if (snapshot.isEmpty) {
                 return _StatsMessage(
@@ -265,9 +270,7 @@ class PlayerSourceChip extends StatelessWidget {
             color: selected ? accent.withValues(alpha: 0.16) : kBlack3Color,
             borderRadius: BorderRadius.circular(999),
             border: Border.all(
-              color: selected
-                  ? accent.withValues(alpha: 0.6)
-                  : kDividerColor,
+              color: selected ? accent.withValues(alpha: 0.6) : kDividerColor,
             ),
           ),
           child: Row(
@@ -276,7 +279,10 @@ class PlayerSourceChip extends StatelessWidget {
               Container(
                 width: 7,
                 height: 7,
-                decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                  color: accent,
+                  shape: BoxShape.circle,
+                ),
               ),
               const SizedBox(width: 7),
               Text(
@@ -311,7 +317,10 @@ class _StatsBody extends StatelessWidget {
         _ScorePanel(snapshot: snapshot),
         if (snapshot.ratingSeries.length >= 2) ...[
           const SizedBox(height: 14),
-          _RatingSection(spots: snapshot.ratingSeries),
+          _RatingSection(
+            spots: snapshot.ratingSeries,
+            timeControlCategory: snapshot.ratingTimeControlCategory,
+          ),
         ],
         const SizedBox(height: 14),
         _ColorSplitRow(snapshot: snapshot),
@@ -370,6 +379,9 @@ class _HeroStripe extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final winRate = snapshot.overall.scorePercent;
+    final ratingCategory = snapshot.ratingTimeControlCategory;
+    final ratingNowLabel =
+        ratingCategory == null ? 'Now' : '${_titleCase(ratingCategory)} now';
     final cards = <Widget>[
       _StatCard(
         icon: Icons.sports_score_outlined,
@@ -393,18 +405,20 @@ class _HeroStripe extends StatelessWidget {
         accent: const Color(0xFFE9A23B),
         value: snapshot.peakRating?.toString() ?? '—',
         label: 'Peak rating',
-        sub: snapshot.latestRating == null
-            ? 'No rated games'
-            : 'Now ${snapshot.latestRating}',
+        sub:
+            snapshot.latestRating == null
+                ? 'No classified rated games'
+                : '$ratingNowLabel ${snapshot.latestRating}',
       ),
       _StatCard(
         icon: Icons.military_tech_outlined,
         accent: const Color(0xFF5AA9E6),
         value: snapshot.performanceRating?.toString() ?? '—',
         label: 'Performance',
-        sub: snapshot.averageOpponentRating == null
-            ? 'Opponents unrated'
-            : 'vs avg ${snapshot.averageOpponentRating}',
+        sub:
+            snapshot.averageOpponentRating == null
+                ? 'Opponents unrated'
+                : 'vs avg ${snapshot.averageOpponentRating}',
       ),
     ];
     return Row(
@@ -637,15 +651,20 @@ class _Legend extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _RatingSection extends StatelessWidget {
-  const _RatingSection({required this.spots});
+  const _RatingSection({required this.spots, this.timeControlCategory});
 
   final List<PlayerRatingSpot> spots;
+  final String? timeControlCategory;
 
   @override
   Widget build(BuildContext context) {
     final points = _toPoints(spots);
     final latest = spots.last.rating;
     final peak = spots.map((s) => s.rating).reduce((a, b) => a > b ? a : b);
+    final title =
+        timeControlCategory == null
+            ? 'Rating progression'
+            : '${_titleCase(timeControlCategory!)} rating progression';
     return _Panel(
       accent: kPrimaryColor,
       child: Column(
@@ -653,7 +672,7 @@ class _RatingSection extends StatelessWidget {
         children: [
           Row(
             children: [
-              const _Eyebrow('Rating progression'),
+              _Eyebrow(title),
               const Spacer(),
               Text(
                 '$latest',
@@ -1082,7 +1101,7 @@ class _YearsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final maxGames = years
-        .map((y) => y.tally.games)
+        .map((y) => y.games)
         .fold<int>(1, (a, b) => a > b ? a : b);
     return _Panel(
       child: Column(
@@ -1096,9 +1115,7 @@ class _YearsPanel extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 for (final year in years)
-                  Expanded(
-                    child: _YearColumn(year: year, maxGames: maxGames),
-                  ),
+                  Expanded(child: _YearColumn(year: year, maxGames: maxGames)),
               ],
             ),
           ),
@@ -1117,13 +1134,15 @@ class _YearColumn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tally = year.tally;
-    final heightFactor = (tally.games / maxGames).clamp(0.04, 1.0);
+    final games = year.games;
+    final unclassified = (games - tally.games).clamp(0, games).toInt();
+    final heightFactor = (games / maxGames).clamp(0.04, 1.0).toDouble();
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: Column(
         children: [
           Text(
-            _formatInt(tally.games),
+            _formatInt(games),
             style: const TextStyle(
               color: kWhiteColor70,
               fontSize: 10,
@@ -1133,33 +1152,55 @@ class _YearColumn extends StatelessWidget {
           ),
           const SizedBox(height: 5),
           Expanded(
-            child: Align(
-              alignment: Alignment.bottomCenter,
-              child: FractionallySizedBox(
-                heightFactor: heightFactor,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: Column(
-                    children: [
-                      if (tally.wins > 0)
-                        Expanded(
-                          flex: tally.wins,
-                          child: const ColoredBox(color: _kWin),
-                        ),
-                      if (tally.draws > 0)
-                        Expanded(
-                          flex: tally.draws,
-                          child: const ColoredBox(color: _kDraw),
-                        ),
-                      if (tally.losses > 0)
-                        Expanded(
-                          flex: tally.losses,
-                          child: const ColoredBox(color: _kLoss),
-                        ),
-                    ],
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final availableWidth = constraints.maxWidth;
+                final targetWidth =
+                    (availableWidth * 0.48).clamp(6.0, 22.0).toDouble();
+                final barWidth =
+                    targetWidth > availableWidth ? availableWidth : targetWidth;
+                if (barWidth <= 0) return const SizedBox.shrink();
+                final barHeight =
+                    (constraints.maxHeight * heightFactor)
+                        .clamp(2.0, constraints.maxHeight)
+                        .toDouble();
+
+                return Align(
+                  alignment: Alignment.bottomCenter,
+                  child: SizedBox(
+                    key: ValueKey<String>('player-stats-year-bar-${year.year}'),
+                    width: barWidth,
+                    height: barHeight,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: Column(
+                        children: [
+                          if (tally.wins > 0)
+                            Expanded(
+                              flex: tally.wins,
+                              child: const ColoredBox(color: _kWin),
+                            ),
+                          if (tally.draws > 0)
+                            Expanded(
+                              flex: tally.draws,
+                              child: const ColoredBox(color: _kDraw),
+                            ),
+                          if (tally.losses > 0)
+                            Expanded(
+                              flex: tally.losses,
+                              child: const ColoredBox(color: _kLoss),
+                            ),
+                          if (unclassified > 0)
+                            Expanded(
+                              flex: unclassified,
+                              child: const ColoredBox(color: _kUnclassified),
+                            ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
           ),
           const SizedBox(height: 6),
@@ -1224,9 +1265,8 @@ class _HistogramBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final factor = bucket.count == 0
-        ? 0.0
-        : (bucket.count / maxCount).clamp(0.05, 1.0);
+    final factor =
+        bucket.count == 0 ? 0.0 : (bucket.count / maxCount).clamp(0.05, 1.0);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 5),
       child: Column(
@@ -1384,12 +1424,14 @@ class _Panel extends StatelessWidget {
         color: kBlack2Color,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: accent == null
-              ? kDividerColor
-              : accent!.withValues(alpha: 0.45),
+          color:
+              accent == null ? kDividerColor : accent!.withValues(alpha: 0.45),
         ),
       ),
-      child: Padding(padding: padding ?? const EdgeInsets.all(16), child: child),
+      child: Padding(
+        padding: padding ?? const EdgeInsets.all(16),
+        child: child,
+      ),
     );
   }
 }
@@ -1456,14 +1498,14 @@ class _Pill extends StatelessWidget {
           duration: const Duration(milliseconds: 120),
           padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
           decoration: BoxDecoration(
-            color: selected
-                ? kPrimaryColor.withValues(alpha: 0.15)
-                : kBlack3Color,
+            color:
+                selected ? kPrimaryColor.withValues(alpha: 0.15) : kBlack3Color,
             borderRadius: BorderRadius.circular(999),
             border: Border.all(
-              color: selected
-                  ? kPrimaryColor.withValues(alpha: 0.55)
-                  : kDividerColor,
+              color:
+                  selected
+                      ? kPrimaryColor.withValues(alpha: 0.55)
+                      : kDividerColor,
             ),
           ),
           child: Text(
@@ -1505,7 +1547,10 @@ class _StatsMessage extends StatelessWidget {
         child: SizedBox(
           width: 22,
           height: 22,
-          child: CircularProgressIndicator(strokeWidth: 2, color: kPrimaryColor),
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: kPrimaryColor,
+          ),
         ),
       );
     }

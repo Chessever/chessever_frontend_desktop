@@ -2,6 +2,7 @@ import 'package:dartchess/dartchess.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
+import 'package:chessever/desktop/services/time_control_classifier.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
@@ -1197,7 +1198,7 @@ String? _playerColorForRow(Map<String, dynamic> row, String playerId) {
 }
 
 bool _timeControlMatches(Object? rawValue, TimeControl wanted) {
-  return _timeControlCategory(rawValue) == wanted.name.toLowerCase();
+  return classifyTimeControlCategory(rawValue) == wanted.name.toLowerCase();
 }
 
 String _resultCode(Object? value) {
@@ -1336,53 +1337,6 @@ String? _normalizePlayerName(String? value) {
   final raw = value?.trim().toLowerCase();
   if (raw == null || raw.isEmpty || raw == '?') return null;
   return raw.replaceAll(RegExp(r'\s+'), ' ');
-}
-
-String? _timeControlCategory(Object? rawValue) {
-  final raw = rawValue?.toString().trim().toLowerCase();
-  if (raw == null || raw.isEmpty || raw == '?' || raw == '-') return null;
-  if (raw.contains('bullet') || raw.contains('blitz')) return 'blitz';
-  if (raw.contains('rapid')) return 'rapid';
-  if (raw.contains('classical') ||
-      raw.contains('classic') ||
-      raw.contains('standard')) {
-    return 'classical';
-  }
-  if (raw == 'timecontrol.blitz' || raw == 'time_control.blitz' || raw == 'b') {
-    return 'blitz';
-  }
-  if (raw == 'timecontrol.rapid' || raw == 'time_control.rapid' || raw == 'r') {
-    return 'rapid';
-  }
-  if (raw == 'timecontrol.classical' ||
-      raw == 'time_control.classical' ||
-      raw == 'c') {
-    return 'classical';
-  }
-
-  final baseSeconds = _timeControlBaseSeconds(raw);
-  if (baseSeconds == null) return null;
-  if (baseSeconds < 600) return 'blitz';
-  if (baseSeconds < 3600) return 'rapid';
-  return 'classical';
-}
-
-int? _timeControlBaseSeconds(String raw) {
-  var total = 0;
-  var found = false;
-  for (final segment in raw.split(':')) {
-    final clean = segment.trim();
-    if (clean.isEmpty) continue;
-    final slash = clean.indexOf('/');
-    var clock = slash >= 0 ? clean.substring(slash + 1) : clean;
-    final plus = clock.indexOf('+');
-    if (plus >= 0) clock = clock.substring(0, plus);
-    final seconds = int.tryParse(clock.trim());
-    if (seconds == null || seconds <= 0) continue;
-    total += seconds;
-    found = true;
-  }
-  return found ? total : null;
 }
 
 int _readInt(Object? value) {

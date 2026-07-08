@@ -18,12 +18,14 @@ class PlayerStatsRequest {
   const PlayerStatsRequest({
     required this.databasePath,
     required this.aliases,
+    this.playerFideId,
     this.revision = 0,
     this.windowDays,
   });
 
   final String databasePath;
   final List<String> aliases;
+  final String? playerFideId;
   final int revision;
   final int? windowDays;
 
@@ -31,14 +33,20 @@ class PlayerStatsRequest {
   bool operator ==(Object other) {
     return other is PlayerStatsRequest &&
         other.databasePath == databasePath &&
+        other.playerFideId == playerFideId &&
         other.revision == revision &&
         other.windowDays == windowDays &&
         listEquals(other.aliases, aliases);
   }
 
   @override
-  int get hashCode =>
-      Object.hash(databasePath, revision, windowDays, Object.hashAll(aliases));
+  int get hashCode => Object.hash(
+    databasePath,
+    playerFideId,
+    revision,
+    windowDays,
+    Object.hashAll(aliases),
+  );
 }
 
 final playerStatsProvider = FutureProvider.autoDispose
@@ -47,6 +55,7 @@ final playerStatsProvider = FutureProvider.autoDispose
       return repository.computePlayerStats(
         databasePath: request.databasePath,
         aliases: request.aliases,
+        playerFideId: request.playerFideId,
         windowDays: request.windowDays,
       );
     });

@@ -69,10 +69,13 @@ class PlayerOpponentStat {
 
 @immutable
 class PlayerYearStat {
-  const PlayerYearStat({required this.year, required this.tally});
+  const PlayerYearStat({required this.year, required this.tally, this.total});
 
   final int year;
   final PlayerResultTally tally;
+  final int? total;
+
+  int get games => total ?? tally.games;
 }
 
 @immutable
@@ -105,6 +108,7 @@ class PlayerStatsSnapshot {
     required this.years,
     required this.lengthBuckets,
     required this.timeControls,
+    this.ratingTimeControlCategory,
     this.peakRating,
     this.latestRating,
     this.averageOpponentRating,
@@ -120,6 +124,7 @@ class PlayerStatsSnapshot {
   final List<PlayerYearStat> years;
   final List<PlayerLengthBucket> lengthBuckets;
   final List<PlayerTimeControlStat> timeControls;
+  final String? ratingTimeControlCategory;
   final int? peakRating;
   final int? latestRating;
   final int? averageOpponentRating;
@@ -129,8 +134,7 @@ class PlayerStatsSnapshot {
   bool get isEmpty => games == 0;
   int get decisiveGames => overall.wins + overall.losses;
 
-  double? get decisiveRate =>
-      games == 0 ? null : (decisiveGames / games) * 100;
+  double? get decisiveRate => games == 0 ? null : (decisiveGames / games) * 100;
 
   static const empty = PlayerStatsSnapshot(
     overall: PlayerResultTally.empty,

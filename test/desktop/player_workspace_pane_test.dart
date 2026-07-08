@@ -10,6 +10,7 @@ import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_workspace_repository.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
+import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -67,8 +68,10 @@ void main() {
     });
     final lichessPath = '${temp.path}/lichess.pgn';
     final chessComPath = '${temp.path}/chesscom.pgn';
+    final combinedPath = '${temp.path}/combined.pgn';
     File(lichessPath).writeAsStringSync(_paneTestPgn('lichess_user'));
     File(chessComPath).writeAsStringSync(_paneTestPgn('chesscom_user'));
+    File(combinedPath).writeAsStringSync(_paneTestPgn('combined_user'));
 
     final repository = _PaneFakePlayerWorkspaceRepository(
       snapshot: PlayerWorkspaceSnapshot(
@@ -91,6 +94,8 @@ void main() {
                 gameCount: 3,
               ),
             },
+            combinedPgnPath: combinedPath,
+            combinedGameCount: 5,
           ),
         ],
       ),
@@ -98,6 +103,7 @@ void main() {
     final localRepository = _PaneFakeLocalChessDatabaseRepository({
       lichessPath: _paneTreeIndex(path: lichessPath, gameCount: 2),
       chessComPath: _paneTreeIndex(path: chessComPath, gameCount: 3),
+      combinedPath: _paneTreeIndex(path: combinedPath, gameCount: 5),
     });
 
     await tester.binding.setSurfaceSize(const Size(1200, 800));
@@ -109,6 +115,7 @@ void main() {
       ProviderScope(
         overrides: [
           playerWorkspaceRepositoryProvider.overrideWithValue(repository),
+          _playerWorkspaceOverride(repository),
           localChessDatabaseRepositoryProvider.overrideWithValue(
             localRepository,
           ),
@@ -140,7 +147,9 @@ void main() {
     await tester.pump();
 
     expect(find.text('Opening trees'), findsOneWidget);
-    expect(find.text('Tree'), findsNWidgets(2));
+    expect(find.text('Tree'), findsNWidgets(3));
+    expect(find.text('Prep Target Combined'), findsOneWidget);
+    expect(find.text('5 games · Both colours'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
@@ -211,6 +220,7 @@ Future<void> _pumpAndConnectOnlineAccount(
     ProviderScope(
       overrides: [
         playerWorkspaceRepositoryProvider.overrideWithValue(repository),
+        _playerWorkspaceOverride(repository),
       ],
       child: const MaterialApp(
         home: SizedBox(width: 1200, height: 800, child: PlayerWorkspacePane()),
@@ -240,6 +250,18 @@ Future<void> _pumpAndConnectOnlineAccount(
 
   await tester.tap(find.text('Add 1 username'));
   await tester.pumpAndSettle();
+}
+
+Override _playerWorkspaceOverride(
+  _PaneFakePlayerWorkspaceRepository repository,
+) {
+  return playerWorkspaceProvider.overrideWith(
+    (ref) => PlayerWorkspaceNotifier(
+      workspaceRepository: repository,
+      gamebaseRepository: ref.watch(gamebaseRepositoryProvider),
+      localRepository: ref.watch(localChessDatabaseRepositoryProvider),
+    ),
+  );
 }
 
 class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
@@ -371,6 +393,7 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     required String sourceLabel,
     required String pgn,
     required Iterable<String> playerAliases,
+    String? playerFideId,
     bool replaceExisting = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,

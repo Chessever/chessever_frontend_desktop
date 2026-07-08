@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -11,6 +12,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/screens/gamebase/models/gamebase_game.dart';
@@ -878,6 +880,14 @@ void main() {
         progress.map((event) => event.message),
         contains('Importing games...'),
       );
+      expect(
+        progress.map((event) => event.message),
+        contains('Opening local database writer...'),
+      );
+      expect(
+        progress.map((event) => event.message),
+        contains('Local database writer ready.'),
+      );
       expect(await _count(db, 'local_chess_databases'), 1);
       expect(await _count(db, 'local_chess_games'), 5);
       expect(await _count(db, 'local_chess_tree_nodes'), 0);
@@ -1018,6 +1028,53 @@ void main() {
       addTearDown(workerDb.close);
       expect(await _count(workerDb, 'local_chess_databases'), 1);
       expect(await _count(workerDb, 'local_chess_games'), 2);
+    },
+  );
+
+  test(
+    'canceled worker import does not poison same-path retry or write queue',
+    () async {
+      final pgnFile = File('${temp.path}/canceled-retry.pgn');
+      await pgnFile.writeAsString(_samplePgn);
+      final token = OperationCancellationToken();
+      final pathLookupStarted = Completer<void>();
+      final blockedPathLookup = Completer<String>();
+      final blockedRepo = LocalChessDatabaseRepository(
+        database: () async {
+          throw StateError('database should not open before path resolver');
+        },
+        databaseFilePath: () {
+          if (!pathLookupStarted.isCompleted) pathLookupStarted.complete();
+          return blockedPathLookup.future;
+        },
+      );
+
+      final firstImport = blockedRepo.importSingleFileSource(
+        path: pgnFile.path,
+        cancellationToken: token,
+      );
+      await pathLookupStarted.future.timeout(const Duration(seconds: 5));
+      token.cancel();
+
+      await expectLater(
+        firstImport,
+        throwsA(isA<OperationCanceledException>()),
+      );
+
+      final retryRepo = LocalChessDatabaseRepository(
+        database: () async => db,
+        cachedFileNodeGamePreviewLimit: 1,
+      );
+      final retried = await retryRepo
+          .importSingleFileSource(path: pgnFile.path)
+          .timeout(const Duration(seconds: 5));
+
+      expect(retried, isNotNull);
+      final fileNode = retried!.root.singlePlayableDatabaseInSubtree!;
+      expect(fileNode.gameCount, 2);
+      expect(fileNode.games, hasLength(1));
+      expect(await _count(db, 'local_chess_databases'), 1);
+      expect(await _count(db, 'local_chess_games'), 2);
     },
   );
 
@@ -2611,6 +2668,114 @@ void main() {
       expect(disjoint.gameCount, lichess.gameCount + otb.gameCount);
     },
   );
+
+  test(
+    'resultStatsForDatabases uses FIDE id before names when available',
+    () async {
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await _seedStatsDatabase(
+        db,
+        databaseId: 'srcFide',
+        player: 'Durarbayli,Vasif',
+        playerFideId: '13402935',
+        games: const <_StatsGame>[
+          _StatsGame(
+            hash: 'fide-1',
+            opponent: 'Nakamura,Hi',
+            opponentFideId: '2016192',
+            result: '1-0',
+          ),
+          _StatsGame(
+            hash: 'fide-2',
+            opponent: 'Nakamura,Hi',
+            opponentFideId: '2016192',
+            result: '0-1',
+            aliasIsWhite: false,
+          ),
+        ],
+      );
+
+      final stats = await repo.localDatabaseResultStats(
+        databasePath: 'srcFide',
+        playerAliases: const <String>['GM Vasif Durarbayli'],
+        playerFideId: '13402935',
+      );
+
+      expect(stats.gameCount, 2);
+      expect(stats.winCount, 2);
+      expect(stats.lossCount, 0);
+    },
+  );
+
+  test(
+    'resultStatsForDatabases includes no-FIDE source rows by alias fallback',
+    () async {
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await _seedStatsDatabase(
+        db,
+        databaseId: 'srcFide',
+        player: 'Durarbayli,Vasif',
+        playerFideId: '13402935',
+        games: const <_StatsGame>[
+          _StatsGame(
+            hash: 'mixed-fide-1',
+            opponent: 'Nakamura,Hi',
+            opponentFideId: '2016192',
+            result: '1-0',
+          ),
+          _StatsGame(
+            hash: 'mixed-fide-2',
+            opponent: 'Nakamura,Hi',
+            opponentFideId: '2016192',
+            result: '0-1',
+            aliasIsWhite: false,
+          ),
+        ],
+      );
+      await _seedStatsDatabase(
+        db,
+        databaseId: 'srcChessCom',
+        player: 'Vasif_Durarbayli',
+        games: const <_StatsGame>[
+          _StatsGame(
+            hash: 'mixed-no-fide-1',
+            opponent: 'Carlsen, Magnus',
+            result: '1/2-1/2',
+          ),
+          _StatsGame(
+            hash: 'mixed-no-fide-2',
+            opponent: 'Carlsen, Magnus',
+            result: '0-1',
+            aliasIsWhite: false,
+          ),
+        ],
+      );
+      await _seedStatsDatabase(
+        db,
+        databaseId: 'srcWrongFide',
+        player: 'Vasif Durarbayli',
+        playerFideId: '999999',
+        games: const <_StatsGame>[
+          _StatsGame(
+            hash: 'mixed-wrong-fide-1',
+            opponent: 'Firouzja, Alireza',
+            result: '1-0',
+          ),
+        ],
+      );
+
+      final stats = await repo.resultStatsForDatabases(
+        databasePaths: const <String>['srcFide', 'srcChessCom', 'srcWrongFide'],
+        playerAliases: const <String>['Vasif Durarbayli'],
+        playerFideId: '13402935',
+      );
+
+      expect(stats.gameCount, 4);
+      expect(stats.winCount, 3);
+      expect(stats.drawCount, 1);
+      expect(stats.lossCount, 0);
+    },
+  );
 }
 
 Future<int> _count(resqlite.Database db, String table) async {
@@ -2623,12 +2788,14 @@ class _StatsGame {
     required this.hash,
     required this.opponent,
     required this.result,
+    this.opponentFideId,
     this.aliasIsWhite = true,
   });
 
   final String hash;
   final String opponent;
   final String result;
+  final String? opponentFideId;
   final bool aliasIsWhite;
 }
 
@@ -2639,6 +2806,7 @@ Future<void> _seedStatsDatabase(
   resqlite.Database db, {
   required String databaseId,
   required String player,
+  String? playerFideId,
   required List<_StatsGame> games,
 }) async {
   final now = DateTime.now().millisecondsSinceEpoch;
@@ -2667,12 +2835,22 @@ Future<void> _seedStatsDatabase(
     final opponent = await playerId(game.opponent);
     final whiteId = game.aliasIsWhite ? me : opponent;
     final blackId = game.aliasIsWhite ? opponent : me;
+    final headersJson = jsonEncode(<String, Object?>{
+      if (game.aliasIsWhite && playerFideId != null)
+        'WhiteFideId': playerFideId,
+      if (!game.aliasIsWhite && playerFideId != null)
+        'BlackFideId': playerFideId,
+      if (game.aliasIsWhite && game.opponentFideId != null)
+        'BlackFideId': game.opponentFideId,
+      if (!game.aliasIsWhite && game.opponentFideId != null)
+        'WhiteFideId': game.opponentFideId,
+    });
     await db.execute(
       'INSERT INTO local_chess_games'
       '(id, database_id, white_id, black_id, result, raw_pgn, pgn_hash, '
-      'source_path, source_relative_path, file_name, index_in_file, '
+      'headers_json, source_path, source_relative_path, file_name, index_in_file, '
       'file_game_count) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       <Object?>[
         '$databaseId-$i',
         databaseId,
@@ -2681,6 +2859,7 @@ Future<void> _seedStatsDatabase(
         game.result,
         '[Event "seed"]',
         game.hash,
+        headersJson,
         databaseId,
         '',
         'seed.pgn',
@@ -3215,7 +3394,7 @@ const _filterPgn = '''
 [BlackFideId "2016192"]
 [WhiteElo "2830"]
 [BlackElo "2802"]
-[TimeControl "600+0"]
+[TimeControl "900+0"]
 [Result "1-0"]
 
 1. e4 e5 2. Nf3 Nc6 1-0

@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
 import 'package:chessever/desktop/services/local_source_deletion.dart';
@@ -31,31 +32,163 @@ const int _chessEverPageSize = 1000;
 const int _chessEverEmbeddedPgnBatchSize = 200;
 const int _chessEverHydrateConcurrency = 16;
 const Duration _chessEverHydrationTimeout = Duration(seconds: 20);
+const Duration _importStatsTimeout = Duration(seconds: 8);
 
 typedef PlayerWorkspaceProgress =
     void Function(String message, double? progress);
+typedef PlayerWorkspaceSupportDirectoryResolver = Future<Directory> Function();
 
 class PlayerWorkspaceRepository {
   PlayerWorkspaceRepository({
     AppDatabase? appDatabase,
     http.Client? client,
     Duration? chessEverHydrationTimeout,
+    Duration? importStatsTimeout,
+    PlayerWorkspaceSupportDirectoryResolver? supportDirectory,
   }) : chessEverHydrationTimeout =
            chessEverHydrationTimeout ?? _chessEverHydrationTimeout,
+       importStatsTimeout = importStatsTimeout ?? _importStatsTimeout,
        _appDatabase = appDatabase ?? AppDatabase.instance,
-       _client = client ?? http.Client();
+       _client = client ?? http.Client(),
+       _supportDirectory = supportDirectory ?? getApplicationSupportDirectory;
 
   final AppDatabase _appDatabase;
   final http.Client _client;
   final Duration chessEverHydrationTimeout;
+  final Duration importStatsTimeout;
+  final PlayerWorkspaceSupportDirectoryResolver _supportDirectory;
 
   Future<PlayerWorkspaceSnapshot> loadSnapshot() async {
     final raw = await _appDatabase.getJson<Object?>(_workspaceStorageKey);
-    return PlayerWorkspaceSnapshot.fromJson(raw);
+    final snapshot = PlayerWorkspaceSnapshot.fromJson(raw);
+    final support = await _supportDirectory();
+    localChessLog.info(
+      'Player workspace storage root',
+      context: <String, Object?>{'root': support.path},
+    );
+    final normalized = await _normalizeGeneratedPathsForCurrentSupportRoot(
+      snapshot,
+    );
+    if (normalized.changed) {
+      await saveSnapshot(normalized.snapshot);
+      localChessLog.info(
+        'Player workspace generated paths rebased',
+        context: <String, Object?>{'root': support.path},
+      );
+    }
+    return normalized.snapshot;
   }
 
   Future<void> saveSnapshot(PlayerWorkspaceSnapshot snapshot) async {
     await _appDatabase.setJson(_workspaceStorageKey, snapshot.toJson());
+  }
+
+  @visibleForTesting
+  Future<PlayerWorkspaceSnapshot> normalizeGeneratedPathsForCurrentSupportRoot(
+    PlayerWorkspaceSnapshot snapshot,
+  ) async {
+    return (await _normalizeGeneratedPathsForCurrentSupportRoot(
+      snapshot,
+    )).snapshot;
+  }
+
+  Future<({PlayerWorkspaceSnapshot snapshot, bool changed})>
+  _normalizeGeneratedPathsForCurrentSupportRoot(
+    PlayerWorkspaceSnapshot snapshot,
+  ) async {
+    var changed = false;
+    final players = <PlayerWorkspacePlayer>[];
+    for (final player in snapshot.players) {
+      var playerChanged = false;
+      final accounts = <PlayerWorkspaceSource, PlayerWorkspaceAccount>{};
+      for (final entry in player.accounts.entries) {
+        final normalized = await _normalizeGeneratedWorkspaceAccountPath(
+          playerId: player.id,
+          account: entry.value,
+        );
+        accounts[entry.key] = normalized;
+        playerChanged = playerChanged || !identical(normalized, entry.value);
+      }
+
+      final additionalAccounts = <PlayerWorkspaceAccount>[];
+      for (final account in player.additionalAccounts) {
+        final normalized = await _normalizeGeneratedWorkspaceAccountPath(
+          playerId: player.id,
+          account: account,
+        );
+        additionalAccounts.add(normalized);
+        playerChanged = playerChanged || !identical(normalized, account);
+      }
+
+      final combinedPgnPath = await _normalizeGeneratedWorkspacePath(
+        playerId: player.id,
+        storedPath: player.combinedPgnPath,
+      );
+      playerChanged =
+          playerChanged || combinedPgnPath != player.combinedPgnPath;
+
+      players.add(
+        playerChanged
+            ? player.copyWith(
+              accounts: Map.unmodifiable(accounts),
+              additionalAccounts: List.unmodifiable(additionalAccounts),
+              combinedPgnPath: combinedPgnPath,
+            )
+            : player,
+      );
+      changed = changed || playerChanged;
+    }
+
+    if (!changed) return (snapshot: snapshot, changed: false);
+    return (
+      snapshot: PlayerWorkspaceSnapshot(
+        players: List.unmodifiable(players),
+        selectedPlayerId: snapshot.selectedPlayerId,
+      ),
+      changed: true,
+    );
+  }
+
+  Future<PlayerWorkspaceAccount> _normalizeGeneratedWorkspaceAccountPath({
+    required String playerId,
+    required PlayerWorkspaceAccount account,
+  }) async {
+    final normalized = await _normalizeGeneratedWorkspacePath(
+      playerId: playerId,
+      storedPath: account.pgnPath,
+    );
+    if (normalized == account.pgnPath) return account;
+    return account.copyWith(pgnPath: normalized);
+  }
+
+  Future<String?> _normalizeGeneratedWorkspacePath({
+    required String playerId,
+    required String? storedPath,
+  }) async {
+    final clean = storedPath?.trim();
+    if (clean == null || clean.isEmpty) return storedPath;
+    final relativeParts = _generatedWorkspaceRelativeParts(
+      playerId: playerId,
+      storedPath: clean,
+    );
+    if (relativeParts == null || relativeParts.isEmpty) return storedPath;
+
+    final currentDir = await _playerWorkspaceDirectory(playerId, create: false);
+    final nextPath = p.normalize(
+      p.joinAll(<String>[currentDir.path, ...relativeParts]),
+    );
+    final currentPath = p.normalize(clean);
+    if (_samePath(currentPath, nextPath)) return nextPath;
+
+    final nextFile = File(nextPath);
+    if (!await nextFile.exists()) {
+      final currentFile = File(currentPath);
+      if (await currentFile.exists()) {
+        await nextFile.parent.create(recursive: true);
+        await currentFile.copy(nextPath);
+      }
+    }
+    return nextPath;
   }
 
   Future<String> sourcePgnPath({
@@ -686,6 +819,7 @@ class PlayerWorkspaceRepository {
     required String sourceLabel,
     required String pgn,
     required Iterable<String> playerAliases,
+    String? playerFideId,
     bool replaceExisting = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
@@ -719,14 +853,17 @@ class PlayerWorkspaceRepository {
             (progress) => onProgress?.call(progress.message, progress.fraction),
       );
       cancellationToken?.throwIfCanceled();
+      onProgress?.call('Finalizing $sourceLabel...', 0.99);
       final stats = await _statsForImportedLocalDatabase(
         localRepository: localRepository,
         path: path,
         playerAliases: playerAliases,
+        playerFideId: playerFideId,
         fallbackGameCount: _sourceGameCount(
           source,
           fallback: countPgnGames(pgn),
         ),
+        timeout: importStatsTimeout,
       );
       return PlayerWorkspaceImportResult(
         path: path,
@@ -744,6 +881,7 @@ class PlayerWorkspaceRepository {
     final prepared = await _preparePgnImport(
       pgn: pgn,
       playerAliases: playerAliases,
+      playerFideId: playerFideId,
     );
     cancellationToken?.throwIfCanceled();
 
@@ -755,7 +893,9 @@ class PlayerWorkspaceRepository {
         localRepository: localRepository,
         path: path,
         playerAliases: playerAliases,
+        playerFideId: playerFideId,
         fallbackGameCount: _sourceGameCount(source),
+        timeout: importStatsTimeout,
       );
       return PlayerWorkspaceImportResult(
         path: path,
@@ -781,6 +921,7 @@ class PlayerWorkspaceRepository {
         sourceLabel: sourceLabel,
         pgn: pgn,
         playerAliases: playerAliases,
+        playerFideId: playerFideId,
         replaceExisting: true,
         onProgress: onProgress,
         cancellationToken: cancellationToken,
@@ -805,11 +946,17 @@ class PlayerWorkspaceRepository {
     final source = await localRepository.loadFreshSource(<String>[
       path,
     ], sourceLabel: sourceLabel);
+    onProgress?.call('Finalizing $sourceLabel...', 0.99);
     final stats = await _statsForImportedLocalDatabase(
       localRepository: localRepository,
       path: file.path,
       playerAliases: playerAliases,
-      fallbackGameCount: prepared.stats.gameCount,
+      playerFideId: playerFideId,
+      fallbackGameCount: _sourceGameCount(
+        source,
+        fallback: prepared.stats.gameCount,
+      ),
+      timeout: importStatsTimeout,
     );
     return PlayerWorkspaceImportResult(
       path: path,
@@ -851,6 +998,7 @@ class PlayerWorkspaceRepository {
       sourcePaths: paths,
       combinedPath: combinedPath,
       playerAliases: playerAliases,
+      playerFideId: playerFideId,
     );
     cancellationToken?.throwIfCanceled();
     final source = await localRepository.importSingleFileSource(
@@ -861,6 +1009,7 @@ class PlayerWorkspaceRepository {
           (progress) => onProgress?.call(progress.message, progress.fraction),
     );
     cancellationToken?.throwIfCanceled();
+    onProgress?.call('Finalizing combined database...', 0.99);
     // Compute the Combined numbers directly from the union of the player's
     // source databases (deduplicated by PGN fingerprint) rather than from the
     // freshly re-imported combined file. This is the same counting method the
@@ -868,19 +1017,22 @@ class PlayerWorkspaceRepository {
     // number of distinct games across sources and — for disjoint sources —
     // sums the per-source counts, regardless of whether the physical combined
     // database is momentarily stale.
-    final combinedStats = await localRepository.resultStatsForDatabases(
+    final combinedStats = await _statsForLocalDatabases(
+      localRepository: localRepository,
       databasePaths: paths,
       playerAliases: playerAliases,
+      playerFideId: playerFideId,
+      fallbackGameCount: _sourceGameCount(
+        source,
+        fallback: prepared.stats.gameCount,
+      ),
+      timeout: importStatsTimeout,
     );
-    final combinedGameCount =
-        combinedStats.gameCount > 0
-            ? combinedStats.gameCount
-            : _sourceGameCount(source, fallback: prepared.stats.gameCount);
     return PlayerWorkspaceImportResult(
       path: prepared.path,
       source: source,
       stats: PlayerWorkspaceImportStats(
-        gameCount: combinedGameCount,
+        gameCount: combinedStats.gameCount,
         newGameCount: prepared.stats.gameCount,
         winCount: combinedStats.winCount,
         drawCount: combinedStats.drawCount,
@@ -893,7 +1045,7 @@ class PlayerWorkspaceRepository {
     String playerId, {
     bool create = true,
   }) async {
-    final support = await getApplicationSupportDirectory();
+    final support = await _supportDirectory();
     final dir = Directory(
       p.join(support.path, 'player-workspace', _safeFilePart(playerId)),
     );
@@ -1579,12 +1731,17 @@ class _PreparedCombinedPgnImport {
 Future<_PreparedPgnImport> _preparePgnImport({
   required String pgn,
   required Iterable<String> playerAliases,
+  String? playerFideId,
 }) {
   final aliases = playerAliases.toList(growable: false);
-  return Isolate.run(() => _preparePgnImportSync(pgn, aliases));
+  return Isolate.run(() => _preparePgnImportSync(pgn, aliases, playerFideId));
 }
 
-_PreparedPgnImport _preparePgnImportSync(String pgn, List<String> aliases) {
+_PreparedPgnImport _preparePgnImportSync(
+  String pgn,
+  List<String> aliases,
+  String? playerFideId,
+) {
   final chunks = splitPgnGames(pgn);
   final seen = <String>{};
   final games = <_PreparedPgnGame>[];
@@ -1595,7 +1752,11 @@ _PreparedPgnImport _preparePgnImportSync(String pgn, List<String> aliases) {
     if (!seen.add(fingerprint)) continue;
     games.add(_PreparedPgnGame(pgn: trimmed, fingerprint: fingerprint));
   }
-  final stats = analyzePgnStats(games.map((game) => game.pgn), aliases);
+  final stats = analyzePgnStats(
+    games.map((game) => game.pgn),
+    aliases,
+    playerFideId: playerFideId,
+  );
   return _PreparedPgnImport(
     games: List<_PreparedPgnGame>.unmodifiable(games),
     stats: stats,
@@ -1606,11 +1767,17 @@ Future<_PreparedCombinedPgnImport> _prepareCombinedPgnImport({
   required Iterable<String> sourcePaths,
   required String combinedPath,
   required Iterable<String> playerAliases,
+  String? playerFideId,
 }) {
   final paths = sourcePaths.toList(growable: false);
   final aliases = playerAliases.toList(growable: false);
   return Isolate.run(
-    () => _prepareCombinedPgnImportSync(paths, combinedPath, aliases),
+    () => _prepareCombinedPgnImportSync(
+      paths,
+      combinedPath,
+      aliases,
+      playerFideId,
+    ),
   );
 }
 
@@ -1618,6 +1785,7 @@ _PreparedCombinedPgnImport _prepareCombinedPgnImportSync(
   List<String> paths,
   String combinedPath,
   List<String> aliases,
+  String? playerFideId,
 ) {
   final output = File(combinedPath);
   output.parent.createSync(recursive: true);
@@ -1626,7 +1794,7 @@ _PreparedCombinedPgnImport _prepareCombinedPgnImportSync(
   final temp = File(tempPath);
   final writer = temp.openSync(mode: FileMode.write);
   final seen = <String>{};
-  final stats = _PgnStatsCounter(aliases);
+  final stats = _PgnStatsCounter(aliases, playerFideId: playerFideId);
   var wroteAny = false;
   try {
     for (final path in paths) {
@@ -1665,21 +1833,75 @@ Future<PlayerWorkspaceImportStats> _statsForImportedLocalDatabase({
   required LocalChessDatabaseRepository localRepository,
   required String path,
   required Iterable<String> playerAliases,
+  String? playerFideId,
   required int fallbackGameCount,
+  required Duration timeout,
 }) async {
-  final stats = await localRepository.localDatabaseResultStats(
-    databasePath: path,
-    playerAliases: playerAliases,
+  return _loadImportStatsWithFallback(
+    contextPath: path,
+    fallbackGameCount: fallbackGameCount,
+    timeout: timeout,
+    loadStats:
+        () => localRepository.localDatabaseResultStats(
+          databasePath: path,
+          playerAliases: playerAliases,
+          playerFideId: playerFideId,
+        ),
   );
-  if (stats.gameCount <= 0 && fallbackGameCount > 0) {
+}
+
+Future<PlayerWorkspaceImportStats> _statsForLocalDatabases({
+  required LocalChessDatabaseRepository localRepository,
+  required Iterable<String> databasePaths,
+  required Iterable<String> playerAliases,
+  String? playerFideId,
+  required int fallbackGameCount,
+  required Duration timeout,
+}) {
+  final paths = databasePaths.toList(growable: false);
+  return _loadImportStatsWithFallback(
+    contextPath: paths.join('|'),
+    fallbackGameCount: fallbackGameCount,
+    timeout: timeout,
+    loadStats:
+        () => localRepository.resultStatsForDatabases(
+          databasePaths: paths,
+          playerAliases: playerAliases,
+          playerFideId: playerFideId,
+        ),
+  );
+}
+
+Future<PlayerWorkspaceImportStats> _loadImportStatsWithFallback({
+  required String contextPath,
+  required int fallbackGameCount,
+  required Duration timeout,
+  required Future<LocalChessDatabaseResultStats> Function() loadStats,
+}) async {
+  try {
+    final stats = await loadStats().timeout(timeout);
+    if (stats.gameCount <= 0 && fallbackGameCount > 0) {
+      return PlayerWorkspaceImportStats(gameCount: fallbackGameCount);
+    }
+    return PlayerWorkspaceImportStats(
+      gameCount: stats.gameCount,
+      winCount: stats.winCount,
+      drawCount: stats.drawCount,
+      lossCount: stats.lossCount,
+    );
+  } catch (error, stackTrace) {
+    if (fallbackGameCount <= 0) rethrow;
+    localChessLog.warning(
+      'Player workspace import stats unavailable; using fallback count',
+      context: <String, Object?>{
+        'path': contextPath,
+        'fallbackGames': fallbackGameCount,
+      },
+      error: error,
+      stackTrace: stackTrace,
+    );
     return PlayerWorkspaceImportStats(gameCount: fallbackGameCount);
   }
-  return PlayerWorkspaceImportStats(
-    gameCount: stats.gameCount,
-    winCount: stats.winCount,
-    drawCount: stats.drawCount,
-    lossCount: stats.lossCount,
-  );
 }
 
 Future<void> _writePgnText(File file, String pgn) async {
@@ -1741,9 +1963,10 @@ int countPgnGames(String pgn) {
 
 PlayerWorkspaceImportStats analyzePgnStats(
   Iterable<String> chunks,
-  Iterable<String> aliases,
-) {
-  final counter = _PgnStatsCounter(aliases);
+  Iterable<String> aliases, {
+  String? playerFideId,
+}) {
+  final counter = _PgnStatsCounter(aliases, playerFideId: playerFideId);
   for (final chunk in chunks) {
     counter.add(chunk);
   }
@@ -1751,14 +1974,16 @@ PlayerWorkspaceImportStats analyzePgnStats(
 }
 
 class _PgnStatsCounter {
-  _PgnStatsCounter(Iterable<String> aliases)
+  _PgnStatsCounter(Iterable<String> aliases, {String? playerFideId})
     : _normalizedAliases =
           aliases
               .map(_normalizePlayerName)
               .where((name) => name.isNotEmpty)
-              .toSet();
+              .toSet(),
+      _playerFideId = _normalizeFideId(playerFideId);
 
   final Set<String> _normalizedAliases;
+  final String? _playerFideId;
   var _games = 0;
   var _wins = 0;
   var _draws = 0;
@@ -1769,12 +1994,20 @@ class _PgnStatsCounter {
     final result = headers['result'] ?? '';
     final white = _normalizePlayerName(headers['white']);
     final black = _normalizePlayerName(headers['black']);
-    if (white.isEmpty && black.isEmpty) return;
+    final whiteFideId = _normalizeFideId(headers['whitefideid']);
+    final blackFideId = _normalizeFideId(headers['blackfideid']);
+    final hasAnyFideId = whiteFideId != null || blackFideId != null;
+    final isWhite = _matchesPgnSide(name: white, fideId: whiteFideId);
+    final isBlack = _matchesPgnSide(name: black, fideId: blackFideId);
+    if (!isWhite && !isBlack) {
+      if (_playerFideId != null && !hasAnyFideId) {
+        _games++;
+        if (_isDrawResult(result)) _draws++;
+      }
+      return;
+    }
     _games++;
-    final isWhite =
-        _normalizedAliases.isEmpty || _normalizedAliases.contains(white);
-    final isBlack = _normalizedAliases.contains(black);
-    if (result == '1/2-1/2' || result == '1/2' || result == '½-½') {
+    if (_isDrawResult(result)) {
       _draws++;
     } else if ((result == '1-0' && isWhite) || (result == '0-1' && isBlack)) {
       _wins++;
@@ -1791,6 +2024,19 @@ class _PgnStatsCounter {
       lossCount: _losses,
     );
   }
+
+  bool _matchesPgnSide({required String name, required String? fideId}) {
+    final targetFideId = _playerFideId;
+    if (targetFideId != null) {
+      return fideId == targetFideId ||
+          (fideId == null && _normalizedAliases.contains(name));
+    }
+    return _normalizedAliases.isEmpty || _normalizedAliases.contains(name);
+  }
+}
+
+bool _isDrawResult(String result) {
+  return result == '1/2-1/2' || result == '1/2' || result == '½-½';
 }
 
 Iterable<String> _readPgnGamesFromFileSync(String path) sync* {
@@ -1907,11 +2153,13 @@ Map<String, String> _pgnHeaders(String pgn) {
 }
 
 String _normalizePlayerName(String? name) {
-  return (name ?? '')
-      .toLowerCase()
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .replaceAll(',', '')
-      .trim();
+  return (name ?? '').toLowerCase().replaceAll(RegExp(r'[\s,._-]+'), '').trim();
+}
+
+String? _normalizeFideId(String? value) {
+  final clean = value?.trim().toLowerCase();
+  if (clean == null || clean.isEmpty || clean == '?') return null;
+  return clean;
 }
 
 List<Map<String, dynamic>> _rowsFromPlayerGamesResponse(
@@ -2080,6 +2328,32 @@ String? _countryCodeFromChessComUrl(String? url) {
   if (url == null || url.isEmpty) return null;
   final last = Uri.tryParse(url)?.pathSegments.last;
   return last?.trim().toUpperCase();
+}
+
+List<String>? _generatedWorkspaceRelativeParts({
+  required String playerId,
+  required String storedPath,
+}) {
+  final playerPart = _safeFilePart(playerId).toLowerCase();
+  final parts = storedPath
+      .split(RegExp(r'[\\/]+'))
+      .where((part) => part.trim().isNotEmpty)
+      .toList(growable: false);
+  for (var i = 0; i < parts.length - 2; i++) {
+    if (parts[i].toLowerCase() != 'player-workspace') continue;
+    if (parts[i + 1].toLowerCase() != playerPart) continue;
+    return parts.sublist(i + 2);
+  }
+  return null;
+}
+
+bool _samePath(String a, String b) {
+  final normalizedA = p.normalize(a);
+  final normalizedB = p.normalize(b);
+  if (Platform.isWindows) {
+    return normalizedA.toLowerCase() == normalizedB.toLowerCase();
+  }
+  return normalizedA == normalizedB;
 }
 
 String _safeFilePart(String value) {

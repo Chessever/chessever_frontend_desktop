@@ -57,6 +57,8 @@ void main() {
     required String result,
     required String eco,
     required String date,
+    String? whiteFideId,
+    String? blackFideId,
     int? whiteElo,
     int? blackElo,
     int ply = 40,
@@ -71,6 +73,8 @@ void main() {
       'Result': result,
       'ECO': eco,
       'Date': date,
+      if (whiteFideId != null) 'WhiteFideId': whiteFideId,
+      if (blackFideId != null) 'BlackFideId': blackFideId,
       if (opening != null) 'Opening': opening,
     });
     await db.execute(
@@ -208,6 +212,62 @@ void main() {
     expect(stats.games, 0);
   });
 
+  test('rating series uses one classified time-control bucket', () async {
+    const player = 'Durarbayli, Vasif';
+    await insertGame(
+      white: player,
+      black: 'Classical Opponent 1',
+      result: '1-0',
+      eco: 'C42',
+      date: '2024.01.01',
+      whiteElo: 2600,
+      blackElo: 2500,
+      tcc: 'classical',
+    );
+    await insertGame(
+      white: 'Classical Opponent 2',
+      black: player,
+      result: '0-1',
+      eco: 'C43',
+      date: '2024.02.01',
+      whiteElo: 2510,
+      blackElo: 2610,
+      tcc: 'classical',
+    );
+    await insertGame(
+      white: player,
+      black: 'Blitz Opponent',
+      result: '1-0',
+      eco: 'B90',
+      date: '2024.03.01',
+      whiteElo: 2900,
+      blackElo: 2800,
+      tcc: 'blitz',
+    );
+    await insertGame(
+      white: player,
+      black: 'Unknown Opponent',
+      result: '1-0',
+      eco: 'D30',
+      date: '2024.04.01',
+      whiteElo: 2400,
+      blackElo: 2300,
+      tcc: 'Unknown',
+    );
+
+    final repository = PlayerStatsRepository(database: () async => db);
+    final stats = await repository.computePlayerStats(
+      databasePath: databasePath,
+      aliases: const [player],
+    );
+
+    expect(stats.games, 4);
+    expect(stats.ratingTimeControlCategory, 'classical');
+    expect(stats.ratingSeries.map((s) => s.rating), [2600, 2610]);
+    expect(stats.peakRating, 2610);
+    expect(stats.latestRating, 2610);
+  });
+
   test(
     'hydrates missing local cache from the player PGN before computing stats',
     () async {
@@ -254,6 +314,100 @@ void main() {
     expect(stats.games, 2);
     expect(stats.overall.wins, 1); // won as White
     expect(stats.overall.losses, 1); // lost as Black
+  });
+
+  test(
+    'uses FIDE id instead of names when PGN player names are inconsistent',
+    () async {
+      // The same player appears under two compact ChessEver name variants. A
+      // repeated opponent is the dominant name in the database, so name fallback
+      // alone would attribute both games to the opponent.
+      await insertGame(
+        white: 'Durarbayli,Vasif',
+        black: 'Nakamura,Hi',
+        whiteFideId: '13402935',
+        blackFideId: '2016192',
+        result: '1-0',
+        eco: 'C42',
+        date: '2026.03.31',
+      );
+      await insertGame(
+        white: 'Nakamura,Hi',
+        black: 'Durarbayli,V',
+        whiteFideId: '2016192',
+        blackFideId: '13402935',
+        result: '0-1',
+        eco: 'B90',
+        date: '2026.04.01',
+      );
+
+      final repository = PlayerStatsRepository(database: () async => db);
+      final stats = await repository.computePlayerStats(
+        databasePath: databasePath,
+        aliases: const ['GM Vasif Durarbayli'],
+        playerFideId: '13402935',
+      );
+
+      expect(stats.games, 2);
+      expect(stats.overall.wins, 2);
+      expect(stats.overall.losses, 0);
+    },
+  );
+
+  test('uses aliases for source games that do not carry FIDE ids', () async {
+    await insertGame(
+      white: 'Durarbayli,Vasif',
+      black: 'Nakamura,Hi',
+      whiteFideId: '13402935',
+      blackFideId: '2016192',
+      result: '1-0',
+      eco: 'C42',
+      date: '2026.03.31',
+    );
+    await insertGame(
+      white: 'Nakamura,Hi',
+      black: 'Durarbayli,V',
+      whiteFideId: '2016192',
+      blackFideId: '13402935',
+      result: '0-1',
+      eco: 'B90',
+      date: '2026.04.01',
+    );
+    await insertGame(
+      white: 'Vasif_Durarbayli',
+      black: 'Carlsen, Magnus',
+      result: '1/2-1/2',
+      eco: 'C65',
+      date: '2026.04.02',
+    );
+    await insertGame(
+      white: 'Carlsen, Magnus',
+      black: 'VasifDurarbayli',
+      result: '0-1',
+      eco: 'C67',
+      date: '2026.04.03',
+    );
+    await insertGame(
+      white: 'Vasif Durarbayli',
+      black: 'Firouzja, Alireza',
+      whiteFideId: '999999',
+      result: '1-0',
+      eco: 'D30',
+      date: '2026.04.04',
+    );
+
+    final repository = PlayerStatsRepository(database: () async => db);
+    final stats = await repository.computePlayerStats(
+      databasePath: databasePath,
+      aliases: const ['Vasif Durarbayli'],
+      playerFideId: '13402935',
+    );
+
+    expect(stats.games, 4);
+    expect(stats.overall.wins, 3);
+    expect(stats.overall.draws, 1);
+    expect(stats.overall.losses, 0);
+    expect(stats.years.single.games, 4);
   });
 }
 

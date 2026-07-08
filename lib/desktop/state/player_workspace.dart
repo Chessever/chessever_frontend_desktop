@@ -17,9 +17,9 @@ import 'package:chessever/screens/gamebase/models/models.dart';
 const double _standardDownloadPhaseSpan = 0.45;
 const double _standardImportPhaseStart = 0.45;
 const double _standardImportPhaseSpan = 0.50;
-const double _chessEverDownloadPhaseSpan = 0.90;
-const double _chessEverImportPhaseStart = 0.90;
-const double _chessEverImportPhaseSpan = 0.10;
+const double _chessEverDownloadPhaseSpan = 0.40;
+const double _chessEverImportPhaseStart = 0.40;
+const double _chessEverImportPhaseSpan = 0.55;
 
 @immutable
 class PlayerWorkspaceState {
@@ -714,7 +714,8 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
                 reinstall: reinstall,
               ),
               onProgress:
-                  (message, progress) => _setOperationPhaseProgress(
+                  (message, progress) => _setScopedOperationPhaseProgress(
+                    scope,
                     operationKey,
                     source,
                     message,
@@ -729,7 +730,8 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
               username: existing.username,
               sinceMs: sinceMs,
               onProgress:
-                  (message, progress) => _setOperationPhaseProgress(
+                  (message, progress) => _setScopedOperationPhaseProgress(
+                    scope,
                     operationKey,
                     source,
                     message,
@@ -750,7 +752,8 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
                 reinstall: reinstall,
               ),
               onProgress:
-                  (message, progress) => _setOperationPhaseProgress(
+                  (message, progress) => _setScopedOperationPhaseProgress(
+                    scope,
                     operationKey,
                     source,
                     message,
@@ -775,7 +778,8 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
           source == PlayerWorkspaceSource.chessever
               ? _chessEverImportPhaseSpan
               : _standardImportPhaseSpan;
-      _setOperation(
+      _setScopedOperation(
+        scope,
         operationKey,
         source,
         'Importing ${source.label} games...',
@@ -795,9 +799,11 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         sourceLabel: '${player.displayName} ${source.label}',
         pgn: downloaded.pgn,
         playerAliases: _aliasesFor(player, account),
+        playerFideId: player.fideId,
         replaceExisting: reinstall || downloaded.replaceExistingSource,
         onProgress:
-            (message, progress) => _setOperationPhaseProgress(
+            (message, progress) => _setScopedOperationPhaseProgress(
+              scope,
               operationKey,
               source,
               message,
@@ -808,6 +814,9 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         cancellationToken: scope.token,
       );
       scope.token.throwIfCanceled();
+      if (!_scopeCanUpdateOperation(scope) || _isPlayerDeleted(player.id)) {
+        return;
+      }
       final now = DateTime.now().millisecondsSinceEpoch;
       final nextAccount = existing.copyWith(
         pgnPath: imported.path,
@@ -829,16 +838,21 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       if (_isPlayerDeleted(player.id)) return;
       final nextPlayer = latest.withAccount(nextAccount);
       await _upsertPlayer(nextPlayer, select: true);
-      await _registerPlayerDatabasePathBestEffort(
-        player: nextPlayer,
-        path: imported.path,
-        gameCount: imported.stats.gameCount,
-        indexedAtMs: now,
+      if (!_scopeCanUpdateOperation(scope) || _isPlayerDeleted(player.id)) {
+        return;
+      }
+      unawaited(
+        _registerPlayerDatabasePathBestEffort(
+          player: nextPlayer,
+          path: imported.path,
+          gameCount: imported.stats.gameCount,
+          indexedAtMs: now,
+        ),
       );
-      _clearOperation(operationKey);
+      _clearOperationForScope(scope);
       importedSuccessfully = true;
     } catch (error, stackTrace) {
-      _clearOperation(operationKey);
+      _clearOperationForScope(scope);
       if (isOperationCanceled(error) || _isPlayerDeleted(player.id)) {
         caughtError = null;
         caughtStackTrace = null;
@@ -852,9 +866,11 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         caughtStackTrace = stackTrace;
       }
     } finally {
-      _activeAccountSyncOperationKeys.remove(operationKey);
-      if (importedSuccessfully && !_isPlayerDeleted(player.id)) {
-        _pendingCombinedRebuildPlayerIds.add(player.id);
+      if (_scopeOwnsOperationKey(scope)) {
+        _activeAccountSyncOperationKeys.remove(operationKey);
+        if (importedSuccessfully && !_isPlayerDeleted(player.id)) {
+          _pendingCombinedRebuildPlayerIds.add(player.id);
+        }
       }
       _finishOperationScope(scope);
     }
@@ -958,6 +974,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         sourceLabel: '${player.displayName} $label',
         pgn: downloaded.pgn,
         playerAliases: _aliasesFor(player, account),
+        playerFideId: player.fideId,
         onProgress:
             (message, progress) =>
                 _setOperation(operationKey, source, message, progress),
@@ -979,11 +996,13 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       if (_isPlayerDeleted(player.id)) return;
       final nextPlayer = _latestPlayer(player).withAccount(nextAccount);
       await _upsertPlayer(nextPlayer, select: true);
-      await _registerPlayerDatabasePathBestEffort(
-        player: nextPlayer,
-        path: imported.path,
-        gameCount: imported.stats.gameCount,
-        indexedAtMs: now,
+      unawaited(
+        _registerPlayerDatabasePathBestEffort(
+          player: nextPlayer,
+          path: imported.path,
+          gameCount: imported.stats.gameCount,
+          indexedAtMs: now,
+        ),
       );
       _clearOperation(operationKey);
       _pendingCombinedRebuildPlayerIds.add(player.id);
@@ -1105,11 +1124,13 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         combinedBuiltAtMs: now,
       );
       await _upsertPlayer(nextPlayer, select: true);
-      await _registerPlayerDatabasePathBestEffort(
-        player: nextPlayer,
-        path: result.path,
-        gameCount: result.stats.gameCount,
-        indexedAtMs: now,
+      unawaited(
+        _registerPlayerDatabasePathBestEffort(
+          player: nextPlayer,
+          path: result.path,
+          gameCount: result.stats.gameCount,
+          indexedAtMs: now,
+        ),
       );
       _clearOperation(operationKey);
     } catch (error) {
@@ -1525,6 +1546,17 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     state = state.copyWith(operations: Map.unmodifiable(next));
   }
 
+  void _setScopedOperation(
+    _PlayerWorkspaceOperationScope scope,
+    String key,
+    PlayerWorkspaceSource source,
+    String message,
+    double? progress,
+  ) {
+    if (!_scopeCanUpdateOperation(scope)) return;
+    _setOperation(key, source, message, progress);
+  }
+
   void _setOperationPhaseProgress(
     String key,
     PlayerWorkspaceSource source,
@@ -1547,11 +1579,44 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     _setOperation(key, source, message, nextProgress);
   }
 
+  void _setScopedOperationPhaseProgress(
+    _PlayerWorkspaceOperationScope scope,
+    String key,
+    PlayerWorkspaceSource source,
+    String message,
+    double? progress, {
+    required double start,
+    required double span,
+  }) {
+    if (!_scopeCanUpdateOperation(scope)) return;
+    _setOperationPhaseProgress(
+      key,
+      source,
+      message,
+      progress,
+      start: start,
+      span: span,
+    );
+  }
+
   void _clearOperation(String key) {
     if (!state.operations.containsKey(key)) return;
     final next = Map<String, PlayerWorkspaceOperation>.of(state.operations)
       ..remove(key);
     state = state.copyWith(operations: Map.unmodifiable(next));
+  }
+
+  void _clearOperationForScope(_PlayerWorkspaceOperationScope scope) {
+    if (!_scopeOwnsOperationKey(scope)) return;
+    _clearOperation(scope.key);
+  }
+
+  bool _scopeCanUpdateOperation(_PlayerWorkspaceOperationScope scope) {
+    return _scopeOwnsOperationKey(scope) && !scope.token.isCanceled;
+  }
+
+  bool _scopeOwnsOperationKey(_PlayerWorkspaceOperationScope scope) {
+    return identical(_operationScopes[scope.key], scope);
   }
 
   Future<void> _registerPlayersGeneratedDatabasesBestEffort(

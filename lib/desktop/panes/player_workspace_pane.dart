@@ -2224,6 +2224,7 @@ class _OverviewTab extends StatelessWidget {
     return PlayerStatsDashboard(
       sources: sources,
       aliases: _statsAliases(player),
+      playerFideId: player.fideId,
       revision:
           player.combinedBuiltAtMs ?? player.lastSyncAtMs ?? player.totalGames,
       onDownloadGames: onGoToAccounts,
