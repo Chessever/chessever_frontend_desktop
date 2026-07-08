@@ -6910,6 +6910,9 @@ TournamentGameSummary _summaryFromLocalPreviewGame(LocalChessGame localGame) {
     status: _statusFromResult(s('Result')),
     openingName: s('Opening').isNotEmpty ? s('Opening') : s('ECO'),
     hasStarted: localGame.hasMoves,
+    localPgnSourcePath: localGame.sourcePath,
+    localPgnSourceIndex: localGame.indexInFile,
+    localPgnSourceFileGameCount: localGame.fileGameCount,
   );
 }
 
@@ -7063,6 +7066,9 @@ TournamentGameSummary _summaryFromAnalysis(SavedAnalysis analysis) {
     openingName: analysis.openingName ?? s('Opening'),
     startsAt: analysis.updatedAt,
     hasStarted: game.mainline.isNotEmpty,
+    cloudSavedAnalysisId: analysis.id,
+    cloudSavedAnalysisTitle:
+        analysis.title.isEmpty ? fallbackTitle : analysis.title,
   );
 }
 

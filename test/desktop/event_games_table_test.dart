@@ -25,6 +25,64 @@ void main() {
     expect(gamebaseStatusFromResult('½–½'), GameStatus.draw);
   });
 
+  test('local PGN database rail summaries preserve update origin', () {
+    final origin = librarySaveOriginFromDatabaseSummary(
+      const TournamentGameSummary(
+        id: 'local_1',
+        name: 'Andrew Wu vs Ruben',
+        whitePlayer: 'Andrew Wu',
+        blackPlayer: 'Ruben',
+        hasPgn: true,
+        pgn: '[Event "OTB Review"]\n\n1. e4 *',
+        localPgnSourcePath: '/tmp/OTB Review (48).pgn',
+        localPgnSourceIndex: 17,
+        localPgnSourceFileGameCount: 48,
+      ),
+    );
+
+    expect(origin, isNotNull);
+    expect(origin!.kind, BoardTabLibrarySaveOriginKind.localPgnFile);
+    expect(origin.sourcePath, '/tmp/OTB Review (48).pgn');
+    expect(origin.sourceIndex, 17);
+    expect(origin.sourceFileGameCount, 48);
+    expect(origin.title, 'Andrew Wu vs Ruben');
+  });
+
+  test('cloud database rail summaries preserve update origin', () {
+    final origin = librarySaveOriginFromDatabaseSummary(
+      const TournamentGameSummary(
+        id: 'analysis_2',
+        name: 'Cloud analysis title',
+        whitePlayer: 'White',
+        blackPlayer: 'Black',
+        hasPgn: true,
+        pgn: '[Event "Cloud"]\n\n1. d4 *',
+        cloudSavedAnalysisId: 'analysis_2',
+        cloudSavedAnalysisTitle: 'Cloud analysis title',
+      ),
+    );
+
+    expect(origin, isNotNull);
+    expect(origin!.kind, BoardTabLibrarySaveOriginKind.cloudSavedAnalysis);
+    expect(origin.analysisId, 'analysis_2');
+    expect(origin.title, 'Cloud analysis title');
+  });
+
+  test('plain database rail summaries do not inherit stale update origin', () {
+    final origin = librarySaveOriginFromDatabaseSummary(
+      const TournamentGameSummary(
+        id: 'plain_3',
+        name: 'Plain database game',
+        whitePlayer: 'White',
+        blackPlayer: 'Black',
+        hasPgn: true,
+        pgn: '[Event "Plain"]\n\n1. c4 *',
+      ),
+    );
+
+    expect(origin, isNull);
+  });
+
   test('event rail summaries prefer canonical round start from game rows', () {
     final game = Games.fromJson({
       'id': 'game-1',

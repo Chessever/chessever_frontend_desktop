@@ -57,6 +57,49 @@ final _gameRailTabProvider = StateProvider.autoDispose
 bool _eventGameReplacementConfirmationOpen = false;
 
 @visibleForTesting
+BoardTabLibrarySaveOrigin? librarySaveOriginFromDatabaseSummary(
+  TournamentGameSummary game,
+) {
+  final analysisId = game.cloudSavedAnalysisId?.trim();
+  if (analysisId != null && analysisId.isNotEmpty) {
+    final title = game.cloudSavedAnalysisTitle?.trim();
+    return BoardTabLibrarySaveOrigin.cloudSavedAnalysis(
+      analysisId: analysisId,
+      title:
+          title != null && title.isNotEmpty
+              ? title
+              : _fallbackLibraryOriginTitle(game),
+    );
+  }
+
+  final sourcePath = game.localPgnSourcePath?.trim();
+  final sourceIndex = game.localPgnSourceIndex;
+  final sourceFileGameCount = game.localPgnSourceFileGameCount;
+  if (sourcePath == null ||
+      sourcePath.isEmpty ||
+      sourceIndex == null ||
+      sourceFileGameCount == null) {
+    return null;
+  }
+  return BoardTabLibrarySaveOrigin.localPgnFile(
+    sourcePath: sourcePath,
+    sourceIndex: sourceIndex,
+    sourceFileGameCount: sourceFileGameCount,
+    title: _fallbackLibraryOriginTitle(game),
+  );
+}
+
+@visibleForTesting
+BoardTabLibrarySaveOrigin? localPgnLibrarySaveOriginFromSummary(
+  TournamentGameSummary game,
+) => librarySaveOriginFromDatabaseSummary(game);
+
+String _fallbackLibraryOriginTitle(TournamentGameSummary game) {
+  if (game.name.isNotEmpty) return game.name;
+  return '${game.whitePlayer} vs ${game.blackPlayer}';
+}
+
+@visibleForTesting
 List<String> eventRailRangeSelectionIds({
   required List<TournamentGameSummary> orderedGames,
   required String? anchorGameId,
@@ -1814,6 +1857,16 @@ TournamentGameSummary _mergeFreshEventGameSummary(
     roundStartsAt: fresh.roundStartsAt ?? current.roundStartsAt,
     hasStarted: fresh.hasStarted || current.hasStarted,
     pgn: fresh.pgn ?? current.pgn,
+    cloudSavedAnalysisId:
+        fresh.cloudSavedAnalysisId ?? current.cloudSavedAnalysisId,
+    cloudSavedAnalysisTitle:
+        fresh.cloudSavedAnalysisTitle ?? current.cloudSavedAnalysisTitle,
+    localPgnSourcePath: fresh.localPgnSourcePath ?? current.localPgnSourcePath,
+    localPgnSourceIndex:
+        fresh.localPgnSourceIndex ?? current.localPgnSourceIndex,
+    localPgnSourceFileGameCount:
+        fresh.localPgnSourceFileGameCount ??
+        current.localPgnSourceFileGameCount,
     whiteTeam: fresh.whiteTeam.isNotEmpty ? fresh.whiteTeam : current.whiteTeam,
     blackTeam: fresh.blackTeam.isNotEmpty ? fresh.blackTeam : current.blackTeam,
   );
@@ -3061,6 +3114,11 @@ Future<void> _openEventGame({
   if (kind == _GameListKind.database) {
     final pgn = openGame.pgn?.trim() ?? '';
     final hasPlayableLocalPgn = pgnHasMoves(pgn);
+    final databaseUpdateOrigin = librarySaveOriginFromDatabaseSummary(openGame);
+    final inheritedUpdateOrigin =
+        activeArgs?.gameListSelectedId == openGame.id
+            ? activeArgs?.librarySaveOrigin
+            : null;
     final args = BoardTabGameArgs(
       gameId: hasPlayableLocalPgn ? null : openGame.id,
       pgn: pgn,
@@ -3086,6 +3144,7 @@ Future<void> _openEventGame({
       databaseGamesPagination: activeArgs?.databaseGamesPagination,
       databaseGamesContinuation: activeArgs?.databaseGamesContinuation,
       gameListSelectedId: openGame.id,
+      librarySaveOrigin: databaseUpdateOrigin ?? inheritedUpdateOrigin,
     );
 
     if (inNewWindow) {

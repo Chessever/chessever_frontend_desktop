@@ -2725,6 +2725,9 @@ TournamentGameSummary _summaryFromLocalGame(LocalChessGame localGame) {
     status: _statusFromResult(s('Result')),
     openingName: s('Opening').isNotEmpty ? s('Opening') : s('ECO'),
     hasStarted: localGame.hasMoves,
+    localPgnSourcePath: localGame.sourcePath,
+    localPgnSourceIndex: localGame.indexInFile,
+    localPgnSourceFileGameCount: localGame.fileGameCount,
   );
 }
 

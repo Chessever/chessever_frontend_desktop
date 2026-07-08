@@ -36,6 +36,11 @@ class TournamentGameSummary {
     this.roundStartsAt,
     this.hasStarted = false,
     this.pgn,
+    this.cloudSavedAnalysisId,
+    this.cloudSavedAnalysisTitle,
+    this.localPgnSourcePath,
+    this.localPgnSourceIndex,
+    this.localPgnSourceFileGameCount,
     this.whiteTeam = '',
     this.blackTeam = '',
   });
@@ -197,6 +202,19 @@ class TournamentGameSummary {
   /// summaries usually omit this and let the board fetch the current PGN.
   final String? pgn;
 
+  /// Original cloud saved-analysis identity for saved library rows. Used by
+  /// board-side database navigation so switching rows preserves the correct
+  /// in-place update target instead of falling back to save-as-new.
+  final String? cloudSavedAnalysisId;
+  final String? cloudSavedAnalysisTitle;
+
+  /// Original local PGN location for database rail entries opened from a
+  /// desktop PGN file. Keeping this on the rail summary lets switching games
+  /// from the board-side database list preserve the in-place update target.
+  final String? localPgnSourcePath;
+  final int? localPgnSourceIndex;
+  final int? localPgnSourceFileGameCount;
+
   TournamentGameSummary copyWith({
     String? pgn,
     String? fen,
@@ -233,6 +251,11 @@ class TournamentGameSummary {
       roundStartsAt: roundStartsAt,
       hasStarted: hasStarted ?? this.hasStarted,
       pgn: pgn ?? this.pgn,
+      cloudSavedAnalysisId: cloudSavedAnalysisId,
+      cloudSavedAnalysisTitle: cloudSavedAnalysisTitle,
+      localPgnSourcePath: localPgnSourcePath,
+      localPgnSourceIndex: localPgnSourceIndex,
+      localPgnSourceFileGameCount: localPgnSourceFileGameCount,
       whiteTeam: whiteTeam,
       blackTeam: blackTeam,
     );
