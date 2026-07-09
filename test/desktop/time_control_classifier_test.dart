@@ -59,6 +59,14 @@ void main() {
     expect(
       classifyTimeControlCategory(
         null,
+        event: 'Titled Swiss',
+        site: 'ChessEver',
+      ),
+      'classical',
+    );
+    expect(
+      classifyTimeControlCategory(
+        null,
         event: 'Titled Tuesday',
         site: 'lichess.org',
       ),

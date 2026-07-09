@@ -7,8 +7,17 @@ import 'package:resqlite/resqlite.dart' as resqlite;
 import 'package:chessever/desktop/models/player_stats.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart'
     show LocalChessDatabaseRepository, LocalChessResqliteDatabase;
+import 'package:chessever/desktop/state/player_stats_provider.dart'
+    show PlayerStatsOutcomeFilter;
 import 'package:chessever/repository/sqlite/local_chess_schema.dart'
     show localChessDatabasesTable, localChessGamesTable, localChessPlayersTable;
+
+typedef PlayerStatsSelect =
+    Future<List<Map<String, Object?>>> Function(
+      resqlite.Database database,
+      String sql,
+      List<Object?> parameters,
+    );
 
 /// Computes rich per-player statistics locally from the player's combined
 /// resqlite database.
@@ -24,18 +33,32 @@ class PlayerStatsRepository {
   PlayerStatsRepository({
     Future<resqlite.Database> Function()? database,
     LocalChessDatabaseRepository? localRepository,
+    PlayerStatsSelect? select,
   }) : _database =
            database ?? (() => LocalChessResqliteDatabase.instance.database),
-       _localRepository = localRepository;
+       _localRepository = localRepository,
+       _select = select ?? _defaultSelect;
 
   final Future<resqlite.Database> Function() _database;
   final LocalChessDatabaseRepository? _localRepository;
+  final PlayerStatsSelect _select;
+
+  static Future<List<Map<String, Object?>>> _defaultSelect(
+    resqlite.Database database,
+    String sql,
+    List<Object?> parameters,
+  ) => database.select(sql, parameters);
 
   Future<PlayerStatsSnapshot> computePlayerStats({
     required String databasePath,
     required Iterable<String> aliases,
     String? playerFideId,
     int? windowDays,
+    String? timeControlCategory,
+    String? preferredRatingTimeControl,
+    String? unclassifiedTimeControlCategory,
+    PlayerStatsOutcomeFilter playerOutcome = PlayerStatsOutcomeFilter.all,
+    String? playerColor,
   }) async {
     final normalizedFideId = _normalizeFideId(playerFideId);
     final normalizedAliases =
@@ -62,6 +85,13 @@ class PlayerStatsRepository {
     final dateModifier =
         (windowDays != null && windowDays > 0) ? '-$windowDays days' : null;
     final hasAliasFallback = matchAliases.isNotEmpty;
+    final tcFilter = _normalizeTimeControlFilter(timeControlCategory);
+    final preferredRating = _normalizeTimeControlFilter(
+      preferredRatingTimeControl,
+    );
+    final unclassifiedTimeControl = _normalizeUnclassifiedTimeControlFallback(
+      unclassifiedTimeControlCategory,
+    );
     final baseParams = <Object?>[
       if (normalizedFideId != null) ...[
         normalizedFideId,
@@ -73,26 +103,76 @@ class PlayerStatsRepository {
       ],
       databaseId,
       if (dateModifier != null) ...[dateModifier, databaseId],
+      // Time-control scope placeholders (empty when unscoped).
+      ..._timeControlFilterParams(tcFilter),
     ];
+    final colorFilter = _normalizePlayerColorFilter(playerColor);
     final cte = _cte(
       aliasPlaceholders: List.filled(matchAliases.length, '?').join(', '),
       fideScoped: normalizedFideId != null,
       hasAliasFallback: hasAliasFallback,
       windowed: dateModifier != null,
+      timeControlFiltered: tcFilter != null,
+      unclassifiedTimeControlCategory: unclassifiedTimeControl,
+      playerOutcome: playerOutcome,
+      playerColor: colorFilter,
     );
 
-    final results = await Future.wait(<Future<List<Map<String, Object?>>>>[
-      db.select('$cte\n$_overallSql', baseParams),
-      db.select('$cte\n$_ratingSql', baseParams),
-      db.select('$cte\n$_openingsSql', baseParams),
-      db.select('$cte\n$_opponentsSql', baseParams),
-      db.select('$cte\n$_yearsSql', baseParams),
-      db.select('$cte\n$_lengthSql', baseParams),
-      db.select('$cte\n$_timeControlSql', baseParams),
-      db.select('$cte\n$_auxSql', baseParams),
-      db.select('$cte\n$_yearTimeControlSql', baseParams),
-      db.select('$cte\n$_yearSourceSql', baseParams),
-    ]);
+    // Rating ladder: when the dashboard is scoped to a TC, the series is just
+    // rated games in that scope. When unscoped ("All"), pick the preferred
+    // ladder (classical for Combined/ChessEver, blitz for online sources),
+    // falling back to the most common rated TC.
+    final ratingSql =
+        tcFilter != null
+            ? _ratingSqlScoped
+            : _ratingSqlPreferred(preferredRating ?? 'classical');
+    final ratingParams =
+        tcFilter != null
+            ? baseParams
+            : <Object?>[
+              ...baseParams,
+              preferredRating ?? 'classical',
+              preferredRating ?? 'classical',
+            ];
+
+    // Each aggregate scans the same player's database. Dispatching all ten at
+    // once occupies every resqlite reader isolate and creates a short, severe
+    // CPU burst while the Combined overview opens. Keep the reads serial: the
+    // work still happens off the UI isolate, while one reader at a time leaves
+    // enough CPU headroom for Flutter to keep presenting frames smoothly.
+    final queries = <({String sql, List<Object?> parameters})>[
+      (sql: '$cte\n$_overallSql', parameters: baseParams),
+      (sql: '$cte\n$ratingSql', parameters: ratingParams),
+      (sql: '$cte\n$_openingsSql', parameters: baseParams),
+      (sql: '$cte\n$_opponentsSql', parameters: baseParams),
+      (sql: '$cte\n$_yearsSql', parameters: baseParams),
+      (sql: '$cte\n$_lengthSql', parameters: baseParams),
+      // TC chip counts are always unscoped so the chip strip stays complete
+      // while the rest of the dashboard filters.
+      (
+        sql:
+            '${_cte(aliasPlaceholders: List.filled(matchAliases.length, '?').join(', '), fideScoped: normalizedFideId != null, hasAliasFallback: hasAliasFallback, windowed: dateModifier != null, timeControlFiltered: false, unclassifiedTimeControlCategory: unclassifiedTimeControl, playerOutcome: PlayerStatsOutcomeFilter.all, playerColor: null)}\n$_timeControlSql',
+        parameters: <Object?>[
+          if (normalizedFideId != null) ...[
+            normalizedFideId,
+            normalizedFideId,
+            if (hasAliasFallback) ...[...matchAliases, ...matchAliases],
+          ] else ...[
+            ...matchAliases,
+            ...matchAliases,
+          ],
+          databaseId,
+          if (dateModifier != null) ...[dateModifier, databaseId],
+        ],
+      ),
+      (sql: '$cte\n$_auxSql', parameters: baseParams),
+      (sql: '$cte\n$_yearTimeControlSql', parameters: baseParams),
+      (sql: '$cte\n$_yearSourceSql', parameters: baseParams),
+    ];
+    final results = <List<Map<String, Object?>>>[];
+    for (final query in queries) {
+      results.add(await _select(db, query.sql, query.parameters));
+    }
 
     final overallRows = results[0];
     final ratingRows = results[1];
@@ -349,10 +429,9 @@ class PlayerStatsRepository {
               losses: _int(row['l']),
             ),
             total: _int(row['total']),
-            timeControls:
-                List<PlayerTimeControlStat>.unmodifiable(
-                  tcsByYear[year] ?? const <PlayerTimeControlStat>[],
-                ),
+            timeControls: List<PlayerTimeControlStat>.unmodifiable(
+              tcsByYear[year] ?? const <PlayerTimeControlStat>[],
+            ),
             sources: List<PlayerSourceStat>.unmodifiable(
               sourcesByYear[year] ?? const <PlayerSourceStat>[],
             ),
@@ -402,6 +481,10 @@ class PlayerStatsRepository {
     required bool fideScoped,
     required bool hasAliasFallback,
     bool windowed = false,
+    bool timeControlFiltered = false,
+    String? unclassifiedTimeControlCategory,
+    PlayerStatsOutcomeFilter playerOutcome = PlayerStatsOutcomeFilter.all,
+    String? playerColor,
   }) {
     // Chronological window relative to the newest game in this database. PGN
     // dates are stored as 'YYYY.MM.DD' strings; converting the dots to dashes
@@ -418,6 +501,34 @@ class PlayerStatsRepository {
       WHERE g2.database_id = ? AND g2.date LIKE '____.__.__'
     )'''
             : '';
+    final timeControlValueSql = '''
+      CASE
+        WHEN TRIM(COALESCE(g.time_control_category, '')) = ''
+          THEN '${unclassifiedTimeControlCategory ?? ''}'
+        ELSE g.time_control_category
+      END''';
+    final canonicalTimeControlSql = '''
+      CASE LOWER(TRIM(COALESCE(($timeControlValueSql), '')))
+        WHEN 'standard' THEN 'classical'
+        WHEN 'ultra bullet' THEN 'ultrabullet'
+        WHEN 'ultra_bullet' THEN 'ultrabullet'
+        WHEN 'ultra-bullet' THEN 'ultrabullet'
+        ELSE LOWER(TRIM(COALESCE(($timeControlValueSql), '')))
+      END''';
+    // Overview time-control chip scope. Explicit stored categories win; only
+    // an empty category uses the trusted source-level fallback above.
+    final tcClause =
+        timeControlFiltered
+            ? '''
+    AND ($canonicalTimeControlSql) = ?'''
+            : '';
+    final outcomeClause = switch (playerOutcome) {
+      PlayerStatsOutcomeFilter.win => " AND presult = 'win'",
+      PlayerStatsOutcomeFilter.draw => " AND presult = 'draw'",
+      PlayerStatsOutcomeFilter.loss => " AND presult = 'loss'",
+      PlayerStatsOutcomeFilter.all => '',
+    };
+    final colorClause = playerColor == null ? '' : " AND side = '$playerColor'";
     final sideSql =
         fideScoped
             ? '''
@@ -441,7 +552,7 @@ WITH base AS (
     g.eco AS eco,
     g.date AS date,
     g.ply_count AS ply,
-    g.time_control_category AS tcc,
+    $timeControlValueSql AS tcc,
     g.white_elo AS white_elo,
     g.black_elo AS black_elo,
     wp.name AS white_name,
@@ -454,7 +565,7 @@ WITH base AS (
   FROM $localChessGamesTable g
   LEFT JOIN $localChessPlayersTable wp ON wp.id = g.white_id
   LEFT JOIN $localChessPlayersTable bp ON bp.id = g.black_id
-  WHERE g.database_id = ?$dateClause
+  WHERE g.database_id = ?$dateClause$tcClause
 ),
 pv AS (
   SELECT
@@ -471,24 +582,60 @@ pv AS (
     END AS presult
   FROM base
   WHERE side IS NOT NULL
+),
+scoped AS (
+  SELECT * FROM pv
+  WHERE 1=1$outcomeClause$colorClause
 )''';
   }
 
   static const _overallSql = '''
 SELECT side, presult, COUNT(*) AS c
-FROM pv
+FROM scoped
 WHERE presult IS NOT NULL
 GROUP BY side, presult''';
 
-  static const _ratingSql = '''
-, rating_bucket AS (
-  SELECT LOWER(TRIM(tcc)) AS tc, COUNT(*) AS c
-  FROM pv
+  /// Rating series when the overview is already scoped to one time control.
+  static const _ratingSqlScoped = '''
+SELECT date AS d, my_elo AS elo,
+  CASE LOWER(TRIM(COALESCE(tcc, '')))
+    WHEN 'standard' THEN 'classical'
+    WHEN 'bullet' THEN 'blitz'
+    ELSE LOWER(TRIM(COALESCE(tcc, '')))
+  END AS tc
+FROM scoped
+WHERE my_elo IS NOT NULL AND my_elo > 0
+  AND date IS NOT NULL AND date LIKE '____.__.__'
+ORDER BY date ASC''';
+
+  /// Rating series for "All" — prefer the bound ladder (`?`), then the most
+  /// common rated classical/rapid/blitz series. If the chosen ladder would
+  /// start after older Elo-tagged games, return the full rated history instead.
+  static String _ratingSqlPreferred(String preferredTc) {
+    assert(preferredTc.isNotEmpty);
+    return '''
+, rating_all AS (
+  SELECT date AS d, my_elo AS elo,
+    CASE LOWER(TRIM(COALESCE(tcc, '')))
+      WHEN 'standard' THEN 'classical'
+      WHEN 'bullet' THEN 'blitz'
+      ELSE LOWER(TRIM(COALESCE(tcc, '')))
+    END AS tc
+  FROM scoped
   WHERE my_elo IS NOT NULL AND my_elo > 0
     AND date IS NOT NULL AND date LIKE '____.__.__'
-    AND LOWER(TRIM(COALESCE(tcc, ''))) IN ('classical', 'rapid', 'blitz')
+),
+rating_bucket AS (
+  SELECT
+    tc,
+    COUNT(*) AS c,
+    MIN(d) AS first_d
+  FROM rating_all
+  WHERE tc IN ('classical', 'rapid', 'blitz')
   GROUP BY tc
-  ORDER BY c DESC,
+  ORDER BY
+    CASE WHEN tc = ? THEN 0 ELSE 1 END ASC,
+    c DESC,
     CASE tc
       WHEN 'classical' THEN 0
       WHEN 'rapid' THEN 1
@@ -496,13 +643,24 @@ GROUP BY side, presult''';
       ELSE 3
     END ASC
   LIMIT 1
+),
+rating_scope AS (
+  SELECT
+    (SELECT tc FROM rating_bucket) AS tc,
+    CASE
+      WHEN (SELECT tc FROM rating_bucket) IS NULL THEN 0
+      WHEN ? <> 'classical' THEN 1
+      WHEN (SELECT MIN(d) FROM rating_all) < (SELECT first_d FROM rating_bucket) THEN 0
+      ELSE 1
+    END AS bucket_only
 )
-SELECT date AS d, my_elo AS elo, LOWER(TRIM(tcc)) AS tc
-FROM pv
-WHERE my_elo IS NOT NULL AND my_elo > 0
-  AND date IS NOT NULL AND date LIKE '____.__.__'
-  AND LOWER(TRIM(COALESCE(tcc, ''))) = (SELECT tc FROM rating_bucket)
-ORDER BY date ASC''';
+SELECT d, elo,
+  CASE WHEN (SELECT bucket_only FROM rating_scope) = 1 THEN tc ELSE NULL END AS tc
+FROM rating_all
+WHERE (SELECT bucket_only FROM rating_scope) = 0
+  OR tc = (SELECT tc FROM rating_scope)
+ORDER BY d ASC''';
+  }
 
   static const _openingsSql = '''
 SELECT eco,
@@ -511,7 +669,7 @@ SELECT eco,
   SUM(CASE WHEN presult = 'draw' THEN 1 ELSE 0 END) AS d,
   SUM(CASE WHEN presult = 'loss' THEN 1 ELSE 0 END) AS l,
   COUNT(*) AS total
-FROM pv
+FROM scoped
 WHERE eco IS NOT NULL AND eco <> '' AND eco <> '?'
 GROUP BY eco
 ORDER BY total DESC, eco ASC
@@ -524,7 +682,7 @@ SELECT opp_name AS name,
   SUM(CASE WHEN presult = 'loss' THEN 1 ELSE 0 END) AS l,
   AVG(CASE WHEN opp_elo > 0 THEN opp_elo END) AS avg_elo,
   COUNT(*) AS total
-FROM pv
+FROM scoped
 WHERE opp_name IS NOT NULL AND opp_name <> '' AND opp_name <> '?'
 GROUP BY opp_name
 ORDER BY total DESC, w DESC
@@ -536,7 +694,7 @@ SELECT substr(date, 1, 4) AS yr,
   SUM(CASE WHEN presult = 'draw' THEN 1 ELSE 0 END) AS d,
   SUM(CASE WHEN presult = 'loss' THEN 1 ELSE 0 END) AS l,
   COUNT(*) AS total
-FROM pv
+FROM scoped
 WHERE date IS NOT NULL AND length(date) >= 4
 GROUP BY yr
 ORDER BY yr ASC''';
@@ -548,12 +706,12 @@ SELECT
   SUM(CASE WHEN ply BETWEEN 61 AND 80 THEN 1 ELSE 0 END) AS b3,
   SUM(CASE WHEN ply BETWEEN 81 AND 100 THEN 1 ELSE 0 END) AS b4,
   SUM(CASE WHEN ply > 100 THEN 1 ELSE 0 END) AS b5
-FROM pv
+FROM scoped
 WHERE ply > 0''';
 
   static const _timeControlSql = '''
 SELECT COALESCE(NULLIF(TRIM(tcc), ''), 'Unknown') AS cat, COUNT(*) AS c
-FROM pv
+FROM scoped
 GROUP BY cat
 ORDER BY c DESC''';
 
@@ -561,7 +719,7 @@ ORDER BY c DESC''';
 SELECT substr(date, 1, 4) AS yr,
   COALESCE(NULLIF(TRIM(tcc), ''), 'Unknown') AS cat,
   COUNT(*) AS c
-FROM pv
+FROM scoped
 WHERE date IS NOT NULL AND length(date) >= 4
 GROUP BY yr, cat
 ORDER BY yr ASC, c DESC''';
@@ -578,15 +736,76 @@ SELECT substr(date, 1, 4) AS yr,
     ELSE 'Other'
   END AS src,
   COUNT(*) AS c
-FROM pv
+FROM scoped
 WHERE date IS NOT NULL AND length(date) >= 4
 GROUP BY yr, src
 ORDER BY yr ASC, c DESC''';
 
   static const _auxSql = '''
 SELECT AVG(CASE WHEN opp_elo > 0 THEN opp_elo END) AS avg_opp
-FROM pv''';
+FROM scoped''';
 }
+
+/// Normalize a UI / source default TC into a canonical filter key.
+String? _normalizeTimeControlFilter(String? raw) {
+  switch ((raw ?? '').trim().toLowerCase()) {
+    case '':
+    case 'all':
+      return null;
+    case 'classical':
+    case 'standard':
+      return 'classical';
+    case 'rapid':
+      return 'rapid';
+    case 'blitz':
+      return 'blitz';
+    case 'bullet':
+      return 'bullet';
+    case 'ultrabullet':
+    case 'ultra_bullet':
+    case 'ultra-bullet':
+    case 'ultra bullet':
+      return 'ultrabullet';
+    default:
+      final clean = raw!.trim().toLowerCase();
+      return clean.isEmpty ? null : clean;
+  }
+}
+
+String? _normalizeUnclassifiedTimeControlFallback(String? raw) {
+  final normalized = _normalizeTimeControlFilter(raw);
+  return switch (normalized) {
+    'classical' ||
+    'rapid' ||
+    'blitz' ||
+    'bullet' ||
+    'ultrabullet' => normalized,
+    _ => null,
+  };
+}
+
+String? _normalizePlayerColorFilter(String? raw) {
+  switch ((raw ?? '').trim().toLowerCase()) {
+    case 'w':
+    case 'white':
+      return 'w';
+    case 'b':
+    case 'black':
+      return 'b';
+    default:
+      return null;
+  }
+}
+
+List<Object?> _timeControlFilterParams(String? normalized) {
+  if (normalized == null) return const <Object?>[];
+  return <Object?>[normalized];
+}
+
+/// Default overview time-control for a player source:
+/// online (Lichess/Chess.com) → blitz; Combined / ChessEver / manual → classical.
+String defaultPlayerStatsTimeControl({required bool isOnlineSource}) =>
+    isOnlineSource ? 'blitz' : 'classical';
 
 // ------------------------------------------------------------------
 // Helpers

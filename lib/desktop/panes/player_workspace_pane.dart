@@ -2309,6 +2309,18 @@ List<PlayerStatsSource> _statsSources(PlayerWorkspacePlayer player) {
         accent: _sourceAccentColor(target.source),
         path: target.path,
         gameCount: target.gameCount,
+        kind: target.source,
+        // Online sources default overview/rating to blitz; Combined /
+        // ChessEver / manual default to classical.
+        preferredTimeControl:
+            target.source == PlayerWorkspaceSource.lichess ||
+                    target.source == PlayerWorkspaceSource.chesscom
+                ? 'blitz'
+                : 'classical',
+        unclassifiedTimeControlCategory:
+            target.source == PlayerWorkspaceSource.chessever
+                ? 'classical'
+                : null,
       ),
   ];
 }

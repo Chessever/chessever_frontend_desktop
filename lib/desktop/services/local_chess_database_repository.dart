@@ -280,6 +280,11 @@ Future<int> deleteLocalChessResqliteCacheFilesAt(String dbPath) async {
 
 const int _kPositionRefInsertBatchSize = 4096;
 const int _kSqlWriteBatchSize = 4096;
+// Streaming imports run while the app is interactive. Keep their transfer and
+// row-materialization batches small enough that JSON encoding, metadata-set
+// construction, and resqlite request packing yield within a frame budget. The
+// wider 4096-row SQL batch remains appropriate for non-interactive maintenance.
+const int _kInteractiveImportBatchSize = 128;
 const int _kEagerPositionRefLoadLimit = 250000;
 const int _kEagerTreeMoveLoadLimit = 250000;
 const int _kCachedFileNodeGamePreviewLimit = 1000;
@@ -2006,7 +2011,7 @@ class LocalChessDatabaseRepository {
       path: path,
       rootPath: rootPath,
       previewGameLimit: cachedFileNodeGamePreviewLimit,
-      batchSize: _kSqlWriteBatchSize,
+      batchSize: _kInteractiveImportBatchSize,
       onProgress: emit,
       onImportStart: (start) async {
         cancellationToken?.throwIfCanceled();

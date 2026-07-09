@@ -52,8 +52,8 @@ String? classifyFreeformTimeControlCategory(Object? value) {
 
 String? inferTimeControlCategoryFromEvent(Object? event, Object? site) {
   final rawEvent = _clean(event);
-  if (rawEvent == null) return null;
   final rawSite = _clean(site) ?? '';
+  if (rawEvent == null) return _sourceDefaultCategory(rawSite);
 
   if (rawEvent.contains('checkmate covid rematch')) return 'blitz';
   if (rawEvent.contains('titled') && rawEvent.contains('tue')) {
@@ -79,7 +79,7 @@ String? inferTimeControlCategoryFromEvent(Object? event, Object? site) {
   if (embeddedMinutes != null) return _classifyBaseMinutes(embeddedMinutes);
 
   final isChessCom = rawSite.contains('chess.com');
-  if (!isChessCom) return null;
+  if (!isChessCom) return _sourceDefaultCategory(rawSite);
 
   if (rawEvent.startsWith('chess.com speed')) return 'blitz';
   if (rawEvent.contains('women') && rawEvent.contains('speed')) return 'blitz';
@@ -103,8 +103,14 @@ String? inferTimeControlCategoryFromEvent(Object? event, Object? site) {
       rawEvent.contains('blitz') ||
       rawEvent.contains('bullet') ||
       rawEvent.contains('speed');
-  return rapidish && !fast ? 'rapid' : null;
+  return rapidish && !fast ? 'rapid' : _sourceDefaultCategory(rawSite);
 }
+
+/// ChessEver's player export is the FIDE/OTB database source. Those PGNs
+/// frequently omit `TimeControl`, so provenance is the only reliable fallback
+/// after the event-name heuristics above have ruled out rapid/blitz events.
+String? _sourceDefaultCategory(String rawSite) =>
+    rawSite.contains('chessever') ? 'classical' : null;
 
 String? _clean(Object? value) {
   final raw = value?.toString().trim().toLowerCase();

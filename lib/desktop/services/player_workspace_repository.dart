@@ -729,6 +729,7 @@ class PlayerWorkspaceRepository {
       playerId: playerId,
       fideId: fideId,
       progress: progress,
+      expectedGameCount: expectedGameCount,
       cancellationToken: cancellationToken,
     );
     if (exported != null) return exported;
@@ -792,6 +793,7 @@ class PlayerWorkspaceRepository {
     required String playerId,
     required String? fideId,
     required _ChessEverDownloadProgress progress,
+    required int? expectedGameCount,
     OperationCancellationToken? cancellationToken,
   }) async {
     cancellationToken?.throwIfCanceled();
@@ -812,6 +814,16 @@ class PlayerWorkspaceRepository {
     final gameCount =
         export.gameCount > 0 ? export.gameCount : countPgnGames(export.pgn);
     if (export.pgn.trim().isEmpty && gameCount > 0) return null;
+    if (expectedGameCount != null &&
+        expectedGameCount > 0 &&
+        gameCount > 0 &&
+        gameCount < expectedGameCount) {
+      progress.exportShortfall(
+        gameCount: gameCount,
+        expectedGameCount: expectedGameCount,
+      );
+      return null;
+    }
 
     progress.exportFinished(gameCount);
     return PlayerWorkspaceDownloadedPgn(
@@ -1549,6 +1561,18 @@ class _ChessEverDownloadProgress {
     _completedRows = gameCount;
     _readyPgns = gameCount;
     _emit('ChessEver: downloaded $gameCount games as PGN.', 1, force: true);
+  }
+
+  void exportShortfall({
+    required int gameCount,
+    required int expectedGameCount,
+  }) {
+    _emit(
+      'ChessEver: PGN export had $gameCount of $expectedGameCount games; '
+      'loading pages instead...',
+      _externalSourceInitialProgress,
+      force: true,
+    );
   }
 
   void loadingPage(int pageNumber) {

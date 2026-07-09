@@ -448,8 +448,8 @@ class LocalChessFilesView extends HookConsumerWidget {
                                 showFormatFilter: true,
                               );
                               if (next == null || !context.mounted) return;
-                              final merged = gameFilter.value.copyWith(
-                                base: next,
+                              final merged = gameFilter.value.applyingDialog(
+                                next,
                               );
                               gameFilter.value = merged;
                               onFilterChanged?.call(merged);

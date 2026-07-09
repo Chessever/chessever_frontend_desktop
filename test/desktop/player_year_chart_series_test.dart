@@ -29,11 +29,7 @@ void main() {
           tally: PlayerResultTally(wins: 0, draws: 2, losses: 0),
           total: 2,
         ),
-        PlayerYearStat(
-          year: 2024,
-          tally: PlayerResultTally.empty,
-          total: 7,
-        ),
+        PlayerYearStat(year: 2024, tally: PlayerResultTally.empty, total: 7),
       ];
 
       final series = playerYearChartSeries(years);
@@ -62,6 +58,8 @@ void main() {
     test('empty series max is 1 so axis scale stays valid', () {
       expect(playerYearChartSeries(const []), isEmpty);
       expect(playerYearChartMaxGames(const []), 1);
+      expect(playerYearChartAxisMax(1), 1);
+      expect(playerYearChartAxisTicks(1), [0, 1]);
     });
 
     test('single-year series preserves game count from tally alone', () {
@@ -75,8 +73,21 @@ void main() {
       expect(series, hasLength(1));
       expect(series.single.year, 2019);
       expect(series.single.games, 3);
-      expect(series.single.wins + series.single.draws + series.single.losses, 3);
+      expect(
+        series.single.wins + series.single.draws + series.single.losses,
+        3,
+      );
       expect(playerYearChartMaxGames(series), 3);
+    });
+
+    test('axis max is a nice ceiling at or above peak games', () {
+      expect(playerYearChartAxisMax(10), greaterThanOrEqualTo(10));
+      expect(playerYearChartAxisMax(11), greaterThanOrEqualTo(11));
+      final ticks = playerYearChartAxisTicks(playerYearChartAxisMax(11));
+      expect(ticks.first, 0);
+      expect(ticks.last, playerYearChartAxisMax(11));
+      // Bar scale and grid share the same top — no tick above axisMax.
+      expect(ticks.every((t) => t <= playerYearChartAxisMax(11)), isTrue);
     });
   });
 }

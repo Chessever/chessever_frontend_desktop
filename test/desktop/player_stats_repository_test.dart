@@ -205,6 +205,41 @@ void main() {
     expect(opponentA.tally.games, 2);
   });
 
+  test(
+    'first Combined stats load does not fan out heavyweight reads',
+    () async {
+      var activeSelects = 0;
+      var peakActiveSelects = 0;
+      final repository = PlayerStatsRepository(
+        database: () async => db,
+        select: (database, sql, parameters) async {
+          activeSelects++;
+          if (activeSelects > peakActiveSelects) {
+            peakActiveSelects = activeSelects;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 2));
+          activeSelects--;
+          return const <Map<String, Object?>>[];
+        },
+      );
+
+      await repository.computePlayerStats(
+        databasePath: databasePath,
+        aliases: const ['Combined Player'],
+        playerFideId: '1234567',
+        preferredRatingTimeControl: 'classical',
+      );
+
+      expect(
+        peakActiveSelects,
+        1,
+        reason:
+            'Parallel full-database aggregates saturate resqlite reader '
+            'workers and cause first-open frame drops.',
+      );
+    },
+  );
+
   test('returns empty snapshot when the database has no games', () async {
     final repository = PlayerStatsRepository(database: () async => db);
     final stats = await repository.computePlayerStats(
@@ -215,11 +250,104 @@ void main() {
     expect(stats.games, 0);
   });
 
-  test('rating series uses one classified time-control bucket', () async {
+  test(
+    'rating series prefers classical for Combined/ChessEver defaults',
+    () async {
+      const player = 'Durarbayli, Vasif';
+      // More blitz rated games — still prefer classical when preferred.
+      await insertGame(
+        white: player,
+        black: 'Classical Opponent 1',
+        result: '1-0',
+        eco: 'C42',
+        date: '2024.01.01',
+        whiteElo: 2600,
+        blackElo: 2500,
+        tcc: 'classical',
+      );
+      await insertGame(
+        white: 'Classical Opponent 2',
+        black: player,
+        result: '0-1',
+        eco: 'C43',
+        date: '2024.02.01',
+        whiteElo: 2510,
+        blackElo: 2610,
+        tcc: 'classical',
+      );
+      await insertGame(
+        white: player,
+        black: 'Blitz Opponent 1',
+        result: '1-0',
+        eco: 'B90',
+        date: '2024.03.01',
+        whiteElo: 2900,
+        blackElo: 2800,
+        tcc: 'blitz',
+      );
+      await insertGame(
+        white: player,
+        black: 'Blitz Opponent 2',
+        result: '1-0',
+        eco: 'B90',
+        date: '2024.03.15',
+        whiteElo: 2910,
+        blackElo: 2800,
+        tcc: 'blitz',
+      );
+      await insertGame(
+        white: player,
+        black: 'Blitz Opponent 3',
+        result: '0-1',
+        eco: 'B90',
+        date: '2024.04.01',
+        whiteElo: 2890,
+        blackElo: 2750,
+        tcc: 'blitz',
+      );
+      await insertGame(
+        white: player,
+        black: 'Unknown Opponent',
+        result: '1-0',
+        eco: 'D30',
+        date: '2024.05.01',
+        whiteElo: 2400,
+        blackElo: 2300,
+        tcc: 'Unknown',
+      );
+
+      final repository = PlayerStatsRepository(database: () async => db);
+      final classicalPreferred = await repository.computePlayerStats(
+        databasePath: databasePath,
+        aliases: const [player],
+        preferredRatingTimeControl: 'classical',
+      );
+      expect(classicalPreferred.games, 6);
+      expect(classicalPreferred.ratingTimeControlCategory, 'classical');
+      expect(classicalPreferred.ratingSeries.map((s) => s.rating), [
+        2600,
+        2610,
+      ]);
+
+      final blitzPreferred = await repository.computePlayerStats(
+        databasePath: databasePath,
+        aliases: const [player],
+        preferredRatingTimeControl: 'blitz',
+      );
+      expect(blitzPreferred.ratingTimeControlCategory, 'blitz');
+      expect(blitzPreferred.ratingSeries.map((s) => s.rating), [
+        2900,
+        2910,
+        2890,
+      ]);
+    },
+  );
+
+  test('timeControlCategory scopes whole dashboard including rating', () async {
     const player = 'Durarbayli, Vasif';
     await insertGame(
       white: player,
-      black: 'Classical Opponent 1',
+      black: 'Classical Opp',
       result: '1-0',
       eco: 'C42',
       date: '2024.01.01',
@@ -228,48 +356,121 @@ void main() {
       tcc: 'classical',
     );
     await insertGame(
-      white: 'Classical Opponent 2',
-      black: player,
-      result: '0-1',
-      eco: 'C43',
-      date: '2024.02.01',
-      whiteElo: 2510,
-      blackElo: 2610,
-      tcc: 'classical',
-    );
-    await insertGame(
       white: player,
-      black: 'Blitz Opponent',
-      result: '1-0',
+      black: 'Blitz Opp',
+      result: '0-1',
       eco: 'B90',
-      date: '2024.03.01',
-      whiteElo: 2900,
-      blackElo: 2800,
+      date: '2024.02.01',
+      whiteElo: 2800,
+      blackElo: 2700,
       tcc: 'blitz',
     );
     await insertGame(
-      white: player,
-      black: 'Unknown Opponent',
+      white: 'Opp',
+      black: player,
       result: '1-0',
-      eco: 'D30',
-      date: '2024.04.01',
-      whiteElo: 2400,
-      blackElo: 2300,
-      tcc: 'Unknown',
+      eco: 'B90',
+      date: '2024.03.01',
+      whiteElo: 2650,
+      blackElo: 2810,
+      tcc: 'blitz',
     );
 
     final repository = PlayerStatsRepository(database: () async => db);
-    final stats = await repository.computePlayerStats(
+    final blitzOnly = await repository.computePlayerStats(
       databasePath: databasePath,
       aliases: const [player],
+      timeControlCategory: 'blitz',
     );
+    expect(blitzOnly.games, 2);
+    expect(blitzOnly.overall.wins, 0);
+    expect(blitzOnly.overall.losses, 2);
+    expect(blitzOnly.ratingSeries.map((s) => s.rating), [2800, 2810]);
+    expect(blitzOnly.ratingTimeControlCategory, 'blitz');
 
-    expect(stats.games, 4);
-    expect(stats.ratingTimeControlCategory, 'classical');
-    expect(stats.ratingSeries.map((s) => s.rating), [2600, 2610]);
-    expect(stats.peakRating, 2610);
-    expect(stats.latestRating, 2610);
+    final classicalOnly = await repository.computePlayerStats(
+      databasePath: databasePath,
+      aliases: const [player],
+      timeControlCategory: 'classical',
+    );
+    expect(classicalOnly.games, 1);
+    expect(classicalOnly.overall.wins, 1);
+    expect(classicalOnly.ratingSeries.map((s) => s.rating), [2600]);
   });
+
+  test(
+    'rating series keeps older rated history when dominant bucket starts late',
+    () async {
+      const player = 'Durarbayli, Vasif';
+      await insertGame(
+        white: player,
+        black: 'Older Opponent 1',
+        result: '1-0',
+        eco: 'C42',
+        date: '2018.01.01',
+        whiteElo: 2400,
+        blackElo: 2300,
+        tcc: 'Unknown',
+      );
+      await insertGame(
+        white: 'Older Opponent 2',
+        black: player,
+        result: '1/2-1/2',
+        eco: 'D30',
+        date: '2019.01.01',
+        whiteElo: 2350,
+        blackElo: 2450,
+        tcc: '',
+      );
+      await insertGame(
+        white: player,
+        black: 'Blitz Opponent 1',
+        result: '1-0',
+        eco: 'B90',
+        date: '2022.01.01',
+        whiteElo: 2600,
+        blackElo: 2500,
+        tcc: 'blitz',
+      );
+      await insertGame(
+        white: 'Blitz Opponent 2',
+        black: player,
+        result: '0-1',
+        eco: 'B91',
+        date: '2022.02.01',
+        whiteElo: 2510,
+        blackElo: 2610,
+        tcc: 'blitz',
+      );
+      await insertGame(
+        white: player,
+        black: 'Blitz Opponent 3',
+        result: '1-0',
+        eco: 'B92',
+        date: '2022.03.01',
+        whiteElo: 2620,
+        blackElo: 2520,
+        tcc: 'blitz',
+      );
+
+      final repository = PlayerStatsRepository(database: () async => db);
+      final stats = await repository.computePlayerStats(
+        databasePath: databasePath,
+        aliases: const [player],
+      );
+
+      expect(stats.ratingTimeControlCategory, isNull);
+      expect(stats.ratingSeries.map((s) => s.rating), [
+        2400,
+        2450,
+        2600,
+        2610,
+        2620,
+      ]);
+      expect(stats.peakRating, 2620);
+      expect(stats.latestRating, 2620);
+    },
+  );
 
   test(
     'hydrates missing local cache from the player PGN before computing stats',
@@ -286,6 +487,61 @@ void main() {
       expect(stats.overall.wins, 1);
       expect(stats.overall.losses, 1);
       expect(stats.isEmpty, isFalse);
+    },
+  );
+
+  test(
+    'ChessEver games without a TimeControl tag count as classical',
+    () async {
+      await File(databasePath).writeAsString('''
+[Event "Titled Swiss"]
+[Site "Baku, Azerbaijan"]
+[Date "2025.03.01"]
+[Round "1"]
+[White "Durarbayli,Vasif"]
+[Black "Opponent, One"]
+[WhiteFideId "13402935"]
+[BlackFideId "10000001"]
+[WhiteElo "2605"]
+[BlackElo "2500"]
+[ECO "B90"]
+[Result "1-0"]
+
+1. e4 c5 2. Nf3 d6 1-0
+''');
+
+      final repository = PlayerStatsRepository(database: () async => db);
+      final stats = await repository.computePlayerStats(
+        databasePath: databasePath,
+        aliases: const ['Vasif Durarbayli'],
+        playerFideId: '13402935',
+        timeControlCategory: 'classical',
+        unclassifiedTimeControlCategory: 'classical',
+      );
+
+      expect(stats.games, 1);
+      expect(stats.overall.wins, 1);
+      expect(stats.overall.draws, 0);
+      expect(stats.timeControls.single.category, 'classical');
+      expect(stats.timeControls.single.count, 1);
+
+      // Existing players can already have this game cached with a null
+      // category and a geographic Site. Source provenance must classify it
+      // without requiring the user to re-download the ChessEver source.
+      await db.execute(
+        'UPDATE $localChessGamesTable '
+        'SET time_control_category = NULL WHERE database_id = ?',
+        [databaseId],
+      );
+      final repaired = await repository.computePlayerStats(
+        databasePath: databasePath,
+        aliases: const ['Vasif Durarbayli'],
+        playerFideId: '13402935',
+        timeControlCategory: 'classical',
+        unclassifiedTimeControlCategory: 'classical',
+      );
+      expect(repaired.games, 1);
+      expect(repaired.timeControls.single.category, 'classical');
     },
   );
 
@@ -413,95 +669,95 @@ void main() {
     expect(stats.years.single.games, 4);
   });
 
-  test('year series carries W/D/L, time controls and sources for hover', () async {
-    const player = 'Year Chart Player';
-    await insertGame(
-      white: player,
-      black: 'Opp A',
-      result: '1-0',
-      eco: 'C01',
-      date: '2022.05.01',
-      tcc: 'Blitz',
-      site: 'https://lichess.org/abc',
-    );
-    await insertGame(
-      white: 'Opp B',
-      black: player,
-      result: '1-0',
-      eco: 'C02',
-      date: '2022.06.01',
-      tcc: 'Rapid',
-      site: 'https://www.chess.com/game/live/1',
-    );
-    await insertGame(
-      white: player,
-      black: 'Opp C',
-      result: '1/2-1/2',
-      eco: 'C03',
-      date: '2023.01.15',
-      tcc: 'Blitz',
-      site: 'https://lichess.org/def',
-    );
-    await insertGame(
-      white: player,
-      black: 'Opp D',
-      result: '0-1',
-      eco: 'C04',
-      date: '2023.08.20',
-      tcc: 'Classical',
-      site: 'https://lichess.org/ghi',
-    );
+  test(
+    'year series carries W/D/L, time controls and sources for hover',
+    () async {
+      const player = 'Year Chart Player';
+      await insertGame(
+        white: player,
+        black: 'Opp A',
+        result: '1-0',
+        eco: 'C01',
+        date: '2022.05.01',
+        tcc: 'Blitz',
+        site: 'https://lichess.org/abc',
+      );
+      await insertGame(
+        white: 'Opp B',
+        black: player,
+        result: '1-0',
+        eco: 'C02',
+        date: '2022.06.01',
+        tcc: 'Rapid',
+        site: 'https://www.chess.com/game/live/1',
+      );
+      await insertGame(
+        white: player,
+        black: 'Opp C',
+        result: '1/2-1/2',
+        eco: 'C03',
+        date: '2023.01.15',
+        tcc: 'Blitz',
+        site: 'https://lichess.org/def',
+      );
+      await insertGame(
+        white: player,
+        black: 'Opp D',
+        result: '0-1',
+        eco: 'C04',
+        date: '2023.08.20',
+        tcc: 'Classical',
+        site: 'https://lichess.org/ghi',
+      );
 
-    final repository = PlayerStatsRepository(database: () async => db);
-    final stats = await repository.computePlayerStats(
-      databasePath: databasePath,
-      aliases: const [player],
-    );
+      final repository = PlayerStatsRepository(database: () async => db);
+      final stats = await repository.computePlayerStats(
+        databasePath: databasePath,
+        aliases: const [player],
+      );
 
-    expect(stats.years.map((y) => y.year).toList(), [2022, 2023]);
+      expect(stats.years.map((y) => y.year).toList(), [2022, 2023]);
 
-    final y2022 = stats.years.firstWhere((y) => y.year == 2022);
-    expect(y2022.games, 2);
-    expect(y2022.tally.wins, 1);
-    expect(y2022.tally.losses, 1);
-    expect(y2022.tally.draws, 0);
-    expect(
-      {for (final t in y2022.timeControls) t.category: t.count},
-      {'Blitz': 1, 'Rapid': 1},
-    );
-    expect(
-      {for (final s in y2022.sources) s.label: s.count},
-      {'Lichess': 1, 'Chess.com': 1},
-    );
+      final y2022 = stats.years.firstWhere((y) => y.year == 2022);
+      expect(y2022.games, 2);
+      expect(y2022.tally.wins, 1);
+      expect(y2022.tally.losses, 1);
+      expect(y2022.tally.draws, 0);
+      expect(
+        {for (final t in y2022.timeControls) t.category: t.count},
+        {'Blitz': 1, 'Rapid': 1},
+      );
+      expect(
+        {for (final s in y2022.sources) s.label: s.count},
+        {'Lichess': 1, 'Chess.com': 1},
+      );
 
-    final y2023 = stats.years.firstWhere((y) => y.year == 2023);
-    expect(y2023.games, 2);
-    expect(y2023.tally.wins, 0);
-    expect(y2023.tally.draws, 1);
-    expect(y2023.tally.losses, 1);
-    expect(
-      {for (final t in y2023.timeControls) t.category: t.count},
-      {'Blitz': 1, 'Classical': 1},
-    );
-    expect(
-      {for (final s in y2023.sources) s.label: s.count},
-      {'Lichess': 2},
-    );
+      final y2023 = stats.years.firstWhere((y) => y.year == 2023);
+      expect(y2023.games, 2);
+      expect(y2023.tally.wins, 0);
+      expect(y2023.tally.draws, 1);
+      expect(y2023.tally.losses, 1);
+      expect(
+        {for (final t in y2023.timeControls) t.category: t.count},
+        {'Blitz': 1, 'Classical': 1},
+      );
+      expect({for (final s in y2023.sources) s.label: s.count}, {'Lichess': 2});
 
-    // Shipped chart mapping must surface the same breakdowns.
-    final series = playerYearChartSeries(stats.years);
-    expect(series.map((p) => p.year), [2022, 2023]);
-    expect(series[0].wins, 1);
-    expect(series[0].losses, 1);
-    expect(series[0].sources.map((s) => s.label).toSet(), {
-      'Lichess',
-      'Chess.com',
-    });
-    expect(series[1].timeControls.map((t) => t.category).toSet(), {
-      'Blitz',
-      'Classical',
-    });
-  });
+      // Shipped chart mapping must surface the same breakdowns.
+      final series = playerYearChartSeries(stats.years);
+      expect(series.map((p) => p.year), [2022, 2023]);
+      expect(series[0].wins, 1);
+      expect(series[0].losses, 1);
+      expect(series[0].sources.map((s) => s.label).toSet(), {
+        'Lichess',
+        'Chess.com',
+      });
+      expect(series[1].timeControls.map((t) => t.category).toSet(), {
+        'Blitz',
+        'Classical',
+      });
+    },
+  );
 }
 
 const String _pgnWin = '''

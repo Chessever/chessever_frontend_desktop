@@ -4261,8 +4261,8 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
                           showFormatFilter: true,
                         );
                         if (next == null || !context.mounted) return;
-                        gameFilter.value = gameFilter.value.copyWith(
-                          base: next,
+                        gameFilter.value = gameFilter.value.applyingDialog(
+                          next,
                         );
                       },
                     ),

@@ -2144,7 +2144,7 @@ class _ResultDonut extends StatelessWidget {
       _ResultPill(
         label: 'Won',
         value: stats.wins,
-        color: kGreenColor,
+        color: kPrimaryColor,
         pct: winPct,
         selected: selected == PlayerResultFilter.win,
         onTap: () => onSelect(PlayerResultFilter.win),
@@ -2152,7 +2152,7 @@ class _ResultDonut extends StatelessWidget {
       _ResultPill(
         label: 'Drew',
         value: stats.draws,
-        color: kLightGreyColor,
+        color: const Color(0xFF8B93A7),
         pct: drawPct,
         selected: selected == PlayerResultFilter.draw,
         onTap: () => onSelect(PlayerResultFilter.draw),
@@ -2422,8 +2422,12 @@ class _ColorCard extends StatelessWidget {
                   runSpacing: 8,
                   children: [
                     _MicroStat(label: 'Games', value: '$games'),
-                    _MicroStat(label: 'W', value: '$wins', color: kGreenColor),
-                    _MicroStat(label: 'D', value: '$draws'),
+                    _MicroStat(label: 'W', value: '$wins', color: kPrimaryColor),
+                    _MicroStat(
+                      label: 'D',
+                      value: '$draws',
+                      color: const Color(0xFF8B93A7),
+                    ),
                     _MicroStat(label: 'L', value: '$losses', color: kRedColor),
                   ],
                 ),

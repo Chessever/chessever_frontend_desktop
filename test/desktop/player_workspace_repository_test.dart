@@ -47,6 +47,61 @@ void main() {
   });
 
   group('Player workspace PGN helpers', () {
+    test(
+      'cold Combined rebuild keeps the UI event loop responsive',
+      () async {
+        final sourceFile = File('${temp.path}/cold-chessever-source.pgn');
+        await sourceFile.writeAsString(_largeChessEverPgn(1000));
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+
+        final stopwatch = Stopwatch()..start();
+        var lastTickUs = stopwatch.elapsedMicroseconds;
+        var maxTickGapUs = 0;
+        var tickCount = 0;
+        var phase = 'starting';
+        var phaseAtMaxGap = phase;
+        final timer = Timer.periodic(const Duration(milliseconds: 4), (_) {
+          final nowUs = stopwatch.elapsedMicroseconds;
+          final gapUs = nowUs - lastTickUs;
+          if (gapUs > maxTickGapUs) {
+            maxTickGapUs = gapUs;
+            phaseAtMaxGap = phase;
+          }
+          lastTickUs = nowUs;
+          tickCount++;
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 12));
+
+        final result = await workspaceRepository.rebuildCombinedDatabase(
+          localRepository: localRepository,
+          playerId: 'vasif-cold-install',
+          playerName: 'Vasif Durarbayli',
+          playerFideId: '13402935',
+          sourcePaths: <String>[sourceFile.path],
+          playerAliases: const <String>['Vasif Durarbayli', 'Durarbayli,Vasif'],
+          onProgress: (message, _) => phase = message,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 12));
+        timer.cancel();
+
+        expect(result.stats.gameCount, 1000);
+        expect(tickCount, greaterThan(10));
+        expect(
+          maxTickGapUs,
+          lessThan(25000),
+          reason:
+              'A cold Combined rebuild must not block the UI event loop for '
+              'longer than roughly one 60 Hz frame. Actual max gap: '
+              '${(maxTickGapUs / 1000).toStringAsFixed(1)} ms during '
+              '"$phaseAtMaxGap".',
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
     test('formats generated PGN file names with an upper-case source', () {
       expect(
         playerWorkspaceSourceFileName(
@@ -1470,9 +1525,7 @@ void main() {
     test(
       'load repairs stale downloaded ChessEver stats from local cache',
       () async {
-        final workspaceRepository = PlayerWorkspaceRepository(
-          supportDirectory: () async => temp,
-        );
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
         final localRepository = LocalChessDatabaseRepository(
           database: () async => db,
         );
@@ -1506,11 +1559,9 @@ void main() {
             ),
           },
         );
-        await workspaceRepository.saveSnapshot(
-          PlayerWorkspaceSnapshot(
-            players: <PlayerWorkspacePlayer>[stalePlayer],
-            selectedPlayerId: playerId,
-          ),
+        workspaceRepository.snapshot = PlayerWorkspaceSnapshot(
+          players: <PlayerWorkspacePlayer>[stalePlayer],
+          selectedPlayerId: playerId,
         );
 
         final notifier = PlayerWorkspaceNotifier(
@@ -2889,6 +2940,40 @@ $_mergeGameOne
       },
     );
 
+    test(
+      'falls back to paged ChessEver download when PGN export is short',
+      () async {
+        final gamebaseRepository = _FakeGamebaseRepository(
+          const <String, String>{'ce-1': _mergeGameOne, 'ce-2': _mergeGameTwo},
+          pgnExport: _mergeGameOne,
+        );
+        final progressMessages = <String>[];
+        final workspaceRepository = PlayerWorkspaceRepository();
+
+        final downloaded = await workspaceRepository.downloadChessEverGames(
+          repository: gamebaseRepository,
+          playerId: 'ce-player',
+          fideId: '1503014',
+          expectedGameCount: 2,
+          onProgress: (message, _) => progressMessages.add(message),
+        );
+
+        expect(downloaded.source, PlayerWorkspaceSource.chessever);
+        expect(downloaded.gameCount, 2);
+        expect(downloaded.pgn, contains('Lichess import 1'));
+        expect(downloaded.pgn, contains('Lichess import 2'));
+        expect(gamebaseRepository.exportPlayerIds, <String>['ce-player']);
+        expect(gamebaseRepository.requestedPlayerIds, <String>['ce-player']);
+        expect(gamebaseRepository.hydratedIds, <String>['ce-1', 'ce-2']);
+        expect(
+          progressMessages,
+          contains(
+            'ChessEver: PGN export had 1 of 2 games; loading pages instead...',
+          ),
+        );
+      },
+    );
+
     test('hydrates missing ChessEver PGNs concurrently', () async {
       final gamebaseRepository = _ConcurrentHydrationGamebaseRepository(
         const <String, String>{
@@ -3237,6 +3322,30 @@ $_mergeGameOne
       );
     });
   });
+}
+
+String _largeChessEverPgn(int gameCount) {
+  final buffer = StringBuffer();
+  for (var index = 0; index < gameCount; index++) {
+    if (index > 0) buffer.writeln();
+    final day = (index % 28) + 1;
+    final result = index.isEven ? '1-0' : '0-1';
+    buffer
+      ..writeln('[Event "ChessEver cold game $index"]')
+      ..writeln('[Site "ChessEver"]')
+      ..writeln('[Date "2025.01.${day.toString().padLeft(2, '0')}"]')
+      ..writeln('[Round "${index + 1}"]')
+      ..writeln('[White "Durarbayli,Vasif"]')
+      ..writeln('[Black "Opponent $index"]')
+      ..writeln('[WhiteFideId "13402935"]')
+      ..writeln('[BlackFideId "${20000000 + index}"]')
+      ..writeln('[WhiteElo "2600"]')
+      ..writeln('[BlackElo "2500"]')
+      ..writeln('[Result "$result"]')
+      ..writeln()
+      ..writeln('1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 $result');
+  }
+  return buffer.toString();
 }
 
 Future<int> _count(resqlite.Database db, String table) async {

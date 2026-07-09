@@ -7,49 +7,88 @@ enum LocalPlayerOutcomeFilter { all, win, draw, loss }
 
 /// Structured filters for local resqlite game lists (players Games tab + library).
 ///
-/// Wraps the shared [GameFilter] dialog model plus an optional player-centric
-/// win/draw/loss outcome used by the players Overview → Games handoff.
+/// Wraps the shared [GameFilter] dialog model plus player-centric outcome,
+/// opponent name, and exact local time-control category (including bullet).
 @immutable
 class LocalChessGameFilter {
   LocalChessGameFilter({
     GameFilter? base,
     this.playerOutcome = LocalPlayerOutcomeFilter.all,
+    this.opponentName,
+    this.timeControlCategory,
   }) : base = base ?? GameFilter.defaultFilter();
 
   final GameFilter base;
   final LocalPlayerOutcomeFilter playerOutcome;
 
+  /// Opponent display name (substring match, case-insensitive) when set.
+  final String? opponentName;
+
+  /// Exact local category (`classical` / `rapid` / `blitz` / `bullet` / …).
+  /// When set, overrides [GameFilter.timeControl] for the SQL path.
+  final String? timeControlCategory;
+
   static LocalChessGameFilter get empty => LocalChessGameFilter();
 
   bool get hasActiveFilters =>
-      base.hasActiveFilters || playerOutcome != LocalPlayerOutcomeFilter.all;
+      base.hasActiveFilters ||
+      playerOutcome != LocalPlayerOutcomeFilter.all ||
+      (opponentName != null && opponentName!.trim().isNotEmpty) ||
+      (timeControlCategory != null && timeControlCategory!.trim().isNotEmpty);
 
-  int get activeFilterCount =>
-      base.activeFilterCount +
-      (playerOutcome != LocalPlayerOutcomeFilter.all ? 1 : 0);
+  int get activeFilterCount {
+    var count = base.activeFilterCount;
+    if (playerOutcome != LocalPlayerOutcomeFilter.all) count++;
+    if (opponentName != null && opponentName!.trim().isNotEmpty) count++;
+    // Prefer explicit category over the dialog enum when both set.
+    if (timeControlCategory != null && timeControlCategory!.trim().isNotEmpty) {
+      if (base.timeControl == GameTimeControlFilter.all) count++;
+    }
+    return count;
+  }
 
   LocalChessGameFilter copyWith({
     GameFilter? base,
     LocalPlayerOutcomeFilter? playerOutcome,
+    String? opponentName,
+    String? timeControlCategory,
+    bool clearOpponentName = false,
+    bool clearTimeControlCategory = false,
   }) {
     return LocalChessGameFilter(
       base: base ?? this.base,
       playerOutcome: playerOutcome ?? this.playerOutcome,
+      opponentName:
+          clearOpponentName ? null : (opponentName ?? this.opponentName),
+      timeControlCategory:
+          clearTimeControlCategory
+              ? null
+              : (timeControlCategory ?? this.timeControlCategory),
     );
   }
 
   LocalChessGameFilter cleared() => LocalChessGameFilter();
+
+  /// Applies a filter-dialog result. Clears sticky [timeControlCategory] so the
+  /// dialog's [GameFilter.timeControl] is what SQL honors (Overview handoffs
+  /// set exact categories that would otherwise shadow the dialog).
+  LocalChessGameFilter applyingDialog(GameFilter dialogResult) {
+    return copyWith(base: dialogResult, clearTimeControlCategory: true);
+  }
 
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
     return other is LocalChessGameFilter &&
         other.base == base &&
-        other.playerOutcome == playerOutcome;
+        other.playerOutcome == playerOutcome &&
+        other.opponentName == opponentName &&
+        other.timeControlCategory == timeControlCategory;
   }
 
   @override
-  int get hashCode => Object.hash(base, playerOutcome);
+  int get hashCode =>
+      Object.hash(base, playerOutcome, opponentName, timeControlCategory);
 }
 
 /// Facet kind for Overview stat taps.
@@ -62,6 +101,7 @@ enum PlayerOverviewFilterFacet {
   eco,
   year,
   timeControl,
+  opponent,
 }
 
 /// One overview surface the user can tap to seed the Games tab filter.
@@ -72,6 +112,7 @@ class PlayerOverviewFilterRequest {
     this.ecoCode,
     this.year,
     this.timeControlCategory,
+    this.opponentName,
     this.sourcePath,
   });
 
@@ -79,6 +120,7 @@ class PlayerOverviewFilterRequest {
   final String? ecoCode;
   final int? year;
   final String? timeControlCategory;
+  final String? opponentName;
 
   /// Preferred Games-tab source database path (active stats source).
   final String? sourcePath;
@@ -93,17 +135,11 @@ LocalChessGameFilter localChessGameFilterFromOverview(
   final yearNow = DateTime.now().year;
   switch (request.facet) {
     case PlayerOverviewFilterFacet.wins:
-      return LocalChessGameFilter(
-        playerOutcome: LocalPlayerOutcomeFilter.win,
-      );
+      return LocalChessGameFilter(playerOutcome: LocalPlayerOutcomeFilter.win);
     case PlayerOverviewFilterFacet.draws:
-      return LocalChessGameFilter(
-        playerOutcome: LocalPlayerOutcomeFilter.draw,
-      );
+      return LocalChessGameFilter(playerOutcome: LocalPlayerOutcomeFilter.draw);
     case PlayerOverviewFilterFacet.losses:
-      return LocalChessGameFilter(
-        playerOutcome: LocalPlayerOutcomeFilter.loss,
-      );
+      return LocalChessGameFilter(playerOutcome: LocalPlayerOutcomeFilter.loss);
     case PlayerOverviewFilterFacet.asWhite:
       return LocalChessGameFilter(
         base: GameFilter(color: GameColorFilter.white, maxYear: yearNow),
@@ -121,15 +157,19 @@ LocalChessGameFilter localChessGameFilterFromOverview(
     case PlayerOverviewFilterFacet.year:
       final y = request.year;
       if (y == null) return LocalChessGameFilter();
-      return LocalChessGameFilter(
-        base: GameFilter(minYear: y, maxYear: y),
-      );
+      return LocalChessGameFilter(base: GameFilter(minYear: y, maxYear: y));
     case PlayerOverviewFilterFacet.timeControl:
-      final tc = _timeControlFromCategory(request.timeControlCategory);
-      if (tc == GameTimeControlFilter.all) return LocalChessGameFilter();
+      final raw = request.timeControlCategory?.trim().toLowerCase();
+      if (raw == null || raw.isEmpty) return LocalChessGameFilter();
+      final enumTc = _timeControlFromCategory(raw);
       return LocalChessGameFilter(
-        base: GameFilter(timeControl: tc, maxYear: yearNow),
+        base: GameFilter(timeControl: enumTc, maxYear: yearNow),
+        timeControlCategory: raw,
       );
+    case PlayerOverviewFilterFacet.opponent:
+      final name = request.opponentName?.trim();
+      if (name == null || name.isEmpty) return LocalChessGameFilter();
+      return LocalChessGameFilter(opponentName: name);
   }
 }
 
@@ -141,7 +181,14 @@ GameTimeControlFilter _timeControlFromCategory(String? raw) {
     case 'rapid':
       return GameTimeControlFilter.rapid;
     case 'blitz':
+      return GameTimeControlFilter.blitz;
     case 'bullet':
+    case 'ultrabullet':
+    case 'ultra_bullet':
+    case 'ultra-bullet':
+    case 'ultra bullet':
+      // Dialog enum has no bullet; keep blitz as nearest chip, exact category
+      // is applied via [LocalChessGameFilter.timeControlCategory].
       return GameTimeControlFilter.blitz;
     default:
       return GameTimeControlFilter.all;
@@ -151,8 +198,8 @@ GameTimeControlFilter _timeControlFromCategory(String? raw) {
 /// Appends SQL predicates for [filter] onto an existing WHERE starting with
 /// `g.database_id = ?` (joins: wp/bp players as in [localDatabaseGamesPage]).
 ///
-/// When [playerFideId] / [playerAliases] are set, colour and player-outcome
-/// filters resolve sides relative to that player (same idea as profile filters).
+/// Search terms are applied separately via [_appendLocalGameSearch] — both
+/// compose with AND so filters + search always stack.
 void appendLocalChessGameFilter(
   StringBuffer where,
   List<Object?> parameters,
@@ -162,12 +209,11 @@ void appendLocalChessGameFilter(
 }) {
   final base = filter.base;
   final fide = playerFideId?.trim().toLowerCase();
-  final aliases =
-      playerAliases
-          .map(_normalizePlayerName)
-          .where((name) => name.isNotEmpty)
-          .toSet()
-          .toList(growable: false);
+  final aliases = playerAliases
+      .map(_normalizePlayerName)
+      .where((name) => name.isNotEmpty)
+      .toSet()
+      .toList(growable: false);
 
   // Absolute result (1-0 / 0-1 / draw) — dialog "Result" chips.
   switch (base.result) {
@@ -178,13 +224,10 @@ void appendLocalChessGameFilter(
     case GameResultFilter.blackWins:
       where.write(" AND g.result IN ('0-1')");
     case GameResultFilter.draw:
-      where.write(
-        " AND g.result IN ('1/2-1/2', '1/2', '0.5-0.5', '½-½')",
-      );
+      where.write(" AND g.result IN ('1/2-1/2', '1/2', '0.5-0.5', '½-½')");
   }
 
-  // Player-centric outcome (Overview W/D/L taps). Side expression is used
-  // once so bound FIDE/alias parameters stay 1:1 with placeholders.
+  // Player-centric outcome (Overview W/D/L).
   if (filter.playerOutcome != LocalPlayerOutcomeFilter.all &&
       ((fide != null && fide.isNotEmpty) || aliases.isNotEmpty)) {
     final sideSql = _playerSidePredicateSql(
@@ -220,7 +263,7 @@ void appendLocalChessGameFilter(
     }
   }
 
-  // Colour relative to the player when identity is known; otherwise no-op.
+  // Colour relative to the player when identity is known.
   if (base.color != GameColorFilter.all &&
       ((fide != null && fide.isNotEmpty) || aliases.isNotEmpty)) {
     final sideSql = _playerSidePredicateSql(
@@ -233,24 +276,62 @@ void appendLocalChessGameFilter(
     parameters.add(want);
   }
 
-  // Time control category column.
-  switch (base.timeControl) {
-    case GameTimeControlFilter.all:
-      break;
-    case GameTimeControlFilter.classical:
-      where.write(
-        " AND LOWER(TRIM(COALESCE(g.time_control_category, ''))) "
-        "IN ('classical', 'standard')",
-      );
-    case GameTimeControlFilter.rapid:
-      where.write(
-        " AND LOWER(TRIM(COALESCE(g.time_control_category, ''))) = 'rapid'",
-      );
-    case GameTimeControlFilter.blitz:
-      where.write(
-        " AND LOWER(TRIM(COALESCE(g.time_control_category, ''))) "
-        "IN ('blitz', 'bullet')",
-      );
+  // Time control — exact local category wins over dialog enum.
+  final exactTc = filter.timeControlCategory?.trim().toLowerCase();
+  if (exactTc != null && exactTc.isNotEmpty) {
+    switch (exactTc) {
+      case 'classical':
+      case 'standard':
+        where.write(
+          " AND LOWER(TRIM(COALESCE(g.time_control_category, ''))) "
+          "IN ('classical', 'standard')",
+        );
+      case 'rapid':
+        where.write(
+          " AND LOWER(TRIM(COALESCE(g.time_control_category, ''))) = 'rapid'",
+        );
+      case 'blitz':
+        where.write(
+          " AND LOWER(TRIM(COALESCE(g.time_control_category, ''))) = 'blitz'",
+        );
+      case 'bullet':
+        where.write(
+          " AND LOWER(TRIM(COALESCE(g.time_control_category, ''))) = 'bullet'",
+        );
+      case 'ultrabullet':
+      case 'ultra_bullet':
+      case 'ultra-bullet':
+      case 'ultra bullet':
+        where.write(
+          " AND LOWER(TRIM(COALESCE(g.time_control_category, ''))) "
+          "IN ('ultrabullet', 'ultra_bullet', 'ultra-bullet', 'ultra bullet')",
+        );
+      default:
+        where.write(
+          " AND LOWER(TRIM(COALESCE(g.time_control_category, ''))) = ?",
+        );
+        parameters.add(exactTc);
+    }
+  } else {
+    switch (base.timeControl) {
+      case GameTimeControlFilter.all:
+        break;
+      case GameTimeControlFilter.classical:
+        where.write(
+          " AND LOWER(TRIM(COALESCE(g.time_control_category, ''))) "
+          "IN ('classical', 'standard')",
+        );
+      case GameTimeControlFilter.rapid:
+        where.write(
+          " AND LOWER(TRIM(COALESCE(g.time_control_category, ''))) = 'rapid'",
+        );
+      case GameTimeControlFilter.blitz:
+        // Dialog "Blitz" still includes bullet when no exact category is set.
+        where.write(
+          " AND LOWER(TRIM(COALESCE(g.time_control_category, ''))) "
+          "IN ('blitz', 'bullet', 'ultrabullet', 'ultra bullet')",
+        );
+    }
   }
 
   // Online / OTB when column is populated.
@@ -315,10 +396,24 @@ void appendLocalChessGameFilter(
     );
     parameters.add(maxMove);
   }
+
+  // Opponent name — either side matches (substring, case-insensitive).
+  final opp = filter.opponentName?.trim();
+  if (opp != null && opp.isNotEmpty) {
+    final like = '%${_escapeLike(opp.toLowerCase())}%';
+    where.write('''
+ AND (
+  LOWER(COALESCE(wp.name, json_extract(g.headers_json, '\$.White'), '')) LIKE ? ESCAPE '\\'
+  OR LOWER(COALESCE(bp.name, json_extract(g.headers_json, '\$.Black'), '')) LIKE ? ESCAPE '\\'
+)
+''');
+    parameters
+      ..add(like)
+      ..add(like);
+  }
 }
 
 /// SQL expression returning `'w'`, `'b'`, or NULL for the player's side.
-/// Appends bound parameters for FIDE/aliases as needed.
 String _playerSidePredicateSql({
   required String? fideId,
   required List<String> aliases,

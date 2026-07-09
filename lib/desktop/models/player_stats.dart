@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 
 /// Win / draw / loss tally from a single player's point of view.
@@ -146,9 +148,45 @@ List<PlayerYearChartPoint> playerYearChartSeries(List<PlayerYearStat> years) {
   ];
 }
 
-/// Y-scale ceiling for a games-per-year series (at least 1 so empty axes stay valid).
+/// Peak games in the series (at least 1 so empty axes stay valid).
 int playerYearChartMaxGames(List<PlayerYearChartPoint> series) {
   return series.map((p) => p.games).fold<int>(1, (a, b) => a > b ? a : b);
+}
+
+/// Nice Y-axis ceiling ≥ [maxGames] so grid lines and bar tops share one scale.
+int playerYearChartAxisMax(int maxGames) {
+  if (maxGames <= 1) return 1;
+  final step = _playerYearNiceStep(maxGames / 4);
+  final top = ((maxGames + step - 1) ~/ step) * step;
+  return top < maxGames ? maxGames : top;
+}
+
+/// Inclusive Y ticks from 0 to [axisMax] (usually 4–5 steps).
+List<int> playerYearChartAxisTicks(int axisMax) {
+  if (axisMax <= 1) return const <int>[0, 1];
+  final step = _playerYearNiceStep(axisMax / 4);
+  final ticks = <int>{0};
+  for (var v = step; v < axisMax; v += step) {
+    ticks.add(v);
+  }
+  ticks.add(axisMax);
+  return ticks.toList()..sort();
+}
+
+int _playerYearNiceStep(double rough) {
+  if (rough <= 1) return 1;
+  final exp = (math.log(rough) / math.ln10).floor();
+  final base = math.pow(10, exp).toDouble();
+  final fraction = rough / base;
+  final nice =
+      fraction <= 1
+          ? 1.0
+          : fraction <= 2
+          ? 2.0
+          : fraction <= 5
+          ? 5.0
+          : 10.0;
+  return (nice * base).round().clamp(1, 1000000);
 }
 
 @immutable

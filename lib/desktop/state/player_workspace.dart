@@ -769,10 +769,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
               playerId: existing.externalId ?? player.chesseverPlayerId ?? '',
               fideId: player.fideId,
               sinceDate: latestStoredGameDate,
-              expectedGameCount: _expectedDownloadGameCount(
-                existing,
-                reinstall: reinstall,
-              ),
+              expectedGameCount: _expectedChessEverDownloadGameCount(existing),
               onProgress:
                   (message, progress) => _setScopedOperationPhaseProgress(
                     scope,
@@ -2105,6 +2102,11 @@ int? _expectedDownloadGameCount(
     return account.effectiveAvailableGameCount;
   }
   return null;
+}
+
+int? _expectedChessEverDownloadGameCount(PlayerWorkspaceAccount account) {
+  final available = account.effectiveAvailableGameCount;
+  return available > 0 ? available : null;
 }
 
 int _maxGameCount(Iterable<int> counts) {
