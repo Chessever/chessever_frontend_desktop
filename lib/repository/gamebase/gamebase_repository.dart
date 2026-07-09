@@ -32,10 +32,34 @@ class GamebaseData with GamebaseDataMappable {
 }
 
 class GamebasePlayerPgnExport {
-  const GamebasePlayerPgnExport({required this.pgn, required this.gameCount});
+  const GamebasePlayerPgnExport({
+    required this.pgn,
+    required this.gameCount,
+    this.cacheStatus,
+  });
 
   final String pgn;
   final int gameCount;
+  final String? cacheStatus;
+}
+
+enum GamebaseExternalPlayerSource {
+  lichess,
+  chesscom;
+
+  String get apiPathSegment {
+    return switch (this) {
+      GamebaseExternalPlayerSource.lichess => 'lichess',
+      GamebaseExternalPlayerSource.chesscom => 'chesscom',
+    };
+  }
+
+  String get label {
+    return switch (this) {
+      GamebaseExternalPlayerSource.lichess => 'Lichess',
+      GamebaseExternalPlayerSource.chesscom => 'Chess.com',
+    };
+  }
 }
 
 enum MiniatureGamesWindow {
@@ -453,7 +477,7 @@ class GamebaseRepository {
   final Dio _dio;
   final String _baseUrl;
   static const Duration _aggregateReceiveTimeout = Duration(seconds: 75);
-  static const Duration _pgnExportReceiveTimeout = Duration(seconds: 120);
+  static const Duration _pgnExportReceiveTimeout = Duration(seconds: 240);
   static const Duration _aggregateTimeoutRetryDelay = Duration(
     milliseconds: 750,
   );
@@ -1353,14 +1377,70 @@ class GamebaseRepository {
       final gameCount = int.tryParse(
         response.headers.value('x-game-count') ?? '',
       );
+      final cacheStatus = response.headers.value('x-pgn-cache');
 
-      return GamebasePlayerPgnExport(pgn: pgn, gameCount: gameCount ?? 0);
+      return GamebasePlayerPgnExport(
+        pgn: pgn,
+        gameCount: gameCount ?? 0,
+        cacheStatus: cacheStatus,
+      );
     } on DioException catch (e) {
       final statusCode = e.response?.statusCode;
       if (statusCode == 403 ||
           statusCode == 404 ||
           statusCode == 405 ||
           statusCode == 501) {
+        return null;
+      }
+      rethrow;
+    }
+  }
+
+  /// Fetch an external player source as one server-cached PGN snapshot.
+  ///
+  /// The gamebase endpoint probes the origin source first and only refreshes
+  /// its cache when the remote source is bigger/newer than the cached snapshot.
+  /// Returns null when the deployed proxy/API does not support the endpoint yet.
+  /// Production player source sync treats that as an unavailable backend source,
+  /// not as permission to hit Lichess/Chess.com from the client.
+  Future<GamebasePlayerPgnExport?> getExternalPlayerGamesPgn({
+    required GamebaseExternalPlayerSource source,
+    required String username,
+    bool refresh = false,
+  }) async {
+    final cleanUsername = username.trim();
+    if (cleanUsername.isEmpty) return null;
+
+    try {
+      final path =
+          '$_baseUrl/api/player/${source.apiPathSegment}/${Uri.encodeComponent(cleanUsername)}/games.pgn';
+      final response = await _dio.get<String>(
+        path,
+        queryParameters: <String, dynamic>{if (refresh) 'refresh': 'true'},
+        options: Options(
+          headers: <String, String>{
+            ..._headers,
+            'Accept': 'application/x-chess-pgn, text/plain, */*',
+          },
+          receiveTimeout: _pgnExportReceiveTimeout,
+          responseType: ResponseType.plain,
+        ),
+      );
+
+      final pgn = response.data ?? '';
+      final gameCount = int.tryParse(
+        response.headers.value('x-game-count') ?? '',
+      );
+      final cacheStatus = response.headers.value('x-pgn-cache');
+
+      return GamebasePlayerPgnExport(
+        pgn: pgn,
+        gameCount: gameCount ?? 0,
+        cacheStatus: cacheStatus,
+      );
+    } on DioException catch (e) {
+      final statusCode = e.response?.statusCode;
+      if (statusCode == 403 || statusCode == 405 || statusCode == 501) {
         return null;
       }
       rethrow;

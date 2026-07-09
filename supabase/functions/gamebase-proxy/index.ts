@@ -10,7 +10,7 @@ const corsHeaders = {
 };
 
 const DEFAULT_GAMEBASE_API_BASE = "https://service.chessever.com";
-const UPSTREAM_TIMEOUT_MS = 80_000;
+const UPSTREAM_TIMEOUT_MS = 240_000;
 
 type AllowedRoute = {
   method: "GET" | "POST";
@@ -23,6 +23,10 @@ const allowedRoutes: AllowedRoute[] = [
   { method: "GET", pattern: /^\/api\/player\/[^/]+\/(?:events|games|stats)$/ },
   { method: "GET", pattern: /^\/api\/player\/[^/]+\/games\.pgn$/ },
   { method: "GET", pattern: /^\/api\/player\/fide\/[^/]+\/games\.pgn$/ },
+  {
+    method: "GET",
+    pattern: /^\/api\/player\/(?:lichess|chesscom)\/[^/]+\/games\.pgn$/,
+  },
 
   { method: "POST", pattern: /^\/api\/player\/[^/]+\/opening-tree\/build$/ },
   { method: "GET", pattern: /^\/api\/player\/[^/]+\/opening-tree\/status$/ },

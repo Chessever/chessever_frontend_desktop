@@ -69,7 +69,9 @@ class PlayerWorkspaceState {
 }
 
 final playerWorkspaceRepositoryProvider = Provider<PlayerWorkspaceRepository>(
-  (_) => PlayerWorkspaceRepository(),
+  (ref) => PlayerWorkspaceRepository(
+    gamebaseRepository: ref.watch(gamebaseRepositoryProvider),
+  ),
 );
 
 typedef PlayerWorkspaceLocalDatabaseRegistrar =
@@ -706,7 +708,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
           : 'Preparing ${source.label} sync...',
       0,
     );
-    var importedSuccessfully = false;
+    var sourceChanged = false;
     Object? caughtError;
     StackTrace? caughtStackTrace;
     try {
@@ -781,87 +783,119 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       };
 
       scope.token.throwIfCanceled();
-      final importPhaseStart =
-          source == PlayerWorkspaceSource.chessever
-              ? _chessEverImportPhaseStart
-              : _standardImportPhaseStart;
-      final importPhaseSpan =
-          source == PlayerWorkspaceSource.chessever
-              ? _chessEverImportPhaseSpan
-              : _standardImportPhaseSpan;
-      _setScopedOperation(
-        scope,
-        operationKey,
-        source,
-        'Importing ${source.label} games...',
-        importPhaseStart,
-      );
-      final path = await _workspaceRepository.sourcePgnPath(
-        playerId: player.id,
-        playerName: player.displayName,
-        fideId: player.fideId,
-        source: source,
-        username: existing.username,
-      );
-      scope.token.throwIfCanceled();
-      final imported = await _workspaceRepository.mergeIntoLocalDatabase(
-        localRepository: _localRepository,
-        path: path,
-        sourceLabel: '${player.displayName} ${source.label}',
-        pgn: downloaded.pgn,
-        playerAliases: _aliasesFor(player, account),
-        playerFideId: player.fideId,
-        replaceExisting: reinstall || downloaded.replaceExistingSource,
-        onProgress:
-            (message, progress) => _setScopedOperationPhaseProgress(
-              scope,
-              operationKey,
-              source,
-              message,
-              progress,
-              start: importPhaseStart,
-              span: importPhaseSpan,
-            ),
-        cancellationToken: scope.token,
-      );
-      scope.token.throwIfCanceled();
-      if (!_scopeCanUpdateOperation(scope) || _isPlayerDeleted(player.id)) {
-        return;
-      }
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final nextAccount = existing.copyWith(
-        pgnPath: imported.path,
-        lastSyncAtMs: now,
-        availableGameCount: _maxGameCount(<int>[
-          existing.availableGameCount,
-          existing.gameCount,
-          downloaded.gameCount,
-          imported.stats.gameCount,
-        ]),
-        gameCount: imported.stats.gameCount,
-        newGameCount: imported.stats.newGameCount,
-        winCount: imported.stats.winCount,
-        drawCount: imported.stats.drawCount,
-        lossCount: imported.stats.lossCount,
-        clearError: true,
-      );
-      final latest = _latestPlayer(player);
-      if (_isPlayerDeleted(player.id)) return;
-      final nextPlayer = latest.withAccount(nextAccount);
-      await _upsertPlayer(nextPlayer, select: true);
-      if (!_scopeCanUpdateOperation(scope) || _isPlayerDeleted(player.id)) {
-        return;
-      }
-      unawaited(
-        _registerPlayerDatabasePathBestEffort(
-          player: nextPlayer,
-          path: imported.path,
+      if (!reinstall &&
+          await _canSkipUnchangedRemoteImport(
+            existing: existing,
+            downloaded: downloaded,
+          )) {
+        _setScopedOperation(
+          scope,
+          operationKey,
+          source,
+          '${source.label} is already current.',
+          1,
+        );
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final nextAccount = existing.copyWith(
+          lastSyncAtMs: now,
+          availableGameCount: _maxGameCount(<int>[
+            existing.availableGameCount,
+            existing.gameCount,
+            downloaded.gameCount,
+          ]),
+          clearError: true,
+        );
+        final latest = _latestPlayer(player);
+        if (_isPlayerDeleted(player.id)) return;
+        final nextPlayer = latest.withAccount(nextAccount);
+        await _upsertPlayer(nextPlayer, select: true);
+        if (!_scopeCanUpdateOperation(scope) || _isPlayerDeleted(player.id)) {
+          return;
+        }
+        _clearOperationForScope(scope);
+      } else {
+        final importPhaseStart =
+            source == PlayerWorkspaceSource.chessever
+                ? _chessEverImportPhaseStart
+                : _standardImportPhaseStart;
+        final importPhaseSpan =
+            source == PlayerWorkspaceSource.chessever
+                ? _chessEverImportPhaseSpan
+                : _standardImportPhaseSpan;
+        _setScopedOperation(
+          scope,
+          operationKey,
+          source,
+          'Importing ${source.label} games...',
+          importPhaseStart,
+        );
+        final path = await _workspaceRepository.sourcePgnPath(
+          playerId: player.id,
+          playerName: player.displayName,
+          fideId: player.fideId,
+          source: source,
+          username: existing.username,
+        );
+        scope.token.throwIfCanceled();
+        final imported = await _workspaceRepository.mergeIntoLocalDatabase(
+          localRepository: _localRepository,
+          path: path,
+          sourceLabel: '${player.displayName} ${source.label}',
+          pgn: downloaded.pgn,
+          playerAliases: _aliasesFor(player, account),
+          playerFideId: player.fideId,
+          replaceExisting: reinstall || downloaded.replaceExistingSource,
+          onProgress:
+              (message, progress) => _setScopedOperationPhaseProgress(
+                scope,
+                operationKey,
+                source,
+                message,
+                progress,
+                start: importPhaseStart,
+                span: importPhaseSpan,
+              ),
+          cancellationToken: scope.token,
+        );
+        scope.token.throwIfCanceled();
+        if (!_scopeCanUpdateOperation(scope) || _isPlayerDeleted(player.id)) {
+          return;
+        }
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final nextAccount = existing.copyWith(
+          pgnPath: imported.path,
+          lastSyncAtMs: now,
+          availableGameCount: _maxGameCount(<int>[
+            existing.availableGameCount,
+            existing.gameCount,
+            downloaded.gameCount,
+            imported.stats.gameCount,
+          ]),
           gameCount: imported.stats.gameCount,
-          indexedAtMs: now,
-        ),
-      );
-      _clearOperationForScope(scope);
-      importedSuccessfully = true;
+          newGameCount: imported.stats.newGameCount,
+          winCount: imported.stats.winCount,
+          drawCount: imported.stats.drawCount,
+          lossCount: imported.stats.lossCount,
+          clearError: true,
+        );
+        final latest = _latestPlayer(player);
+        if (_isPlayerDeleted(player.id)) return;
+        final nextPlayer = latest.withAccount(nextAccount);
+        await _upsertPlayer(nextPlayer, select: true);
+        if (!_scopeCanUpdateOperation(scope) || _isPlayerDeleted(player.id)) {
+          return;
+        }
+        unawaited(
+          _registerPlayerDatabasePathBestEffort(
+            player: nextPlayer,
+            path: imported.path,
+            gameCount: imported.stats.gameCount,
+            indexedAtMs: now,
+          ),
+        );
+        _clearOperationForScope(scope);
+        sourceChanged = true;
+      }
     } catch (error, stackTrace) {
       _clearOperationForScope(scope);
       if (isOperationCanceled(error) || _isPlayerDeleted(player.id)) {
@@ -879,7 +913,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     } finally {
       if (_scopeOwnsOperationKey(scope)) {
         _activeAccountSyncOperationKeys.remove(operationKey);
-        if (importedSuccessfully && !_isPlayerDeleted(player.id)) {
+        if (sourceChanged && !_isPlayerDeleted(player.id)) {
           _pendingCombinedRebuildPlayerIds.add(player.id);
         }
       }
@@ -898,6 +932,21 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
 
     if (caughtError != null) {
       Error.throwWithStackTrace(caughtError, caughtStackTrace!);
+    }
+  }
+
+  Future<bool> _canSkipUnchangedRemoteImport({
+    required PlayerWorkspaceAccount existing,
+    required PlayerWorkspaceDownloadedPgn downloaded,
+  }) async {
+    if (!downloaded.remoteUnchanged) return false;
+    final path = existing.pgnPath;
+    if (path == null || path.trim().isEmpty) return false;
+    if (existing.gameCount < downloaded.gameCount) return false;
+    try {
+      return await File(path).exists();
+    } catch (_) {
+      return false;
     }
   }
 

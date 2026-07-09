@@ -1199,6 +1199,65 @@ void main() {
     );
 
     test(
+      'sync skips local import when server source cache is unchanged',
+      () async {
+        final sourcePgns = <String, String>{
+          'alpha': '$_mergeGameOne\n\n$_mergeGameTwo',
+        };
+        final workspaceRepository = _RemoteHitPlayerWorkspaceRepository(
+          root: temp,
+          lichessPgnByUsername: sourcePgns,
+        );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: LocalChessDatabaseRepository(
+            database: () async => db,
+          ),
+        );
+        await notifier.load();
+        await notifier.addManualPlayer('Prep Target');
+        await notifier.selectPlayer(notifier.state.players.single.id);
+        await notifier.connectExternalAccount(
+          source: PlayerWorkspaceSource.lichess,
+          username: 'alpha',
+        );
+
+        var account =
+            notifier.state.selectedPlayer!.account(
+              PlayerWorkspaceSource.lichess,
+            )!;
+        await notifier.syncAccount(account);
+
+        final firstPlayer = notifier.state.selectedPlayer!;
+        final firstAccount =
+            firstPlayer.account(PlayerWorkspaceSource.lichess)!;
+        final firstLastSyncAt = firstAccount.lastSyncAtMs;
+        final firstCombinedBuiltAt = firstPlayer.combinedBuiltAtMs;
+        expect(firstLastSyncAt, isNotNull);
+        expect(workspaceRepository.replaceExistingRequests, <bool>[true]);
+        expect(await File(firstAccount.pgnPath!).exists(), isTrue);
+
+        workspaceRepository.remoteUnchanged = true;
+        account =
+            notifier.state.selectedPlayer!.account(
+              PlayerWorkspaceSource.lichess,
+            )!;
+        await notifier.syncAccount(account);
+
+        final nextPlayer = notifier.state.selectedPlayer!;
+        final nextAccount = nextPlayer.account(PlayerWorkspaceSource.lichess)!;
+        expect(workspaceRepository.replaceExistingRequests, hasLength(1));
+        expect(nextAccount.gameCount, firstAccount.gameCount);
+        expect(
+          nextAccount.lastSyncAtMs,
+          greaterThanOrEqualTo(firstLastSyncAt!),
+        );
+        expect(nextPlayer.combinedBuiltAtMs, firstCombinedBuiltAt);
+      },
+    );
+
+    test(
       'reinstall redownloads a source from scratch and replaces it',
       () async {
         final sourcePgns = <String, String>{
@@ -2724,6 +2783,78 @@ $_mergeGameOne
       },
     );
 
+    test('downloads external source games from gamebase snapshots', () async {
+      var directClientRequests = 0;
+      final gamebaseRepository = _FakeGamebaseRepository(
+        const <String, String>{},
+        externalExports:
+            const <GamebaseExternalPlayerSource, GamebasePlayerPgnExport>{
+              GamebaseExternalPlayerSource.lichess: GamebasePlayerPgnExport(
+                pgn: _mergeGameOne,
+                gameCount: 1,
+                cacheStatus: 'miss',
+              ),
+              GamebaseExternalPlayerSource.chesscom: GamebasePlayerPgnExport(
+                pgn: _mergeGameTwo,
+                gameCount: 1,
+                cacheStatus: 'hit',
+              ),
+            },
+      );
+      final workspaceRepository = PlayerWorkspaceRepository(
+        gamebaseRepository: gamebaseRepository,
+        client: MockClient((_) async {
+          directClientRequests += 1;
+          throw StateError('direct origin should not be used');
+        }),
+      );
+
+      final lichess = await workspaceRepository.downloadLichessGames(
+        username: 'DrNykterstein',
+      );
+      final chessCom = await workspaceRepository.downloadChessComGames(
+        username: 'Hikaru',
+      );
+
+      expect(lichess.source, PlayerWorkspaceSource.lichess);
+      expect(lichess.pgn, _mergeGameOne);
+      expect(lichess.replaceExistingSource, isTrue);
+      expect(lichess.remoteUnchanged, isFalse);
+      expect(chessCom.source, PlayerWorkspaceSource.chesscom);
+      expect(chessCom.pgn, _mergeGameTwo);
+      expect(chessCom.replaceExistingSource, isTrue);
+      expect(chessCom.remoteUnchanged, isTrue);
+      expect(directClientRequests, 0);
+    });
+
+    test(
+      'gamebase-configured source downloads do not fall back to client origins',
+      () async {
+        var directClientRequests = 0;
+        final gamebaseRepository = _FakeGamebaseRepository(
+          const <String, String>{},
+        );
+        final workspaceRepository = PlayerWorkspaceRepository(
+          gamebaseRepository: gamebaseRepository,
+          client: MockClient((_) async {
+            directClientRequests += 1;
+            throw StateError('direct origin should not be used');
+          }),
+        );
+
+        await expectLater(
+          workspaceRepository.downloadLichessGames(username: 'DrNykterstein'),
+          throwsA(isA<StateError>()),
+        );
+        await expectLater(
+          workspaceRepository.downloadChessComGames(username: 'Hikaru'),
+          throwsA(isA<StateError>()),
+        );
+
+        expect(directClientRequests, 0);
+      },
+    );
+
     test('large Lichess downloads use concurrent date ranges', () async {
       var inFlight = 0;
       var maxInFlight = 0;
@@ -3288,6 +3419,35 @@ class _CoalescingPlayerWorkspaceRepository
   }
 }
 
+class _RemoteHitPlayerWorkspaceRepository
+    extends _FakePlayerWorkspaceRepository {
+  _RemoteHitPlayerWorkspaceRepository({
+    required super.root,
+    required super.lichessPgnByUsername,
+  });
+
+  var remoteUnchanged = false;
+
+  @override
+  Future<PlayerWorkspaceDownloadedPgn> downloadLichessGames({
+    required String username,
+    int? sinceMs,
+    int? expectedGameCount,
+    PlayerWorkspaceProgress? onProgress,
+    OperationCancellationToken? cancellationToken,
+  }) async {
+    final pgn = lichessPgnByUsername[username.trim()] ?? '';
+    onProgress?.call('Lichess: source cache checked.', 1);
+    return PlayerWorkspaceDownloadedPgn(
+      source: PlayerWorkspaceSource.lichess,
+      pgn: pgn,
+      gameCount: splitPgnGames(pgn).length,
+      replaceExistingSource: true,
+      remoteUnchanged: remoteUnchanged,
+    );
+  }
+}
+
 class _HoldingMergePlayerWorkspaceRepository
     extends _FakePlayerWorkspaceRepository {
   _HoldingMergePlayerWorkspaceRepository({
@@ -3594,11 +3754,15 @@ class _FakeGamebaseRepository extends GamebaseRepository {
   _FakeGamebaseRepository(
     this.pgnById, {
     this.pgnExport,
+    this.externalExports =
+        const <GamebaseExternalPlayerSource, GamebasePlayerPgnExport>{},
     this.playersById = const <String, GamebasePlayer>{},
   }) : super(Dio());
 
   final Map<String, String> pgnById;
   final String? pgnExport;
+  final Map<GamebaseExternalPlayerSource, GamebasePlayerPgnExport>
+  externalExports;
   final Map<String, GamebasePlayer> playersById;
   final exportPlayerIds = <String>[];
   final exportFideIds = <String?>[];
@@ -3631,6 +3795,15 @@ class _FakeGamebaseRepository extends GamebaseRepository {
       pgn: export,
       gameCount: splitPgnGames(export).length,
     );
+  }
+
+  @override
+  Future<GamebasePlayerPgnExport?> getExternalPlayerGamesPgn({
+    required GamebaseExternalPlayerSource source,
+    required String username,
+    bool refresh = false,
+  }) async {
+    return externalExports[source];
   }
 
   @override

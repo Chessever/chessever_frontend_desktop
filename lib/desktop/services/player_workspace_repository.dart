@@ -44,16 +44,19 @@ class PlayerWorkspaceRepository {
     http.Client? client,
     Duration? chessEverHydrationTimeout,
     Duration? importStatsTimeout,
+    GamebaseRepository? gamebaseRepository,
     PlayerWorkspaceSupportDirectoryResolver? supportDirectory,
   }) : chessEverHydrationTimeout =
            chessEverHydrationTimeout ?? _chessEverHydrationTimeout,
        importStatsTimeout = importStatsTimeout ?? _importStatsTimeout,
        _appDatabase = appDatabase ?? AppDatabase.instance,
        _client = client ?? http.Client(),
+       _gamebaseRepository = gamebaseRepository,
        _supportDirectory = supportDirectory ?? getApplicationSupportDirectory;
 
   final AppDatabase _appDatabase;
   final http.Client _client;
+  final GamebaseRepository? _gamebaseRepository;
   final Duration chessEverHydrationTimeout;
   final Duration importStatsTimeout;
   final PlayerWorkspaceSupportDirectoryResolver _supportDirectory;
@@ -418,6 +421,18 @@ class PlayerWorkspaceRepository {
     OperationCancellationToken? cancellationToken,
   }) async {
     cancellationToken?.throwIfCanceled();
+    final exported = await _downloadExternalPlayerPgnExport(
+      externalSource: GamebaseExternalPlayerSource.lichess,
+      workspaceSource: PlayerWorkspaceSource.lichess,
+      username: username,
+      onProgress: onProgress,
+      cancellationToken: cancellationToken,
+    );
+    if (exported != null) return exported;
+    if (_gamebaseRepository != null) {
+      throw StateError('Lichess source export is not available from gamebase.');
+    }
+
     if (sinceMs == null &&
         expectedGameCount != null &&
         expectedGameCount >= _lichessParallelRangeMinExpectedGames) {
@@ -586,6 +601,20 @@ class PlayerWorkspaceRepository {
     OperationCancellationToken? cancellationToken,
   }) async {
     cancellationToken?.throwIfCanceled();
+    final exported = await _downloadExternalPlayerPgnExport(
+      externalSource: GamebaseExternalPlayerSource.chesscom,
+      workspaceSource: PlayerWorkspaceSource.chesscom,
+      username: username,
+      onProgress: onProgress,
+      cancellationToken: cancellationToken,
+    );
+    if (exported != null) return exported;
+    if (_gamebaseRepository != null) {
+      throw StateError(
+        'Chess.com source export is not available from gamebase.',
+      );
+    }
+
     final clean = username.trim().toLowerCase();
     final archivesUri = Uri.https(
       'api.chess.com',
@@ -776,7 +805,51 @@ class PlayerWorkspaceRepository {
       pgn: export.pgn,
       gameCount: gameCount,
       replaceExistingSource: true,
+      remoteUnchanged: _pgnCacheStatusIsUnchanged(export.cacheStatus),
     );
+  }
+
+  Future<PlayerWorkspaceDownloadedPgn?> _downloadExternalPlayerPgnExport({
+    required GamebaseExternalPlayerSource externalSource,
+    required PlayerWorkspaceSource workspaceSource,
+    required String username,
+    PlayerWorkspaceProgress? onProgress,
+    OperationCancellationToken? cancellationToken,
+  }) async {
+    final repository = _gamebaseRepository;
+    if (repository == null) return null;
+
+    cancellationToken?.throwIfCanceled();
+    onProgress?.call('${externalSource.label}: checking source cache...', null);
+    final export = await repository.getExternalPlayerGamesPgn(
+      source: externalSource,
+      username: username,
+    );
+    cancellationToken?.throwIfCanceled();
+    if (export == null) return null;
+
+    final gameCount =
+        export.gameCount > 0 ? export.gameCount : countPgnGames(export.pgn);
+    final remoteUnchanged = _pgnCacheStatusIsUnchanged(export.cacheStatus);
+    onProgress?.call(
+      remoteUnchanged
+          ? '${externalSource.label}: source cache is already current '
+              '($gameCount games).'
+          : '${externalSource.label}: received latest source snapshot '
+              '($gameCount games).',
+      1,
+    );
+    return PlayerWorkspaceDownloadedPgn(
+      source: workspaceSource,
+      pgn: export.pgn,
+      gameCount: gameCount,
+      replaceExistingSource: true,
+      remoteUnchanged: remoteUnchanged,
+    );
+  }
+
+  bool _pgnCacheStatusIsUnchanged(String? cacheStatus) {
+    return cacheStatus?.trim().toLowerCase() == 'hit';
   }
 
   Future<PlayerWorkspaceDownloadedPgn> readManualPgnPaths({
@@ -1675,6 +1748,7 @@ class PlayerWorkspaceDownloadedPgn {
     required this.pgn,
     required this.gameCount,
     this.replaceExistingSource = false,
+    this.remoteUnchanged = false,
   });
 
   final PlayerWorkspaceSource source;
@@ -1684,6 +1758,11 @@ class PlayerWorkspaceDownloadedPgn {
   /// True when the PGN is a complete source snapshot and should replace the
   /// previous per-player source file/database instead of appending to it.
   final bool replaceExistingSource;
+
+  /// True when the server-side source probe says the origin data did not change
+  /// since the cached snapshot. Callers can skip a local re-import when the
+  /// existing local source file already has at least [gameCount] games.
+  final bool remoteUnchanged;
 }
 
 @immutable
