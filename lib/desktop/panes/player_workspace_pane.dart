@@ -19,6 +19,7 @@ import 'package:chessever/desktop/panes/library_pane.dart'
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_explorer_scope.dart';
@@ -56,6 +57,15 @@ final _cachedPlayerWorkspaceTreeIndexProvider = FutureProvider.autoDispose
     .family<PlayerOpeningTreeIndex?, String>((ref, path) async {
       final clean = path.trim();
       if (clean.isEmpty) return null;
+      final liveIndex = ref.watch(
+        localChessLibraryProvider.select((state) {
+          final node = state.source?.nodeForPath(clean);
+          if (node is! LocalChessFileNode) return null;
+          final index = node.openingTreeIndex;
+          return index?.isUsable == true ? index : null;
+        }),
+      );
+      if (liveIndex != null) return liveIndex;
       final node = await ref
           .read(localChessDatabaseRepositoryProvider)
           .loadFreshFileNode(clean, rootPath: p.dirname(clean));
@@ -80,13 +90,28 @@ class PlayerWorkspacePane extends HookConsumerWidget {
     final openedPlayerId = useState<String?>(null);
     final selected = _playerById(players, openedPlayerId.value);
     final tab = useState(_PlayerWorkspaceTab.overview);
+    final gamesFilter = useState(LocalChessGameFilter());
+    final gamesSourcePath = useState<String?>(null);
+    final gamesFilterNonce = useState(0);
 
     void openPlayer(String playerId) {
       openedPlayerId.value = playerId;
       tab.value = _PlayerWorkspaceTab.overview;
+      gamesFilter.value = LocalChessGameFilter();
+      gamesSourcePath.value = null;
+      gamesFilterNonce.value = 0;
       unawaited(
         ref.read(playerWorkspaceProvider.notifier).selectPlayer(playerId),
       );
+    }
+
+    void applyOverviewFilter(PlayerOverviewFilterRequest request) {
+      gamesFilter.value = localChessGameFilterFromOverview(request);
+      if (request.sourcePath != null && request.sourcePath!.isNotEmpty) {
+        gamesSourcePath.value = request.sourcePath;
+      }
+      gamesFilterNonce.value++;
+      tab.value = _PlayerWorkspaceTab.games;
     }
 
     final body = ColoredBox(
@@ -209,6 +234,13 @@ class PlayerWorkspacePane extends HookConsumerWidget {
                               onGoToAccounts:
                                   () =>
                                       tab.value = _PlayerWorkspaceTab.accounts,
+                              gamesFilter: gamesFilter.value,
+                              gamesSourcePath: gamesSourcePath.value,
+                              gamesFilterNonce: gamesFilterNonce.value,
+                              onOverviewFilter: applyOverviewFilter,
+                              onGamesFilterChanged: (next) {
+                                gamesFilter.value = next;
+                              },
                             ),
                           ),
                         ],
@@ -1681,7 +1713,8 @@ class _SourceCard extends StatelessWidget {
               ),
               if (!working &&
                   downloadProgress != null &&
-                  currentAccount != null) ...[
+                  currentAccount != null &&
+                  currentAccount.remainingGameCount > 0) ...[
                 const SizedBox(height: 7),
                 _DownloadProgress(account: currentAccount),
               ],
@@ -2123,12 +2156,22 @@ class _PlayerWorkspaceMain extends StatelessWidget {
     required this.onTabChanged,
     required this.player,
     required this.onGoToAccounts,
+    required this.gamesFilter,
+    required this.gamesSourcePath,
+    required this.gamesFilterNonce,
+    required this.onOverviewFilter,
+    required this.onGamesFilterChanged,
   });
 
   final _PlayerWorkspaceTab selectedTab;
   final ValueChanged<_PlayerWorkspaceTab> onTabChanged;
   final PlayerWorkspacePlayer player;
   final VoidCallback onGoToAccounts;
+  final LocalChessGameFilter gamesFilter;
+  final String? gamesSourcePath;
+  final int gamesFilterNonce;
+  final ValueChanged<PlayerOverviewFilterRequest> onOverviewFilter;
+  final ValueChanged<LocalChessGameFilter> onGamesFilterChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -2183,9 +2226,16 @@ class _PlayerWorkspaceMain extends StatelessWidget {
               _PlayerWorkspaceTab.overview => _OverviewTab(
                 player: player,
                 onGoToAccounts: onGoToAccounts,
+                onOverviewFilter: onOverviewFilter,
               ),
               _PlayerWorkspaceTab.accounts => _AccountsTab(player: player),
-              _PlayerWorkspaceTab.games => _GamesTab(player: player),
+              _PlayerWorkspaceTab.games => _GamesTab(
+                player: player,
+                gamesFilter: gamesFilter,
+                preferredSourcePath: gamesSourcePath,
+                filterNonce: gamesFilterNonce,
+                onFilterChanged: onGamesFilterChanged,
+              ),
               _PlayerWorkspaceTab.buildTree => _BuildTreeTab(
                 player: player,
                 onGoToAccounts: onGoToAccounts,
@@ -2202,10 +2252,15 @@ class _PlayerWorkspaceMain extends StatelessWidget {
 /// metric from the player's combined resqlite database via fast GROUP BY
 /// aggregates and renders them in the Play-profile visual language.
 class _OverviewTab extends StatelessWidget {
-  const _OverviewTab({required this.player, required this.onGoToAccounts});
+  const _OverviewTab({
+    required this.player,
+    required this.onGoToAccounts,
+    required this.onOverviewFilter,
+  });
 
   final PlayerWorkspacePlayer player;
   final VoidCallback onGoToAccounts;
+  final ValueChanged<PlayerOverviewFilterRequest> onOverviewFilter;
 
   @override
   Widget build(BuildContext context) {
@@ -2228,6 +2283,7 @@ class _OverviewTab extends StatelessWidget {
       revision:
           player.combinedBuiltAtMs ?? player.lastSyncAtMs ?? player.totalGames,
       onDownloadGames: onGoToAccounts,
+      onOverviewFilter: onOverviewFilter,
     );
   }
 }
@@ -2361,12 +2417,22 @@ class _AccountsTab extends ConsumerWidget {
 
 /// Games tab: an inline, keyboard-navigable table of the selected source's
 /// games. Reuses the Library's local-database view (search, sort, pagination,
-/// arrow-key selection, on-demand title/flag enrichment) scoped to one source
-/// or the merged combined set — so the prep games live on the player page.
+/// filters, arrow-key selection, on-demand title/flag enrichment) scoped to
+/// one source or the merged combined set.
 class _GamesTab extends HookConsumerWidget {
-  const _GamesTab({required this.player});
+  const _GamesTab({
+    required this.player,
+    required this.gamesFilter,
+    required this.preferredSourcePath,
+    required this.filterNonce,
+    required this.onFilterChanged,
+  });
 
   final PlayerWorkspacePlayer player;
+  final LocalChessGameFilter gamesFilter;
+  final String? preferredSourcePath;
+  final int filterNonce;
+  final ValueChanged<LocalChessGameFilter> onFilterChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -2381,8 +2447,17 @@ class _GamesTab extends HookConsumerWidget {
       );
     }
     final selected = useState(0);
+    // Prefer the Overview source when a facet tap hands off a path.
+    useEffect(() {
+      final path = preferredSourcePath;
+      if (path == null || path.isEmpty) return null;
+      final i = sources.indexWhere((s) => s.path == path);
+      if (i >= 0) selected.value = i;
+      return null;
+    }, [preferredSourcePath, filterNonce, sources.length]);
     final index = selected.value.clamp(0, sources.length - 1);
     final source = sources[index];
+    final aliases = _statsAliases(player);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2422,10 +2497,14 @@ class _GamesTab extends HookConsumerWidget {
         ),
         Expanded(
           child: _EmbeddedLocalGames(
-            key: ValueKey(source.path),
+            key: ValueKey<String>('${source.path}#$filterNonce'),
             path: source.path,
             title: source.label,
             revision: source.gameCount,
+            initialFilter: gamesFilter,
+            onFilterChanged: onFilterChanged,
+            playerFideId: player.fideId,
+            playerAliases: aliases,
           ),
         ),
       ],
@@ -2441,11 +2520,19 @@ class _EmbeddedLocalGames extends ConsumerWidget {
     required this.path,
     required this.title,
     this.revision = 0,
+    this.initialFilter,
+    this.onFilterChanged,
+    this.playerFideId,
+    this.playerAliases = const <String>[],
   });
 
   final String path;
   final String title;
   final int revision;
+  final LocalChessGameFilter? initialFilter;
+  final ValueChanged<LocalChessGameFilter>? onFilterChanged;
+  final String? playerFideId;
+  final List<String> playerAliases;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -2471,6 +2558,7 @@ class _EmbeddedLocalGames extends ConsumerWidget {
           ),
       data:
           (source) => LocalChessFilesView(
+            key: ValueKey<Object?>(initialFilter),
             selectedPath: path,
             onSelectPath: (_) {},
             stateOverride: LocalChessLibraryState(
@@ -2481,6 +2569,10 @@ class _EmbeddedLocalGames extends ConsumerWidget {
               ref.invalidate(localDatabaseWorkspaceSourceProvider(key));
               await ref.read(localDatabaseWorkspaceSourceProvider(key).future);
             },
+            initialFilter: initialFilter,
+            onFilterChanged: onFilterChanged,
+            playerFideId: playerFideId,
+            playerAliases: playerAliases,
           ),
     );
   }

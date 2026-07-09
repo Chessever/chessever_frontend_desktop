@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
@@ -210,22 +211,20 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
               LocalChessScanProgress(fraction: 0, message: 'Preparing PGN...'),
           error: null,
         );
+        // Yield so the loading overlay can paint before a long import blocks
+        // this isolate (especially important in release where frames are rarer).
+        await Future<void>.delayed(Duration.zero);
         final repository = localDatabaseRepository;
         imported =
-            paths.length == 1 && repository != null
-                ? await repository.importSingleFileSource(
-                  path: paths.single,
+            repository == null
+                ? null
+                : await _importLocalChessFilePaths(
+                  repository,
+                  paths,
                   sourceLabel: sourceLabel,
-                  onProgress: (progress) {
-                    if (_scanToken != token) return;
-                    state = state.copyWith(
-                      isScanning: true,
-                      scanProgress: progress,
-                      error: null,
-                    );
-                  },
-                )
-                : null;
+                  token: token,
+                );
+        if (_scanToken != token) return false;
         source =
             imported ??
             await _scanPathsWithProgress(
@@ -389,6 +388,103 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     final node = source.nodeForPath(path);
     if (node is! LocalChessFileNode || !node.isPlayable) return false;
     return _scheduleTreeBuild(node, source, force: true);
+  }
+
+  /// Imports pure PGN/file lists through the same resqlite cache path single
+  /// file import uses. Multi-file picks used to fall straight into the slower
+  /// scanner path and skip `importSingleFileSource`, which made large multi-PGN
+  /// imports feel stuck and left the cache colder than a single-file import.
+  Future<LocalChessSource?> _importLocalChessFilePaths(
+    LocalChessDatabaseRepository repository,
+    List<String> paths, {
+    String? sourceLabel,
+    required Object token,
+  }) async {
+    final filePaths = await _resolvableImportFilePaths(paths);
+    if (filePaths == null || filePaths.isEmpty) return null;
+
+    void publish(LocalChessScanProgress progress) {
+      if (_scanToken != token) return;
+      state = state.copyWith(
+        isScanning: true,
+        scanProgress: progress,
+        error: null,
+      );
+    }
+
+    if (filePaths.length == 1) {
+      return repository.importSingleFileSource(
+        path: filePaths.single,
+        sourceLabel: sourceLabel,
+        onProgress: publish,
+      );
+    }
+
+    final total = filePaths.length;
+    for (var index = 0; index < total; index++) {
+      if (_scanToken != token) return null;
+      final path = filePaths[index];
+      final start = index / total;
+      final span = 1 / total;
+      final label = p.basename(path);
+      publish(
+        LocalChessScanProgress(
+          fraction: start,
+          message: 'Importing file ${index + 1} of $total ($label)...',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      final imported = await repository.importSingleFileSource(
+        path: path,
+        sourceLabel: label,
+        onProgress: (progress) {
+          publish(
+            LocalChessScanProgress(
+              fraction: (start + (progress.fraction * span))
+                  .clamp(0.0, 1.0)
+                  .toDouble(),
+              message:
+                  'File ${index + 1} of $total: ${progress.message}',
+            ),
+          );
+        },
+      );
+      if (imported == null) return null;
+    }
+    if (_scanToken != token) return null;
+    publish(
+      LocalChessScanProgress(
+        fraction: 0.98,
+        message: 'Opening imported databases...',
+      ),
+    );
+    try {
+      return await repository.loadFreshSource(
+        filePaths,
+        sourceLabel: sourceLabel,
+        onProgress: publish,
+      );
+    } catch (error, stackTrace) {
+      _debugLocalChessCacheFailure(
+        'load multi-file import cache',
+        error,
+        stackTrace,
+      );
+      return null;
+    }
+  }
+
+  Future<List<String>?> _resolvableImportFilePaths(List<String> paths) async {
+    if (paths.isEmpty) return null;
+    final files = <String>[];
+    for (final raw in paths) {
+      final path = raw.trim();
+      if (path.isEmpty || !looksLikeLocalChessFile(path)) return null;
+      final type = await FileSystemEntity.type(path, followLinks: false);
+      if (type != FileSystemEntityType.file) return null;
+      files.add(path);
+    }
+    return files;
   }
 
   Future<LocalChessSource?> _loadFreshSourceBestEffort(
@@ -759,8 +855,17 @@ void _debugLocalChessCacheFailure(
   Object error,
   StackTrace stackTrace,
 ) {
-  if (!kDebugMode) return;
-  debugPrint('Local chess cache $operation failed: $error\n$stackTrace');
+  // Always log: release-mode library/import failures were previously silent
+  // (`kDebugMode` only), which made "works in debug, broken in release"
+  // much harder to diagnose.
+  localChessLog.warning(
+    'Local chess cache $operation failed',
+    error: error,
+    stackTrace: stackTrace,
+  );
+  if (kDebugMode) {
+    debugPrint('Local chess cache $operation failed: $error\n$stackTrace');
+  }
 }
 
 ({LocalChessFolderNode folder, bool replaced}) _replaceFileNode(

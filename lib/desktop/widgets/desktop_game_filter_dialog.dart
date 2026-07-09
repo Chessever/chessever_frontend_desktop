@@ -51,10 +51,15 @@ class DesktopGameFilterButton extends StatefulWidget {
     super.key,
     required this.filter,
     required this.onPress,
+    this.activeCountOverride,
   });
 
   final GameFilter filter;
   final VoidCallback onPress;
+
+  /// When set (e.g. local player-outcome filters outside [GameFilter]), used
+  /// for the active badge instead of [GameFilter.activeFilterCount].
+  final int? activeCountOverride;
 
   @override
   State<DesktopGameFilterButton> createState() =>
@@ -66,8 +71,9 @@ class _DesktopGameFilterButtonState extends State<DesktopGameFilterButton> {
 
   @override
   Widget build(BuildContext context) {
-    final active = widget.filter.hasActiveFilters;
-    final activeCount = widget.filter.activeFilterCount;
+    final activeCount =
+        widget.activeCountOverride ?? widget.filter.activeFilterCount;
+    final active = activeCount > 0;
     return FTheme(
       data: FThemes.zinc.dark,
       child: DesktopTooltip(

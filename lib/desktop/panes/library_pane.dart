@@ -26,6 +26,7 @@ import 'package:chessever/desktop/services/library_quick_import.dart';
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/local_player_enrichment_service.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_source_deletion.dart';
@@ -48,6 +49,7 @@ import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
+import 'package:chessever/desktop/widgets/desktop_game_filter_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
@@ -57,6 +59,7 @@ import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/desktop/widgets/library/folder_drop_target.dart';
 import 'package:chessever/desktop/widgets/library/library_actions_toolbar.dart';
+import 'package:chessever/desktop/widgets/library/library_chrome_bar.dart';
 import 'package:chessever/desktop/widgets/library/library_folder_context_menu.dart';
 import 'package:chessever/desktop/widgets/library/library_folder_dialogs.dart';
 import 'package:chessever/desktop/widgets/library/library_game_context_menu.dart';
@@ -978,13 +981,15 @@ class _FolderRowState extends ConsumerState<_FolderRow>
 
   @override
   Widget build(BuildContext context) {
+    final chrome = _LibraryKindChrome.forKind(widget.iconKind);
+    final isFolder = widget.iconKind == _DatabaseBoardIconKind.folder;
     final fg =
         widget.selected
-            ? kPrimaryColor
+            ? chrome.accent
             : (_hovered ? kWhiteColor : kWhiteColor70);
     final bg =
         widget.selected
-            ? kPrimaryColor.withValues(alpha: 0.10)
+            ? chrome.accent.withValues(alpha: 0.12)
             : (_hovered ? kBlack3Color : Colors.transparent);
     final nudgeX = _pressed ? -1.5 : (_hovered ? 3.0 : 0.0);
     final isChild = widget.folder.parentId != null;
@@ -1007,89 +1012,115 @@ class _FolderRowState extends ConsumerState<_FolderRow>
         onAction: widget.onAction,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(8, 1, 8, 1),
-          child: ClickCursor(
-            child: MouseRegion(
-              onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
-              onExit:
-                  (_) => setStateAfterPointerEvent(() {
-                    _hovered = false;
-                    _pressed = false;
-                  }),
-              child: Focus(
-                canRequestFocus: true,
-                onKeyEvent: (_, event) {
-                  if (event is! KeyDownEvent) return KeyEventResult.ignored;
-                  if (event.logicalKey == LogicalKeyboardKey.enter ||
-                      event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-                    widget.onOpen();
-                    return KeyEventResult.handled;
-                  }
-                  return KeyEventResult.ignored;
-                },
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: widget.onTap,
-                  onDoubleTap: widget.onOpen,
-                  onTapDown:
-                      (_) => setStateAfterPointerEvent(() => _pressed = true),
-                  onTapUp:
-                      (_) => setStateAfterPointerEvent(() => _pressed = false),
-                  onTapCancel:
-                      () => setStateAfterPointerEvent(() => _pressed = false),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 120),
-                    padding: EdgeInsets.fromLTRB(isChild ? 22 : 12, 8, 10, 8),
-                    decoration: BoxDecoration(
-                      color: bg,
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                        color:
-                            widget.selected
-                                ? kPrimaryColor.withValues(alpha: 0.45)
-                                : Colors.transparent,
+          child: DesktopTooltip(
+            message: widget.folder.name,
+            child: ClickCursor(
+              child: MouseRegion(
+                onEnter:
+                    (_) => setStateAfterPointerEvent(() => _hovered = true),
+                onExit:
+                    (_) => setStateAfterPointerEvent(() {
+                      _hovered = false;
+                      _pressed = false;
+                    }),
+                child: Focus(
+                  canRequestFocus: true,
+                  onKeyEvent: (_, event) {
+                    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+                    if (event.logicalKey == LogicalKeyboardKey.enter ||
+                        event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+                      widget.onOpen();
+                      return KeyEventResult.handled;
+                    }
+                    return KeyEventResult.ignored;
+                  },
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: widget.onTap,
+                    onDoubleTap: widget.onOpen,
+                    onTapDown:
+                        (_) => setStateAfterPointerEvent(() => _pressed = true),
+                    onTapUp:
+                        (_) =>
+                            setStateAfterPointerEvent(() => _pressed = false),
+                    onTapCancel:
+                        () =>
+                            setStateAfterPointerEvent(() => _pressed = false),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 120),
+                      padding: EdgeInsets.fromLTRB(
+                        isChild ? 20 : 10,
+                        7,
+                        8,
+                        7,
                       ),
-                    ),
-                    child: SingleMotionBuilder(
-                      value: nudgeX,
-                      motion:
-                          _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-                      builder:
-                          (context, x, child) => Transform.translate(
-                            offset: Offset(x, 0),
-                            child: child,
-                          ),
-                      child: Row(
-                        children: [
-                          _DatabaseBoardIcon(
-                            kind: widget.iconKind,
-                            color: fg,
-                            size: 16,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              widget.folder.name,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: fg,
-                                fontSize: 13,
-                                fontWeight:
-                                    widget.selected
-                                        ? FontWeight.w600
-                                        : FontWeight.w500,
+                      decoration: BoxDecoration(
+                        color: bg,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color:
+                              widget.selected
+                                  ? chrome.accent.withValues(alpha: 0.48)
+                                  : Colors.transparent,
+                        ),
+                      ),
+                      child: SingleMotionBuilder(
+                        value: nudgeX,
+                        motion:
+                            _pressed ? DesktopMotion.tap : DesktopMotion.hover,
+                        builder:
+                            (context, x, child) => Transform.translate(
+                              offset: Offset(x, 0),
+                              child: child,
+                            ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 22,
+                              height: 22,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: chrome.wellFill,
+                                borderRadius: BorderRadius.circular(
+                                  isFolder ? 5 : 7,
+                                ),
+                                border: Border.all(
+                                  color: chrome.wellBorder.withValues(
+                                    alpha: widget.selected || _hovered
+                                        ? 0.85
+                                        : 0.45,
+                                  ),
+                                ),
+                              ),
+                              child: _DatabaseBoardIcon(
+                                kind: widget.iconKind,
+                                color: chrome.accent,
+                                size: 13,
                               ),
                             ),
-                          ),
-                          if (widget.folder.isSubscribed)
-                            const DesktopTooltip(
-                              message: 'Subscribed (read-only)',
-                              child: Icon(
+                            const SizedBox(width: 9),
+                            Expanded(
+                              child: Text(
+                                widget.folder.name,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: fg,
+                                  fontSize: 13,
+                                  fontWeight:
+                                      widget.selected
+                                          ? FontWeight.w600
+                                          : FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                            if (widget.folder.isSubscribed)
+                              const Icon(
                                 Icons.lock_outline_rounded,
                                 size: 11,
                                 color: kLightGreyColor,
                               ),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -1374,7 +1405,6 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
               onOpenLocalFiles: onOpenLocalFiles,
               onImportPgnFiles: onImportPgnFiles,
             ),
-            const FDivider(),
             Expanded(
               child: ResizableSplitView(
                 axis: Axis.vertical,
@@ -1457,53 +1487,18 @@ class _MyDatabasesHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 16, 8),
-      child: Row(
-        children: [
-          Container(
-            width: 32,
-            height: 32,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: kPrimaryColor.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: kPrimaryColor.withValues(alpha: 0.34)),
-            ),
-            child: const Icon(
-              Icons.storage_rounded,
-              color: kPrimaryColor,
-              size: 18,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: const [
-                Text(
-                  'My Databases',
-                  style: TextStyle(
-                    color: kWhiteColor,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          LibraryActionsToolbar(
-            onNewFolder: onNewFolder,
-            disabledNewFolderTooltip: disabledNewFolderTooltip,
-            onImportPgnFiles: onImportPgnFiles,
-            buttonSize: 30,
-            iconSize: 15.5,
-            spacing: 5,
-            hitSize: 40,
-          ),
-        ],
+    return LibraryChromeBar(
+      icon: Icons.storage_rounded,
+      title: 'My Databases',
+      meta: 'Local & cloud',
+      trailing: LibraryActionsToolbar(
+        onNewFolder: onNewFolder,
+        disabledNewFolderTooltip: disabledNewFolderTooltip,
+        onImportPgnFiles: onImportPgnFiles,
+        buttonSize: 28,
+        iconSize: 14.5,
+        spacing: 4,
+        hitSize: 34,
       ),
     );
   }
@@ -2074,7 +2069,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       final isFolder = iconKind == _DatabaseBoardIconKind.folder;
       final tile = _DatabaseBoardTile(
         title: item.title,
-        subtitle: item.subtitle,
+        subtitle: item.subtitleForKind(iconKind),
         iconKind: iconKind,
         selected:
             folder != null
@@ -2615,12 +2610,43 @@ class _DatabaseBoardItem {
       final databases = group.entries.length;
       final databaseLabel = databases == 1 ? 'database' : 'databases';
       final games = count;
-      if (games == null) return '$databases $databaseLabel';
-      return '$databases $databaseLabel · ${formatCompactCount(games)} games';
+      if (games == null) return 'Folder · $databases $databaseLabel';
+      return 'Folder · $databases $databaseLabel · ${formatCompactCount(games)} games';
     }
     final localEntry = entry;
-    if (localEntry == null) return null;
-    return localLibraryEntryStatusLine(localEntry, count: count);
+    if (localEntry != null) {
+      return localLibraryEntryStatusLine(localEntry, count: count);
+    }
+    return null;
+  }
+
+  /// Kind-aware fallback when [subtitle] is null (typical cloud folders).
+  String subtitleForKind(_DatabaseBoardIconKind kind) {
+    final existing = subtitle;
+    if (existing != null && existing.isNotEmpty) return existing;
+    final games = count;
+    return switch (kind) {
+      _DatabaseBoardIconKind.folder =>
+        games == null
+            ? 'Folder · holds databases'
+            : 'Folder · ${formatCompactCount(games)} games inside',
+      _DatabaseBoardIconKind.twic =>
+        games == null
+            ? 'System database'
+            : '${formatCompactCount(games)} games',
+      _DatabaseBoardIconKind.subscribedDatabase =>
+        games == null
+            ? 'Cloud database · read-only'
+            : '${formatCompactCount(games)} games · read-only',
+      _DatabaseBoardIconKind.localDatabase =>
+        games == null
+            ? 'Local database · games only'
+            : '${formatCompactCount(games)} games · local',
+      _DatabaseBoardIconKind.cloudDatabase =>
+        games == null
+            ? 'Database · games only'
+            : '${formatCompactCount(games)} games',
+    };
   }
 
   _DatabaseBoardIconKind iconKind(List<LibraryFolder> folders) {
@@ -2750,6 +2776,71 @@ enum _DatabaseBoardIconKind {
   twic,
 }
 
+/// Visual hierarchy for Library containers:
+/// - **Folder** (amber): can hold folders + databases
+/// - **Database** (primary/cyan): holds games only
+@immutable
+class _LibraryKindChrome {
+  const _LibraryKindChrome({
+    required this.accent,
+    required this.wellFill,
+    required this.wellBorder,
+    required this.kindLabel,
+    required this.kindHint,
+  });
+
+  final Color accent;
+  final Color wellFill;
+  final Color wellBorder;
+  final String kindLabel;
+  final String kindHint;
+
+  static const Color folderAmber = Color(0xFFF5A524);
+  static const Color databaseCyan = Color(0xFF38BDF8);
+  static const Color localViolet = Color(0xFFA78BFA);
+  static const Color twicTeal = Color(0xFF2DD4BF);
+
+  static _LibraryKindChrome forKind(_DatabaseBoardIconKind kind) {
+    return switch (kind) {
+      _DatabaseBoardIconKind.folder => _LibraryKindChrome(
+        accent: folderAmber,
+        wellFill: folderAmber.withValues(alpha: 0.14),
+        wellBorder: folderAmber.withValues(alpha: 0.42),
+        kindLabel: 'Folder',
+        kindHint: 'Holds folders & databases',
+      ),
+      _DatabaseBoardIconKind.localDatabase => _LibraryKindChrome(
+        accent: localViolet,
+        wellFill: localViolet.withValues(alpha: 0.14),
+        wellBorder: localViolet.withValues(alpha: 0.42),
+        kindLabel: 'Local DB',
+        kindHint: 'Games only',
+      ),
+      _DatabaseBoardIconKind.subscribedDatabase => _LibraryKindChrome(
+        accent: databaseCyan,
+        wellFill: databaseCyan.withValues(alpha: 0.12),
+        wellBorder: databaseCyan.withValues(alpha: 0.40),
+        kindLabel: 'Cloud DB',
+        kindHint: 'Read-only games',
+      ),
+      _DatabaseBoardIconKind.twic => _LibraryKindChrome(
+        accent: twicTeal,
+        wellFill: twicTeal.withValues(alpha: 0.12),
+        wellBorder: twicTeal.withValues(alpha: 0.40),
+        kindLabel: 'System',
+        kindHint: 'ChessEver archive',
+      ),
+      _DatabaseBoardIconKind.cloudDatabase => _LibraryKindChrome(
+        accent: kPrimaryColor,
+        wellFill: kPrimaryColor.withValues(alpha: 0.12),
+        wellBorder: kPrimaryColor.withValues(alpha: 0.40),
+        kindLabel: 'Database',
+        kindHint: 'Games only',
+      ),
+    };
+  }
+}
+
 class _DatabaseBoardIcon extends StatelessWidget {
   const _DatabaseBoardIcon({
     required this.kind,
@@ -2764,33 +2855,100 @@ class _DatabaseBoardIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return switch (kind) {
-      _DatabaseBoardIconKind.folder => Icon(
-        Icons.folder_rounded,
+      _DatabaseBoardIconKind.folder => _FolderHierarchyGlyph(
         color: color,
-        size: size * 0.9,
+        size: size,
       ),
       _DatabaseBoardIconKind.twic => Icon(
         Icons.public_rounded,
         color: color,
-        size: size * 0.85,
+        size: size * 0.88,
       ),
       _DatabaseBoardIconKind.subscribedDatabase => Stack(
         clipBehavior: Clip.none,
         children: [
           _ChessDatabaseGlyph(color: color, size: size),
           Positioned(
-            right: -size * 0.20,
-            bottom: -size * 0.15,
-            child: Icon(
-              Icons.cloud_done_outlined,
-              color: color,
-              size: size * 0.5,
+            right: -size * 0.18,
+            bottom: -size * 0.12,
+            child: Container(
+              width: size * 0.52,
+              height: size * 0.52,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: kBlack2Color,
+                shape: BoxShape.circle,
+                border: Border.all(color: color.withValues(alpha: 0.55)),
+              ),
+              child: Icon(
+                Icons.cloud_done_rounded,
+                color: color,
+                size: size * 0.34,
+              ),
             ),
           ),
         ],
       ),
       _ => _ChessDatabaseGlyph(color: color, size: size),
     };
+  }
+}
+
+/// Folder glyph that reads as a *container* (not a database cylinder):
+/// open folder shell + nested mini-db chip, so hierarchy is obvious.
+class _FolderHierarchyGlyph extends StatelessWidget {
+  const _FolderHierarchyGlyph({required this.color, required this.size});
+
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: Icon(
+              Icons.folder_rounded,
+              color: color,
+              size: size * 0.96,
+            ),
+          ),
+          Positioned(
+            right: -size * 0.06,
+            bottom: -size * 0.04,
+            child: Container(
+              width: size * 0.48,
+              height: size * 0.42,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: kBlack2Color,
+                borderRadius: BorderRadius.circular(size * 0.10),
+                border: Border.all(
+                  color: color.withValues(alpha: 0.70),
+                  width: 1,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.28),
+                    blurRadius: 3,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.table_rows_rounded,
+                color: color,
+                size: size * 0.26,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -2925,11 +3083,13 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
 
   @override
   Widget build(BuildContext context) {
+    final chrome = _LibraryKindChrome.forKind(widget.iconKind);
+    final isFolder = widget.iconKind == _DatabaseBoardIconKind.folder;
     final borderColor =
         widget.selected
-            ? kPrimaryColor.withValues(alpha: 0.75)
+            ? chrome.accent.withValues(alpha: 0.78)
             : _hovered
-            ? kPrimaryColor.withValues(alpha: 0.32)
+            ? chrome.accent.withValues(alpha: 0.38)
             : kDividerColor;
     return SizedBox(
       width: _kDatabaseBoardTileWidth,
@@ -2946,100 +3106,143 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
           }
           return KeyEventResult.ignored;
         },
-        child: ClickCursor(
-          child: MouseRegion(
-            onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
-            onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _selectFromTile,
-              onDoubleTap: _openFromTile,
-              onSecondaryTapDown:
-                  widget.onContextMenu == null
-                      ? null
-                      : (details) =>
-                          widget.onContextMenu!(details.globalPosition),
-              child: MotionCard(
-                borderRadius: 10,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 120),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 9,
-                  ),
-                  decoration: BoxDecoration(
-                    color:
-                        widget.selected
-                            ? kPrimaryColor.withValues(alpha: 0.12)
-                            : (_hovered ? kBlack3Color : kBlack2Color),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: borderColor),
-                    // Selection keeps a persistent shadow; hover/press shadow
-                    // is owned by the [MotionCard] dock above.
-                    boxShadow:
-                        widget.selected
-                            ? [
-                              BoxShadow(
-                                color: kPrimaryColor.withValues(alpha: 0.18),
-                                blurRadius: 18,
-                                offset: const Offset(0, 6),
-                              ),
-                            ]
-                            : null,
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 30,
-                        height: 30,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: kPrimaryColor.withValues(alpha: 0.10),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: _DatabaseBoardIcon(
-                          kind: widget.iconKind,
-                          color: kPrimaryColor,
-                        ),
-                      ),
-                      const SizedBox(width: 9),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              widget.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: kWhiteColor,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            if (widget.subtitle != null) ...[
-                              const SizedBox(height: 3),
-                              Text(
-                                widget.subtitle!,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: kWhiteColor70,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
+        child: DesktopTooltip(
+          message: widget.title,
+          child: ClickCursor(
+            child: MouseRegion(
+              onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+              onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _selectFromTile,
+                onDoubleTap: _openFromTile,
+                onSecondaryTapDown:
+                    widget.onContextMenu == null
+                        ? null
+                        : (details) =>
+                            widget.onContextMenu!(details.globalPosition),
+                child: MotionCard(
+                  borderRadius: 10,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 120),
+                    padding: const EdgeInsets.fromLTRB(10, 9, 10, 8),
+                    decoration: BoxDecoration(
+                      color:
+                          widget.selected
+                              ? chrome.accent.withValues(alpha: 0.12)
+                              : (_hovered ? kBlack3Color : kBlack2Color),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: borderColor),
+                      // Left edge accent encodes kind (folder amber vs DB primary).
+                      boxShadow:
+                          widget.selected
+                              ? [
+                                BoxShadow(
+                                  color: chrome.accent.withValues(alpha: 0.20),
+                                  blurRadius: 16,
+                                  offset: const Offset(0, 5),
                                 ),
-                              ),
-                            ],
-                          ],
+                              ]
+                              : null,
+                    ),
+                    child: Row(
+                      children: [
+                        // Kind well — folders are rounded-square “containers”,
+                        // databases are slightly rounder “records”.
+                        Container(
+                          width: 34,
+                          height: 34,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: chrome.wellFill,
+                            borderRadius: BorderRadius.circular(
+                              isFolder ? 8 : 10,
+                            ),
+                            border: Border.all(color: chrome.wellBorder),
+                          ),
+                          child: _DatabaseBoardIcon(
+                            kind: widget.iconKind,
+                            color: chrome.accent,
+                            size: 18,
+                          ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      widget.title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: kWhiteColor,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w800,
+                                        height: 1.15,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  _LibraryKindChip(chrome: chrome),
+                                ],
+                              ),
+                              if (widget.subtitle != null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  widget.subtitle!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: kWhiteColor.withValues(alpha: 0.62),
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w600,
+                                    height: 1.15,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LibraryKindChip extends StatelessWidget {
+  const _LibraryKindChip({required this.chrome});
+
+  final _LibraryKindChrome chrome;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(
+        color: chrome.wellFill,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: chrome.wellBorder),
+      ),
+      child: Text(
+        chrome.kindLabel,
+        style: TextStyle(
+          color: chrome.accent,
+          fontSize: 9,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.15,
+          height: 1,
         ),
       ),
     );
@@ -3630,17 +3833,19 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
     final scrollController = useScrollController();
     final searchController = useTextEditingController();
     final query = useState<String>('');
+    final gameFilter = useState<LocalChessGameFilter>(LocalChessGameFilter());
     final selectedIndex = useState<int>(0);
     final selectedIds = useState<Set<String>>(<String>{});
     final selectionAnchor = useState<int?>(null);
     final selectionExtent = useState<int?>(null);
     final plyIndex = useState<int>(0);
     final shortcutsFocusNode = useFocusNode(debugLabel: 'library-mini-local');
-    // Clear the query when the previewed database changes so a stale filter
-    // doesn't hide the next database's games.
+    // Clear the query/filters when the previewed database changes so a stale
+    // filter doesn't hide the next database's games.
     useEffect(() {
       searchController.clear();
       query.value = '';
+      gameFilter.value = LocalChessGameFilter();
       return null;
     }, [selectedPath]);
     final enrichmentEpoch = ref.watch(localPlayerEnrichmentEpochProvider);
@@ -3689,6 +3894,7 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
           selectedDatabase?.modifiedAt?.millisecondsSinceEpoch,
           enrichmentEpoch,
           query.value,
+          gameFilter.value,
         ).toString();
     final previewPageWindow = useState(
       _LocalMiniPreviewPageWindow(previewQueryKey, 0),
@@ -3732,6 +3938,7 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
           ref.read(localChessDatabaseRepositoryProvider),
           databasePath: database.path,
           search: query.value,
+          filter: gameFilter.value,
           pageNumber: effectivePreviewPageWindow.pageNumber,
           pageSize: _kLocalMiniPreviewGameQueryPageSize,
         );
@@ -3740,6 +3947,7 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
         selectedDatabase?.path,
         previewEntryCount,
         query.value,
+        gameFilter.value,
         effectivePreviewPageWindow.queryKey,
         effectivePreviewPageWindow.pageNumber,
       ],
@@ -4028,12 +4236,48 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 10, 16, 6),
-                child: DesktopSearchField(
-                  controller: searchController,
-                  hintText:
-                      'Search this database — players, events, openings, ECO',
-                  onChanged: (value) => query.value = value,
-                  onClear: () => query.value = '',
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: DesktopSearchField(
+                        controller: searchController,
+                        hintText:
+                            'Search this database — players, events, openings, ECO',
+                        onChanged: (value) => query.value = value,
+                        onClear: () => query.value = '',
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    DesktopGameFilterButton(
+                      key: const ValueKey<String>(
+                        'library-mini-preview-filter-button',
+                      ),
+                      filter: gameFilter.value.base,
+                      activeCountOverride: gameFilter.value.activeFilterCount,
+                      onPress: () async {
+                        final next = await showDesktopGameFilterDialog(
+                          context: context,
+                          currentFilter: gameFilter.value.base,
+                          showFormatFilter: true,
+                        );
+                        if (next == null || !context.mounted) return;
+                        gameFilter.value = gameFilter.value.copyWith(
+                          base: next,
+                        );
+                      },
+                    ),
+                    if (gameFilter.value.hasActiveFilters) ...[
+                      const SizedBox(width: 6),
+                      ClearDesktopGameFiltersButton(
+                        key: const ValueKey<String>(
+                          'library-mini-preview-clear-filters',
+                        ),
+                        onPress: () {
+                          gameFilter.value = LocalChessGameFilter();
+                        },
+                      ),
+                    ],
+                  ],
                 ),
               ),
               Expanded(
@@ -4396,69 +4640,35 @@ class _MiniDatabasePreviewFrame extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 10, 18, 8),
-          child: Row(
+        LibraryChromeBar(
+          icon: Icons.preview_outlined,
+          title: title,
+          meta: subtitle,
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
-                Icons.preview_outlined,
-                color: kPrimaryColor,
-                size: 16,
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: kWhiteColor,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: kLightGreyColor,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
               if (onOpenTree != null ||
                   onBuildTree != null ||
                   treeBuildProgress != null) ...[
-                const SizedBox(width: 10),
                 LocalTreeActionButton(
                   progress: treeBuildProgress,
                   onOpen: onOpenTree,
                   onBuild: onBuildTree,
                 ),
+                const SizedBox(width: 6),
               ],
-              if (onOpen != null) ...[
-                const SizedBox(width: 10),
+              if (onOpen != null)
                 const DesktopTooltip(
                   message: 'Double-click or press Enter to open this database',
                   child: Icon(
                     Icons.keyboard_return_rounded,
-                    size: 16,
+                    size: 15,
                     color: kLightGreyColor,
                   ),
                 ),
-              ],
             ],
           ),
         ),
-        const Divider(height: 1, color: kDividerColor),
         Expanded(child: child),
       ],
     );
@@ -4661,7 +4871,6 @@ class _FolderContentView extends HookConsumerWidget {
             onOpenEditor: onOpenEditor,
             onOpenExplorer: onOpenExplorer,
           ),
-          const FDivider(),
           _ContentToolbar(
             searchController: searchController,
             onSearchChanged: (v) => query.value = v,
@@ -4874,9 +5083,9 @@ class _FolderHeader extends StatelessWidget {
     final subtitle =
         subtitleOverride ??
         (isLoading
-            ? 'Loading games…'
+            ? 'Loading…'
             : (count == null
-                ? 'Unknown game count'
+                ? 'Unknown count'
                 : '${count!} ${count == 1 ? 'game' : 'games'}'));
     final icon =
         iconOverride ??
@@ -4885,64 +5094,20 @@ class _FolderHeader extends StatelessWidget {
             : isDatabase
             ? Icons.storage_outlined
             : Icons.folder_rounded);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 18, 16, 14),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+    return LibraryChromeBar(
+      icon: icon,
+      title: folder.name,
+      meta: subtitle,
+      accent:
+          isDatabase
+              ? _LibraryKindChrome.databaseCyan
+              : _LibraryKindChrome.folderAmber,
+      badge:
+          badge ??
+          (folder.isSubscribed ? const _ReadOnlyBadge() : null),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 40,
-            height: 40,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: kPrimaryColor.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: kPrimaryColor.withValues(alpha: 0.32)),
-            ),
-            child: Icon(icon, size: 18, color: kPrimaryColor),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        folder.name,
-                        style: const TextStyle(
-                          color: kWhiteColor,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.2,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (badge != null) ...[
-                      const SizedBox(width: 10),
-                      badge!,
-                    ] else if (folder.isSubscribed) ...[
-                      const SizedBox(width: 10),
-                      const _ReadOnlyBadge(),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: const TextStyle(
-                    color: kLightGreyColor,
-                    fontSize: 12,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
           LibraryActionsToolbar(
             suggestedFolderId:
                 (folder.isSubscribed || folder.id == kTwicBookId)
@@ -4950,12 +5115,16 @@ class _FolderHeader extends StatelessWidget {
                     : folder.id,
             onNewFolder: onNewFolder,
             onImportPgnFiles: onOpenLocalFiles,
+            buttonSize: 28,
+            iconSize: 14.5,
+            spacing: 4,
+            hitSize: 34,
           ),
           if (showOverflow &&
               onAction != null &&
               !folder.isSubscribed &&
               !folder.isPermanentLibraryFolder) ...[
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
             DesktopDialogIconButton(
               icon: Icons.delete_outline_rounded,
               tooltip: isDatabase ? 'Delete database' : 'Delete folder',
@@ -4964,7 +5133,7 @@ class _FolderHeader extends StatelessWidget {
             ),
           ],
           if (showOverflow && onAction != null) ...[
-            const SizedBox(width: 8),
+            const SizedBox(width: 2),
             _OverflowMenuButton(
               folder: folder,
               canCreateSubfolder: canCreateSubfolder,
@@ -4984,24 +5153,25 @@ class _ReadOnlyBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: kBlack3Color,
+        color: kBlack3Color.withValues(alpha: 0.9),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: kDividerColor),
+        border: Border.all(color: kDividerColor.withValues(alpha: 0.85)),
       ),
       child: const Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.lock_outline_rounded, size: 10, color: kLightGreyColor),
-          SizedBox(width: 5),
+          Icon(Icons.lock_outline_rounded, size: 9, color: kLightGreyColor),
+          SizedBox(width: 4),
           Text(
             'Subscribed',
             style: TextStyle(
               color: kLightGreyColor,
-              fontSize: 10,
+              fontSize: 9.5,
               fontWeight: FontWeight.w700,
-              letterSpacing: 0.4,
+              letterSpacing: 0.3,
+              height: 1,
             ),
           ),
         ],
@@ -5103,40 +5273,48 @@ class _ContentToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 16, 10),
-      child: Row(
-        children: [
-          Expanded(
-            child: DesktopSearchField(
-              controller: searchController,
-              hintText: 'Search games — names, event, opening, ECO',
-              onChanged: onSearchChanged,
-              onClear: onSearchClear,
-            ),
-          ),
-          const SizedBox(width: 12),
-          _ViewModeToggle(value: viewMode, onChanged: onViewModeChanged),
-          const SizedBox(width: 12),
-          DesktopTooltip(
-            message:
-                onExport == null
-                    ? 'Folder is empty'
-                    : 'Export this folder as a .pgn file',
-            child: FButton(
-              style: FButtonStyle.outline(),
-              onPress: onExport,
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.save_alt_rounded, size: 13),
-                  SizedBox(width: 6),
-                  Text('Export'),
-                ],
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: kBackgroundColor,
+        border: Border(
+          bottom: BorderSide(color: kDividerColor.withValues(alpha: 0.75)),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 8, 12, 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: DesktopSearchField(
+                controller: searchController,
+                hintText: 'Search games — names, event, opening, ECO',
+                onChanged: onSearchChanged,
+                onClear: onSearchClear,
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 8),
+            _ViewModeToggle(value: viewMode, onChanged: onViewModeChanged),
+            const SizedBox(width: 8),
+            DesktopTooltip(
+              message:
+                  onExport == null
+                      ? 'Folder is empty'
+                      : 'Export this folder as a .pgn file',
+              child: FButton(
+                style: FButtonStyle.outline(),
+                onPress: onExport,
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.save_alt_rounded, size: 12),
+                    SizedBox(width: 5),
+                    Text('Export', style: TextStyle(fontSize: 12)),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -5151,10 +5329,10 @@ class _ViewModeToggle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 36,
+      height: 32,
       decoration: BoxDecoration(
         color: kBlack2Color,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(7),
         border: Border.all(color: kDividerColor),
       ),
       padding: const EdgeInsets.all(2),
@@ -5233,14 +5411,14 @@ class _ViewModeButtonState extends State<_ViewModeButton>
             onTap: widget.onTap,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
-              width: 34,
-              height: 30,
+              width: 30,
+              height: 26,
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: bg,
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(5),
               ),
-              child: Icon(widget.icon, size: 14, color: fg),
+              child: Icon(widget.icon, size: 13, color: fg),
             ),
           ),
         ),
@@ -7552,7 +7730,6 @@ class _TwicContentView extends HookConsumerWidget {
             subtitleOverride: subtitle,
             badge: const _SystemDatabaseBadge(),
           ),
-          const FDivider(),
           _TwicContentToolbar(
             controller: searchController,
             viewMode: viewMode.value,
@@ -7865,7 +8042,7 @@ class _SystemDatabaseBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: kPrimaryColor.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(999),
@@ -7874,15 +8051,16 @@ class _SystemDatabaseBadge extends StatelessWidget {
       child: const Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.lock_outline_rounded, size: 10, color: kPrimaryColor),
-          SizedBox(width: 5),
+          Icon(Icons.lock_outline_rounded, size: 9, color: kPrimaryColor),
+          SizedBox(width: 4),
           Text(
-            'System database',
+            'System',
             style: TextStyle(
               color: kPrimaryColor,
-              fontSize: 10,
+              fontSize: 9.5,
               fontWeight: FontWeight.w700,
-              letterSpacing: 0.4,
+              letterSpacing: 0.25,
+              height: 1,
             ),
           ),
         ],
@@ -7918,38 +8096,45 @@ class _TwicContentToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 16, 10),
-      child: Row(
-        children: [
-          Expanded(
-            child: DesktopSearchField(
-              controller: controller,
-              hintText: 'Search players, events, openings…',
-              onChanged: onSearchChanged,
-              onClear: onSearchClear,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: kBackgroundColor,
+        border: Border(
+          bottom: BorderSide(color: kDividerColor.withValues(alpha: 0.75)),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 8, 12, 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: DesktopSearchField(
+                controller: controller,
+                hintText: 'Search players, events, openings…',
+                onChanged: onSearchChanged,
+                onClear: onSearchClear,
+              ),
             ),
-          ),
-          const SizedBox(width: 12),
-          _ViewModeToggle(value: viewMode, onChanged: onViewModeChanged),
-          const SizedBox(width: 12),
-          DesktopTooltip(
-            message:
-                filterCount == 0
-                    ? 'Filter games'
-                    : '$filterCount filter${filterCount == 1 ? '' : 's'} active',
-            child: FButton(
-              style:
+            const SizedBox(width: 8),
+            _ViewModeToggle(value: viewMode, onChanged: onViewModeChanged),
+            const SizedBox(width: 8),
+            DesktopTooltip(
+              message:
                   filterCount == 0
-                      ? FButtonStyle.outline()
-                      : FButtonStyle.primary(),
-              onPress: onOpenFilters,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.tune_rounded, size: 13),
-                  const SizedBox(width: 6),
-                  const Text('Filters'),
+                      ? 'Filter games'
+                      : '$filterCount filter${filterCount == 1 ? '' : 's'} active',
+              child: FButton(
+                style:
+                    filterCount == 0
+                        ? FButtonStyle.outline()
+                        : FButtonStyle.primary(),
+                onPress: onOpenFilters,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.tune_rounded, size: 12),
+                    const SizedBox(width: 5),
+                    const Text('Filters', style: TextStyle(fontSize: 12)),
                   if (filterCount > 0) ...[
                     const SizedBox(width: 6),
                     Container(
@@ -7975,18 +8160,19 @@ class _TwicContentToolbar extends StatelessWidget {
               ),
             ),
           ),
-          if (onClearFilters != null) ...[
-            const SizedBox(width: 8),
-            DesktopTooltip(
-              message: 'Clear filters',
-              child: FButton(
-                style: FButtonStyle.ghost(),
-                onPress: onClearFilters,
-                child: const Icon(Icons.close_rounded, size: 13),
+            if (onClearFilters != null) ...[
+              const SizedBox(width: 6),
+              DesktopTooltip(
+                message: 'Clear filters',
+                child: FButton(
+                  style: FButtonStyle.ghost(),
+                  onPress: onClearFilters,
+                  child: const Icon(Icons.close_rounded, size: 13),
+                ),
               ),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -9010,6 +9196,7 @@ Future<LocalChessGameQueryPage?> _queryLocalMiniPreviewPage(
   LocalChessDatabaseRepository repository, {
   required String databasePath,
   required String search,
+  LocalChessGameFilter? filter,
   required int pageNumber,
   required int pageSize,
 }) async {
@@ -9019,6 +9206,7 @@ Future<LocalChessGameQueryPage?> _queryLocalMiniPreviewPage(
       search: search,
       sortBy: LocalChessGameSortField.originalOrder,
       sortDirection: LocalChessGameSortDirection.asc,
+      filter: filter,
       pageNumber: pageNumber,
       pageSize: pageSize,
     );

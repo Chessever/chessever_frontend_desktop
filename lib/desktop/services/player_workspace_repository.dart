@@ -27,12 +27,20 @@ const String _httpUserAgent =
 const int _lichessRangeConcurrency = 4;
 const int _lichessParallelRangeMinExpectedGames = 1500;
 const int _lichessFirstFullExportYear = 2010;
-const int _chessComArchiveConcurrency = 8;
+const int _chessComArchiveConcurrency = 1;
+const double _chessComArchiveProgressFloor = 0.08;
 const int _chessEverPageSize = 1000;
 const int _chessEverEmbeddedPgnBatchSize = 200;
 const int _chessEverHydrateConcurrency = 16;
 const Duration _chessEverHydrationTimeout = Duration(seconds: 20);
 const Duration _importStatsTimeout = Duration(seconds: 8);
+const double _externalSourceInitialProgress = 0.05;
+const List<double> _sourceSnapshotWaitProgressSteps = <double>[
+  0.18,
+  0.28,
+  0.35,
+  0.38,
+];
 
 typedef PlayerWorkspaceProgress =
     void Function(String message, double? progress);
@@ -620,7 +628,7 @@ class PlayerWorkspaceRepository {
       'api.chess.com',
       '/pub/player/$clean/games/archives',
     );
-    onProgress?.call('Chess.com: loading monthly archive list...', null);
+    onProgress?.call('Chess.com: loading monthly archive list...', 0.05);
     cancellationToken?.throwIfCanceled();
     final response = await _client.get(
       archivesUri,
@@ -645,7 +653,7 @@ class PlayerWorkspaceRepository {
       onProgress?.call(
         'Chess.com: downloading ${archives.length} monthly archives '
         '(${_chessComArchiveConcurrency.clamp(1, archives.length)} at a time)...',
-        0,
+        _chessComArchiveProgressFloor,
       );
     }
     final downloads = await _mapConcurrentIndexed<String, _IndexedPgn>(
@@ -659,7 +667,7 @@ class PlayerWorkspaceRepository {
           'Chess.com: started ${_chessComArchiveLabel(archiveUrl)} '
           '(${index + 1}/${archives.length}); $completedArchives done, '
           '$downloadedGames games received...',
-          completedArchives / archives.length,
+          _chessComArchiveProgress(completedArchives, archives.length),
         );
         final pgn = await _downloadText(
           Uri.parse(pgnUrl),
@@ -673,7 +681,7 @@ class PlayerWorkspaceRepository {
         onProgress?.call(
           'Chess.com: $completedArchives/${archives.length} archives done; '
           '$downloadedGames games received...',
-          completedArchives / archives.length,
+          _chessComArchiveProgress(completedArchives, archives.length),
         );
         return _IndexedPgn(index, pgn);
       },
@@ -788,10 +796,16 @@ class PlayerWorkspaceRepository {
   }) async {
     cancellationToken?.throwIfCanceled();
     progress.exportStarted();
-    final export = await repository.getPlayerGamesPgn(
-      playerId: playerId,
-      fideId: fideId,
-    );
+    final exportWaitTimer = progress.startExportWaitTimer();
+    final GamebasePlayerPgnExport? export;
+    try {
+      export = await repository.getPlayerGamesPgn(
+        playerId: playerId,
+        fideId: fideId,
+      );
+    } finally {
+      exportWaitTimer?.cancel();
+    }
     cancellationToken?.throwIfCanceled();
     if (export == null) return null;
 
@@ -820,11 +834,23 @@ class PlayerWorkspaceRepository {
     if (repository == null) return null;
 
     cancellationToken?.throwIfCanceled();
-    onProgress?.call('${externalSource.label}: checking source cache...', null);
-    final export = await repository.getExternalPlayerGamesPgn(
-      source: externalSource,
-      username: username,
+    onProgress?.call(
+      '${externalSource.label}: checking source cache...',
+      _externalSourceInitialProgress,
     );
+    final slowSnapshotTimer = _startSourceSnapshotWaitProgress(
+      onProgress: onProgress,
+      label: externalSource.label,
+    );
+    final GamebasePlayerPgnExport? export;
+    try {
+      export = await repository.getExternalPlayerGamesPgn(
+        source: externalSource,
+        username: username,
+      );
+    } finally {
+      slowSnapshotTimer?.cancel();
+    }
     cancellationToken?.throwIfCanceled();
     if (export == null) return null;
 
@@ -910,20 +936,27 @@ class PlayerWorkspaceRepository {
     cancellationToken?.throwIfCanceled();
 
     if (replaceExisting || !fileExists || existingDatabase == null) {
-      await _writePgnText(file, pgn);
+      await _writePgnText(file, pgn, onProgress: onProgress);
       cancellationToken?.throwIfCanceled();
       onProgress?.call(
         replaceExisting
             ? 'Reinstalling $sourceLabel...'
             : 'Importing $sourceLabel...',
-        null,
+        0.10,
       );
+      // Yield so the import-phase progress can paint before the local cache
+      // open / write-queue wait begins (these can take a long time on a warm
+      // release cache and previously looked like a freeze at ~40%).
+      await Future<void>.delayed(Duration.zero);
       final source = await localRepository.importSingleFileSource(
         path: path,
         sourceLabel: sourceLabel,
         cancellationToken: cancellationToken,
         onProgress:
-            (progress) => onProgress?.call(progress.message, progress.fraction),
+            (progress) => onProgress?.call(
+              progress.message,
+              _mapImportWorkerProgress(progress.fraction),
+            ),
       );
       cancellationToken?.throwIfCanceled();
       onProgress?.call('Finalizing $sourceLabel...', 0.99);
@@ -951,12 +984,15 @@ class PlayerWorkspaceRepository {
       );
     }
 
+    onProgress?.call('Preparing downloaded games...', 0.0);
+    await Future<void>.delayed(Duration.zero);
     final prepared = await _preparePgnImport(
       pgn: pgn,
       playerAliases: playerAliases,
       playerFideId: playerFideId,
     );
     cancellationToken?.throwIfCanceled();
+    onProgress?.call('Merging into local database...', 0.12);
 
     if (prepared.games.isEmpty) {
       final source = await localRepository.loadFreshSource(<String>[
@@ -1486,7 +1522,26 @@ class _ChessEverDownloadProgress {
   }
 
   void exportStarted() {
-    _emit('ChessEver: downloading PGN export...', 0.02, force: true);
+    _emit(
+      'ChessEver: downloading PGN export...',
+      _externalSourceInitialProgress,
+      force: true,
+    );
+  }
+
+  Timer? startExportWaitTimer() {
+    if (onProgress == null) return null;
+    var step = 0;
+    return Timer.periodic(const Duration(seconds: 5), (_) {
+      final index =
+          step.clamp(0, _sourceSnapshotWaitProgressSteps.length - 1).toInt();
+      _emit(
+        'ChessEver: preparing source snapshot...',
+        _sourceSnapshotWaitProgressSteps[index],
+        force: true,
+      );
+      if (step < _sourceSnapshotWaitProgressSteps.length - 1) step += 1;
+    });
   }
 
   void exportFinished(int gameCount) {
@@ -1983,13 +2038,64 @@ Future<PlayerWorkspaceImportStats> _loadImportStatsWithFallback({
   }
 }
 
-Future<void> _writePgnText(File file, String pgn) async {
+/// Maps a 0–1 local-import worker fraction into the later part of the
+/// player-workspace import phase after the PGN has already been saved.
+///
+/// Download→import handoff previously parked the overall bar at the import
+/// phase start (~40% for ChessEver) while the worker still reported early
+/// fractions like 0.02–0.18. Remapping keeps the UI climbing once import work
+/// is actually underway.
+@visibleForTesting
+double mapPlayerWorkspaceImportWorkerProgress(double workerFraction) {
+  return _mapImportWorkerProgress(workerFraction);
+}
+
+double _mapImportWorkerProgress(double workerFraction) {
+  final clamped = workerFraction.clamp(0.0, 1.0).toDouble();
+  // Reserve 0.00–0.10 for saving the PGN; map worker work onto 0.10–0.98.
+  return (0.10 + (clamped * 0.88)).clamp(0.0, 0.98).toDouble();
+}
+
+const int _largePgnWriteIsolateThresholdBytes = 512 * 1024;
+
+Future<void> _writePgnText(
+  File file,
+  String pgn, {
+  PlayerWorkspaceProgress? onProgress,
+}) async {
   await file.parent.create(recursive: true);
   final normalized = pgn.trim();
-  await file.writeAsString(
-    normalized.isEmpty ? '' : '$normalized\n',
-    flush: true,
+  final content = normalized.isEmpty ? '' : '$normalized\n';
+  final sizeLabel = _formatByteCount(content.length);
+  onProgress?.call(
+    content.isEmpty
+        ? 'Saving downloaded PGN...'
+        : 'Saving downloaded PGN ($sizeLabel)...',
+    0.0,
   );
+  // Let the progress callback paint before a multi‑MB write blocks this
+  // isolate (or before we schedule the worker isolate for large payloads).
+  await Future<void>.delayed(Duration.zero);
+
+  if (content.length >= _largePgnWriteIsolateThresholdBytes) {
+    final path = file.path;
+    await Isolate.run(() {
+      File(path).writeAsStringSync(content, flush: true);
+    });
+  } else {
+    await file.writeAsString(content, flush: true);
+  }
+
+  onProgress?.call('Downloaded PGN saved.', 0.08);
+  await Future<void>.delayed(Duration.zero);
+}
+
+String _formatByteCount(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) {
+    return '${(bytes / 1024).toStringAsFixed(bytes < 10 * 1024 ? 1 : 0)} KB';
+  }
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
 
 Future<void> _appendPreparedPgnGames(
@@ -2342,6 +2448,31 @@ bool _archiveIsAfterSinceMonth(String archiveUrl, int? sinceMs) {
   final sinceMonth =
       DateTime.utc(since.year, since.month).millisecondsSinceEpoch;
   return archiveStart >= sinceMonth;
+}
+
+double _chessComArchiveProgress(int completedArchives, int totalArchives) {
+  if (totalArchives <= 0) return 1;
+  final archiveFraction = (completedArchives / totalArchives).clamp(0.0, 1.0);
+  return (_chessComArchiveProgressFloor +
+          archiveFraction * (1 - _chessComArchiveProgressFloor))
+      .clamp(_chessComArchiveProgressFloor, 1.0);
+}
+
+Timer? _startSourceSnapshotWaitProgress({
+  required PlayerWorkspaceProgress? onProgress,
+  required String label,
+}) {
+  if (onProgress == null) return null;
+  var step = 0;
+  return Timer.periodic(const Duration(seconds: 5), (_) {
+    final index =
+        step.clamp(0, _sourceSnapshotWaitProgressSteps.length - 1).toInt();
+    onProgress(
+      '$label: preparing source snapshot...',
+      _sourceSnapshotWaitProgressSteps[index],
+    );
+    if (step < _sourceSnapshotWaitProgressSteps.length - 1) step += 1;
+  });
 }
 
 String? _gamebaseDate(DateTime? date) {

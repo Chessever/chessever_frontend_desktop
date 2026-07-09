@@ -1,11 +1,16 @@
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/models/player_stats.dart';
+import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/play/play_profile_repository.dart'
     show PlayRatingPoint;
 import 'package:chessever/desktop/state/player_stats_provider.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/play_rating_chart.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -71,6 +76,7 @@ class PlayerStatsDashboard extends ConsumerStatefulWidget {
     this.playerFideId,
     this.revision = 0,
     this.onDownloadGames,
+    this.onOverviewFilter,
   });
 
   final List<PlayerStatsSource> sources;
@@ -78,6 +84,9 @@ class PlayerStatsDashboard extends ConsumerStatefulWidget {
   final String? playerFideId;
   final int revision;
   final VoidCallback? onDownloadGames;
+
+  /// When a stats surface is tapped, seed Games-tab filters and navigate.
+  final ValueChanged<PlayerOverviewFilterRequest>? onOverviewFilter;
 
   @override
   ConsumerState<PlayerStatsDashboard> createState() =>
@@ -143,7 +152,11 @@ class _PlayerStatsDashboardState extends ConsumerState<PlayerStatsDashboard> {
                       'window. Try a wider range or another source.',
                 );
               }
-              return _StatsBody(snapshot: snapshot);
+              return _StatsBody(
+                snapshot: snapshot,
+                sourcePath: source.path,
+                onOverviewFilter: widget.onOverviewFilter,
+              );
             },
           ),
         ),
@@ -303,9 +316,29 @@ class PlayerSourceChip extends StatelessWidget {
 }
 
 class _StatsBody extends StatelessWidget {
-  const _StatsBody({required this.snapshot});
+  const _StatsBody({
+    required this.snapshot,
+    required this.sourcePath,
+    this.onOverviewFilter,
+  });
 
   final PlayerStatsSnapshot snapshot;
+  final String sourcePath;
+  final ValueChanged<PlayerOverviewFilterRequest>? onOverviewFilter;
+
+  void _emit(PlayerOverviewFilterFacet facet, {String? eco, int? year, String? tc}) {
+    final cb = onOverviewFilter;
+    if (cb == null) return;
+    cb(
+      PlayerOverviewFilterRequest(
+        facet: facet,
+        ecoCode: eco,
+        year: year,
+        timeControlCategory: tc,
+        sourcePath: sourcePath,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -314,7 +347,12 @@ class _StatsBody extends StatelessWidget {
       children: [
         _HeroStripe(snapshot: snapshot),
         const SizedBox(height: 14),
-        _ScorePanel(snapshot: snapshot),
+        _ScorePanel(
+          snapshot: snapshot,
+          onWins: () => _emit(PlayerOverviewFilterFacet.wins),
+          onDraws: () => _emit(PlayerOverviewFilterFacet.draws),
+          onLosses: () => _emit(PlayerOverviewFilterFacet.losses),
+        ),
         if (snapshot.ratingSeries.length >= 2) ...[
           const SizedBox(height: 14),
           _RatingSection(
@@ -323,10 +361,18 @@ class _StatsBody extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 14),
-        _ColorSplitRow(snapshot: snapshot),
+        _ColorSplitRow(
+          snapshot: snapshot,
+          onAsWhite: () => _emit(PlayerOverviewFilterFacet.asWhite),
+          onAsBlack: () => _emit(PlayerOverviewFilterFacet.asBlack),
+        ),
         if (snapshot.openings.isNotEmpty) ...[
           const SizedBox(height: 14),
-          _OpeningsPanel(openings: snapshot.openings),
+          _OpeningsPanel(
+            openings: snapshot.openings,
+            onOpening:
+                (eco) => _emit(PlayerOverviewFilterFacet.eco, eco: eco),
+          ),
         ],
         if (snapshot.opponents.isNotEmpty) ...[
           const SizedBox(height: 14),
@@ -334,37 +380,25 @@ class _StatsBody extends StatelessWidget {
         ],
         if (snapshot.years.length >= 2) ...[
           const SizedBox(height: 14),
-          _YearsPanel(years: snapshot.years),
+          _YearsPanel(
+            years: snapshot.years,
+            timeControls: snapshot.timeControls,
+            onYear: (y) => _emit(PlayerOverviewFilterFacet.year, year: y),
+            onTimeControl:
+                (cat) =>
+                    _emit(PlayerOverviewFilterFacet.timeControl, tc: cat),
+          ),
         ],
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (_hasLengths(snapshot.lengthBuckets)) ...[
-              Expanded(child: _lengthPanelWrapper(snapshot.lengthBuckets)),
-              const SizedBox(width: 14),
-            ],
-            if (snapshot.timeControls.isNotEmpty)
-              Expanded(child: _timeControlWrapper(snapshot.timeControls))
-            else
-              const Spacer(),
-          ],
-        ),
+        if (_hasLengths(snapshot.lengthBuckets)) ...[
+          const SizedBox(height: 14),
+          _LengthPanel(buckets: snapshot.lengthBuckets),
+        ],
       ],
     );
   }
 
   static bool _hasLengths(List<PlayerLengthBucket> buckets) =>
       buckets.any((b) => b.count > 0);
-
-  Widget _lengthPanelWrapper(List<PlayerLengthBucket> buckets) => Padding(
-    padding: const EdgeInsets.only(top: 14),
-    child: _LengthPanel(buckets: buckets),
-  );
-
-  Widget _timeControlWrapper(List<PlayerTimeControlStat> tcs) => Padding(
-    padding: const EdgeInsets.only(top: 14),
-    child: _TimeControlPanel(timeControls: tcs),
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -509,9 +543,17 @@ class _StatCard extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _ScorePanel extends StatelessWidget {
-  const _ScorePanel({required this.snapshot});
+  const _ScorePanel({
+    required this.snapshot,
+    this.onWins,
+    this.onDraws,
+    this.onLosses,
+  });
 
   final PlayerStatsSnapshot snapshot;
+  final VoidCallback? onWins;
+  final VoidCallback? onDraws;
+  final VoidCallback? onLosses;
 
   @override
   Widget build(BuildContext context) {
@@ -532,9 +574,24 @@ class _ScorePanel extends StatelessWidget {
           const SizedBox(height: 10),
           Row(
             children: [
-              _RecordChunk(count: tally.wins, label: 'Wins', color: _kWin),
-              _RecordChunk(count: tally.draws, label: 'Draws', color: _kDraw),
-              _RecordChunk(count: tally.losses, label: 'Losses', color: _kLoss),
+              _RecordChunk(
+                count: tally.wins,
+                label: 'Wins',
+                color: _kWin,
+                onTap: onWins,
+              ),
+              _RecordChunk(
+                count: tally.draws,
+                label: 'Draws',
+                color: _kDraw,
+                onTap: onDraws,
+              ),
+              _RecordChunk(
+                count: tally.losses,
+                label: 'Losses',
+                color: _kLoss,
+                onTap: onLosses,
+              ),
               const Spacer(),
               if (snapshot.decisiveRate != null)
                 Text(
@@ -558,15 +615,17 @@ class _RecordChunk extends StatelessWidget {
     required this.count,
     required this.label,
     required this.color,
+    this.onTap,
   });
 
   final int count;
   final String label;
   final Color color;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    final content = Padding(
       padding: const EdgeInsets.only(right: 18),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -596,6 +655,17 @@ class _RecordChunk extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+    if (onTap == null) return content;
+    return ClickCursor(
+      child: DesktopTooltip(
+        message: 'Show $label games',
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: content,
+        ),
       ),
     );
   }
@@ -732,9 +802,15 @@ class _RatingSection extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _ColorSplitRow extends StatelessWidget {
-  const _ColorSplitRow({required this.snapshot});
+  const _ColorSplitRow({
+    required this.snapshot,
+    this.onAsWhite,
+    this.onAsBlack,
+  });
 
   final PlayerStatsSnapshot snapshot;
+  final VoidCallback? onAsWhite;
+  final VoidCallback? onAsBlack;
 
   @override
   Widget build(BuildContext context) {
@@ -751,6 +827,7 @@ class _ColorSplitRow extends StatelessWidget {
               label: 'As White',
               icon: Icons.circle_outlined,
               tally: snapshot.asWhite,
+              onTap: onAsWhite,
             ),
           ),
           const SizedBox(width: 14),
@@ -759,6 +836,7 @@ class _ColorSplitRow extends StatelessWidget {
               label: 'As Black',
               icon: Icons.circle,
               tally: snapshot.asBlack,
+              onTap: onAsBlack,
             ),
           ),
         ],
@@ -772,16 +850,18 @@ class _ColorCard extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.tally,
+    this.onTap,
   });
 
   final String label;
   final IconData icon;
   final PlayerResultTally tally;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final score = tally.scorePercent;
-    return _Panel(
+    final panel = _Panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -833,6 +913,17 @@ class _ColorCard extends StatelessWidget {
         ],
       ),
     );
+    if (onTap == null) return panel;
+    return ClickCursor(
+      child: DesktopTooltip(
+        message: 'Show games played $label',
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: panel,
+        ),
+      ),
+    );
   }
 }
 
@@ -841,9 +932,10 @@ class _ColorCard extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _OpeningsPanel extends StatelessWidget {
-  const _OpeningsPanel({required this.openings});
+  const _OpeningsPanel({required this.openings, this.onOpening});
 
   final List<PlayerOpeningStat> openings;
+  final ValueChanged<String>? onOpening;
 
   @override
   Widget build(BuildContext context) {
@@ -855,7 +947,13 @@ class _OpeningsPanel extends StatelessWidget {
           const SizedBox(height: 12),
           for (var i = 0; i < openings.length; i++) ...[
             if (i > 0) const Divider(height: 14, color: kDividerColor),
-            _OpeningRow(opening: openings[i]),
+            _OpeningRow(
+              opening: openings[i],
+              onTap:
+                  onOpening == null
+                      ? null
+                      : () => onOpening!(openings[i].eco),
+            ),
           ],
         ],
       ),
@@ -864,14 +962,15 @@ class _OpeningsPanel extends StatelessWidget {
 }
 
 class _OpeningRow extends StatelessWidget {
-  const _OpeningRow({required this.opening});
+  const _OpeningRow({required this.opening, this.onTap});
 
   final PlayerOpeningStat opening;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final score = opening.tally.scorePercent;
-    return Row(
+    final row = Row(
       children: [
         Expanded(
           child: Column(
@@ -896,6 +995,17 @@ class _OpeningRow extends StatelessWidget {
         const SizedBox(width: 12),
         SizedBox(width: 96, child: _ScoreBar(tally: opening.tally, height: 7)),
       ],
+    );
+    if (onTap == null) return row;
+    return ClickCursor(
+      child: DesktopTooltip(
+        message: 'Show games with ${opening.eco}',
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: row,
+        ),
+      ),
     );
   }
 }
@@ -1090,132 +1200,710 @@ class _ResultScoreChip extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// By-year stacked bars
+// Games-by-year chart + time-control chips
 // ---------------------------------------------------------------------------
 
-class _YearsPanel extends StatelessWidget {
-  const _YearsPanel({required this.years});
+/// Games-per-year bar chart stacked by W/D/L. Static bars (no draw-in or
+/// hover motion); hover shows an instant detail popup for that year.
+class _YearsPanel extends StatefulWidget {
+  const _YearsPanel({
+    required this.years,
+    required this.timeControls,
+    this.onYear,
+    this.onTimeControl,
+  });
 
   final List<PlayerYearStat> years;
+  final List<PlayerTimeControlStat> timeControls;
+  final ValueChanged<int>? onYear;
+  final ValueChanged<String>? onTimeControl;
+
+  @override
+  State<_YearsPanel> createState() => _YearsPanelState();
+}
+
+class _YearsPanelState extends State<_YearsPanel> {
+  int? _hoveredYear;
 
   @override
   Widget build(BuildContext context) {
-    final maxGames = years
-        .map((y) => y.games)
-        .fold<int>(1, (a, b) => a > b ? a : b);
+    final series = playerYearChartSeries(widget.years);
+    final maxGames = playerYearChartMaxGames(series);
+    final yTicks = _yearAxisTicks(maxGames);
+    final totalGames = series.fold<int>(0, (sum, p) => sum + p.games);
+    PlayerYearChartPoint? hovered;
+    final hoveredYear = _hoveredYear;
+    if (hoveredYear != null) {
+      for (final point in series) {
+        if (point.year == hoveredYear) {
+          hovered = point;
+          break;
+        }
+      }
+    }
+
     return _Panel(
+      accent: kPrimaryColor,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const _Eyebrow('Games by year'),
+          Row(
+            children: [
+              const _Eyebrow('Games by year'),
+              const Spacer(),
+              Text(
+                '${_formatInt(totalGames)} total',
+                style: const TextStyle(
+                  color: kSecondaryTextColor,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+              const SizedBox(width: 12),
+              const _ResultLegend(),
+            ],
+          ),
+          if (widget.timeControls.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _TimeControlChips(
+              timeControls: widget.timeControls,
+              onTap: widget.onTimeControl,
+            ),
+          ],
           const SizedBox(height: 14),
           SizedBox(
-            height: 132,
+            height: 188,
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (final year in years)
-                  Expanded(child: _YearColumn(year: year, maxGames: maxGames)),
+                SizedBox(
+                  width: 34,
+                  child: _YearAxisLabels(ticks: yTicks, maxGames: maxGames),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: CustomPaint(
+                          painter: _YearChartGridPainter(
+                            ticks: yTicks,
+                            maxGames: maxGames,
+                          ),
+                        ),
+                      ),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          for (final point in series)
+                            Expanded(
+                              child: _YearChartBar(
+                                point: point,
+                                maxGames: maxGames,
+                                hovered: _hoveredYear == point.year,
+                                onHover:
+                                    (active) => setState(() {
+                                      _hoveredYear =
+                                          active ? point.year : null;
+                                    }),
+                                onTap:
+                                    widget.onYear == null
+                                        ? null
+                                        : () => widget.onYear!(point.year),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
+          if (hovered != null) ...[
+            const SizedBox(height: 12),
+            _YearHoverCard(point: hovered),
+          ],
         ],
       ),
     );
   }
 }
 
-class _YearColumn extends StatelessWidget {
-  const _YearColumn({required this.year, required this.maxGames});
-
-  final PlayerYearStat year;
-  final int maxGames;
+class _ResultLegend extends StatelessWidget {
+  const _ResultLegend();
 
   @override
   Widget build(BuildContext context) {
-    final tally = year.tally;
-    final games = year.games;
-    final unclassified = (games - tally.games).clamp(0, games).toInt();
-    final heightFactor = (games / maxGames).clamp(0.04, 1.0).toDouble();
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Column(
-        children: [
-          Text(
-            _formatInt(games),
-            style: const TextStyle(
-              color: kWhiteColor70,
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-              fontFeatures: [FontFeature.tabularFigures()],
-            ),
-          ),
-          const SizedBox(height: 5),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final availableWidth = constraints.maxWidth;
-                final targetWidth =
-                    (availableWidth * 0.48).clamp(6.0, 22.0).toDouble();
-                final barWidth =
-                    targetWidth > availableWidth ? availableWidth : targetWidth;
-                if (barWidth <= 0) return const SizedBox.shrink();
-                final barHeight =
-                    (constraints.maxHeight * heightFactor)
-                        .clamp(2.0, constraints.maxHeight)
-                        .toDouble();
+    return const Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _LegendDot(color: _kWin, label: 'W'),
+        SizedBox(width: 8),
+        _LegendDot(color: _kDraw, label: 'D'),
+        SizedBox(width: 8),
+        _LegendDot(color: _kLoss, label: 'L'),
+      ],
+    );
+  }
+}
 
-                return Align(
-                  alignment: Alignment.bottomCenter,
-                  child: SizedBox(
-                    key: ValueKey<String>('player-stats-year-bar-${year.year}'),
-                    width: barWidth,
-                    height: barHeight,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: Column(
-                        children: [
-                          if (tally.wins > 0)
-                            Expanded(
-                              flex: tally.wins,
-                              child: const ColoredBox(color: _kWin),
-                            ),
-                          if (tally.draws > 0)
-                            Expanded(
-                              flex: tally.draws,
-                              child: const ColoredBox(color: _kDraw),
-                            ),
-                          if (tally.losses > 0)
-                            Expanded(
-                              flex: tally.losses,
-                              child: const ColoredBox(color: _kLoss),
-                            ),
-                          if (unclassified > 0)
-                            Expanded(
-                              flex: unclassified,
-                              child: const ColoredBox(color: _kUnclassified),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              },
+class _LegendDot extends StatelessWidget {
+  const _LegendDot({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: const TextStyle(
+            color: kSecondaryTextColor,
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+List<int> _yearAxisTicks(int maxGames) {
+  if (maxGames <= 1) return const <int>[0, 1];
+  final step = _niceStep(maxGames / 3);
+  final top = ((maxGames / step).ceil() * step).clamp(step, maxGames * 2);
+  final ticks = <int>{0, step, step * 2, top}.toList()..sort();
+  return ticks;
+}
+
+int _niceStep(double rough) {
+  if (rough <= 1) return 1;
+  final exp = (math.log(rough) / math.ln10).floor();
+  final base = math.pow(10, exp).toDouble();
+  final fraction = rough / base;
+  final nice =
+      fraction <= 1
+          ? 1.0
+          : fraction <= 2
+          ? 2.0
+          : fraction <= 5
+          ? 5.0
+          : 10.0;
+  return (nice * base).round().clamp(1, 1000000);
+}
+
+class _TimeControlChips extends StatelessWidget {
+  const _TimeControlChips({required this.timeControls, this.onTap});
+
+  final List<PlayerTimeControlStat> timeControls;
+  final ValueChanged<String>? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = timeControls.fold<int>(0, (sum, tc) => sum + tc.count);
+    if (total <= 0) return const SizedBox.shrink();
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final tc in timeControls)
+          _TimeControlChip(
+            category: tc.category,
+            count: tc.count,
+            share: tc.count / total,
+            onTap: onTap == null ? null : () => onTap!(tc.category),
+          ),
+      ],
+    );
+  }
+}
+
+class _TimeControlChip extends StatelessWidget {
+  const _TimeControlChip({
+    required this.category,
+    required this.count,
+    required this.share,
+    this.onTap,
+  });
+
+  final String category;
+  final int count;
+  final double share;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = _timeControlAccent(category);
+    final pct = (share * 100).round();
+    final chip = Container(
+      padding: const EdgeInsets.fromLTRB(9, 5, 9, 5),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: accent.withValues(alpha: 0.38)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              color: accent,
+              shape: BoxShape.circle,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(width: 6),
           Text(
-            "'${year.year % 100}".padLeft(3, '0'),
-            style: const TextStyle(
-              color: kSecondaryTextColor,
-              fontSize: 10,
+            _titleCase(category),
+            style: TextStyle(
+              color: accent,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '$pct%',
+            style: TextStyle(
+              color: kWhiteColor.withValues(alpha: 0.72),
+              fontSize: 10.5,
               fontWeight: FontWeight.w700,
-              fontFeatures: [FontFeature.tabularFigures()],
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
         ],
       ),
     );
+    return DesktopTooltip(
+      message:
+          onTap == null
+              ? '${_titleCase(category)} · ${_formatInt(count)} games · $pct% of activity'
+              : 'Show ${_titleCase(category)} games · ${_formatInt(count)} · $pct%',
+      child:
+          onTap == null
+              ? chip
+              : ClickCursor(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: onTap,
+                  child: chip,
+                ),
+              ),
+    );
+  }
+}
+
+Color _timeControlAccent(String category) {
+  switch (category.trim().toLowerCase()) {
+    case 'classical':
+    case 'standard':
+      return const Color(0xFF60A5FA);
+    case 'rapid':
+      return const Color(0xFF34D399);
+    case 'blitz':
+      return const Color(0xFFFBBF24);
+    case 'bullet':
+      return const Color(0xFFF87171);
+    case 'correspondence':
+    case 'daily':
+      return const Color(0xFFA78BFA);
+    default:
+      return kPrimaryColor;
+  }
+}
+
+class _YearAxisLabels extends StatelessWidget {
+  const _YearAxisLabels({required this.ticks, required this.maxGames});
+
+  final List<int> ticks;
+  final int maxGames;
+
+  @override
+  Widget build(BuildContext context) {
+    // Leave room under the plot for year labels (~18px).
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final height = constraints.maxHeight;
+          return Stack(
+            children: [
+              for (final tick in ticks)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom:
+                      maxGames <= 0
+                          ? 0
+                          : (tick / maxGames).clamp(0.0, 1.0) * height - 6,
+                  child: Text(
+                    _formatInt(tick),
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      color: kWhiteColor.withValues(alpha: 0.38),
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _YearChartGridPainter extends CustomPainter {
+  const _YearChartGridPainter({required this.ticks, required this.maxGames});
+
+  final List<int> ticks;
+  final int maxGames;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final plotHeight = size.height - 18;
+    if (plotHeight <= 0 || maxGames <= 0) return;
+    final line =
+        Paint()
+          ..color = kDividerColor.withValues(alpha: 0.55)
+          ..strokeWidth = 1;
+    final baseline =
+        Paint()
+          ..color = kDividerColor.withValues(alpha: 0.9)
+          ..strokeWidth = 1.2;
+    for (final tick in ticks) {
+      final y = plotHeight - (tick / maxGames).clamp(0.0, 1.0) * plotHeight;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), line);
+    }
+    canvas.drawLine(
+      Offset(0, plotHeight),
+      Offset(size.width, plotHeight),
+      baseline,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _YearChartGridPainter oldDelegate) {
+    return oldDelegate.maxGames != maxGames ||
+        !listEquals(oldDelegate.ticks, ticks);
+  }
+}
+
+/// Stacked W/D/L bar for one year. Static — no AnimatedContainer / shadows.
+class _YearChartBar extends StatelessWidget {
+  const _YearChartBar({
+    required this.point,
+    required this.maxGames,
+    required this.hovered,
+    required this.onHover,
+    this.onTap,
+  });
+
+  final PlayerYearChartPoint point;
+  final int maxGames;
+  final bool hovered;
+  final ValueChanged<bool> onHover;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final games = point.games;
+    final heightFactor =
+        games <= 0 ? 0.0 : (games / maxGames).clamp(0.035, 1.0).toDouble();
+
+    return MouseRegion(
+      onEnter: (_) => onHover(true),
+      onExit: (_) => onHover(false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 3),
+          child: Column(
+            children: [
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final plotHeight = constraints.maxHeight;
+                    final availableWidth = constraints.maxWidth;
+                    final barWidth =
+                        (availableWidth * 0.55).clamp(8.0, 28.0).toDouble();
+                    final width =
+                        barWidth > availableWidth ? availableWidth : barWidth;
+                    final barHeight =
+                        games <= 0
+                            ? 0.0
+                            : (plotHeight * heightFactor)
+                                .clamp(3.0, plotHeight)
+                                .toDouble();
+                    return Align(
+                      alignment: Alignment.bottomCenter,
+                      child: Opacity(
+                        opacity: hovered ? 1 : 0.9,
+                        child: Container(
+                          key: ValueKey<String>(
+                            'player-stats-year-bar-${point.year}',
+                          ),
+                          width: width,
+                          height: barHeight,
+                          clipBehavior: Clip.antiAlias,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Column(
+                            children: [
+                              if (point.wins > 0)
+                                Expanded(
+                                  flex: point.wins,
+                                  child: const ColoredBox(color: _kWin),
+                                ),
+                              if (point.draws > 0)
+                                Expanded(
+                                  flex: point.draws,
+                                  child: const ColoredBox(color: _kDraw),
+                                ),
+                              if (point.losses > 0)
+                                Expanded(
+                                  flex: point.losses,
+                                  child: const ColoredBox(color: _kLoss),
+                                ),
+                              if (point.unclassified > 0)
+                                Expanded(
+                                  flex: point.unclassified,
+                                  child: const ColoredBox(
+                                    color: _kUnclassified,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                point.year.toString(),
+                style: TextStyle(
+                  color:
+                      hovered
+                          ? kWhiteColor
+                          : kSecondaryTextColor.withValues(alpha: 0.9),
+                  fontSize: 10,
+                  fontWeight: hovered ? FontWeight.w800 : FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Instant hover detail: W/D/L counts, per-year sources, time controls.
+class _YearHoverCard extends StatelessWidget {
+  const _YearHoverCard({required this.point});
+
+  final PlayerYearChartPoint point;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: kBlack3Color,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                '${point.year}',
+                style: const TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                '${_formatInt(point.games)} games',
+                style: const TextStyle(
+                  color: kWhiteColor70,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+              const Spacer(),
+              _HoverResultChip(label: 'W', value: point.wins, color: _kWin),
+              const SizedBox(width: 6),
+              _HoverResultChip(label: 'D', value: point.draws, color: _kDraw),
+              const SizedBox(width: 6),
+              _HoverResultChip(label: 'L', value: point.losses, color: _kLoss),
+            ],
+          ),
+          if (point.sources.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            const Text(
+              'Sources',
+              style: TextStyle(
+                color: kSecondaryTextColor,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.4,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final src in point.sources)
+                  _HoverMetaChip(
+                    label: src.label,
+                    value: src.count,
+                    color: _sourceAccent(src.label),
+                  ),
+              ],
+            ),
+          ],
+          if (point.timeControls.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            const Text(
+              'Time controls',
+              style: TextStyle(
+                color: kSecondaryTextColor,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.4,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final tc in point.timeControls)
+                  _HoverMetaChip(
+                    label: _titleCase(tc.category),
+                    value: tc.count,
+                    color: _timeControlAccent(tc.category),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _HoverResultChip extends StatelessWidget {
+  const _HoverResultChip({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final int value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        '$label ${_formatInt(value)}',
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
+    );
+  }
+}
+
+class _HoverMetaChip extends StatelessWidget {
+  const _HoverMetaChip({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final int value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.32)),
+      ),
+      child: Text(
+        '$label · ${_formatInt(value)}',
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
+    );
+  }
+}
+
+Color _sourceAccent(String label) {
+  switch (label.trim().toLowerCase()) {
+    case 'lichess':
+      return const Color(0xFF81B64C);
+    case 'chess.com':
+      return const Color(0xFF00A86B);
+    case 'chess24':
+      return const Color(0xFF60A5FA);
+    case 'chessbase':
+      return const Color(0xFFFBBF24);
+    case 'unknown':
+      return kSecondaryTextColor;
+    default:
+      return kPrimaryColor;
   }
 }
 
@@ -1313,95 +2001,6 @@ class _HistogramBar extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Time controls
-// ---------------------------------------------------------------------------
-
-class _TimeControlPanel extends StatelessWidget {
-  const _TimeControlPanel({required this.timeControls});
-
-  final List<PlayerTimeControlStat> timeControls;
-
-  @override
-  Widget build(BuildContext context) {
-    final total = timeControls.fold<int>(0, (sum, tc) => sum + tc.count);
-    return _Panel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const _Eyebrow('Time controls'),
-          const SizedBox(height: 12),
-          for (var i = 0; i < timeControls.length; i++) ...[
-            if (i > 0) const SizedBox(height: 10),
-            _TimeControlRow(stat: timeControls[i], total: total),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _TimeControlRow extends StatelessWidget {
-  const _TimeControlRow({required this.stat, required this.total});
-
-  final PlayerTimeControlStat stat;
-  final int total;
-
-  @override
-  Widget build(BuildContext context) {
-    final share = total == 0 ? 0.0 : stat.count / total;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                _titleCase(stat.category),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            Text(
-              '${_formatInt(stat.count)} · ${(share * 100).round()}%',
-              style: const TextStyle(
-                color: kWhiteColor70,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(999),
-          child: SizedBox(
-            height: 6,
-            child: Row(
-              children: [
-                Expanded(
-                  flex: (share * 1000).round().clamp(1, 1000),
-                  child: const ColoredBox(color: kPrimaryColor),
-                ),
-                Expanded(
-                  flex: (1000 - (share * 1000).round()).clamp(0, 1000),
-                  child: const ColoredBox(color: kDividerColor),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

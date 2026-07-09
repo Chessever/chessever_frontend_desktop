@@ -90,6 +90,8 @@ class PlayerStatsRepository {
       db.select('$cte\n$_lengthSql', baseParams),
       db.select('$cte\n$_timeControlSql', baseParams),
       db.select('$cte\n$_auxSql', baseParams),
+      db.select('$cte\n$_yearTimeControlSql', baseParams),
+      db.select('$cte\n$_yearSourceSql', baseParams),
     ]);
 
     final overallRows = results[0];
@@ -100,6 +102,8 @@ class PlayerStatsRepository {
     final lengthRows = results[5];
     final timeControlRows = results[6];
     final auxRows = results[7];
+    final yearTimeControlRows = results[8];
+    final yearSourceRows = results[9];
 
     final tallies = _talliesFromRows(overallRows);
     final rating = _ratingSeriesFromRows(ratingRows);
@@ -121,7 +125,11 @@ class PlayerStatsRepository {
       ratingSeries: ratingSeries,
       openings: _openingsFromRows(openingRows),
       opponents: _opponentsFromRows(opponentRows),
-      years: _yearsFromRows(yearRows),
+      years: _yearsFromRows(
+        yearRows,
+        yearTimeControls: yearTimeControlRows,
+        yearSources: yearSourceRows,
+      ),
       lengthBuckets: _lengthBucketsFromRows(lengthRows),
       timeControls: _timeControlsFromRows(timeControlRows),
       ratingTimeControlCategory: rating.timeControlCategory,
@@ -294,7 +302,41 @@ class PlayerStatsRepository {
         .toList(growable: false);
   }
 
-  List<PlayerYearStat> _yearsFromRows(List<Map<String, Object?>> rows) {
+  List<PlayerYearStat> _yearsFromRows(
+    List<Map<String, Object?>> rows, {
+    List<Map<String, Object?>> yearTimeControls = const [],
+    List<Map<String, Object?>> yearSources = const [],
+  }) {
+    final tcsByYear = <int, List<PlayerTimeControlStat>>{};
+    for (final row in yearTimeControls) {
+      final year = int.tryParse(row['yr']?.toString() ?? '');
+      if (year == null) continue;
+      final count = _int(row['c']);
+      if (count <= 0) continue;
+      final cat =
+          row['cat']?.toString().trim().isEmpty ?? true
+              ? 'Unknown'
+              : row['cat']!.toString().trim();
+      tcsByYear
+          .putIfAbsent(year, () => <PlayerTimeControlStat>[])
+          .add(PlayerTimeControlStat(category: cat, count: count));
+    }
+
+    final sourcesByYear = <int, List<PlayerSourceStat>>{};
+    for (final row in yearSources) {
+      final year = int.tryParse(row['yr']?.toString() ?? '');
+      if (year == null) continue;
+      final count = _int(row['c']);
+      if (count <= 0) continue;
+      final label =
+          row['src']?.toString().trim().isEmpty ?? true
+              ? 'Unknown'
+              : row['src']!.toString().trim();
+      sourcesByYear
+          .putIfAbsent(year, () => <PlayerSourceStat>[])
+          .add(PlayerSourceStat(label: label, count: count));
+    }
+
     return rows
         .map((row) {
           final year = int.tryParse(row['yr']?.toString() ?? '');
@@ -307,6 +349,13 @@ class PlayerStatsRepository {
               losses: _int(row['l']),
             ),
             total: _int(row['total']),
+            timeControls:
+                List<PlayerTimeControlStat>.unmodifiable(
+                  tcsByYear[year] ?? const <PlayerTimeControlStat>[],
+                ),
+            sources: List<PlayerSourceStat>.unmodifiable(
+              sourcesByYear[year] ?? const <PlayerSourceStat>[],
+            ),
           );
         })
         .whereType<PlayerYearStat>()
@@ -398,6 +447,7 @@ WITH base AS (
     wp.name AS white_name,
     bp.name AS black_name,
     json_extract(g.headers_json, '\$.Opening') AS opening,
+    json_extract(g.headers_json, '\$.Site') AS site,
     CASE
       $sideSql
     END AS side
@@ -408,7 +458,7 @@ WITH base AS (
 ),
 pv AS (
   SELECT
-    side, eco, date, ply, tcc, opening,
+    side, eco, date, ply, tcc, opening, site,
     CASE side WHEN 'w' THEN white_elo WHEN 'b' THEN black_elo END AS my_elo,
     CASE side WHEN 'w' THEN black_name WHEN 'b' THEN white_name END AS opp_name,
     CASE side WHEN 'w' THEN black_elo WHEN 'b' THEN white_elo END AS opp_elo,
@@ -506,6 +556,32 @@ SELECT COALESCE(NULLIF(TRIM(tcc), ''), 'Unknown') AS cat, COUNT(*) AS c
 FROM pv
 GROUP BY cat
 ORDER BY c DESC''';
+
+  static const _yearTimeControlSql = '''
+SELECT substr(date, 1, 4) AS yr,
+  COALESCE(NULLIF(TRIM(tcc), ''), 'Unknown') AS cat,
+  COUNT(*) AS c
+FROM pv
+WHERE date IS NOT NULL AND length(date) >= 4
+GROUP BY yr, cat
+ORDER BY yr ASC, c DESC''';
+
+  /// Bucket PGN Site into known online origins for the year-chart hover card.
+  static const _yearSourceSql = '''
+SELECT substr(date, 1, 4) AS yr,
+  CASE
+    WHEN LOWER(COALESCE(site, '')) LIKE '%lichess%' THEN 'Lichess'
+    WHEN LOWER(COALESCE(site, '')) LIKE '%chess.com%' THEN 'Chess.com'
+    WHEN LOWER(COALESCE(site, '')) LIKE '%chess24%' THEN 'Chess24'
+    WHEN LOWER(COALESCE(site, '')) LIKE '%chessbase%' THEN 'ChessBase'
+    WHEN NULLIF(TRIM(site), '') IS NULL OR TRIM(site) = '?' THEN 'Unknown'
+    ELSE 'Other'
+  END AS src,
+  COUNT(*) AS c
+FROM pv
+WHERE date IS NOT NULL AND length(date) >= 4
+GROUP BY yr, src
+ORDER BY yr ASC, c DESC''';
 
   static const _auxSql = '''
 SELECT AVG(CASE WHEN opp_elo > 0 THEN opp_elo END) AS avg_opp

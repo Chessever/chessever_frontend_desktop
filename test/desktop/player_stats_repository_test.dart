@@ -7,6 +7,7 @@ import 'package:resqlite/resqlite.dart' as resqlite;
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'package:chessever/desktop/models/player_stats.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/player_stats_repository.dart';
 import 'package:chessever/repository/sqlite/local_chess_schema.dart';
@@ -64,6 +65,7 @@ void main() {
     int ply = 40,
     String tcc = 'Classical',
     String? opening,
+    String? site,
   }) async {
     final whiteId = await upsertPlayer(white, whiteElo);
     final blackId = await upsertPlayer(black, blackElo);
@@ -76,6 +78,7 @@ void main() {
       if (whiteFideId != null) 'WhiteFideId': whiteFideId,
       if (blackFideId != null) 'BlackFideId': blackFideId,
       if (opening != null) 'Opening': opening,
+      if (site != null) 'Site': site,
     });
     await db.execute(
       '''
@@ -408,6 +411,96 @@ void main() {
     expect(stats.overall.draws, 1);
     expect(stats.overall.losses, 0);
     expect(stats.years.single.games, 4);
+  });
+
+  test('year series carries W/D/L, time controls and sources for hover', () async {
+    const player = 'Year Chart Player';
+    await insertGame(
+      white: player,
+      black: 'Opp A',
+      result: '1-0',
+      eco: 'C01',
+      date: '2022.05.01',
+      tcc: 'Blitz',
+      site: 'https://lichess.org/abc',
+    );
+    await insertGame(
+      white: 'Opp B',
+      black: player,
+      result: '1-0',
+      eco: 'C02',
+      date: '2022.06.01',
+      tcc: 'Rapid',
+      site: 'https://www.chess.com/game/live/1',
+    );
+    await insertGame(
+      white: player,
+      black: 'Opp C',
+      result: '1/2-1/2',
+      eco: 'C03',
+      date: '2023.01.15',
+      tcc: 'Blitz',
+      site: 'https://lichess.org/def',
+    );
+    await insertGame(
+      white: player,
+      black: 'Opp D',
+      result: '0-1',
+      eco: 'C04',
+      date: '2023.08.20',
+      tcc: 'Classical',
+      site: 'https://lichess.org/ghi',
+    );
+
+    final repository = PlayerStatsRepository(database: () async => db);
+    final stats = await repository.computePlayerStats(
+      databasePath: databasePath,
+      aliases: const [player],
+    );
+
+    expect(stats.years.map((y) => y.year).toList(), [2022, 2023]);
+
+    final y2022 = stats.years.firstWhere((y) => y.year == 2022);
+    expect(y2022.games, 2);
+    expect(y2022.tally.wins, 1);
+    expect(y2022.tally.losses, 1);
+    expect(y2022.tally.draws, 0);
+    expect(
+      {for (final t in y2022.timeControls) t.category: t.count},
+      {'Blitz': 1, 'Rapid': 1},
+    );
+    expect(
+      {for (final s in y2022.sources) s.label: s.count},
+      {'Lichess': 1, 'Chess.com': 1},
+    );
+
+    final y2023 = stats.years.firstWhere((y) => y.year == 2023);
+    expect(y2023.games, 2);
+    expect(y2023.tally.wins, 0);
+    expect(y2023.tally.draws, 1);
+    expect(y2023.tally.losses, 1);
+    expect(
+      {for (final t in y2023.timeControls) t.category: t.count},
+      {'Blitz': 1, 'Classical': 1},
+    );
+    expect(
+      {for (final s in y2023.sources) s.label: s.count},
+      {'Lichess': 2},
+    );
+
+    // Shipped chart mapping must surface the same breakdowns.
+    final series = playerYearChartSeries(stats.years);
+    expect(series.map((p) => p.year), [2022, 2023]);
+    expect(series[0].wins, 1);
+    expect(series[0].losses, 1);
+    expect(series[0].sources.map((s) => s.label).toSet(), {
+      'Lichess',
+      'Chess.com',
+    });
+    expect(series[1].timeControls.map((t) => t.category).toSet(), {
+      'Blitz',
+      'Classical',
+    });
   });
 }
 

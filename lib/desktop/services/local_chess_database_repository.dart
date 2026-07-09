@@ -15,6 +15,7 @@ import 'package:sqflite/sqflite.dart' as sqflite;
 
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
@@ -194,22 +195,6 @@ class LocalChessResqliteDatabase {
     final environmentValue =
         Platform.environment[_localChessDevelopmentPurgeEnv];
     final flagFileExists = await flagFile.exists();
-    if (kReleaseMode) {
-      if (dartDefineEnabled ||
-          flagFileExists ||
-          _isTruthyDevelopmentFlag(environmentValue)) {
-        localChessLog.warning(
-          'Ignoring local chess development purge request in release mode',
-          context: <String, Object?>{
-            'path': dbPath,
-            'flag': flagFileExists ? flagFile.path : null,
-            'dartDefine': dartDefineEnabled,
-            'environment': _isTruthyDevelopmentFlag(environmentValue),
-          },
-        );
-      }
-      return false;
-    }
     final shouldPurge = shouldPurgeLocalChessResqliteCacheForDevelopment(
       isReleaseMode: kReleaseMode,
       dartDefineEnabled: dartDefineEnabled,
@@ -227,6 +212,9 @@ class LocalChessResqliteDatabase {
         'deletedFiles': deleted,
         'path': dbPath,
         'flag': flagFile.path,
+        'releaseMode': kReleaseMode,
+        'dartDefine': dartDefineEnabled,
+        'environment': _isTruthyDevelopmentFlag(environmentValue),
       },
     );
     return true;
@@ -247,7 +235,14 @@ bool shouldPurgeLocalChessResqliteCacheForDevelopment({
   required String? environmentValue,
   required bool flagFileExists,
 }) {
-  if (isReleaseMode) return false;
+  // Opt-in only (flag file / env / dart-define). Allowed in release so local
+  // `flutter run --release` can match debug when developers request a clean
+  // local-chess cache. Production installs never set these opt-ins.
+  //
+  // [isReleaseMode] is kept for call-site compatibility and logging; it no
+  // longer blocks an explicit opt-in.
+  // ignore: avoid_unused_constructor_parameters
+  final _ = isReleaseMode;
   return dartDefineEnabled ||
       flagFileExists ||
       _isTruthyDevelopmentFlag(environmentValue);
@@ -1932,6 +1927,15 @@ class LocalChessDatabaseRepository {
           cancellationToken: cancellationToken,
           onProgress: onProgress,
         ),
+        onWaiting:
+            onProgress == null
+                ? null
+                : () => onProgress(
+                  LocalChessScanProgress(
+                    fraction: 0,
+                    message: 'Waiting for local database...',
+                  ),
+                ),
       );
       cancellationToken?.throwIfCanceled();
       importStopwatch.stop();
@@ -2081,9 +2085,14 @@ class LocalChessDatabaseRepository {
   /// begins. Reads never go through here — WAL readers never block. Nested
   /// calls from the same queued action run inline; this lets first-open schema
   /// and migration work share the caller's lock instead of self-deadlocking.
+  ///
+  /// [onWaiting] fires once if another writer still owns the queue after a
+  /// short delay so import / tree UI can show "Waiting for local database..."
+  /// instead of looking frozen at 0%.
   static Future<T> _runLocalCacheWriteQueued<T>(
-    Future<T> Function() action,
-  ) async {
+    Future<T> Function() action, {
+    void Function()? onWaiting,
+  }) async {
     if (Zone.current[_localCacheWriteQueueZoneKey] == true) {
       return action();
     }
@@ -2092,6 +2101,18 @@ class LocalChessDatabaseRepository {
     final current = Completer<void>();
     _localCacheWriteQueue = current.future;
     try {
+      var waitingNotified = false;
+      void notifyWaiting() {
+        if (waitingNotified || onWaiting == null) return;
+        waitingNotified = true;
+        onWaiting();
+      }
+
+      final previousDone = previous.catchError((_) {});
+      await Future.any<void>([
+        previousDone,
+        Future<void>.delayed(const Duration(milliseconds: 80), notifyWaiting),
+      ]);
       try {
         await previous;
       } catch (_) {
@@ -2201,6 +2222,15 @@ class LocalChessDatabaseRepository {
         databasePath: databasePath,
         onProgress: onProgress,
       ),
+      onWaiting:
+          onProgress == null
+              ? null
+              : () => onProgress(
+                LocalChessScanProgress(
+                  fraction: 0,
+                  message: 'Waiting for local database...',
+                ),
+              ),
     );
   }
 
@@ -2894,6 +2924,9 @@ class LocalChessDatabaseRepository {
     String search = '',
     LocalChessGameSortField sortBy = LocalChessGameSortField.originalOrder,
     LocalChessGameSortDirection sortDirection = LocalChessGameSortDirection.asc,
+    LocalChessGameFilter? filter,
+    String? playerFideId,
+    List<String> playerAliases = const <String>[],
     required int pageNumber,
     required int pageSize,
   }) async {
@@ -2913,6 +2946,16 @@ class LocalChessDatabaseRepository {
     final where = StringBuffer('g.database_id = ?');
     final parameters = <Object?>[databaseId];
     _appendLocalGameSearch(where, parameters, search);
+    final activeFilter = filter;
+    if (activeFilter != null && activeFilter.hasActiveFilters) {
+      appendLocalChessGameFilter(
+        where,
+        parameters,
+        activeFilter,
+        playerFideId: playerFideId,
+        playerAliases: playerAliases,
+      );
+    }
 
     const fromClause = '''
       FROM $localChessGamesTable g
@@ -6196,6 +6239,21 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
         gameRows.last['index_in_file'],
         fallback: lastIndexInFile,
       );
+      // Page-level progress even when the per-game throttle is still warming up
+      // (small first page, or a long gap before the next 512-game tick).
+      final pageFraction =
+          cachedGameCount <= 0
+              ? 0.32
+              : 0.18 + ((processed / cachedGameCount) * 0.64);
+      emit(
+        LocalChessScanProgress(
+          fraction: pageFraction.clamp(0.18, 0.82).toDouble(),
+          message:
+              cachedGameCount > 0
+                  ? 'Building tree... $processed of $cachedGameCount games'
+                  : 'Building tree...',
+        ),
+      );
       if (await repository._databaseIsMarkedDeleted(db, databaseId)) {
         request.sendPort.send(
           const _LocalTreeRebuildWorkerFailure(
@@ -6442,7 +6500,10 @@ Iterable<LocalOpeningTreeGameInput> _treeInputsForCachedGameRows({
         onProgress(
           LocalChessScanProgress(
             fraction: fraction.clamp(0.18, 0.82).toDouble(),
-            message: 'Building tree...',
+            message:
+                totalRows > 0
+                    ? 'Building tree... $processed of $totalRows games'
+                    : 'Building tree...',
           ),
         );
       }

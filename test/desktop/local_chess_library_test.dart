@@ -166,6 +166,59 @@ void main() {
     );
 
     test(
+      'openPaths imports each multi-file PGN through the cache worker path',
+      () async {
+        final first = File('${temp.path}/first.pgn');
+        final second = File('${temp.path}/second.pgn');
+        await first.writeAsString(_samplePgn);
+        await second.writeAsString(_samplePgn);
+        final combined = await scanLocalChessPaths(<String>[
+          first.path,
+          second.path,
+        ], sourceLabel: '2 PGN files');
+        final repo = _FailingLocalChessDatabaseRepository(
+          importedSource: combined,
+          multiFileLoadSource: combined,
+        );
+        final notifier = LocalChessLibraryNotifier(
+          localDatabaseRepository: repo,
+        );
+        final progressMessages = <String>[];
+        final subscription = notifier.stream.listen((state) {
+          final message = state.scanProgress?.message;
+          if (message != null && message.isNotEmpty) {
+            progressMessages.add(message);
+          }
+        });
+        addTearDown(subscription.cancel);
+
+        final opened = await notifier.openPaths(
+          <String>[first.path, second.path],
+          sourceLabel: '2 PGN files',
+        );
+
+        expect(opened, isTrue);
+        expect(repo.importSingleFileSourceCalls, 2);
+        expect(repo.importSingleFileSourcePaths, <String>[
+          first.path,
+          second.path,
+        ]);
+        expect(repo.loadFreshSourceCalls, greaterThanOrEqualTo(2));
+        expect(repo.persistSourceCalls, 0);
+        expect(
+          progressMessages,
+          anyElement(contains('Importing file 1 of 2')),
+        );
+        expect(
+          progressMessages,
+          anyElement(contains('Importing file 2 of 2')),
+        );
+        expect(notifier.state.source?.paths, hasLength(2));
+        notifier.clear();
+      },
+    );
+
+    test(
       'refreshFile updates one local database tree and persisted cache',
       () async {
         final db = await resqlite.Database.open('${temp.path}/local_chess.db');
@@ -738,6 +791,7 @@ class _FailingLocalChessDatabaseRepository
     this.failLoadFreshFileNode = false,
     this.failPersistFileNode = false,
     this.importedSource,
+    this.multiFileLoadSource,
     this.rebuildStarted,
     this.releaseRebuild,
     this.rebuildReturned,
@@ -748,6 +802,7 @@ class _FailingLocalChessDatabaseRepository
   final bool failLoadFreshFileNode;
   final bool failPersistFileNode;
   final LocalChessSource? importedSource;
+  final LocalChessSource? multiFileLoadSource;
   final Completer<void>? rebuildStarted;
   final Completer<void>? releaseRebuild;
   final Completer<void>? rebuildReturned;
@@ -759,6 +814,7 @@ class _FailingLocalChessDatabaseRepository
   int importSingleFileSourceCalls = 0;
   int persistOpeningTreeIndexCalls = 0;
   int rebuildOpeningTreeCalls = 0;
+  final List<String> importSingleFileSourcePaths = <String>[];
 
   @override
   Future<LocalChessSource?> loadFreshSource(
@@ -769,6 +825,13 @@ class _FailingLocalChessDatabaseRepository
     loadFreshSourceCalls++;
     if (failLoadFreshSource) {
       throw StateError('cache restore failed');
+    }
+    // Only return the multi-file cache after imports have run; the initial
+    // openPaths restore probe must still miss so the import path is exercised.
+    if (paths.length > 1 &&
+        multiFileLoadSource != null &&
+        importSingleFileSourceCalls > 0) {
+      return multiFileLoadSource;
     }
     return null;
   }
@@ -781,6 +844,13 @@ class _FailingLocalChessDatabaseRepository
     void Function(LocalChessScanProgress progress)? onProgress,
   }) async {
     importSingleFileSourceCalls++;
+    importSingleFileSourcePaths.add(path);
+    onProgress?.call(
+      LocalChessScanProgress(
+        fraction: 0.5,
+        message: 'Importing ${sourceLabel ?? path}...',
+      ),
+    );
     return importedSource;
   }
 

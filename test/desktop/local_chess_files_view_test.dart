@@ -4,6 +4,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -71,7 +72,7 @@ void main() {
 
     expect(repository.queries, hasLength(1));
     expect(repository.queries.single.search, isEmpty);
-    expect(repository.queries.single.pageSize, 1000);
+    expect(repository.queries.single.pageSize, 200);
     // Row player names render in the shared library-table abbreviated form.
     expect(find.text('Only, D.'), findsOneWidget);
     expect(find.text('Hou, Y.'), findsNothing);
@@ -149,10 +150,10 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(repository.queries.single.pageSize, 1000);
+      expect(repository.queries.single.pageSize, 200);
       expect(repository.queries.single.pageNumber, 0);
       expect(find.text('Load more'), findsOneWidget);
-      expect(find.text('1000 / 2500 loaded'), findsOneWidget);
+      expect(find.text('200 / 2500 loaded'), findsOneWidget);
 
       final tableScrollable = tester.state<ScrollableState>(
         find.descendant(
@@ -166,8 +167,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
 
       expect(repository.queries.last.pageNumber, 1);
-      expect(repository.queries.last.pageSize, 1000);
-      expect(find.text('2000 / 2500 loaded'), findsOneWidget);
+      expect(repository.queries.last.pageSize, 200);
+      expect(find.text('400 / 2500 loaded'), findsOneWidget);
 
       await tester.enterText(find.byType(TextField), 'database 2');
       await tester.pump();
@@ -175,7 +176,7 @@ void main() {
 
       expect(repository.queries.last.search, 'database 2');
       expect(repository.queries.last.pageNumber, 0);
-      expect(repository.queries.last.pageSize, 1000);
+      expect(repository.queries.last.pageSize, 200);
     },
   );
 
@@ -198,7 +199,7 @@ void main() {
           games: source.root.files.single.games,
           totalCount: 1,
           pageNumber: 0,
-          pageSize: 1000,
+          pageSize: 200,
         ),
       );
 
@@ -281,7 +282,7 @@ void main() {
         games: source.root.files.single.games,
         totalCount: 1,
         pageNumber: 0,
-        pageSize: 1000,
+        pageSize: 200,
       ),
     );
 
@@ -357,7 +358,7 @@ void main() {
         games: source.root.files.single.games,
         totalCount: 1,
         pageNumber: 0,
-        pageSize: 1000,
+        pageSize: 200,
       ),
     );
 
@@ -438,7 +439,7 @@ void main() {
         games: source.root.files.single.games,
         totalCount: 1,
         pageNumber: 0,
-        pageSize: 1000,
+        pageSize: 200,
       ),
     );
 
@@ -501,6 +502,9 @@ class _FakeLocalChessDatabaseRepository extends LocalChessDatabaseRepository {
     String search = '',
     LocalChessGameSortField sortBy = LocalChessGameSortField.originalOrder,
     LocalChessGameSortDirection sortDirection = LocalChessGameSortDirection.asc,
+    LocalChessGameFilter? filter,
+    String? playerFideId,
+    List<String> playerAliases = const <String>[],
     required int pageNumber,
     required int pageSize,
   }) async {

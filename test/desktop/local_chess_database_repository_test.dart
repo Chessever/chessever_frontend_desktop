@@ -608,13 +608,40 @@ void main() {
     },
   );
 
-  test('development purge switch is ignored in release mode', () {
+  test('development purge switch honors opt-ins in release mode', () {
     expect(
       shouldPurgeLocalChessResqliteCacheForDevelopment(
         isReleaseMode: true,
         dartDefineEnabled: true,
+        environmentValue: null,
+        flagFileExists: false,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldPurgeLocalChessResqliteCacheForDevelopment(
+        isReleaseMode: true,
+        dartDefineEnabled: false,
         environmentValue: 'true',
+        flagFileExists: false,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldPurgeLocalChessResqliteCacheForDevelopment(
+        isReleaseMode: true,
+        dartDefineEnabled: false,
+        environmentValue: null,
         flagFileExists: true,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldPurgeLocalChessResqliteCacheForDevelopment(
+        isReleaseMode: true,
+        dartDefineEnabled: false,
+        environmentValue: null,
+        flagFileExists: false,
       ),
       isFalse,
     );
