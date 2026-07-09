@@ -612,9 +612,7 @@ class _StatsBody extends StatelessWidget {
       children: [
         toolbar,
         Padding(
-          // Room under the last panel so the games-by-year hover detail can
-          // open fully without sitting under the pane fold.
-          padding: const EdgeInsets.fromLTRB(18, 16, 18, 160),
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -1625,7 +1623,15 @@ class _YearsPanelState extends State<_YearsPanel> {
   static const double _kLabelBand = 22;
   static const double _kMinSlot = 36;
 
+  final ScrollController _chartScrollController = ScrollController();
   int? _hoveredYear;
+  double? _hoverViewportX;
+
+  @override
+  void dispose() {
+    _chartScrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1697,62 +1703,126 @@ class _YearsPanelState extends State<_YearsPanel> {
                         constraints.maxWidth,
                         n * _kMinSlot,
                       );
-                      return ScrollConfiguration(
-                        behavior: ScrollConfiguration.of(
-                          context,
-                        ).copyWith(scrollbars: true),
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: SizedBox(
-                            width: width,
-                            height: constraints.maxHeight,
-                            child: MouseRegion(
-                              onHover: (event) {
-                                final year = _yearAt(
-                                  series,
-                                  width,
-                                  event.localPosition.dx,
-                                );
-                                if (year != _hoveredYear) {
-                                  setState(() => _hoveredYear = year);
-                                }
-                              },
-                              onExit: (_) {
-                                if (_hoveredYear != null) {
-                                  setState(() => _hoveredYear = null);
-                                }
-                              },
-                              child: GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onTapUp: (details) {
-                                  final year = _yearAt(
-                                    series,
-                                    width,
-                                    details.localPosition.dx,
-                                  );
-                                  if (year != null) widget.onYear?.call(year);
-                                },
-                                child: CustomPaint(
-                                  painter: _GamesByYearChartPainter(
-                                    series: series,
-                                    axisMax: axisMax,
-                                    ticks: ticks,
-                                    hoveredYear: _hoveredYear,
-                                    labelBand: _kLabelBand,
-                                    winColor: _kWin,
-                                    drawColor: _kDraw,
-                                    lossColor: _kLoss,
-                                    unclassifiedColor: _kUnclassified,
-                                    gridColor: kDividerColor,
-                                    labelColor: kSecondaryTextColor,
-                                    hoverLabelColor: kWhiteColor,
+                      final double overlayWidth =
+                          math
+                              .min(
+                                280.0,
+                                math.max(0.0, constraints.maxWidth - 16),
+                              )
+                              .toDouble();
+                      final double pointerX =
+                          (_hoverViewportX ?? 8)
+                              .clamp(
+                                8.0,
+                                math.max(8.0, constraints.maxWidth - 8),
+                              )
+                              .toDouble();
+                      final fitsOnRight =
+                          pointerX + 12 + overlayWidth <=
+                          constraints.maxWidth - 8;
+                      final double overlayLeft =
+                          fitsOnRight
+                              ? pointerX + 12
+                              : math
+                                  .max(8.0, pointerX - 12 - overlayWidth)
+                                  .toDouble();
+                      return Stack(
+                        key: const ValueKey<String>(
+                          'player-games-by-year-chart',
+                        ),
+                        clipBehavior: Clip.hardEdge,
+                        children: [
+                          Positioned.fill(
+                            child: ScrollConfiguration(
+                              behavior: ScrollConfiguration.of(
+                                context,
+                              ).copyWith(scrollbars: true),
+                              child: SingleChildScrollView(
+                                controller: _chartScrollController,
+                                scrollDirection: Axis.horizontal,
+                                child: SizedBox(
+                                  width: width,
+                                  height: constraints.maxHeight,
+                                  child: MouseRegion(
+                                    onHover: (event) {
+                                      final year = _yearAt(
+                                        series,
+                                        width,
+                                        event.localPosition.dx,
+                                      );
+                                      final scrollOffset =
+                                          _chartScrollController.hasClients
+                                              ? _chartScrollController.offset
+                                              : 0.0;
+                                      final viewportX =
+                                          event.localPosition.dx - scrollOffset;
+                                      if (year != _hoveredYear ||
+                                          _hoverViewportX == null ||
+                                          (viewportX - _hoverViewportX!).abs() >
+                                              6) {
+                                        setState(() {
+                                          _hoveredYear = year;
+                                          _hoverViewportX = viewportX;
+                                        });
+                                      }
+                                    },
+                                    onExit: (_) {
+                                      if (_hoveredYear != null ||
+                                          _hoverViewportX != null) {
+                                        setState(() {
+                                          _hoveredYear = null;
+                                          _hoverViewportX = null;
+                                        });
+                                      }
+                                    },
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
+                                      onTapUp: (details) {
+                                        final year = _yearAt(
+                                          series,
+                                          width,
+                                          details.localPosition.dx,
+                                        );
+                                        if (year != null) {
+                                          widget.onYear?.call(year);
+                                        }
+                                      },
+                                      child: CustomPaint(
+                                        painter: _GamesByYearChartPainter(
+                                          series: series,
+                                          axisMax: axisMax,
+                                          ticks: ticks,
+                                          hoveredYear: _hoveredYear,
+                                          labelBand: _kLabelBand,
+                                          winColor: _kWin,
+                                          drawColor: _kDraw,
+                                          lossColor: _kLoss,
+                                          unclassifiedColor: _kUnclassified,
+                                          gridColor: kDividerColor,
+                                          labelColor: kSecondaryTextColor,
+                                          hoverLabelColor: kWhiteColor,
+                                        ),
+                                        size: Size(
+                                          width,
+                                          constraints.maxHeight,
+                                        ),
+                                      ),
+                                    ),
                                   ),
-                                  size: Size(width, constraints.maxHeight),
                                 ),
                               ),
                             ),
                           ),
-                        ),
+                          if (hovered != null && overlayWidth >= 160)
+                            Positioned(
+                              left: overlayLeft,
+                              top: 8,
+                              width: overlayWidth,
+                              child: IgnorePointer(
+                                child: _YearHoverOverlay(point: hovered),
+                              ),
+                            ),
+                        ],
                       );
                     },
                   ),
@@ -1760,10 +1830,6 @@ class _YearsPanelState extends State<_YearsPanel> {
               ],
             ),
           ),
-          if (hovered != null) ...[
-            const SizedBox(height: 10),
-            _YearHoverCard(point: hovered),
-          ],
         ],
       ),
     );
@@ -2158,23 +2224,33 @@ class _GamesByYearChartPainter extends CustomPainter {
   }
 }
 
-/// Instant hover detail: W/D/L counts, per-year sources, time controls.
-class _YearHoverCard extends StatelessWidget {
-  const _YearHoverCard({required this.point});
+/// Pointer-transparent hover detail that paints inside the chart viewport.
+/// It never participates in layout, so entering or leaving a bar cannot move
+/// the dashboard or alter its scroll extent.
+class _YearHoverOverlay extends StatelessWidget {
+  const _YearHoverOverlay({required this.point});
 
   final PlayerYearChartPoint point;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      key: const ValueKey<String>('player-games-by-year-hover-overlay'),
+      padding: const EdgeInsets.fromLTRB(11, 9, 11, 9),
       decoration: BoxDecoration(
-        color: kBlack3Color,
+        color: kBlack2Color.withValues(alpha: 0.97),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: kDividerColor),
+        border: Border.all(color: kWhiteColor.withValues(alpha: 0.16)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.45),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -2188,7 +2264,7 @@ class _YearHoverCard extends StatelessWidget {
                   fontFeatures: [FontFeature.tabularFigures()],
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Text(
                 '${_formatInt(point.games)} games',
                 style: const TextStyle(
@@ -2198,58 +2274,37 @@ class _YearHoverCard extends StatelessWidget {
                   fontFeatures: [FontFeature.tabularFigures()],
                 ),
               ),
-              const Spacer(),
+            ],
+          ),
+          const SizedBox(height: 7),
+          Row(
+            children: [
               _HoverResultChip(label: 'W', value: point.wins, color: _kWin),
-              const SizedBox(width: 6),
+              const SizedBox(width: 5),
               _HoverResultChip(label: 'D', value: point.draws, color: _kDraw),
-              const SizedBox(width: 6),
+              const SizedBox(width: 5),
               _HoverResultChip(label: 'L', value: point.losses, color: _kLoss),
             ],
           ),
           if (point.sources.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            const Text(
-              'Sources',
-              style: TextStyle(
-                color: kSecondaryTextColor,
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.4,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (final src in point.sources)
-                  _HoverSourceChip(label: src.label, value: src.count),
-              ],
+            const SizedBox(height: 7),
+            _HoverDetailLine(
+              label: 'Sources',
+              value: point.sources
+                  .map((src) => '${src.label} ${_formatInt(src.count)}')
+                  .join(' · '),
             ),
           ],
           if (point.timeControls.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            const Text(
-              'Time controls',
-              style: TextStyle(
-                color: kSecondaryTextColor,
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.4,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (final tc in point.timeControls)
-                  _HoverMetaChip(
-                    label: _titleCase(tc.category),
-                    value: tc.count,
-                    color: _timeControlAccent(tc.category),
-                  ),
-              ],
+            const SizedBox(height: 4),
+            _HoverDetailLine(
+              label: 'Tempo',
+              value: point.timeControls
+                  .map(
+                    (tc) =>
+                        '${_titleCase(tc.category)} ${_formatInt(tc.count)}',
+                  )
+                  .join(' · '),
             ),
           ],
         ],
@@ -2258,62 +2313,43 @@ class _YearHoverCard extends StatelessWidget {
   }
 }
 
-/// Year-hover source chip with platform brand mark (not a colored dot).
-class _HoverSourceChip extends StatelessWidget {
-  const _HoverSourceChip({required this.label, required this.value});
+class _HoverDetailLine extends StatelessWidget {
+  const _HoverDetailLine({required this.label, required this.value});
 
   final String label;
-  final int value;
+  final String value;
 
   @override
   Widget build(BuildContext context) {
-    final kind = _workspaceSourceFromLabel(label);
-    return Container(
-      padding: const EdgeInsets.fromLTRB(7, 4, 9, 4),
-      decoration: BoxDecoration(
-        color: kBlack3Color,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: kDividerColor),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (kind != null) ...[
-            _PlayerSourceBrandMark(kind: kind, size: 12),
-            const SizedBox(width: 6),
-          ],
-          Text(
-            '$label · ${_formatInt(value)}',
+    return Row(
+      children: [
+        SizedBox(
+          width: 48,
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: kSecondaryTextColor,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: kWhiteColor70,
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
               fontFeatures: [FontFeature.tabularFigures()],
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
-  }
-}
-
-PlayerWorkspaceSource? _workspaceSourceFromLabel(String label) {
-  switch (label.trim().toLowerCase()) {
-    case 'lichess':
-      return PlayerWorkspaceSource.lichess;
-    case 'chess.com':
-    case 'chesscom':
-      return PlayerWorkspaceSource.chesscom;
-    case 'chessever':
-    case 'chess ever':
-      return PlayerWorkspaceSource.chessever;
-    case 'manual':
-    case 'manual pgn':
-      return PlayerWorkspaceSource.manual;
-    case 'combined':
-      return PlayerWorkspaceSource.combined;
-    default:
-      return null;
   }
 }
 
@@ -2339,39 +2375,6 @@ class _HoverResultChip extends StatelessWidget {
       ),
       child: Text(
         '$label ${_formatInt(value)}',
-        style: TextStyle(
-          color: color,
-          fontSize: 11,
-          fontWeight: FontWeight.w800,
-          fontFeatures: const [FontFeature.tabularFigures()],
-        ),
-      ),
-    );
-  }
-}
-
-class _HoverMetaChip extends StatelessWidget {
-  const _HoverMetaChip({
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  final String label;
-  final int value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.32)),
-      ),
-      child: Text(
-        '$label · ${_formatInt(value)}',
         style: TextStyle(
           color: color,
           fontSize: 11,
@@ -2632,7 +2635,11 @@ class _TempoPill extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TempoIcon(category: category, size: 13, color: accent),
+              TempoIcon(
+                key: ValueKey<String>('player-overview-tempo-$category'),
+                category: category,
+                size: 16,
+              ),
               const SizedBox(width: 6),
               Text(
                 label,

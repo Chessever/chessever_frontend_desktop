@@ -5,6 +5,7 @@ import 'package:motor/motor.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
+import 'package:chessever/desktop/widgets/desktop_toolbar_metrics.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 /// Desktop search field — square edges, dark chrome, ⌘+F-friendly. Used inside
@@ -94,11 +95,11 @@ class _DesktopSearchFieldState extends State<DesktopSearchField> {
         motion: DesktopMotion.layout,
         builder: (context, t, child) {
           return Container(
-            height: 36,
+            height: desktopToolbarControlHeight,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             decoration: BoxDecoration(
               color: kBlack2Color,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(desktopToolbarControlRadius),
               border: Border.all(
                 color: Color.lerp(kDividerColor, kPrimaryColor, t)!,
                 width: 1 + 0.2 * t,

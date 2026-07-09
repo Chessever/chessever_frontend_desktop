@@ -26,6 +26,7 @@ import 'package:chessever/desktop/widgets/desktop_tappable.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
+import 'package:chessever/desktop/widgets/desktop_toolbar_metrics.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
 import 'package:chessever/desktop/widgets/library/library_table_row_style.dart';
 import 'package:chessever/desktop/widgets/library/local_game_info_dialog.dart';
@@ -469,7 +470,10 @@ class LocalChessFilesView extends HookConsumerWidget {
                             ),
                           ],
                           const SizedBox(width: 8),
-                          _LocalCountPill(
+                          DesktopToolbarCountPill(
+                            key: const ValueKey<String>(
+                              'local-chess-files-loaded-count',
+                            ),
                             label: _localDatabaseCountLabel(
                               loadedCount: filtered.length,
                               totalFilteredCount: totalFilteredCount,
@@ -810,34 +814,6 @@ FBaseButtonStyle Function(FButtonStyle style) _breadcrumbButtonStyle() {
           ),
     ),
   );
-}
-
-class _LocalCountPill extends StatelessWidget {
-  const _LocalCountPill({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 34,
-      alignment: Alignment.center,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: kBlack2Color,
-        borderRadius: BorderRadius.circular(7),
-        border: Border.all(color: kDividerColor),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: kWhiteColor70,
-          fontSize: 11,
-          fontFeatures: [FontFeature.tabularFigures()],
-        ),
-      ),
-    );
-  }
 }
 
 class _LocalChildrenStrip extends StatelessWidget {
