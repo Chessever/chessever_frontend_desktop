@@ -773,15 +773,19 @@ class _NotationAnnotationToolbar extends StatelessWidget {
       onTrimContinuation != null;
 
   Set<int> get _activeNagSet {
+    final moveNags = activeMove?.nags ?? const <int>[];
     final ply = _targetMainlinePly;
-    if (ply != null) return (userNags[ply] ?? const <int>[]).toSet();
-    return (activeMove?.nags ?? const <int>[]).toSet();
+    if (ply != null) {
+      return <int>{...moveNags, ...(userNags[ply] ?? const <int>[])};
+    }
+    return moveNags.toSet();
   }
 
   void _clearNags() {
     final ply = _targetMainlinePly;
     if (ply != null) {
       onClearUserNags?.call(ply);
+      if (activePointer.isNotEmpty) onClearMoveNags?.call(activePointer);
       return;
     }
     if (activePointer.isNotEmpty) onClearMoveNags?.call(activePointer);
@@ -1351,9 +1355,10 @@ class _LineBlock extends StatelessWidget {
               depth == 0 &&
               isMainlineRoot &&
               whitePointer != null &&
-              (userNags[whitePointer.last] ?? const <int>[]).any(
-                (n) => n >= 1 && n <= 7,
-              ),
+              <int>{
+                ...whiteMove?.nags ?? const <int>[],
+                ...userNags[whitePointer.last] ?? const <int>[],
+              }.any((n) => n >= 1 && n <= 7),
           blackNags:
               (depth == 0 && isMainlineRoot && blackPointer != null)
                   ? _mergedMainlineNagsFor(
@@ -1371,9 +1376,10 @@ class _LineBlock extends StatelessWidget {
               depth == 0 &&
               isMainlineRoot &&
               blackPointer != null &&
-              (userNags[blackPointer.last] ?? const <int>[]).any(
-                (n) => n >= 1 && n <= 7,
-              ),
+              <int>{
+                ...blackMove?.nags ?? const <int>[],
+                ...userNags[blackPointer.last] ?? const <int>[],
+              }.any((n) => n >= 1 && n <= 7),
           onSetUserQualityNag:
               (depth == 0 && isMainlineRoot) ? onSetUserQualityNag : null,
           onToggleUserNag:
@@ -2034,9 +2040,10 @@ class _InlineNotationBlock extends StatelessWidget {
         annotation: isMainlineMove ? lichessAnnotations[pointer.last] : null,
         userHasQualityNag:
             isMainlineMove &&
-            (userNags[pointer.last] ?? const <int>[]).any(
-              (n) => n >= 1 && n <= 7,
-            ),
+            <int>{
+              ...move.nags ?? const <int>[],
+              ...userNags[pointer.last] ?? const <int>[],
+            }.any((n) => n >= 1 && n <= 7),
         onSetUserQualityNag: isMainlineMove ? onSetUserQualityNag : null,
         onToggleUserNag: isMainlineMove ? onToggleUserNag : null,
         onToggleMoveNag: isMainlineMove ? null : onToggleMoveNag,
@@ -3553,7 +3560,7 @@ class _LadderChipState extends State<_LadderChip>
       case _LadderAction.deleteTextCommentary:
         widget.onSetComment?.call(null);
       case _LadderAction.clearAnnotation:
-        widget.onSetUserQualityNag?.call(null);
+        widget.onClearNags?.call();
       case _LadderAction.toggleAllAnnotations:
         notationState?._toggleAllAnnotationsFromMenu();
       case _LadderAction.editComment:

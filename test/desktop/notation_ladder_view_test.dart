@@ -94,6 +94,45 @@ void main() {
   );
 
   testWidgets(
+    'right-click clear symbol removes both overlay and imported mainline NAG callbacks',
+    (tester) async {
+      ChessMovePointer? clearedPointer;
+      int? clearedUserPly;
+      final game = _sampleGame();
+      final mainline = List<ChessMove>.of(game.mainline);
+      mainline[1] = mainline[1].copyWith(nags: const <int>[6]);
+
+      await tester.pumpWidget(
+        _host(
+          game: game.copyWith(mainline: mainline),
+          activePointer: const [1],
+          onJump: (_) {},
+          onSetUserQualityNag: (_, _) {},
+          onClearUserNags: (ply) => clearedUserPly = ply,
+          onClearMoveNags: (pointer) {
+            clearedPointer = List<int>.from(pointer);
+          },
+          width: 760,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tapAt(
+        tester.getCenter(find.text('e5', findRichText: true)),
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Clear move symbol'), findsOneWidget);
+      await tester.tap(find.text('Clear move symbol'));
+      await tester.pumpAndSettle();
+
+      expect(clearedUserPly, 1);
+      expect(clearedPointer, const [1]);
+    },
+  );
+
+  testWidgets(
     'right-click menu supports sideline quality NAGs without visible toolbar',
     (tester) async {
       ChessMovePointer? toggledPointer;

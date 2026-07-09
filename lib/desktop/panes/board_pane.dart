@@ -45,6 +45,7 @@ import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/state/user_move_nags.dart';
 import 'package:chessever/desktop/utils/mainline_annotation_index.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
+import 'package:chessever/desktop/utils/pgn_analysis_effect_commentary.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
@@ -4349,8 +4350,21 @@ ChessGame _setMoveNagsAtPointer(
   return _updateMoveAtPointer(
     game,
     pointer,
-    (move) => move.copyWith(nags: List<int>.unmodifiable(nags)),
+    (move) => _withMoveNags(move, nags),
   );
+}
+
+ChessMove _withMoveNags(ChessMove move, List<int> nags) {
+  final nextNags = List<int>.unmodifiable(nags);
+  final hadQualityNag = (move.nags ?? const <int>[]).any(_isQualityNag);
+  final hasQualityNag = nextNags.any(_isQualityNag);
+  if (hadQualityNag && !hasQualityNag) {
+    return move.copyWith(
+      nags: nextNags,
+      comments: stripAnalysisEffectDirectivesFromComments(move.comments),
+    );
+  }
+  return move.copyWith(nags: nextNags);
 }
 
 List<int> _toggleNagList(List<int> current, int nag) {
