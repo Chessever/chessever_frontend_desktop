@@ -9,6 +9,7 @@ import 'package:chessever/repository/sqlite/app_database.dart';
 
 const Object _localLibraryUnset = Object();
 const String playerWorkspaceLocalLibraryGroupPrefix = 'player-workspace:';
+const String playerWorkspaceCombinedSourceKey = 'combined';
 
 String? playerWorkspaceIdFromLocalLibraryGroupId(String? groupId) {
   final clean = groupId?.trim();
@@ -20,6 +21,21 @@ String? playerWorkspaceIdFromLocalLibraryGroupId(String? groupId) {
     playerWorkspaceLocalLibraryGroupPrefix.length,
   );
   return playerId.isEmpty ? null : playerId;
+}
+
+/// Whether [entry] is the generated Combined database for a Players folder.
+///
+/// New entries carry an explicit source key. The filename fallback keeps
+/// registries written by older app versions correctly ordered.
+bool localLibraryEntryIsPlayerWorkspaceCombined(LocalLibraryEntry entry) {
+  if (entry.playerWorkspaceSource == playerWorkspaceCombinedSourceKey) {
+    return true;
+  }
+  if (entry.playerWorkspaceSource != null) return false;
+  final stem = p.basenameWithoutExtension(entry.path).trim().toLowerCase();
+  return stem == playerWorkspaceCombinedSourceKey ||
+      stem.startsWith('${playerWorkspaceCombinedSourceKey}_') ||
+      stem.startsWith('$playerWorkspaceCombinedSourceKey-');
 }
 
 /// Persisted user-registered local PGN folders. Each entry represents a
@@ -35,6 +51,7 @@ class LocalLibraryEntry {
     this.indexedAt,
     this.groupId,
     this.groupLabel,
+    this.playerWorkspaceSource,
   });
 
   factory LocalLibraryEntry.fromJson(Map<String, dynamic> json) {
@@ -50,6 +67,7 @@ class LocalLibraryEntry {
       indexedAt: _jsonDateTime(json['indexedAt']),
       groupId: explicitGroupId ?? inferredGroup?.id,
       groupLabel: explicitGroupLabel ?? inferredGroup?.label,
+      playerWorkspaceSource: _stringOrNull(json['playerWorkspaceSource']),
     );
   }
 
@@ -59,6 +77,7 @@ class LocalLibraryEntry {
   final DateTime? indexedAt;
   final String? groupId;
   final String? groupLabel;
+  final String? playerWorkspaceSource;
 
   String get displayName {
     return localChessDatabaseDisplayNameForPath(path);
@@ -71,6 +90,7 @@ class LocalLibraryEntry {
     Object? indexedAt = _localLibraryUnset,
     Object? groupId = _localLibraryUnset,
     Object? groupLabel = _localLibraryUnset,
+    Object? playerWorkspaceSource = _localLibraryUnset,
   }) {
     return LocalLibraryEntry(
       path: path ?? this.path,
@@ -91,6 +111,10 @@ class LocalLibraryEntry {
           identical(groupLabel, _localLibraryUnset)
               ? this.groupLabel
               : groupLabel as String?,
+      playerWorkspaceSource:
+          identical(playerWorkspaceSource, _localLibraryUnset)
+              ? this.playerWorkspaceSource
+              : playerWorkspaceSource as String?,
     );
   }
 
@@ -102,6 +126,8 @@ class LocalLibraryEntry {
       if (indexedAt != null) 'indexedAt': indexedAt!.toIso8601String(),
       if (groupId != null) 'groupId': groupId,
       if (groupLabel != null) 'groupLabel': groupLabel,
+      if (playerWorkspaceSource != null)
+        'playerWorkspaceSource': playerWorkspaceSource,
     };
   }
 
@@ -114,12 +140,20 @@ class LocalLibraryEntry {
             gameCount == other.gameCount &&
             indexedAt == other.indexedAt &&
             groupId == other.groupId &&
-            groupLabel == other.groupLabel;
+            groupLabel == other.groupLabel &&
+            playerWorkspaceSource == other.playerWorkspaceSource;
   }
 
   @override
-  int get hashCode =>
-      Object.hash(path, addedAt, gameCount, indexedAt, groupId, groupLabel);
+  int get hashCode => Object.hash(
+    path,
+    addedAt,
+    gameCount,
+    indexedAt,
+    groupId,
+    groupLabel,
+    playerWorkspaceSource,
+  );
 }
 
 @immutable
@@ -129,6 +163,7 @@ class LocalLibraryEntryMetadata {
     this.indexedAt,
     this.groupId,
     this.groupLabel,
+    this.playerWorkspaceSource,
   });
 
   factory LocalLibraryEntryMetadata.playerWorkspace({
@@ -136,6 +171,7 @@ class LocalLibraryEntryMetadata {
     required String playerName,
     int? gameCount,
     DateTime? indexedAt,
+    String? playerWorkspaceSource,
   }) {
     final cleanId = playerId.trim();
     final cleanName = playerName.trim();
@@ -147,6 +183,7 @@ class LocalLibraryEntryMetadata {
               ? null
               : '$playerWorkspaceLocalLibraryGroupPrefix$cleanId',
       groupLabel: cleanName.isEmpty ? 'Player databases' : cleanName,
+      playerWorkspaceSource: _stringOrNull(playerWorkspaceSource),
     );
   }
 
@@ -154,6 +191,7 @@ class LocalLibraryEntryMetadata {
   final DateTime? indexedAt;
   final String? groupId;
   final String? groupLabel;
+  final String? playerWorkspaceSource;
 }
 
 @immutable
@@ -181,12 +219,13 @@ class LocalLibraryRegistryNotifier
     extends StateNotifier<LocalLibraryRegistryState> {
   LocalLibraryRegistryNotifier(this._db)
     : super(const LocalLibraryRegistryState()) {
-    _hydrate();
+    _hydration = _hydrate();
   }
 
   static const String _kvKey = 'desktop.local_libraries.v1';
 
   final AppDatabase _db;
+  late final Future<void> _hydration;
 
   Future<void> _hydrate() async {
     try {
@@ -237,6 +276,7 @@ class LocalLibraryRegistryNotifier
     List<String> paths, {
     Map<String, LocalLibraryEntryMetadata> metadataByPath = const {},
   }) async {
+    await _hydration;
     if (paths.isEmpty) return const <LocalLibraryEntry>[];
 
     final normalizedMetadata = <String, LocalLibraryEntryMetadata>{};
@@ -274,6 +314,7 @@ class LocalLibraryRegistryNotifier
         indexedAt: metadata?.indexedAt,
         groupId: metadata?.groupId ?? inferredGroup?.id,
         groupLabel: metadata?.groupLabel ?? inferredGroup?.label,
+        playerWorkspaceSource: metadata?.playerWorkspaceSource,
       );
       next.add(entry);
       registered.add(entry);
@@ -289,6 +330,7 @@ class LocalLibraryRegistryNotifier
 
   /// Drop [path] from the registry. Files on disk are not touched.
   Future<void> unregister(String path) async {
+    await _hydration;
     final normalized = _canonical(path);
     final next = state.entries
         .where((e) => _canonical(e.path) != normalized)
@@ -306,6 +348,7 @@ class LocalLibraryRegistryNotifier
     String playerId, {
     Iterable<String> paths = const <String>[],
   }) async {
+    await _hydration;
     final cleanPlayerId = playerId.trim();
     final groupId =
         cleanPlayerId.isEmpty
@@ -358,6 +401,8 @@ class LocalLibraryRegistryNotifier
       groupId: metadata?.groupId ?? entry.groupId ?? inferredGroup?.id,
       groupLabel:
           metadata?.groupLabel ?? entry.groupLabel ?? inferredGroup?.label,
+      playerWorkspaceSource:
+          metadata?.playerWorkspaceSource ?? entry.playerWorkspaceSource,
     );
   }
 }

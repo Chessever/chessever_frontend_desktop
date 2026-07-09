@@ -1649,6 +1649,9 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       // reshuffle every time the user picks a different database. Order them
       // by name instead — a pure function of the registry entry.
       if (aLocalish) {
+        if (currentLocalGroupIsPlayerWorkspace && aLocal && bLocal) {
+          return comparePlayerWorkspaceLibraryEntries(a.entry!, b.entry!);
+        }
         return a.title.toLowerCase().compareTo(b.title.toLowerCase());
       }
 
@@ -2655,6 +2658,25 @@ class _DatabaseBoardItem {
     if (f == null) return _DatabaseBoardIconKind.localDatabase;
     return _cloudFolderIconKind(f, folders, gameCount: count);
   }
+}
+
+/// Stable database ordering inside a Players-generated Library folder.
+///
+/// Kept as a public test seam because this ordering is part of the
+/// Players↔Library synchronization contract.
+@visibleForTesting
+int comparePlayerWorkspaceLibraryEntries(
+  LocalLibraryEntry a,
+  LocalLibraryEntry b,
+) {
+  final aCombined = localLibraryEntryIsPlayerWorkspaceCombined(a);
+  final bCombined = localLibraryEntryIsPlayerWorkspaceCombined(b);
+  if (aCombined != bCombined) return aCombined ? -1 : 1;
+  final byName = a.displayName.toLowerCase().compareTo(
+    b.displayName.toLowerCase(),
+  );
+  if (byName != 0) return byName;
+  return a.path.toLowerCase().compareTo(b.path.toLowerCase());
 }
 
 class _LocalLibraryEntryGroup {

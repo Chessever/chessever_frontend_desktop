@@ -3604,6 +3604,7 @@ Future<void> _buildLocalTree(
           playerId: player.id,
           playerName: player.displayName,
           gameCount: target.gameCount,
+          playerWorkspaceSource: target.source.storageKey,
         ),
       );
   if (!opened) return;
@@ -3628,6 +3629,7 @@ void _openLocalTree(
               playerName: player.displayName,
               gameCount: target.gameCount,
               indexedAt: index.generatedAt,
+              playerWorkspaceSource: target.source.storageKey,
             ),
           },
         ),

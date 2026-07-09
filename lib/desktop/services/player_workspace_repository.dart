@@ -1145,9 +1145,6 @@ class PlayerWorkspaceRepository {
       uniqueInputs.putIfAbsent(p.normalize(input.path), () => input);
     }
     final preparedInputs = uniqueInputs.values.toList(growable: false);
-    final paths = preparedInputs
-        .map((input) => input.path)
-        .toList(growable: false);
     final combinedPath = await combinedPgnPath(
       playerId: playerId,
       playerName: playerName,
@@ -1170,24 +1167,31 @@ class PlayerWorkspaceRepository {
     );
     cancellationToken?.throwIfCanceled();
     onProgress?.call('Finalizing combined database...', 0.99);
-    // Compute the Combined numbers directly from the union of the player's
-    // source databases (deduplicated by PGN fingerprint) rather than from the
-    // freshly re-imported combined file. This is the same counting method the
-    // per-source cards use on a single database, so Combined always equals the
-    // number of distinct games across sources and — for disjoint sources —
-    // sums the per-source counts, regardless of whether the physical combined
-    // database is momentarily stale.
-    final combinedStats = await _statsForLocalDatabases(
+    // The freshly imported Combined database is the authoritative union. Its
+    // player-scoped stats stay correct even when one or more individual source
+    // caches have been evicted or were never opened in this app session.
+    var combinedStats = await _statsForImportedLocalDatabase(
       localRepository: localRepository,
-      databasePaths: paths,
+      path: prepared.path,
       playerAliases: playerAliases,
       playerFideId: playerFideId,
-      fallbackGameCount: _sourceGameCount(
-        source,
-        fallback: prepared.stats.gameCount,
-      ),
+      // Never replace the player-scoped count with the physical PGN row
+      // count. If stats are temporarily unavailable, fail this rebuild so the
+      // caller keeps the previously persisted Combined metadata.
+      fallbackGameCount: 0,
       timeout: importStatsTimeout,
     );
+    if (combinedStats.gameCount <= 0) {
+      combinedStats =
+          prepared.stats.gameCount > 0
+              ? prepared.stats
+              : PlayerWorkspaceImportStats(
+                gameCount: _sourceGameCount(
+                  source,
+                  fallback: prepared.stats.gameCount,
+                ),
+              );
+    }
     return PlayerWorkspaceImportResult(
       path: prepared.path,
       source: source,
@@ -2104,28 +2108,6 @@ Future<PlayerWorkspaceImportStats> _statsForImportedLocalDatabase({
     loadStats:
         () => localRepository.localDatabaseResultStats(
           databasePath: path,
-          playerAliases: playerAliases,
-          playerFideId: playerFideId,
-        ),
-  );
-}
-
-Future<PlayerWorkspaceImportStats> _statsForLocalDatabases({
-  required LocalChessDatabaseRepository localRepository,
-  required Iterable<String> databasePaths,
-  required Iterable<String> playerAliases,
-  String? playerFideId,
-  required int fallbackGameCount,
-  required Duration timeout,
-}) {
-  final paths = databasePaths.toList(growable: false);
-  return _loadImportStatsWithFallback(
-    contextPath: paths.join('|'),
-    fallbackGameCount: fallbackGameCount,
-    timeout: timeout,
-    loadStats:
-        () => localRepository.resultStatsForDatabases(
-          databasePaths: paths,
           playerAliases: playerAliases,
           playerFideId: playerFideId,
         ),

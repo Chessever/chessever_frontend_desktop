@@ -49,6 +49,53 @@ void main() {
 
   group('Player workspace PGN helpers', () {
     test(
+      'Combined rebuild uses the complete Combined cache instead of a partial source union',
+      () async {
+        final sourcePaths = <String>[
+          '${temp.path}/chessever.pgn',
+          '${temp.path}/lichess.pgn',
+          '${temp.path}/chesscom.pgn',
+        ];
+        await File(sourcePaths[0]).writeAsString(_mergeGameOne);
+        await File(sourcePaths[1]).writeAsString(_mergeGameTwo);
+        await File(sourcePaths[2]).writeAsString(_mergeGameThree);
+        final localRepository = _PartialSourceUnionStatsRepository(
+          database: () async => db,
+        );
+        final workspaceRepository = PlayerWorkspaceRepository(
+          supportDirectory: () async => temp,
+        );
+
+        final result = await workspaceRepository.rebuildCombinedDatabase(
+          localRepository: localRepository,
+          playerId: 'vasif-combined-authority',
+          playerName: 'GM Vasif Durarbayli',
+          playerFideId: '13402935',
+          sourcePaths: sourcePaths,
+          sources: <PlayerWorkspaceCombinedSource>[
+            PlayerWorkspaceCombinedSource(
+              path: sourcePaths[0],
+              source: PlayerWorkspaceSource.chessever,
+            ),
+            PlayerWorkspaceCombinedSource(
+              path: sourcePaths[1],
+              source: PlayerWorkspaceSource.lichess,
+            ),
+            PlayerWorkspaceCombinedSource(
+              path: sourcePaths[2],
+              source: PlayerWorkspaceSource.chesscom,
+            ),
+          ],
+          playerAliases: const <String>['GM Vasif Durarbayli', 'Durarbayli'],
+        );
+
+        expect(result.stats.gameCount, 20226);
+        expect(localRepository.combinedPathRequests, 1);
+        expect(localRepository.sourceUnionRequests, 0);
+      },
+    );
+
+    test(
       'cold Combined rebuild keeps the UI event loop responsive',
       () async {
         final sourceFile = File('${temp.path}/cold-chessever-source.pgn');
@@ -490,6 +537,88 @@ void main() {
 
   group('Player workspace notifier library selection', () {
     test(
+      'load repairs stale Players and Library Combined counts from the Combined path',
+      () async {
+        final registry = _CapturedLocalLibraryRegistry();
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final playerDir = Directory('${temp.path}/player-workspace/vasif');
+        await playerDir.create(recursive: true);
+        final chesseverPath = '${playerDir.path}/chessever.pgn';
+        final lichessPath = '${playerDir.path}/lichess.pgn';
+        final chessComPath = '${playerDir.path}/chesscom.pgn';
+        final combinedPath = '${playerDir.path}/combined.pgn';
+        await File(chesseverPath).writeAsString(_mergeGameOne);
+        await File(lichessPath).writeAsString(_mergeGameTwo);
+        await File(chessComPath).writeAsString(_mergeGameThree);
+        await File(combinedPath).writeAsString('''
+[Event "Combined"]
+[$playerWorkspaceCombinedVersionTag "$playerWorkspaceCombinedFormatVersion"]
+[White "Durarbayli"]
+[Black "Opponent"]
+[Result "1-0"]
+
+1. e4 e5 1-0
+''');
+        workspaceRepository.snapshot = PlayerWorkspaceSnapshot(
+          selectedPlayerId: 'vasif',
+          players: <PlayerWorkspacePlayer>[
+            PlayerWorkspacePlayer(
+              id: 'vasif',
+              displayName: 'GM Vasif Durarbayli',
+              createdAtMs: 1,
+              fideId: '13402935',
+              accounts: <PlayerWorkspaceSource, PlayerWorkspaceAccount>{
+                PlayerWorkspaceSource.chessever: PlayerWorkspaceAccount(
+                  source: PlayerWorkspaceSource.chessever,
+                  username: 'Vasif Durarbayli',
+                  pgnPath: chesseverPath,
+                  gameCount: 3982,
+                ),
+                PlayerWorkspaceSource.lichess: PlayerWorkspaceAccount(
+                  source: PlayerWorkspaceSource.lichess,
+                  username: 'Durarbayli',
+                  pgnPath: lichessPath,
+                  gameCount: 6016,
+                ),
+                PlayerWorkspaceSource.chesscom: PlayerWorkspaceAccount(
+                  source: PlayerWorkspaceSource.chesscom,
+                  username: 'durarbayli',
+                  pgnPath: chessComPath,
+                  gameCount: 10573,
+                ),
+              },
+              combinedPgnPath: combinedPath,
+              combinedGameCount: 9998,
+              combinedBuiltAtMs: 1,
+            ),
+          ],
+        );
+        final localRepository = _PartialSourceUnionStatsRepository(
+          database: () async => db,
+        );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: localRepository,
+          localDatabaseRegistrar: registry.registerAll,
+        );
+
+        await notifier.load();
+
+        expect(notifier.state.selectedPlayer!.combinedGameCount, 20226);
+        expect(registry.registered[combinedPath]?.gameCount, 20226);
+        expect(
+          registry.registered[combinedPath]?.playerWorkspaceSource,
+          PlayerWorkspaceSource.combined.storageKey,
+        );
+        expect(
+          workspaceRepository.snapshot.players.single.combinedGameCount,
+          20226,
+        );
+      },
+    );
+
+    test(
       'load registers existing UUID workspace paths under player name',
       () async {
         final registry = _CapturedLocalLibraryRegistry();
@@ -540,6 +669,18 @@ void main() {
               .registered['/tmp/player-workspace/uuid/combined.pgn']
               ?.groupLabel,
           'Magnus Carlsen',
+        );
+        expect(
+          registry
+              .registered['/tmp/player-workspace/uuid/lichess.pgn']
+              ?.playerWorkspaceSource,
+          PlayerWorkspaceSource.lichess.storageKey,
+        );
+        expect(
+          registry
+              .registered['/tmp/player-workspace/uuid/combined.pgn']
+              ?.playerWorkspaceSource,
+          PlayerWorkspaceSource.combined.storageKey,
         );
         expect(
           registry.registered.values
@@ -3762,6 +3903,58 @@ class _HangingStatsLocalChessDatabaseRepository
   }) {
     statsRequested = true;
     return Completer<LocalChessDatabaseResultStats>().future;
+  }
+}
+
+class _PartialSourceUnionStatsRepository extends LocalChessDatabaseRepository {
+  _PartialSourceUnionStatsRepository({required super.database});
+
+  var combinedPathRequests = 0;
+  var sourceUnionRequests = 0;
+
+  @override
+  Future<LocalChessDatabaseResultStats> localDatabaseResultStats({
+    required String databasePath,
+    required Iterable<String> playerAliases,
+    String? playerFideId,
+  }) async {
+    final lower = p.basename(databasePath).toLowerCase();
+    if (lower.contains('combined')) {
+      combinedPathRequests++;
+      return const LocalChessDatabaseResultStats(
+        gameCount: 20226,
+        winCount: 11237,
+        drawCount: 2011,
+        lossCount: 6978,
+      );
+    }
+    final count = switch (lower) {
+      String value when value.contains('chessever') => 3982,
+      String value when value.contains('lichess') => 6016,
+      String value when value.contains('chesscom') => 10573,
+      _ => 1,
+    };
+    return LocalChessDatabaseResultStats(
+      gameCount: count,
+      winCount: count,
+      drawCount: 0,
+      lossCount: 0,
+    );
+  }
+
+  @override
+  Future<LocalChessDatabaseResultStats> resultStatsForDatabases({
+    required Iterable<String> databasePaths,
+    required Iterable<String> playerAliases,
+    String? playerFideId,
+  }) async {
+    sourceUnionRequests++;
+    return const LocalChessDatabaseResultStats(
+      gameCount: 9998,
+      winCount: 5628,
+      drawCount: 1122,
+      lossCount: 3248,
+    );
   }
 }
 

@@ -922,6 +922,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         unawaited(
           _registerPlayerDatabasePathBestEffort(
             player: nextPlayer,
+            source: source,
             path: imported.path,
             gameCount: imported.stats.gameCount,
             indexedAtMs: now,
@@ -1093,6 +1094,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       unawaited(
         _registerPlayerDatabasePathBestEffort(
           player: nextPlayer,
+          source: source,
           path: imported.path,
           gameCount: imported.stats.gameCount,
           indexedAtMs: now,
@@ -1223,13 +1225,12 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         combinedBuiltAtMs: now,
       );
       await _upsertPlayer(nextPlayer, select: true);
-      unawaited(
-        _registerPlayerDatabasePathBestEffort(
-          player: nextPlayer,
-          path: result.path,
-          gameCount: result.stats.gameCount,
-          indexedAtMs: now,
-        ),
+      await _registerPlayerDatabasePathBestEffort(
+        player: nextPlayer,
+        source: source,
+        path: result.path,
+        gameCount: result.stats.gameCount,
+        indexedAtMs: now,
       );
       _clearOperation(operationKey);
     } catch (error) {
@@ -1746,6 +1747,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       if (path == null || path.isEmpty) continue;
       metadataByPath[path] = _playerRegistryMetadata(
         player: player,
+        source: account.source,
         gameCount: account.gameCount,
         indexedAtMs: account.lastSyncAtMs,
       );
@@ -1754,6 +1756,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     if (combinedPath != null && combinedPath.isNotEmpty) {
       metadataByPath[combinedPath] = _playerRegistryMetadata(
         player: player,
+        source: PlayerWorkspaceSource.combined,
         gameCount: player.combinedGameCount,
         indexedAtMs: player.combinedBuiltAtMs,
       );
@@ -1833,17 +1836,11 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     final combinedPath = player.combinedPgnPath?.trim();
     if (combinedPath == null || combinedPath.isEmpty) return player;
     if (!await _fileExistsBestEffort(combinedPath)) return player;
-    final sourcePaths = player.allAccounts
-        .map((account) => account.pgnPath?.trim())
-        .whereType<String>()
-        .where((path) => path.isNotEmpty)
-        .toList(growable: false);
-    if (sourcePaths.isEmpty) return player;
     final gen = _repairGeneration;
     try {
       final stats = await _awaitWithRepairTimeout(
-        _localRepository.resultStatsForDatabases(
-          databasePaths: sourcePaths,
+        _localRepository.localDatabaseResultStats(
+          databasePath: combinedPath,
           playerAliases: _aliasesFor(player, null),
           playerFideId: player.fideId,
         ),
@@ -1902,6 +1899,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
 
   Future<void> _registerPlayerDatabasePathBestEffort({
     required PlayerWorkspacePlayer player,
+    required PlayerWorkspaceSource source,
     required String path,
     required int gameCount,
     required int? indexedAtMs,
@@ -1912,6 +1910,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       <String, LocalLibraryEntryMetadata>{
         clean: _playerRegistryMetadata(
           player: player,
+          source: source,
           gameCount: gameCount,
           indexedAtMs: indexedAtMs,
         ),
@@ -1977,12 +1976,14 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
 
 LocalLibraryEntryMetadata _playerRegistryMetadata({
   required PlayerWorkspacePlayer player,
+  required PlayerWorkspaceSource source,
   required int gameCount,
   required int? indexedAtMs,
 }) {
   return LocalLibraryEntryMetadata.playerWorkspace(
     playerId: player.id,
     playerName: player.displayName,
+    playerWorkspaceSource: source.storageKey,
     gameCount: gameCount > 0 ? gameCount : null,
     indexedAt:
         indexedAtMs == null

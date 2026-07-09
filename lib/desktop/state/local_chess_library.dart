@@ -596,6 +596,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
           indexedAt: source.scannedAt,
           groupId: baseMetadata?.groupId,
           groupLabel: baseMetadata?.groupLabel,
+          playerWorkspaceSource: baseMetadata?.playerWorkspaceSource,
         ),
     };
   }
