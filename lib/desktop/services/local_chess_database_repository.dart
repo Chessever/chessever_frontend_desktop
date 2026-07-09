@@ -1863,18 +1863,12 @@ class LocalChessDatabaseRepository {
       return existingImport.future;
     }
 
-    // The import streams PGN parsing and cache writes through one queued
-    // connection, so serialize its whole lifetime through the global write lock.
-    // This keeps BEGIN IMMEDIATE away from concurrent schema, enrichment, append,
-    // and tree-rebuild writes.
     late final Future<LocalChessSource?> importFuture;
-    importFuture = _runLocalCacheWriteQueued(
-      () => _importSingleFileSourceUnlocked(
-        path: trimmed,
-        sourceLabel: sourceLabel,
-        cancellationToken: cancellationToken,
-        onProgress: onProgress,
-      ),
+    importFuture = _importSingleFileSourceUnlocked(
+      path: trimmed,
+      sourceLabel: sourceLabel,
+      cancellationToken: cancellationToken,
+      onProgress: onProgress,
     );
     final importRecord = _LocalChessSingleFileImport(
       importFuture,
@@ -1924,12 +1918,18 @@ class LocalChessDatabaseRepository {
     cancellationToken?.throwIfCanceled();
 
     try {
-      final source = await _importSingleLocalChessFileInline(
-        path: trimmed,
-        sourceLabel: sourceLabel,
-        writerRepository: session.repository,
-        cancellationToken: cancellationToken,
-        onProgress: onProgress,
+      // Open the cache/session before taking the global write queue. Opening the
+      // app cache may itself need that queue for schema or migration work; if
+      // import holds it while awaiting a pending open, the UI stalls around the
+      // early import progress range.
+      final source = await _runLocalCacheWriteQueued(
+        () => _importSingleLocalChessFileInline(
+          path: trimmed,
+          sourceLabel: sourceLabel,
+          writerRepository: session.repository,
+          cancellationToken: cancellationToken,
+          onProgress: onProgress,
+        ),
       );
       cancellationToken?.throwIfCanceled();
       importStopwatch.stop();

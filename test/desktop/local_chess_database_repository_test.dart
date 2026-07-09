@@ -1061,6 +1061,53 @@ void main() {
     },
   );
 
+  test('import does not hold write queue while app cache opens', () async {
+    final pgnFile = File('${temp.path}/pending-cache-open.pgn');
+    await pgnFile.writeAsString(_samplePgn);
+    final openRequested = Completer<void>();
+    final openCache = Completer<resqlite.Database>();
+    final repo = LocalChessDatabaseRepository(
+      database: () {
+        if (!openRequested.isCompleted) openRequested.complete();
+        return openCache.future;
+      },
+      cachedFileNodeGamePreviewLimit: 1,
+    );
+
+    final importFuture = repo.importSingleFileSource(path: pgnFile.path);
+    await openRequested.future.timeout(const Duration(seconds: 5));
+
+    final queueEntered = Completer<void>();
+    final openerSchemaWork =
+        LocalChessDatabaseRepository.debugRunWriteSerialized(() async {
+          queueEntered.complete();
+          if (!openCache.isCompleted) openCache.complete(db);
+        });
+
+    Object? queueWaitError;
+    try {
+      await queueEntered.future.timeout(const Duration(seconds: 1));
+    } catch (error) {
+      queueWaitError = error;
+    } finally {
+      if (!openCache.isCompleted) openCache.complete(db);
+    }
+
+    await importFuture.timeout(const Duration(seconds: 5));
+    await openerSchemaWork.timeout(const Duration(seconds: 5));
+
+    expect(
+      queueWaitError,
+      isNull,
+      reason:
+          'Import must not hold the local chess write queue while waiting for '
+          'an app-cache open that may itself need the write queue for schema '
+          'or migration work.',
+    );
+    expect(await _count(db, 'local_chess_databases'), 1);
+    expect(await _count(db, 'local_chess_games'), 2);
+  });
+
   test(
     'canceled queued import does not poison same-path retry or write queue',
     () async {
