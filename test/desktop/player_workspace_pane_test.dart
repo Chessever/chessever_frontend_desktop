@@ -646,6 +646,8 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     required String playerName,
     String? playerFideId,
     required Iterable<String> sourcePaths,
+    Iterable<PlayerWorkspaceCombinedSource> sources =
+        const <PlayerWorkspaceCombinedSource>[],
     required Iterable<String> playerAliases,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,

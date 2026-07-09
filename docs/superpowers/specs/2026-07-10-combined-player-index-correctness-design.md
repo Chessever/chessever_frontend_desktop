@@ -59,6 +59,24 @@ name when present and `EcoOpenings` as the fallback. Values such as empty text,
 code is invalid or absent, the UI may still show Unknown; it must never show
 Unknown for a code covered by the app's ECO catalog.
 
+Opening enrichment is also applied while importing every individual local
+source, not only while building Combined. Existing cache rows are repaired once
+through a versioned schema migration. This keeps the Games table's displayed
+opening, opening search, and opening-column sort identical for Combined and for
+each individual source.
+
+An unresolved time control is stored as the explicit `unknown` sentinel rather
+than SQL `NULL`. This makes derived-filter repair converge and keeps unknown
+games out of exact Classical, Rapid, Blitz, and Bullet selections unless a
+trusted source rule classified them.
+
+The Games query composes all filters before it applies sorting and pagination.
+That contract covers filters handed off by Overview (result, color, ECO, year,
+time control, and opponent), dialog-only filters (rating range, finish reason,
+and online category), free-text search, every sortable table column, both sort
+directions, and every page. Search terms are literal data: `%` and `_` must not
+be interpreted as SQL wildcards.
+
 ## Verification
 
 A mixed-source integration fixture will contain:
@@ -75,3 +93,10 @@ series, rating series, source breakdown, Top Openings names, and Games-filter
 counts agree. A stale-version fixture must prove the derived file is detected
 and rebuilt. Existing single-writer concurrency and first-open responsiveness
 tests remain green.
+
+An independent in-memory oracle exercises the cartesian product of representative
+filter/search scenarios with every sortable column, both directions, and
+multi-page results. It also compares every Overview handoff count with the
+corresponding computed statistic. Separate cache tests prove that newly imported
+and already-cached ECO rows receive canonical opening names, and that unknown
+time-control repair reaches a stable state.

@@ -11,6 +11,7 @@ import 'package:chessever/desktop/state/player_stats_provider.dart'
     show PlayerStatsOutcomeFilter;
 import 'package:chessever/repository/sqlite/local_chess_schema.dart'
     show localChessDatabasesTable, localChessGamesTable, localChessPlayersTable;
+import 'package:chessever/utils/eco_openings.dart';
 
 typedef PlayerStatsSelect =
     Future<List<Map<String, Object?>>> Function(
@@ -349,8 +350,12 @@ class PlayerStatsRepository {
   List<PlayerOpeningStat> _openingsFromRows(List<Map<String, Object?>> rows) {
     return rows
         .map((row) {
-          final eco = row['eco']?.toString().trim() ?? '';
-          final name = row['name']?.toString().trim();
+          final eco = (row['eco']?.toString().trim() ?? '').toUpperCase();
+          final storedName = row['name']?.toString().trim();
+          final name =
+              _isMeaningfulOpeningName(storedName)
+                  ? storedName
+                  : EcoOpenings.getOpeningName(eco);
           return PlayerOpeningStat(
             eco: eco,
             name: (name == null || name.isEmpty) ? null : name,
@@ -503,7 +508,8 @@ class PlayerStatsRepository {
             : '';
     final timeControlValueSql = '''
       CASE
-        WHEN TRIM(COALESCE(g.time_control_category, '')) = ''
+        WHEN LOWER(TRIM(COALESCE(g.time_control_category, '')))
+          IN ('', 'unknown', 'unclassified')
           THEN '${unclassifiedTimeControlCategory ?? ''}'
         ELSE g.time_control_category
       END''';
@@ -559,6 +565,7 @@ WITH base AS (
     bp.name AS black_name,
     json_extract(g.headers_json, '\$.Opening') AS opening,
     json_extract(g.headers_json, '\$.Site') AS site,
+    json_extract(g.headers_json, '\$.ChessEverSource') AS source,
     CASE
       $sideSql
     END AS side
@@ -569,7 +576,7 @@ WITH base AS (
 ),
 pv AS (
   SELECT
-    side, eco, date, ply, tcc, opening, site,
+    side, eco, date, ply, tcc, opening, site, source,
     CASE side WHEN 'w' THEN white_elo WHEN 'b' THEN black_elo END AS my_elo,
     CASE side WHEN 'w' THEN black_name WHEN 'b' THEN white_name END AS opp_name,
     CASE side WHEN 'w' THEN black_elo WHEN 'b' THEN white_elo END AS opp_elo,
@@ -728,6 +735,10 @@ ORDER BY yr ASC, c DESC''';
   static const _yearSourceSql = '''
 SELECT substr(date, 1, 4) AS yr,
   CASE
+    WHEN LOWER(TRIM(COALESCE(source, ''))) = 'chessever' THEN 'ChessEver'
+    WHEN LOWER(TRIM(COALESCE(source, ''))) = 'lichess' THEN 'Lichess'
+    WHEN LOWER(TRIM(COALESCE(source, ''))) = 'chesscom' THEN 'Chess.com'
+    WHEN LOWER(TRIM(COALESCE(source, ''))) = 'manual' THEN 'Manual PGN'
     WHEN LOWER(COALESCE(site, '')) LIKE '%lichess%' THEN 'Lichess'
     WHEN LOWER(COALESCE(site, '')) LIKE '%chess.com%' THEN 'Chess.com'
     WHEN LOWER(COALESCE(site, '')) LIKE '%chess24%' THEN 'Chess24'
@@ -744,6 +755,16 @@ ORDER BY yr ASC, c DESC''';
   static const _auxSql = '''
 SELECT AVG(CASE WHEN opp_elo > 0 THEN opp_elo END) AS avg_opp
 FROM scoped''';
+}
+
+bool _isMeaningfulOpeningName(String? value) {
+  final normalized = value?.trim().toLowerCase();
+  return normalized != null &&
+      normalized.isNotEmpty &&
+      normalized != '?' &&
+      normalized != '-' &&
+      normalized != 'unknown' &&
+      normalized != 'unknown opening';
 }
 
 /// Normalize a UI / source default TC into a canonical filter key.

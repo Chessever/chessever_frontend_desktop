@@ -217,6 +217,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       );
       await _repairPersistedDownloadedStatsBestEffort();
       await _registerPlayersGeneratedDatabasesBestEffort(state.players);
+      await _rebuildSelectedCombinedIfStaleBestEffort();
     } catch (error) {
       state = state.copyWith(
         isLoading: false,
@@ -312,6 +313,33 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     if (!state.players.any((player) => player.id == playerId)) return;
     state = state.copyWith(selectedPlayerId: playerId);
     await _persist();
+    await _rebuildSelectedCombinedIfStaleBestEffort();
+  }
+
+  Future<void> _rebuildSelectedCombinedIfStaleBestEffort() async {
+    final player = state.selectedPlayer;
+    if (player == null) return;
+    final combinedPath = player.combinedPgnPath?.trim();
+    if (combinedPath == null || combinedPath.isEmpty) return;
+    if (await _workspaceRepository.isCombinedDatabaseCurrent(combinedPath)) {
+      return;
+    }
+    var hasReadableSource = false;
+    for (final account in player.allAccounts) {
+      final path = account.pgnPath?.trim();
+      if (path == null || path.isEmpty) continue;
+      if (await _fileExistsBestEffort(path)) {
+        hasReadableSource = true;
+        break;
+      }
+    }
+    if (!hasReadableSource) return;
+    try {
+      await _rebuildCombinedDatabaseForPlayer(player);
+    } catch (_) {
+      // The rebuild path already exposes its error in state. Keep the last
+      // readable Combined file available rather than failing workspace load.
+    }
   }
 
   Future<void> renamePlayer(String playerId, String displayName) async {
@@ -1143,12 +1171,16 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       _pendingCombinedRebuildPlayerIds.add(player.id);
       return;
     }
-    final paths = player.allAccounts
-        .map((account) => account.pgnPath)
-        .whereType<String>()
-        .where((path) => path.trim().isNotEmpty)
+    final combinedSources = player.allAccounts
+        .where((account) => account.pgnPath?.trim().isNotEmpty == true)
+        .map(
+          (account) => PlayerWorkspaceCombinedSource(
+            path: account.pgnPath!.trim(),
+            source: account.source,
+          ),
+        )
         .toList(growable: false);
-    if (paths.isEmpty) return;
+    if (combinedSources.isEmpty) return;
     const source = PlayerWorkspaceSource.combined;
     final generation = ++_combinedRebuildGeneration;
     final operationKey = _sourceOperationKey(source);
@@ -1166,7 +1198,8 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         playerId: player.id,
         playerName: player.displayName,
         playerFideId: player.fideId,
-        sourcePaths: paths,
+        sourcePaths: combinedSources.map((source) => source.path),
+        sources: combinedSources,
         playerAliases: _aliasesFor(player, null),
         onProgress:
             (message, progress) =>

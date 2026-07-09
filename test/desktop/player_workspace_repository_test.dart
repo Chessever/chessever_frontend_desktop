@@ -13,6 +13,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_stats_repository.dart';
 import 'package:chessever/desktop/services/player_workspace_repository.dart';
@@ -1591,6 +1592,86 @@ void main() {
     );
 
     test(
+      'load rebuilds a stale Combined index from its typed sources',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+        const playerId = 'player-stale-combined';
+        final sourcePath = await workspaceRepository.sourcePgnPath(
+          playerId: playerId,
+          playerName: 'GM Vasif Durarbayli',
+          fideId: '13402935',
+          source: PlayerWorkspaceSource.chessever,
+        );
+        await workspaceRepository.mergeIntoLocalDatabase(
+          localRepository: localRepository,
+          path: sourcePath,
+          sourceLabel: 'GM Vasif Durarbayli ChessEver',
+          pgn: _vasifGeographicChessEverPgn,
+          playerAliases: const <String>['Durarbayli, Vasif'],
+          playerFideId: '13402935',
+          replaceExisting: true,
+        );
+        final combinedPath = await workspaceRepository.combinedPgnPath(
+          playerId: playerId,
+          playerName: 'GM Vasif Durarbayli',
+          fideId: '13402935',
+        );
+        await File(combinedPath).writeAsString(_vasifGeographicChessEverPgn);
+        expect(
+          await workspaceRepository.isCombinedDatabaseCurrent(combinedPath),
+          isFalse,
+        );
+        workspaceRepository.snapshot = PlayerWorkspaceSnapshot(
+          selectedPlayerId: playerId,
+          players: <PlayerWorkspacePlayer>[
+            PlayerWorkspacePlayer(
+              id: playerId,
+              displayName: 'GM Vasif Durarbayli',
+              createdAtMs: 1,
+              fideId: '13402935',
+              accounts: <PlayerWorkspaceSource, PlayerWorkspaceAccount>{
+                PlayerWorkspaceSource.chessever: PlayerWorkspaceAccount(
+                  source: PlayerWorkspaceSource.chessever,
+                  username: 'GM Vasif Durarbayli',
+                  externalId: 'ce-vasif',
+                  pgnPath: sourcePath,
+                  gameCount: 2,
+                ),
+              },
+              combinedPgnPath: combinedPath,
+              combinedGameCount: 2,
+              combinedBuiltAtMs: 1,
+            ),
+          ],
+        );
+
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: localRepository,
+        );
+        await notifier.load();
+
+        expect(
+          await workspaceRepository.isCombinedDatabaseCurrent(combinedPath),
+          isTrue,
+        );
+        final combinedPgn = await File(combinedPath).readAsString();
+        expect(
+          combinedPgn,
+          contains('[$playerWorkspaceCombinedSourceTag "chessever"]'),
+        );
+        expect(
+          combinedPgn,
+          contains('[$playerWorkspaceCombinedTimeControlTag "classical"]'),
+        );
+      },
+    );
+
+    test(
       'FIDE-locked player rejects a different ChessEver source after deletion',
       () async {
         final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
@@ -1831,6 +1912,159 @@ void main() {
         hasLength(4),
       );
     });
+
+    test(
+      'Combined preserves source classification and resolves ECO opening names',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(
+          root: temp,
+          chessEverPgnByPlayerId: const <String, String>{
+            'ce-vasif': _vasifGeographicChessEverPgn,
+          },
+          chessComPgnByUsername: const <String, String>{
+            'vasifdurarbayli': _vasifClassifiedChessComPgn,
+          },
+        );
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: localRepository,
+        );
+        await notifier.load();
+        await notifier.addManualPlayer('GM Vasif Durarbayli');
+        await notifier.selectPlayer(notifier.state.players.single.id);
+        await notifier.connectChessEverPlayer(
+          const GamebasePlayer(
+            id: 'ce-vasif',
+            fideId: '13402935',
+            name: 'Durarbayli, Vasif',
+            gender: PlayerGender.male,
+            fed: 'AZE',
+            title: 'GM',
+          ),
+        );
+        await notifier.connectExternalAccount(
+          source: PlayerWorkspaceSource.chesscom,
+          username: 'vasifdurarbayli',
+        );
+
+        await notifier.syncAccount(
+          notifier.state.selectedPlayer!.account(
+            PlayerWorkspaceSource.chessever,
+          )!,
+        );
+        await notifier.syncAccount(
+          notifier.state.selectedPlayer!.account(
+            PlayerWorkspaceSource.chesscom,
+          )!,
+        );
+
+        final player = notifier.state.selectedPlayer!;
+        final combinedPath = player.combinedPgnPath!;
+        final statsRepository = PlayerStatsRepository(database: () async => db);
+        final all = await statsRepository.computePlayerStats(
+          databasePath: combinedPath,
+          aliases: const <String>[
+            'GM Vasif Durarbayli',
+            'Durarbayli, Vasif',
+            'vasifdurarbayli',
+          ],
+          playerFideId: '13402935',
+        );
+        final classical = await statsRepository.computePlayerStats(
+          databasePath: combinedPath,
+          aliases: const <String>[
+            'GM Vasif Durarbayli',
+            'Durarbayli, Vasif',
+            'vasifdurarbayli',
+          ],
+          playerFideId: '13402935',
+          timeControlCategory: 'classical',
+        );
+
+        expect(player.combinedGameCount, 4);
+        expect(all.games, 4);
+        expect(classical.games, 2);
+        expect(classical.overall.wins, 1);
+        expect(classical.overall.draws, 1);
+        expect(classical.ratingSeries.map((spot) => spot.rating), [2600, 2605]);
+        expect(
+          {
+            for (final source in all.years.single.sources)
+              source.label: source.count,
+          },
+          <String, int>{'ChessEver': 2, 'Chess.com': 2},
+        );
+        expect({
+          for (final opening in all.openings) opening.eco: opening.name,
+        }, containsPair('C02', 'French: Advance'));
+        expect({
+          for (final opening in all.openings) opening.eco: opening.name,
+        }, containsPair('B20', 'Sicilian Defense'));
+        expect({
+          for (final opening in all.openings) opening.eco: opening.name,
+        }, containsPair('C45', 'Scotch Game'));
+        expect(
+          all.openings.map((opening) => opening.name),
+          isNot(contains(anyOf(isNull, startsWith('Unknown')))),
+        );
+
+        final classicalPage = await localRepository.localDatabaseGamesPage(
+          databasePath: combinedPath,
+          filter: LocalChessGameFilter(timeControlCategory: 'classical'),
+          playerFideId: '13402935',
+          playerAliases: const <String>['Durarbayli, Vasif'],
+          sortBy: LocalChessGameSortField.date,
+          sortDirection: LocalChessGameSortDirection.desc,
+          pageNumber: 0,
+          pageSize: 50,
+        );
+        expect(classicalPage, isNotNull);
+        expect(classicalPage!.totalCount, 2);
+        expect(
+          classicalPage.games.map(
+            (game) => game.game.metadata['Date']?.toString(),
+          ),
+          <String>['2025.02.02', '2025.01.01'],
+        );
+
+        final openingSearch = await localRepository.localDatabaseGamesPage(
+          databasePath: combinedPath,
+          search: 'French Advance',
+          playerFideId: '13402935',
+          playerAliases: const <String>['Durarbayli, Vasif'],
+          sortBy: LocalChessGameSortField.opening,
+          sortDirection: LocalChessGameSortDirection.asc,
+          pageNumber: 0,
+          pageSize: 50,
+        );
+        expect(openingSearch, isNotNull);
+        expect(openingSearch!.totalCount, 1);
+        expect(openingSearch.games.single.game.metadata['ECO'], 'C02');
+
+        final openingSort = await localRepository.localDatabaseGamesPage(
+          databasePath: combinedPath,
+          sortBy: LocalChessGameSortField.opening,
+          sortDirection: LocalChessGameSortDirection.asc,
+          pageNumber: 0,
+          pageSize: 50,
+        );
+        expect(
+          openingSort!.games.map(
+            (game) => game.game.metadata['Opening']?.toString(),
+          ),
+          <String>[
+            'French: Advance',
+            'Modern Defense',
+            'Scotch Game',
+            'Sicilian Defense',
+          ],
+        );
+      },
+    );
 
     test('ChessEver sync replaces the single source snapshot', () async {
       final sourcePgns = <String, String>{
@@ -3455,6 +3689,64 @@ const String _vasifChessComPgn = '''
 1. Nf3 d5 0-1
 ''';
 
+const String _vasifGeographicChessEverPgn = '''
+[Event "Baku Open"]
+[Site "Baku, Azerbaijan"]
+[Date "2025.01.01"]
+[White "Durarbayli, Vasif"]
+[Black "Opponent, One"]
+[WhiteFideId "13402935"]
+[BlackFideId "10000001"]
+[WhiteElo "2600"]
+[BlackElo "2500"]
+[ECO "C02"]
+[Result "1-0"]
+
+1. e4 e6 2. d4 d5 3. e5 1-0
+
+[Event "Baku Masters"]
+[Site "Baku, Azerbaijan"]
+[Date "2025.02.02"]
+[White "Opponent, Two"]
+[Black "Durarbayli, Vasif"]
+[WhiteFideId "10000002"]
+[BlackFideId "13402935"]
+[WhiteElo "2510"]
+[BlackElo "2605"]
+[ECO "B20"]
+[Result "1/2-1/2"]
+
+1. e4 c5 2. Nf3 1/2-1/2
+''';
+
+const String _vasifClassifiedChessComPgn = '''
+[Event "Live Chess"]
+[Site "https://www.chess.com/game/live/1"]
+[Date "2025.03.03"]
+[White "Vasif_Durarbayli"]
+[Black "Opponent Three"]
+[WhiteElo "2700"]
+[BlackElo "2650"]
+[TimeControl "300+0"]
+[ECO "C45"]
+[Result "0-1"]
+
+1. e4 e5 2. Nf3 Nc6 3. d4 0-1
+
+[Event "Live Chess"]
+[Site "https://www.chess.com/game/live/2"]
+[Date "2025.04.04"]
+[White "Opponent Four"]
+[Black "Vasif_Durarbayli"]
+[WhiteElo "2660"]
+[BlackElo "2710"]
+[TimeControl "300+0"]
+[ECO "B06"]
+[Result "0-1"]
+
+1. e4 g6 2. d4 Bg7 0-1
+''';
+
 class _HangingStatsLocalChessDatabaseRepository
     extends LocalChessDatabaseRepository {
   _HangingStatsLocalChessDatabaseRepository({required super.database})
@@ -3761,6 +4053,8 @@ class _CoalescingPlayerWorkspaceRepository
     required String playerName,
     String? playerFideId,
     required Iterable<String> sourcePaths,
+    Iterable<PlayerWorkspaceCombinedSource> sources =
+        const <PlayerWorkspaceCombinedSource>[],
     required Iterable<String> playerAliases,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
@@ -3858,6 +4152,8 @@ class _HoldingMergePlayerWorkspaceRepository
     required String playerName,
     String? playerFideId,
     required Iterable<String> sourcePaths,
+    Iterable<PlayerWorkspaceCombinedSource> sources =
+        const <PlayerWorkspaceCombinedSource>[],
     required Iterable<String> playerAliases,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,

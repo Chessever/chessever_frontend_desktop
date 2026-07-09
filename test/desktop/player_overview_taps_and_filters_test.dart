@@ -155,7 +155,7 @@ void main() {
     }
 
     var seq = 0;
-    Future<void> insertGame({
+    Future<String> insertGame({
       required String white,
       required String black,
       required String result,
@@ -166,30 +166,55 @@ void main() {
       String? blackFideId,
       int? whiteElo,
       int? blackElo,
+      String opening = '',
+      String event = 'Local Event',
+      String site = 'Local Site',
+      int ply = 40,
+      bool isOnline = false,
+      String fileName = 'player.pgn',
     }) async {
       final whiteId = await upsertPlayer(white);
       final blackId = await upsertPlayer(black);
+      Future<int> upsertNamed(String table, String name) async {
+        await db.execute('INSERT OR IGNORE INTO $table(name) VALUES(?)', [
+          name,
+        ]);
+        final rows = await db.select('SELECT id FROM $table WHERE name = ?', [
+          name,
+        ]);
+        return (rows.single['id'] as num).toInt();
+      }
+
+      final eventId = await upsertNamed(localChessEventsTable, event);
+      final siteId = await upsertNamed(localChessSitesTable, site);
       final headers = jsonEncode(<String, Object?>{
         'White': white,
         'Black': black,
         'Result': result,
         'ECO': eco,
         'Date': date,
+        'Event': event,
+        'Site': site,
+        if (opening.isNotEmpty) 'Opening': opening,
         if (whiteFideId != null) 'WhiteFideId': whiteFideId,
         if (blackFideId != null) 'BlackFideId': blackFideId,
       });
+      final id = 'g${seq++}';
       await db.execute(
         '''
         INSERT INTO $localChessGamesTable
-          (id, database_id, white_id, black_id, white_elo, black_elo, result,
-           eco, date, ply_count, time_control_category, headers_json, raw_pgn,
+          (id, database_id, event_id, site_id, white_id, black_id,
+           white_elo, black_elo, result, eco, date, ply_count,
+           time_control_category, is_online, headers_json, raw_pgn,
            source_path, source_relative_path, file_name, index_in_file,
            file_game_count)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ''',
         [
-          'g${seq++}',
+          id,
           databaseId,
+          eventId,
+          siteId,
           whiteId,
           blackId,
           whiteElo,
@@ -197,17 +222,19 @@ void main() {
           result,
           eco,
           date,
-          40,
+          ply,
           tcc,
+          isOnline ? 1 : 0,
           headers,
           '',
           databasePath,
-          'player.pgn',
-          'player.pgn',
+          fileName,
+          fileName,
           seq,
           1,
         ],
       );
+      return id;
     }
 
     test('combines outcome + eco + year + search on selected source', () async {
@@ -320,6 +347,498 @@ void main() {
       // Clear restores
       expect(await count(LocalChessGameFilter()), 4);
     });
+
+    test(
+      'all filter/search combinations compose with every column sort and page',
+      () async {
+        const player = 'Filter Player';
+        final games = <_QueryOracleGame>[
+          const _QueryOracleGame(
+            event: 'Baku Open',
+            white: player,
+            black: 'Carlsen, Magnus',
+            result: '1-0',
+            eco: 'C02',
+            opening: 'French: Advance',
+            date: '2022.01.01',
+            timeControl: 'classical',
+            whiteElo: 2600,
+            blackElo: 2800,
+            ply: 40,
+            isOnline: false,
+            playerSide: 'w',
+            playerOutcome: 'win',
+          ),
+          const _QueryOracleGame(
+            event: 'Wijk Masters',
+            white: 'Nepomniachtchi, Ian',
+            black: player,
+            result: '1/2-1/2',
+            eco: 'B20',
+            opening: 'Sicilian Defense',
+            date: '2022.02.02',
+            timeControl: 'rapid',
+            whiteElo: 2750,
+            blackElo: 2610,
+            ply: 60,
+            isOnline: false,
+            playerSide: 'b',
+            playerOutcome: 'draw',
+          ),
+          const _QueryOracleGame(
+            event: 'Speed Arena',
+            white: 'Filter_Player',
+            black: 'Nakamura, Hikaru',
+            result: '0-1',
+            eco: 'C45',
+            opening: 'Scotch Game',
+            date: '2023.03.03',
+            timeControl: 'blitz',
+            whiteElo: 2650,
+            blackElo: 2900,
+            ply: 30,
+            isOnline: true,
+            playerSide: 'w',
+            playerOutcome: 'loss',
+          ),
+          const _QueryOracleGame(
+            event: 'Bullet Cup',
+            white: 'Firouzja, Alireza',
+            black: 'Filter_Player',
+            result: '0-1',
+            eco: 'B06',
+            opening: 'Modern Defense',
+            date: '2024.04.04',
+            timeControl: 'bullet',
+            whiteElo: 2800,
+            blackElo: 2700,
+            ply: 22,
+            isOnline: true,
+            playerSide: 'b',
+            playerOutcome: 'win',
+          ),
+          const _QueryOracleGame(
+            event: 'Candidates',
+            white: player,
+            black: 'Gukesh D',
+            result: '1/2-1/2',
+            eco: 'D30',
+            opening: "Queen's Gambit Declined",
+            date: '2024.05.05',
+            timeControl: 'classical',
+            whiteElo: 2710,
+            blackElo: 2750,
+            ply: 80,
+            isOnline: false,
+            playerSide: 'w',
+            playerOutcome: 'draw',
+          ),
+          const _QueryOracleGame(
+            event: 'Rapid Open',
+            white: 'Abdusattorov, Nodirbek',
+            black: player,
+            result: '1-0',
+            eco: 'A04',
+            opening: 'Réti Opening',
+            date: '2025.06.06',
+            timeControl: 'rapid',
+            whiteElo: 2760,
+            blackElo: 2720,
+            ply: 50,
+            isOnline: false,
+            playerSide: 'b',
+            playerOutcome: 'loss',
+          ),
+          const _QueryOracleGame(
+            event: 'Online Swiss',
+            white: 'Filter_Player',
+            black: 'Carlsen, Magnus',
+            result: '1-0',
+            eco: 'B90',
+            opening: 'Sicilian: Najdorf',
+            date: '2025.07.07',
+            timeControl: 'blitz',
+            whiteElo: 2730,
+            blackElo: 2850,
+            ply: 70,
+            isOnline: true,
+            playerSide: 'w',
+            playerOutcome: 'win',
+          ),
+          const _QueryOracleGame(
+            event: 'Mystery Match',
+            white: 'Opponent Eight',
+            black: 'Filter_Player',
+            result: '1/2-1/2',
+            eco: 'A45',
+            opening: 'Indian Defense',
+            date: '2021.08.08',
+            timeControl: 'classical',
+            blackElo: 2500,
+            ply: 18,
+            isOnline: false,
+            playerSide: 'b',
+            playerOutcome: 'draw',
+          ),
+          const _QueryOracleGame(
+            event: 'Percent % Under_score',
+            white: player,
+            black: 'Literal Opponent',
+            result: '1-0',
+            eco: 'E90',
+            opening: "King's Indian: Classical",
+            date: '2020.09.09',
+            timeControl: 'classical',
+            whiteElo: 2400,
+            blackElo: 2450,
+            ply: 28,
+            isOnline: false,
+            playerSide: 'w',
+            playerOutcome: 'win',
+          ),
+        ];
+
+        for (final game in games) {
+          await insertGame(
+            white: game.white,
+            black: game.black,
+            result: game.result,
+            eco: game.eco,
+            date: game.date,
+            tcc: game.timeControl,
+            whiteFideId:
+                game.playerSide == 'w' && game.white == player ? '111' : null,
+            blackFideId:
+                game.playerSide == 'b' && game.black == player ? '111' : null,
+            whiteElo: game.whiteElo,
+            blackElo: game.blackElo,
+            opening: game.opening,
+            event: game.event,
+            site:
+                game.isOnline ? 'https://online.test/${game.eco}' : 'OTB Hall',
+            ply: game.ply,
+            isOnline: game.isOnline,
+          );
+        }
+
+        final scenarios = <_QueryOracleScenario>[
+          _QueryOracleScenario(
+            label: 'all',
+            filter: LocalChessGameFilter(),
+            matches: (_) => true,
+          ),
+          _QueryOracleScenario(
+            label: 'overview wins',
+            filter: localChessGameFilterFromOverview(
+              const PlayerOverviewFilterRequest(
+                facet: PlayerOverviewFilterFacet.wins,
+              ),
+            ),
+            matches: (game) => game.playerOutcome == 'win',
+          ),
+          _QueryOracleScenario(
+            label: 'overview draws',
+            filter: localChessGameFilterFromOverview(
+              const PlayerOverviewFilterRequest(
+                facet: PlayerOverviewFilterFacet.draws,
+              ),
+            ),
+            matches: (game) => game.playerOutcome == 'draw',
+          ),
+          _QueryOracleScenario(
+            label: 'overview losses',
+            filter: localChessGameFilterFromOverview(
+              const PlayerOverviewFilterRequest(
+                facet: PlayerOverviewFilterFacet.losses,
+              ),
+            ),
+            matches: (game) => game.playerOutcome == 'loss',
+          ),
+          _QueryOracleScenario(
+            label: 'overview as white',
+            filter: localChessGameFilterFromOverview(
+              const PlayerOverviewFilterRequest(
+                facet: PlayerOverviewFilterFacet.asWhite,
+              ),
+            ),
+            matches: (game) => game.playerSide == 'w',
+          ),
+          _QueryOracleScenario(
+            label: 'overview as black',
+            filter: localChessGameFilterFromOverview(
+              const PlayerOverviewFilterRequest(
+                facet: PlayerOverviewFilterFacet.asBlack,
+              ),
+            ),
+            matches: (game) => game.playerSide == 'b',
+          ),
+          _QueryOracleScenario(
+            label: 'overview eco',
+            filter: localChessGameFilterFromOverview(
+              const PlayerOverviewFilterRequest(
+                facet: PlayerOverviewFilterFacet.eco,
+                ecoCode: 'B20',
+              ),
+            ),
+            matches: (game) => game.eco == 'B20',
+          ),
+          _QueryOracleScenario(
+            label: 'overview year',
+            filter: localChessGameFilterFromOverview(
+              const PlayerOverviewFilterRequest(
+                facet: PlayerOverviewFilterFacet.year,
+                year: 2024,
+              ),
+            ),
+            matches: (game) => game.date.startsWith('2024.'),
+          ),
+          _QueryOracleScenario(
+            label: 'overview classical',
+            filter: localChessGameFilterFromOverview(
+              const PlayerOverviewFilterRequest(
+                facet: PlayerOverviewFilterFacet.timeControl,
+                timeControlCategory: 'classical',
+              ),
+            ),
+            matches: (game) => game.timeControl == 'classical',
+          ),
+          _QueryOracleScenario(
+            label: 'overview opponent',
+            filter: localChessGameFilterFromOverview(
+              const PlayerOverviewFilterRequest(
+                facet: PlayerOverviewFilterFacet.opponent,
+                opponentName: 'Carlsen, Magnus',
+              ),
+            ),
+            matches:
+                (game) =>
+                    game.white == 'Carlsen, Magnus' ||
+                    game.black == 'Carlsen, Magnus',
+          ),
+          _QueryOracleScenario(
+            label: 'dialog online blitz',
+            filter: LocalChessGameFilter(
+              base: GameFilter(
+                timeControl: GameTimeControlFilter.blitz,
+                online: GameOnlineFilter.online,
+                maxYear: DateTime.now().year,
+              ),
+            ),
+            matches:
+                (game) =>
+                    game.isOnline &&
+                    (game.timeControl == 'blitz' ||
+                        game.timeControl == 'bullet'),
+          ),
+          _QueryOracleScenario(
+            label: 'stacked result year rating finish',
+            filter: LocalChessGameFilter(
+              base: GameFilter(
+                result: GameResultFilter.whiteWins,
+                finish: GameFinishFilter.byMove25,
+                minYear: 2020,
+                maxYear: 2025,
+                minRating: 2400,
+                maxRating: 2800,
+              ),
+            ),
+            matches:
+                (game) =>
+                    game.result == '1-0' &&
+                    game.ply <= 50 &&
+                    game.year >= 2020 &&
+                    game.year <= 2025 &&
+                    game.averageRating >= 2400 &&
+                    game.averageRating <= 2800,
+          ),
+          _QueryOracleScenario(
+            label: 'dense combined filters and search',
+            filter: LocalChessGameFilter(
+              base: GameFilter(
+                color: GameColorFilter.black,
+                finish: GameFinishFilter.byMove15,
+                online: GameOnlineFilter.online,
+                eco: GameEcoFilter.forCode('B06'),
+                minYear: 2024,
+                maxYear: 2024,
+                minRating: 2600,
+                maxRating: 2800,
+              ),
+              playerOutcome: LocalPlayerOutcomeFilter.win,
+              opponentName: 'Firouzja, Alireza',
+              timeControlCategory: 'bullet',
+            ),
+            search: 'bullet cup',
+            matches: (game) => game.event == 'Bullet Cup',
+          ),
+          _QueryOracleScenario(
+            label: 'multi-term search',
+            filter: LocalChessGameFilter(),
+            search: 'carlsen 2025',
+            matches: (game) => game.event == 'Online Swiss',
+          ),
+          _QueryOracleScenario(
+            label: 'literal SQL wildcard search',
+            filter: LocalChessGameFilter(),
+            search: '% under_',
+            matches: (game) => game.event == 'Percent % Under_score',
+          ),
+        ];
+        final repo = LocalChessDatabaseRepository(database: () async => db);
+
+        Future<int> countOverview(PlayerOverviewFilterRequest request) async {
+          final page = await repo.localDatabaseGamesPage(
+            databasePath: databasePath,
+            filter: localChessGameFilterFromOverview(request),
+            playerFideId: '111',
+            playerAliases: const <String>[player, 'Filter_Player'],
+            pageNumber: 0,
+            pageSize: 50,
+          );
+          return page!.totalCount;
+        }
+
+        final stats = await PlayerStatsRepository(
+          database: () async => db,
+        ).computePlayerStats(
+          databasePath: databasePath,
+          aliases: const <String>[player, 'Filter_Player'],
+          playerFideId: '111',
+        );
+        expect(
+          await countOverview(
+            const PlayerOverviewFilterRequest(
+              facet: PlayerOverviewFilterFacet.wins,
+            ),
+          ),
+          stats.overall.wins,
+        );
+        expect(
+          await countOverview(
+            const PlayerOverviewFilterRequest(
+              facet: PlayerOverviewFilterFacet.draws,
+            ),
+          ),
+          stats.overall.draws,
+        );
+        expect(
+          await countOverview(
+            const PlayerOverviewFilterRequest(
+              facet: PlayerOverviewFilterFacet.losses,
+            ),
+          ),
+          stats.overall.losses,
+        );
+        expect(
+          await countOverview(
+            const PlayerOverviewFilterRequest(
+              facet: PlayerOverviewFilterFacet.asWhite,
+            ),
+          ),
+          stats.asWhite.games,
+        );
+        expect(
+          await countOverview(
+            const PlayerOverviewFilterRequest(
+              facet: PlayerOverviewFilterFacet.asBlack,
+            ),
+          ),
+          stats.asBlack.games,
+        );
+        for (final opening in stats.openings) {
+          expect(
+            await countOverview(
+              PlayerOverviewFilterRequest(
+                facet: PlayerOverviewFilterFacet.eco,
+                ecoCode: opening.eco,
+              ),
+            ),
+            opening.tally.games,
+            reason: 'Opening handoff ${opening.eco}',
+          );
+        }
+        for (final year in stats.years) {
+          expect(
+            await countOverview(
+              PlayerOverviewFilterRequest(
+                facet: PlayerOverviewFilterFacet.year,
+                year: year.year,
+              ),
+            ),
+            year.games,
+            reason: 'Year handoff ${year.year}',
+          );
+        }
+        for (final timeControl in stats.timeControls) {
+          expect(
+            await countOverview(
+              PlayerOverviewFilterRequest(
+                facet: PlayerOverviewFilterFacet.timeControl,
+                timeControlCategory: timeControl.category,
+              ),
+            ),
+            timeControl.count,
+            reason: 'Time-control handoff ${timeControl.category}',
+          );
+        }
+        for (final opponent in stats.opponents) {
+          expect(
+            await countOverview(
+              PlayerOverviewFilterRequest(
+                facet: PlayerOverviewFilterFacet.opponent,
+                opponentName: opponent.name,
+              ),
+            ),
+            opponent.tally.games,
+            reason: 'Opponent handoff ${opponent.name}',
+          );
+        }
+
+        for (final scenario in scenarios) {
+          final scoped = games.where(scenario.matches).toList(growable: false);
+          for (final sort in LocalChessGameSortField.values) {
+            for (final direction in LocalChessGameSortDirection.values) {
+              final expected = _sortOracleGames(scoped, sort, direction);
+              final actualEvents = <String>[];
+              var pageNumber = 0;
+              var total = -1;
+              do {
+                final page = await repo.localDatabaseGamesPage(
+                  databasePath: databasePath,
+                  search: scenario.search,
+                  filter: scenario.filter,
+                  playerFideId: '111',
+                  playerAliases: const <String>[player, 'Filter_Player'],
+                  sortBy: sort,
+                  sortDirection: direction,
+                  pageNumber: pageNumber,
+                  pageSize: 2,
+                );
+                expect(page, isNotNull, reason: scenario.label);
+                total = page!.totalCount;
+                actualEvents.addAll(
+                  page.games.map(
+                    (game) => game.game.metadata['Event']!.toString(),
+                  ),
+                );
+                pageNumber++;
+              } while (actualEvents.length < total);
+
+              expect(
+                total,
+                expected.length,
+                reason: '${scenario.label} · $sort · $direction total',
+              );
+              expect(
+                actualEvents,
+                expected.map((game) => game.event),
+                reason: '${scenario.label} · $sort · $direction order',
+              );
+            }
+          }
+        }
+      },
+    );
   });
 
   group('overview outcome re-scopes stats', () {
@@ -475,4 +994,127 @@ void main() {
       expect(asWhite.games, 2);
     });
   });
+}
+
+class _QueryOracleGame {
+  const _QueryOracleGame({
+    required this.event,
+    required this.white,
+    required this.black,
+    required this.result,
+    required this.eco,
+    required this.opening,
+    required this.date,
+    required this.timeControl,
+    this.whiteElo,
+    this.blackElo,
+    required this.ply,
+    required this.isOnline,
+    required this.playerSide,
+    required this.playerOutcome,
+  });
+
+  final String event;
+  final String white;
+  final String black;
+  final String result;
+  final String eco;
+  final String opening;
+  final String date;
+  final String timeControl;
+  final int? whiteElo;
+  final int? blackElo;
+  final int ply;
+  final bool isOnline;
+  final String playerSide;
+  final String playerOutcome;
+
+  int get year => int.parse(date.substring(0, 4));
+
+  int get averageRating {
+    final whiteRating = whiteElo ?? 0;
+    final blackRating = blackElo ?? 0;
+    if (whiteRating <= 0) return blackRating;
+    if (blackRating <= 0) return whiteRating;
+    return (whiteRating + blackRating) ~/ 2;
+  }
+}
+
+class _QueryOracleScenario {
+  const _QueryOracleScenario({
+    required this.label,
+    required this.filter,
+    required this.matches,
+    this.search = '',
+  });
+
+  final String label;
+  final LocalChessGameFilter filter;
+  final bool Function(_QueryOracleGame game) matches;
+  final String search;
+}
+
+List<_QueryOracleGame> _sortOracleGames(
+  List<_QueryOracleGame> games,
+  LocalChessGameSortField field,
+  LocalChessGameSortDirection direction,
+) {
+  final indexed = <({int index, _QueryOracleGame game})>[
+    for (var index = 0; index < games.length; index++)
+      (index: index, game: games[index]),
+  ];
+  int compareText(String? a, String? b) {
+    final cleanA = a?.trim();
+    final cleanB = b?.trim();
+    final missingA =
+        cleanA == null || cleanA.isEmpty || cleanA == '?' || cleanA == '-';
+    final missingB =
+        cleanB == null || cleanB.isEmpty || cleanB == '?' || cleanB == '-';
+    if (missingA != missingB) return missingA ? 1 : -1;
+    final compared = (cleanA ?? '').toLowerCase().compareTo(
+      (cleanB ?? '').toLowerCase(),
+    );
+    return direction == LocalChessGameSortDirection.asc ? compared : -compared;
+  }
+
+  int compareInt(int? a, int? b) {
+    if ((a == null) != (b == null)) return a == null ? 1 : -1;
+    final compared = (a ?? 0).compareTo(b ?? 0);
+    return direction == LocalChessGameSortDirection.asc ? compared : -compared;
+  }
+
+  indexed.sort((a, b) {
+    if (field == LocalChessGameSortField.originalOrder) {
+      final compared = a.index.compareTo(b.index);
+      return direction == LocalChessGameSortDirection.asc
+          ? compared
+          : -compared;
+    }
+    final compared = switch (field) {
+      LocalChessGameSortField.originalOrder => 0,
+      LocalChessGameSortField.white => compareText(a.game.white, b.game.white),
+      LocalChessGameSortField.whiteElo => compareInt(
+        a.game.whiteElo,
+        b.game.whiteElo,
+      ),
+      LocalChessGameSortField.black => compareText(a.game.black, b.game.black),
+      LocalChessGameSortField.blackElo => compareInt(
+        a.game.blackElo,
+        b.game.blackElo,
+      ),
+      LocalChessGameSortField.result => compareText(
+        a.game.result,
+        b.game.result,
+      ),
+      LocalChessGameSortField.eco => compareText(a.game.eco, b.game.eco),
+      LocalChessGameSortField.opening => compareText(
+        a.game.opening,
+        b.game.opening,
+      ),
+      LocalChessGameSortField.event => compareText(a.game.event, b.game.event),
+      LocalChessGameSortField.date => compareText(a.game.date, b.game.date),
+    };
+    return compared != 0 ? compared : a.index.compareTo(b.index);
+  });
+  return indexed.map((entry) => entry.game).toList(growable: false);
 }

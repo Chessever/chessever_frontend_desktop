@@ -2048,6 +2048,105 @@ void main() {
   );
 
   test(
+    'unclassified imports persist Unknown so derived-filter repair converges',
+    () async {
+      final pgnFile = File('${temp.path}/unknown-time-control.pgn');
+      await pgnFile.writeAsString('''
+[Event "Casual notebook game"]
+[Site "?"]
+[Date "2024.01.01"]
+[White "Player One"]
+[Black "Player Two"]
+[Result "1-0"]
+
+1. e4 e5 1-0
+''');
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(fileNode, sourceLabel: source.label);
+
+      Future<Object?> storedCategory() async {
+        final rows = await db.select(
+          'SELECT time_control_category FROM local_chess_games '
+          'WHERE database_id = ?',
+          <Object?>[pgnFile.path],
+        );
+        return rows.single['time_control_category'];
+      }
+
+      expect(await storedCategory(), 'unknown');
+      await createLocalChessResqliteDatabaseSchema(
+        db,
+      ).timeout(const Duration(seconds: 2));
+      expect(await storedCategory(), 'unknown');
+    },
+  );
+
+  test(
+    'import indexes ECO opening fallback for display search and sort',
+    () async {
+      final pgnFile = File('${temp.path}/eco-opening-fallback.pgn');
+      await pgnFile.writeAsString('''
+[Event "Opening fallback"]
+[Site "OTB Hall"]
+[Date "2024.01.01"]
+[White "Player One"]
+[Black "Player Two"]
+[ECO "C02"]
+[Result "1-0"]
+
+1. e4 e6 2. d4 d5 3. e5 1-0
+''');
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(fileNode, sourceLabel: source.label);
+
+      final all = await repo.localDatabaseGamesPage(
+        databasePath: pgnFile.path,
+        sortBy: LocalChessGameSortField.opening,
+        sortDirection: LocalChessGameSortDirection.asc,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(all, isNotNull);
+      expect(all!.games.single.game.metadata['Opening'], 'French: Advance');
+
+      final searched = await repo.localDatabaseGamesPage(
+        databasePath: pgnFile.path,
+        search: 'French Advance',
+        sortBy: LocalChessGameSortField.opening,
+        sortDirection: LocalChessGameSortDirection.asc,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(searched, isNotNull);
+      expect(searched!.totalCount, 1);
+
+      await db.execute(
+        "UPDATE local_chess_games SET headers_json = "
+        "json_remove(headers_json, '\$.Opening') WHERE database_id = ?",
+        <Object?>[pgnFile.path],
+      );
+      await db.execute(
+        'DELETE FROM local_chess_migrations WHERE name = ?',
+        const <Object?>['local_chess_opening_name_backfill_v1'],
+      );
+      await createLocalChessResqliteDatabaseSchema(db);
+      final repaired = await repo.localDatabaseGamesPage(
+        databasePath: pgnFile.path,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(
+        repaired!.games.single.game.metadata['Opening'],
+        'French: Advance',
+      );
+    },
+  );
+
+  test(
     'rejects stale persisted PGN rows when the file fingerprint changes',
     () async {
       final pgnFile = File('${temp.path}/stale.pgn');

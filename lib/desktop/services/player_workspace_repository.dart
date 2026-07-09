@@ -16,10 +16,12 @@ import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
 import 'package:chessever/desktop/services/local_source_deletion.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
+import 'package:chessever/desktop/services/time_control_classifier.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
+import 'package:chessever/utils/eco_openings.dart';
 
 const String _workspaceStorageKey = 'desktop_player_workspace_v1';
 const String _httpUserAgent =
@@ -45,6 +47,23 @@ const List<double> _sourceSnapshotWaitProgressSteps = <double>[
 typedef PlayerWorkspaceProgress =
     void Function(String message, double? progress);
 typedef PlayerWorkspaceSupportDirectoryResolver = Future<Directory> Function();
+
+const String playerWorkspaceCombinedFormatVersion = '2';
+const String playerWorkspaceCombinedVersionTag = 'ChessEverCombinedVersion';
+const String playerWorkspaceCombinedSourceTag = 'ChessEverSource';
+const String playerWorkspaceCombinedTimeControlTag =
+    'ChessEverTimeControlCategory';
+
+@immutable
+class PlayerWorkspaceCombinedSource {
+  const PlayerWorkspaceCombinedSource({
+    required this.path,
+    required this.source,
+  });
+
+  final String path;
+  final PlayerWorkspaceSource source;
+}
 
 class PlayerWorkspaceRepository {
   PlayerWorkspaceRepository({
@@ -1101,13 +1120,33 @@ class PlayerWorkspaceRepository {
     required String playerName,
     String? playerFideId,
     required Iterable<String> sourcePaths,
+    Iterable<PlayerWorkspaceCombinedSource> sources =
+        const <PlayerWorkspaceCombinedSource>[],
     required Iterable<String> playerAliases,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
-    final paths = sourcePaths
-        .map((path) => path.trim())
-        .where((path) => path.isNotEmpty)
+    final inputs = <PlayerWorkspaceCombinedSource>[
+      for (final input in sources)
+        if (input.path.trim().isNotEmpty)
+          PlayerWorkspaceCombinedSource(
+            path: input.path.trim(),
+            source: input.source,
+          ),
+      for (final path in sourcePaths)
+        if (path.trim().isNotEmpty)
+          PlayerWorkspaceCombinedSource(
+            path: path.trim(),
+            source: PlayerWorkspaceSource.manual,
+          ),
+    ];
+    final uniqueInputs = <String, PlayerWorkspaceCombinedSource>{};
+    for (final input in inputs) {
+      uniqueInputs.putIfAbsent(p.normalize(input.path), () => input);
+    }
+    final preparedInputs = uniqueInputs.values.toList(growable: false);
+    final paths = preparedInputs
+        .map((input) => input.path)
         .toList(growable: false);
     final combinedPath = await combinedPgnPath(
       playerId: playerId,
@@ -1116,7 +1155,7 @@ class PlayerWorkspaceRepository {
     );
     onProgress?.call('Preparing combined database...', 0.02);
     final prepared = await _prepareCombinedPgnImport(
-      sourcePaths: paths,
+      sources: preparedInputs,
       combinedPath: combinedPath,
       playerAliases: playerAliases,
       playerFideId: playerFideId,
@@ -1160,6 +1199,29 @@ class PlayerWorkspaceRepository {
         lossCount: combinedStats.lossCount,
       ),
     );
+  }
+
+  Future<bool> isCombinedDatabaseCurrent(String path) async {
+    final clean = path.trim();
+    if (clean.isEmpty) return false;
+    final file = File(clean);
+    if (!await file.exists()) return false;
+    try {
+      final raf = await file.open();
+      try {
+        final prefix = await raf.read(64 * 1024);
+        return utf8
+            .decode(prefix, allowMalformed: true)
+            .contains(
+              '[$playerWorkspaceCombinedVersionTag '
+              '"$playerWorkspaceCombinedFormatVersion"]',
+            );
+      } finally {
+        await raf.close();
+      }
+    } on FileSystemException {
+      return false;
+    }
   }
 
   Future<Directory> _playerWorkspaceDirectory(
@@ -1922,16 +1984,16 @@ _PreparedPgnImport _preparePgnImportSync(
 }
 
 Future<_PreparedCombinedPgnImport> _prepareCombinedPgnImport({
-  required Iterable<String> sourcePaths,
+  required Iterable<PlayerWorkspaceCombinedSource> sources,
   required String combinedPath,
   required Iterable<String> playerAliases,
   String? playerFideId,
 }) {
-  final paths = sourcePaths.toList(growable: false);
+  final inputs = sources.toList(growable: false);
   final aliases = playerAliases.toList(growable: false);
   return Isolate.run(
     () => _prepareCombinedPgnImportSync(
-      paths,
+      inputs,
       combinedPath,
       aliases,
       playerFideId,
@@ -1940,7 +2002,7 @@ Future<_PreparedCombinedPgnImport> _prepareCombinedPgnImport({
 }
 
 _PreparedCombinedPgnImport _prepareCombinedPgnImportSync(
-  List<String> paths,
+  List<PlayerWorkspaceCombinedSource> inputs,
   String combinedPath,
   List<String> aliases,
   String? playerFideId,
@@ -1955,14 +2017,14 @@ _PreparedCombinedPgnImport _prepareCombinedPgnImportSync(
   final stats = _PgnStatsCounter(aliases, playerFideId: playerFideId);
   var wroteAny = false;
   try {
-    for (final path in paths) {
-      for (final chunk in _readPgnGamesFromFileSync(path)) {
+    for (final input in inputs) {
+      for (final chunk in _readPgnGamesFromFileSync(input.path)) {
         final trimmed = chunk.trim();
         if (trimmed.isEmpty) continue;
         final fingerprint = localChessPgnFingerprint(trimmed);
         if (!seen.add(fingerprint)) continue;
         if (wroteAny) writer.writeStringSync('\n\n');
-        writer.writeStringSync(trimmed);
+        writer.writeStringSync(_withCombinedMetadata(trimmed, input.source));
         stats.add(trimmed);
         wroteAny = true;
       }
@@ -1986,6 +2048,46 @@ _PreparedCombinedPgnImport _prepareCombinedPgnImportSync(
     rethrow;
   }
 }
+
+String _withCombinedMetadata(String pgn, PlayerWorkspaceSource source) {
+  final headers = _pgnHeaders(pgn);
+  final explicitOrInferred = classifyTimeControlCategory(
+    headers['timecontrol'],
+    event: headers['event'],
+    site: headers['site'],
+  );
+  final category =
+      explicitOrInferred ??
+      (source == PlayerWorkspaceSource.chessever ? 'classical' : null);
+  final storedOpening = headers['opening']?.trim();
+  final normalizedOpening = storedOpening?.toLowerCase();
+  final needsOpeningFallback =
+      normalizedOpening == null ||
+      normalizedOpening.isEmpty ||
+      normalizedOpening == '?' ||
+      normalizedOpening == '-' ||
+      normalizedOpening == 'unknown' ||
+      normalizedOpening == 'unknown opening';
+  final opening =
+      needsOpeningFallback
+          ? EcoOpenings.getOpeningName(headers['eco']?.trim())
+          : null;
+  final derivedTags = <String>[
+    '[$playerWorkspaceCombinedVersionTag '
+        '"$playerWorkspaceCombinedFormatVersion"]',
+    '[$playerWorkspaceCombinedSourceTag "${source.storageKey}"]',
+    if (category != null)
+      '[$playerWorkspaceCombinedTimeControlTag "$category"]',
+    if (opening != null) '[Opening "${_escapePgnTagValue(opening)}"]',
+  ].join('\n');
+  final headerBoundary = RegExp(r'\n\s*\n').firstMatch(pgn);
+  if (headerBoundary == null) return '$pgn\n$derivedTags';
+  return '${pgn.substring(0, headerBoundary.start).trimRight()}\n'
+      '$derivedTags${pgn.substring(headerBoundary.start)}';
+}
+
+String _escapePgnTagValue(String value) =>
+    value.replaceAll(r'\', r'\\').replaceAll('"', r'\"');
 
 Future<PlayerWorkspaceImportStats> _statsForImportedLocalDatabase({
   required LocalChessDatabaseRepository localRepository,

@@ -26,6 +26,7 @@ import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/repository/sqlite/local_chess_schema.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
+import 'package:chessever/utils/eco_openings.dart';
 import 'package:chessever/utils/local_pgn_metadata.dart';
 
 export 'package:chessever/repository/sqlite/local_chess_schema.dart'
@@ -304,6 +305,8 @@ const String _localChessCacheGenerationName =
     'local_chess_resqlite_cache_generation_20260628_safe_streaming_v1';
 const String _localChessTreeDepthGenerationName =
     'local_chess_tree_depth_50_v1';
+const String _localChessOpeningNameBackfillName =
+    'local_chess_opening_name_backfill_v1';
 
 typedef LocalChessLegacySqfliteDatabaseFactory =
     Future<sqflite.Database> Function();
@@ -391,6 +394,7 @@ Future<void> createLocalChessResqliteDatabaseSchema(
       ddl: 'INTEGER',
     );
     await _backfillGameDerivedFilters(tx);
+    await _backfillGameOpeningNames(tx);
     await tx.execute(
       'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_result ON '
       '$localChessGamesTable(database_id, result)',
@@ -555,6 +559,65 @@ Future<void> _backfillGameDerivedFilters(resqlite.Transaction tx) async {
     );
     if (rows.length < 500) return;
   }
+}
+
+Future<void> _backfillGameOpeningNames(resqlite.Transaction tx) async {
+  final markerRows = await tx.select(
+    'SELECT 1 FROM $_localChessMigrationsTable WHERE name = ? LIMIT 1',
+    const <Object?>[_localChessOpeningNameBackfillName],
+  );
+  if (markerRows.isNotEmpty) return;
+  final knownCodes = EcoOpenings.codeToName.keys.toList(growable: false);
+  for (final codes in _chunks(knownCodes, 300)) {
+    final placeholders = List<String>.filled(codes.length, '?').join(', ');
+    while (true) {
+      final rows = await tx.select(
+        '''
+        SELECT database_id, id, eco, headers_json
+        FROM $localChessGamesTable
+        WHERE SUBSTR(UPPER(TRIM(COALESCE(eco, ''))), 1, 3)
+            IN ($placeholders)
+          AND LOWER(TRIM(COALESCE(
+            json_extract(headers_json, '\$.Opening'), ''
+          ))) IN ('', '?', '-', 'unknown', 'unknown opening')
+        LIMIT 500
+        ''',
+        <Object?>[...codes],
+      );
+      if (rows.isEmpty) break;
+      await tx.executeBatch(
+        '''
+        UPDATE $localChessGamesTable
+        SET headers_json = ?
+        WHERE database_id = ? AND id = ?
+        ''',
+        <List<Object?>>[
+          for (final row in rows)
+            <Object?>[
+              jsonEncode(
+                _metadataWithCanonicalOpening(
+                  _jsonMap(row['headers_json']),
+                  row['eco'],
+                ),
+              ),
+              row['database_id'],
+              row['id'],
+            ],
+        ],
+      );
+      if (rows.length < 500) break;
+    }
+  }
+  await tx.execute(
+    '''
+    INSERT OR REPLACE INTO $_localChessMigrationsTable(name, completed_at_ms)
+    VALUES (?, ?)
+    ''',
+    <Object?>[
+      _localChessOpeningNameBackfillName,
+      DateTime.now().millisecondsSinceEpoch,
+    ],
+  );
 }
 
 Future<void> _backfillPositionGameNextUci(resqlite.Transaction tx) async {
@@ -5085,8 +5148,9 @@ class LocalChessDatabaseRepository {
     }
 
     for (final game in games) {
-      final metadata = game.game.metadata;
       final treeRow = treeRowsById[game.id];
+      final eco = treeRow?['eco']?.toString() ?? game.game.metadata['ECO'];
+      final metadata = _metadataWithCanonicalOpening(game.game.metadata, eco);
       final white = _normalizedName(metadata['White'] ?? treeRow?['white']);
       final black = _normalizedName(metadata['Black'] ?? treeRow?['black']);
       final event = _normalizedName(metadata['Event'] ?? treeRow?['event']);
@@ -5140,7 +5204,7 @@ class LocalChessDatabaseRepository {
                 )
                 ? 1
                 : 0,
-        'eco': treeRow?['eco']?.toString() ?? metadata['ECO']?.toString(),
+        'eco': eco?.toString(),
         'ply_count': line.length,
         'fen': game.game.startingFen,
         'moves': jsonEncode(line),
@@ -7315,11 +7379,35 @@ String? _localGameTimeControlCategory({
   Map<String, dynamic>? metadata,
 }) {
   final data = metadata ?? _jsonMap(headersJson);
-  return classifyTimeControlCategory(
-    timeControl,
-    event: data['Event'],
-    site: data['Site'],
+  final combinedCategory = classifyPgnTimeControlCategory(
+    data['ChessEverTimeControlCategory'],
   );
+  if (combinedCategory != null) return combinedCategory;
+  return classifyTimeControlCategory(
+        timeControl,
+        event: data['Event'],
+        site: data['Site'],
+      ) ??
+      'unknown';
+}
+
+Map<String, dynamic> _metadataWithCanonicalOpening(
+  Map<String, dynamic> metadata,
+  Object? eco,
+) {
+  final opening = metadata['Opening']?.toString().trim();
+  final normalized = opening?.toLowerCase();
+  final needsFallback =
+      normalized == null ||
+      normalized.isEmpty ||
+      normalized == '?' ||
+      normalized == '-' ||
+      normalized == 'unknown' ||
+      normalized == 'unknown opening';
+  if (!needsFallback) return metadata;
+  final fallback = EcoOpenings.getOpeningName(eco?.toString());
+  if (fallback == null || fallback.isEmpty) return metadata;
+  return Map<String, dynamic>.of(metadata)..['Opening'] = fallback;
 }
 
 bool _inferLocalGameIsOnline({
@@ -7336,6 +7424,7 @@ bool _inferLocalGameIsOnline({
           'Site',
           'Event',
           'Source',
+          'ChessEverSource',
           'Annotator',
           'WhiteTeam',
           'BlackTeam',
