@@ -430,6 +430,8 @@ class _BoardPaneContent extends HookConsumerWidget {
         );
     useEffect(() => visibleNotationMoveOrderController.dispose, const []);
     final rightRailAnalysisKey = useMemoized(GlobalKey.new, const []);
+    final reportRunning = useState(false);
+    final reportTabSelected = useState(false);
     // Controller for the outer board pane split — used so the in-pane
     // close button on the left games rail can collapse the rail itself.
     final mainSplitController = useMemoized<ResizableSplitViewController>(
@@ -3572,6 +3574,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           onBoardSizeChangeEnd: () {
                             persistBoardSizePreference();
                           },
+                          suppressEngineAnalysis: reportRunning.value,
                         ),
                       ),
                     ),
@@ -3631,6 +3634,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                 child: KeyedSubtree(
                   key: rightRailAnalysisKey,
                   child: _RightRailAnalysis(
+                    reportSelected: reportTabSelected.value,
                     showEngine: ref.watch(
                       engineSettingsProviderNew.select(
                         (s) =>
@@ -3728,6 +3732,23 @@ class _BoardPaneContent extends HookConsumerWidget {
                       fen: boardPosition.fen,
                       sideToMove: boardPosition.turn == Side.white ? 'w' : 'b',
                       onPlayUci: playUci,
+                      game: chessGame.value,
+                      headers: pgnHeaders.value,
+                      activePly:
+                          pointer.value.length == 1
+                              ? pointer.value.first + 1
+                              : cursor,
+                      onJumpToPly: (ply) {
+                        jumpToPointer(
+                          ply <= 0 ? const <int>[] : <int>[ply - 1],
+                        );
+                      },
+                      onReportRunningChanged: (running) {
+                        reportRunning.value = running;
+                      },
+                      onTabChanged: (tab) {
+                        reportTabSelected.value = tab == EnginePanelTab.report;
+                      },
                     ),
                   ),
                 ),
@@ -3754,11 +3775,13 @@ class _BoardPaneContent extends HookConsumerWidget {
 /// split panes, so the user has a clear one-click way to bring it back.
 class _RightRailAnalysis extends ConsumerStatefulWidget {
   const _RightRailAnalysis({
+    required this.reportSelected,
     required this.showEngine,
     required this.notationPanel,
     required this.enginePanel,
   });
 
+  final bool reportSelected;
   final bool showEngine;
   final Widget notationPanel;
   final Widget enginePanel;
@@ -3770,6 +3793,7 @@ class _RightRailAnalysis extends ConsumerStatefulWidget {
 class _RightRailAnalysisState extends ConsumerState<_RightRailAnalysis> {
   final ResizableSplitViewController _splitController =
       ResizableSplitViewController();
+  double? _preReportEngineSize;
 
   @override
   void initState() {
@@ -3783,6 +3807,25 @@ class _RightRailAnalysisState extends ConsumerState<_RightRailAnalysis> {
     if (oldWidget.showEngine != widget.showEngine) {
       _syncEngineRailAfterLayout(restoreWhenEnabled: !oldWidget.showEngine);
     }
+    if (oldWidget.reportSelected != widget.reportSelected) {
+      _syncReportSizeAfterLayout();
+    }
+  }
+
+  void _syncReportSizeAfterLayout() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (widget.reportSelected) {
+        _preReportEngineSize = _splitController.sizeOf(0);
+        _splitController.setFraction(0, 0.64, persist: false);
+        return;
+      }
+      final previous = _preReportEngineSize;
+      _preReportEngineSize = null;
+      if (previous != null && previous > 0) {
+        _splitController.setSize(0, previous, persist: false);
+      }
+    });
   }
 
   void _syncEngineRailAfterLayout({bool restoreWhenEnabled = false}) {
@@ -5109,6 +5152,7 @@ class _BoardArea extends ConsumerWidget {
     required this.onBoardSizeChanged,
     required this.onBoardSizeReset,
     required this.onBoardSizeChangeEnd,
+    required this.suppressEngineAnalysis,
     this.onGraphicCommentaryChanged,
     this.activeGameId,
     this.boardArgs,
@@ -5175,6 +5219,7 @@ class _BoardArea extends ConsumerWidget {
   /// (any earlier move, or finished game).
   final bool isLiveAtTip;
   final bool isForegroundTab;
+  final bool suppressEngineAnalysis;
 
   /// `[%cal …]` arrows + `[%csl …]` square circles authored into the
   /// current move's PGN comment. Merged with user-drawn annotations.
@@ -5217,7 +5262,8 @@ class _BoardArea extends ConsumerWidget {
     final engineSettings =
         ref.watch(engineSettingsProviderNew).valueOrNull ??
         const EngineSettings();
-    final showEngineAnalysis = engineSettings.showEngineAnalysis;
+    final showEngineAnalysis =
+        engineSettings.showEngineAnalysis && !suppressEngineAnalysis;
     // A null-move threat FEN is illegal when the side to move is in check, so
     // degrade to the real position there (also guards navigating into check
     // while threat mode is already on) — never feed the engine an illegal FEN.
