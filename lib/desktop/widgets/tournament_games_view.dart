@@ -26,6 +26,7 @@ import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/round_header_card.dart';
+import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
@@ -41,7 +42,7 @@ import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_de
 import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
-    show pgnHasMoves;
+    show buildPgnFromGamebaseData, pgnHasMoves;
 import 'package:chessever/theme/app_theme.dart';
 
 /// Games sub-view of the Tournament Detail.
@@ -1483,9 +1484,11 @@ Future<void> openTournamentGameTab(
   // is held by the surrounding ProviderScope and survives card disposal.
   final container = ProviderScope.containerOf(ref.context, listen: false);
   final gameRepo = container.read(gameRepositoryProvider);
+  final gamebaseRepo = container.read(gamebaseRepositoryProvider);
 
   final hydratedGame = await _hydrateTournamentGameForBoardOpen(
     gameRepo: gameRepo,
+    gamebaseRepo: gamebaseRepo,
     game: game,
   );
   _seedBaseGameIfFresher(container, hydratedGame);
@@ -1524,9 +1527,29 @@ Future<void> openTournamentGameTab(
 
 Future<GamesTourModel> _hydrateTournamentGameForBoardOpen({
   required GameRepository gameRepo,
+  required GamebaseRepository gamebaseRepo,
   required GamesTourModel game,
 }) async {
   final normalizedCurrent = _withFreshestFen(game);
+  if (game.source == GameSource.gamebase && game.gameId.trim().isNotEmpty) {
+    try {
+      final resolved = await gamebaseRepo.getGameWithPgn(game.gameId);
+      if (resolved == null) return normalizedCurrent;
+      final builtPgn = buildPgnFromGamebaseData(resolved.data)?.trim() ?? '';
+      final pgn =
+          (resolved.pgn?.trim().isNotEmpty ?? false)
+              ? resolved.pgn!.trim()
+              : builtPgn;
+      if (!pgnHasMoves(pgn)) return normalizedCurrent;
+      return _withFreshestFen(normalizedCurrent.copyWith(pgn: pgn));
+    } catch (error) {
+      debugPrint(
+        '[DesktopBoard] Failed to hydrate Gamebase game ${game.gameId} before open: $error',
+      );
+      return normalizedCurrent;
+    }
+  }
+
   if (game.source != GameSource.supabase || game.gameId.trim().isEmpty) {
     return normalizedCurrent;
   }
@@ -2088,6 +2111,7 @@ Future<void> _showLiveGameContextMenu({
       final container = ProviderScope.containerOf(context, listen: false);
       final hydratedGame = await _hydrateTournamentGameForBoardOpen(
         gameRepo: container.read(gameRepositoryProvider),
+        gamebaseRepo: container.read(gamebaseRepositoryProvider),
         game: game,
       );
       _seedBaseGameIfFresher(container, hydratedGame);

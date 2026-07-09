@@ -30,11 +30,6 @@ String? buildDesktopGameShareUrl({
 }) {
   final modelUrl = game == null ? null : buildGameShareUrl(game: game);
   if (modelUrl != null && modelUrl.trim().isNotEmpty) return modelUrl;
-  if (game != null &&
-      game.source != GameSource.supabase &&
-      game.source != GameSource.savedAnalysis) {
-    return null;
-  }
 
   final id = (gameId ?? game?.gameId)?.trim();
   if (id == null || !_isResolvableSharedGameId(id)) return null;
