@@ -7196,6 +7196,136 @@ Future<void> _onDeleteGame({
   }
 }
 
+Future<_DatabaseSavedGameContextAction?> _showDatabaseSavedGameContextMenu({
+  required BuildContext context,
+  required Offset position,
+  required int selectedCount,
+  required int visibleCount,
+  required bool canDelete,
+}) {
+  final hasSelection = selectedCount > 0;
+  final countLabel = selectedCount > 1 ? ' ($selectedCount)' : '';
+  return showDesktopContextMenu<_DatabaseSavedGameContextAction>(
+    context: context,
+    position: position,
+    width: 220,
+    entries: [
+      DesktopContextMenuItem(
+        value: _DatabaseSavedGameContextAction.copyPgn,
+        icon: Icons.content_copy_rounded,
+        label: selectedCount > 1 ? 'Copy PGN$countLabel' : 'Copy PGN',
+        enabled: hasSelection,
+      ),
+      DesktopContextMenuItem(
+        value: _DatabaseSavedGameContextAction.selectAll,
+        icon: Icons.select_all_rounded,
+        label: 'Select all',
+        enabled: visibleCount > 0,
+      ),
+      const DesktopContextMenuDivider(),
+      DesktopContextMenuItem(
+        value: _DatabaseSavedGameContextAction.delete,
+        icon: Icons.delete_outline_rounded,
+        label: selectedCount > 1 ? 'Delete games$countLabel' : 'Delete game',
+        destructive: true,
+        enabled: canDelete && hasSelection,
+      ),
+    ],
+  );
+}
+
+Future<bool> showLibraryDeleteAnalysesConfirmation(
+  BuildContext context, {
+  required List<SavedAnalysis> analyses,
+}) async {
+  final count = analyses.length;
+  if (count <= 0) return false;
+  if (count == 1) {
+    return showLibraryDeleteAnalysisConfirmation(context, analysis: analyses.single);
+  }
+  final confirmed = await showGeneralDialog<bool>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'Delete games',
+    barrierColor: Colors.black.withValues(alpha: 0.55),
+    transitionDuration: const Duration(milliseconds: 140),
+    pageBuilder:
+        (ctx, _, _) => FTheme(
+          data: FThemes.zinc.dark,
+          child: Center(
+            child: Container(
+              width: 420,
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+              decoration: BoxDecoration(
+                color: kBlack2Color,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: kDividerColor),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(
+                        Icons.delete_forever_outlined,
+                        color: Color(0xFFEB5757),
+                        size: 18,
+                      ),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Delete selected games?',
+                          style: TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    '$count games and any saved analysis on them will be removed from your library. This cannot be undone.',
+                    style: const TextStyle(
+                      color: kWhiteColor70,
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      DesktopDialogButton(
+                        label: 'Cancel',
+                        onPress: () => Navigator.of(ctx).pop(false),
+                      ),
+                      const SizedBox(width: 8),
+                      DesktopDialogButton(
+                        label: 'Delete',
+                        tone: DesktopDialogButtonTone.danger,
+                        onPress: () => Navigator.of(ctx).pop(true),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+  );
+  return confirmed == true;
+}
+
 Future<void> _onCreateFolder({
   required BuildContext context,
   required WidgetRef ref,
@@ -9344,6 +9474,7 @@ Widget _databaseWorkspaceClipboardShortcuts({
   required Widget child,
   VoidCallback? onCopy,
   VoidCallback? onPaste,
+  VoidCallback? onSelectAll,
 }) {
   final bindings = <ShortcutActivator, VoidCallback>{};
   if (onCopy != null) {
@@ -9357,6 +9488,12 @@ Widget _databaseWorkspaceClipboardShortcuts({
         onPaste;
     bindings[const SingleActivator(LogicalKeyboardKey.keyV, control: true)] =
         onPaste;
+  }
+  if (onSelectAll != null) {
+    bindings[const SingleActivator(LogicalKeyboardKey.keyA, meta: true)] =
+        onSelectAll;
+    bindings[const SingleActivator(LogicalKeyboardKey.keyA, control: true)] =
+        onSelectAll;
   }
   if (bindings.isEmpty) return child;
   return CallbackShortcuts(bindings: bindings, child: child);
@@ -9773,6 +9910,92 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
       unawaited(copySavedAnalysesAsPgn(context: context, analyses: copyRows));
     }
 
+    void selectAllVisibleSaved() {
+      if (visibleIds.isEmpty) return;
+      selectedIds.value = visibleIds.toSet();
+      selectedId.value = visibleIds.last;
+      selectionAnchor.value = 0;
+      selectionExtent.value = visibleIds.length - 1;
+      _requestDatabaseWorkspaceFocus(shortcutsFocusNode);
+    }
+
+    List<SavedAnalysis> contextRowsFor(SavedAnalysis analysis) {
+      if (clampedSelectedIds.contains(analysis.id)) {
+        final selectedRows =
+            filtered
+                .where((row) => clampedSelectedIds.contains(row.id))
+                .toList(growable: false);
+        if (selectedRows.isNotEmpty) return selectedRows;
+      }
+      return <SavedAnalysis>[analysis];
+    }
+
+    Future<void> deleteSavedRows(List<SavedAnalysis> rows) async {
+      if (args.isSubscribed || rows.isEmpty) return;
+      if (rows.length == 1) {
+        await _onDeleteGame(
+          context: context,
+          ref: ref,
+          analysis: rows.single,
+          onChanged: () => refreshNonce.value++,
+        );
+        return;
+      }
+      final confirmed = await showLibraryDeleteAnalysesConfirmation(
+        context,
+        analyses: rows,
+      );
+      if (!confirmed) return;
+      try {
+        final repository = ref.read(libraryRepositoryProvider);
+        for (final analysis in rows) {
+          await repository.deleteSavedAnalysis(analysis.id);
+        }
+        refreshNonce.value++;
+        selectedIds.value = <String>{};
+        if (!context.mounted) return;
+        _toast(context, '${rows.length} games deleted.');
+      } catch (e, st) {
+        ErrorReporter.report(e, stackTrace: st, tag: 'library.delete_games');
+        if (!context.mounted) return;
+        _toast(context, 'Failed to delete games. Please try again.', error: true);
+      }
+    }
+
+    Future<void> showSavedRowContextMenu(
+      _DatabaseSavedGameContextRequest request,
+    ) async {
+      final analysis = request.analysis;
+      final index = filtered.indexWhere((row) => row.id == analysis.id);
+      if (index < 0) return;
+      if (!clampedSelectedIds.contains(analysis.id)) {
+        selectSavedIndex(index);
+      } else {
+        selectedId.value = analysis.id;
+        _requestDatabaseWorkspaceFocus(shortcutsFocusNode);
+      }
+
+      final actionRows = contextRowsFor(analysis);
+      final action = await _showDatabaseSavedGameContextMenu(
+        context: context,
+        position: request.position,
+        selectedCount: actionRows.length,
+        visibleCount: visibleIds.length,
+        canDelete: !args.isSubscribed,
+      );
+      if (action == null || !context.mounted) return;
+      switch (action) {
+        case _DatabaseSavedGameContextAction.copyPgn:
+          unawaited(
+            copySavedAnalysesAsPgn(context: context, analyses: actionRows),
+          );
+        case _DatabaseSavedGameContextAction.selectAll:
+          selectAllVisibleSaved();
+        case _DatabaseSavedGameContextAction.delete:
+          unawaited(deleteSavedRows(actionRows));
+      }
+    }
+
     void pasteIntoWorkspaceFolder() {
       if (args.isSubscribed) {
         showDesktopToast(context, '"${args.title}" is read-only.', error: true);
@@ -9792,6 +10015,7 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
     return _databaseWorkspaceClipboardShortcuts(
       onCopy: copySelectedSaved,
       onPaste: args.isSubscribed ? null : pasteIntoWorkspaceFolder,
+      onSelectAll: selectAllVisibleSaved,
       child: Focus(
         focusNode: shortcutsFocusNode,
         canRequestFocus: true,
@@ -9878,6 +10102,7 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
                           if (index >= 0) selectSavedIndex(index);
                         },
                         onOpen: openSelected,
+                        onContextMenu: showSavedRowContextMenu,
                       ),
             ),
           ],
@@ -10334,6 +10559,18 @@ class _DatabaseWorkspaceToolbar extends StatelessWidget {
 // librarySelectedRowDecoration now lives in library_table_row_style.dart and is
 // re-exported above so existing call-sites and tests keep resolving it here.
 
+class _DatabaseSavedGameContextRequest {
+  const _DatabaseSavedGameContextRequest({
+    required this.analysis,
+    required this.position,
+  });
+
+  final SavedAnalysis analysis;
+  final Offset position;
+}
+
+enum _DatabaseSavedGameContextAction { copyPgn, selectAll, delete }
+
 class _DatabaseSavedGamesTable extends HookWidget {
   const _DatabaseSavedGamesTable({
     required this.rows,
@@ -10345,6 +10582,7 @@ class _DatabaseSavedGamesTable extends HookWidget {
     required this.onSelect,
     required this.onOpen,
     this.onRangeSelect,
+    this.onContextMenu,
   });
 
   final List<SavedAnalysis> rows;
@@ -10356,6 +10594,7 @@ class _DatabaseSavedGamesTable extends HookWidget {
   final ValueChanged<SavedAnalysis> onSelect;
   final ValueChanged<SavedAnalysis> onOpen;
   final ValueChanged<int>? onRangeSelect;
+  final ValueChanged<_DatabaseSavedGameContextRequest>? onContextMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -10403,6 +10642,15 @@ class _DatabaseSavedGamesTable extends HookWidget {
                               : () => onRangeSelect!(i),
                       onSelect: () => onSelect(rows[i]),
                       onOpen: () => onOpen(rows[i]),
+                      onContextMenu:
+                          onContextMenu == null
+                              ? null
+                              : (position) => onContextMenu!(
+                                _DatabaseSavedGameContextRequest(
+                                  analysis: rows[i],
+                                  position: position,
+                                ),
+                              ),
                     ),
               ),
             ),
@@ -10423,6 +10671,7 @@ class _DatabaseSavedGameRow extends StatefulWidget {
     this.onRangeSelect,
     required this.onSelect,
     required this.onOpen,
+    this.onContextMenu,
   });
 
   final int index;
@@ -10433,6 +10682,7 @@ class _DatabaseSavedGameRow extends StatefulWidget {
   final VoidCallback? onRangeSelect;
   final VoidCallback onSelect;
   final VoidCallback onOpen;
+  final ValueChanged<Offset>? onContextMenu;
 
   @override
   State<_DatabaseSavedGameRow> createState() => _DatabaseSavedGameRowState();
@@ -10558,6 +10808,10 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow>
               widget.onSelect();
             },
             onDoubleTap: widget.onOpen,
+            onSecondaryTapUp:
+                widget.onContextMenu == null
+                    ? null
+                    : (details) => widget.onContextMenu!(details.globalPosition),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 100),
               decoration: librarySelectedRowDecoration(
