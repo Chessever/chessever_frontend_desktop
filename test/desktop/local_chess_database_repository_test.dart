@@ -1031,6 +1031,47 @@ void main() {
     },
   );
 
+  test('path-only fallback prepares schema through the write queue', () async {
+    final pgnFile = File('${temp.path}/queued-path-fallback.pgn');
+    await pgnFile.writeAsString(_samplePgn);
+    final workerDbPath = p.join(temp.path, 'queued-path-only-local-chess.db');
+    final progressMessages = <String>[];
+    final repo = LocalChessDatabaseRepository(
+      database: () async => throw StateError('app cache unavailable'),
+      databaseFilePath: () async => workerDbPath,
+      cachedFileNodeGamePreviewLimit: 1,
+    );
+
+    final queueEntered = Completer<void>();
+    final releaseQueue = Completer<void>();
+    final held = LocalChessDatabaseRepository.debugRunWriteSerialized(() async {
+      queueEntered.complete();
+      await releaseQueue.future;
+    });
+    await queueEntered.future.timeout(const Duration(seconds: 5));
+
+    final importFuture = repo.importSingleFileSource(
+      path: pgnFile.path,
+      onProgress: (progress) => progressMessages.add(progress.message),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    expect(progressMessages, contains('Preparing local database cache...'));
+    expect(
+      progressMessages,
+      isNot(contains('Checking local database schema...')),
+    );
+    expect(progressMessages, isNot(contains('Local database cache ready.')));
+
+    releaseQueue.complete();
+    final source = await importFuture.timeout(const Duration(seconds: 5));
+    await held.timeout(const Duration(seconds: 5));
+
+    expect(source, isNotNull);
+    expect(progressMessages, contains('Checking local database schema...'));
+    expect(progressMessages, contains('Local database cache ready.'));
+  });
+
   test(
     'queued import prefers the open app cache over a path-only writer',
     () async {

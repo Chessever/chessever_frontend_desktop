@@ -82,7 +82,9 @@ class LocalChessResqliteDatabase {
   Future<resqlite.Database> openDedicatedConnection() async {
     final path = await _resolvePath();
     final db = await resqlite.Database.open(path);
-    await _configure(db);
+    await LocalChessDatabaseRepository._runLocalCacheWriteQueued(
+      () => _configure(db),
+    );
     return db;
   }
 
@@ -106,24 +108,22 @@ class LocalChessResqliteDatabase {
       ),
     );
     final db = await resqlite.Database.open(path);
-    await _configure(db);
-    await LocalChessDatabaseRepository._runLocalCacheWriteQueued(
-      () => createLocalChessResqliteDatabaseSchema(db),
-    );
-    if (purgedForDevelopment) {
-      localChessLog.warning(
-        'Skipping legacy sqflite local chess migration for development purge',
-        context: <String, Object?>{'path': path},
-      );
-    } else {
-      await LocalChessDatabaseRepository._runLocalCacheWriteQueued(
-        () => migrateLegacyLocalChessSqfliteCache(
+    await LocalChessDatabaseRepository._runLocalCacheWriteQueued(() async {
+      await _configure(db);
+      await createLocalChessResqliteDatabaseSchema(db);
+      if (purgedForDevelopment) {
+        localChessLog.warning(
+          'Skipping legacy sqflite local chess migration for development purge',
+          context: <String, Object?>{'path': path},
+        );
+      } else {
+        await migrateLegacyLocalChessSqfliteCache(
           db,
           legacyDatabase: _defaultLegacyLocalChessSqfliteDatabase,
           onProgress: onProgress,
-        ),
-      );
-    }
+        );
+      }
+    });
     onProgress?.call(
       LocalChessScanProgress(
         fraction: 0.18,
@@ -1697,14 +1697,16 @@ class LocalChessDatabaseRepository {
           message: 'Preparing local database cache...',
         ),
       );
-      await _configureStandaloneLocalChessDatabase(db);
-      onProgress?.call(
-        LocalChessScanProgress(
-          fraction: 0.03,
-          message: 'Checking local database schema...',
-        ),
-      );
-      await createLocalChessResqliteDatabaseSchema(db);
+      await _runLocalCacheWriteQueued(() async {
+        await _configureStandaloneLocalChessDatabase(db);
+        onProgress?.call(
+          LocalChessScanProgress(
+            fraction: 0.03,
+            message: 'Checking local database schema...',
+          ),
+        );
+        await createLocalChessResqliteDatabaseSchema(db);
+      });
       onProgress?.call(
         LocalChessScanProgress(
           fraction: 0.04,
