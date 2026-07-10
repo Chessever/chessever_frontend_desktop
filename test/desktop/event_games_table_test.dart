@@ -893,6 +893,68 @@ void main() {
     ]);
   });
 
+  testWidgets(
+    'source rail highlight follows an externally selected active game',
+    (tester) async {
+      await tester.pumpWidget(
+        _wrap(
+          BoardTabGameArgs(
+            gameId: 'source-game-1',
+            pgn: '1. e4 e5 *',
+            label: 'Source game',
+            whiteName: 'White One',
+            blackName: 'Black One',
+            routeTitle: 'Miniatures',
+            routeGames: [
+              _summary(
+                id: 'source-game-1',
+                roundLabel: '2026',
+                whitePlayer: 'White One',
+                blackPlayer: 'Black One',
+              ),
+              _summary(
+                id: 'source-game-2',
+                roundLabel: '2026',
+                whitePlayer: 'White Two',
+                blackPlayer: 'Black Two',
+              ),
+            ],
+            gameListSelectedId: 'source-game-1',
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // Give the source rail its own local highlight, as happens after a row
+      // click before the global Ctrl+Down board shortcut changes games.
+      await tester.tap(find.text('Black One'));
+      await tester.pump(const Duration(milliseconds: 350));
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(EventGamesTable)),
+      );
+      container.read(boardTabGameArgsByTabIdProvider.notifier).update((tabs) {
+        final current = tabs['tournaments-default']!;
+        return {
+          ...tabs,
+          'tournaments-default': current.copyWith(
+            gameId: 'source-game-2',
+            gameListSelectedId: 'source-game-2',
+            whiteName: 'White Two',
+            blackName: 'Black Two',
+          ),
+        };
+      });
+      await tester.pump();
+
+      final table = tester.widget<Table>(find.byType(Table));
+      final firstDecoration = table.children[0].decoration as BoxDecoration;
+      final secondDecoration = table.children[1].decoration as BoxDecoration;
+      expect(firstDecoration.color, Colors.transparent);
+      expect(secondDecoration.color, isNot(Colors.transparent));
+    },
+  );
+
   testWidgets('event games keep the board and round column', (tester) async {
     await tester.pumpWidget(
       _wrap(

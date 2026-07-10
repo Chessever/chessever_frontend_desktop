@@ -207,6 +207,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
   String? _loadingDatabaseTabId;
   String? _databaseLoadErrorTabId;
   String? _highlightedGameId;
+  String? _lastSelectedGameId;
   String? _rangeAnchorGameId;
   Set<String> _highlightedGameIds = const <String>{};
   String? _databaseLoadError;
@@ -253,6 +254,20 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
       _rangeAnchorGameId = game.id;
       _highlightedGameIds = const <String>{};
     });
+  }
+
+  void _syncHighlightWithSelectedGame(String? selectedGameId) {
+    if (_lastSelectedGameId == selectedGameId) return;
+    final previousSelectedGameId = _lastSelectedGameId;
+    _lastSelectedGameId = selectedGameId;
+    if (previousSelectedGameId == null ||
+        _highlightedGameId == null ||
+        _highlightedGameId == selectedGameId) {
+      return;
+    }
+    _highlightedGameId = null;
+    _rangeAnchorGameId = selectedGameId;
+    _highlightedGameIds = const <String>{};
   }
 
   void _highlightGameRange(
@@ -892,6 +907,9 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
                 .expand((round) => round.games)
                 .toList(growable: false);
     final selectedGameId = resolved.selectedGameId;
+    if (resolved.kind == _GameListKind.source) {
+      _syncHighlightWithSelectedGame(selectedGameId);
+    }
     final activeSelectionId = _highlightedGameId ?? selectedGameId;
     _pruneRowKeys(orderedGames);
     final liveBatchKeys = _eventRailLiveBatchKeys(
