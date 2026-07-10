@@ -7210,6 +7210,12 @@ Future<_DatabaseSavedGameContextAction?> _showDatabaseSavedGameContextMenu({
     position: position,
     width: 220,
     entries: [
+      if (canDelete)
+        const DesktopContextMenuItem(
+          value: _DatabaseSavedGameContextAction.pasteGames,
+          icon: Icons.content_paste_go_rounded,
+          label: 'Paste games',
+        ),
       DesktopContextMenuItem(
         value: _DatabaseSavedGameContextAction.copyPgn,
         icon: Icons.content_copy_rounded,
@@ -9962,6 +9968,22 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
       }
     }
 
+    void pasteIntoWorkspaceFolder() {
+      if (args.isSubscribed) {
+        showDesktopToast(context, '"${args.title}" is read-only.', error: true);
+        return;
+      }
+      unawaited(
+        quickImportClipboardToFolder(
+          context: context,
+          ref: ref,
+          folder: _workspaceFolderFromArgs(args),
+        ).then((count) {
+          if (count > 0) refreshNonce.value++;
+        }),
+      );
+    }
+
     Future<void> showSavedRowContextMenu(
       _DatabaseSavedGameContextRequest request,
     ) async {
@@ -9985,6 +10007,8 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
       );
       if (action == null || !context.mounted) return;
       switch (action) {
+        case _DatabaseSavedGameContextAction.pasteGames:
+          pasteIntoWorkspaceFolder();
         case _DatabaseSavedGameContextAction.copyPgn:
           unawaited(
             copySavedAnalysesAsPgn(context: context, analyses: actionRows),
@@ -9994,22 +10018,6 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
         case _DatabaseSavedGameContextAction.delete:
           unawaited(deleteSavedRows(actionRows));
       }
-    }
-
-    void pasteIntoWorkspaceFolder() {
-      if (args.isSubscribed) {
-        showDesktopToast(context, '"${args.title}" is read-only.', error: true);
-        return;
-      }
-      unawaited(
-        quickImportClipboardToFolder(
-          context: context,
-          ref: ref,
-          folder: _workspaceFolderFromArgs(args),
-        ).then((count) {
-          if (count > 0) refreshNonce.value++;
-        }),
-      );
     }
 
     return _databaseWorkspaceClipboardShortcuts(
@@ -10569,7 +10577,16 @@ class _DatabaseSavedGameContextRequest {
   final Offset position;
 }
 
-enum _DatabaseSavedGameContextAction { copyPgn, selectAll, delete }
+enum _DatabaseSavedGameContextAction { pasteGames, copyPgn, selectAll, delete }
+
+@visibleForTesting
+List<String> debugDatabaseSavedGameContextMenuLabels({required bool canPaste}) =>
+    <String>[
+      if (canPaste) 'Paste games',
+      'Copy PGN',
+      'Select all',
+      'Delete game',
+    ];
 
 class _DatabaseSavedGamesTable extends HookWidget {
   const _DatabaseSavedGamesTable({

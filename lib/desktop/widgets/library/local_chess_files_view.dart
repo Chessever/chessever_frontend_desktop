@@ -513,6 +513,7 @@ class LocalChessFilesView extends HookConsumerWidget {
                             games: filtered,
                             databaseGames: boardContextGames,
                             sort: sort.value,
+                            onPasteGames: pasteIntoLocalDatabase,
                             onSortChange: (next) => sort.value = next,
                             onRefresh: onRefreshOverride,
                             onSelectPath: onSelectPath,
@@ -958,7 +959,17 @@ FBaseButtonStyle Function(FButtonStyle style) _localChildCardButtonStyle({
   );
 }
 
-enum _LocalGameRowAction { gameInfo, copyPgn, saveToCloud, delete }
+enum _LocalGameRowAction { pasteGames, gameInfo, copyPgn, saveToCloud, delete }
+
+@visibleForTesting
+List<String> debugLocalGameRowContextMenuLabels({required bool canPaste}) =>
+    <String>[
+      if (canPaste) 'Paste games',
+      'Game info',
+      'Copy PGN',
+      'Save To Cloud',
+      'Delete game',
+    ];
 
 class _LocalGamesTable extends HookConsumerWidget {
   const _LocalGamesTable({
@@ -967,6 +978,7 @@ class _LocalGamesTable extends HookConsumerWidget {
     required this.games,
     required this.databaseGames,
     required this.sort,
+    required this.onPasteGames,
     required this.onSortChange,
     required this.onRefresh,
     required this.onSelectPath,
@@ -982,6 +994,7 @@ class _LocalGamesTable extends HookConsumerWidget {
   final List<LocalChessGame> games;
   final List<LocalChessGame> databaseGames;
   final _LocalGamesSortConfig sort;
+  final VoidCallback onPasteGames;
   final ValueChanged<_LocalGamesSortConfig> onSortChange;
   final Future<void> Function()? onRefresh;
   final ValueChanged<String> onSelectPath;
@@ -1302,6 +1315,11 @@ class _LocalGamesTable extends HookConsumerWidget {
         width: 220,
         entries: [
           const DesktopContextMenuItem(
+            value: _LocalGameRowAction.pasteGames,
+            icon: Icons.content_paste_go_rounded,
+            label: 'Paste games',
+          ),
+          const DesktopContextMenuItem(
             value: _LocalGameRowAction.gameInfo,
             icon: Icons.info_outline_rounded,
             label: 'Game info',
@@ -1328,6 +1346,8 @@ class _LocalGamesTable extends HookConsumerWidget {
       );
       if (action == null || !context.mounted) return;
       switch (action) {
+        case _LocalGameRowAction.pasteGames:
+          onPasteGames();
         case _LocalGameRowAction.gameInfo:
           unawaited(showLocalGameInfoDialog(context, game));
         case _LocalGameRowAction.copyPgn:
