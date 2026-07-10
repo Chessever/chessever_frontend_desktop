@@ -1406,56 +1406,41 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
               onImportPgnFiles: onImportPgnFiles,
             ),
             Expanded(
-              child: ResizableSplitView(
-                axis: Axis.vertical,
-                storageKey: 'library_pane.my_databases.home_split',
-                children: [
-                  SplitChild(
-                    minSize: 124,
-                    maxSize: 220,
-                    initialWeight: 0.24,
-                    label: 'My Databases',
-                    child: _MyDatabasesBoard(
-                      folders: folders,
-                      currentFolderId: currentFolderId,
-                      currentLocalGroupId: currentLocalGroupId.value,
-                      localSource: localSource,
-                      selectedFolderId: selectedFolderId,
-                      selectedLocalPath: selectedLocalPath,
-                      isDeletingLocalDatabase: deleteProgress.value != null,
-                      onDeleteProgress: setDeleteProgress,
-                      onSelectFolder: onSelectFolder,
-                      onOpenFolder: onOpenFolder,
-                      onOpenDatabase: onOpenDatabase,
-                      onNavigateToFolder: onNavigateToFolder,
-                      onCurrentLocalGroupChanged:
-                          (value) => currentLocalGroupId.value = value,
-                      onSelectLocalPath: onSelectLocalPath,
-                      onOpenLocalPath: onOpenLocalPath,
-                      onDropDatabase: onDropDatabase,
-                    ),
+              child: buildLibraryMyDatabasesHomeSplit(
+                board: _MyDatabasesBoard(
+                  folders: folders,
+                  currentFolderId: currentFolderId,
+                  currentLocalGroupId: currentLocalGroupId.value,
+                  localSource: localSource,
+                  selectedFolderId: selectedFolderId,
+                  selectedLocalPath: selectedLocalPath,
+                  isDeletingLocalDatabase: deleteProgress.value != null,
+                  onDeleteProgress: setDeleteProgress,
+                  onSelectFolder: onSelectFolder,
+                  onOpenFolder: onOpenFolder,
+                  onOpenDatabase: onOpenDatabase,
+                  onNavigateToFolder: onNavigateToFolder,
+                  onCurrentLocalGroupChanged:
+                      (value) => currentLocalGroupId.value = value,
+                  onSelectLocalPath: onSelectLocalPath,
+                  onOpenLocalPath: onOpenLocalPath,
+                  onDropDatabase: onDropDatabase,
+                ),
+                preview: switch (selectedKind) {
+                  _LibraryDatabaseKind.local => _LocalDatabaseMiniPreview(
+                    source: localSource,
+                    selectedNode: selectedLocalNode,
+                    selectedPath: selectedLocalPath,
+                    onOpen:
+                        selectedLocalPath == null
+                            ? null
+                            : () => onOpenLocalPath(selectedLocalPath!),
                   ),
-                  SplitChild(
-                    minSize: 260,
-                    initialWeight: 0.70,
-                    label: 'Preview',
-                    child: switch (selectedKind) {
-                      _LibraryDatabaseKind.local => _LocalDatabaseMiniPreview(
-                        source: localSource,
-                        selectedNode: selectedLocalNode,
-                        selectedPath: selectedLocalPath,
-                        onOpen:
-                            selectedLocalPath == null
-                                ? null
-                                : () => onOpenLocalPath(selectedLocalPath!),
-                      ),
-                      _LibraryDatabaseKind.cloud => _CloudDatabaseMiniPreview(
-                        folder: selectedFolder,
-                        onOpenFolder: onOpenDatabase,
-                      ),
-                    },
+                  _LibraryDatabaseKind.cloud => _CloudDatabaseMiniPreview(
+                    folder: selectedFolder,
+                    onOpenFolder: onOpenDatabase,
                   ),
-                ],
+                },
               ),
             ),
           ],
@@ -2072,7 +2057,6 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       final isFolder = iconKind == _DatabaseBoardIconKind.folder;
       final tile = _DatabaseBoardTile(
         title: item.title,
-        subtitle: item.subtitleForKind(iconKind),
         iconKind: iconKind,
         selected:
             folder != null
@@ -2166,8 +2150,8 @@ class _MyDatabasesBoard extends HookConsumerWidget {
               ),
               const SizedBox(height: 10),
               Wrap(
-                spacing: 10,
-                runSpacing: 10,
+                spacing: _kDatabaseBoardTileSpacing,
+                runSpacing: _kDatabaseBoardTileRunSpacing,
                 children: [for (final item in items) buildBoardTile(item)],
               ),
               if (items.isEmpty)
@@ -3056,8 +3040,44 @@ class _ChessDatabaseGlyphPainter extends CustomPainter {
   }
 }
 
-const double _kDatabaseBoardTileWidth = 196;
-const double _kDatabaseBoardTileHeight = 100;
+const double _kDatabaseBoardTileWidth = 168;
+const double _kDatabaseBoardTileHeight = 60;
+const double _kDatabaseBoardTileSpacing = 6;
+const double _kDatabaseBoardTileRunSpacing = 6;
+
+const double debugLibraryDatabaseTileWidth = _kDatabaseBoardTileWidth;
+const double debugLibraryDatabaseTileHeight = _kDatabaseBoardTileHeight;
+const double debugLibraryDatabaseTileSpacing = _kDatabaseBoardTileSpacing;
+const double debugLibraryDatabaseTileRunSpacing = _kDatabaseBoardTileRunSpacing;
+const double debugLibraryDatabasePreviewMinHeight = 260;
+
+@visibleForTesting
+Widget buildLibraryMyDatabasesHomeSplit({
+  required Widget board,
+  required Widget preview,
+  String? storageKey = 'library_pane.my_databases.home_split',
+  ResizableSplitViewController? controller,
+}) {
+  return ResizableSplitView(
+    axis: Axis.vertical,
+    storageKey: storageKey,
+    controller: controller,
+    children: [
+      SplitChild(
+        minSize: 124,
+        initialWeight: 0.30,
+        label: 'My Databases',
+        child: board,
+      ),
+      SplitChild(
+        minSize: debugLibraryDatabasePreviewMinHeight,
+        initialWeight: 0.70,
+        label: 'Preview',
+        child: preview,
+      ),
+    ],
+  );
+}
 
 class _DatabaseBoardTile extends StatefulWidget {
   const _DatabaseBoardTile({
@@ -3066,12 +3086,10 @@ class _DatabaseBoardTile extends StatefulWidget {
     required this.selected,
     required this.onSelect,
     required this.onOpen,
-    this.subtitle,
     this.onContextMenu,
   });
 
   final String title;
-  final String? subtitle;
   final _DatabaseBoardIconKind iconKind;
   final bool selected;
   final VoidCallback onSelect;
@@ -3147,7 +3165,10 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
                   borderRadius: 10,
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 120),
-                    padding: const EdgeInsets.fromLTRB(10, 9, 10, 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 7,
+                    ),
                     decoration: BoxDecoration(
                       color:
                           widget.selected
@@ -3172,8 +3193,8 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
                         // Kind well — folders are rounded-square “containers”,
                         // databases are slightly rounder “records”.
                         Container(
-                          width: 34,
-                          height: 34,
+                          width: 30,
+                          height: 30,
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
                             color: chrome.wellFill,
@@ -3185,49 +3206,21 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
                           child: _DatabaseBoardIcon(
                             kind: widget.iconKind,
                             color: chrome.accent,
-                            size: 18,
+                            size: 17,
                           ),
                         ),
-                        const SizedBox(width: 9),
+                        const SizedBox(width: 8),
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Row(
-                                children: [
-                                  Flexible(
-                                    child: Text(
-                                      widget.title,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: kWhiteColor,
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w800,
-                                        height: 1.15,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  _LibraryKindChip(chrome: chrome),
-                                ],
-                              ),
-                              if (widget.subtitle != null) ...[
-                                const SizedBox(height: 4),
-                                Text(
-                                  widget.subtitle!,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: kWhiteColor.withValues(alpha: 0.62),
-                                    fontSize: 10.5,
-                                    fontWeight: FontWeight.w600,
-                                    height: 1.15,
-                                  ),
-                                ),
-                              ],
-                            ],
+                          child: Text(
+                            widget.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: kWhiteColor,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              height: 1.15,
+                            ),
                           ),
                         ),
                       ],
@@ -3243,33 +3236,6 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
   }
 }
 
-class _LibraryKindChip extends StatelessWidget {
-  const _LibraryKindChip({required this.chrome});
-
-  final _LibraryKindChrome chrome;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-      decoration: BoxDecoration(
-        color: chrome.wellFill,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: chrome.wellBorder),
-      ),
-      child: Text(
-        chrome.kindLabel,
-        style: TextStyle(
-          color: chrome.accent,
-          fontSize: 9,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0.15,
-          height: 1,
-        ),
-      ),
-    );
-  }
-}
 
 class _CloudDatabaseMiniPreview extends HookConsumerWidget {
   const _CloudDatabaseMiniPreview({
