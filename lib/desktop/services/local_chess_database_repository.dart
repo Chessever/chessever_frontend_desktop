@@ -325,6 +325,8 @@ const String _localChessCacheGenerationName =
     'local_chess_resqlite_cache_generation_20260628_safe_streaming_v1';
 const String _localChessTreeDepthGenerationName =
     'local_chess_tree_depth_50_v1';
+const String _localChessTreePositionIdentityGenerationName =
+    'local_chess_tree_position_identity_fen4_v1';
 const String _localChessOpeningNameBackfillName =
     'local_chess_opening_name_backfill_v1';
 const String _localChessTimeControlBackfillName =
@@ -374,7 +376,13 @@ Future<T> _cancelableLocalChessFuture<T>(
 Future<sqflite.Database> _defaultLegacyLocalChessSqfliteDatabase() =>
     AppDatabase.instance.database;
 
-Future<void> createLocalChessResqliteDatabaseSchema(
+Future<void> createLocalChessResqliteDatabaseSchema(resqlite.Database db) {
+  return LocalChessDatabaseRepository._runLocalCacheWriteQueued(
+    () => _createLocalChessResqliteDatabaseSchemaUnlocked(db),
+  );
+}
+
+Future<void> _createLocalChessResqliteDatabaseSchemaUnlocked(
   resqlite.Database db,
 ) async {
   await db.transaction((tx) async {
@@ -496,6 +504,7 @@ Future<void> createLocalChessResqliteDatabaseSchema(
       const <Object?>[0, 'Unknown'],
     );
     await _ensureLocalChessCacheGeneration(tx);
+    await _ensureLocalChessTreePositionIdentityGeneration(tx);
     await _ensureLocalChessTreeDepthGeneration(tx);
   });
 }
@@ -765,6 +774,61 @@ Future<void> _ensureLocalChessCacheGeneration(resqlite.Transaction tx) async {
   );
 }
 
+Future<void> _ensureLocalChessTreePositionIdentityGeneration(
+  resqlite.Transaction tx, {
+  bool invalidateExisting = false,
+}) async {
+  final markerRows = await tx.select(
+    'SELECT 1 FROM $_localChessMigrationsTable WHERE name = ? LIMIT 1',
+    const <Object?>[_localChessTreePositionIdentityGenerationName],
+  );
+  if (markerRows.isNotEmpty && !invalidateExisting) return;
+
+  final treeRows = await tx.select('''
+    SELECT
+      (SELECT COUNT(*) FROM $localChessTreeNodesTable) AS node_count,
+      (SELECT COUNT(*) FROM $localChessTreeMovesTable) AS move_count,
+      (SELECT COUNT(*) FROM $localChessPositionGamesTable) AS ref_count,
+      (
+        SELECT COUNT(*)
+        FROM $localChessDatabasesTable
+        WHERE position_count > 0
+          OR tree_snapshot IS NOT NULL
+          OR tree_max_ply IS NOT NULL
+      ) AS metadata_count
+    ''');
+  final treeState = treeRows.single;
+  final hasGeneratedTreeState =
+      _readInt(treeState['node_count']) > 0 ||
+      _readInt(treeState['move_count']) > 0 ||
+      _readInt(treeState['ref_count']) > 0 ||
+      _readInt(treeState['metadata_count']) > 0;
+  if (hasGeneratedTreeState) {
+    localChessLog.info(
+      'Invalidating local chess trees with stale position identity',
+      context: <String, Object?>{
+        'nodes': _readInt(treeState['node_count']),
+        'moves': _readInt(treeState['move_count']),
+        'positionRefs': _readInt(treeState['ref_count']),
+        'databases': _readInt(treeState['metadata_count']),
+        'generation': _localChessTreePositionIdentityGenerationName,
+      },
+    );
+    await _clearLocalChessTreeCache(tx);
+  }
+
+  await tx.execute(
+    '''
+    INSERT OR REPLACE INTO $_localChessMigrationsTable(name, completed_at_ms)
+    VALUES (?, ?)
+    ''',
+    <Object?>[
+      _localChessTreePositionIdentityGenerationName,
+      DateTime.now().millisecondsSinceEpoch,
+    ],
+  );
+}
+
 Future<void> _ensureLocalChessTreeDepthGeneration(
   resqlite.Transaction tx,
 ) async {
@@ -846,6 +910,24 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
   LocalChessLegacySqfliteDatabaseFactory? legacyDatabase,
   Iterable<LocalChessLegacySqfliteDatabaseFactory>? legacyDatabaseCandidates,
   @visibleForTesting Iterable<String>? legacyDatabasePathCandidates,
+  LocalChessScanProgressSink? onProgress,
+}) {
+  return LocalChessDatabaseRepository._runLocalCacheWriteQueued(
+    () => _migrateLegacyLocalChessSqfliteCacheUnlocked(
+      target,
+      legacyDatabase: legacyDatabase,
+      legacyDatabaseCandidates: legacyDatabaseCandidates,
+      legacyDatabasePathCandidates: legacyDatabasePathCandidates,
+      onProgress: onProgress,
+    ),
+  );
+}
+
+Future<void> _migrateLegacyLocalChessSqfliteCacheUnlocked(
+  resqlite.Database target, {
+  LocalChessLegacySqfliteDatabaseFactory? legacyDatabase,
+  Iterable<LocalChessLegacySqfliteDatabaseFactory>? legacyDatabaseCandidates,
+  Iterable<String>? legacyDatabasePathCandidates,
   LocalChessScanProgressSink? onProgress,
 }) async {
   void emit(double fraction, String message) {
@@ -986,6 +1068,10 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
         );
         emit(0.94, 'Finalizing local database migration...');
         await _backfillPositionGameNextUci(tx);
+        await _ensureLocalChessTreePositionIdentityGeneration(
+          tx,
+          invalidateExisting: true,
+        );
         await _ensureLocalChessTreeDepthGeneration(tx);
         await tx.execute(
           '''

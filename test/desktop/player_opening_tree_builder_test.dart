@@ -37,6 +37,25 @@ void main() {
     expect(moves.first.lastPlayed, DateTime.parse('2026-05-21'));
   });
 
+  test('falls back to old compact two-field snapshot keys', () {
+    final snapshot = _snapshotJson();
+    snapshot['fk'] = <String>[
+      Chess.initial.fen.split(RegExp(r'\s+')).take(2).join(' '),
+    ];
+    final index = PlayerOpeningTreeIndex.fromSnapshot(
+      PlayerOpeningTreeSnapshot.fromJson(snapshot),
+    );
+
+    final canonicalKey = playerOpeningTreeFenKey(Chess.initial.fen);
+    final moves = index.movesForFen(Chess.initial.fen);
+
+    expect(canonicalKey.split(' '), hasLength(4));
+    expect(canonicalKey, endsWith('KQkq -'));
+    expect(index.nodesByFenKey.keys.single.split(' '), hasLength(2));
+    expect(moves, hasLength(2));
+    expect(moves.first.uci, 'd2d4');
+  });
+
   test('filters supported compact backend buckets locally', () {
     final index = PlayerOpeningTreeIndex.fromSnapshot(
       PlayerOpeningTreeSnapshot.fromJson(_snapshotJson()),

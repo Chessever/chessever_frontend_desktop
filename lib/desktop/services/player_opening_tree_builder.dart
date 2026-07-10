@@ -199,7 +199,7 @@ class PlayerOpeningTreeIndex {
     PlayerOpeningTreeFilterCriteria filters =
         const PlayerOpeningTreeFilterCriteria(),
   }) {
-    final node = nodesByFenKey[_fenKey(fen)];
+    final node = _valueForFenKey(nodesByFenKey, _fenKey(fen));
     if (node == null) return const <MoveAggregate>[];
     final moves = node.moves
       .map((move) => move.toMoveAggregate(filters: filters))
@@ -261,7 +261,8 @@ class PlayerOpeningTreeIndex {
     if (gamesByFen.isEmpty && gameRowsById.isNotEmpty) {
       return _replayRowsForFenKey(key, filters: filters);
     }
-    final refs = gamesByFen[key] ?? const <PlayerOpeningTreeGameRef>[];
+    final refs =
+        _valueForFenKey(gamesByFen, key) ?? const <PlayerOpeningTreeGameRef>[];
     if (!filters.hasFilters) return refs;
     return refs
         .where((ref) {
@@ -738,8 +739,33 @@ class PlayerOpeningTreeGamesIndex {
   int get positionCount => gamesByFen.length;
 }
 
-String _fenKey(String fen) =>
-    fen.trim().split(RegExp(r'\s+')).take(2).join(' ');
+String _fenKey(String fen) => _fenKeyWithFieldLimit(fen, 4);
+
+String _legacyFenKey(String fen) => _fenKeyWithFieldLimit(fen, 2);
+
+String _fenKeyWithFieldLimit(String fen, int fieldLimit) {
+  return fen
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((field) => field.isNotEmpty)
+      .take(fieldLimit)
+      .join(' ');
+}
+
+T? _valueForFenKey<T>(Map<String, T> values, String key) {
+  final exact = values[key];
+  if (exact != null) return exact;
+  final legacyKey = _legacyFenKey(key);
+  if (legacyKey == key) return null;
+  return values[legacyKey];
+}
+
+bool _matchesFenKey(String fen, String key) {
+  final canonicalKey = _fenKey(fen);
+  if (canonicalKey == key) return true;
+  final keyFields = key.split(RegExp(r'\s+'));
+  return keyFields.length == 2 && _legacyFenKey(canonicalKey) == key;
+}
 
 String playerOpeningTreeFenKey(String fen) => _fenKey(fen);
 
@@ -1161,7 +1187,7 @@ PlayerOpeningTreeGameRef? _replayRowForFenKey({
   PlayerOpeningTreeGameRef? latest;
   for (var ply = 0; ply <= line.length; ply++) {
     final currentFen = position.fen;
-    if (_fenKey(currentFen) == fenKey) {
+    if (_matchesFenKey(currentFen, fenKey)) {
       latest = PlayerOpeningTreeGameRef(
         gameId: gameId,
         fen: currentFen,
