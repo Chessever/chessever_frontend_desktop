@@ -10,15 +10,14 @@ import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 enum GameReportStatus { idle, running, completed, cancelled, failed }
 
 enum GameMoveClassification {
-  splendid('Splendid'),
-  perfect('Perfect'),
-  best('Best'),
+  brilliant('Brilliant'),
+  goodMove('Good Move'),
+  bestMove('Best move'),
   forced('Forced'),
-  excellent('Excellent'),
-  okay('Okay'),
   inaccuracy('Inaccuracy'),
   mistake('Mistake'),
-  blunder('Blunder');
+  blunder('Blunder'),
+  missedWin('Missed Win');
 
   const GameMoveClassification(this.label);
   final String label;
@@ -65,7 +64,9 @@ class GameReportMove {
   final String san;
   final String uci;
   final bool isWhite;
-  final GameMoveClassification classification;
+
+  /// Null when the move is neutral and does not warrant a named category.
+  final GameMoveClassification? classification;
   final GameReportLine evaluation;
   final String? bestAlternative;
 }
@@ -196,14 +197,35 @@ class GameAnalysisReportController extends ChangeNotifier {
         if (_disposed || generation != _generation) return;
         final fen = fens[i];
         final terminal = terminalGameReportPosition(fen);
-        final position =
-            terminal ??
-            await _evaluate(
-              fen,
-              depth: reportDepth,
-              multiPv: reportMultiPv,
-              ownerId: _ownerId,
-            );
+        GameReportPosition position;
+        if (terminal != null) {
+          position = terminal;
+        } else {
+          while (true) {
+            if (_disposed || generation != _generation) return;
+            try {
+              position = await _evaluate(
+                fen,
+                depth: reportDepth,
+                multiPv: reportMultiPv,
+                ownerId: _ownerId,
+              );
+              break;
+            } on _ReportPositionPreempted {
+              if (_disposed || generation != _generation) return;
+              _setState(
+                GameReportState(
+                  status: GameReportStatus.running,
+                  progress: i / fens.length,
+                  completedPositions: i,
+                  totalPositions: fens.length,
+                  message: 'Waiting for live position analysis…',
+                ),
+              );
+              await Future<void>.delayed(const Duration(milliseconds: 100));
+            }
+          }
+        }
         if (_disposed || generation != _generation) return;
         positions.add(position);
         final done = i + 1;
@@ -264,12 +286,15 @@ class GameAnalysisReportController extends ChangeNotifier {
               depth: depth,
               maxDepth: depth,
               multiPV: multiPv,
-              isCurrentPosition: true,
+              // Report searches are background work. Live board analysis must
+              // remain responsive and may preempt this job; the caller retries
+              // the same report position when that happens.
+              isCurrentPosition: false,
               allowCache: true,
               ownerId: ownerId,
             );
     if (result.isCancelled) {
-      throw StateError('Stockfish cancelled the position search');
+      throw const _ReportPositionPreempted();
     }
     final lines = <GameReportLine>[
       for (final pv in result.pvs)
@@ -311,6 +336,10 @@ class GameAnalysisReportController extends ChangeNotifier {
     unawaited(_stockfish.cancelEvaluationsForOwner(_ownerId));
     super.dispose();
   }
+}
+
+class _ReportPositionPreempted implements Exception {
+  const _ReportPositionPreempted();
 }
 
 String gameReportFingerprint(ChessGame game) =>
@@ -413,7 +442,7 @@ String? _bestAlternative(GameReportPosition position, String playedMove) {
   return null;
 }
 
-GameMoveClassification classifyGameReportMove({
+GameMoveClassification? classifyGameReportMove({
   required int index,
   required ChessGame game,
   required List<GameReportPosition> positions,
@@ -450,7 +479,7 @@ GameMoveClassification classifyGameReportMove({
           move.uci,
           positions[index + 1].bestLine.moves,
         )) {
-      return GameMoveClassification.splendid;
+      return GameMoveClassification.brilliant;
     }
     final crossedOutcome =
         moverChange > 10 &&
@@ -468,16 +497,20 @@ GameMoveClassification classifyGameReportMove({
         !alternativeCompletelyWinning &&
         !simpleRecapture &&
         (crossedOutcome || onlyGoodMove)) {
-      return GameMoveClassification.perfect;
+      return GameMoveClassification.goodMove;
     }
   }
 
-  if (playedIsBest) return GameMoveClassification.best;
+  if (playedIsBest) return GameMoveClassification.bestMove;
+  final hadWinningPosition = isWhite ? beforeWin >= 75 : beforeWin <= 25;
+  final lostWinningPosition = isWhite ? afterWin <= 55 : afterWin >= 45;
+  if (hadWinningPosition && lostWinningPosition) {
+    return GameMoveClassification.missedWin;
+  }
   if (moverChange < -20) return GameMoveClassification.blunder;
   if (moverChange < -10) return GameMoveClassification.mistake;
   if (moverChange < -5) return GameMoveClassification.inaccuracy;
-  if (moverChange < -2) return GameMoveClassification.okay;
-  return GameMoveClassification.excellent;
+  return null;
 }
 
 bool isReportPieceSacrifice(

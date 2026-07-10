@@ -208,6 +208,8 @@ extension LichessMoveAnnotationTypeX on LichessMoveAnnotationType {
         return '!';
       case LichessMoveAnnotationType.bestMove:
         return '!';
+      case LichessMoveAnnotationType.forced:
+        return '□';
       case LichessMoveAnnotationType.bookMove:
         return '';
       case LichessMoveAnnotationType.inaccuracy:
@@ -235,6 +237,8 @@ extension LichessMoveAnnotationTypeX on LichessMoveAnnotationType {
         return 'assets/svgs/good_move.svg';
       case LichessMoveAnnotationType.bestMove:
         return 'assets/svgs/best_move.svg';
+      case LichessMoveAnnotationType.forced:
+        return 'assets/svgs/forced_move.svg';
       case LichessMoveAnnotationType.bookMove:
         return 'assets/svgs/book_move.svg';
     }
@@ -250,6 +254,8 @@ extension LichessMoveAnnotationTypeX on LichessMoveAnnotationType {
         return const Color(0xFF177A68);
       case LichessMoveAnnotationType.bestMove:
         return const Color(0xFF28833A);
+      case LichessMoveAnnotationType.forced:
+        return const Color(0xFF6B7A8A);
       case LichessMoveAnnotationType.bookMove:
         return const Color(0xFF4E5B4F);
       case LichessMoveAnnotationType.inaccuracy:

@@ -2,6 +2,7 @@ import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -11,7 +12,7 @@ void main() {
     '[White "Ada"]\n[Black "Grace"]\n[ECO "C20"]\n\n1. e4 e5 *',
   );
 
-  testWidgets('EnginePanel defaults to Moves and exposes the Report tab', (
+  testWidgets('EnginePanel switches to the externally selected Report view', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -25,6 +26,8 @@ void main() {
               sideToMove: 'w',
               game: game,
               headers: const {'White': 'Ada', 'Black': 'Grace'},
+              selectedTab: EnginePanelTab.report,
+              autoAnalysisAllowed: false,
             ),
           ),
         ),
@@ -32,12 +35,6 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Moves'), findsOneWidget);
-    expect(find.text('Report'), findsOneWidget);
-    expect(find.text('Engine analysis off'), findsOneWidget);
-
-    await tester.tap(find.text('Report'));
-    await tester.pump();
     expect(find.text('Analyze Game'), findsOneWidget);
     expect(find.textContaining('three candidate lines'), findsOneWidget);
   });
@@ -94,7 +91,7 @@ void main() {
           san: 'e4',
           uci: 'e2e4',
           isWhite: true,
-          classification: GameMoveClassification.best,
+          classification: GameMoveClassification.bestMove,
           evaluation: _line(30),
           bestAlternative: 'd2d4',
         ),
@@ -103,7 +100,7 @@ void main() {
           san: 'e5',
           uci: 'e7e5',
           isWhite: false,
-          classification: GameMoveClassification.excellent,
+          classification: GameMoveClassification.goodMove,
           evaluation: _line(5),
         ),
       ],
@@ -139,8 +136,17 @@ void main() {
     expect(find.text('98.4%'), findsOneWidget);
     expect(find.text('2050'), findsOneWidget);
     expect(find.text('C20'), findsOneWidget);
-    await tester.tap(find.text('1.e4'));
-    expect(jumpedPly, 1);
+    expect(find.text('Brilliant'), findsOneWidget);
+    expect(find.text('Good Move'), findsWidgets);
+    expect(find.text('Best move'), findsOneWidget);
+    expect(find.text('Missed Win'), findsOneWidget);
+    expect(find.text('Excellent'), findsNothing);
+    expect(find.text('Okay'), findsNothing);
+    expect(find.byType(SvgPicture), findsWidgets);
+    expect(find.text('1.e4'), findsNothing);
+    expect(find.text('Moves'), findsNothing);
+    await tester.tapAt(tester.getCenter(find.byType(CustomPaint).first));
+    expect(jumpedPly, isNotNull);
   });
 }
 

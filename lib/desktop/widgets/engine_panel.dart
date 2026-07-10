@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
@@ -8,7 +11,6 @@ import 'package:motor/motor.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
-import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/engine_settings_popover.dart';
 import 'package:chessever/desktop/widgets/move_hover_preview.dart';
@@ -43,7 +45,10 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.activePly = 0,
     this.onJumpToPly,
     this.onReportRunningChanged,
+    this.onReportChanged,
     this.onTabChanged,
+    this.selectedTab = EnginePanelTab.moves,
+    this.autoAnalysisAllowed = true,
   });
 
   final String fen;
@@ -64,7 +69,10 @@ class EnginePanel extends ConsumerStatefulWidget {
   final int activePly;
   final ValueChanged<int>? onJumpToPly;
   final ValueChanged<bool>? onReportRunningChanged;
+  final ValueChanged<GameAnalysisReport?>? onReportChanged;
   final ValueChanged<EnginePanelTab>? onTabChanged;
+  final EnginePanelTab selectedTab;
+  final bool autoAnalysisAllowed;
 
   @override
   ConsumerState<EnginePanel> createState() => _EnginePanelState();
@@ -72,8 +80,9 @@ class EnginePanel extends ConsumerStatefulWidget {
 
 class _EnginePanelState extends ConsumerState<EnginePanel> {
   late final GameAnalysisReportController _reportController;
-  EnginePanelTab _selectedTab = EnginePanelTab.moves;
   bool _lastReportedRunning = false;
+  GameAnalysisReport? _lastPublishedReport;
+  String? _autoStartedFingerprint;
   String? _gameFingerprint;
 
   @override
@@ -89,9 +98,12 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     final nextFingerprint = _fingerprint(widget.game);
     if (_gameFingerprint != nextFingerprint) {
       _gameFingerprint = nextFingerprint;
+      _autoStartedFingerprint = null;
       _reportController.invalidate();
-      if (_selectedTab == EnginePanelTab.report && widget.game == null) {
-        _selectTab(EnginePanelTab.moves);
+      if (widget.selectedTab == EnginePanelTab.report && widget.game == null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) widget.onTabChanged?.call(EnginePanelTab.moves);
+        });
       }
     }
   }
@@ -101,7 +113,8 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
 
   void _onReport() {
     if (!mounted) return;
-    final running = _reportController.state.isRunning;
+    final reportState = _reportController.state;
+    final running = reportState.isRunning;
     if (running != _lastReportedRunning) {
       _lastReportedRunning = running;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -109,16 +122,15 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
         widget.onReportRunningChanged?.call(running);
       });
     }
-    setState(() {});
-  }
-
-  void _selectTab(EnginePanelTab tab) {
-    if (_reportController.state.isRunning && tab == EnginePanelTab.moves) {
-      return;
+    final report = reportState.report;
+    if (!identical(report, _lastPublishedReport)) {
+      _lastPublishedReport = report;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !identical(_lastPublishedReport, report)) return;
+        widget.onReportChanged?.call(report);
+      });
     }
-    if (_selectedTab == tab) return;
-    setState(() => _selectedTab = tab);
-    widget.onTabChanged?.call(tab);
+    setState(() {});
   }
 
   Future<void> _analyze() async {
@@ -136,6 +148,32 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     return raw == null ? null : int.tryParse(raw);
   }
 
+  void _scheduleAutomaticAnalysis(EngineSettings settings) {
+    final game = widget.game;
+    if (!widget.autoAnalysisAllowed ||
+        !settings.autoGameAnalysis ||
+        game == null ||
+        game.mainline.isEmpty) {
+      return;
+    }
+    final fingerprint = gameReportFingerprint(game);
+    if (_autoStartedFingerprint == fingerprint ||
+        _reportController.state.isRunning ||
+        _reportController.state.report?.fingerprint == fingerprint) {
+      return;
+    }
+    _autoStartedFingerprint = fingerprint;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !widget.autoAnalysisAllowed ||
+          widget.game == null ||
+          gameReportFingerprint(widget.game!) != fingerprint) {
+        return;
+      }
+      unawaited(_analyze());
+    });
+  }
+
   @override
   void dispose() {
     _reportController
@@ -146,17 +184,22 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
 
   @override
   Widget build(BuildContext context) {
-    final running = _reportController.state.isRunning;
+    final asyncSettings = ref.watch(engineSettingsProviderNew);
+    final settings = asyncSettings.valueOrNull;
+    if (settings != null) _scheduleAutomaticAnalysis(settings);
+    final selectedTab = widget.selectedTab;
     return Container(
       color: kBlack2Color,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            child:
-                _selectedTab == EnginePanelTab.moves
-                    ? _buildMoves()
-                    : GameReportView(
+      child:
+          selectedTab == EnginePanelTab.moves
+              ? _buildMoves()
+              : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(height: 168, child: _buildMoves()),
+                  const Divider(height: 1, color: kDividerColor),
+                  Expanded(
+                    child: GameReportView(
                       state: _reportController.state,
                       game: widget.game,
                       headers: widget.headers,
@@ -165,14 +208,9 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                       onCancel: _reportController.cancel,
                       onJumpToPly: widget.onJumpToPly,
                     ),
-          ),
-          _EngineVerticalTabRail(
-            selected: _selectedTab,
-            movesEnabled: !running,
-            onSelected: _selectTab,
-          ),
-        ],
-      ),
+                  ),
+                ],
+              ),
     );
   }
 
@@ -265,80 +303,6 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
           ],
         ],
       ),
-    );
-  }
-}
-
-class _EngineVerticalTabRail extends StatelessWidget {
-  const _EngineVerticalTabRail({
-    required this.selected,
-    required this.movesEnabled,
-    required this.onSelected,
-  });
-
-  final EnginePanelTab selected;
-  final bool movesEnabled;
-  final ValueChanged<EnginePanelTab> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return FTheme(
-      data: FThemes.zinc.dark,
-      child: Container(
-        width: 72,
-        padding: const EdgeInsets.fromLTRB(5, 8, 5, 8),
-        decoration: const BoxDecoration(
-          color: kBlack3Color,
-          border: Border(left: BorderSide(color: kDividerColor)),
-        ),
-        child: Column(
-          children: [
-            _button(
-              tab: EnginePanelTab.moves,
-              icon: Icons.route_rounded,
-              label: 'Moves',
-              enabled: movesEnabled,
-            ),
-            const SizedBox(height: 5),
-            _button(
-              tab: EnginePanelTab.report,
-              icon: Icons.analytics_outlined,
-              label: 'Report',
-              enabled: true,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _button({
-    required EnginePanelTab tab,
-    required IconData icon,
-    required String label,
-    required bool enabled,
-  }) {
-    final button = Semantics(
-      selected: selected == tab,
-      button: true,
-      label: '$label engine tab',
-      child: FButton(
-        style: desktopSegmentButtonStyle(selected: selected == tab),
-        onPress: enabled ? () => onSelected(tab) : null,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 15),
-            const SizedBox(height: 3),
-            Text(label, style: const TextStyle(fontSize: 10)),
-          ],
-        ),
-      ),
-    );
-    if (enabled) return button;
-    return DesktopTooltip(
-      message: 'Cancel or finish the report before returning to Moves',
-      child: button,
     );
   }
 }
@@ -476,22 +440,8 @@ class _GameReportViewState extends State<GameReportView> {
           onJumpToPly: widget.onJumpToPly,
         ),
         const SizedBox(height: 12),
-        const _ReportSectionTitle('Move classifications'),
-        const SizedBox(height: 6),
         _classificationRecap(report, white, black),
-        const SizedBox(height: 12),
-        const _ReportSectionTitle('Moves'),
-        const SizedBox(height: 6),
-        for (final move in report.moves)
-          _ReportMoveRow(
-            move: move,
-            positionBefore: report.positions[move.ply - 1],
-            active: move.ply == widget.activePly,
-            onTap:
-                widget.onJumpToPly == null
-                    ? null
-                    : () => widget.onJumpToPly!(move.ply),
-          ),
+        const SizedBox(height: 4),
       ],
     );
   }
@@ -950,13 +900,9 @@ class _ReportRecapRow extends StatelessWidget {
             width: 104,
             child: Row(
               children: [
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
-                  ),
+                _GameReportClassificationIcon(
+                  classification: classification,
+                  size: 20,
                 ),
                 const SizedBox(width: 6),
                 Expanded(
@@ -992,134 +938,59 @@ class _ReportRecapRow extends StatelessWidget {
   );
 }
 
-class _ReportMoveRow extends StatelessWidget {
-  const _ReportMoveRow({
-    required this.move,
-    required this.positionBefore,
-    required this.active,
-    required this.onTap,
+class _GameReportClassificationIcon extends StatelessWidget {
+  const _GameReportClassificationIcon({
+    required this.classification,
+    required this.size,
   });
 
-  final GameReportMove move;
-  final GameReportPosition positionBefore;
-  final bool active;
-  final VoidCallback? onTap;
+  final GameMoveClassification classification;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
-    final color = _classificationColor(move.classification);
-    final moveNumber = (move.ply + 1) ~/ 2;
-    final label =
-        move.isWhite ? '$moveNumber.${move.san}' : '$moveNumber…${move.san}';
-    final alternative = _sanForUci(positionBefore.fen, move.bestAlternative);
-    return ClickCursor(
-      enabled: onTap != null,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          decoration: BoxDecoration(
-            color:
-                active ? kPrimaryColor.withValues(alpha: 0.10) : kBlack3Color,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color:
-                  active ? kPrimaryColor.withValues(alpha: 0.4) : kDividerColor,
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 7,
-                height: 7,
-                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-              ),
-              const SizedBox(width: 7),
-              SizedBox(
-                width: 72,
-                child: Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: kWhiteColor,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              Expanded(
-                child: Text(
-                  alternative == null
-                      ? move.classification.label
-                      : 'Best: $alternative',
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: color, fontSize: 10),
-                ),
-              ),
-              const SizedBox(width: 5),
-              Text(
-                _formatReportLine(move.evaluation),
-                style: const TextStyle(
-                  color: kWhiteColor70,
-                  fontSize: 10,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
-          ),
+    return DesktopTooltip(
+      message: classification.label,
+      child: Container(
+        width: size,
+        height: size,
+        padding: EdgeInsets.all(size * 0.23),
+        decoration: BoxDecoration(
+          color: _classificationColor(classification),
+          shape: BoxShape.circle,
+        ),
+        child: SvgPicture.asset(
+          _classificationIconAsset(classification),
+          fit: BoxFit.contain,
         ),
       ),
     );
   }
 }
 
-class _ReportSectionTitle extends StatelessWidget {
-  const _ReportSectionTitle(this.label);
-  final String label;
-
-  @override
-  Widget build(BuildContext context) => Text(
-    label,
-    style: const TextStyle(
-      color: kWhiteColor,
-      fontSize: 11,
-      fontWeight: FontWeight.w700,
-    ),
-  );
-}
+String _classificationIconAsset(GameMoveClassification classification) =>
+    switch (classification) {
+      GameMoveClassification.brilliant => 'assets/svgs/brilliant.svg',
+      GameMoveClassification.goodMove => 'assets/svgs/good_move.svg',
+      GameMoveClassification.bestMove => 'assets/svgs/best_move.svg',
+      GameMoveClassification.forced => 'assets/svgs/forced_move.svg',
+      GameMoveClassification.inaccuracy => 'assets/svgs/inaccuracy.svg',
+      GameMoveClassification.mistake => 'assets/svgs/mistake.svg',
+      GameMoveClassification.blunder => 'assets/svgs/blunder.svg',
+      GameMoveClassification.missedWin => 'assets/svgs/missed_win.svg',
+    };
 
 Color _classificationColor(GameMoveClassification classification) =>
     switch (classification) {
-      GameMoveClassification.splendid => const Color(0xFF22B9A0),
-      GameMoveClassification.perfect => const Color(0xFF6FB6E8),
-      GameMoveClassification.best => const Color(0xFF5BAA7A),
-      GameMoveClassification.forced => const Color(0xFF9AA3AD),
-      GameMoveClassification.excellent => const Color(0xFF75A66A),
-      GameMoveClassification.okay => const Color(0xFFB7B06A),
+      GameMoveClassification.brilliant => const Color(0xFF177A68),
+      GameMoveClassification.goodMove => const Color(0xFF177A68),
+      GameMoveClassification.bestMove => const Color(0xFF28833A),
+      GameMoveClassification.forced => const Color(0xFF6B7A8A),
       GameMoveClassification.inaccuracy => const Color(0xFFFABE46),
-      GameMoveClassification.mistake => const Color(0xFFEB9518),
+      GameMoveClassification.mistake => const Color(0xFFC55A1E),
       GameMoveClassification.blunder => const Color(0xFFC9342E),
+      GameMoveClassification.missedWin => const Color(0xFF8F1E1E),
     };
-
-String _formatReportLine(GameReportLine line) {
-  final mate = line.mate;
-  if (mate != null) return mate > 0 ? 'M$mate' : '-M${mate.abs()}';
-  return ((line.centipawns ?? 0) / 100).toStringAsFixed(2);
-}
-
-String? _sanForUci(String fen, String? uci) {
-  if (uci == null || uci.isEmpty) return null;
-  try {
-    final position = Chess.fromSetup(Setup.parseFen(fen));
-    final move = Move.parse(uci);
-    if (move == null || !position.isLegal(move)) return uci;
-    return position.makeSan(move).$2;
-  } catch (_) {
-    return uci;
-  }
-}
 
 class _PvLine extends StatefulWidget {
   const _PvLine({

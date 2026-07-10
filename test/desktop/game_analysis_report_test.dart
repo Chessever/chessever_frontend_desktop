@@ -71,8 +71,8 @@ void main() {
     final game = ChessGame.fromPgn('classify', '1. e4 *');
 
     test('covers basic win-loss thresholds', () {
-      expect(_classify(game, 50, 49), GameMoveClassification.excellent);
-      expect(_classify(game, 50, 47), GameMoveClassification.okay);
+      expect(_classify(game, 50, 49), isNull);
+      expect(_classify(game, 50, 47), isNull);
       expect(_classify(game, 50, 43), GameMoveClassification.inaccuracy);
       expect(_classify(game, 50, 38), GameMoveClassification.mistake);
       expect(_classify(game, 50, 25), GameMoveClassification.blunder);
@@ -81,7 +81,7 @@ void main() {
     test('best and forced take precedence over score thresholds', () {
       expect(
         _classify(game, 50, 20, bestMove: 'e2e4'),
-        GameMoveClassification.best,
+        GameMoveClassification.bestMove,
       );
       expect(
         _classify(game, 50, 20, alternatives: false),
@@ -110,8 +110,12 @@ void main() {
           positions: positions,
           winPercentages: const [50, 70],
         ),
-        GameMoveClassification.perfect,
+        GameMoveClassification.goodMove,
       );
+    });
+
+    test('losing a winning position produces Missed Win', () {
+      expect(_classify(game, 80, 50), GameMoveClassification.missedWin);
     });
 
     test('sacrifice and simple-recapture guards inspect the board', () {
@@ -135,7 +139,7 @@ void main() {
   });
 }
 
-GameMoveClassification _classify(
+GameMoveClassification? _classify(
   ChessGame game,
   double before,
   double after, {

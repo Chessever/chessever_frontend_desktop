@@ -106,6 +106,10 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.previousGameShortcutLabel,
     this.nextGameShortcutLabel,
     this.trailingActions,
+    this.reportSelected = false,
+    this.reportEnabled = true,
+    this.showReport = true,
+    this.onToggleReport,
   });
 
   /// Board tab id used to persist the active right-rail page. Null routes to
@@ -164,6 +168,10 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   /// Used by the desktop board to keep Save / Play-from-here / Info visible
   /// without consuming a separate board chrome row.
   final Widget? trailingActions;
+  final bool reportSelected;
+  final bool reportEnabled;
+  final bool showReport;
+  final VoidCallback? onToggleReport;
 
   final String currentFen;
   final String startingFen;
@@ -259,6 +267,17 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
   @override
   void didUpdateWidget(covariant NotationOpeningPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!oldWidget.reportSelected && widget.reportSelected) {
+      _cancelPageRestoreLock();
+      _setCurrentPage(0);
+      _buildExplorerPage = false;
+      _writeStoredPage(0);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        widget.onClearPreviewUciMove?.call();
+        _focusActivePage();
+      });
+    }
     final positionChanged =
         _positionKey(oldWidget.currentFen) != _positionKey(widget.currentFen) ||
         _positionKey(oldWidget.startingFen) !=
@@ -563,6 +582,10 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
             _SegmentBar(
               explorerOpen: explorerVisible,
               onToggleExplorer: _toggleExplorerVisibility,
+              reportSelected: widget.reportSelected,
+              reportEnabled: widget.reportEnabled,
+              showReport: widget.showReport,
+              onToggleReport: widget.onToggleReport,
               explorerScope: widget.explorerScope,
               canGoBack: widget.canGoBack,
               canGoForward: widget.canGoForward,
@@ -671,6 +694,10 @@ class _SegmentBar extends ConsumerWidget {
   const _SegmentBar({
     required this.explorerOpen,
     required this.onToggleExplorer,
+    required this.reportSelected,
+    required this.reportEnabled,
+    required this.showReport,
+    this.onToggleReport,
     required this.explorerScope,
     required this.canGoBack,
     required this.canGoForward,
@@ -692,6 +719,10 @@ class _SegmentBar extends ConsumerWidget {
 
   final bool explorerOpen;
   final VoidCallback onToggleExplorer;
+  final bool reportSelected;
+  final bool reportEnabled;
+  final bool showReport;
+  final VoidCallback? onToggleReport;
   final BoardExplorerScope? explorerScope;
   final bool canGoBack;
   final bool canGoForward;
@@ -725,8 +756,8 @@ class _SegmentBar extends ConsumerWidget {
         onPreviousGame != null ||
         onNextGame != null;
     return Container(
-      height: 42,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
+      height: 52,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
         color: kBlack2Color,
         border: Border(top: BorderSide(color: kDividerColor)),
@@ -742,6 +773,17 @@ class _SegmentBar extends ConsumerWidget {
             selected: explorerOpen,
             onTap: onToggleExplorer,
           ),
+          if (showReport) ...[
+            const SizedBox(width: 6),
+            _RailIconButton(
+              icon: Icons.analytics_outlined,
+              tooltip:
+                  reportSelected ? 'Hide game analysis' : 'Show game analysis',
+              selected: reportSelected,
+              enabled: reportEnabled && onToggleReport != null,
+              onTap: onToggleReport ?? () {},
+            ),
+          ],
           if (explorerOpen) ...[
             const SizedBox(width: 8),
             ExplorerFiltersPopoverButton(
@@ -952,8 +994,8 @@ class _RailIconButtonState extends State<_RailIconButton>
           behavior: HitTestBehavior.opaque,
           onTap: widget.enabled ? widget.onTap : null,
           child: Container(
-            width: 28,
-            height: 28,
+            width: 36,
+            height: 36,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color:
@@ -970,7 +1012,7 @@ class _RailIconButtonState extends State<_RailIconButton>
             ),
             child: Icon(
               widget.icon,
-              size: 16,
+              size: 21,
               color:
                   widget.enabled
                       ? (widget.selected ? kPrimaryColor : kWhiteColor70)
