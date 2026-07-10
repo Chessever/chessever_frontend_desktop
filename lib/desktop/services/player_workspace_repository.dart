@@ -465,6 +465,7 @@ class PlayerWorkspaceRepository {
       externalSource: GamebaseExternalPlayerSource.lichess,
       workspaceSource: PlayerWorkspaceSource.lichess,
       username: username,
+      sinceMs: sinceMs,
       onProgress: onProgress,
       cancellationToken: cancellationToken,
     );
@@ -645,6 +646,7 @@ class PlayerWorkspaceRepository {
       externalSource: GamebaseExternalPlayerSource.chesscom,
       workspaceSource: PlayerWorkspaceSource.chesscom,
       username: username,
+      sinceMs: sinceMs,
       onProgress: onProgress,
       cancellationToken: cancellationToken,
     );
@@ -760,6 +762,7 @@ class PlayerWorkspaceRepository {
       repository: repository,
       playerId: playerId,
       fideId: fideId,
+      dateFrom: dateFrom,
       progress: progress,
       expectedGameCount: expectedGameCount,
       cancellationToken: cancellationToken,
@@ -824,6 +827,7 @@ class PlayerWorkspaceRepository {
     required GamebaseRepository repository,
     required String playerId,
     required String? fideId,
+    required String? dateFrom,
     required _ChessEverDownloadProgress progress,
     required int? expectedGameCount,
     OperationCancellationToken? cancellationToken,
@@ -836,6 +840,7 @@ class PlayerWorkspaceRepository {
       export = await repository.getPlayerGamesPgn(
         playerId: playerId,
         fideId: fideId,
+        dateFrom: dateFrom,
       );
     } finally {
       exportWaitTimer?.cancel();
@@ -846,7 +851,8 @@ class PlayerWorkspaceRepository {
     final gameCount =
         export.gameCount > 0 ? export.gameCount : countPgnGames(export.pgn);
     if (export.pgn.trim().isEmpty && gameCount > 0) return null;
-    if (expectedGameCount != null &&
+    if (dateFrom == null &&
+        expectedGameCount != null &&
         expectedGameCount > 0 &&
         gameCount > 0 &&
         gameCount < expectedGameCount) {
@@ -862,8 +868,11 @@ class PlayerWorkspaceRepository {
       source: PlayerWorkspaceSource.chessever,
       pgn: export.pgn,
       gameCount: gameCount,
-      replaceExistingSource: true,
-      remoteUnchanged: _pgnCacheStatusIsUnchanged(export.cacheStatus),
+      replaceExistingSource: dateFrom == null,
+      remoteUnchanged:
+          dateFrom != null
+              ? gameCount == 0 && export.pgn.trim().isEmpty
+              : _pgnCacheStatusIsUnchanged(export.cacheStatus),
     );
   }
 
@@ -871,6 +880,7 @@ class PlayerWorkspaceRepository {
     required GamebaseExternalPlayerSource externalSource,
     required PlayerWorkspaceSource workspaceSource,
     required String username,
+    required int? sinceMs,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
@@ -891,6 +901,7 @@ class PlayerWorkspaceRepository {
       export = await repository.getExternalPlayerGamesPgn(
         source: externalSource,
         username: username,
+        sinceMs: sinceMs,
       );
     } finally {
       slowSnapshotTimer?.cancel();
@@ -900,12 +911,20 @@ class PlayerWorkspaceRepository {
 
     final gameCount =
         export.gameCount > 0 ? export.gameCount : countPgnGames(export.pgn);
-    final remoteUnchanged = _pgnCacheStatusIsUnchanged(export.cacheStatus);
+    final replaceExistingSource =
+        export.snapshotStatus?.trim().toLowerCase() != 'delta';
+    final remoteUnchanged =
+        replaceExistingSource
+            ? _pgnCacheStatusIsUnchanged(export.cacheStatus)
+            : gameCount == 0 && export.pgn.trim().isEmpty;
     onProgress?.call(
       remoteUnchanged
           ? '${externalSource.label}: source cache is already current '
               '($gameCount games).'
-          : '${externalSource.label}: received latest source snapshot '
+          : replaceExistingSource
+          ? '${externalSource.label}: received latest source snapshot '
+              '($gameCount games).'
+          : '${externalSource.label}: received incremental games '
               '($gameCount games).',
       1,
     );
@@ -913,7 +932,7 @@ class PlayerWorkspaceRepository {
       source: workspaceSource,
       pgn: export.pgn,
       gameCount: gameCount,
-      replaceExistingSource: true,
+      replaceExistingSource: replaceExistingSource,
       remoteUnchanged: remoteUnchanged,
     );
   }

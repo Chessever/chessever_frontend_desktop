@@ -36,11 +36,13 @@ class GamebasePlayerPgnExport {
     required this.pgn,
     required this.gameCount,
     this.cacheStatus,
+    this.snapshotStatus,
   });
 
   final String pgn;
   final int gameCount;
   final String? cacheStatus;
+  final String? snapshotStatus;
 }
 
 enum GamebaseExternalPlayerSource {
@@ -1407,6 +1409,7 @@ class GamebaseRepository {
     required GamebaseExternalPlayerSource source,
     required String username,
     bool refresh = false,
+    int? sinceMs,
   }) async {
     final cleanUsername = username.trim();
     if (cleanUsername.isEmpty) return null;
@@ -1416,7 +1419,10 @@ class GamebaseRepository {
           '$_baseUrl/api/player/${source.apiPathSegment}/${Uri.encodeComponent(cleanUsername)}/games.pgn';
       final response = await _dio.get<String>(
         path,
-        queryParameters: <String, dynamic>{if (refresh) 'refresh': 'true'},
+        queryParameters: <String, dynamic>{
+          if (refresh) 'refresh': 'true',
+          if (sinceMs != null && sinceMs >= 0) 'since': sinceMs,
+        },
         options: Options(
           headers: <String, String>{
             ..._headers,
@@ -1432,11 +1438,13 @@ class GamebaseRepository {
         response.headers.value('x-game-count') ?? '',
       );
       final cacheStatus = response.headers.value('x-pgn-cache');
+      final snapshotStatus = response.headers.value('x-pgn-snapshot');
 
       return GamebasePlayerPgnExport(
         pgn: pgn,
         gameCount: gameCount ?? 0,
         cacheStatus: cacheStatus,
+        snapshotStatus: snapshotStatus,
       );
     } on DioException catch (e) {
       final statusCode = e.response?.statusCode;

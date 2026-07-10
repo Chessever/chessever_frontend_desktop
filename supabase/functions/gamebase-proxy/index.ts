@@ -6,7 +6,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, if-none-match",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
   "Access-Control-Expose-Headers":
-    "X-Game-Count, X-PGN-Cache, ETag, Content-Disposition",
+    "X-Game-Count, X-PGN-Cache, X-PGN-Snapshot, ETag, Content-Disposition",
 };
 
 const DEFAULT_GAMEBASE_API_BASE = "https://service.chessever.com";
@@ -149,6 +149,8 @@ Deno.serve(async (req: Request) => {
     if (gameCount) responseHeaders.set("X-Game-Count", gameCount);
     const pgnCache = upstream.headers.get("x-pgn-cache");
     if (pgnCache) responseHeaders.set("X-PGN-Cache", pgnCache);
+    const pgnSnapshot = upstream.headers.get("x-pgn-snapshot");
+    if (pgnSnapshot) responseHeaders.set("X-PGN-Snapshot", pgnSnapshot);
     const etag = upstream.headers.get("etag");
     if (etag) responseHeaders.set("ETag", etag);
     const disposition = upstream.headers.get("content-disposition");

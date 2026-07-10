@@ -1462,6 +1462,50 @@ void main() {
       },
     );
 
+    test('sync treats an empty incremental delta as already current', () async {
+      final sourcePgns = <String, String>{
+        'alpha': '$_mergeGameOne\n\n$_mergeGameTwo',
+      };
+      final workspaceRepository = _FakePlayerWorkspaceRepository(
+        root: temp,
+        lichessPgnByUsername: sourcePgns,
+      );
+      final notifier = PlayerWorkspaceNotifier(
+        workspaceRepository: workspaceRepository,
+        gamebaseRepository: GamebaseRepository(Dio()),
+        localRepository: LocalChessDatabaseRepository(database: () async => db),
+      );
+      await notifier.load();
+      await notifier.addManualPlayer('Prep Target');
+      await notifier.selectPlayer(notifier.state.players.single.id);
+      await notifier.connectExternalAccount(
+        source: PlayerWorkspaceSource.lichess,
+        username: 'alpha',
+      );
+
+      var account =
+          notifier.state.selectedPlayer!.account(
+            PlayerWorkspaceSource.lichess,
+          )!;
+      await notifier.syncAccount(account);
+      final firstPlayer = notifier.state.selectedPlayer!;
+      final firstCombinedBuiltAt = firstPlayer.combinedBuiltAtMs;
+      final firstPath =
+          firstPlayer.account(PlayerWorkspaceSource.lichess)!.pgnPath!;
+
+      sourcePgns['alpha'] = '';
+      account =
+          notifier.state.selectedPlayer!.account(
+            PlayerWorkspaceSource.lichess,
+          )!;
+      await notifier.syncAccount(account);
+
+      final nextPlayer = notifier.state.selectedPlayer!;
+      expect(workspaceRepository.replaceExistingRequests, hasLength(1));
+      expect(nextPlayer.combinedBuiltAtMs, firstCombinedBuiltAt);
+      expect(splitPgnGames(await File(firstPath).readAsString()), hasLength(2));
+    });
+
     test(
       'reinstall redownloads a source from scratch and replaces it',
       () async {
@@ -3624,6 +3668,52 @@ $_mergeGameOne
   });
 
   group('Player workspace public API downloads', () {
+    test(
+      'external Gamebase PGN request forwards cursor and delta header',
+      () async {
+        RequestOptions? request;
+        final dio = Dio();
+        dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              request = options;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  data: _mergeGameThree,
+                  statusCode: 200,
+                  headers: Headers.fromMap(<String, List<String>>{
+                    'x-game-count': <String>['1'],
+                    'x-pgn-cache': <String>['refresh'],
+                    'x-pgn-snapshot': <String>['delta'],
+                  }),
+                ),
+              );
+            },
+          ),
+        );
+        final repository = GamebaseRepository(
+          dio,
+          baseUrl: 'https://gamebase.test',
+        );
+
+        final export = await repository.getExternalPlayerGamesPgn(
+          source: GamebaseExternalPlayerSource.lichess,
+          username: 'DrNykterstein',
+          sinceMs: 1782864000000,
+        );
+
+        expect(
+          request?.uri.path,
+          '/api/player/lichess/DrNykterstein/games.pgn',
+        );
+        expect(request?.queryParameters['since'], 1782864000000);
+        expect(export?.gameCount, 1);
+        expect(export?.cacheStatus, 'refresh');
+        expect(export?.snapshotStatus, 'delta');
+      },
+    );
+
     test('downloads ChessEver games by hydrating Gamebase PGNs', () async {
       final gamebaseRepository = _FakeGamebaseRepository(const <String, String>{
         'ce-1': _mergeGameOne,
@@ -3682,10 +3772,10 @@ $_mergeGameOne
         expect(downloaded.gameCount, 2);
         expect(downloaded.pgn, contains('Lichess import 1'));
         expect(downloaded.pgn, contains('Lichess import 2'));
-        expect(downloaded.replaceExistingSource, isTrue);
+        expect(downloaded.replaceExistingSource, isFalse);
         expect(gamebaseRepository.exportPlayerIds, <String>['ce-player']);
         expect(gamebaseRepository.exportFideIds, <String?>['1503014']);
-        expect(gamebaseRepository.exportDateFrom, <String?>[null]);
+        expect(gamebaseRepository.exportDateFrom, <String?>['2026-06-02']);
         expect(gamebaseRepository.requestedPlayerIds, isEmpty);
         expect(gamebaseRepository.hydratedIds, isEmpty);
         expect(
@@ -3849,6 +3939,7 @@ $_mergeGameOne
                 pgn: _mergeGameOne,
                 gameCount: 1,
                 cacheStatus: 'miss',
+                snapshotStatus: 'delta',
               ),
               GamebaseExternalPlayerSource.chesscom: GamebasePlayerPgnExport(
                 pgn: _mergeGameTwo,
@@ -3867,6 +3958,7 @@ $_mergeGameOne
 
       final lichess = await workspaceRepository.downloadLichessGames(
         username: 'DrNykterstein',
+        sinceMs: 1782864000000,
       );
       final chessComProgress = <({String message, double? progress})>[];
       final chessCom = await workspaceRepository.downloadChessComGames(
@@ -3878,7 +3970,7 @@ $_mergeGameOne
 
       expect(lichess.source, PlayerWorkspaceSource.lichess);
       expect(lichess.pgn, _mergeGameOne);
-      expect(lichess.replaceExistingSource, isTrue);
+      expect(lichess.replaceExistingSource, isFalse);
       expect(lichess.remoteUnchanged, isFalse);
       expect(chessCom.source, PlayerWorkspaceSource.chesscom);
       expect(chessCom.pgn, _mergeGameTwo);
@@ -3886,7 +3978,36 @@ $_mergeGameOne
       expect(chessCom.remoteUnchanged, isTrue);
       expect(chessComProgress.first.message, contains('source cache'));
       expect(chessComProgress.first.progress, greaterThan(0));
+      expect(gamebaseRepository.externalSinceMs, <int?>[1782864000000, null]);
       expect(directClientRequests, 0);
+    });
+
+    test('empty Gamebase delta is reported as already current', () async {
+      final gamebaseRepository = _FakeGamebaseRepository(
+        const <String, String>{},
+        externalExports:
+            const <GamebaseExternalPlayerSource, GamebasePlayerPgnExport>{
+              GamebaseExternalPlayerSource.lichess: GamebasePlayerPgnExport(
+                pgn: '',
+                gameCount: 0,
+                cacheStatus: 'refresh',
+                snapshotStatus: 'delta',
+              ),
+            },
+      );
+      final workspaceRepository = PlayerWorkspaceRepository(
+        gamebaseRepository: gamebaseRepository,
+      );
+
+      final downloaded = await workspaceRepository.downloadLichessGames(
+        username: 'DrNykterstein',
+        sinceMs: 1782864000000,
+      );
+
+      expect(downloaded.gameCount, 0);
+      expect(downloaded.pgn, isEmpty);
+      expect(downloaded.replaceExistingSource, isFalse);
+      expect(downloaded.remoteUnchanged, isTrue);
     });
 
     test(
@@ -4466,6 +4587,7 @@ class _FakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
       source: PlayerWorkspaceSource.lichess,
       pgn: pgn,
       gameCount: splitPgnGames(pgn).length,
+      remoteUnchanged: pgn.trim().isEmpty,
     );
   }
 
@@ -5047,6 +5169,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
   final exportPlayerIds = <String>[];
   final exportFideIds = <String?>[];
   final exportDateFrom = <String?>[];
+  final externalSinceMs = <int?>[];
   final requestedProfileIds = <String>[];
   final requestedPlayerIds = <String>[];
   final requestedIncludeData = <bool>[];
@@ -5082,7 +5205,9 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     required GamebaseExternalPlayerSource source,
     required String username,
     bool refresh = false,
+    int? sinceMs,
   }) async {
+    externalSinceMs.add(sinceMs);
     return externalExports[source];
   }
 
