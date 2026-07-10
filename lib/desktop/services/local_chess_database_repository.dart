@@ -1569,8 +1569,6 @@ const List<String> _localChessSchemaStatements = <String>[
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_site ON $localChessGamesTable(site_id)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_result ON $localChessGamesTable(result)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_result ON $localChessGamesTable(database_id, result)',
-  'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_time_category ON $localChessGamesTable(database_id, time_control_category)',
-  'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_online ON $localChessGamesTable(database_id, is_online)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_white_elo ON $localChessGamesTable(white_elo)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_black_elo ON $localChessGamesTable(black_elo)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_date ON $localChessGamesTable(database_id, date)',

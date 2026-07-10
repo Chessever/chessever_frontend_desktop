@@ -847,6 +847,72 @@ void main() {
   });
 
   test(
+    'schema migrates legacy games before creating derived-filter indexes',
+    () async {
+      final oldDb = await resqlite.Database.open(
+        '${temp.path}/old_games_cache.db',
+      );
+      addTearDown(oldDb.close);
+      await oldDb.execute('''
+      CREATE TABLE local_chess_games (
+        id TEXT PRIMARY KEY,
+        database_id TEXT NOT NULL,
+        event_id INTEGER NOT NULL DEFAULT 0,
+        site_id INTEGER NOT NULL DEFAULT 0,
+        date TEXT,
+        utc_time TEXT,
+        round TEXT,
+        white_id INTEGER NOT NULL DEFAULT 0,
+        white_elo INTEGER,
+        black_id INTEGER NOT NULL DEFAULT 0,
+        black_elo INTEGER,
+        white_material INTEGER NOT NULL DEFAULT 39,
+        black_material INTEGER NOT NULL DEFAULT 39,
+        result TEXT,
+        time_control TEXT,
+        eco TEXT,
+        ply_count INTEGER NOT NULL DEFAULT 0,
+        fen TEXT,
+        moves TEXT NOT NULL DEFAULT '[]',
+        pawn_home INTEGER NOT NULL DEFAULT 65535,
+        raw_pgn TEXT NOT NULL,
+        pgn_hash TEXT,
+        headers_json TEXT NOT NULL DEFAULT '{}',
+        source_path TEXT NOT NULL,
+        source_relative_path TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        index_in_file INTEGER NOT NULL,
+        file_game_count INTEGER NOT NULL,
+        has_moves INTEGER NOT NULL DEFAULT 0,
+        source_byte_start INTEGER,
+        source_byte_end INTEGER
+      )
+    ''');
+
+      await createLocalChessResqliteDatabaseSchema(oldDb);
+      await createLocalChessResqliteDatabaseSchema(oldDb);
+
+      final columns = await oldDb.select(
+        'PRAGMA table_info(local_chess_games)',
+      );
+      expect(
+        columns.map((row) => row['name']?.toString()),
+        containsAll(<String>['time_control_category', 'is_online']),
+      );
+      final indexes = await oldDb.select(
+        "SELECT name FROM sqlite_master WHERE type = 'index'",
+      );
+      expect(
+        indexes.map((row) => row['name']?.toString()),
+        containsAll(<String>[
+          'idx_local_chess_games_db_time_category',
+          'idx_local_chess_games_db_online',
+        ]),
+      );
+    },
+  );
+
+  test(
     'schema migrates existing resqlite cache missing delete tombstone',
     () async {
       final oldDb = await resqlite.Database.open('${temp.path}/old_cache.db');
