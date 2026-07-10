@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,6 +10,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:chessever/desktop/models/player_stats.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_stats_repository.dart';
 import 'package:chessever/repository/sqlite/local_chess_schema.dart';
 
@@ -239,6 +241,194 @@ void main() {
       );
     },
   );
+
+  test(
+    'rating query transfers at most one point per day to the UI isolate',
+    () async {
+      final whiteId = await upsertPlayer('Frame Test Player', 2800);
+      final blackId = await upsertPlayer('Frame Test Opponent', 2700);
+      final headers = jsonEncode(const <String, Object?>{
+        'White': 'Frame Test Player',
+        'Black': 'Frame Test Opponent',
+        'WhiteFideId': '7654321',
+        'Result': '1-0',
+        'Date': '2025.01.01',
+      });
+      const gameCount = 2000;
+      await db.executeBatch(
+        '''
+        INSERT INTO $localChessGamesTable
+          (id, database_id, white_id, black_id, white_elo, black_elo, result,
+           eco, date, ply_count, time_control_category, headers_json, raw_pgn,
+           source_path, source_relative_path, file_name, index_in_file,
+           file_game_count)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ''',
+        <List<Object?>>[
+          for (var i = 0; i < gameCount; i++)
+            <Object?>[
+              'frame-$i',
+              databaseId,
+              whiteId,
+              blackId,
+              2800 + (i % 10),
+              2700,
+              '1-0',
+              'C42',
+              '2025.01.01',
+              40,
+              'blitz',
+              headers,
+              '',
+              databasePath,
+              'combined.pgn',
+              'combined.pgn',
+              i,
+              gameCount,
+            ],
+        ],
+      );
+
+      var preferredRatingRows = -1;
+      var scopedRatingRows = -1;
+      final repository = PlayerStatsRepository(
+        database: () async => db,
+        select: (database, sql, parameters) async {
+          final rows = await database.select(sql, parameters);
+          if (sql.contains('rating_scope')) {
+            preferredRatingRows = rows.length;
+          } else if (sql.contains('rating_daily AS')) {
+            scopedRatingRows = rows.length;
+          }
+          return rows;
+        },
+      );
+
+      final stats = await repository.computePlayerStats(
+        databasePath: databasePath,
+        aliases: const ['Frame Test Player'],
+        playerFideId: '7654321',
+        preferredRatingTimeControl: 'blitz',
+      );
+
+      expect(stats.games, gameCount);
+      expect(stats.ratingSeries, hasLength(1));
+      expect(stats.ratingSeries.single.rating, 2809);
+      final scopedStats = await repository.computePlayerStats(
+        databasePath: databasePath,
+        aliases: const ['Frame Test Player'],
+        playerFideId: '7654321',
+        timeControlCategory: 'blitz',
+      );
+      expect(scopedStats.games, gameCount);
+      expect(scopedStats.ratingSeries, hasLength(1));
+      expect(scopedStats.ratingSeries.single.rating, 2809);
+      expect(
+        preferredRatingRows,
+        1,
+        reason:
+            'The preferred-ladder rating query must aggregate each calendar '
+            'day before rows cross into the Flutter isolate.',
+      );
+      expect(
+        scopedRatingRows,
+        1,
+        reason:
+            'The scoped rating query must aggregate each calendar day before '
+            'rows cross into the Flutter isolate.',
+      );
+    },
+  );
+
+  test('disposed source stats stop before dispatching another query', () async {
+    final cancellationToken = OperationCancellationToken();
+    var selectCount = 0;
+    final repository = PlayerStatsRepository(
+      database: () async => db,
+      select: (_, _, _) async {
+        selectCount++;
+        cancellationToken.cancel();
+        return const <Map<String, Object?>>[];
+      },
+    );
+
+    await expectLater(
+      repository.computePlayerStats(
+        databasePath: databasePath,
+        aliases: const ['Canceled Player'],
+        playerFideId: '1234567',
+        cancellationToken: cancellationToken,
+      ),
+      throwsA(isA<OperationCanceledException>()),
+    );
+    expect(
+      selectCount,
+      1,
+      reason:
+          'Switching source must not leave the obsolete ten-query stats loop '
+          'competing with the newly selected source.',
+    );
+  });
+
+  test('source switch never overlaps old and new stats reads', () async {
+    final oldToken = OperationCancellationToken();
+    final firstReadStarted = Completer<void>();
+    final releaseFirstRead = Completer<void>();
+    var selectCount = 0;
+    var activeSelects = 0;
+    var peakActiveSelects = 0;
+    final repository = PlayerStatsRepository(
+      database: () async => db,
+      select: (_, _, _) async {
+        selectCount++;
+        activeSelects++;
+        if (activeSelects > peakActiveSelects) {
+          peakActiveSelects = activeSelects;
+        }
+        try {
+          if (selectCount == 1) {
+            firstReadStarted.complete();
+            await releaseFirstRead.future;
+          }
+          return const <Map<String, Object?>>[];
+        } finally {
+          activeSelects--;
+        }
+      },
+    );
+
+    final oldRequest = repository.computePlayerStats(
+      databasePath: databasePath,
+      aliases: const ['Old Source Player'],
+      playerFideId: '1111111',
+      cancellationToken: oldToken,
+    );
+    await firstReadStarted.future;
+    oldToken.cancel();
+    final oldExpectation = expectLater(
+      oldRequest,
+      throwsA(isA<OperationCanceledException>()),
+    );
+    final newRequest = repository.computePlayerStats(
+      databasePath: databasePath,
+      aliases: const ['New Source Player'],
+      playerFideId: '2222222',
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(
+      selectCount,
+      1,
+      reason:
+          'The new source must wait for resqlite\'s already-dispatched old '
+          'read instead of occupying a second reader isolate.',
+    );
+
+    releaseFirstRead.complete();
+    await oldExpectation;
+    await newRequest;
+    expect(peakActiveSelects, 1);
+  });
 
   test('returns empty snapshot when the database has no games', () async {
     final repository = PlayerStatsRepository(database: () async => db);

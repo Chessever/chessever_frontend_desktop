@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/models/player_stats.dart';
+import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_stats_repository.dart';
 
 final playerStatsRepositoryProvider = Provider<PlayerStatsRepository>(
@@ -90,7 +93,9 @@ class PlayerStatsRequest {
 final playerStatsProvider = FutureProvider.autoDispose
     .family<PlayerStatsSnapshot, PlayerStatsRequest>((ref, request) async {
       final repository = ref.watch(playerStatsRepositoryProvider);
-      return repository.computePlayerStats(
+      final cancellationToken = OperationCancellationToken();
+      ref.onDispose(cancellationToken.cancel);
+      final snapshot = await repository.computePlayerStats(
         databasePath: request.databasePath,
         aliases: request.aliases,
         playerFideId: request.playerFideId,
@@ -101,5 +106,16 @@ final playerStatsProvider = FutureProvider.autoDispose
             request.unclassifiedTimeControlCategory,
         playerOutcome: request.playerOutcome,
         playerColor: request.playerColor,
+        cancellationToken: cancellationToken,
       );
+      cancellationToken.throwIfCanceled();
+
+      // A completed source snapshot is small, while recomputing it re-scans a
+      // large player database. Retain only successful requests briefly so
+      // switching back to a source is instant; in-flight requests remain
+      // auto-disposable and are canceled above.
+      final keepAlive = ref.keepAlive();
+      final expiry = Timer(const Duration(minutes: 5), keepAlive.close);
+      ref.onDispose(expiry.cancel);
+      return snapshot;
     });

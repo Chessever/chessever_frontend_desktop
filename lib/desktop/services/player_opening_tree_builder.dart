@@ -1198,7 +1198,13 @@ String? _playerColorForRow(Map<String, dynamic> row, String playerId) {
 }
 
 bool _timeControlMatches(Object? rawValue, TimeControl wanted) {
-  return classifyTimeControlCategory(rawValue) == wanted.name.toLowerCase();
+  final category = classifyTimeControlCategory(rawValue);
+  if (wanted == TimeControl.blitz) {
+    return category == 'blitz' ||
+        category == 'bullet' ||
+        category == 'ultrabullet';
+  }
+  return category == wanted.name.toLowerCase();
 }
 
 String _resultCode(Object? value) {

@@ -207,6 +207,10 @@ class LocalChessResqliteDatabase {
 
     _didApplyDevelopmentPurge = true;
     final deleted = await deleteLocalChessResqliteCacheFilesAt(dbPath);
+    final consumedFlag =
+        flagFileExists
+            ? await consumeLocalChessDevelopmentPurgeFlagAt(flagFile.path)
+            : false;
     localChessLog.warning(
       'Purged local chess resqlite cache for development startup',
       context: <String, Object?>{
@@ -216,6 +220,7 @@ class LocalChessResqliteDatabase {
         'releaseMode': kReleaseMode,
         'dartDefine': dartDefineEnabled,
         'environment': _isTruthyDevelopmentFlag(environmentValue),
+        'consumedFlag': consumedFlag,
       },
     );
     return true;
@@ -228,6 +233,21 @@ const String _localChessDevelopmentPurgeEnv =
 @visibleForTesting
 const String localChessDevelopmentPurgeFlagFileName =
     '.chessever_purge_local_chess_cache_on_start';
+
+/// The file opt-in is a one-shot request. Leaving it in place silently purges
+/// hundreds of megabytes on every session and forces the Players page to
+/// re-index each source the first time it is opened.
+@visibleForTesting
+Future<bool> consumeLocalChessDevelopmentPurgeFlagAt(String path) async {
+  final file = File(path);
+  try {
+    if (!await file.exists()) return false;
+    await file.delete();
+    return true;
+  } on FileSystemException {
+    return false;
+  }
+}
 
 @visibleForTesting
 bool shouldPurgeLocalChessResqliteCacheForDevelopment({
@@ -307,6 +327,8 @@ const String _localChessTreeDepthGenerationName =
     'local_chess_tree_depth_50_v1';
 const String _localChessOpeningNameBackfillName =
     'local_chess_opening_name_backfill_v1';
+const String _localChessTimeControlBackfillName =
+    'local_chess_source_time_control_backfill_v2';
 
 typedef LocalChessLegacySqfliteDatabaseFactory =
     Future<sqflite.Database> Function();
@@ -394,6 +416,7 @@ Future<void> createLocalChessResqliteDatabaseSchema(
       ddl: 'INTEGER',
     );
     await _backfillGameDerivedFilters(tx);
+    await _backfillTimeControlCategories(tx);
     await _backfillGameOpeningNames(tx);
     await tx.execute(
       'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_result ON '
@@ -524,7 +547,7 @@ Future<void> _backfillGamePgnHashes(resqlite.Transaction tx) async {
 Future<void> _backfillGameDerivedFilters(resqlite.Transaction tx) async {
   while (true) {
     final rows = await tx.select('''
-      SELECT database_id, id, time_control, headers_json
+      SELECT database_id, id, time_control, time_control_category, headers_json
       FROM $localChessGamesTable
       WHERE time_control_category IS NULL
         OR time_control_category = ''
@@ -545,6 +568,7 @@ Future<void> _backfillGameDerivedFilters(resqlite.Transaction tx) async {
             _localGameTimeControlCategory(
               timeControl: row['time_control'],
               headersJson: row['headers_json'],
+              storedCategory: row['time_control_category'],
             ),
             _inferLocalGameIsOnline(
                   timeControl: row['time_control'],
@@ -559,6 +583,61 @@ Future<void> _backfillGameDerivedFilters(resqlite.Transaction tx) async {
     );
     if (rows.length < 500) return;
   }
+}
+
+Future<void> _backfillTimeControlCategories(resqlite.Transaction tx) async {
+  final markerRows = await tx.select(
+    'SELECT 1 FROM $_localChessMigrationsTable WHERE name = ? LIMIT 1',
+    const <Object?>[_localChessTimeControlBackfillName],
+  );
+  if (markerRows.isNotEmpty) return;
+
+  var lastRowId = 0;
+  while (true) {
+    final rows = await tx.select(
+      '''
+      SELECT rowid AS game_rowid, time_control, time_control_category,
+             headers_json
+      FROM $localChessGamesTable
+      WHERE rowid > ?
+      ORDER BY rowid
+      LIMIT 500
+      ''',
+      <Object?>[lastRowId],
+    );
+    if (rows.isEmpty) break;
+    final updates = <List<Object?>>[];
+    for (final row in rows) {
+      final category = _localGameTimeControlCategory(
+        timeControl: row['time_control'],
+        headersJson: row['headers_json'],
+        storedCategory: row['time_control_category'],
+      );
+      final storedCategory = row['time_control_category']?.toString();
+      if (category != storedCategory) {
+        updates.add(<Object?>[category, row['game_rowid']]);
+      }
+    }
+    if (updates.isNotEmpty) {
+      await tx.executeBatch('''
+        UPDATE $localChessGamesTable
+        SET time_control_category = ?
+        WHERE rowid = ?
+        ''', updates);
+    }
+    lastRowId = _readInt(rows.last['game_rowid']);
+    await _yieldAfterSqlBatch();
+  }
+  await tx.execute(
+    '''
+    INSERT OR REPLACE INTO $_localChessMigrationsTable(name, completed_at_ms)
+    VALUES (?, ?)
+    ''',
+    <Object?>[
+      _localChessTimeControlBackfillName,
+      DateTime.now().millisecondsSinceEpoch,
+    ],
+  );
 }
 
 Future<void> _backfillGameOpeningNames(resqlite.Transaction tx) async {
@@ -1238,18 +1317,18 @@ Future<void> _copyLegacyGames(
               'black_material': row['black_material'],
               'result': row['result'],
               'time_control': row['time_control'],
-              'time_control_category':
-                  legacyColumns.contains('time_control_category') &&
-                          row['time_control_category']
-                                  ?.toString()
-                                  .trim()
-                                  .isNotEmpty ==
-                              true
-                      ? row['time_control_category']
-                      : _localGameTimeControlCategory(
-                        timeControl: row['time_control'],
-                        headersJson: row['headers_json'],
-                      ),
+              // Prefer the current source-aware classifier because older
+              // caches collapsed Bullet/UltraBullet into Blitz. If the PGN
+              // carries no usable evidence, preserve and canonicalize its
+              // valid stored category instead of degrading it to Unknown.
+              'time_control_category': _localGameTimeControlCategory(
+                timeControl: row['time_control'],
+                headersJson: row['headers_json'],
+                storedCategory:
+                    legacyColumns.contains('time_control_category')
+                        ? row['time_control_category']
+                        : null,
+              ),
               'is_online':
                   legacyColumns.contains('is_online')
                       ? row['is_online']
@@ -7011,8 +7090,19 @@ void _appendLocalPositionFilters(
 ) {
   final timeControl = filters.timeControl;
   if (timeControl != null) {
-    where.write(" AND LOWER(COALESCE(g.time_control_category, '')) = ?");
-    parameters.add(timeControl.name.toLowerCase());
+    if (timeControl == TimeControl.blitz) {
+      // The legacy opening-tree control has only three broad buckets. Keep
+      // Bullet and UltraBullet available beneath its Blitz umbrella while the
+      // richer Players stats facets continue to expose them independently.
+      where.write(
+        " AND LOWER(COALESCE(g.time_control_category, '')) "
+        "IN ('blitz', 'bullet', 'ultrabullet', 'ultra_bullet', "
+        "'ultra-bullet')",
+      );
+    } else {
+      where.write(" AND LOWER(COALESCE(g.time_control_category, '')) = ?");
+      parameters.add(timeControl.name.toLowerCase());
+    }
   }
 
   _appendLocalPlayerIdentityFilter(where, parameters, filters);
@@ -7377,17 +7467,18 @@ String? _localGameTimeControlCategory({
   Object? timeControl,
   Object? headersJson,
   Map<String, dynamic>? metadata,
+  Object? storedCategory,
 }) {
   final data = metadata ?? _jsonMap(headersJson);
-  final combinedCategory = classifyPgnTimeControlCategory(
-    data['ChessEverTimeControlCategory'],
+  final category = classifyTimeControlCategory(
+    timeControl,
+    event: data['Event'],
+    site: data['Site'],
+    source: data['ChessEverSource'],
   );
-  if (combinedCategory != null) return combinedCategory;
-  return classifyTimeControlCategory(
-        timeControl,
-        event: data['Event'],
-        site: data['Site'],
-      ) ??
+  if (category != null) return category;
+  return classifyPgnTimeControlCategory(data['ChessEverTimeControlCategory']) ??
+      classifyPgnTimeControlCategory(storedCategory) ??
       'unknown';
 }
 

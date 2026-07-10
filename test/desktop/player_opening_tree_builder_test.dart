@@ -5,6 +5,20 @@ import 'package:dartchess/dartchess.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('keeps Bullet and UltraBullet inside the legacy Blitz tree bucket', () {
+    const blitz = PlayerOpeningTreeFilterCriteria(
+      timeControl: TimeControl.blitz,
+    );
+
+    expect(blitz.matches(<String, dynamic>{'timeControl': 'blitz'}), isTrue);
+    expect(blitz.matches(<String, dynamic>{'timeControl': 'bullet'}), isTrue);
+    expect(
+      blitz.matches(<String, dynamic>{'timeControl': 'ultrabullet'}),
+      isTrue,
+    );
+    expect(blitz.matches(<String, dynamic>{'timeControl': 'rapid'}), isFalse);
+  });
+
   test('maps backend tree snapshot moves by FEN key', () {
     final index = PlayerOpeningTreeIndex.fromSnapshot(
       PlayerOpeningTreeSnapshot.fromJson(_snapshotJson()),

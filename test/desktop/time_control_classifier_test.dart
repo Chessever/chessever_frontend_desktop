@@ -4,7 +4,12 @@ import 'package:chessever/desktop/services/time_control_classifier.dart';
 
 void main() {
   group('classifyPgnTimeControlCategory', () {
-    test('uses gamebase effective seconds boundaries', () {
+    test('preserves generic gamebase effective seconds boundaries', () {
+      expect(classifyPgnTimeControlCategory('30'), 'blitz');
+      expect(classifyPgnTimeControlCategory('60'), 'blitz');
+      expect(classifyPgnTimeControlCategory('60+1'), 'blitz');
+      expect(classifyPgnTimeControlCategory('120'), 'blitz');
+      expect(classifyPgnTimeControlCategory('180'), 'blitz');
       expect(classifyPgnTimeControlCategory('300+2'), 'blitz');
       expect(classifyPgnTimeControlCategory('600+0'), 'blitz');
       expect(classifyPgnTimeControlCategory('601+0'), 'rapid');
@@ -17,11 +22,36 @@ void main() {
       );
     });
 
+    test('uses Chess.com effective-clock speed boundaries', () {
+      const chessCom = 'https://www.chess.com/game/live/123';
+      expect(
+        classifyPgnTimeControlCategory('30', site: chessCom),
+        'ultrabullet',
+      );
+      expect(classifyPgnTimeControlCategory('31', site: chessCom), 'bullet');
+      expect(classifyPgnTimeControlCategory('60+1', site: chessCom), 'bullet');
+      expect(classifyPgnTimeControlCategory('179', site: chessCom), 'bullet');
+      expect(classifyPgnTimeControlCategory('180', site: chessCom), 'blitz');
+      expect(classifyPgnTimeControlCategory('599', site: chessCom), 'blitz');
+      expect(classifyPgnTimeControlCategory('600', site: chessCom), 'rapid');
+      expect(classifyPgnTimeControlCategory('3600', site: chessCom), 'rapid');
+      expect(
+        classifyPgnTimeControlCategory('3601', site: chessCom),
+        'classical',
+      );
+    });
+
     test('normalizes explicit buckets', () {
       expect(classifyPgnTimeControlCategory('Classical'), 'classical');
       expect(classifyPgnTimeControlCategory('standard'), 'classical');
       expect(classifyPgnTimeControlCategory('Rapid'), 'rapid');
-      expect(classifyPgnTimeControlCategory('bullet'), 'blitz');
+      expect(classifyPgnTimeControlCategory('bullet'), 'bullet');
+      expect(classifyPgnTimeControlCategory('ultra bullet'), 'ultrabullet');
+      expect(classifyPgnTimeControlCategory('ultra-bullet'), 'ultrabullet');
+      expect(
+        classifyPgnTimeControlCategory('correspondence'),
+        'correspondence',
+      );
       expect(classifyPgnTimeControlCategory('timeControl.blitz'), 'blitz');
     });
   });
@@ -93,6 +123,57 @@ void main() {
         '900+10',
         event: 'World Blitz Championship',
         site: 'example.com',
+      ),
+      'rapid',
+    );
+  });
+
+  test('uses Lichess effective-clock speed boundaries', () {
+    const lichess = 'https://lichess.org/game-id';
+    expect(classifyTimeControlCategory('15+0', site: lichess), 'ultrabullet');
+    expect(classifyTimeControlCategory('29+0', site: lichess), 'ultrabullet');
+    expect(classifyTimeControlCategory('30+0', site: lichess), 'bullet');
+    expect(classifyTimeControlCategory('179+0', site: lichess), 'bullet');
+    expect(classifyTimeControlCategory('180+0', site: lichess), 'blitz');
+    expect(classifyTimeControlCategory('60+3', site: lichess), 'blitz');
+    expect(classifyTimeControlCategory('479+0', site: lichess), 'blitz');
+    expect(classifyTimeControlCategory('480+0', site: lichess), 'rapid');
+    expect(classifyTimeControlCategory('300+5', site: lichess), 'rapid');
+    expect(classifyTimeControlCategory('1499+0', site: lichess), 'rapid');
+    expect(classifyTimeControlCategory('1500+0', site: lichess), 'classical');
+    expect(
+      classifyTimeControlCategory('21600+0', site: lichess),
+      'correspondence',
+    );
+    expect(
+      classifyTimeControlCategory(
+        null,
+        event: 'rated correspondence game',
+        site: lichess,
+      ),
+      'correspondence',
+    );
+  });
+
+  test('uses combined-file source provenance when Site is unavailable', () {
+    expect(
+      classifyTimeControlCategory('15+0', site: '?', source: 'lichess'),
+      'ultrabullet',
+    );
+    expect(
+      classifyTimeControlCategory('60+0', site: '?', source: 'chesscom'),
+      'bullet',
+    );
+    expect(
+      classifyTimeControlCategory(null, site: '?', source: 'chessever'),
+      'classical',
+    );
+    expect(
+      classifyTimeControlCategory(
+        '-',
+        event: 'Chess.com RCC Swiss',
+        site: '?',
+        source: 'chesscom',
       ),
       'rapid',
     );

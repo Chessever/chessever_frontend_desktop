@@ -45,6 +45,86 @@ void main() {
     }
   });
 
+  test('repairs source-specific time-control categories', () async {
+    await db.execute('PRAGMA foreign_keys=OFF');
+    const chessComHeaders =
+        '{"Site":"https://www.chess.com/game/live/1",'
+        '"ChessEverTimeControlCategory":"blitz"}';
+    const lichessHeaders =
+        '{"Site":"https://lichess.org/game-id",'
+        '"ChessEverTimeControlCategory":"blitz"}';
+    const lichessCorrespondenceHeaders =
+        '{"Event":"rated correspondence game",'
+        '"Site":"https://lichess.org/game-id"}';
+    const combinedLichessHeaders = '{"Site":"?","ChessEverSource":"lichess"}';
+    const genericHeaders = '{"Site":"OTB Hall"}';
+    const unknownHeaders = '{"Site":"?"}';
+    for (final entry in <(String, String, String, String)>[
+      ('chesscom-ultra', '30', 'blitz', chessComHeaders),
+      ('chesscom-bullet', '60', 'blitz', chessComHeaders),
+      ('generic-fast', '60', 'bullet', genericHeaders),
+      ('stored-bullet-without-clock', '-', ' Bullet ', unknownHeaders),
+      ('stored-mixed-case-blitz', '180', ' Blitz ', genericHeaders),
+      ('lichess-bullet', '30', 'ultrabullet', lichessHeaders),
+      ('lichess-combined-provenance', '15', 'blitz', combinedLichessHeaders),
+      ('lichess-blitz', '180', 'blitz', lichessHeaders),
+      ('lichess-rapid', '480', 'blitz', lichessHeaders),
+      ('lichess-classical', '1500', 'rapid', lichessHeaders),
+      ('lichess-correspondence', '21600', 'classical', lichessHeaders),
+      (
+        'lichess-correspondence-unknown',
+        '-',
+        'unknown',
+        lichessCorrespondenceHeaders,
+      ),
+    ]) {
+      await db.execute(
+        '''
+        INSERT INTO local_chess_games
+          (id, database_id, time_control, time_control_category, headers_json,
+           is_online, raw_pgn, source_path, source_relative_path, file_name,
+           index_in_file, file_game_count)
+        VALUES (?, 'hikaru', ?, ?, ?, 1, '', 'hikaru.pgn', 'hikaru.pgn',
+                'hikaru.pgn', 0, 1)
+        ''',
+        <Object?>[entry.$1, entry.$2, entry.$3, entry.$4],
+      );
+    }
+    await db.execute(
+      "DELETE FROM local_chess_migrations WHERE name = "
+      "'local_chess_source_time_control_backfill_v2'",
+    );
+
+    await createLocalChessResqliteDatabaseSchema(db);
+
+    final rows = await db.select('''
+      SELECT id, time_control_category
+      FROM local_chess_games
+      WHERE database_id = 'hikaru'
+      ORDER BY id
+    ''');
+    expect(
+      <String, String>{
+        for (final row in rows)
+          row['id']! as String: row['time_control_category']! as String,
+      },
+      <String, String>{
+        'chesscom-ultra': 'ultrabullet',
+        'chesscom-bullet': 'bullet',
+        'generic-fast': 'blitz',
+        'stored-bullet-without-clock': 'bullet',
+        'stored-mixed-case-blitz': 'blitz',
+        'lichess-bullet': 'bullet',
+        'lichess-combined-provenance': 'ultrabullet',
+        'lichess-blitz': 'blitz',
+        'lichess-rapid': 'rapid',
+        'lichess-classical': 'classical',
+        'lichess-correspondence': 'correspondence',
+        'lichess-correspondence-unknown': 'correspondence',
+      },
+    );
+  });
+
   test('migrates existing sqflite local chess cache into resqlite', () async {
     final pgnFile = File('${temp.path}/legacy.pgn');
     await pgnFile.writeAsString(_legacyPgn.trim());
@@ -55,6 +135,12 @@ void main() {
     await legacyDb.execute('PRAGMA foreign_keys=ON');
     await createLocalChessDatabaseSchema(legacyDb);
     await _seedLegacyLocalChessCache(legacyDb, pgnFile);
+    await legacyDb.update(
+      'local_chess_games',
+      <String, Object?>{'time_control_category': ' Bullet '},
+      where: 'database_id = ?',
+      whereArgs: <Object?>[pgnFile.path],
+    );
 
     await migrateLegacyLocalChessSqfliteCache(
       db,
@@ -74,13 +160,14 @@ void main() {
     final migrated =
         (await db.select(
           '''
-      SELECT pgn_hash, headers_json
+      SELECT pgn_hash, headers_json, time_control_category
       FROM local_chess_games
       WHERE database_id = ?
       ''',
           <Object?>[pgnFile.path],
         )).single;
     expect(migrated['pgn_hash']?.toString(), isNotEmpty);
+    expect(migrated['time_control_category'], 'bullet');
     final metadata =
         jsonDecode(migrated['headers_json'] as String) as Map<String, dynamic>;
     expect(metadata['WhiteTitle'], 'GM');
@@ -675,6 +762,17 @@ void main() {
       ),
       isFalse,
     );
+  });
+
+  test('development purge flag is consumed after one startup', () async {
+    final flag = File(
+      p.join(temp.path, localChessDevelopmentPurgeFlagFileName),
+    );
+    await flag.writeAsString('');
+
+    expect(await consumeLocalChessDevelopmentPurgeFlagAt(flag.path), isTrue);
+    expect(await flag.exists(), isFalse);
+    expect(await consumeLocalChessDevelopmentPurgeFlagAt(flag.path), isFalse);
   });
 
   test('deletes local chess resqlite db sidecar files', () async {
@@ -1972,6 +2070,18 @@ void main() {
       expect(rapidGames!.metadata.totalCount, 1);
       expect(rapidGames.data.single['event'], 'Rapid Local');
       expect(rapidGames.data.single['white'], 'Carlsen, Magnus');
+
+      // The opening tree still exposes the historical three-bucket control.
+      // A newly precise Bullet row therefore remains reachable via Blitz.
+      await db.execute(
+        '''
+        UPDATE local_chess_games
+        SET time_control_category = 'bullet'
+        WHERE database_id = ?
+          AND json_extract(headers_json, '\$.Event') = 'Online Blitz'
+        ''',
+        <Object?>[pgnFile.path],
+      );
 
       const carlsenBlackOnlineBlitz = PlayerOpeningTreeFilterCriteria(
         playerFideIds: <String>['1503014'],

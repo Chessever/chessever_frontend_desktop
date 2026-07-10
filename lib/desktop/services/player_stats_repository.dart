@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -7,6 +8,7 @@ import 'package:resqlite/resqlite.dart' as resqlite;
 import 'package:chessever/desktop/models/player_stats.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart'
     show LocalChessDatabaseRepository, LocalChessResqliteDatabase;
+import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/state/player_stats_provider.dart'
     show PlayerStatsOutcomeFilter;
 import 'package:chessever/repository/sqlite/local_chess_schema.dart'
@@ -43,6 +45,7 @@ class PlayerStatsRepository {
   final Future<resqlite.Database> Function() _database;
   final LocalChessDatabaseRepository? _localRepository;
   final PlayerStatsSelect _select;
+  Future<void> _statsComputationTail = Future<void>.value();
 
   static Future<List<Map<String, Object?>>> _defaultSelect(
     resqlite.Database database,
@@ -60,14 +63,51 @@ class PlayerStatsRepository {
     String? unclassifiedTimeControlCategory,
     PlayerStatsOutcomeFilter playerOutcome = PlayerStatsOutcomeFilter.all,
     String? playerColor,
+    OperationCancellationToken? cancellationToken,
   }) async {
+    return _runStatsComputationQueued(
+      cancellationToken,
+      () => _computePlayerStatsUnlocked(
+        databasePath: databasePath,
+        aliases: aliases,
+        playerFideId: playerFideId,
+        windowDays: windowDays,
+        timeControlCategory: timeControlCategory,
+        preferredRatingTimeControl: preferredRatingTimeControl,
+        unclassifiedTimeControlCategory: unclassifiedTimeControlCategory,
+        playerOutcome: playerOutcome,
+        playerColor: playerColor,
+        cancellationToken: cancellationToken,
+      ),
+    );
+  }
+
+  Future<PlayerStatsSnapshot> _computePlayerStatsUnlocked({
+    required String databasePath,
+    required Iterable<String> aliases,
+    String? playerFideId,
+    int? windowDays,
+    String? timeControlCategory,
+    String? preferredRatingTimeControl,
+    String? unclassifiedTimeControlCategory,
+    PlayerStatsOutcomeFilter playerOutcome = PlayerStatsOutcomeFilter.all,
+    String? playerColor,
+    OperationCancellationToken? cancellationToken,
+  }) async {
+    cancellationToken?.throwIfCanceled();
     final normalizedFideId = _normalizeFideId(playerFideId);
     final normalizedAliases =
         aliases.map(_normalizeName).where((name) => name.isNotEmpty).toSet();
 
     final databaseId = _databaseId(databasePath);
     final db = await _database();
-    await _ensureLocalCache(databasePath: databasePath, databaseId: databaseId);
+    cancellationToken?.throwIfCanceled();
+    await _ensureLocalCache(
+      databasePath: databasePath,
+      databaseId: databaseId,
+      cancellationToken: cancellationToken,
+    );
+    cancellationToken?.throwIfCanceled();
 
     final aliasSet = normalizedAliases.toSet();
     if (normalizedFideId == null) {
@@ -75,6 +115,7 @@ class PlayerStatsRepository {
       // database is built from one player's games, so the most frequent name
       // rescues spelling / word-order differences.
       final dominant = await _dominantPlayerName(db, databaseId);
+      cancellationToken?.throwIfCanceled();
       if (dominant != null) aliasSet.add(dominant);
       if (aliasSet.isEmpty) return PlayerStatsSnapshot.empty;
     }
@@ -113,7 +154,7 @@ class PlayerStatsRepository {
       fideScoped: normalizedFideId != null,
       hasAliasFallback: hasAliasFallback,
       windowed: dateModifier != null,
-      timeControlFiltered: tcFilter != null,
+      timeControlCategory: tcFilter,
       unclassifiedTimeControlCategory: unclassifiedTimeControl,
       playerOutcome: playerOutcome,
       playerColor: colorFilter,
@@ -152,7 +193,7 @@ class PlayerStatsRepository {
       // while the rest of the dashboard filters.
       (
         sql:
-            '${_cte(aliasPlaceholders: List.filled(matchAliases.length, '?').join(', '), fideScoped: normalizedFideId != null, hasAliasFallback: hasAliasFallback, windowed: dateModifier != null, timeControlFiltered: false, unclassifiedTimeControlCategory: unclassifiedTimeControl, playerOutcome: PlayerStatsOutcomeFilter.all, playerColor: null)}\n$_timeControlSql',
+            '${_cte(aliasPlaceholders: List.filled(matchAliases.length, '?').join(', '), fideScoped: normalizedFideId != null, hasAliasFallback: hasAliasFallback, windowed: dateModifier != null, unclassifiedTimeControlCategory: unclassifiedTimeControl, playerOutcome: PlayerStatsOutcomeFilter.all, playerColor: null)}\n$_timeControlSql',
         parameters: <Object?>[
           if (normalizedFideId != null) ...[
             normalizedFideId,
@@ -172,7 +213,9 @@ class PlayerStatsRepository {
     ];
     final results = <List<Map<String, Object?>>>[];
     for (final query in queries) {
+      cancellationToken?.throwIfCanceled();
       results.add(await _select(db, query.sql, query.parameters));
+      cancellationToken?.throwIfCanceled();
     }
 
     final overallRows = results[0];
@@ -221,20 +264,64 @@ class PlayerStatsRepository {
     );
   }
 
+  /// resqlite 0.7 lets a dispatched read finish; it does not expose a safe
+  /// per-query interrupt. Keep one Players stats computation active per
+  /// repository so a source switch waits for the obsolete read to finish
+  /// instead of saturating another reader in parallel. Cancellation checks
+  /// then discard the obsolete request before it can dispatch its next query.
+  Future<T> _runStatsComputationQueued<T>(
+    OperationCancellationToken? cancellationToken,
+    Future<T> Function() operation,
+  ) async {
+    final release = await _enterStatsComputationQueue(cancellationToken);
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  Future<void Function()> _enterStatsComputationQueue(
+    OperationCancellationToken? cancellationToken,
+  ) async {
+    final previous = _statsComputationTail;
+    final released = Completer<void>();
+    _statsComputationTail = released.future;
+    var didRelease = false;
+
+    void release() {
+      if (didRelease) return;
+      didRelease = true;
+      released.complete();
+    }
+
+    try {
+      await previous;
+      cancellationToken?.throwIfCanceled();
+      return release;
+    } catch (_) {
+      release();
+      rethrow;
+    }
+  }
+
   Future<void> _ensureLocalCache({
     required String databasePath,
     required String databaseId,
+    OperationCancellationToken? cancellationToken,
   }) async {
+    cancellationToken?.throwIfCanceled();
     final file = File(databasePath);
     if (!await file.exists()) return;
 
     final db = await _database();
+    cancellationToken?.throwIfCanceled();
     final rows = await db.select(
       '''
       SELECT
         d.game_count AS game_count,
         d.deleted_at_ms AS deleted_at_ms,
-        COUNT(g.id) AS row_count
+        COUNT(g.rowid) AS row_count
       FROM $localChessDatabasesTable d
       LEFT JOIN $localChessGamesTable g ON g.database_id = d.id
       WHERE d.id = ?
@@ -254,7 +341,10 @@ class PlayerStatsRepository {
 
     final repository =
         _localRepository ?? LocalChessDatabaseRepository(database: _database);
-    await repository.importSingleFileSource(path: databasePath);
+    await repository.importSingleFileSource(
+      path: databasePath,
+      cancellationToken: cancellationToken,
+    );
   }
 
   /// The most frequent player across White + Black in this database — for a
@@ -486,7 +576,7 @@ class PlayerStatsRepository {
     required bool fideScoped,
     required bool hasAliasFallback,
     bool windowed = false,
-    bool timeControlFiltered = false,
+    String? timeControlCategory,
     String? unclassifiedTimeControlCategory,
     PlayerStatsOutcomeFilter playerOutcome = PlayerStatsOutcomeFilter.all,
     String? playerColor,
@@ -513,21 +603,33 @@ class PlayerStatsRepository {
           THEN '${unclassifiedTimeControlCategory ?? ''}'
         ELSE g.time_control_category
       END''';
-    final canonicalTimeControlSql = '''
-      CASE LOWER(TRIM(COALESCE(($timeControlValueSql), '')))
-        WHEN 'standard' THEN 'classical'
-        WHEN 'ultra bullet' THEN 'ultrabullet'
-        WHEN 'ultra_bullet' THEN 'ultrabullet'
-        WHEN 'ultra-bullet' THEN 'ultrabullet'
-        ELSE LOWER(TRIM(COALESCE(($timeControlValueSql), '')))
-      END''';
-    // Overview time-control chip scope. Explicit stored categories win; only
-    // an empty category uses the trusted source-level fallback above.
+    // Keep the filter on the stored column so SQLite can use the full
+    // (database_id, time_control_category) index. Imports/backfills canonicalize
+    // categories; the small legacy aliases stay in the indexed IN list.
+    final storedTimeControlValues = switch (timeControlCategory) {
+      'classical' => const <String>['standard'],
+      'ultrabullet' => const <String>[
+        'ultra bullet',
+        'ultra_bullet',
+        'ultra-bullet',
+      ],
+      _ => const <String>[],
+    };
+    final includeUnclassified =
+        timeControlCategory != null &&
+        unclassifiedTimeControlCategory == timeControlCategory;
     final tcClause =
-        timeControlFiltered
-            ? '''
-    AND ($canonicalTimeControlSql) = ?'''
-            : '';
+        timeControlCategory == null
+            ? ''
+            : '''
+    AND (
+      g.time_control_category IN (
+        ?
+        ${storedTimeControlValues.map((value) => ", '$value'").join()}
+        ${includeUnclassified ? ", '', 'unknown', 'unclassified'" : ''}
+      )
+      ${includeUnclassified ? 'OR g.time_control_category IS NULL' : ''}
+    )''';
     final outcomeClause = switch (playerOutcome) {
       PlayerStatsOutcomeFilter.win => " AND presult = 'win'",
       PlayerStatsOutcomeFilter.draw => " AND presult = 'draw'",
@@ -555,6 +657,7 @@ class PlayerStatsRepository {
 WITH base AS (
   SELECT
     g.result AS result,
+    g.rowid AS game_row_id,
     g.eco AS eco,
     g.date AS date,
     g.ply_count AS ply,
@@ -576,7 +679,7 @@ WITH base AS (
 ),
 pv AS (
   SELECT
-    side, eco, date, ply, tcc, opening, site, source,
+    side, game_row_id, eco, date, ply, tcc, opening, site, source,
     CASE side WHEN 'w' THEN white_elo WHEN 'b' THEN black_elo END AS my_elo,
     CASE side WHEN 'w' THEN black_name WHEN 'b' THEN white_name END AS opp_name,
     CASE side WHEN 'w' THEN black_elo WHEN 'b' THEN white_elo END AS opp_elo,
@@ -604,16 +707,24 @@ GROUP BY side, presult''';
 
   /// Rating series when the overview is already scoped to one time control.
   static const _ratingSqlScoped = '''
-SELECT date AS d, my_elo AS elo,
-  CASE LOWER(TRIM(COALESCE(tcc, '')))
-    WHEN 'standard' THEN 'classical'
-    WHEN 'bullet' THEN 'blitz'
-    ELSE LOWER(TRIM(COALESCE(tcc, '')))
-  END AS tc
-FROM scoped
-WHERE my_elo IS NOT NULL AND my_elo > 0
-  AND date IS NOT NULL AND date LIKE '____.__.__'
-ORDER BY date ASC''';
+, rating_daily AS (
+  SELECT date AS d, my_elo AS elo,
+    CASE LOWER(TRIM(COALESCE(tcc, '')))
+      WHEN 'standard' THEN 'classical'
+      ELSE LOWER(TRIM(COALESCE(tcc, '')))
+    END AS tc,
+    ROW_NUMBER() OVER (
+      PARTITION BY date
+      ORDER BY game_row_id DESC
+    ) AS day_rank
+  FROM scoped
+  WHERE my_elo IS NOT NULL AND my_elo > 0
+    AND date IS NOT NULL AND date LIKE '____.__.__'
+)
+SELECT d, elo, tc
+FROM rating_daily
+WHERE day_rank = 1
+ORDER BY d ASC''';
 
   /// Rating series for "All" — prefer the bound ladder (`?`), then the most
   /// common rated classical/rapid/blitz series. If the chosen ladder would
@@ -622,11 +733,10 @@ ORDER BY date ASC''';
     assert(preferredTc.isNotEmpty);
     return '''
 , rating_all AS (
-  SELECT date AS d, my_elo AS elo,
-    CASE LOWER(TRIM(COALESCE(tcc, '')))
-      WHEN 'standard' THEN 'classical'
-      WHEN 'bullet' THEN 'blitz'
-      ELSE LOWER(TRIM(COALESCE(tcc, '')))
+  SELECT date AS d, game_row_id, my_elo AS elo,
+      CASE LOWER(TRIM(COALESCE(tcc, '')))
+        WHEN 'standard' THEN 'classical'
+        ELSE LOWER(TRIM(COALESCE(tcc, '')))
     END AS tc
   FROM scoped
   WHERE my_elo IS NOT NULL AND my_elo > 0
@@ -660,12 +770,28 @@ rating_scope AS (
       WHEN (SELECT MIN(d) FROM rating_all) < (SELECT first_d FROM rating_bucket) THEN 0
       ELSE 1
     END AS bucket_only
+),
+rating_filtered AS (
+  SELECT d, game_row_id, elo,
+    CASE
+      WHEN (SELECT bucket_only FROM rating_scope) = 1 THEN tc
+      ELSE NULL
+    END AS tc
+  FROM rating_all
+  WHERE (SELECT bucket_only FROM rating_scope) = 0
+    OR tc = (SELECT tc FROM rating_scope)
+),
+rating_daily AS (
+  SELECT d, elo, tc,
+    ROW_NUMBER() OVER (
+      PARTITION BY d
+      ORDER BY game_row_id DESC
+    ) AS day_rank
+  FROM rating_filtered
 )
-SELECT d, elo,
-  CASE WHEN (SELECT bucket_only FROM rating_scope) = 1 THEN tc ELSE NULL END AS tc
-FROM rating_all
-WHERE (SELECT bucket_only FROM rating_scope) = 0
-  OR tc = (SELECT tc FROM rating_scope)
+SELECT d, elo, tc
+FROM rating_daily
+WHERE day_rank = 1
 ORDER BY d ASC''';
   }
 

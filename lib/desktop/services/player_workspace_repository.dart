@@ -2072,6 +2072,7 @@ String _withCombinedMetadata(String pgn, PlayerWorkspaceSource source) {
     headers['timecontrol'],
     event: headers['event'],
     site: headers['site'],
+    source: source.storageKey,
   );
   final category =
       explicitOrInferred ??
