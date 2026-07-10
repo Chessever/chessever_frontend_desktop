@@ -907,6 +907,49 @@ void main() {
     },
   );
 
+  test(
+    'schema upgrades pre-time-control cache before creating derived indexes',
+    () async {
+      final oldDb = await resqlite.Database.open(
+        '${temp.path}/pre_time_control_cache.db',
+      );
+      addTearDown(oldDb.close);
+      await _createPreTimeControlResqliteCache(
+        oldDb,
+        databaseId: '/tmp/hikaru-chess-com.pgn',
+      );
+
+      await createLocalChessResqliteDatabaseSchema(oldDb);
+      await createLocalChessResqliteDatabaseSchema(oldDb);
+
+      final columns = await oldDb.select(
+        'PRAGMA table_info(local_chess_games)',
+      );
+      expect(
+        columns.map((row) => row['name']?.toString()),
+        containsAll(<String>['time_control_category', 'is_online']),
+      );
+      final indexes = await oldDb.select(
+        "SELECT name FROM sqlite_master WHERE type = 'index'",
+      );
+      expect(
+        indexes.map((row) => row['name']?.toString()),
+        containsAll(<String>[
+          'idx_local_chess_games_db_time_category',
+          'idx_local_chess_games_db_online',
+        ]),
+      );
+      final games = await oldDb.select('''
+        SELECT id, time_control_category, is_online
+        FROM local_chess_games
+      ''');
+      expect(games, hasLength(1));
+      expect(games.single['id'], 'legacy-hikaru-bullet');
+      expect(games.single['time_control_category'], 'bullet');
+      expect(games.single['is_online'], 1);
+    },
+  );
+
   test('persists imported PGN games and opening tree in SQLite rows', () async {
     final pgnFile = File('${temp.path}/mini.pgn');
     await pgnFile.writeAsString(_samplePgn);
@@ -1132,6 +1175,12 @@ void main() {
       final pgnFile = File('${temp.path}/worker-path-only.pgn');
       await pgnFile.writeAsString(_samplePgn);
       final workerDbPath = p.join(temp.path, 'worker-only-local-chess.db');
+      final legacyWorkerDb = await resqlite.Database.open(workerDbPath);
+      await _createPreTimeControlResqliteCache(
+        legacyWorkerDb,
+        databaseId: pgnFile.path,
+      );
+      await legacyWorkerDb.close();
       var openedAppCache = false;
       final repo = LocalChessDatabaseRepository(
         database: () async {
@@ -3176,6 +3225,114 @@ void main() {
       expect(stats.drawCount, 1);
       expect(stats.lossCount, 0);
     },
+  );
+}
+
+Future<void> _createPreTimeControlResqliteCache(
+  resqlite.Database db, {
+  required String databaseId,
+}) async {
+  await db.execute('''
+    CREATE TABLE local_chess_migrations (
+      name TEXT PRIMARY KEY,
+      completed_at_ms INTEGER NOT NULL
+    )
+  ''');
+  await db.execute(
+    '''
+    INSERT INTO local_chess_migrations(name, completed_at_ms)
+    VALUES (?, ?)
+    ''',
+    const <Object?>[
+      'local_chess_resqlite_cache_generation_20260628_safe_streaming_v1',
+      1,
+    ],
+  );
+  await db.execute('''
+    CREATE TABLE local_chess_databases (
+      id TEXT PRIMARY KEY,
+      path TEXT UNIQUE NOT NULL,
+      label TEXT NOT NULL,
+      extension TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      modified_at_ms INTEGER,
+      file_count INTEGER NOT NULL DEFAULT 1,
+      game_count INTEGER NOT NULL DEFAULT 0,
+      position_count INTEGER NOT NULL DEFAULT 0,
+      tree_snapshot TEXT,
+      tree_max_ply INTEGER,
+      imported_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      deleted_at_ms INTEGER,
+      content_fingerprint TEXT
+    )
+  ''');
+  await db.execute(
+    '''
+    INSERT INTO local_chess_databases(
+      id, path, label, extension, size_bytes, game_count,
+      imported_at_ms, updated_at_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''',
+    <Object?>[databaseId, databaseId, 'Hikaru chess.com', '.pgn', 1, 1, 1, 1],
+  );
+  await db.execute('''
+    CREATE TABLE local_chess_games (
+      id TEXT PRIMARY KEY,
+      database_id TEXT NOT NULL,
+      event_id INTEGER NOT NULL DEFAULT 0,
+      site_id INTEGER NOT NULL DEFAULT 0,
+      date TEXT,
+      utc_time TEXT,
+      round TEXT,
+      white_id INTEGER NOT NULL DEFAULT 0,
+      white_elo INTEGER,
+      black_id INTEGER NOT NULL DEFAULT 0,
+      black_elo INTEGER,
+      white_material INTEGER NOT NULL DEFAULT 39,
+      black_material INTEGER NOT NULL DEFAULT 39,
+      result TEXT,
+      time_control TEXT,
+      eco TEXT,
+      ply_count INTEGER NOT NULL DEFAULT 0,
+      fen TEXT,
+      moves TEXT NOT NULL DEFAULT '[]',
+      pawn_home INTEGER NOT NULL DEFAULT 65535,
+      raw_pgn TEXT NOT NULL,
+      pgn_hash TEXT,
+      headers_json TEXT NOT NULL DEFAULT '{}',
+      source_path TEXT NOT NULL,
+      source_relative_path TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      index_in_file INTEGER NOT NULL,
+      file_game_count INTEGER NOT NULL,
+      has_moves INTEGER NOT NULL DEFAULT 0,
+      source_byte_start INTEGER,
+      source_byte_end INTEGER
+    )
+  ''');
+  await db.execute(
+    '''
+    INSERT INTO local_chess_games(
+      id, database_id, time_control, raw_pgn, headers_json, source_path,
+      source_relative_path, file_name, index_in_file, file_game_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''',
+    <Object?>[
+      'legacy-hikaru-bullet',
+      databaseId,
+      '60',
+      '[Event "Live Chess"]\n[Site "https://www.chess.com/game/live/1"]',
+      jsonEncode(<String, Object?>{
+        'Event': 'Live Chess',
+        'Site': 'https://www.chess.com/game/live/1',
+      }),
+      databaseId,
+      p.basename(databaseId),
+      p.basename(databaseId),
+      0,
+      1,
+    ],
   );
 }
 
