@@ -394,6 +394,19 @@ class PlayerWorkspaceRepository {
     return repository.getPlayers(name: clean, pageSize: 20);
   }
 
+  Future<GamebasePlayer?> findChessEverPlayerByFideId(
+    GamebaseRepository repository,
+    String fideId,
+  ) async {
+    final clean = fideId.trim();
+    if (clean.isEmpty || clean == '?') return null;
+    final players = await repository.getPlayers(fideId: clean, pageSize: 20);
+    for (final player in players) {
+      if (player.fideId.trim() == clean) return player;
+    }
+    return null;
+  }
+
   PlayerWorkspacePlayer playerFromChessEver(GamebasePlayer player) {
     final now = DateTime.now().millisecondsSinceEpoch;
     final account = PlayerWorkspaceAccount(

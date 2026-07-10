@@ -281,7 +281,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('filters ChessEver connect results to the locked FIDE id', (
+  testWidgets('FIDE-locked ChessEver reconnect skips player search', (
     tester,
   ) async {
     final repository = _PaneFakePlayerWorkspaceRepository(
@@ -350,17 +350,96 @@ void main() {
         .evaluate()
         .isNotEmpty) {
       await tester.tap(find.text('ChessEver').last);
+    }
+    await repository.onlineImportFinished.future.timeout(
+      const Duration(seconds: 5),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Connect ChessEver'), findsNothing);
+    expect(find.textContaining('Locked to FIDE 13402935'), findsNothing);
+    expect(find.byType(TextField), findsNothing);
+    expect(repository.fideLookupRequests, <String>['13402935']);
+    expect(
+      repository.snapshot.players.single
+          .account(PlayerWorkspaceSource.chessever)
+          ?.gameCount,
+      1,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('no-FIDE ChessEver connection keeps the search dialog', (
+    tester,
+  ) async {
+    final repository = _PaneFakePlayerWorkspaceRepository();
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() async => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          playerWorkspaceRepositoryProvider.overrideWithValue(repository),
+          _playerWorkspaceOverride(repository),
+        ],
+        child: const MaterialApp(
+          home: SizedBox(
+            width: 1200,
+            height: 800,
+            child: PlayerWorkspacePane(),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Prep Target').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Accounts'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add account').first);
+    await tester.pumpAndSettle();
+    if (find
+        .text('Choose the source to connect to this player.')
+        .evaluate()
+        .isNotEmpty) {
+      await tester.tap(find.text('ChessEver').last);
       await tester.pumpAndSettle();
     }
 
-    expect(find.textContaining('Locked to FIDE 13402935'), findsOneWidget);
+    expect(find.text('Connect ChessEver'), findsOneWidget);
+    expect(find.byType(TextField), findsOneWidget);
+    expect(repository.fideLookupRequests, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
 
-    await tester.enterText(find.byType(TextField), 'vasif');
-    await tester.pump(const Duration(milliseconds: 300));
+  testWidgets('initial Add Player always exposes manual creation', (
+    tester,
+  ) async {
+    final repository = _PaneFakePlayerWorkspaceRepository();
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() async => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          playerWorkspaceRepositoryProvider.overrideWithValue(repository),
+          _playerWorkspaceOverride(repository),
+        ],
+        child: const MaterialApp(
+          home: SizedBox(
+            width: 1200,
+            height: 800,
+            child: PlayerWorkspacePane(),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add player').first);
     await tester.pumpAndSettle();
 
-    expect(find.text('GM Vasif Durarbayli'), findsWidgets);
-    expect(find.text('GM Magnus Carlsen'), findsNothing);
+    expect(find.text('Create manual player'), findsOneWidget);
+    expect(find.text('Add & connect'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
@@ -505,6 +584,7 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
 
   PlayerWorkspaceSnapshot snapshot;
   final List<GamebasePlayer> chessEverSearchResults;
+  final fideLookupRequests = <String>[];
   Completer<void> onlineDownloadStarted = Completer<void>();
   Completer<void> onlineImportFinished = Completer<void>();
   Completer<void>? _finishOnlineDownload;
@@ -534,6 +614,18 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     String query,
   ) async {
     return chessEverSearchResults;
+  }
+
+  @override
+  Future<GamebasePlayer?> findChessEverPlayerByFideId(
+    GamebaseRepository repository,
+    String fideId,
+  ) async {
+    fideLookupRequests.add(fideId);
+    for (final player in chessEverSearchResults) {
+      if (player.fideId.trim() == fideId.trim()) return player;
+    }
+    return null;
   }
 
   @override
@@ -586,6 +678,24 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
       source: PlayerWorkspaceSource.chesscom,
       message: 'Chess.com: 1/2 archives done; 42 games received...',
       username: username,
+      onProgress: onProgress,
+    );
+  }
+
+  @override
+  Future<PlayerWorkspaceDownloadedPgn> downloadChessEverGames({
+    required GamebaseRepository repository,
+    required String playerId,
+    String? fideId,
+    DateTime? sinceDate,
+    int? expectedGameCount,
+    PlayerWorkspaceProgress? onProgress,
+    OperationCancellationToken? cancellationToken,
+  }) {
+    return _downloadOnlineGames(
+      source: PlayerWorkspaceSource.chessever,
+      message: 'Downloading ChessEver games...',
+      username: 'GM Vasif Durarbayli',
       onProgress: onProgress,
     );
   }

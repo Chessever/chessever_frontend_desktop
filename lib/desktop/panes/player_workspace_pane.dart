@@ -3862,17 +3862,35 @@ Future<void> _showAccountConnectFlow(
   BuildContext context,
   WidgetRef ref,
   PlayerWorkspaceSource source,
-) {
-  return switch (source) {
-    PlayerWorkspaceSource.chessever => _showConnectChessEverDialog(
-      context,
-      ref,
-    ),
-    PlayerWorkspaceSource.manual => _showManualPgnDialog(context, ref),
-    PlayerWorkspaceSource.lichess || PlayerWorkspaceSource.chesscom =>
-      _showConnectAccountsDialog(context, ref, source),
-    PlayerWorkspaceSource.combined => Future<void>.value(),
-  };
+) async {
+  if (source == PlayerWorkspaceSource.chessever) {
+    final lockedFideId = _normalizedDialogFideId(
+      ref.read(playerWorkspaceProvider).selectedPlayer?.fideId,
+    );
+    if (lockedFideId != null) {
+      try {
+        await ref
+            .read(playerWorkspaceProvider.notifier)
+            .reconnectLockedChessEverSource();
+      } catch (error) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_stageErrorText(error))));
+      }
+      return;
+    }
+    await _showConnectChessEverDialog(context, ref);
+    return;
+  }
+  if (source == PlayerWorkspaceSource.manual) {
+    await _showManualPgnDialog(context, ref);
+    return;
+  }
+  if (source == PlayerWorkspaceSource.lichess ||
+      source == PlayerWorkspaceSource.chesscom) {
+    await _showConnectAccountsDialog(context, ref, source);
+  }
 }
 
 /// Opens the multi-username connect dialog for an online platform. One dialog
@@ -5654,8 +5672,10 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
                         ),
               ),
               const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 8,
                 children: [
                   DesktopDialogButton(
                     label: 'Cancel',
@@ -5664,9 +5684,11 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
                         _working ? null : () => Navigator.of(context).pop(),
                   ),
                   if (widget.onAddManual != null) ...[
-                    const SizedBox(width: 8),
                     DesktopDialogButton(
-                      label: widget.offerConnect ? 'Add only' : 'Add manually',
+                      label:
+                          widget.offerConnect
+                              ? 'Create manual player'
+                              : 'Add manually',
                       icon: Icons.person_add_alt_1_outlined,
                       tone:
                           widget.offerConnect
@@ -5678,7 +5700,6 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
                               : null,
                     ),
                     if (widget.offerConnect) ...[
-                      const SizedBox(width: 8),
                       DesktopDialogButton(
                         label: 'Add & connect',
                         icon: Icons.add_link_outlined,

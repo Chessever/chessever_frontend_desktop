@@ -309,6 +309,56 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     );
   }
 
+  /// Reconnects the only ChessEver identity permitted by this workspace and
+  /// immediately downloads its games. FIDE-less workspaces intentionally keep
+  /// using the searchable connect dialog instead.
+  Future<void> reconnectLockedChessEverSource() async {
+    final player = state.selectedPlayer;
+    if (player == null) return;
+    final lockedFideId = _normalizedPlayerFideId(player.fideId);
+    if (lockedFideId == null) {
+      throw StateError(
+        'ChessEver automatic reconnect requires a locked FIDE ID.',
+      );
+    }
+    final existing = player.account(PlayerWorkspaceSource.chessever);
+    if (existing != null) {
+      await syncAccount(existing);
+      return;
+    }
+
+    const source = PlayerWorkspaceSource.chessever;
+    final operationKey = _sourceOperationKey(source);
+    _setOperation(
+      operationKey,
+      source,
+      'Finding ChessEver player for FIDE $lockedFideId...',
+      null,
+    );
+    try {
+      final match = await _workspaceRepository.findChessEverPlayerByFideId(
+        _gamebaseRepository,
+        lockedFideId,
+      );
+      if (match == null) {
+        throw StateError(
+          'No ChessEver player was found for FIDE $lockedFideId.',
+        );
+      }
+      if (state.selectedPlayer?.id != player.id) return;
+      await connectChessEverPlayer(match);
+    } finally {
+      _clearOperation(operationKey);
+    }
+
+    if (state.selectedPlayer?.id != player.id) return;
+    final connected = state.selectedPlayer?.account(source);
+    if (connected == null) {
+      throw StateError('ChessEver player could not be connected.');
+    }
+    await syncAccount(connected);
+  }
+
   Future<void> selectPlayer(String playerId) async {
     if (!state.players.any((player) => player.id == playerId)) return;
     state = state.copyWith(selectedPlayerId: playerId);
