@@ -244,6 +244,11 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   /// Adds a ChessEver-indexed player and returns its new player id (see
   /// [addManualPlayer]).
   Future<String> addChessEverPlayer(GamebasePlayer gamebasePlayer) async {
+    final existing = _canonicalChessEverPlayer(gamebasePlayer);
+    if (existing != null) {
+      await selectPlayer(existing.id);
+      return existing.id;
+    }
     final player = _workspaceRepository.playerFromChessEver(gamebasePlayer);
     await _upsertPlayer(player, select: false);
     return player.id;
@@ -264,16 +269,24 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     if (accounts.isEmpty) return 0;
     final player = state.selectedPlayer;
     if (player == null) return 0;
-    var latest = _latestPlayer(player);
-    var added = 0;
+    final latest = _latestPlayer(player);
+    final knownIdentityKeys = <String>{
+      for (final account in latest.allAccounts) account.identityKey,
+    };
+    final newAccounts = <PlayerWorkspaceAccount>[];
     for (final account in accounts) {
-      if (!account.source.allowsMultipleAccounts) continue;
-      latest = latest.withAccount(account);
-      added++;
+      if (!_isExternalPlayerAccountSource(account.source)) continue;
+      _ensureExternalAccountCanAttach(account, playerId: latest.id);
+      if (!knownIdentityKeys.add(account.identityKey)) continue;
+      newAccounts.add(account);
     }
-    if (added == 0) return 0;
-    await _upsertPlayer(latest, select: true);
-    return added;
+    if (newAccounts.isEmpty) return 0;
+    var updated = latest;
+    for (final account in newAccounts) {
+      updated = updated.withAccount(account);
+    }
+    await _upsertPlayer(updated, select: true);
+    return newAccounts.length;
   }
 
   Future<void> connectChessEverPlayer(GamebasePlayer gamebasePlayer) async {
@@ -507,6 +520,10 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     }
     final player = state.selectedPlayer;
     if (player == null) return;
+    _ensureExternalAccountCanAttach(
+      PlayerWorkspaceAccount(source: source, username: username.trim()),
+      playerId: player.id,
+    );
     final operationKey = _sourceOperationKey(source);
     _setOperation(
       operationKey,
@@ -514,8 +531,9 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       'Fetching ${source.label} profile...',
       null,
     );
+    late final PlayerWorkspaceAccount account;
     try {
-      final account = switch (source) {
+      account = switch (source) {
         PlayerWorkspaceSource.lichess => await _workspaceRepository
             .fetchLichessAccount(username),
         PlayerWorkspaceSource.chesscom => await _workspaceRepository
@@ -525,11 +543,6 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         PlayerWorkspaceSource
             .combined => throw StateError('Unsupported account source.'),
       };
-      await _upsertPlayer(
-        _latestPlayer(player).withAccount(account),
-        select: true,
-      );
-      _clearOperation(operationKey);
     } catch (error) {
       _clearOperation(operationKey);
       await _upsertPlayer(
@@ -543,6 +556,15 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         select: true,
       );
       rethrow;
+    }
+    try {
+      _ensureExternalAccountCanAttach(account, playerId: player.id);
+      await _upsertPlayer(
+        _latestPlayer(player).withAccount(account),
+        select: true,
+      );
+    } finally {
+      _clearOperation(operationKey);
     }
   }
 
@@ -558,6 +580,13 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     if (player == null) return;
     final existing = _matchingAccount(player, account);
     if (existing == null) return;
+    _ensureExternalAccountCanAttach(
+      PlayerWorkspaceAccount(
+        source: existing.source,
+        username: username.trim(),
+      ),
+      playerId: player.id,
+    );
 
     final source = existing.source;
     final operationKey = _accountOperationKey(existing);
@@ -567,8 +596,9 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       'Fetching ${source.label} profile...',
       null,
     );
+    late final PlayerWorkspaceAccount fetched;
     try {
-      final fetched = switch (source) {
+      fetched = switch (source) {
         PlayerWorkspaceSource.lichess => await _workspaceRepository
             .fetchLichessAccount(username),
         PlayerWorkspaceSource.chesscom => await _workspaceRepository
@@ -578,6 +608,22 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         PlayerWorkspaceSource
             .combined => throw StateError('Unsupported account source.'),
       };
+    } catch (error) {
+      _clearOperation(operationKey);
+      final latest = state.selectedPlayer ?? player;
+      await _upsertPlayer(
+        latest.withAccount(existing.copyWith(error: error.toString())),
+        select: true,
+      );
+      rethrow;
+    }
+    try {
+      _ensureExternalAccountCanAttach(fetched, playerId: player.id);
+    } catch (_) {
+      _clearOperation(operationKey);
+      rethrow;
+    }
+    try {
       final sameIdentity =
           fetched.identityKey == existing.identityKey ||
           fetched.username.trim().toLowerCase() ==
@@ -1356,6 +1402,62 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
 
   PlayerWorkspacePlayer _latestPlayer(PlayerWorkspacePlayer fallback) {
     return _playerById(fallback.id) ?? fallback;
+  }
+
+  PlayerWorkspacePlayer? _canonicalChessEverPlayer(GamebasePlayer player) {
+    final fideId = _normalizedPlayerFideId(player.fideId);
+    if (fideId != null) {
+      for (final candidate in state.players) {
+        if (_normalizedPlayerFideId(candidate.fideId) == fideId) {
+          return candidate;
+        }
+      }
+    }
+
+    final chessEverPlayerId = _normalizedPlayerExternalId(player.id);
+    if (chessEverPlayerId == null) return null;
+    for (final candidate in state.players) {
+      if (_normalizedPlayerExternalId(candidate.chesseverPlayerId) ==
+          chessEverPlayerId) {
+        return candidate;
+      }
+      for (final account in candidate.accountsFor(
+        PlayerWorkspaceSource.chessever,
+      )) {
+        if (_normalizedPlayerExternalId(account.externalId) ==
+            chessEverPlayerId) {
+          return candidate;
+        }
+      }
+    }
+    return null;
+  }
+
+  void _ensureExternalAccountCanAttach(
+    PlayerWorkspaceAccount account, {
+    required String playerId,
+  }) {
+    if (!_isExternalPlayerAccountSource(account.source)) return;
+    for (final candidate in state.players) {
+      if (candidate.id == playerId) continue;
+      final ownsIdentity = candidate
+          .accountsFor(account.source)
+          .any((existing) => existing.identityKey == account.identityKey);
+      if (!ownsIdentity) continue;
+      final username = account.username.trim();
+      final accountDescription =
+          username.isEmpty
+              ? '${account.source.label} account'
+              : '${account.source.label} account "$username"';
+      final ownerFideId = _normalizedPlayerFideId(candidate.fideId);
+      final ownerDescription =
+          '"${candidate.displayName}"'
+          '${ownerFideId == null ? '' : ' (FIDE $ownerFideId)'}';
+      throw StateError(
+        'The $accountDescription is already attached to $ownerDescription. '
+        'Open that player workspace to manage it.',
+      );
+    }
   }
 
   PlayerWorkspacePlayer? _playerById(String playerId) {
@@ -2165,6 +2267,17 @@ String? _normalizedPlayerFideId(String? fideId) {
   final clean = fideId?.trim();
   if (clean == null || clean.isEmpty || clean == '?') return null;
   return clean;
+}
+
+String? _normalizedPlayerExternalId(String? externalId) {
+  final clean = externalId?.trim().toLowerCase();
+  if (clean == null || clean.isEmpty) return null;
+  return clean;
+}
+
+bool _isExternalPlayerAccountSource(PlayerWorkspaceSource source) {
+  return source == PlayerWorkspaceSource.lichess ||
+      source == PlayerWorkspaceSource.chesscom;
 }
 
 int? _sinceMsFromGameDate(DateTime? date) {

@@ -2968,6 +2968,86 @@ void main() {
       },
     );
 
+    test(
+      'addChessEverPlayer reuses FIDE identity and ChessEver id fallback',
+      () async {
+        final workspaceRepository =
+            _FakePlayerWorkspaceRepository()
+              ..snapshot = const PlayerWorkspaceSnapshot(
+                players: [
+                  PlayerWorkspacePlayer(
+                    id: 'fide-owner',
+                    displayName: 'GM Existing FIDE Player',
+                    createdAtMs: 2,
+                    fideId: '1503014',
+                    chesseverPlayerId: 'ce-before-reindex',
+                    accounts: {
+                      PlayerWorkspaceSource.chessever: PlayerWorkspaceAccount(
+                        source: PlayerWorkspaceSource.chessever,
+                        username: 'Existing FIDE Player',
+                        externalId: 'ce-before-reindex',
+                      ),
+                    },
+                  ),
+                  PlayerWorkspacePlayer(
+                    id: 'chessever-owner',
+                    displayName: 'Existing No-FIDE Player',
+                    createdAtMs: 1,
+                    fideId: '?',
+                    chesseverPlayerId: 'ce-stable-id',
+                    accounts: {
+                      PlayerWorkspaceSource.chessever: PlayerWorkspaceAccount(
+                        source: PlayerWorkspaceSource.chessever,
+                        username: 'Existing No-FIDE Player',
+                        externalId: 'ce-stable-id',
+                      ),
+                    },
+                  ),
+                ],
+              );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: LocalChessDatabaseRepository(
+            database: () async => db,
+          ),
+        );
+        await notifier.load();
+
+        final fideOwnerId = await notifier.addChessEverPlayer(
+          const GamebasePlayer(
+            id: 'ce-after-reindex',
+            fideId: '1503014',
+            name: 'Player, Existing FIDE',
+            gender: PlayerGender.male,
+            fed: 'NOR',
+            title: 'GM',
+          ),
+        );
+        final chessEverOwnerId = await notifier.addChessEverPlayer(
+          const GamebasePlayer(
+            id: 'ce-stable-id',
+            fideId: '?',
+            name: 'Player, Existing No-FIDE',
+            gender: PlayerGender.male,
+            fed: 'USA',
+          ),
+        );
+
+        expect(fideOwnerId, 'fide-owner');
+        expect(chessEverOwnerId, 'chessever-owner');
+        expect(notifier.state.players, hasLength(2));
+        expect(notifier.state.selectedPlayerId, 'chessever-owner');
+        expect(workspaceRepository.snapshot.players, hasLength(2));
+        expect(
+          notifier.state.players
+              .singleWhere((player) => player.id == 'fide-owner')
+              .chesseverPlayerId,
+          'ce-before-reindex',
+        );
+      },
+    );
+
     test('addManualPlayer returns the created player id', () async {
       final workspaceRepository = _FakePlayerWorkspaceRepository();
       final notifier = PlayerWorkspaceNotifier(
@@ -3038,6 +3118,170 @@ void main() {
         );
       },
     );
+
+    test(
+      'attachFetchedAccounts counts only genuinely new identity keys',
+      () async {
+        final workspaceRepository =
+            _FakePlayerWorkspaceRepository()
+              ..snapshot = const PlayerWorkspaceSnapshot(
+                selectedPlayerId: 'target',
+                players: [
+                  PlayerWorkspacePlayer(
+                    id: 'target',
+                    displayName: 'Prep Target',
+                    createdAtMs: 1,
+                    accounts: {
+                      PlayerWorkspaceSource.lichess: PlayerWorkspaceAccount(
+                        source: PlayerWorkspaceSource.lichess,
+                        username: 'Alpha',
+                      ),
+                      PlayerWorkspaceSource.chesscom: PlayerWorkspaceAccount(
+                        source: PlayerWorkspaceSource.chesscom,
+                        username: 'OldHandle',
+                        externalId: 'chess-account-42',
+                      ),
+                    },
+                  ),
+                ],
+              );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: LocalChessDatabaseRepository(
+            database: () async => db,
+          ),
+        );
+        await notifier.load();
+
+        final added = await notifier.attachFetchedAccounts(const [
+          PlayerWorkspaceAccount(
+            source: PlayerWorkspaceSource.lichess,
+            username: 'alpha',
+          ),
+          PlayerWorkspaceAccount(
+            source: PlayerWorkspaceSource.chesscom,
+            username: 'RenamedHandle',
+            externalId: 'chess-account-42',
+          ),
+          PlayerWorkspaceAccount(
+            source: PlayerWorkspaceSource.lichess,
+            username: 'Beta',
+          ),
+          PlayerWorkspaceAccount(
+            source: PlayerWorkspaceSource.lichess,
+            username: 'beta',
+          ),
+        ]);
+
+        expect(added, 1);
+        final player = notifier.state.selectedPlayer!;
+        expect(
+          player
+              .accountsFor(PlayerWorkspaceSource.lichess)
+              .map((account) => account.username),
+          <String>['Alpha', 'Beta'],
+        );
+        expect(
+          player.accountsFor(PlayerWorkspaceSource.chesscom).single.username,
+          'OldHandle',
+        );
+        expect(
+          workspaceRepository.snapshot.players.single.allAccounts,
+          hasLength(3),
+        );
+      },
+    );
+
+    for (final source in const <PlayerWorkspaceSource>[
+      PlayerWorkspaceSource.lichess,
+      PlayerWorkspaceSource.chesscom,
+    ]) {
+      test(
+        '${source.label} identity cannot move to another player workspace',
+        () async {
+          final ownerAccount = PlayerWorkspaceAccount(
+            source: source,
+            username:
+                source == PlayerWorkspaceSource.lichess
+                    ? 'SharedHandle'
+                    : 'PreviousHandle',
+            externalId:
+                source == PlayerWorkspaceSource.chesscom
+                    ? 'shared-account-id'
+                    : null,
+          );
+          final fetchedAccount = PlayerWorkspaceAccount(
+            source: source,
+            username:
+                source == PlayerWorkspaceSource.lichess
+                    ? 'sharedhandle'
+                    : 'CurrentHandle',
+            externalId:
+                source == PlayerWorkspaceSource.chesscom
+                    ? 'shared-account-id'
+                    : null,
+          );
+          final workspaceRepository =
+              _FakePlayerWorkspaceRepository()
+                ..snapshot = PlayerWorkspaceSnapshot(
+                  selectedPlayerId: 'target',
+                  players: [
+                    PlayerWorkspacePlayer(
+                      id: 'owner',
+                      displayName: 'GM Existing Owner',
+                      createdAtMs: 2,
+                      fideId: '1503014',
+                      accounts: {source: ownerAccount},
+                    ),
+                    const PlayerWorkspacePlayer(
+                      id: 'target',
+                      displayName: 'New Target',
+                      createdAtMs: 1,
+                    ),
+                  ],
+                );
+          final notifier = PlayerWorkspaceNotifier(
+            workspaceRepository: workspaceRepository,
+            gamebaseRepository: GamebaseRepository(Dio()),
+            localRepository: LocalChessDatabaseRepository(
+              database: () async => db,
+            ),
+          );
+          await notifier.load();
+
+          await expectLater(
+            notifier.attachFetchedAccounts([fetchedAccount]),
+            throwsA(
+              isA<StateError>()
+                  .having(
+                    (error) => error.message.toString(),
+                    'message',
+                    contains(source.label),
+                  )
+                  .having(
+                    (error) => error.message.toString(),
+                    'message',
+                    contains('GM Existing Owner'),
+                  )
+                  .having(
+                    (error) => error.message.toString(),
+                    'message',
+                    contains('FIDE 1503014'),
+                  ),
+            ),
+          );
+
+          expect(notifier.state.selectedPlayer!.allAccounts, isEmpty);
+          expect(
+            workspaceRepository.snapshot.players
+                .singleWhere((player) => player.id == 'target')
+                .allAccounts,
+            isEmpty,
+          );
+        },
+      );
+    }
 
     test(
       'attachFetchedAccounts is a no-op without a selected player',

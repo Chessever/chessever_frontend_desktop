@@ -442,6 +442,151 @@ void main() {
     expect(find.text('Add & connect'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('adding the same FIDE player reopens its existing workspace', (
+    tester,
+  ) async {
+    const existingPlayerId = 'existing-fide-player';
+    const reindexedPlayer = GamebasePlayer(
+      id: 'ce-after-reindex',
+      fideId: '1503014',
+      name: 'Carlsen, Magnus',
+      gender: PlayerGender.male,
+      fed: 'NOR',
+      title: 'GM',
+    );
+    final repository = _PaneFakePlayerWorkspaceRepository(
+      snapshot: const PlayerWorkspaceSnapshot(
+        players: [
+          PlayerWorkspacePlayer(
+            id: existingPlayerId,
+            displayName: 'GM Magnus Carlsen',
+            createdAtMs: 1,
+            fideId: '1503014',
+            chesseverPlayerId: 'ce-before-reindex',
+            accounts: {
+              PlayerWorkspaceSource.chessever: PlayerWorkspaceAccount(
+                source: PlayerWorkspaceSource.chessever,
+                username: 'Magnus Carlsen',
+                externalId: 'ce-before-reindex',
+              ),
+            },
+          ),
+        ],
+      ),
+      chessEverSearchResults: const [reindexedPlayer],
+    );
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() async => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          playerWorkspaceRepositoryProvider.overrideWithValue(repository),
+          _playerWorkspaceOverride(repository),
+        ],
+        child: const MaterialApp(
+          home: SizedBox(
+            width: 1200,
+            height: 800,
+            child: PlayerWorkspacePane(),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add player').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'Magnus');
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('GM Magnus Carlsen').last);
+    await tester.pumpAndSettle();
+
+    expect(repository.snapshot.players, hasLength(1));
+    expect(repository.snapshot.selectedPlayerId, existingPlayerId);
+    expect(
+      repository.snapshot.players.single.chesseverPlayerId,
+      'ce-before-reindex',
+    );
+    expect(find.text('Accounts'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('account ownership error identifies the existing player', (
+    tester,
+  ) async {
+    final repository = _PaneFakePlayerWorkspaceRepository(
+      snapshot: const PlayerWorkspaceSnapshot(
+        players: [
+          PlayerWorkspacePlayer(
+            id: 'owner',
+            displayName: 'GM Existing Owner',
+            createdAtMs: 2,
+            fideId: '1503014',
+            accounts: {
+              PlayerWorkspaceSource.lichess: PlayerWorkspaceAccount(
+                source: PlayerWorkspaceSource.lichess,
+                username: 'SharedHandle',
+              ),
+            },
+          ),
+          PlayerWorkspacePlayer(
+            id: 'target',
+            displayName: 'New Target',
+            createdAtMs: 1,
+          ),
+        ],
+      ),
+    );
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() async => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          playerWorkspaceRepositoryProvider.overrideWithValue(repository),
+          _playerWorkspaceOverride(repository),
+        ],
+        child: const MaterialApp(
+          home: SizedBox(
+            width: 1200,
+            height: 800,
+            child: PlayerWorkspacePane(),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New Target').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add account').at(1));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'sharedhandle');
+    await tester.pump();
+    await tester.tap(find.text('Add').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add 1 username'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(
+      find.text(
+        'The Lichess account "sharedhandle" is already attached to '
+        '"GM Existing Owner" (FIDE 1503014). Open that player workspace '
+        'to manage it.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      repository.snapshot.players
+          .singleWhere((player) => player.id == 'target')
+          .allAccounts,
+      isEmpty,
+    );
+    expect(find.textContaining('Bad state:'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Future<void> _expectOnlineAccountConnects(

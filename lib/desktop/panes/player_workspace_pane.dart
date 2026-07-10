@@ -4917,7 +4917,7 @@ class _ConnectAccountsDialogState extends State<_ConnectAccountsDialog> {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _inputError = error.toString();
+        _inputError = _stageErrorText(error);
       });
     }
   }
