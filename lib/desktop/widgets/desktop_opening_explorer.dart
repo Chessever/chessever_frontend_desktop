@@ -696,14 +696,14 @@ class _ColumnDims {
       if (width >= 300) {
         const horizontalPad = 8.0;
         const move = 72.0;
-        const gamesValue = 36.0;
+        const gamesValue = 40.0;
         const gamesIcon = 0.0;
         // Keep the month-year date visually separated from the games count.
         // The final date is right-aligned at the rail edge, so a wider LAST
         // slot shifts the games count left instead of crowding both values.
-        const last = 64.0;
+        const last = 68.0;
         const double? score = null;
-        const gap = 8.0;
+        const gap = 10.0;
         return _ColumnDims(
           move: move,
           gamesValue: gamesValue,
@@ -729,11 +729,11 @@ class _ColumnDims {
       }
       const horizontalPad = 8.0;
       const move = 58.0;
-      const gamesValue = 30.0;
+      const gamesValue = 34.0;
       const gamesIcon = 0.0;
-      const last = 64.0;
+      const last = 68.0;
       const double? score = null;
-      const gap = 6.0;
+      const gap = 8.0;
       return _ColumnDims(
         move: move,
         gamesValue: gamesValue,
@@ -1446,7 +1446,7 @@ class _GamesCountCell extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(right: 4),
       child: Text(
-        _formatTotalCount(aggregate.total, full: full),
+        formatExplorerGameCount(aggregate.total, full: full),
         textAlign: TextAlign.right,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
@@ -1814,12 +1814,12 @@ String _formatGamesCount(int n) {
   return n.toString();
 }
 
-/// Per-row total — compact whole-unit counts keep the opening table from
-/// crowding the result bars and date column (`63,000` → `63k`, `29,560` →
-/// `30k`).
-String _formatTotalCount(int n, {required bool full}) {
-  if (n >= 1000000) return '${(n / 1000000).round()}M';
-  if (n >= 1000) return '${(n / 1000).round()}k';
+/// Per-row total — compact decimal counts keep the opening table readable
+/// without hiding useful scale (`58,490` → `58.5k`).
+@visibleForTesting
+String formatExplorerGameCount(int n, {bool full = false}) {
+  if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}m';
+  if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}k';
   return n.toString();
 }
 
