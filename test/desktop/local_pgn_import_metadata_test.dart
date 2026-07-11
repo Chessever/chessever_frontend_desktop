@@ -72,6 +72,74 @@ const _expectedTags = <String, String>{
   'UTCTime': '09:00:00',
 };
 
+const _lichessSpeedPgn = '''
+[Event "Hourly UltraBullet Arena"]
+[Site "https://lichess.org/ultra123"]
+[Date "2025.09.13"]
+[White "Fast One"]
+[Black "Fast Two"]
+[Result "1-0"]
+[TimeControl "15+0"]
+
+1. e4 e5 2. Nf3 Nc6 1-0
+
+[Event "rated rapid game"]
+[Site "https://lichess.org/rapid123"]
+[Date "2025.09.14"]
+[White "Fast Two"]
+[Black "Fast One"]
+[Result "0-1"]
+[TimeControl "300+5"]
+
+1. d4 d5 2. c4 e6 0-1
+''';
+
+const _chessComSpeedPgn = '''
+[Event "Live Chess"]
+[Site "Chess.com"]
+[Date "2025.09.13"]
+[Round "1"]
+[White "Fast One"]
+[Black "Fast Two"]
+[Result "1-0"]
+[TimeControl "30"]
+
+1. e4 e5 2. Nf3 Nc6 1-0
+
+[Event "Live Chess"]
+[Site "Chess.com"]
+[Date "2025.09.14"]
+[Round "2"]
+[White "Fast Two"]
+[Black "Fast One"]
+[Result "0-1"]
+[TimeControl "60"]
+
+1. d4 d5 2. c4 e6 0-1
+
+[Event "Live Chess"]
+[Site "Chess.com"]
+[Date "2025.09.15"]
+[Round "3"]
+[White "Fast One"]
+[Black "Fast Two"]
+[Result "1-0"]
+[TimeControl "180"]
+
+1. c4 e5 2. Nc3 Nf6 1-0
+
+[Event "Live Chess"]
+[Site "Chess.com"]
+[Date "2025.09.16"]
+[Round "4"]
+[White "Fast Two"]
+[Black "Fast One"]
+[Result "0-1"]
+[TimeControl "600"]
+
+1. Nf3 d5 2. g3 c5 0-1
+''';
+
 void _expectAllTags(Map<String, dynamic> metadata, String label) {
   final missing = <String>[];
   final wrong = <String>[];
@@ -166,5 +234,73 @@ void main() {
       expect(page!.games, hasLength(1));
       _expectAllTags(page.games.single.game.metadata, 'games page');
     });
+
+    test('repository persists Lichess source-specific speed buckets', () async {
+      final db = await resqlite.Database.open('${temp.path}/lichess.db');
+      addTearDown(db.close);
+      await db.execute('PRAGMA foreign_keys=ON');
+      await createLocalChessResqliteDatabaseSchema(db);
+
+      final pgnFile = File('${temp.path}/lichess-speeds.pgn');
+      await pgnFile.writeAsString(_lichessSpeedPgn);
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      final source = await repo.importSingleFileSource(path: pgnFile.path);
+      expect(source, isNotNull);
+
+      final rows = await db.select(
+        '''
+        SELECT time_control, time_control_category
+        FROM local_chess_games
+        WHERE database_id = ?
+        ''',
+        <Object?>[pgnFile.path],
+      );
+      expect(
+        <String, String>{
+          for (final row in rows)
+            row['time_control']! as String:
+                row['time_control_category']! as String,
+        },
+        <String, String>{'15+0': 'ultrabullet', '300+5': 'rapid'},
+      );
+    });
+
+    test(
+      'repository persists Chess.com Bullet and UltraBullet buckets',
+      () async {
+        final db = await resqlite.Database.open('${temp.path}/chesscom.db');
+        addTearDown(db.close);
+        await db.execute('PRAGMA foreign_keys=ON');
+        await createLocalChessResqliteDatabaseSchema(db);
+
+        final pgnFile = File('${temp.path}/chesscom-speeds.pgn');
+        await pgnFile.writeAsString(_chessComSpeedPgn);
+        final repo = LocalChessDatabaseRepository(database: () async => db);
+        final source = await repo.importSingleFileSource(path: pgnFile.path);
+        expect(source, isNotNull);
+
+        final rows = await db.select(
+          '''
+          SELECT time_control, time_control_category
+          FROM local_chess_games
+          WHERE database_id = ?
+          ''',
+          <Object?>[pgnFile.path],
+        );
+        expect(
+          <String, String>{
+            for (final row in rows)
+              row['time_control']! as String:
+                  row['time_control_category']! as String,
+          },
+          <String, String>{
+            '30': 'ultrabullet',
+            '60': 'bullet',
+            '180': 'blitz',
+            '600': 'rapid',
+          },
+        );
+      },
+    );
   });
 }

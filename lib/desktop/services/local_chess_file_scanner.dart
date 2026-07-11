@@ -550,6 +550,134 @@ Future<LocalChessFileNode> scanLocalChessFileNodeForImportWithProgress({
   if (maxGames <= 0) {
     throw ArgumentError.value(maxGames, 'maxGames', 'must be > 0');
   }
+  if (!looksLikeLocalChessFile(scanPath)) {
+    throw ArgumentError(
+      'No recognized chess file was found at ${_basename(scanPath)}. '
+      'Open $localChessRecognizedFormatsLabel.',
+    );
+  }
+
+  // Only CPU/file work crosses this isolate boundary. Import callbacks stay on
+  // the caller isolate because they own the already-open, globally serialized
+  // resqlite writer. Each callback must finish before its ACK lets the worker
+  // parse and enqueue another batch.
+  final receivePort = ReceivePort();
+  final completer = Completer<LocalChessFileNode>();
+  late final StreamSubscription<dynamic> subscription;
+  Isolate? isolate;
+
+  void completeWithError(Object error, StackTrace stackTrace) {
+    if (completer.isCompleted) return;
+    completer.completeError(error, stackTrace);
+    isolate?.kill(priority: Isolate.immediate);
+  }
+
+  Future<void> handleImportStart(_ScanImportWorkerStart message) async {
+    try {
+      await onImportStart?.call(message.start);
+      if (!completer.isCompleted) {
+        message.ackPort.send(const _ScanImportWorkerAck());
+      }
+    } catch (error, stackTrace) {
+      // Callback failures (including OperationCanceledException) originate on
+      // this isolate. Preserve the exact object so callers retain their normal
+      // cancellation behavior instead of receiving a remote wrapper error.
+      completeWithError(error, stackTrace);
+    }
+  }
+
+  Future<void> handleGameBatch(_ScanImportWorkerBatch message) async {
+    try {
+      await onGameBatch?.call(message.batch);
+      if (!completer.isCompleted) {
+        message.ackPort.send(const _ScanImportWorkerAck());
+      }
+    } catch (error, stackTrace) {
+      completeWithError(error, stackTrace);
+    }
+  }
+
+  subscription = receivePort.listen((message) {
+    if (completer.isCompleted) return;
+    switch (message) {
+      case LocalChessScanProgress progress:
+        try {
+          onProgress?.call(progress);
+        } catch (error, stackTrace) {
+          completeWithError(error, stackTrace);
+        }
+      case _ScanImportWorkerStart start:
+        unawaited(handleImportStart(start));
+      case _ScanImportWorkerBatch batch:
+        unawaited(handleGameBatch(batch));
+      case _ScanImportWorkerSuccess(:final file):
+        completer.complete(file);
+      case _ScanWorkerFailure(:final message, :final stackTrace):
+        completeWithError(
+          ArgumentError(message),
+          StackTrace.fromString(stackTrace),
+        );
+      case null:
+        completeWithError(
+          StateError(
+            'PGN import scan worker exited before returning a result.',
+          ),
+          StackTrace.current,
+        );
+    }
+  });
+
+  try {
+    isolate = await Isolate.spawn(
+      _scanLocalChessFileNodeForImportWorker,
+      _ScanImportWorkerRequest(
+        sendPort: receivePort.sendPort,
+        path: scanPath,
+        rootPath: rootPath,
+        maxDecodedBytes: maxDecodedBytes,
+        maxGames: maxGames,
+        previewGameLimit: previewGameLimit,
+        batchSize: batchSize,
+      ),
+      onExit: receivePort.sendPort,
+      errorsAreFatal: true,
+    );
+    return await completer.future;
+  } catch (error, stackTrace) {
+    completeWithError(error, stackTrace);
+    return await completer.future;
+  } finally {
+    receivePort.close();
+    await subscription.cancel();
+    isolate?.kill(priority: Isolate.immediate);
+  }
+}
+
+Future<LocalChessFileNode> _scanLocalChessFileNodeForImportInline({
+  required String path,
+  required String rootPath,
+  required int maxDecodedBytes,
+  required int maxGames,
+  required int previewGameLimit,
+  required int batchSize,
+  void Function(LocalChessScanProgress progress)? onProgress,
+  Future<void> Function(LocalChessFileImportStart start)? onImportStart,
+  Future<void> Function(LocalChessFileImportBatch batch)? onGameBatch,
+}) async {
+  final scanPath = path.trim();
+  if (scanPath.isEmpty) {
+    throw ArgumentError('No file was provided.');
+  }
+  if (maxDecodedBytes <= 0) {
+    throw ArgumentError.value(
+      maxDecodedBytes,
+      'maxDecodedBytes',
+      'must be > 0',
+    );
+  }
+  if (maxGames <= 0) {
+    throw ArgumentError.value(maxGames, 'maxGames', 'must be > 0');
+  }
 
   void emit(double fraction, String message) {
     onProgress?.call(
@@ -1118,6 +1246,44 @@ class _ScanFileWorkerRequest {
   final bool buildOpeningTree;
 }
 
+class _ScanImportWorkerRequest {
+  const _ScanImportWorkerRequest({
+    required this.sendPort,
+    required this.path,
+    required this.rootPath,
+    required this.maxDecodedBytes,
+    required this.maxGames,
+    required this.previewGameLimit,
+    required this.batchSize,
+  });
+
+  final SendPort sendPort;
+  final String path;
+  final String rootPath;
+  final int maxDecodedBytes;
+  final int maxGames;
+  final int previewGameLimit;
+  final int batchSize;
+}
+
+class _ScanImportWorkerStart {
+  const _ScanImportWorkerStart(this.start, this.ackPort);
+
+  final LocalChessFileImportStart start;
+  final SendPort ackPort;
+}
+
+class _ScanImportWorkerBatch {
+  const _ScanImportWorkerBatch(this.batch, this.ackPort);
+
+  final LocalChessFileImportBatch batch;
+  final SendPort ackPort;
+}
+
+class _ScanImportWorkerAck {
+  const _ScanImportWorkerAck();
+}
+
 class _ScanWorkerSuccess {
   const _ScanWorkerSuccess(this.source);
 
@@ -1126,6 +1292,12 @@ class _ScanWorkerSuccess {
 
 class _ScanFileWorkerSuccess {
   const _ScanFileWorkerSuccess(this.file);
+
+  final LocalChessFileNode file;
+}
+
+class _ScanImportWorkerSuccess {
+  const _ScanImportWorkerSuccess(this.file);
 
   final LocalChessFileNode file;
 }
@@ -1158,6 +1330,50 @@ Future<void> _scanLocalChessPathsWorker(_ScanWorkerRequest request) async {
     request.sendPort.send(
       _ScanWorkerFailure(_scanWorkerErrorMessage(error), stackTrace.toString()),
     );
+  }
+}
+
+Future<void> _scanLocalChessFileNodeForImportWorker(
+  _ScanImportWorkerRequest request,
+) async {
+  try {
+    final file = await _scanLocalChessFileNodeForImportInline(
+      path: request.path,
+      rootPath: request.rootPath,
+      maxDecodedBytes: request.maxDecodedBytes,
+      maxGames: request.maxGames,
+      previewGameLimit: request.previewGameLimit,
+      batchSize: request.batchSize,
+      onProgress: request.sendPort.send,
+      onImportStart:
+          (start) => _sendImportWorkerMessageWithBackpressure(
+            request.sendPort,
+            (ackPort) => _ScanImportWorkerStart(start, ackPort),
+          ),
+      onGameBatch:
+          (batch) => _sendImportWorkerMessageWithBackpressure(
+            request.sendPort,
+            (ackPort) => _ScanImportWorkerBatch(batch, ackPort),
+          ),
+    );
+    request.sendPort.send(_ScanImportWorkerSuccess(file));
+  } catch (error, stackTrace) {
+    request.sendPort.send(
+      _ScanWorkerFailure(_scanWorkerErrorMessage(error), stackTrace.toString()),
+    );
+  }
+}
+
+Future<void> _sendImportWorkerMessageWithBackpressure(
+  SendPort sendPort,
+  Object Function(SendPort ackPort) createMessage,
+) async {
+  final ackPort = ReceivePort();
+  try {
+    sendPort.send(createMessage(ackPort.sendPort));
+    await ackPort.first;
+  } finally {
+    ackPort.close();
   }
 }
 

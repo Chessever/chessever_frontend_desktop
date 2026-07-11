@@ -185,7 +185,7 @@ void main() {
       },
     );
 
-    test('transposes positions by board and side to move', () {
+    test('merges legal transpositions with identical four-field FEN', () {
       final index = buildLocalOpeningTreeIndex(
         treeId: 'local:test',
         databaseId: 'local-db',
@@ -194,15 +194,103 @@ void main() {
           _input('b', _pawnsFirstTranspositionPgn, 1),
         ],
       );
-      final transposedFen =
+      final knightsFirstFen =
           ChessGame.fromPgn('a', _knightsFirstTranspositionPgn).mainline[3].fen;
+      final pawnsFirstFen =
+          ChessGame.fromPgn('b', _pawnsFirstTranspositionPgn).mainline[3].fen;
       final rootMoves = index.movesForFen(
         ChessGame.fromPgn('a', _knightsFirstTranspositionPgn).startingFen,
       );
+      final transposedKey = playerOpeningTreeFenKey(knightsFirstFen);
 
       expect(_move(rootMoves, 'g1f3').total, 1);
       expect(_move(rootMoves, 'c2c4').total, 1);
-      expect(index.gamesCountForFen(transposedFen), 2);
+      expect(transposedKey.split(' '), hasLength(4));
+      expect(playerOpeningTreeFenKey(pawnsFirstFen), transposedKey);
+      expect(index.nodesByFenKey.containsKey(transposedKey), isTrue);
+      expect(index.gamesCountForFen(knightsFirstFen), 2);
+    });
+
+    test('separates castling-right positions and their supporting games', () {
+      final index = buildLocalOpeningTreeIndex(
+        treeId: 'local:test',
+        databaseId: 'local-db',
+        games: <LocalOpeningTreeGameInput>[
+          _input('castle-all', _allCastlingRightsPgn, 0),
+          _input('castle-reduced', _reducedCastlingRightsPgn, 1),
+        ],
+      );
+      final allRightsFen =
+          ChessGame.fromPgn('castle-all', _allCastlingRightsPgn).startingFen;
+      final reducedRightsFen =
+          ChessGame.fromPgn(
+            'castle-reduced',
+            _reducedCastlingRightsPgn,
+          ).startingFen;
+      final allFields = allRightsFen.split(' ');
+      final reducedFields = reducedRightsFen.split(' ');
+
+      expect(allFields.take(2), reducedFields.take(2));
+      expect(allFields[2], 'KQkq');
+      expect(reducedFields[2], 'Qkq');
+      expect(
+        playerOpeningTreeFenKey(allRightsFen),
+        isNot(playerOpeningTreeFenKey(reducedRightsFen)),
+      );
+      expect(_move(index.movesForFen(allRightsFen), 'g1f3').total, 1);
+      expect(
+        index.movesForFen(allRightsFen).map((move) => move.uci),
+        isNot(contains('b1c3')),
+      );
+      expect(_move(index.movesForFen(reducedRightsFen), 'b1c3').total, 1);
+      expect(
+        index.movesForFen(reducedRightsFen).map((move) => move.uci),
+        isNot(contains('g1f3')),
+      );
+      expect(_gameIdsForFen(index, allRightsFen), <String>['castle-all']);
+      expect(_gameIdsForFen(index, reducedRightsFen), <String>[
+        'castle-reduced',
+      ]);
+    });
+
+    test('separates legal en-passant positions and their supporting games', () {
+      final index = buildLocalOpeningTreeIndex(
+        treeId: 'local:test',
+        databaseId: 'local-db',
+        games: <LocalOpeningTreeGameInput>[
+          _input('ep-available', _enPassantAvailablePgn, 0),
+          _input('ep-unavailable', _enPassantUnavailablePgn, 1),
+        ],
+      );
+      final enPassantFen =
+          ChessGame.fromPgn('ep-available', _enPassantAvailablePgn).startingFen;
+      final noEnPassantFen =
+          ChessGame.fromPgn(
+            'ep-unavailable',
+            _enPassantUnavailablePgn,
+          ).startingFen;
+      final enPassantFields = enPassantFen.split(' ');
+      final noEnPassantFields = noEnPassantFen.split(' ');
+
+      expect(enPassantFields.take(3), noEnPassantFields.take(3));
+      expect(enPassantFields[3], 'd6');
+      expect(noEnPassantFields[3], '-');
+      expect(
+        playerOpeningTreeFenKey(enPassantFen),
+        isNot(playerOpeningTreeFenKey(noEnPassantFen)),
+      );
+      expect(_move(index.movesForFen(enPassantFen), 'e5d6').total, 1);
+      expect(
+        index.movesForFen(enPassantFen).map((move) => move.uci),
+        isNot(contains('e5e6')),
+      );
+      expect(_move(index.movesForFen(noEnPassantFen), 'e5e6').total, 1);
+      expect(
+        index.movesForFen(noEnPassantFen).map((move) => move.uci),
+        isNot(contains('e5d6')),
+      );
+      expect(_gameIdsForFen(index, enPassantFen), <String>['ep-available']);
+      expect(_gameIdsForFen(index, noEnPassantFen), <String>['ep-unavailable']);
     });
 
     test('large-import mode replays compact lines for position games', () {
@@ -311,6 +399,19 @@ dynamic _move(List<dynamic> moves, String uci) {
   return moves.singleWhere((move) => move.uci == uci);
 }
 
+List<String> _gameIdsForFen(PlayerOpeningTreeIndex index, String fen) {
+  return index
+      .gamesForFen(
+        fen,
+        sortBy: GamebaseSortField.id,
+        sortDirection: GamebaseSortDirection.asc,
+        pageNumber: 0,
+        pageSize: 10,
+      )
+      .map((row) => row['id']! as String)
+      .toList(growable: false);
+}
+
 const _spanishPgn = '''
 [Event "Fast tree"]
 [Site "Local"]
@@ -392,6 +493,54 @@ const _illegalSanPgn = '''
 [Result "*"]
 
 1. e4 e5 2. e5 *
+''';
+
+const _allCastlingRightsPgn = '''
+[Event "Castling identity"]
+[Site "Local"]
+[White "All rights"]
+[Black "Line"]
+[Result "*"]
+[SetUp "1"]
+[FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"]
+
+1. Nf3 *
+''';
+
+const _reducedCastlingRightsPgn = '''
+[Event "Castling identity"]
+[Site "Local"]
+[White "Reduced rights"]
+[Black "Line"]
+[Result "*"]
+[SetUp "1"]
+[FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w Qkq - 0 1"]
+
+1. Nc3 *
+''';
+
+const _enPassantAvailablePgn = '''
+[Event "En-passant identity"]
+[Site "Local"]
+[White "Available"]
+[Black "Line"]
+[Result "*"]
+[SetUp "1"]
+[FEN "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1"]
+
+1. exd6 *
+''';
+
+const _enPassantUnavailablePgn = '''
+[Event "En-passant identity"]
+[Site "Local"]
+[White "Unavailable"]
+[Black "Line"]
+[Result "*"]
+[SetUp "1"]
+[FEN "4k3/8/8/3pP3/8/8/8/4K3 w - - 0 1"]
+
+1. e6 *
 ''';
 
 const _knightsFirstTranspositionPgn = '''

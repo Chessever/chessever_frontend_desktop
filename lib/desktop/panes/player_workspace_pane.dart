@@ -19,6 +19,7 @@ import 'package:chessever/desktop/panes/library_pane.dart'
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_explorer_scope.dart';
@@ -50,12 +51,47 @@ import 'package:chessever/widgets/player_initials_avatar.dart';
 
 const _startingFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
+@visibleForTesting
+String playerWorkspaceDisplayName(PlayerWorkspacePlayer player) {
+  final displayName = player.displayName.trim();
+  final title = player.title?.trim();
+  if (displayName.isEmpty || title == null || title.isEmpty) {
+    return displayName;
+  }
+  return displayName.replaceFirst(
+    RegExp('^${RegExp.escape(title)}\\s+', caseSensitive: false),
+    '',
+  );
+}
+
+/// Canonical visual order for sources in the player-detail rail.
+///
+/// Kept as a single testable value so the generated Combined database cannot
+/// silently drift below Manual PGN again when source cards are rearranged.
+@visibleForTesting
+const playerWorkspaceSourceRailOrder = <PlayerWorkspaceSource>[
+  PlayerWorkspaceSource.chessever,
+  PlayerWorkspaceSource.lichess,
+  PlayerWorkspaceSource.chesscom,
+  PlayerWorkspaceSource.combined,
+  PlayerWorkspaceSource.manual,
+];
+
 enum _PlayerWorkspaceTab { overview, accounts, games, buildTree }
 
 final _cachedPlayerWorkspaceTreeIndexProvider = FutureProvider.autoDispose
     .family<PlayerOpeningTreeIndex?, String>((ref, path) async {
       final clean = path.trim();
       if (clean.isEmpty) return null;
+      final liveIndex = ref.watch(
+        localChessLibraryProvider.select((state) {
+          final node = state.source?.nodeForPath(clean);
+          if (node is! LocalChessFileNode) return null;
+          final index = node.openingTreeIndex;
+          return index?.isUsable == true ? index : null;
+        }),
+      );
+      if (liveIndex != null) return liveIndex;
       final node = await ref
           .read(localChessDatabaseRepositoryProvider)
           .loadFreshFileNode(clean, rootPath: p.dirname(clean));
@@ -80,13 +116,28 @@ class PlayerWorkspacePane extends HookConsumerWidget {
     final openedPlayerId = useState<String?>(null);
     final selected = _playerById(players, openedPlayerId.value);
     final tab = useState(_PlayerWorkspaceTab.overview);
+    final gamesFilter = useState(LocalChessGameFilter());
+    final gamesSourcePath = useState<String?>(null);
+    final gamesFilterNonce = useState(0);
 
     void openPlayer(String playerId) {
       openedPlayerId.value = playerId;
       tab.value = _PlayerWorkspaceTab.overview;
+      gamesFilter.value = LocalChessGameFilter();
+      gamesSourcePath.value = null;
+      gamesFilterNonce.value = 0;
       unawaited(
         ref.read(playerWorkspaceProvider.notifier).selectPlayer(playerId),
       );
+    }
+
+    void applyOverviewFilter(PlayerOverviewFilterRequest request) {
+      gamesFilter.value = localChessGameFilterFromOverview(request);
+      if (request.sourcePath != null && request.sourcePath!.isNotEmpty) {
+        gamesSourcePath.value = request.sourcePath;
+      }
+      gamesFilterNonce.value++;
+      tab.value = _PlayerWorkspaceTab.games;
     }
 
     final body = ColoredBox(
@@ -94,15 +145,17 @@ class PlayerWorkspacePane extends HookConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _Header(
-            player: selected,
-            onBackToLibrary:
-                selected == null ? null : () => openedPlayerId.value = null,
-            onAddPlayer:
-                () => unawaited(
-                  _showAddPlayerDialog(context, ref, onOpenPlayer: openPlayer),
-                ),
-          ),
+          if (selected == null)
+            _Header(
+              onAddPlayer:
+                  () => unawaited(
+                    _showAddPlayerDialog(
+                      context,
+                      ref,
+                      onOpenPlayer: openPlayer,
+                    ),
+                  ),
+            ),
           Expanded(
             child:
                 isLoading
@@ -132,7 +185,7 @@ class PlayerWorkspacePane extends HookConsumerWidget {
                           ),
                     )
                     : Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
@@ -140,8 +193,6 @@ class PlayerWorkspacePane extends HookConsumerWidget {
                             width: 330,
                             child: _PlayerSourceRail(
                               player: selected,
-                              players: players,
-                              onSelectPlayer: openPlayer,
                               onAddAccount:
                                   (source) => unawaited(
                                     _showAccountConnectFlow(
@@ -209,6 +260,13 @@ class PlayerWorkspacePane extends HookConsumerWidget {
                               onGoToAccounts:
                                   () =>
                                       tab.value = _PlayerWorkspaceTab.accounts,
+                              gamesFilter: gamesFilter.value,
+                              gamesSourcePath: gamesSourcePath.value,
+                              gamesFilterNonce: gamesFilterNonce.value,
+                              onOverviewFilter: applyOverviewFilter,
+                              onGamesFilterChanged: (next) {
+                                gamesFilter.value = next;
+                              },
                             ),
                           ),
                         ],
@@ -239,32 +297,16 @@ class PlayerWorkspacePane extends HookConsumerWidget {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({
-    required this.player,
-    required this.onBackToLibrary,
-    required this.onAddPlayer,
-  });
+  const _Header({required this.onAddPlayer});
 
-  final PlayerWorkspacePlayer? player;
-  final VoidCallback? onBackToLibrary;
   final VoidCallback onAddPlayer;
 
   @override
   Widget build(BuildContext context) {
-    final openedPlayer = player;
-    final title = player?.displayName ?? 'Players';
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
       child: Row(
         children: [
-          if (onBackToLibrary != null) ...[
-            DesktopHeaderActionButton(
-              label: 'All players',
-              icon: Icons.arrow_back_rounded,
-              onPress: onBackToLibrary,
-            ),
-            const SizedBox(width: 12),
-          ],
           const Icon(
             Icons.person_search_outlined,
             size: 18,
@@ -279,7 +321,7 @@ class _Header extends StatelessWidget {
               children: [
                 Flexible(
                   child: Text(
-                    title,
+                    'Players',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -290,17 +332,6 @@ class _Header extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (openedPlayer != null) ...[
-                  const SizedBox(width: 10),
-                  Text(
-                    '${_formatInt(openedPlayer.totalGames)} games',
-                    style: const TextStyle(
-                      color: kWhiteColor70,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
               ],
             ),
           ),
@@ -711,7 +742,7 @@ class _PlayerLibraryRowState extends State<_PlayerLibraryRow>
                               ],
                               Expanded(
                                 child: Text(
-                                  player.displayName,
+                                  playerWorkspaceDisplayName(player),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
@@ -731,49 +762,51 @@ class _PlayerLibraryRowState extends State<_PlayerLibraryRow>
                   ],
                 ),
               ),
-              const SizedBox(width: _kColGap),
-              SizedBox(
-                width: _kSourcesColWidth,
-                child: _SourceChipRow(player: player),
-              ),
-              const SizedBox(width: _kColGap),
-              SizedBox(
-                width: _kGamesColWidth,
-                child: _GamesCell(player: player),
-              ),
-              const SizedBox(width: _kColGap),
-              SizedBox(
-                width: _kLastSyncColWidth,
-                child: _LastSyncCell(ms: player.lastSyncAtMs),
-              ),
-              const SizedBox(width: _kColGap),
-              SizedBox(
-                width: _kRowActionsWidth,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    DesktopDialogIconButton(
-                      icon: Icons.edit_outlined,
-                      tooltip: 'Rename player',
-                      onPress: widget.onRename,
-                    ),
-                    const SizedBox(width: 4),
-                    DesktopDialogIconButton(
-                      icon: Icons.delete_outline_rounded,
-                      tooltip: 'Remove player',
-                      tone: DesktopDialogButtonTone.danger,
-                      onPress: widget.onRemove,
-                    ),
-                    const SizedBox(width: 6),
-                    DesktopDialogIconButton(
-                      icon: Icons.chevron_right_rounded,
-                      tooltip: 'Open player',
-                      tone: DesktopDialogButtonTone.primary,
-                      onPress: widget.onOpen,
-                    ),
-                  ],
+              ...[
+                const SizedBox(width: _kColGap),
+                SizedBox(
+                  width: _kSourcesColWidth,
+                  child: _SourceChipRow(player: player),
                 ),
-              ),
+                const SizedBox(width: _kColGap),
+                SizedBox(
+                  width: _kGamesColWidth,
+                  child: _GamesCell(player: player),
+                ),
+                const SizedBox(width: _kColGap),
+                SizedBox(
+                  width: _kLastSyncColWidth,
+                  child: _LastSyncCell(ms: player.lastSyncAtMs),
+                ),
+                const SizedBox(width: _kColGap),
+                SizedBox(
+                  width: _kRowActionsWidth,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      DesktopDialogIconButton(
+                        icon: Icons.edit_outlined,
+                        tooltip: 'Rename player',
+                        onPress: widget.onRename,
+                      ),
+                      const SizedBox(width: 4),
+                      DesktopDialogIconButton(
+                        icon: Icons.delete_outline_rounded,
+                        tooltip: 'Remove player',
+                        tone: DesktopDialogButtonTone.danger,
+                        onPress: widget.onRemove,
+                      ),
+                      const SizedBox(width: 6),
+                      DesktopDialogIconButton(
+                        icon: Icons.chevron_right_rounded,
+                        tooltip: 'Open player',
+                        tone: DesktopDialogButtonTone.primary,
+                        onPress: widget.onOpen,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -1185,8 +1218,6 @@ class _EmptyPlayerWorkspace extends StatelessWidget {
 class _PlayerSourceRail extends ConsumerWidget {
   const _PlayerSourceRail({
     required this.player,
-    required this.players,
-    required this.onSelectPlayer,
     required this.onAddAccount,
     required this.onEditAccount,
     required this.onRefreshAccount,
@@ -1198,8 +1229,6 @@ class _PlayerSourceRail extends ConsumerWidget {
   });
 
   final PlayerWorkspacePlayer player;
-  final List<PlayerWorkspacePlayer> players;
-  final ValueChanged<String> onSelectPlayer;
   final ValueChanged<PlayerWorkspaceSource> onAddAccount;
   final ValueChanged<PlayerWorkspaceAccount> onEditAccount;
   final ValueChanged<PlayerWorkspaceAccount> onRefreshAccount;
@@ -1224,67 +1253,51 @@ class _PlayerSourceRail extends ConsumerWidget {
         padding: const EdgeInsets.all(14),
         children: [
           _PlayerIdentityCard(player: player),
-          if (players.length > 1) ...[
-            const SizedBox(height: 14),
-            const _RailSectionLabel('Workspace players'),
-            const SizedBox(height: 8),
-            for (final item in players.take(8))
-              _PlayerMiniRow(
-                player: item,
-                selected: item.id == player.id,
-                onTap: () => onSelectPlayer(item.id),
-              ),
-          ],
           const SizedBox(height: 14),
           const _RailSectionLabel('Sources'),
           const SizedBox(height: 8),
-          for (final source in const [
-            PlayerWorkspaceSource.chessever,
-            PlayerWorkspaceSource.lichess,
-            PlayerWorkspaceSource.chesscom,
-            PlayerWorkspaceSource.manual,
-          ]) ...[
-            for (final account in player.accountsFor(source))
-              _SourceCard(
-                source: source,
-                account: account,
-                operation: _operationForAccount(operations, account),
-                onAddAccount: () => onAddAccount(source),
-                onEditAccount: () => onEditAccount(account),
-                onRefreshAccount: () => onRefreshAccount(account),
-                onRemoveAccount: () => onRemoveAccount(account),
-                onSync: () => onSync(account),
-                onReinstall: () => onReinstall(account),
-                onCancelOperation: () => onCancelOperation(account),
-              ),
-            if (player.accountsFor(source).isEmpty)
-              _SourceCard(
-                source: source,
-                account: null,
+          for (final source in playerWorkspaceSourceRailOrder) ...[
+            if (source == PlayerWorkspaceSource.combined)
+              _CombinedCard(
+                player: player,
                 operation: _operationForSource(operations, source),
-                onAddAccount: () => onAddAccount(source),
-                onEditAccount: null,
-                onRefreshAccount: null,
-                onRemoveAccount: null,
-                onSync: null,
-                onReinstall: null,
-                onCancelOperation: null,
+                onRebuild: onRebuildCombined,
               )
-            else if (source.allowsMultipleAccounts)
-              _AddSourceAccountButton(
-                source: source,
-                onPress: () => onAddAccount(source),
-              ),
+            else ...[
+              for (final account in player.accountsFor(source))
+                _SourceCard(
+                  source: source,
+                  account: account,
+                  operation: _operationForAccount(operations, account),
+                  onAddAccount: () => onAddAccount(source),
+                  onEditAccount: () => onEditAccount(account),
+                  onRefreshAccount: () => onRefreshAccount(account),
+                  onRemoveAccount: () => onRemoveAccount(account),
+                  onSync: () => onSync(account),
+                  onReinstall: () => onReinstall(account),
+                  onCancelOperation: () => onCancelOperation(account),
+                ),
+              if (player.accountsFor(source).isEmpty)
+                _SourceCard(
+                  source: source,
+                  account: null,
+                  operation: _operationForSource(operations, source),
+                  onAddAccount: () => onAddAccount(source),
+                  onEditAccount: null,
+                  onRefreshAccount: null,
+                  onRemoveAccount: null,
+                  onSync: null,
+                  onReinstall: null,
+                  onCancelOperation: null,
+                )
+              else if (source.allowsMultipleAccounts)
+                _AddSourceAccountButton(
+                  source: source,
+                  onPress: () => onAddAccount(source),
+                ),
+            ],
             const SizedBox(height: 8),
           ],
-          _CombinedCard(
-            player: player,
-            operation: _operationForSource(
-              operations,
-              PlayerWorkspaceSource.combined,
-            ),
-            onRebuild: onRebuildCombined,
-          ),
         ],
       ),
     );
@@ -1298,6 +1311,10 @@ class _PlayerIdentityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final title = player.title?.trim();
+    final country = player.country?.trim();
+    final hasTitle = title != null && title.isNotEmpty;
+    final hasCountry = country != null && country.isNotEmpty;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: kBlack3Color.withValues(alpha: 0.72),
@@ -1318,7 +1335,7 @@ class _PlayerIdentityCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        player.displayName,
+                        playerWorkspaceDisplayName(player),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -1328,21 +1345,31 @@ class _PlayerIdentityCard extends StatelessWidget {
                           height: 1.15,
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        [
-                          if (player.title != null) player.title!,
-                          if (player.country != null) player.country!,
-                          if (player.fideId != null) 'FIDE ${player.fideId}',
-                        ].join(' · '),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: kWhiteColor70,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
+                      if (hasTitle || hasCountry) ...[
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            if (hasTitle)
+                              Text(
+                                title,
+                                style: const TextStyle(
+                                  color: kWhiteColor70,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            if (hasTitle && hasCountry)
+                              const SizedBox(width: 8),
+                            if (hasCountry)
+                              FederationFlag(
+                                federation: country,
+                                width: 18,
+                                height: 13,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                          ],
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
@@ -1492,72 +1519,6 @@ class _RailSectionLabel extends StatelessWidget {
   }
 }
 
-class _PlayerMiniRow extends StatelessWidget {
-  const _PlayerMiniRow({
-    required this.player,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final PlayerWorkspacePlayer player;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Container(
-        height: 42,
-        margin: const EdgeInsets.only(bottom: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          color: selected ? kPrimaryColor.withValues(alpha: 0.10) : null,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color:
-                selected
-                    ? kPrimaryColor.withValues(alpha: 0.35)
-                    : Colors.transparent,
-          ),
-        ),
-        child: Row(
-          children: [
-            _FidePhotoAvatar(
-              fideId: int.tryParse(player.fideId?.trim() ?? ''),
-              initials: _initials(player.displayName),
-              size: 26,
-              fallbackAvatarUrl: player.bestAvatarUrl,
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Text(
-                player.displayName,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: selected ? kWhiteColor : kWhiteColor70,
-                  fontSize: 13,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                ),
-              ),
-            ),
-            if (player.totalGames > 0)
-              Text(
-                _formatInt(player.totalGames),
-                style: const TextStyle(
-                  color: kLightGreyColor,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _SourceCard extends StatelessWidget {
   const _SourceCard({
     required this.source,
@@ -1681,7 +1642,8 @@ class _SourceCard extends StatelessWidget {
               ),
               if (!working &&
                   downloadProgress != null &&
-                  currentAccount != null) ...[
+                  currentAccount != null &&
+                  currentAccount.remainingGameCount > 0) ...[
                 const SizedBox(height: 7),
                 _DownloadProgress(account: currentAccount),
               ],
@@ -2123,12 +2085,22 @@ class _PlayerWorkspaceMain extends StatelessWidget {
     required this.onTabChanged,
     required this.player,
     required this.onGoToAccounts,
+    required this.gamesFilter,
+    required this.gamesSourcePath,
+    required this.gamesFilterNonce,
+    required this.onOverviewFilter,
+    required this.onGamesFilterChanged,
   });
 
   final _PlayerWorkspaceTab selectedTab;
   final ValueChanged<_PlayerWorkspaceTab> onTabChanged;
   final PlayerWorkspacePlayer player;
   final VoidCallback onGoToAccounts;
+  final LocalChessGameFilter gamesFilter;
+  final String? gamesSourcePath;
+  final int gamesFilterNonce;
+  final ValueChanged<PlayerOverviewFilterRequest> onOverviewFilter;
+  final ValueChanged<LocalChessGameFilter> onGamesFilterChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -2183,9 +2155,16 @@ class _PlayerWorkspaceMain extends StatelessWidget {
               _PlayerWorkspaceTab.overview => _OverviewTab(
                 player: player,
                 onGoToAccounts: onGoToAccounts,
+                onOverviewFilter: onOverviewFilter,
               ),
               _PlayerWorkspaceTab.accounts => _AccountsTab(player: player),
-              _PlayerWorkspaceTab.games => _GamesTab(player: player),
+              _PlayerWorkspaceTab.games => _GamesTab(
+                player: player,
+                gamesFilter: gamesFilter,
+                preferredSourcePath: gamesSourcePath,
+                filterNonce: gamesFilterNonce,
+                onFilterChanged: onGamesFilterChanged,
+              ),
               _PlayerWorkspaceTab.buildTree => _BuildTreeTab(
                 player: player,
                 onGoToAccounts: onGoToAccounts,
@@ -2202,10 +2181,15 @@ class _PlayerWorkspaceMain extends StatelessWidget {
 /// metric from the player's combined resqlite database via fast GROUP BY
 /// aggregates and renders them in the Play-profile visual language.
 class _OverviewTab extends StatelessWidget {
-  const _OverviewTab({required this.player, required this.onGoToAccounts});
+  const _OverviewTab({
+    required this.player,
+    required this.onGoToAccounts,
+    required this.onOverviewFilter,
+  });
 
   final PlayerWorkspacePlayer player;
   final VoidCallback onGoToAccounts;
+  final ValueChanged<PlayerOverviewFilterRequest> onOverviewFilter;
 
   @override
   Widget build(BuildContext context) {
@@ -2228,6 +2212,7 @@ class _OverviewTab extends StatelessWidget {
       revision:
           player.combinedBuiltAtMs ?? player.lastSyncAtMs ?? player.totalGames,
       onDownloadGames: onGoToAccounts,
+      onOverviewFilter: onOverviewFilter,
     );
   }
 }
@@ -2253,6 +2238,18 @@ List<PlayerStatsSource> _statsSources(PlayerWorkspacePlayer player) {
         accent: _sourceAccentColor(target.source),
         path: target.path,
         gameCount: target.gameCount,
+        kind: target.source,
+        // Online sources default overview/rating to blitz; Combined /
+        // ChessEver / manual default to classical.
+        preferredTimeControl:
+            target.source == PlayerWorkspaceSource.lichess ||
+                    target.source == PlayerWorkspaceSource.chesscom
+                ? 'blitz'
+                : 'classical',
+        unclassifiedTimeControlCategory:
+            target.source == PlayerWorkspaceSource.chessever
+                ? 'classical'
+                : null,
       ),
   ];
 }
@@ -2361,12 +2358,22 @@ class _AccountsTab extends ConsumerWidget {
 
 /// Games tab: an inline, keyboard-navigable table of the selected source's
 /// games. Reuses the Library's local-database view (search, sort, pagination,
-/// arrow-key selection, on-demand title/flag enrichment) scoped to one source
-/// or the merged combined set — so the prep games live on the player page.
+/// filters, arrow-key selection, on-demand title/flag enrichment) scoped to
+/// one source or the merged combined set.
 class _GamesTab extends HookConsumerWidget {
-  const _GamesTab({required this.player});
+  const _GamesTab({
+    required this.player,
+    required this.gamesFilter,
+    required this.preferredSourcePath,
+    required this.filterNonce,
+    required this.onFilterChanged,
+  });
 
   final PlayerWorkspacePlayer player;
+  final LocalChessGameFilter gamesFilter;
+  final String? preferredSourcePath;
+  final int filterNonce;
+  final ValueChanged<LocalChessGameFilter> onFilterChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -2381,8 +2388,17 @@ class _GamesTab extends HookConsumerWidget {
       );
     }
     final selected = useState(0);
+    // Prefer the Overview source when a facet tap hands off a path.
+    useEffect(() {
+      final path = preferredSourcePath;
+      if (path == null || path.isEmpty) return null;
+      final i = sources.indexWhere((s) => s.path == path);
+      if (i >= 0) selected.value = i;
+      return null;
+    }, [preferredSourcePath, filterNonce, sources.length]);
     final index = selected.value.clamp(0, sources.length - 1);
     final source = sources[index];
+    final aliases = _statsAliases(player);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2422,10 +2438,14 @@ class _GamesTab extends HookConsumerWidget {
         ),
         Expanded(
           child: _EmbeddedLocalGames(
-            key: ValueKey(source.path),
+            key: ValueKey<String>('${source.path}#$filterNonce'),
             path: source.path,
             title: source.label,
             revision: source.gameCount,
+            initialFilter: gamesFilter,
+            onFilterChanged: onFilterChanged,
+            playerFideId: player.fideId,
+            playerAliases: aliases,
           ),
         ),
       ],
@@ -2441,11 +2461,19 @@ class _EmbeddedLocalGames extends ConsumerWidget {
     required this.path,
     required this.title,
     this.revision = 0,
+    this.initialFilter,
+    this.onFilterChanged,
+    this.playerFideId,
+    this.playerAliases = const <String>[],
   });
 
   final String path;
   final String title;
   final int revision;
+  final LocalChessGameFilter? initialFilter;
+  final ValueChanged<LocalChessGameFilter>? onFilterChanged;
+  final String? playerFideId;
+  final List<String> playerAliases;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -2471,6 +2499,7 @@ class _EmbeddedLocalGames extends ConsumerWidget {
           ),
       data:
           (source) => LocalChessFilesView(
+            key: ValueKey<Object?>(initialFilter),
             selectedPath: path,
             onSelectPath: (_) {},
             stateOverride: LocalChessLibraryState(
@@ -2481,6 +2510,14 @@ class _EmbeddedLocalGames extends ConsumerWidget {
               ref.invalidate(localDatabaseWorkspaceSourceProvider(key));
               await ref.read(localDatabaseWorkspaceSourceProvider(key).future);
             },
+            initialFilter: initialFilter,
+            onFilterChanged: onFilterChanged,
+            playerFideId: playerFideId,
+            playerAliases: playerAliases,
+            // The Players Games tab already identifies the source and count via
+            // the source chips; the header's "N entries · M indexed positions"
+            // line is redundant here, so suppress it.
+            showCountMeta: false,
           ),
     );
   }
@@ -3014,7 +3051,16 @@ class _TreeTargetCard extends ConsumerWidget {
                         player: player,
                       )
                       : null,
-              onBuild: () => unawaited(_buildLocalTree(ref, target, player)),
+              onBuild:
+                  () => unawaited(
+                    _buildLocalTree(
+                      context,
+                      ref,
+                      target,
+                      player,
+                      preparationSide: preparationSide,
+                    ),
+                  ),
             ),
           ],
         ),
@@ -3487,23 +3533,33 @@ String _disabledTreeActionLabel(String reason) {
 }
 
 Future<void> _buildLocalTree(
+  BuildContext context,
   WidgetRef ref,
   _DatabaseTarget target,
-  PlayerWorkspacePlayer player,
-) async {
-  final opened = await ref
-      .read(localChessLibraryProvider.notifier)
-      .openPaths(
-        <String>[target.path],
-        sourceLabel: target.title,
-        registryMetadata: LocalLibraryEntryMetadata.playerWorkspace(
-          playerId: player.id,
-          playerName: player.displayName,
-          gameCount: target.gameCount,
-        ),
-      );
-  if (!opened) return;
-  ref.read(localChessLibraryProvider.notifier).rebuildOpeningTree(target.path);
+  PlayerWorkspacePlayer player, {
+  required PlayerBuildTreePreparationSide preparationSide,
+}) async {
+  final notifier = ref.read(localChessLibraryProvider.notifier);
+  final opened = await notifier.openPaths(
+    <String>[target.path],
+    sourceLabel: target.title,
+    registryMetadata: LocalLibraryEntryMetadata.playerWorkspace(
+      playerId: player.id,
+      playerName: player.displayName,
+      gameCount: target.gameCount,
+      playerWorkspaceSource: target.source.storageKey,
+    ),
+  );
+  if (!opened || !context.mounted) return;
+  final index = await notifier.rebuildOpeningTreeAndWait(target.path);
+  if (!context.mounted || index?.isUsable != true) return;
+  _openLocalTree(
+    ref,
+    target,
+    index!,
+    preparationSide: preparationSide,
+    player: player,
+  );
 }
 
 void _openLocalTree(
@@ -3524,6 +3580,7 @@ void _openLocalTree(
               playerName: player.displayName,
               gameCount: target.gameCount,
               indexedAt: index.generatedAt,
+              playerWorkspaceSource: target.source.storageKey,
             ),
           },
         ),
@@ -3756,17 +3813,35 @@ Future<void> _showAccountConnectFlow(
   BuildContext context,
   WidgetRef ref,
   PlayerWorkspaceSource source,
-) {
-  return switch (source) {
-    PlayerWorkspaceSource.chessever => _showConnectChessEverDialog(
-      context,
-      ref,
-    ),
-    PlayerWorkspaceSource.manual => _showManualPgnDialog(context, ref),
-    PlayerWorkspaceSource.lichess || PlayerWorkspaceSource.chesscom =>
-      _showConnectAccountsDialog(context, ref, source),
-    PlayerWorkspaceSource.combined => Future<void>.value(),
-  };
+) async {
+  if (source == PlayerWorkspaceSource.chessever) {
+    final lockedFideId = _normalizedDialogFideId(
+      ref.read(playerWorkspaceProvider).selectedPlayer?.fideId,
+    );
+    if (lockedFideId != null) {
+      try {
+        await ref
+            .read(playerWorkspaceProvider.notifier)
+            .reconnectLockedChessEverSource();
+      } catch (error) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_stageErrorText(error))));
+      }
+      return;
+    }
+    await _showConnectChessEverDialog(context, ref);
+    return;
+  }
+  if (source == PlayerWorkspaceSource.manual) {
+    await _showManualPgnDialog(context, ref);
+    return;
+  }
+  if (source == PlayerWorkspaceSource.lichess ||
+      source == PlayerWorkspaceSource.chesscom) {
+    await _showConnectAccountsDialog(context, ref, source);
+  }
 }
 
 /// Opens the multi-username connect dialog for an online platform. One dialog
@@ -4793,7 +4868,7 @@ class _ConnectAccountsDialogState extends State<_ConnectAccountsDialog> {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _inputError = error.toString();
+        _inputError = _stageErrorText(error);
       });
     }
   }
@@ -5548,8 +5623,10 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
                         ),
               ),
               const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 8,
                 children: [
                   DesktopDialogButton(
                     label: 'Cancel',
@@ -5558,9 +5635,11 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
                         _working ? null : () => Navigator.of(context).pop(),
                   ),
                   if (widget.onAddManual != null) ...[
-                    const SizedBox(width: 8),
                     DesktopDialogButton(
-                      label: widget.offerConnect ? 'Add only' : 'Add manually',
+                      label:
+                          widget.offerConnect
+                              ? 'Create manual player'
+                              : 'Add manually',
                       icon: Icons.person_add_alt_1_outlined,
                       tone:
                           widget.offerConnect
@@ -5572,7 +5651,6 @@ class _AddPlayerDialogState extends State<_AddPlayerDialog> {
                               : null,
                     ),
                     if (widget.offerConnect) ...[
-                      const SizedBox(width: 8),
                       DesktopDialogButton(
                         label: 'Add & connect',
                         icon: Icons.add_link_outlined,

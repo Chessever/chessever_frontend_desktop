@@ -45,6 +45,8 @@ class DesktopToolbarPillButton extends StatefulWidget {
     this.tooltip,
     this.tabularFigures = false,
     this.busy = false,
+    this.height = 34,
+    this.trailing,
   }) : assert(
          icon != null || leading != null,
          'Provide either an icon or a leading widget',
@@ -73,6 +75,12 @@ class DesktopToolbarPillButton extends StatefulWidget {
   /// Renders with the enabled (non-muted) look while remaining non-interactive.
   /// Used for the "building…" state where the action is in flight.
   final bool busy;
+
+  /// Override for rows whose peer controls use another established height.
+  final double height;
+
+  /// Optional content after the label, such as an active-filter count badge.
+  final Widget? trailing;
 
   @override
   State<DesktopToolbarPillButton> createState() =>
@@ -115,7 +123,7 @@ class _DesktopToolbarPillButtonState extends State<DesktopToolbarPillButton>
     final nudgeX = _pressed ? -1.0 : (_hovered ? 2.0 : 0.0);
 
     final pill = Container(
-      height: 34,
+      height: widget.height,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
         color: bg,
@@ -145,6 +153,10 @@ class _DesktopToolbarPillButtonState extends State<DesktopToolbarPillButton>
                         : null,
               ),
             ),
+            if (widget.trailing != null) ...[
+              const SizedBox(width: 8),
+              widget.trailing!,
+            ],
           ],
         ),
       ),

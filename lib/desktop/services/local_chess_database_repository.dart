@@ -15,6 +15,7 @@ import 'package:sqflite/sqflite.dart' as sqflite;
 
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
@@ -25,6 +26,7 @@ import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/repository/sqlite/local_chess_schema.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
+import 'package:chessever/utils/eco_openings.dart';
 import 'package:chessever/utils/local_pgn_metadata.dart';
 
 export 'package:chessever/repository/sqlite/local_chess_schema.dart'
@@ -194,22 +196,6 @@ class LocalChessResqliteDatabase {
     final environmentValue =
         Platform.environment[_localChessDevelopmentPurgeEnv];
     final flagFileExists = await flagFile.exists();
-    if (kReleaseMode) {
-      if (dartDefineEnabled ||
-          flagFileExists ||
-          _isTruthyDevelopmentFlag(environmentValue)) {
-        localChessLog.warning(
-          'Ignoring local chess development purge request in release mode',
-          context: <String, Object?>{
-            'path': dbPath,
-            'flag': flagFileExists ? flagFile.path : null,
-            'dartDefine': dartDefineEnabled,
-            'environment': _isTruthyDevelopmentFlag(environmentValue),
-          },
-        );
-      }
-      return false;
-    }
     final shouldPurge = shouldPurgeLocalChessResqliteCacheForDevelopment(
       isReleaseMode: kReleaseMode,
       dartDefineEnabled: dartDefineEnabled,
@@ -221,12 +207,20 @@ class LocalChessResqliteDatabase {
 
     _didApplyDevelopmentPurge = true;
     final deleted = await deleteLocalChessResqliteCacheFilesAt(dbPath);
+    final consumedFlag =
+        flagFileExists
+            ? await consumeLocalChessDevelopmentPurgeFlagAt(flagFile.path)
+            : false;
     localChessLog.warning(
       'Purged local chess resqlite cache for development startup',
       context: <String, Object?>{
         'deletedFiles': deleted,
         'path': dbPath,
         'flag': flagFile.path,
+        'releaseMode': kReleaseMode,
+        'dartDefine': dartDefineEnabled,
+        'environment': _isTruthyDevelopmentFlag(environmentValue),
+        'consumedFlag': consumedFlag,
       },
     );
     return true;
@@ -240,6 +234,21 @@ const String _localChessDevelopmentPurgeEnv =
 const String localChessDevelopmentPurgeFlagFileName =
     '.chessever_purge_local_chess_cache_on_start';
 
+/// The file opt-in is a one-shot request. Leaving it in place silently purges
+/// hundreds of megabytes on every session and forces the Players page to
+/// re-index each source the first time it is opened.
+@visibleForTesting
+Future<bool> consumeLocalChessDevelopmentPurgeFlagAt(String path) async {
+  final file = File(path);
+  try {
+    if (!await file.exists()) return false;
+    await file.delete();
+    return true;
+  } on FileSystemException {
+    return false;
+  }
+}
+
 @visibleForTesting
 bool shouldPurgeLocalChessResqliteCacheForDevelopment({
   required bool isReleaseMode,
@@ -247,7 +256,14 @@ bool shouldPurgeLocalChessResqliteCacheForDevelopment({
   required String? environmentValue,
   required bool flagFileExists,
 }) {
-  if (isReleaseMode) return false;
+  // Opt-in only (flag file / env / dart-define). Allowed in release so local
+  // `flutter run --release` can match debug when developers request a clean
+  // local-chess cache. Production installs never set these opt-ins.
+  //
+  // [isReleaseMode] is kept for call-site compatibility and logging; it no
+  // longer blocks an explicit opt-in.
+  // ignore: avoid_unused_constructor_parameters
+  final _ = isReleaseMode;
   return dartDefineEnabled ||
       flagFileExists ||
       _isTruthyDevelopmentFlag(environmentValue);
@@ -285,6 +301,11 @@ Future<int> deleteLocalChessResqliteCacheFilesAt(String dbPath) async {
 
 const int _kPositionRefInsertBatchSize = 4096;
 const int _kSqlWriteBatchSize = 4096;
+// Streaming imports run while the app is interactive. Keep their transfer and
+// row-materialization batches small enough that JSON encoding, metadata-set
+// construction, and resqlite request packing yield within a frame budget. The
+// wider 4096-row SQL batch remains appropriate for non-interactive maintenance.
+const int _kInteractiveImportBatchSize = 16;
 const int _kEagerPositionRefLoadLimit = 250000;
 const int _kEagerTreeMoveLoadLimit = 250000;
 const int _kCachedFileNodeGamePreviewLimit = 1000;
@@ -304,6 +325,17 @@ const String _localChessCacheGenerationName =
     'local_chess_resqlite_cache_generation_20260628_safe_streaming_v1';
 const String _localChessTreeDepthGenerationName =
     'local_chess_tree_depth_50_v1';
+const String _localChessTreePositionIdentityGenerationName =
+    'local_chess_tree_position_identity_fen4_v1';
+const String _localChessOpeningNameBackfillName =
+    'local_chess_opening_name_backfill_v1';
+const String _localChessTimeControlBackfillName =
+    'local_chess_source_time_control_backfill_v2';
+
+bool _localChessTreeMetadataIsUsable({
+  required int positionCount,
+  required int? maxPly,
+}) => positionCount > 0 && maxPly != null && maxPly > 0;
 
 typedef LocalChessLegacySqfliteDatabaseFactory =
     Future<sqflite.Database> Function();
@@ -349,7 +381,13 @@ Future<T> _cancelableLocalChessFuture<T>(
 Future<sqflite.Database> _defaultLegacyLocalChessSqfliteDatabase() =>
     AppDatabase.instance.database;
 
-Future<void> createLocalChessResqliteDatabaseSchema(
+Future<void> createLocalChessResqliteDatabaseSchema(resqlite.Database db) {
+  return LocalChessDatabaseRepository._runLocalCacheWriteQueued(
+    () => _createLocalChessResqliteDatabaseSchemaUnlocked(db),
+  );
+}
+
+Future<void> _createLocalChessResqliteDatabaseSchemaUnlocked(
   resqlite.Database db,
 ) async {
   await db.transaction((tx) async {
@@ -391,6 +429,8 @@ Future<void> createLocalChessResqliteDatabaseSchema(
       ddl: 'INTEGER',
     );
     await _backfillGameDerivedFilters(tx);
+    await _backfillTimeControlCategories(tx);
+    await _backfillGameOpeningNames(tx);
     await tx.execute(
       'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_result ON '
       '$localChessGamesTable(database_id, result)',
@@ -469,6 +509,7 @@ Future<void> createLocalChessResqliteDatabaseSchema(
       const <Object?>[0, 'Unknown'],
     );
     await _ensureLocalChessCacheGeneration(tx);
+    await _ensureLocalChessTreePositionIdentityGeneration(tx);
     await _ensureLocalChessTreeDepthGeneration(tx);
   });
 }
@@ -520,7 +561,7 @@ Future<void> _backfillGamePgnHashes(resqlite.Transaction tx) async {
 Future<void> _backfillGameDerivedFilters(resqlite.Transaction tx) async {
   while (true) {
     final rows = await tx.select('''
-      SELECT database_id, id, time_control, headers_json
+      SELECT database_id, id, time_control, time_control_category, headers_json
       FROM $localChessGamesTable
       WHERE time_control_category IS NULL
         OR time_control_category = ''
@@ -541,6 +582,7 @@ Future<void> _backfillGameDerivedFilters(resqlite.Transaction tx) async {
             _localGameTimeControlCategory(
               timeControl: row['time_control'],
               headersJson: row['headers_json'],
+              storedCategory: row['time_control_category'],
             ),
             _inferLocalGameIsOnline(
                   timeControl: row['time_control'],
@@ -555,6 +597,120 @@ Future<void> _backfillGameDerivedFilters(resqlite.Transaction tx) async {
     );
     if (rows.length < 500) return;
   }
+}
+
+Future<void> _backfillTimeControlCategories(resqlite.Transaction tx) async {
+  final markerRows = await tx.select(
+    'SELECT 1 FROM $_localChessMigrationsTable WHERE name = ? LIMIT 1',
+    const <Object?>[_localChessTimeControlBackfillName],
+  );
+  if (markerRows.isNotEmpty) return;
+
+  var lastRowId = 0;
+  while (true) {
+    final rows = await tx.select(
+      '''
+      SELECT rowid AS game_rowid, time_control, time_control_category,
+             headers_json
+      FROM $localChessGamesTable
+      WHERE rowid > ?
+      ORDER BY rowid
+      LIMIT 500
+      ''',
+      <Object?>[lastRowId],
+    );
+    if (rows.isEmpty) break;
+    final updates = <List<Object?>>[];
+    for (final row in rows) {
+      final category = _localGameTimeControlCategory(
+        timeControl: row['time_control'],
+        headersJson: row['headers_json'],
+        storedCategory: row['time_control_category'],
+      );
+      final storedCategory = row['time_control_category']?.toString();
+      if (category != storedCategory) {
+        updates.add(<Object?>[category, row['game_rowid']]);
+      }
+    }
+    if (updates.isNotEmpty) {
+      await tx.executeBatch('''
+        UPDATE $localChessGamesTable
+        SET time_control_category = ?
+        WHERE rowid = ?
+        ''', updates);
+    }
+    lastRowId = _readInt(rows.last['game_rowid']);
+    await _yieldAfterSqlBatch();
+  }
+  await tx.execute(
+    '''
+    INSERT OR REPLACE INTO $_localChessMigrationsTable(name, completed_at_ms)
+    VALUES (?, ?)
+    ''',
+    <Object?>[
+      _localChessTimeControlBackfillName,
+      DateTime.now().millisecondsSinceEpoch,
+    ],
+  );
+}
+
+Future<void> _backfillGameOpeningNames(resqlite.Transaction tx) async {
+  final markerRows = await tx.select(
+    'SELECT 1 FROM $_localChessMigrationsTable WHERE name = ? LIMIT 1',
+    const <Object?>[_localChessOpeningNameBackfillName],
+  );
+  if (markerRows.isNotEmpty) return;
+  final knownCodes = EcoOpenings.codeToName.keys.toList(growable: false);
+  for (final codes in _chunks(knownCodes, 300)) {
+    final placeholders = List<String>.filled(codes.length, '?').join(', ');
+    while (true) {
+      final rows = await tx.select(
+        '''
+        SELECT database_id, id, eco, headers_json
+        FROM $localChessGamesTable
+        WHERE SUBSTR(UPPER(TRIM(COALESCE(eco, ''))), 1, 3)
+            IN ($placeholders)
+          AND LOWER(TRIM(COALESCE(
+            json_extract(headers_json, '\$.Opening'), ''
+          ))) IN ('', '?', '-', 'unknown', 'unknown opening')
+        LIMIT 500
+        ''',
+        <Object?>[...codes],
+      );
+      if (rows.isEmpty) break;
+      await tx.executeBatch(
+        '''
+        UPDATE $localChessGamesTable
+        SET headers_json = ?
+        WHERE database_id = ? AND id = ?
+        ''',
+        <List<Object?>>[
+          for (final row in rows)
+            <Object?>[
+              jsonEncode(
+                _metadataWithCanonicalOpening(
+                  _jsonMap(row['headers_json']),
+                  row['eco'],
+                ),
+              ),
+              row['database_id'],
+              row['id'],
+            ],
+        ],
+      );
+      if (rows.length < 500) break;
+    }
+  }
+  await tx.execute(
+    '''
+    INSERT OR REPLACE INTO $_localChessMigrationsTable(name, completed_at_ms)
+    VALUES (?, ?)
+    ''',
+    <Object?>[
+      _localChessOpeningNameBackfillName,
+      DateTime.now().millisecondsSinceEpoch,
+    ],
+  );
 }
 
 Future<void> _backfillPositionGameNextUci(resqlite.Transaction tx) async {
@@ -623,6 +779,56 @@ Future<void> _ensureLocalChessCacheGeneration(resqlite.Transaction tx) async {
   );
 }
 
+Future<void> _ensureLocalChessTreePositionIdentityGeneration(
+  resqlite.Transaction tx, {
+  bool invalidateExisting = false,
+}) async {
+  final markerRows = await tx.select(
+    'SELECT 1 FROM $_localChessMigrationsTable WHERE name = ? LIMIT 1',
+    const <Object?>[_localChessTreePositionIdentityGenerationName],
+  );
+  if (markerRows.isNotEmpty && !invalidateExisting) return;
+
+  // Do not count or delete the generated tree tables here. A large desktop
+  // cache can contain millions of rows, and schema opening runs on the app's
+  // startup path. Clearing only the small per-database metadata makes every
+  // loader reject the old identity generation immediately; the stale rows are
+  // reclaimed when that database is explicitly rebuilt, replaced, or purged.
+  final invalidatedMetadata = await tx.execute(
+    '''
+    UPDATE $localChessDatabasesTable
+    SET position_count = 0,
+        tree_snapshot = NULL,
+        tree_max_ply = NULL,
+        updated_at_ms = ?
+    WHERE position_count <> 0
+       OR tree_snapshot IS NOT NULL
+       OR tree_max_ply IS NOT NULL
+    ''',
+    <Object?>[DateTime.now().millisecondsSinceEpoch],
+  );
+  if (invalidatedMetadata.affectedRows > 0) {
+    localChessLog.info(
+      'Marked stale local chess trees for lazy rebuild',
+      context: <String, Object?>{
+        'databases': invalidatedMetadata.affectedRows,
+        'generation': _localChessTreePositionIdentityGenerationName,
+      },
+    );
+  }
+
+  await tx.execute(
+    '''
+    INSERT OR REPLACE INTO $_localChessMigrationsTable(name, completed_at_ms)
+    VALUES (?, ?)
+    ''',
+    <Object?>[
+      _localChessTreePositionIdentityGenerationName,
+      DateTime.now().millisecondsSinceEpoch,
+    ],
+  );
+}
+
 Future<void> _ensureLocalChessTreeDepthGeneration(
   resqlite.Transaction tx,
 ) async {
@@ -631,6 +837,28 @@ Future<void> _ensureLocalChessTreeDepthGeneration(
     const <Object?>[_localChessTreeDepthGenerationName],
   );
   if (markerRows.isNotEmpty) return;
+
+  final usableMetadataRows = await tx.select('''
+    SELECT 1
+    FROM $localChessDatabasesTable
+    WHERE position_count > 0
+      AND tree_max_ply IS NOT NULL
+      AND tree_max_ply > 0
+    LIMIT 1
+    ''');
+  if (usableMetadataRows.isEmpty) {
+    await tx.execute(
+      '''
+      INSERT OR REPLACE INTO $_localChessMigrationsTable(name, completed_at_ms)
+      VALUES (?, ?)
+      ''',
+      <Object?>[
+        _localChessTreeDepthGenerationName,
+        DateTime.now().millisecondsSinceEpoch,
+      ],
+    );
+    return;
+  }
 
   final treeRows = await tx.select(
     'SELECT COALESCE(MAX(ply), 0) AS max_ply FROM $localChessTreeNodesTable',
@@ -705,6 +933,24 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
   Iterable<LocalChessLegacySqfliteDatabaseFactory>? legacyDatabaseCandidates,
   @visibleForTesting Iterable<String>? legacyDatabasePathCandidates,
   LocalChessScanProgressSink? onProgress,
+}) {
+  return LocalChessDatabaseRepository._runLocalCacheWriteQueued(
+    () => _migrateLegacyLocalChessSqfliteCacheUnlocked(
+      target,
+      legacyDatabase: legacyDatabase,
+      legacyDatabaseCandidates: legacyDatabaseCandidates,
+      legacyDatabasePathCandidates: legacyDatabasePathCandidates,
+      onProgress: onProgress,
+    ),
+  );
+}
+
+Future<void> _migrateLegacyLocalChessSqfliteCacheUnlocked(
+  resqlite.Database target, {
+  LocalChessLegacySqfliteDatabaseFactory? legacyDatabase,
+  Iterable<LocalChessLegacySqfliteDatabaseFactory>? legacyDatabaseCandidates,
+  Iterable<String>? legacyDatabasePathCandidates,
+  LocalChessScanProgressSink? onProgress,
 }) async {
   void emit(double fraction, String message) {
     onProgress?.call(
@@ -772,10 +1018,6 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
         legacy,
         localChessGamesTable,
       );
-      final positionColumns = await _legacyColumnNames(
-        legacy,
-        localChessPositionGamesTable,
-      );
 
       await target.transaction((tx) async {
         await _copyLegacyTable(
@@ -814,27 +1056,10 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
           onCopiedRows:
               (rows) => emit(0.52, 'Migrating local games... $rows rows'),
         );
-        await _copyLegacyTable(
-          tx,
-          legacy,
-          localChessTreeNodesTable,
-          onCopiedRows:
-              (rows) => emit(0.66, 'Migrating opening tree... $rows rows'),
-        );
-        await _copyLegacyTable(
-          tx,
-          legacy,
-          localChessTreeMovesTable,
-          onCopiedRows:
-              (rows) => emit(0.72, 'Migrating tree moves... $rows rows'),
-        );
-        await _copyLegacyPositionGames(
-          tx,
-          legacy,
-          positionColumns,
-          onCopiedRows:
-              (rows) => emit(0.80, 'Migrating positions... $rows rows'),
-        );
+        // Opening trees are derived data and the legacy cache uses the old
+        // position identity. Do not spend startup time copying millions of
+        // rows that must remain unusable; games are retained and each tree is
+        // rebuilt explicitly on demand.
         await _copyLegacyTable(
           tx,
           legacy,
@@ -843,7 +1068,10 @@ Future<void> migrateLegacyLocalChessSqfliteCache(
               (rows) => emit(0.88, 'Migrating local analysis... $rows rows'),
         );
         emit(0.94, 'Finalizing local database migration...');
-        await _backfillPositionGameNextUci(tx);
+        await _ensureLocalChessTreePositionIdentityGeneration(
+          tx,
+          invalidateExisting: true,
+        );
         await _ensureLocalChessTreeDepthGeneration(tx);
         await tx.execute(
           '''
@@ -1175,18 +1403,18 @@ Future<void> _copyLegacyGames(
               'black_material': row['black_material'],
               'result': row['result'],
               'time_control': row['time_control'],
-              'time_control_category':
-                  legacyColumns.contains('time_control_category') &&
-                          row['time_control_category']
-                                  ?.toString()
-                                  .trim()
-                                  .isNotEmpty ==
-                              true
-                      ? row['time_control_category']
-                      : _localGameTimeControlCategory(
-                        timeControl: row['time_control'],
-                        headersJson: row['headers_json'],
-                      ),
+              // Prefer the current source-aware classifier because older
+              // caches collapsed Bullet/UltraBullet into Blitz. If the PGN
+              // carries no usable evidence, preserve and canonicalize its
+              // valid stored category instead of degrading it to Unknown.
+              'time_control_category': _localGameTimeControlCategory(
+                timeControl: row['time_control'],
+                headersJson: row['headers_json'],
+                storedCategory:
+                    legacyColumns.contains('time_control_category')
+                        ? row['time_control_category']
+                        : null,
+              ),
               'is_online':
                   legacyColumns.contains('is_online')
                       ? row['is_online']
@@ -1230,46 +1458,6 @@ Future<void> _copyLegacyGames(
     );
     onCopiedRows?.call(offset + rows.length);
     if (rows.length < _kLegacyMigrationGamePageSize) return;
-    offset += rows.length;
-    await _yieldAfterSqlBatch();
-  }
-}
-
-Future<void> _copyLegacyPositionGames(
-  resqlite.Transaction tx,
-  sqflite.Database legacy,
-  Set<String> legacyColumns, {
-  void Function(int copiedRows)? onCopiedRows,
-}) async {
-  if (!await _legacyTableExists(legacy, localChessPositionGamesTable)) return;
-  var offset = 0;
-  while (true) {
-    final rows = await legacy.query(
-      localChessPositionGamesTable,
-      orderBy: 'rowid ASC',
-      limit: _kLegacyMigrationRowPageSize,
-      offset: offset,
-    );
-    if (rows.isEmpty) return;
-    await _insertOrReplaceBatch(
-      tx,
-      localChessPositionGamesTable,
-      rows
-          .map(
-            (row) => <String, Object?>{
-              'database_id': row['database_id'],
-              'fen_key': row['fen_key'],
-              'fen': row['fen'],
-              'game_id': row['game_id'],
-              'ply': row['ply'],
-              'next_uci':
-                  legacyColumns.contains('next_uci') ? row['next_uci'] : null,
-            },
-          )
-          .toList(growable: false),
-    );
-    onCopiedRows?.call(offset + rows.length);
-    if (rows.length < _kLegacyMigrationRowPageSize) return;
     offset += rows.length;
     await _yieldAfterSqlBatch();
   }
@@ -1427,8 +1615,8 @@ const List<String> _localChessSchemaStatements = <String>[
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_site ON $localChessGamesTable(site_id)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_result ON $localChessGamesTable(result)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_result ON $localChessGamesTable(database_id, result)',
-  'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_time_category ON $localChessGamesTable(database_id, time_control_category)',
-  'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_online ON $localChessGamesTable(database_id, is_online)',
+  // Indexes that depend on upgrade-added columns must be created only after
+  // their `_ensureColumn` calls in createLocalChessResqliteDatabaseSchema.
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_white_elo ON $localChessGamesTable(white_elo)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_black_elo ON $localChessGamesTable(black_elo)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_db_date ON $localChessGamesTable(database_id, date)',
@@ -1932,6 +2120,15 @@ class LocalChessDatabaseRepository {
           cancellationToken: cancellationToken,
           onProgress: onProgress,
         ),
+        onWaiting:
+            onProgress == null
+                ? null
+                : () => onProgress(
+                  LocalChessScanProgress(
+                    fraction: 0,
+                    message: 'Waiting for local database...',
+                  ),
+                ),
       );
       cancellationToken?.throwIfCanceled();
       importStopwatch.stop();
@@ -2002,7 +2199,7 @@ class LocalChessDatabaseRepository {
       path: path,
       rootPath: rootPath,
       previewGameLimit: cachedFileNodeGamePreviewLimit,
-      batchSize: _kSqlWriteBatchSize,
+      batchSize: _kInteractiveImportBatchSize,
       onProgress: emit,
       onImportStart: (start) async {
         cancellationToken?.throwIfCanceled();
@@ -2081,9 +2278,14 @@ class LocalChessDatabaseRepository {
   /// begins. Reads never go through here — WAL readers never block. Nested
   /// calls from the same queued action run inline; this lets first-open schema
   /// and migration work share the caller's lock instead of self-deadlocking.
+  ///
+  /// [onWaiting] fires once if another writer still owns the queue after a
+  /// short delay so import / tree UI can show "Waiting for local database..."
+  /// instead of looking frozen at 0%.
   static Future<T> _runLocalCacheWriteQueued<T>(
-    Future<T> Function() action,
-  ) async {
+    Future<T> Function() action, {
+    void Function()? onWaiting,
+  }) async {
     if (Zone.current[_localCacheWriteQueueZoneKey] == true) {
       return action();
     }
@@ -2092,6 +2294,18 @@ class LocalChessDatabaseRepository {
     final current = Completer<void>();
     _localCacheWriteQueue = current.future;
     try {
+      var waitingNotified = false;
+      void notifyWaiting() {
+        if (waitingNotified || onWaiting == null) return;
+        waitingNotified = true;
+        onWaiting();
+      }
+
+      final previousDone = previous.catchError((_) {});
+      await Future.any<void>([
+        previousDone,
+        Future<void>.delayed(const Duration(milliseconds: 80), notifyWaiting),
+      ]);
       try {
         await previous;
       } catch (_) {
@@ -2201,6 +2415,15 @@ class LocalChessDatabaseRepository {
         databasePath: databasePath,
         onProgress: onProgress,
       ),
+      onWaiting:
+          onProgress == null
+              ? null
+              : () => onProgress(
+                LocalChessScanProgress(
+                  fraction: 0,
+                  message: 'Waiting for local database...',
+                ),
+              ),
     );
   }
 
@@ -2345,6 +2568,61 @@ class LocalChessDatabaseRepository {
           () => purgeDeletedCaches(sourcePath: path, onProgress: onProgress),
     );
     return marked;
+  }
+
+  /// Marks every path in [sourcePaths] deleted and then runs a single purge
+  /// pass over the marked databases on one dedicated connection, awaiting
+  /// completion and reporting [onProgress].
+  ///
+  /// Removing a player that owns several generated sources used to enqueue one
+  /// fire-and-forget [scheduleCachedSourceDelete] per source, and each of those
+  /// opened (and closed) its own dedicated resqlite connection — spawning a
+  /// reader pool + writer isolate every time. Doing the whole player in one
+  /// marked-then-purged pass collapses that to a single connection open, and
+  /// because it is awaitable the caller can show honest progress and keep the
+  /// row on screen until the cleanup actually finishes.
+  Future<int> deleteCachedSourcesAwaitingPurge({
+    required Iterable<String> sourcePaths,
+    int batchSize = 4096,
+    bool cleanupOrphanMetadata = false,
+    bool checkpoint = false,
+    void Function(LocalChessScanProgress progress)? onProgress,
+  }) async {
+    final paths = <String>{
+      for (final path in sourcePaths)
+        if (path.trim().isNotEmpty) path.trim(),
+    };
+    if (paths.isEmpty) {
+      onProgress?.call(
+        LocalChessScanProgress(fraction: 1, message: 'Delete complete.'),
+      );
+      return 0;
+    }
+    var marked = 0;
+    for (final path in paths) {
+      marked += await _retryWhenSqliteBusy(
+        operation: 'mark local source deleted',
+        context: <String, Object?>{'sourcePath': path},
+        action: () => markCachedSourceDeleted(path),
+      );
+    }
+    if (marked == 0) {
+      onProgress?.call(
+        LocalChessScanProgress(fraction: 1, message: 'Delete complete.'),
+      );
+      return 0;
+    }
+    return _retryWhenSqliteBusy(
+      operation: 'purge deleted local sources',
+      context: <String, Object?>{'sourcePaths': paths.length},
+      action:
+          () => purgeDeletedCaches(
+            batchSize: batchSize,
+            cleanupOrphanMetadata: cleanupOrphanMetadata,
+            checkpoint: checkpoint,
+            onProgress: onProgress,
+          ),
+    );
   }
 
   void scheduleCachedSourceDelete({
@@ -2894,6 +3172,9 @@ class LocalChessDatabaseRepository {
     String search = '',
     LocalChessGameSortField sortBy = LocalChessGameSortField.originalOrder,
     LocalChessGameSortDirection sortDirection = LocalChessGameSortDirection.asc,
+    LocalChessGameFilter? filter,
+    String? playerFideId,
+    List<String> playerAliases = const <String>[],
     required int pageNumber,
     required int pageSize,
   }) async {
@@ -2913,6 +3194,16 @@ class LocalChessDatabaseRepository {
     final where = StringBuffer('g.database_id = ?');
     final parameters = <Object?>[databaseId];
     _appendLocalGameSearch(where, parameters, search);
+    final activeFilter = filter;
+    if (activeFilter != null && activeFilter.hasActiveFilters) {
+      appendLocalChessGameFilter(
+        where,
+        parameters,
+        activeFilter,
+        playerFideId: playerFideId,
+        playerAliases: playerAliases,
+      );
+    }
 
     const fromClause = '''
       FROM $localChessGamesTable g
@@ -3374,6 +3665,10 @@ class LocalChessDatabaseRepository {
     final now = DateTime.now().millisecondsSinceEpoch;
 
     await _lockedTransaction(db, (txn) async {
+      final updateOpeningTree = await _transactionHasUsableOpeningTreeMetadata(
+        txn,
+        databaseId,
+      );
       final playerNames = <String>{};
       final eventNames = <String>{};
       final siteNames = <String>{};
@@ -3418,10 +3713,12 @@ class LocalChessDatabaseRepository {
         eventIds: eventIds,
         siteIds: siteIds,
       );
-      await _upsertTreeDelta(txn, databaseId, index);
-      await _insertPositionGameRefs(txn, databaseId, index, <String>{
-        for (final game in games) game.id,
-      });
+      if (updateOpeningTree) {
+        await _upsertTreeDelta(txn, databaseId, index);
+        await _insertPositionGameRefs(txn, databaseId, index, <String>{
+          for (final game in games) game.id,
+        });
+      }
       await txn.execute(
         '''
         UPDATE $localChessGamesTable
@@ -3430,14 +3727,18 @@ class LocalChessDatabaseRepository {
         ''',
         <Object?>[nextFileGameCount, databaseId],
       );
-      final positionCountRows = await txn.select(
-        '''
-        SELECT COUNT(*) AS count
-        FROM $localChessTreeNodesTable
-        WHERE database_id = ?
-        ''',
-        <Object?>[databaseId],
-      );
+      var nextPositionCount = 0;
+      if (updateOpeningTree) {
+        final positionCountRows = await txn.select(
+          '''
+          SELECT COUNT(*) AS count
+          FROM $localChessTreeNodesTable
+          WHERE database_id = ?
+          ''',
+          <Object?>[databaseId],
+        );
+        nextPositionCount = _readInt(positionCountRows.single['count']);
+      }
       await txn.execute(
         '''
         UPDATE $localChessDatabasesTable
@@ -3455,8 +3756,8 @@ class LocalChessDatabaseRepository {
           stat.size,
           stat.modified.millisecondsSinceEpoch,
           games.length,
-          _readInt(positionCountRows.single['count']),
-          treeMaxPly,
+          nextPositionCount,
+          updateOpeningTree ? treeMaxPly : null,
           now,
           databaseId,
         ],
@@ -3627,6 +3928,10 @@ class LocalChessDatabaseRepository {
     final now = DateTime.now().millisecondsSinceEpoch;
 
     await _lockedTransaction(db, (txn) async {
+      final updateOpeningTree = await _transactionHasUsableOpeningTreeMetadata(
+        txn,
+        databaseId,
+      );
       await txn.execute(
         'DELETE FROM $localChessPositionGamesTable WHERE database_id = ? AND game_id = ?',
         <Object?>[databaseId, targetId],
@@ -3639,8 +3944,10 @@ class LocalChessDatabaseRepository {
         'DELETE FROM $localChessGamesTable WHERE database_id = ? AND id = ?',
         <Object?>[databaseId, targetId],
       );
-      await _subtractTreeDelta(txn, databaseId, oldDelta.index);
-      await _deleteUnreferencedTreeNodes(txn, databaseId);
+      if (updateOpeningTree) {
+        await _subtractTreeDelta(txn, databaseId, oldDelta.index);
+        await _deleteUnreferencedTreeNodes(txn, databaseId);
+      }
 
       final treeRow = newDelta.index.gameRowsById[targetId];
       final playerNames = <String>{};
@@ -3682,10 +3989,12 @@ class LocalChessDatabaseRepository {
         eventIds: eventIds,
         siteIds: siteIds,
       );
-      await _upsertTreeDelta(txn, databaseId, newDelta.index);
-      await _insertPositionGameRefs(txn, databaseId, newDelta.index, <String>{
-        targetId,
-      });
+      if (updateOpeningTree) {
+        await _upsertTreeDelta(txn, databaseId, newDelta.index);
+        await _insertPositionGameRefs(txn, databaseId, newDelta.index, <String>{
+          targetId,
+        });
+      }
       await _executeBatchChunked(
         txn,
         '''
@@ -3709,14 +4018,18 @@ class LocalChessDatabaseRepository {
             ],
         ],
       );
-      final positionCountRows = await txn.select(
-        '''
-        SELECT COUNT(*) AS count
-        FROM $localChessTreeNodesTable
-        WHERE database_id = ?
-        ''',
-        <Object?>[databaseId],
-      );
+      var nextPositionCount = 0;
+      if (updateOpeningTree) {
+        final positionCountRows = await txn.select(
+          '''
+          SELECT COUNT(*) AS count
+          FROM $localChessTreeNodesTable
+          WHERE database_id = ?
+          ''',
+          <Object?>[databaseId],
+        );
+        nextPositionCount = _readInt(positionCountRows.single['count']);
+      }
       await txn.execute(
         '''
         UPDATE $localChessDatabasesTable
@@ -3734,8 +4047,8 @@ class LocalChessDatabaseRepository {
           nextStat.size,
           nextStat.modified.millisecondsSinceEpoch,
           fileGameCount,
-          _readInt(positionCountRows.single['count']),
-          treeMaxPly,
+          nextPositionCount,
+          updateOpeningTree ? treeMaxPly : null,
           now,
           databaseId,
         ],
@@ -3826,6 +4139,10 @@ class LocalChessDatabaseRepository {
         await _deleteFileCache(txn, databasePath);
         return;
       }
+      final updateOpeningTree = await _transactionHasUsableOpeningTreeMetadata(
+        txn,
+        databaseId,
+      );
 
       await _executeBatchChunked(
         txn,
@@ -3848,8 +4165,10 @@ class LocalChessDatabaseRepository {
           for (final id in deletedIds) <Object?>[databaseId, id],
         ],
       );
-      await _subtractTreeDelta(txn, databaseId, deleteDelta.index);
-      await _deleteUnreferencedTreeNodes(txn, databaseId);
+      if (updateOpeningTree) {
+        await _subtractTreeDelta(txn, databaseId, deleteDelta.index);
+        await _deleteUnreferencedTreeNodes(txn, databaseId);
+      }
       await _executeBatchChunked(
         txn,
         '''
@@ -3873,14 +4192,18 @@ class LocalChessDatabaseRepository {
             ],
         ],
       );
-      final positionCountRows = await txn.select(
-        '''
-        SELECT COUNT(*) AS count
-        FROM $localChessTreeNodesTable
-        WHERE database_id = ?
-        ''',
-        <Object?>[databaseId],
-      );
+      var nextPositionCount = 0;
+      if (updateOpeningTree) {
+        final positionCountRows = await txn.select(
+          '''
+          SELECT COUNT(*) AS count
+          FROM $localChessTreeNodesTable
+          WHERE database_id = ?
+          ''',
+          <Object?>[databaseId],
+        );
+        nextPositionCount = _readInt(positionCountRows.single['count']);
+      }
       await txn.execute(
         '''
         UPDATE $localChessDatabasesTable
@@ -3898,8 +4221,8 @@ class LocalChessDatabaseRepository {
           stat.size,
           stat.modified.millisecondsSinceEpoch,
           keptRows.length,
-          _readInt(positionCountRows.single['count']),
-          treeMaxPly,
+          nextPositionCount,
+          updateOpeningTree ? treeMaxPly : null,
           now,
           databaseId,
         ],
@@ -3918,6 +4241,18 @@ class LocalChessDatabaseRepository {
   }) async {
     final databaseId = _databaseId(databasePath);
     final db = await _database();
+    final hasUsableTree = await _databaseHasUsableOpeningTreeMetadata(
+      db,
+      databaseId,
+    );
+    if (!hasUsableTree) {
+      return _localMoveAggregatesForMovePrefix(
+        db,
+        databaseId: databaseId,
+        moves: moves,
+        filters: filters,
+      );
+    }
     if (!filters.hasFilters) {
       return _localTreeMoveAggregatesForFen(
         db,
@@ -4113,7 +4448,7 @@ class LocalChessDatabaseRepository {
     final db = await _database();
     final databaseRows = await db.select(
       '''
-      SELECT 1
+      SELECT position_count, tree_max_ply
       FROM $localChessDatabasesTable
       WHERE id = ? AND deleted_at_ms IS NULL
       LIMIT 1
@@ -4121,6 +4456,24 @@ class LocalChessDatabaseRepository {
       <Object?>[databaseId],
     );
     if (databaseRows.isEmpty) return null;
+    final databaseRow = databaseRows.single;
+    if (!_localChessTreeMetadataIsUsable(
+      positionCount: _readInt(databaseRow['position_count']),
+      maxPly: _readNullableInt(databaseRow['tree_max_ply']),
+    )) {
+      return _localPositionGamesResponseFromMovePrefix(
+        db,
+        databaseId: databaseId,
+        fen: fen,
+        moves: moves,
+        uci: uci,
+        filters: filters,
+        sortBy: sortBy,
+        sortDirection: sortDirection,
+        pageNumber: pageNumber,
+        pageSize: pageSize,
+      );
+    }
 
     final availableRefRows = await db.select(
       'SELECT 1 FROM $localChessPositionGamesTable WHERE database_id = ? LIMIT 1',
@@ -4785,29 +5138,25 @@ class LocalChessDatabaseRepository {
     required int batchSize,
     void Function(String table, int deletedRows)? onDeletedRows,
   }) async {
+    // Delete in bounded batches, but let the writer isolate pick the rows via a
+    // subquery instead of SELECTing a batch of rowids back to the caller and
+    // echoing them into an `IN (?, ?, …)` list. Materializing 4096-row id
+    // batches on the calling (UI) isolate and re-encoding them per batch across
+    // the millions of rows a heavy player can hold is what dropped frames while
+    // a removal's cache purge ran. The `Future.delayed(Duration.zero)` between
+    // batches still yields the event loop so the purge stays cooperative.
     while (true) {
-      final rows = await db.select(
+      final result = await db.execute(
         '''
-        SELECT rowid
-        FROM $table
-        WHERE database_id = ?
-        LIMIT ?
+        DELETE FROM $table
+        WHERE rowid IN (
+          SELECT rowid FROM $table WHERE database_id = ? LIMIT ?
+        )
         ''',
         <Object?>[databaseId, batchSize],
       );
-      if (rows.isEmpty) return;
-      final rowIds = <Object?>[for (final row in rows) row['rowid']];
-      final placeholders = List<String>.filled(rowIds.length, '?').join(', ');
-      final result = await db.execute(
-        'DELETE FROM $table WHERE rowid IN ($placeholders)',
-        rowIds,
-      );
       final deletedRows = result.affectedRows;
-      if (deletedRows <= 0) {
-        throw StateError(
-          'Local chess purge could not delete selected rows from $table.',
-        );
-      }
+      if (deletedRows <= 0) return;
       onDeletedRows?.call(table, deletedRows);
       await Future<void>.delayed(Duration.zero);
     }
@@ -4937,12 +5286,15 @@ class LocalChessDatabaseRepository {
     required String idSql,
     required int batchSize,
   }) async {
+    // Same rationale as _deleteDatabaseRowsInChunks: nest the id selection
+    // (`idSql` already ends in `LIMIT ?`) as a subquery so the writer isolate
+    // deletes each batch without shipping a batch of ids back to the caller.
     while (true) {
-      final rows = await db.select(idSql, <Object?>[batchSize]);
-      if (rows.isEmpty) return;
-      final ids = <Object?>[for (final row in rows) row['id']];
-      final placeholders = List<String>.filled(ids.length, '?').join(', ');
-      await db.execute('DELETE FROM $table WHERE id IN ($placeholders)', ids);
+      final result = await db.execute(
+        'DELETE FROM $table WHERE id IN ($idSql)',
+        <Object?>[batchSize],
+      );
+      if (result.affectedRows <= 0) return;
       await Future<void>.delayed(Duration.zero);
     }
   }
@@ -5037,8 +5389,9 @@ class LocalChessDatabaseRepository {
     }
 
     for (final game in games) {
-      final metadata = game.game.metadata;
       final treeRow = treeRowsById[game.id];
+      final eco = treeRow?['eco']?.toString() ?? game.game.metadata['ECO'];
+      final metadata = _metadataWithCanonicalOpening(game.game.metadata, eco);
       final white = _normalizedName(metadata['White'] ?? treeRow?['white']);
       final black = _normalizedName(metadata['Black'] ?? treeRow?['black']);
       final event = _normalizedName(metadata['Event'] ?? treeRow?['event']);
@@ -5092,7 +5445,7 @@ class LocalChessDatabaseRepository {
                 )
                 ? 1
                 : 0,
-        'eco': treeRow?['eco']?.toString() ?? metadata['ECO']?.toString(),
+        'eco': eco?.toString(),
         'ply_count': line.length,
         'fen': game.game.startingFen,
         'moves': jsonEncode(line),
@@ -5435,6 +5788,15 @@ class LocalChessDatabaseRepository {
     required int expectedGameCount,
     required int? expectedMaxPly,
   }) async {
+    // Metadata is the cheap validity boundary. Generation migrations clear it
+    // without touching potentially millions of stale tree rows, so reject the
+    // cache before issuing any count or materialization query against them.
+    if (!_localChessTreeMetadataIsUsable(
+      positionCount: expectedPositionCount,
+      maxPly: expectedMaxPly,
+    )) {
+      throw const _LocalChessCacheMiss();
+    }
     final nodeStatsRows = await db.select(
       '''
       SELECT COUNT(*) AS count, MAX(ply) AS max_ply
@@ -5662,7 +6024,7 @@ class LocalChessDatabaseRepository {
   ) async {
     final databaseRows = await db.select(
       '''
-      SELECT tree_max_ply
+      SELECT position_count, tree_max_ply
       FROM $localChessDatabasesTable
       WHERE id = ? AND deleted_at_ms IS NULL
       LIMIT 1
@@ -5670,20 +6032,58 @@ class LocalChessDatabaseRepository {
       <Object?>[databaseId],
     );
     if (databaseRows.isNotEmpty) {
-      final stored = _readNullableInt(databaseRows.single['tree_max_ply']);
-      if (stored != null && stored > 0) return stored;
+      final row = databaseRows.single;
+      final stored = _readNullableInt(row['tree_max_ply']);
+      if (_localChessTreeMetadataIsUsable(
+        positionCount: _readInt(row['position_count']),
+        maxPly: stored,
+      )) {
+        return stored!;
+      }
     }
+    return localOpeningTreeDefaultMaxPly;
+  }
 
+  Future<bool> _databaseHasUsableOpeningTreeMetadata(
+    resqlite.Database db,
+    String databaseId,
+  ) async {
     final rows = await db.select(
       '''
-      SELECT MAX(ply) AS max_ply
-      FROM $localChessTreeNodesTable
-      WHERE database_id = ?
+      SELECT position_count, tree_max_ply
+      FROM $localChessDatabasesTable
+      WHERE id = ? AND deleted_at_ms IS NULL
+      LIMIT 1
       ''',
       <Object?>[databaseId],
     );
-    final maxPly = rows.isEmpty ? 0 : _readInt(rows.single['max_ply']);
-    return maxPly > 0 ? maxPly : localOpeningTreeDefaultMaxPly;
+    if (rows.isEmpty) return false;
+    final row = rows.single;
+    return _localChessTreeMetadataIsUsable(
+      positionCount: _readInt(row['position_count']),
+      maxPly: _readNullableInt(row['tree_max_ply']),
+    );
+  }
+
+  Future<bool> _transactionHasUsableOpeningTreeMetadata(
+    resqlite.Transaction txn,
+    String databaseId,
+  ) async {
+    final rows = await txn.select(
+      '''
+      SELECT position_count, tree_max_ply
+      FROM $localChessDatabasesTable
+      WHERE id = ? AND deleted_at_ms IS NULL
+      LIMIT 1
+      ''',
+      <Object?>[databaseId],
+    );
+    if (rows.isEmpty) return false;
+    final row = rows.single;
+    return _localChessTreeMetadataIsUsable(
+      positionCount: _readInt(row['position_count']),
+      maxPly: _readNullableInt(row['tree_max_ply']),
+    );
   }
 
   LocalChessGame _localGameFromRow(Map<String, Object?> row) {
@@ -5976,7 +6376,16 @@ class LocalChessDatabaseRepository {
         playerIds: playerIds,
         eventIds: eventIds,
         siteIds: siteIds,
-        parseRawPgnLineFallback: false,
+        // Derive the UCI move line (and ply_count) from the retained PGN. The
+        // opening-explorer games list for large local databases (> the
+        // position-game-ref limit, where per-position refs are skipped) is
+        // served by _localPositionGamesResponseFromMovePrefix, which matches
+        // the board's move prefix against g.moves. Persisting an empty moves
+        // array here left that fallback with nothing to match, so every
+        // non-root position reported "No Games Found" while the FEN-keyed move
+        // tree still rendered. See regression test in
+        // local_chess_position_games_move_prefix_test.dart.
+        parseRawPgnLineFallback: true,
       );
     });
   }
@@ -6195,6 +6604,21 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
       lastIndexInFile = _readInt(
         gameRows.last['index_in_file'],
         fallback: lastIndexInFile,
+      );
+      // Page-level progress even when the per-game throttle is still warming up
+      // (small first page, or a long gap before the next 512-game tick).
+      final pageFraction =
+          cachedGameCount <= 0
+              ? 0.32
+              : 0.18 + ((processed / cachedGameCount) * 0.64);
+      emit(
+        LocalChessScanProgress(
+          fraction: pageFraction.clamp(0.18, 0.82).toDouble(),
+          message:
+              cachedGameCount > 0
+                  ? 'Building tree... $processed of $cachedGameCount games'
+                  : 'Building tree...',
+        ),
       );
       if (await repository._databaseIsMarkedDeleted(db, databaseId)) {
         request.sendPort.send(
@@ -6442,7 +6866,10 @@ Iterable<LocalOpeningTreeGameInput> _treeInputsForCachedGameRows({
         onProgress(
           LocalChessScanProgress(
             fraction: fraction.clamp(0.18, 0.82).toDouble(),
-            message: 'Building tree...',
+            message:
+                totalRows > 0
+                    ? 'Building tree... $processed of $totalRows games'
+                    : 'Building tree...',
           ),
         );
       }
@@ -6881,8 +7308,19 @@ void _appendLocalPositionFilters(
 ) {
   final timeControl = filters.timeControl;
   if (timeControl != null) {
-    where.write(" AND LOWER(COALESCE(g.time_control_category, '')) = ?");
-    parameters.add(timeControl.name.toLowerCase());
+    if (timeControl == TimeControl.blitz) {
+      // The legacy opening-tree control has only three broad buckets. Keep
+      // Bullet and UltraBullet available beneath its Blitz umbrella while the
+      // richer Players stats facets continue to expose them independently.
+      where.write(
+        " AND LOWER(COALESCE(g.time_control_category, '')) "
+        "IN ('blitz', 'bullet', 'ultrabullet', 'ultra_bullet', "
+        "'ultra-bullet')",
+      );
+    } else {
+      where.write(" AND LOWER(COALESCE(g.time_control_category, '')) = ?");
+      parameters.add(timeControl.name.toLowerCase());
+    }
   }
 
   _appendLocalPlayerIdentityFilter(where, parameters, filters);
@@ -7247,13 +7685,38 @@ String? _localGameTimeControlCategory({
   Object? timeControl,
   Object? headersJson,
   Map<String, dynamic>? metadata,
+  Object? storedCategory,
 }) {
   final data = metadata ?? _jsonMap(headersJson);
-  return classifyTimeControlCategory(
+  final category = classifyTimeControlCategory(
     timeControl,
     event: data['Event'],
     site: data['Site'],
+    source: data['ChessEverSource'],
   );
+  if (category != null) return category;
+  return classifyPgnTimeControlCategory(data['ChessEverTimeControlCategory']) ??
+      classifyPgnTimeControlCategory(storedCategory) ??
+      'unknown';
+}
+
+Map<String, dynamic> _metadataWithCanonicalOpening(
+  Map<String, dynamic> metadata,
+  Object? eco,
+) {
+  final opening = metadata['Opening']?.toString().trim();
+  final normalized = opening?.toLowerCase();
+  final needsFallback =
+      normalized == null ||
+      normalized.isEmpty ||
+      normalized == '?' ||
+      normalized == '-' ||
+      normalized == 'unknown' ||
+      normalized == 'unknown opening';
+  if (!needsFallback) return metadata;
+  final fallback = EcoOpenings.getOpeningName(eco?.toString());
+  if (fallback == null || fallback.isEmpty) return metadata;
+  return Map<String, dynamic>.of(metadata)..['Opening'] = fallback;
 }
 
 bool _inferLocalGameIsOnline({
@@ -7270,6 +7733,7 @@ bool _inferLocalGameIsOnline({
           'Site',
           'Event',
           'Source',
+          'ChessEverSource',
           'Annotator',
           'WhiteTeam',
           'BlackTeam',

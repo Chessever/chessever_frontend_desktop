@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 
 /// Win / draw / loss tally from a single player's point of view.
@@ -69,13 +71,122 @@ class PlayerOpponentStat {
 
 @immutable
 class PlayerYearStat {
-  const PlayerYearStat({required this.year, required this.tally, this.total});
+  const PlayerYearStat({
+    required this.year,
+    required this.tally,
+    this.total,
+    this.timeControls = const <PlayerTimeControlStat>[],
+    this.sources = const <PlayerSourceStat>[],
+  });
 
   final int year;
   final PlayerResultTally tally;
   final int? total;
 
+  /// Games in this year by time-control category (blitz, rapid, …).
+  final List<PlayerTimeControlStat> timeControls;
+
+  /// Games in this year by origin (Lichess / Chess.com / … from PGN Site).
+  final List<PlayerSourceStat> sources;
+
   int get games => total ?? tally.games;
+}
+
+/// Origin bucket for per-year source breakdown on the year chart hover card.
+@immutable
+class PlayerSourceStat {
+  const PlayerSourceStat({required this.label, required this.count});
+
+  final String label;
+  final int count;
+}
+
+/// One plot point for the players-page games-by-year chart.
+///
+/// [games] is the bar height (`total ?? tally.games`). [wins]/[draws]/[losses]
+/// are the stacked segments; any remainder is [unclassified].
+@immutable
+class PlayerYearChartPoint {
+  const PlayerYearChartPoint({
+    required this.year,
+    required this.games,
+    required this.wins,
+    required this.draws,
+    required this.losses,
+    required this.unclassified,
+    this.timeControls = const <PlayerTimeControlStat>[],
+    this.sources = const <PlayerSourceStat>[],
+  });
+
+  final int year;
+  final int games;
+  final int wins;
+  final int draws;
+  final int losses;
+  final int unclassified;
+  final List<PlayerTimeControlStat> timeControls;
+  final List<PlayerSourceStat> sources;
+}
+
+/// Maps player year stats into the ordered series the year chart plots.
+///
+/// Uses each year's [PlayerYearStat.games] (`total ?? tally.games`) for height
+/// and the W/D/L tally for stacked segments. Does not re-order.
+List<PlayerYearChartPoint> playerYearChartSeries(List<PlayerYearStat> years) {
+  return [
+    for (final year in years)
+      PlayerYearChartPoint(
+        year: year.year,
+        games: year.games,
+        wins: year.tally.wins,
+        draws: year.tally.draws,
+        losses: year.tally.losses,
+        unclassified: (year.games - year.tally.games).clamp(0, year.games),
+        timeControls: year.timeControls,
+        sources: year.sources,
+      ),
+  ];
+}
+
+/// Peak games in the series (at least 1 so empty axes stay valid).
+int playerYearChartMaxGames(List<PlayerYearChartPoint> series) {
+  return series.map((p) => p.games).fold<int>(1, (a, b) => a > b ? a : b);
+}
+
+/// Nice Y-axis ceiling ≥ [maxGames] so grid lines and bar tops share one scale.
+int playerYearChartAxisMax(int maxGames) {
+  if (maxGames <= 1) return 1;
+  final step = _playerYearNiceStep(maxGames / 4);
+  final top = ((maxGames + step - 1) ~/ step) * step;
+  return top < maxGames ? maxGames : top;
+}
+
+/// Inclusive Y ticks from 0 to [axisMax] (usually 4–5 steps).
+List<int> playerYearChartAxisTicks(int axisMax) {
+  if (axisMax <= 1) return const <int>[0, 1];
+  final step = _playerYearNiceStep(axisMax / 4);
+  final ticks = <int>{0};
+  for (var v = step; v < axisMax; v += step) {
+    ticks.add(v);
+  }
+  ticks.add(axisMax);
+  return ticks.toList()..sort();
+}
+
+int _playerYearNiceStep(double rough) {
+  if (rough <= 1) return 1;
+  final exp = (math.log(rough) / math.ln10).floor();
+  final base = math.pow(10, exp).toDouble();
+  final fraction = rough / base;
+  final nice =
+      fraction <= 1
+          ? 1.0
+          : fraction <= 2
+          ? 2.0
+          : fraction <= 5
+          ? 5.0
+          : 10.0;
+  return (nice * base).round().clamp(1, 1000000);
 }
 
 @immutable

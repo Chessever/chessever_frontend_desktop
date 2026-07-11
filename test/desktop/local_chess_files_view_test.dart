@@ -4,6 +4,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -71,7 +72,7 @@ void main() {
 
     expect(repository.queries, hasLength(1));
     expect(repository.queries.single.search, isEmpty);
-    expect(repository.queries.single.pageSize, 1000);
+    expect(repository.queries.single.pageSize, 200);
     // Row player names render in the shared library-table abbreviated form.
     expect(find.text('Only, D.'), findsOneWidget);
     expect(find.text('Hou, Y.'), findsNothing);
@@ -84,6 +85,83 @@ void main() {
     expect(find.text('Only, D.'), findsOneWidget);
     expect(find.text('1 / 42 entries'), findsOneWidget);
   });
+
+  testWidgets(
+    'showCountMeta:false hides the header entries/indexed-positions line',
+    (tester) async {
+      final treeIndex = _usableTreeIndex();
+      expect(treeIndex.positionCount, greaterThan(0));
+      final source = _sourceWithGame(
+        _localGame(
+          id: 'fallback',
+          white: 'Hou, Yifan',
+          black: 'Gukesh, D',
+          sourcePath: '/tmp/view.pgn',
+        ),
+        gameCount: 42,
+        openingTreeIndex: treeIndex,
+      );
+      final repository = _FakeLocalChessDatabaseRepository(
+        page: LocalChessGameQueryPage(
+          games: <LocalChessGame>[
+            _localGame(
+              id: 'database',
+              white: 'Database Only',
+              black: 'Gukesh, D',
+              sourcePath: '/tmp/view.pgn',
+            ),
+          ],
+          totalCount: 1,
+          pageNumber: 0,
+          pageSize: 1,
+        ),
+      );
+
+      Widget build({required bool showCountMeta}) => ProviderScope(
+        overrides: [
+          localChessDatabaseRepositoryProvider.overrideWithValue(repository),
+          localChessLibraryProvider.overrideWith(
+            (ref) => LocalChessLibraryNotifier(),
+          ),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 1100,
+              height: 700,
+              child: LocalChessFilesView(
+                selectedPath: source.root.path,
+                onSelectPath: (_) {},
+                stateOverride: LocalChessLibraryState(
+                  source: source,
+                  selectedPath: source.root.path,
+                ),
+                onRefreshOverride: () async {},
+                showCountMeta: showCountMeta,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Default (Library) keeps the entry count but never the internal
+      // "indexed positions" metric, even with a populated tree index.
+      await tester.pumpWidget(build(showCountMeta: true));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text('42 entries'), findsOneWidget);
+      expect(find.textContaining('indexed positions'), findsNothing);
+
+      // Embedded (Players Games tab) suppresses the redundant count line while
+      // still rendering the rows.
+      await tester.pumpWidget(build(showCountMeta: false));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text('42 entries'), findsNothing);
+      expect(find.textContaining('indexed positions'), findsNothing);
+      expect(find.text('Only, D.'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'selected local database loads more games when scrolled near the bottom',
@@ -149,10 +227,10 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(repository.queries.single.pageSize, 1000);
+      expect(repository.queries.single.pageSize, 200);
       expect(repository.queries.single.pageNumber, 0);
       expect(find.text('Load more'), findsOneWidget);
-      expect(find.text('1000 / 2500 loaded'), findsOneWidget);
+      expect(find.text('200 / 2500 loaded'), findsOneWidget);
 
       final tableScrollable = tester.state<ScrollableState>(
         find.descendant(
@@ -166,8 +244,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
 
       expect(repository.queries.last.pageNumber, 1);
-      expect(repository.queries.last.pageSize, 1000);
-      expect(find.text('2000 / 2500 loaded'), findsOneWidget);
+      expect(repository.queries.last.pageSize, 200);
+      expect(find.text('400 / 2500 loaded'), findsOneWidget);
 
       await tester.enterText(find.byType(TextField), 'database 2');
       await tester.pump();
@@ -175,7 +253,7 @@ void main() {
 
       expect(repository.queries.last.search, 'database 2');
       expect(repository.queries.last.pageNumber, 0);
-      expect(repository.queries.last.pageSize, 1000);
+      expect(repository.queries.last.pageSize, 200);
     },
   );
 
@@ -198,7 +276,7 @@ void main() {
           games: source.root.files.single.games,
           totalCount: 1,
           pageNumber: 0,
-          pageSize: 1000,
+          pageSize: 200,
         ),
       );
 
@@ -281,7 +359,7 @@ void main() {
         games: source.root.files.single.games,
         totalCount: 1,
         pageNumber: 0,
-        pageSize: 1000,
+        pageSize: 200,
       ),
     );
 
@@ -357,7 +435,7 @@ void main() {
         games: source.root.files.single.games,
         totalCount: 1,
         pageNumber: 0,
-        pageSize: 1000,
+        pageSize: 200,
       ),
     );
 
@@ -438,7 +516,7 @@ void main() {
         games: source.root.files.single.games,
         totalCount: 1,
         pageNumber: 0,
-        pageSize: 1000,
+        pageSize: 200,
       ),
     );
 
@@ -501,6 +579,9 @@ class _FakeLocalChessDatabaseRepository extends LocalChessDatabaseRepository {
     String search = '',
     LocalChessGameSortField sortBy = LocalChessGameSortField.originalOrder,
     LocalChessGameSortDirection sortDirection = LocalChessGameSortDirection.asc,
+    LocalChessGameFilter? filter,
+    String? playerFideId,
+    List<String> playerAliases = const <String>[],
     required int pageNumber,
     required int pageSize,
   }) async {

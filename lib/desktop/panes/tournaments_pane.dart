@@ -20,6 +20,7 @@ import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_event_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_event_favorite_button.dart';
 import 'package:chessever/desktop/widgets/desktop_collection_cards.dart';
+import 'package:chessever/desktop/widgets/desktop_for_you_game_context.dart';
 import 'package:chessever/desktop/widgets/desktop_for_you_strip_layout.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
@@ -72,30 +73,41 @@ LiveGamesBatchKey _desktopForYouLiveBatchKey({
   );
 }
 
-/// All renderable boards for [tourId] parsed ONCE per `gamesTourProvider`
-/// update (not per widget build). `gamesTourProvider` is the authoritative,
-/// UNLIMITED event source (`getGamesByTourId` returns every board — a large
-/// open can publish hundreds), so this lifts the For You strip off the capped
-/// top-games snapshot. Returns an empty list while the provider is still
-/// loading so callers fall back to the snapshot placeholder.
-final _forYouStripFullGamesProvider = Provider.autoDispose
-    .family<List<GamesTourModel>, String>((ref, tourId) {
-      if (tourId.isEmpty) return const <GamesTourModel>[];
-      final full = ref.watch(gamesTourProvider(tourId)).valueOrNull;
-      if (full == null || full.isEmpty) return const <GamesTourModel>[];
-      final models = <GamesTourModel>[];
-      for (final row in full) {
-        try {
-          final model = GamesTourModel.fromGame(row);
-          if (isEventBoardGameVisible(model)) {
-            models.add(model);
-          }
-        } catch (_) {
-          // Skip malformed rows; a bad board must never blank the strip.
-        }
+typedef _ForYouFullEventGames =
+    ({List<GamesTourModel> all, List<GamesTourModel> visible});
+
+/// Every valid event game plus the renderable subset, both parsed once per
+/// authoritative `gamesTourProvider` update. The complete list is board-rail
+/// context; the visible subset is only for the latest-round For You preview.
+final _forYouFullEventGamesProvider = Provider.autoDispose.family<
+  _ForYouFullEventGames,
+  String
+>((ref, tourId) {
+  if (tourId.isEmpty) {
+    return (all: const <GamesTourModel>[], visible: const <GamesTourModel>[]);
+  }
+  final full = ref.watch(gamesTourProvider(tourId)).valueOrNull;
+  if (full == null || full.isEmpty) {
+    return (all: const <GamesTourModel>[], visible: const <GamesTourModel>[]);
+  }
+  final all = <GamesTourModel>[];
+  final visible = <GamesTourModel>[];
+  for (final row in full) {
+    try {
+      final model = GamesTourModel.fromGame(row);
+      all.add(model);
+      if (isEventBoardGameVisible(model)) {
+        visible.add(model);
       }
-      return models;
-    });
+    } catch (_) {
+      // Skip malformed rows; one bad board must not blank the event.
+    }
+  }
+  return (
+    all: List<GamesTourModel>.unmodifiable(all),
+    visible: List<GamesTourModel>.unmodifiable(visible),
+  );
+});
 
 /// Authoritative board list for a For You event strip.
 ///
@@ -105,47 +117,20 @@ final _forYouStripFullGamesProvider = Provider.autoDispose
 /// RPC returns. Falls back to `snapshot.visibleGames` while the full list is
 /// still loading (transient placeholder) or if it resolves empty, so the strip
 /// can never regress to blank or wedge on partial data.
-List<GamesTourModel> _forYouStripAuthoritativeGames(
+DesktopForYouGameContext _forYouGameContext(
   WidgetRef ref,
   ForYouEventGamesSnapshot snapshot,
 ) {
   final tourId = snapshot.tourId.trim();
-  if (tourId.isEmpty) return snapshot.visibleGames;
-
-  final fullVisible = ref.watch(_forYouStripFullGamesProvider(tourId));
-  if (fullVisible.isEmpty) return snapshot.visibleGames;
-
-  final previewRoundIds = <String>{
-    for (final game in snapshot.visibleGames)
-      if (game.roundId.trim().isNotEmpty) game.roundId,
-  };
-  final scoped =
-      previewRoundIds.isEmpty
-          ? fullVisible
-          : fullVisible
-              .where((game) => previewRoundIds.contains(game.roundId))
-              .toList(growable: false);
-  if (scoped.isEmpty) return snapshot.visibleGames;
-
-  // Keep the snapshot's ordering for the boards it already ranked (pins /
-  // priority stay put), then append the remaining round boards after them.
-  final snapshotOrder = <String, int>{
-    for (var i = 0; i < snapshot.visibleGames.length; i++)
-      snapshot.visibleGames[i].gameId: i,
-  };
-  final overflowRank = snapshotOrder.length;
-  final ordered = scoped.toList(growable: false)..sort((a, b) {
-    final ai = snapshotOrder[a.gameId] ?? overflowRank;
-    final bi = snapshotOrder[b.gameId] ?? overflowRank;
-    if (ai != bi) return ai.compareTo(bi);
-    final ab = a.boardNr;
-    final bb = b.boardNr;
-    if (ab != null && bb != null && ab != bb) return ab.compareTo(bb);
-    if (ab != null && bb == null) return -1;
-    if (ab == null && bb != null) return 1;
-    return a.gameId.compareTo(b.gameId);
-  });
-  return ordered;
+  final full =
+      tourId.isEmpty
+          ? (all: const <GamesTourModel>[], visible: const <GamesTourModel>[])
+          : ref.watch(_forYouFullEventGamesProvider(tourId));
+  return buildDesktopForYouGameContext(
+    snapshotGames: snapshot.visibleGames,
+    fullVisibleGames: full.visible,
+    fullEventGames: full.all,
+  );
 }
 
 String _smartCollectionTitle(PremiumGamesType type) {
@@ -2584,10 +2569,16 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     final snapshot =
         ref.read(forYouEventSnapshotProvider(event.id)).valueOrNull;
     if (snapshot == null) return;
+    final full = ref.read(_forYouFullEventGamesProvider(snapshot.tourId));
+    final gameContext = buildDesktopForYouGameContext(
+      snapshotGames: snapshot.visibleGames,
+      fullVisibleGames: full.visible,
+      fullEventGames: full.all,
+    );
     final gameIds = _gameIdsFor(event);
     if (gameIds.isEmpty) return;
     final gamesById = {
-      for (final game in snapshot.visibleGames) game.gameId: game,
+      for (final game in gameContext.stripGames) game.gameId: game,
     };
     final games = [
       for (final gameId in gameIds)
@@ -2599,7 +2590,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
       ref,
       games[gameIndex],
       event.title,
-      eventGames: snapshot.visibleGames,
+      eventGames: gameContext.boardGames,
       viewSource: ChessboardView.forYou,
     );
   }
@@ -3177,12 +3168,14 @@ class _GamesStrip extends ConsumerWidget {
           });
           return const SizedBox.shrink();
         }
+        final gameContext = _forYouGameContext(ref, snapshot);
         if (layout != DesktopCardLayout.grid) {
           if (snapshot.isGroupEvent) {
             return _TeamGamesStrip(
               eventId: eventId,
               tournamentTitle: tournamentTitle,
               snapshot: snapshot,
+              boardGames: gameContext.boardGames,
               layout: layout,
               streamingEnabled: cardStreamingEnabled,
               selectedGameIndex: selectedGameIndex,
@@ -3194,6 +3187,7 @@ class _GamesStrip extends ConsumerWidget {
               eventId: eventId,
               tournamentTitle: tournamentTitle,
               snapshot: snapshot,
+              boardGames: gameContext.boardGames,
               layout: layout,
               streamingEnabled: cardStreamingEnabled,
               selectedGameIndex: selectedGameIndex,
@@ -3205,7 +3199,7 @@ class _GamesStrip extends ConsumerWidget {
           // board renders, and a busy open with hundreds of boards is handled
           // because the visible slice below is bounded to what fits and the
           // flow itself builds cards lazily (ListView.builder under the hood).
-          final allGames = _forYouStripAuthoritativeGames(ref, snapshot);
+          final allGames = gameContext.stripGames;
           // Each event's strip has BOUNDED vertical space — the For You
           // feed gives every event the same hard-coded row height (see
           // _ForYouEventSection._rowHeightFor) and never lets a single
@@ -3251,7 +3245,7 @@ class _GamesStrip extends ConsumerWidget {
                 itemBuilder:
                     (context, i) => LiveDesktopGameCard(
                       game: games[i],
-                      eventGames: allGames,
+                      eventGames: gameContext.boardGames,
                       tournamentTitle: tournamentTitle,
                       layout: layout,
                       selected: selectedGameIndex == i,
@@ -3265,7 +3259,7 @@ class _GamesStrip extends ConsumerWidget {
           );
         }
 
-        final stripGames = _forYouStripAuthoritativeGames(ref, snapshot);
+        final stripGames = gameContext.stripGames;
         return LayoutBuilder(
           builder: (context, constraints) {
             final strip = DesktopForYouStripLayout.compute(
@@ -3295,7 +3289,7 @@ class _GamesStrip extends ConsumerWidget {
                     width: strip.cardWidth,
                     child: LiveDesktopGameCard(
                       game: games[i],
-                      eventGames: stripGames,
+                      eventGames: gameContext.boardGames,
                       tournamentTitle: tournamentTitle,
                       layout: DesktopCardLayout.grid,
                       selected: selectedGameIndex == i,
@@ -3436,6 +3430,7 @@ class _TeamGamesStrip extends StatelessWidget {
     required this.eventId,
     required this.tournamentTitle,
     required this.snapshot,
+    required this.boardGames,
     required this.layout,
     required this.streamingEnabled,
     required this.selectedGameIndex,
@@ -3445,6 +3440,7 @@ class _TeamGamesStrip extends StatelessWidget {
   final String eventId;
   final String tournamentTitle;
   final ForYouEventGamesSnapshot snapshot;
+  final List<GamesTourModel> boardGames;
   final DesktopCardLayout layout;
   final bool streamingEnabled;
   final int? selectedGameIndex;
@@ -3514,7 +3510,7 @@ class _TeamGamesStrip extends StatelessWidget {
                   games: panelGames[displayedGroups[i]] ?? const [],
                   selectedGameId: selectedGameId,
                   tournamentTitle: tournamentTitle,
-                  eventGames: snapshot.visibleGames,
+                  eventGames: boardGames,
                   liveBatchKey: liveBatchKey,
                   streamingEnabled: streamingEnabled,
                 ),
@@ -3533,6 +3529,7 @@ class _KnockoutGamesStrip extends StatelessWidget {
     required this.eventId,
     required this.tournamentTitle,
     required this.snapshot,
+    required this.boardGames,
     required this.layout,
     required this.streamingEnabled,
     required this.selectedGameIndex,
@@ -3542,6 +3539,7 @@ class _KnockoutGamesStrip extends StatelessWidget {
   final String eventId;
   final String tournamentTitle;
   final ForYouEventGamesSnapshot snapshot;
+  final List<GamesTourModel> boardGames;
   final DesktopCardLayout layout;
   final bool streamingEnabled;
   final int? selectedGameIndex;
@@ -3619,7 +3617,7 @@ class _KnockoutGamesStrip extends StatelessWidget {
                   games: panelGames[displayedHeaders[i]] ?? const [],
                   selectedGameId: selectedGameId,
                   tournamentTitle: tournamentTitle,
-                  eventGames: snapshot.visibleGames,
+                  eventGames: boardGames,
                   liveBatchKey: liveBatchKey,
                   streamingEnabled: streamingEnabled,
                 ),

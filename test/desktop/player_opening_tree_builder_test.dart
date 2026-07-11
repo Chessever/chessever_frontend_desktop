@@ -5,6 +5,20 @@ import 'package:dartchess/dartchess.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('keeps Bullet and UltraBullet inside the legacy Blitz tree bucket', () {
+    const blitz = PlayerOpeningTreeFilterCriteria(
+      timeControl: TimeControl.blitz,
+    );
+
+    expect(blitz.matches(<String, dynamic>{'timeControl': 'blitz'}), isTrue);
+    expect(blitz.matches(<String, dynamic>{'timeControl': 'bullet'}), isTrue);
+    expect(
+      blitz.matches(<String, dynamic>{'timeControl': 'ultrabullet'}),
+      isTrue,
+    );
+    expect(blitz.matches(<String, dynamic>{'timeControl': 'rapid'}), isFalse);
+  });
+
   test('maps backend tree snapshot moves by FEN key', () {
     final index = PlayerOpeningTreeIndex.fromSnapshot(
       PlayerOpeningTreeSnapshot.fromJson(_snapshotJson()),
@@ -21,6 +35,25 @@ void main() {
     expect(moves.first.total, 15);
     expect(moves.first.gameId, isNull);
     expect(moves.first.lastPlayed, DateTime.parse('2026-05-21'));
+  });
+
+  test('falls back to old compact two-field snapshot keys', () {
+    final snapshot = _snapshotJson();
+    snapshot['fk'] = <String>[
+      Chess.initial.fen.split(RegExp(r'\s+')).take(2).join(' '),
+    ];
+    final index = PlayerOpeningTreeIndex.fromSnapshot(
+      PlayerOpeningTreeSnapshot.fromJson(snapshot),
+    );
+
+    final canonicalKey = playerOpeningTreeFenKey(Chess.initial.fen);
+    final moves = index.movesForFen(Chess.initial.fen);
+
+    expect(canonicalKey.split(' '), hasLength(4));
+    expect(canonicalKey, endsWith('KQkq -'));
+    expect(index.nodesByFenKey.keys.single.split(' '), hasLength(2));
+    expect(moves, hasLength(2));
+    expect(moves.first.uci, 'd2d4');
   });
 
   test('filters supported compact backend buckets locally', () {
@@ -103,6 +136,60 @@ void main() {
       expect(response.data.single['continuation'], ['e2e4', 'e7e5']);
     },
   );
+
+  test('normalizes legacy tree rows for year and notation columns', () {
+    final treeIndex = PlayerOpeningTreeIndex.fromSnapshot(
+      PlayerOpeningTreeSnapshot.fromJson(_snapshotJson()),
+    );
+    final index = treeIndex.copyWithGames(
+      PlayerOpeningTreeGamesIndex(
+        gamesByFen: <String, List<PlayerOpeningTreeGameRef>>{
+          playerOpeningTreeFenKey(Chess.initial.fen): const [
+            PlayerOpeningTreeGameRef(
+              gameId: 'legacy-game',
+              fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+              ply: 0,
+            ),
+          ],
+        },
+        gameRowsById: const <String, Map<String, dynamic>>{
+          'legacy-game': <String, dynamic>{
+            'id': 'legacy-game',
+            'white': 'Legacy White',
+            'black': 'Legacy Black',
+            'headers': <String, dynamic>{'Date': '2026.06.28'},
+            'pgn': '''
+[Event "Legacy cache"]
+[Date "2026.06.28"]
+[White "Legacy White"]
+[Black "Legacy Black"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 1-0
+''',
+          },
+        },
+      ),
+    );
+
+    final response = localPlayerTreeGamesResponse(
+      index: index,
+      fen: Chess.initial.fen,
+      uci: null,
+      sortBy: GamebaseSortField.date,
+      sortDirection: GamebaseSortDirection.desc,
+      pageNumber: 0,
+      pageSize: 10,
+    );
+
+    expect(response.data.single['date'], '2026-06-28T00:00:00.000');
+    expect(response.data.single['continuation'], [
+      'e2e4',
+      'e7e5',
+      'g1f3',
+      'b8c6',
+    ]);
+  });
 }
 
 Map<String, dynamic> _snapshotJson() {

@@ -773,10 +773,16 @@ class _DesktopPgnLoadingOverlay extends StatelessWidget {
 
 String _localProgressTitle(String? phase) {
   final lower = phase?.toLowerCase() ?? '';
+  if (lower.contains('waiting')) {
+    return 'Waiting for local database...';
+  }
   if (lower.contains('cache') ||
       lower.contains('migrat') ||
       lower.contains('local database')) {
     return 'Preparing local database...';
+  }
+  if (lower.contains('importing file') || lower.startsWith('file ')) {
+    return 'Importing PGN...';
   }
   return 'Loading PGN...';
 }

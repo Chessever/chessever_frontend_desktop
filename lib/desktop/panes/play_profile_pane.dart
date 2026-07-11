@@ -79,8 +79,7 @@ String _assetFor(RatedTimeControl tc) {
     case RatedTimeControl.blitz:
       return PngAsset.blitzIcon;
     case RatedTimeControl.bullet:
-      // No dedicated bullet asset shipped -- reuse the blitz icon.
-      return PngAsset.blitzIcon;
+      return PngAsset.bulletIcon;
   }
 }
 
@@ -1431,6 +1430,7 @@ class _BreakdownRow extends StatelessWidget {
           _assetFor(tc),
           width: 16,
           height: 16,
+          fit: BoxFit.contain,
           cacheWidth: (16 * MediaQuery.devicePixelRatioOf(context)).round(),
           cacheHeight: (16 * MediaQuery.devicePixelRatioOf(context)).round(),
         ),

@@ -207,65 +207,25 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       );
       final photos = await _resolvePlayerPhotos();
 
-      // Build frames by replaying mainline moves from the start.
-      final frames = <({String fen, Move? lastMove})>[];
-      final frameClocks = <({String? whiteClock, String? blackClock})>[];
-      final frameEvaluations =
-          <({double? evaluation, int? mate, bool isEvaluating})>[];
-      final durations = <int>[];
-      String? whiteClock;
-      String? blackClock;
-      ({double? evaluation, int? mate, bool isEvaluating})? lastEval;
+      // Replay the mainline into per-frame board/clock/eval data. Each frame
+      // carries its own last move (for from/to highlighting) and its own eval
+      // (from PGN annotations, carried forward) so the shared GIF's board
+      // highlight and eval bar update in step with the animation.
+      final gifData = buildBoardShareGifFrames(
+        startingFen: widget.chessGame.startingFen,
+        mainline: widget.chessGame.mainline,
+      );
 
-      // Initial position
-      frames.add((fen: widget.chessGame.startingFen, lastMove: null));
-      frameClocks.add((whiteClock: whiteClock, blackClock: blackClock));
-      frameEvaluations.add((
-        evaluation: null,
-        mate: null,
-        isEvaluating: widget.isEvaluating,
-      ));
-      durations.add(80); // 0.8s initial hold
-
-      Position pos;
-      try {
-        pos = Chess.fromSetup(Setup.parseFen(widget.chessGame.startingFen));
-      } catch (_) {
-        pos = Chess.initial;
-      }
-
-      for (int i = 0; i < widget.chessGame.mainline.length; i++) {
-        final moveData = widget.chessGame.mainline[i];
-        final move = pos.parseSan(moveData.san);
-        if (move == null) continue;
-        pos = pos.play(move);
-        final clockTime = moveData.clockTime?.trim();
-        if (clockTime != null && clockTime.isNotEmpty) {
-          if (moveData.turn == ChessColor.white) {
-            whiteClock = clockTime;
-          } else if (moveData.turn == ChessColor.black) {
-            blackClock = clockTime;
-          }
-        }
-        lastEval = _parseMoveEval(moveData.eval) ?? lastEval;
-        final last =
-            move is NormalMove
-                ? NormalMove(from: move.from, to: move.to)
-                : null;
-        frames.add((fen: pos.fen, lastMove: last));
-        frameClocks.add((whiteClock: whiteClock, blackClock: blackClock));
-        frameEvaluations.add(
-          lastEval ??
-              (evaluation: null, mate: null, isEvaluating: widget.isEvaluating),
-        );
-        // Faster for middle moves, slower at the end
-        final isLast = i == widget.chessGame.mainline.length - 1;
-        durations.add(isLast ? 160 : 50);
-      }
+      // Only show the eval bar when the game actually carries evaluations to
+      // animate. A game with no `[%eval]` data would otherwise render a dead,
+      // permanently-centered bar across the whole GIF, which reads as broken.
+      final hasFrameEvals = gifData.evaluations.any(
+        (e) => e.evaluation != null || e.mate != null,
+      );
 
       final gifBytes = await BoardShareService.generateGif(
-        frames: frames,
-        durationsCs: durations,
+        frames: gifData.frames,
+        durationsCs: gifData.durationsCs,
         boardSettings: boardSettings,
         whiteName: _whiteName,
         blackName: _blackName,
@@ -281,13 +241,10 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
         blackScore: _blackScore,
         whitePhotoUrl: photos.whitePhotoUrl,
         blackPhotoUrl: photos.blackPhotoUrl,
-        evaluation: widget.evaluation,
-        mate: widget.mate,
-        isEvaluating: widget.isEvaluating,
-        showEvalBar: widget.showEvalBar,
+        showEvalBar: widget.showEvalBar && hasFrameEvals,
         flipped: widget.flipped,
-        clocks: frameClocks,
-        frameEvaluations: frameEvaluations,
+        clocks: gifData.clocks,
+        frameEvaluations: gifData.evaluations,
       );
 
       if (gifBytes == null) throw Exception('GIF generation returned null');
@@ -301,26 +258,6 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
     } finally {
       if (mounted) setState(() => _isGeneratingGif = false);
     }
-  }
-
-  ({double? evaluation, int? mate, bool isEvaluating})? _parseMoveEval(
-    String? raw,
-  ) {
-    final text = raw?.trim();
-    if (text == null || text.isEmpty) return null;
-    final mateMatch = RegExp(
-      r'^(?:#|M)([+-]?\d+)$',
-      caseSensitive: false,
-    ).firstMatch(text);
-    if (mateMatch != null) {
-      final mate = int.tryParse(mateMatch.group(1)!);
-      if (mate != null) {
-        return (evaluation: null, mate: mate, isEvaluating: false);
-      }
-    }
-    final cp = double.tryParse(text);
-    if (cp == null) return null;
-    return (evaluation: cp, mate: null, isEvaluating: false);
   }
 
   String _defaultExportName(String extension) {

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ORIG="${SSH_ORIGINAL_COMMAND:-}"
-KEEP_LAST_N=3
+KEEP_LAST_N=2
 
 case "$ORIG" in
   "rsync --server"*)
@@ -45,6 +45,22 @@ case "$ORIG" in
     esac
     exec /usr/local/bin/codemagic-finalize ingest \
       "$platform" "$archive" "$version" --keep-last-n "$KEEP_LAST_N"
+    ;;
+  "prune-downloads "*)
+    read -r _ platform extra <<<"$ORIG"
+    case "$platform" in
+      macos | windows | linux) ;;
+      *)
+        echo "bad platform" >&2
+        exit 2
+        ;;
+    esac
+    if [ -n "${extra:-}" ]; then
+      echo "too many prune-downloads arguments" >&2
+      exit 2
+    fi
+    exec /usr/local/bin/codemagic-finalize prune-downloads \
+      "$platform" --keep-last-n "$KEEP_LAST_N"
     ;;
   *)
     echo "rejected: $ORIG" >&2

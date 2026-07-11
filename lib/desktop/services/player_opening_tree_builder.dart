@@ -199,7 +199,7 @@ class PlayerOpeningTreeIndex {
     PlayerOpeningTreeFilterCriteria filters =
         const PlayerOpeningTreeFilterCriteria(),
   }) {
-    final node = nodesByFenKey[_fenKey(fen)];
+    final node = _valueForFenKey(nodesByFenKey, _fenKey(fen));
     if (node == null) return const <MoveAggregate>[];
     final moves = node.moves
       .map((move) => move.toMoveAggregate(filters: filters))
@@ -261,7 +261,8 @@ class PlayerOpeningTreeIndex {
     if (gamesByFen.isEmpty && gameRowsById.isNotEmpty) {
       return _replayRowsForFenKey(key, filters: filters);
     }
-    final refs = gamesByFen[key] ?? const <PlayerOpeningTreeGameRef>[];
+    final refs =
+        _valueForFenKey(gamesByFen, key) ?? const <PlayerOpeningTreeGameRef>[];
     if (!filters.hasFilters) return refs;
     return refs
         .where((ref) {
@@ -274,8 +275,10 @@ class PlayerOpeningTreeIndex {
   Map<String, dynamic>? _rowForRef(PlayerOpeningTreeGameRef ref) {
     final row = gameRowsById[ref.gameId];
     if (row == null) return null;
+    final date = _canonicalDateForRow(row);
     return Map<String, dynamic>.unmodifiable(<String, dynamic>{
       ...row,
+      if (date != null) 'date': date,
       'fen': ref.fen,
       'continuation': _continuationForRef(row, ref),
     });
@@ -738,8 +741,33 @@ class PlayerOpeningTreeGamesIndex {
   int get positionCount => gamesByFen.length;
 }
 
-String _fenKey(String fen) =>
-    fen.trim().split(RegExp(r'\s+')).take(2).join(' ');
+String _fenKey(String fen) => _fenKeyWithFieldLimit(fen, 4);
+
+String _legacyFenKey(String fen) => _fenKeyWithFieldLimit(fen, 2);
+
+String _fenKeyWithFieldLimit(String fen, int fieldLimit) {
+  return fen
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((field) => field.isNotEmpty)
+      .take(fieldLimit)
+      .join(' ');
+}
+
+T? _valueForFenKey<T>(Map<String, T> values, String key) {
+  final exact = values[key];
+  if (exact != null) return exact;
+  final legacyKey = _legacyFenKey(key);
+  if (legacyKey == key) return null;
+  return values[legacyKey];
+}
+
+bool _matchesFenKey(String fen, String key) {
+  final canonicalKey = _fenKey(fen);
+  if (canonicalKey == key) return true;
+  final keyFields = key.split(RegExp(r'\s+'));
+  return keyFields.length == 2 && _legacyFenKey(canonicalKey) == key;
+}
 
 String playerOpeningTreeFenKey(String fen) => _fenKey(fen);
 
@@ -1119,11 +1147,51 @@ DateTime? _dateForRow(Map<String, dynamic> row, ChessGame game) {
 
 List<String> _lineForRow(Map<String, dynamic> row) {
   final raw = row['line'];
-  if (raw is! List) return const <String>[];
-  return raw
-      .map((m) => m.toString().trim().toLowerCase())
-      .where((m) => m.isNotEmpty)
-      .toList(growable: false);
+  if (raw is List) {
+    final line = raw
+        .map((m) => m.toString().trim().toLowerCase())
+        .where((m) => m.isNotEmpty)
+        .toList(growable: false);
+    if (line.isNotEmpty) return line;
+  }
+  final pgn = _pgnForRow(row);
+  if (pgn == null) return const <String>[];
+  try {
+    final game = ChessGame.fromPgn(row['id']?.toString() ?? 'cached-game', pgn);
+    return <String>[
+      for (final move in game.mainline) move.uci.trim().toLowerCase(),
+    ].where((move) => move.isNotEmpty).toList(growable: false);
+  } on Object {
+    return const <String>[];
+  }
+}
+
+String? _canonicalDateForRow(Map<String, dynamic> row) {
+  String? readDate(Object? value) {
+    final raw = value?.toString().trim();
+    if (raw == null || raw.isEmpty || raw == '?') return null;
+    final parsed =
+        DateTime.tryParse(raw) ?? DateTime.tryParse(raw.replaceAll('.', '-'));
+    return parsed?.toIso8601String();
+  }
+
+  final direct = readDate(row['date']);
+  if (direct != null) return direct;
+  for (final containerKey in const ['headers', 'metadata']) {
+    final container = row[containerKey];
+    if (container is Map) {
+      final fromMetadata = readDate(container['Date'] ?? container['date']);
+      if (fromMetadata != null) return fromMetadata;
+    }
+  }
+  final pgn = _pgnForRow(row);
+  if (pgn == null) return null;
+  try {
+    final game = ChessGame.fromPgn(row['id']?.toString() ?? 'cached-game', pgn);
+    return readDate(game.metadata['Date']);
+  } on Object {
+    return null;
+  }
 }
 
 List<String> _continuationForRef(
@@ -1161,7 +1229,7 @@ PlayerOpeningTreeGameRef? _replayRowForFenKey({
   PlayerOpeningTreeGameRef? latest;
   for (var ply = 0; ply <= line.length; ply++) {
     final currentFen = position.fen;
-    if (_fenKey(currentFen) == fenKey) {
+    if (_matchesFenKey(currentFen, fenKey)) {
       latest = PlayerOpeningTreeGameRef(
         gameId: gameId,
         fen: currentFen,
@@ -1198,7 +1266,13 @@ String? _playerColorForRow(Map<String, dynamic> row, String playerId) {
 }
 
 bool _timeControlMatches(Object? rawValue, TimeControl wanted) {
-  return classifyTimeControlCategory(rawValue) == wanted.name.toLowerCase();
+  final category = classifyTimeControlCategory(rawValue);
+  if (wanted == TimeControl.blitz) {
+    return category == 'blitz' ||
+        category == 'bullet' ||
+        category == 'ultrabullet';
+  }
+  return category == wanted.name.toLowerCase();
 }
 
 String _resultCode(Object? value) {

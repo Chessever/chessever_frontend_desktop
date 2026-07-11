@@ -11,6 +11,10 @@ class MainFlutterWindow: NSWindow {
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
 
+    self.appearance = NSAppearance(named: .darkAqua)
+    self.titlebarAppearsTransparent = true
+    self.backgroundColor = NSColor(red: 0x0C / 255, green: 0x0C / 255, blue: 0x0E / 255, alpha: 1)
+
     RegisterGeneratedPlugins(registry: flutterViewController)
     FlutterMultiWindowPlugin.setOnWindowCreatedCallback { controller in
       RegisterGeneratedPlugins(registry: controller)

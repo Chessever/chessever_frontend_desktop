@@ -329,5 +329,9 @@ rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
 rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
   "$DEB_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever.deb"
 
+# Prune only after both the immutable versioned download and stable website
+# alias are safely in place. The server owns version ordering and deletion.
+ssh "${SSH_OPTS[@]}" "$REMOTE" "prune-downloads linux"
+
 echo "Published Linux desktop_updater archive $RELEASE_VERSION"
 echo "Published Linux Debian package: https://chessever.com/updates/desktop/downloads/Chessever.deb"

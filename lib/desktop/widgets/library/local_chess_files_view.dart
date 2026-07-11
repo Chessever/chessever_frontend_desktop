@@ -9,6 +9,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_append.dart';
 import 'package:chessever/desktop/services/local_player_enrichment_service.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
@@ -19,15 +20,18 @@ import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
+import 'package:chessever/desktop/widgets/desktop_game_filter_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_tappable.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
+import 'package:chessever/desktop/widgets/desktop_toolbar_metrics.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
 import 'package:chessever/desktop/widgets/library/library_table_row_style.dart';
 import 'package:chessever/desktop/widgets/library/local_game_info_dialog.dart';
 import 'package:chessever/desktop/widgets/library/local_game_player_cell.dart';
+import 'package:chessever/desktop/widgets/library/library_chrome_bar.dart';
 import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
@@ -42,12 +46,33 @@ class LocalChessFilesView extends HookConsumerWidget {
     required this.onSelectPath,
     this.stateOverride,
     this.onRefreshOverride,
+    this.initialFilter,
+    this.onFilterChanged,
+    this.playerFideId,
+    this.playerAliases = const <String>[],
+    this.showCountMeta = true,
   });
 
   final String selectedPath;
   final ValueChanged<String> onSelectPath;
   final LocalChessLibraryState? stateOverride;
   final Future<void> Function()? onRefreshOverride;
+
+  /// Whether the header renders the "N entries · M indexed positions" count
+  /// line. Disabled when the view is embedded somewhere that already surfaces
+  /// the game count (e.g. the Players Games tab), where the count is redundant.
+  final bool showCountMeta;
+
+  /// Seeded filters (e.g. from players Overview tap). Applied on first build
+  /// and whenever the instance identity / value changes via [useEffect].
+  final LocalChessGameFilter? initialFilter;
+
+  /// Notifies parent when the user changes filters from this view.
+  final ValueChanged<LocalChessGameFilter>? onFilterChanged;
+
+  /// When set, colour / player-outcome filters resolve relative to this player.
+  final String? playerFideId;
+  final List<String> playerAliases;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -57,6 +82,9 @@ class LocalChessFilesView extends HookConsumerWidget {
     final node = source?.nodeForPath(selectedPath);
     final searchController = useTextEditingController();
     final query = useState<String>('');
+    final gameFilter = useState<LocalChessGameFilter>(
+      initialFilter ?? LocalChessGameFilter(),
+    );
     final sort = useState(
       const _LocalGamesSortConfig(
         _LocalGamesSortKey.originalOrder,
@@ -67,6 +95,15 @@ class LocalChessFilesView extends HookConsumerWidget {
     final databaseLoadedPages = useState(
       const _LoadedLocalDatabasePages.empty(),
     );
+    // Pick up Overview → Games handoff and external clear without wiping
+    // in-view edits when the parent re-passes the same filter instance.
+    useEffect(() {
+      final next = initialFilter;
+      if (next != null && next != gameFilter.value) {
+        gameFilter.value = next;
+      }
+      return null;
+    }, [initialFilter]);
 
     Future<void> pickFolder() async {
       final opened =
@@ -131,6 +168,9 @@ class LocalChessFilesView extends HookConsumerWidget {
           query.value,
           sort.value.key,
           sort.value.dir,
+          gameFilter.value,
+          playerFideId,
+          Object.hashAll(playerAliases),
         ).toString();
     final effectiveDatabasePageWindow =
         databasePageWindow.value.queryKey == databaseQueryKey
@@ -177,6 +217,9 @@ class LocalChessFilesView extends HookConsumerWidget {
               databasePath: database.path,
               search: query.value,
               sort: sort.value,
+              filter: gameFilter.value,
+              playerFideId: playerFideId,
+              playerAliases: playerAliases,
               pageNumber: effectiveDatabasePageWindow.pageNumber,
               pageSize: _kLocalDatabaseGameQueryPageSize,
             );
@@ -187,6 +230,9 @@ class LocalChessFilesView extends HookConsumerWidget {
             query.value,
             sort.value.key,
             sort.value.dir,
+            gameFilter.value,
+            playerFideId,
+            Object.hashAll(playerAliases),
             effectiveDatabasePageWindow.queryKey,
             effectiveDatabasePageWindow.pageNumber,
           ],
@@ -349,6 +395,7 @@ class LocalChessFilesView extends HookConsumerWidget {
                 _LocalHeader(
                   source: source,
                   node: node,
+                  showCountMeta: showCountMeta,
                   onOpenFolder: pickFolder,
                   onOpenFiles: pickFiles,
                   onRefresh: () {
@@ -370,30 +417,78 @@ class LocalChessFilesView extends HookConsumerWidget {
                           : rebuildDatabaseTree,
                   onSelectPath: selectLocalPath,
                 ),
-                const FDivider(),
                 if (!isBrowsingFolder)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 12, 16, 8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: DesktopSearchField(
-                            controller: searchController,
-                            hintText:
-                                'Search this database — players, events, openings, ECO',
-                            onChanged: (value) => query.value = value,
-                            onClear: () => query.value = '',
-                          ),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(
+                          color: kDividerColor.withValues(alpha: 0.75),
                         ),
-                        const SizedBox(width: 12),
-                        _LocalCountPill(
-                          label: _localDatabaseCountLabel(
-                            loadedCount: filtered.length,
-                            totalFilteredCount: totalFilteredCount,
-                            databaseEntryCount: databaseEntryCount,
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 8, 12, 8),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: DesktopSearchField(
+                              controller: searchController,
+                              hintText:
+                                  'Search this database — players, events, openings, ECO',
+                              onChanged: (value) => query.value = value,
+                              onClear: () => query.value = '',
+                            ),
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 8),
+                          DesktopGameFilterButton(
+                            key: const ValueKey<String>(
+                              'local-chess-files-filter-button',
+                            ),
+                            filter: gameFilter.value.base,
+                            // Include player-outcome (Overview W/D/L handoff)
+                            // so the badge reflects filters not stored on base.
+                            activeCountOverride:
+                                gameFilter.value.activeFilterCount,
+                            onPress: () async {
+                              final next = await showDesktopGameFilterDialog(
+                                context: context,
+                                currentFilter: gameFilter.value.base,
+                                showFormatFilter: true,
+                              );
+                              if (next == null || !context.mounted) return;
+                              final merged = gameFilter.value.applyingDialog(
+                                next,
+                              );
+                              gameFilter.value = merged;
+                              onFilterChanged?.call(merged);
+                            },
+                          ),
+                          if (gameFilter.value.hasActiveFilters) ...[
+                            const SizedBox(width: 6),
+                            ClearDesktopGameFiltersButton(
+                              key: const ValueKey<String>(
+                                'local-chess-files-clear-filters',
+                              ),
+                              onPress: () {
+                                final cleared = LocalChessGameFilter();
+                                gameFilter.value = cleared;
+                                onFilterChanged?.call(cleared);
+                              },
+                            ),
+                          ],
+                          const SizedBox(width: 8),
+                          DesktopToolbarCountPill(
+                            key: const ValueKey<String>(
+                              'local-chess-files-loaded-count',
+                            ),
+                            label: _localDatabaseCountLabel(
+                              loadedCount: filtered.length,
+                              totalFilteredCount: totalFilteredCount,
+                              databaseEntryCount: databaseEntryCount,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 if (isBrowsingFolder && node.children.isNotEmpty)
@@ -457,6 +552,7 @@ class _LocalHeader extends StatelessWidget {
   const _LocalHeader({
     required this.source,
     required this.node,
+    required this.showCountMeta,
     required this.onOpenFolder,
     required this.onOpenFiles,
     required this.onRefresh,
@@ -469,6 +565,7 @@ class _LocalHeader extends StatelessWidget {
 
   final LocalChessSource source;
   final LocalChessNode node;
+  final bool showCountMeta;
   final VoidCallback onOpenFolder;
   final VoidCallback onOpenFiles;
   final VoidCallback onRefresh;
@@ -496,125 +593,87 @@ class _LocalHeader extends StatelessWidget {
       ),
       _ => (0, 0, 0),
     };
-    late final String countLabel;
+    // The entry count is hidden when embedded where the game count is already
+    // surfaced (e.g. the Players Games tab). The internal "indexed positions"
+    // metric is never shown — it reads as redundant in every context. Tree-build
+    // progress and the "recognized only" note stay.
+    final metaParts = <String>[];
+    final treeProgress = treeBuildProgress;
     if (selectedDatabase == null) {
-      countLabel = '$fileCount files · ${localChessEntryCountLabel(gameCount)}';
+      if (showCountMeta) {
+        metaParts.add('$fileCount files · ${localChessEntryCountLabel(gameCount)}');
+      }
     } else {
-      final entryCountLabel = localChessEntryCountLabel(
-        selectedDatabase.gameCount,
-      );
-      final treeIndex = selectedDatabase.openingTreeIndex;
-      final treeProgress = treeBuildProgress;
+      if (showCountMeta) {
+        metaParts.add(localChessEntryCountLabel(selectedDatabase.gameCount));
+      }
       if (treeProgress?.isActive == true) {
-        countLabel = '$entryCountLabel · tree ${treeProgress!.percent}%';
+        metaParts.add('tree ${treeProgress!.percent}%');
       } else if (treeProgress?.phase == LocalChessTreeBuildPhase.failed) {
-        countLabel = '$entryCountLabel · tree rebuild failed';
-      } else {
-        countLabel =
-            treeIndex != null && treeIndex.positionCount > 0
-                ? '$entryCountLabel · ${treeIndex.positionCount} indexed positions'
-                : entryCountLabel;
+        metaParts.add('tree rebuild failed');
       }
     }
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 16, 12),
-      child: Row(
+    if (unsupportedCount != 0) {
+      metaParts.add('$unsupportedCount recognized only');
+    }
+    final meta = metaParts.join(' · ');
+    return LibraryChromeBar(
+      icon: _iconFor(node),
+      title: node.name.isEmpty ? source.label : node.name,
+      meta: meta,
+      badge:
+          isDatabaseView
+              ? Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: kBlack3Color.withValues(alpha: 0.9),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: kDividerColor.withValues(alpha: 0.85),
+                  ),
+                ),
+                child: const Text(
+                  'Local',
+                  style: TextStyle(
+                    color: kWhiteColor70,
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.2,
+                    height: 1,
+                  ),
+                ),
+              )
+              : null,
+      bottom:
+          isDatabaseView
+              ? null
+              : _Breadcrumb(
+                source: source,
+                node: node,
+                onSelectPath: onSelectPath,
+              ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 42,
-            height: 42,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: kPrimaryColor.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: kPrimaryColor.withValues(alpha: 0.32)),
-            ),
-            child: Icon(_iconFor(node), size: 19, color: kPrimaryColor),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        node.name.isEmpty ? source.label : node.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: kWhiteColor,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    if (isDatabaseView) ...[
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: kBlack2Color,
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: kDividerColor),
-                        ),
-                        child: const Text(
-                          'My database',
-                          style: TextStyle(
-                            color: kWhiteColor70,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                if (!isDatabaseView) ...[
-                  const SizedBox(height: 6),
-                  _Breadcrumb(
-                    source: source,
-                    node: node,
-                    onSelectPath: onSelectPath,
-                  ),
-                ],
-                const SizedBox(height: 6),
-                Text(
-                  '$countLabel${unsupportedCount == 0 ? '' : ' · $unsupportedCount recognized only'}',
-                  style: const TextStyle(
-                    color: kLightGreyColor,
-                    fontSize: 12,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
           if (!isDatabaseView) ...[
             _HeaderAction(
               tooltip: 'Open another local folder',
               icon: Icons.folder_open_outlined,
               onPress: onOpenFolder,
             ),
-            const SizedBox(width: 4),
+            const SizedBox(width: 2),
             _HeaderAction(
               tooltip: 'Open local chess files',
               icon: Icons.file_open_outlined,
               onPress: onOpenFiles,
             ),
-            const SizedBox(width: 4),
+            const SizedBox(width: 2),
             _HeaderAction(
               tooltip: 'Rescan this local source',
               icon: Icons.refresh_rounded,
               onPress: onRefresh,
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
           ],
           if (isDatabaseView) ...[
             LocalTreeActionButton(
@@ -622,7 +681,7 @@ class _LocalHeader extends StatelessWidget {
               onOpen: onOpenTree,
               onBuild: onBuildTree,
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
           ],
           DesktopToolbarPillButton(
             label: 'Save to cloud',
@@ -766,34 +825,6 @@ FBaseButtonStyle Function(FButtonStyle style) _breadcrumbButtonStyle() {
           ),
     ),
   );
-}
-
-class _LocalCountPill extends StatelessWidget {
-  const _LocalCountPill({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 34,
-      alignment: Alignment.center,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: kBlack2Color,
-        borderRadius: BorderRadius.circular(7),
-        border: Border.all(color: kDividerColor),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: kWhiteColor70,
-          fontSize: 11,
-          fontFeatures: [FontFeature.tabularFigures()],
-        ),
-      ),
-    );
-  }
 }
 
 class _LocalChildrenStrip extends StatelessWidget {
@@ -1601,6 +1632,9 @@ Future<LocalChessGameQueryPage?> _queryLocalDatabaseGamesPage(
   required String databasePath,
   required String search,
   required _LocalGamesSortConfig sort,
+  LocalChessGameFilter? filter,
+  String? playerFideId,
+  List<String> playerAliases = const <String>[],
   required int pageNumber,
   required int pageSize,
 }) async {
@@ -1610,6 +1644,9 @@ Future<LocalChessGameQueryPage?> _queryLocalDatabaseGamesPage(
       search: search,
       sortBy: _localRepositorySortField(sort.key),
       sortDirection: _localRepositorySortDirection(sort.dir),
+      filter: filter,
+      playerFideId: playerFideId,
+      playerAliases: playerAliases,
       pageNumber: pageNumber,
       pageSize: pageSize,
     );

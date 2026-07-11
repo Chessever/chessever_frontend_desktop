@@ -333,5 +333,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "windows installer upload (latest) failed with exit code $LASTEXITCODE"
 }
 
+# Prune only after both the immutable versioned download and stable website
+# alias are safely in place. The server owns version ordering and deletion.
+& ssh -i $keyPath -o StrictHostKeyChecking=accept-new $remote 'prune-downloads windows'
+if ($LASTEXITCODE -ne 0) {
+    throw "windows installer prune failed with exit code $LASTEXITCODE"
+}
+
 Write-Host "Published Windows desktop_updater archive $($release.ReleaseVersion)"
 Write-Host "Published Windows installer: https://chessever.com/updates/desktop/downloads/Chessever-Setup.exe"

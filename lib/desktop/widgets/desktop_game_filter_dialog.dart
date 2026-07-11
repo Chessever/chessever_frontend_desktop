@@ -6,6 +6,8 @@ import 'package:chessever/desktop/utils/eco_input_formatter.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/desktop_toolbar_metrics.dart';
+import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/responsive_helper.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
@@ -46,107 +48,58 @@ Future<GameFilter?> showDesktopGameFilterDialog({
   );
 }
 
-class DesktopGameFilterButton extends StatefulWidget {
+class DesktopGameFilterButton extends StatelessWidget {
   const DesktopGameFilterButton({
     super.key,
     required this.filter,
     required this.onPress,
+    this.activeCountOverride,
   });
 
   final GameFilter filter;
   final VoidCallback onPress;
 
-  @override
-  State<DesktopGameFilterButton> createState() =>
-      _DesktopGameFilterButtonState();
-}
-
-class _DesktopGameFilterButtonState extends State<DesktopGameFilterButton> {
-  bool _hovered = false;
+  /// When set (e.g. local player-outcome filters outside [GameFilter]), used
+  /// for the active badge instead of [GameFilter.activeFilterCount].
+  final int? activeCountOverride;
 
   @override
   Widget build(BuildContext context) {
-    final active = widget.filter.hasActiveFilters;
-    final activeCount = widget.filter.activeFilterCount;
-    return FTheme(
-      data: FThemes.zinc.dark,
-      child: DesktopTooltip(
-        message: active ? '$activeCount active game filters' : 'Filter games',
-        child: ClickCursor(
-          child: MouseRegion(
-            onEnter: (_) => setState(() => _hovered = true),
-            onExit: (_) => setState(() => _hovered = false),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: widget.onPress,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 90),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
+    final activeCount = activeCountOverride ?? filter.activeFilterCount;
+    final active = activeCount > 0;
+    return DesktopToolbarPillButton(
+      height: desktopToolbarControlHeight,
+      label: 'Filters',
+      icon: Icons.tune_rounded,
+      tone:
+          active
+              ? DesktopToolbarPillTone.primary
+              : DesktopToolbarPillTone.neutral,
+      tooltip: active ? '$activeCount active game filters' : 'Filter games',
+      onPress: onPress,
+      trailing:
+          active
+              ? Container(
+                constraints: const BoxConstraints(minWidth: 18),
+                height: 18,
+                padding: const EdgeInsets.symmetric(horizontal: 5),
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color:
-                      active
-                          ? kPrimaryColor.withValues(alpha: 0.12)
-                          : (_hovered ? kBlack3Color : Colors.transparent),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color:
-                        active
-                            ? kPrimaryColor.withValues(alpha: 0.45)
-                            : (_hovered
-                                ? kWhiteColor.withValues(alpha: 0.18)
-                                : kDividerColor),
+                  color: kPrimaryColor,
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Text(
+                  '$activeCount',
+                  style: const TextStyle(
+                    color: kBackgroundColor,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    height: 1,
+                    fontFeatures: [FontFeature.tabularFigures()],
                   ),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.tune_rounded,
-                      size: 13,
-                      color: active ? kPrimaryColor : kWhiteColor70,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Filters',
-                      style: TextStyle(
-                        color: active ? kWhiteColor : kWhiteColor70,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.3,
-                      ),
-                    ),
-                    if (active) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 5,
-                          vertical: 1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: kPrimaryColor,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '$activeCount',
-                          style: const TextStyle(
-                            color: kBackgroundColor,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                            fontFeatures: [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+              )
+              : null,
     );
   }
 }
@@ -158,14 +111,12 @@ class ClearDesktopGameFiltersButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FTheme(
-      data: FThemes.zinc.dark,
-      child: FButton(
-        style: FButtonStyle.outline(),
-        onPress: onPress,
-        prefix: const Icon(Icons.filter_alt_off_rounded),
-        child: const Text('Clear filters'),
-      ),
+    return DesktopToolbarPillButton(
+      height: desktopToolbarControlHeight,
+      label: 'Clear filters',
+      icon: Icons.filter_alt_off_rounded,
+      tooltip: 'Clear all game filters',
+      onPress: onPress,
     );
   }
 }

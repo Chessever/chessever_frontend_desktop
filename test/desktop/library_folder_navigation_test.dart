@@ -147,6 +147,7 @@ void main() {
       });
       expect(legacy.gameCount, isNull);
       expect(legacy.indexedAt, isNull);
+      expect(legacy.playerWorkspaceSource, isNull);
 
       final indexedAt = DateTime(2026, 7, 7, 12, 30);
       final entry = LocalLibraryEntry(
@@ -154,6 +155,7 @@ void main() {
         addedAt: DateTime(2026, 7, 6),
         gameCount: 42,
         indexedAt: indexedAt,
+        playerWorkspaceSource: 'combined',
       );
       final roundTrip = LocalLibraryEntry.fromJson(entry.toJson());
 
@@ -161,6 +163,7 @@ void main() {
       expect(roundTrip.addedAt, entry.addedAt);
       expect(roundTrip.gameCount, 42);
       expect(roundTrip.indexedAt, indexedAt);
+      expect(roundTrip.playerWorkspaceSource, 'combined');
     });
 
     test('identifies Players local database entries and groups', () {
@@ -211,6 +214,50 @@ void main() {
         ),
         isFalse,
       );
+    });
+
+    test('orders Combined first inside a Players Library folder', () {
+      final now = DateTime(2026, 7, 10);
+      final entries = <LocalLibraryEntry>[
+        LocalLibraryEntry(
+          path: '/tmp/CHESS.COM_13402935_CHESSEVER_DURARBAYLI.pgn',
+          addedAt: now,
+        ),
+        LocalLibraryEntry(
+          path: '/tmp/CHESSEVER_13402935_CHESSEVER_VASIF_DURARBAYLI.pgn',
+          addedAt: now,
+        ),
+        LocalLibraryEntry(
+          path: '/tmp/vasif-all-games.pgn',
+          addedAt: now,
+          playerWorkspaceSource: playerWorkspaceCombinedSourceKey,
+        ),
+        LocalLibraryEntry(
+          path: '/tmp/LICHESS_13402935_CHESSEVER_DURARBAYLI.pgn',
+          addedAt: now,
+        ),
+      ]..sort(comparePlayerWorkspaceLibraryEntries);
+
+      expect(entries.map((entry) => p.basename(entry.path)), <String>[
+        'vasif-all-games.pgn',
+        'CHESS.COM_13402935_CHESSEVER_DURARBAYLI.pgn',
+        'CHESSEVER_13402935_CHESSEVER_VASIF_DURARBAYLI.pgn',
+        'LICHESS_13402935_CHESSEVER_DURARBAYLI.pgn',
+      ]);
+
+      final legacyCombined = LocalLibraryEntry(
+        path: '/tmp/COMBINED_13402935_CHESSEVER.pgn',
+        addedAt: now,
+      );
+      expect(
+        localLibraryEntryIsPlayerWorkspaceCombined(legacyCombined),
+        isTrue,
+      );
+      final legacyEntries = <LocalLibraryEntry>[
+        entries[1],
+        legacyCombined,
+      ]..sort(comparePlayerWorkspaceLibraryEntries);
+      expect(legacyEntries.first, legacyCombined);
     });
   });
 }

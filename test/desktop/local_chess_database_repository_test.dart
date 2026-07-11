@@ -20,6 +20,8 @@ import 'package:chessever/screens/gamebase/models/gamebase_game.dart';
 const String _legacySqfliteMigrationV1 = 'legacy_sqflite_local_chess_v1';
 const String _legacySqfliteMigrationV2 =
     'legacy_sqflite_local_chess_v2_desktop_path_scan';
+const String _treeFen4Generation = 'local_chess_tree_position_identity_fen4_v1';
+const String _treeDepthGeneration = 'local_chess_tree_depth_50_v1';
 
 void main() {
   late resqlite.Database db;
@@ -45,6 +47,86 @@ void main() {
     }
   });
 
+  test('repairs source-specific time-control categories', () async {
+    await db.execute('PRAGMA foreign_keys=OFF');
+    const chessComHeaders =
+        '{"Site":"https://www.chess.com/game/live/1",'
+        '"ChessEverTimeControlCategory":"blitz"}';
+    const lichessHeaders =
+        '{"Site":"https://lichess.org/game-id",'
+        '"ChessEverTimeControlCategory":"blitz"}';
+    const lichessCorrespondenceHeaders =
+        '{"Event":"rated correspondence game",'
+        '"Site":"https://lichess.org/game-id"}';
+    const combinedLichessHeaders = '{"Site":"?","ChessEverSource":"lichess"}';
+    const genericHeaders = '{"Site":"OTB Hall"}';
+    const unknownHeaders = '{"Site":"?"}';
+    for (final entry in <(String, String, String, String)>[
+      ('chesscom-ultra', '30', 'blitz', chessComHeaders),
+      ('chesscom-bullet', '60', 'blitz', chessComHeaders),
+      ('generic-fast', '60', 'bullet', genericHeaders),
+      ('stored-bullet-without-clock', '-', ' Bullet ', unknownHeaders),
+      ('stored-mixed-case-blitz', '180', ' Blitz ', genericHeaders),
+      ('lichess-bullet', '30', 'ultrabullet', lichessHeaders),
+      ('lichess-combined-provenance', '15', 'blitz', combinedLichessHeaders),
+      ('lichess-blitz', '180', 'blitz', lichessHeaders),
+      ('lichess-rapid', '480', 'blitz', lichessHeaders),
+      ('lichess-classical', '1500', 'rapid', lichessHeaders),
+      ('lichess-correspondence', '21600', 'classical', lichessHeaders),
+      (
+        'lichess-correspondence-unknown',
+        '-',
+        'unknown',
+        lichessCorrespondenceHeaders,
+      ),
+    ]) {
+      await db.execute(
+        '''
+        INSERT INTO local_chess_games
+          (id, database_id, time_control, time_control_category, headers_json,
+           is_online, raw_pgn, source_path, source_relative_path, file_name,
+           index_in_file, file_game_count)
+        VALUES (?, 'hikaru', ?, ?, ?, 1, '', 'hikaru.pgn', 'hikaru.pgn',
+                'hikaru.pgn', 0, 1)
+        ''',
+        <Object?>[entry.$1, entry.$2, entry.$3, entry.$4],
+      );
+    }
+    await db.execute(
+      "DELETE FROM local_chess_migrations WHERE name = "
+      "'local_chess_source_time_control_backfill_v2'",
+    );
+
+    await createLocalChessResqliteDatabaseSchema(db);
+
+    final rows = await db.select('''
+      SELECT id, time_control_category
+      FROM local_chess_games
+      WHERE database_id = 'hikaru'
+      ORDER BY id
+    ''');
+    expect(
+      <String, String>{
+        for (final row in rows)
+          row['id']! as String: row['time_control_category']! as String,
+      },
+      <String, String>{
+        'chesscom-ultra': 'ultrabullet',
+        'chesscom-bullet': 'bullet',
+        'generic-fast': 'blitz',
+        'stored-bullet-without-clock': 'bullet',
+        'stored-mixed-case-blitz': 'blitz',
+        'lichess-bullet': 'bullet',
+        'lichess-combined-provenance': 'ultrabullet',
+        'lichess-blitz': 'blitz',
+        'lichess-rapid': 'rapid',
+        'lichess-classical': 'classical',
+        'lichess-correspondence': 'correspondence',
+        'lichess-correspondence-unknown': 'correspondence',
+      },
+    );
+  });
+
   test('migrates existing sqflite local chess cache into resqlite', () async {
     final pgnFile = File('${temp.path}/legacy.pgn');
     await pgnFile.writeAsString(_legacyPgn.trim());
@@ -55,6 +137,12 @@ void main() {
     await legacyDb.execute('PRAGMA foreign_keys=ON');
     await createLocalChessDatabaseSchema(legacyDb);
     await _seedLegacyLocalChessCache(legacyDb, pgnFile);
+    await legacyDb.update(
+      'local_chess_games',
+      <String, Object?>{'time_control_category': ' Bullet '},
+      where: 'database_id = ?',
+      whereArgs: <Object?>[pgnFile.path],
+    );
 
     await migrateLegacyLocalChessSqfliteCache(
       db,
@@ -63,9 +151,9 @@ void main() {
 
     expect(await _count(db, 'local_chess_databases'), 1);
     expect(await _count(db, 'local_chess_games'), 1);
-    expect(await _count(db, 'local_chess_tree_nodes'), 3);
-    expect(await _count(db, 'local_chess_tree_moves'), 2);
-    expect(await _count(db, 'local_chess_position_games'), 1);
+    expect(await _count(db, 'local_chess_tree_nodes'), 0);
+    expect(await _count(db, 'local_chess_tree_moves'), 0);
+    expect(await _count(db, 'local_chess_position_games'), 0);
     final marker = await db.select(
       'SELECT 1 FROM local_chess_migrations WHERE name = ?',
       const <Object?>[_legacySqfliteMigrationV2],
@@ -74,27 +162,31 @@ void main() {
     final migrated =
         (await db.select(
           '''
-      SELECT pgn_hash, headers_json
+      SELECT pgn_hash, headers_json, time_control_category
       FROM local_chess_games
       WHERE database_id = ?
       ''',
           <Object?>[pgnFile.path],
         )).single;
     expect(migrated['pgn_hash']?.toString(), isNotEmpty);
+    expect(migrated['time_control_category'], 'bullet');
     final metadata =
         jsonDecode(migrated['headers_json'] as String) as Map<String, dynamic>;
     expect(metadata['WhiteTitle'], 'GM');
     expect(metadata['WhiteFed'], 'TUR');
 
-    final nextRows = await db.select(
-      '''
-      SELECT next_uci
-      FROM local_chess_position_games
-      WHERE database_id = ? AND fen_key = ?
-      ''',
-      <Object?>[pgnFile.path, playerOpeningTreeFenKey(Chess.initial.fen)],
-    );
-    expect(nextRows.single['next_uci'], 'e2e4');
+    final migratedDatabase =
+        (await db.select(
+          '''
+          SELECT position_count, tree_snapshot, tree_max_ply
+          FROM local_chess_databases
+          WHERE id = ?
+          ''',
+          <Object?>[pgnFile.path],
+        )).single;
+    expect(migratedDatabase['position_count'], 0);
+    expect(migratedDatabase['tree_snapshot'], isNull);
+    expect(migratedDatabase['tree_max_ply'], isNull);
 
     final repo = LocalChessDatabaseRepository(database: () async => db);
     final restored = await repo.loadFreshFileNode(
@@ -103,12 +195,13 @@ void main() {
     );
     expect(restored, isNotNull);
     expect(restored!.games.single.game.metadata['BlackTitle'], 'IM');
+    expect(restored.openingTreeIndex, isNull);
     final moves = await repo.localMoveAggregatesForFen(
       databasePath: pgnFile.path,
       fen: Chess.initial.fen,
     );
-    expect(moves.single.uci, 'e2e4');
-    expect(moves.single.white, 1);
+    expect(moves.map((move) => move.uci), <String>['e2e4']);
+    expect(moves.single.total, 1);
   });
 
   test(
@@ -223,7 +316,7 @@ void main() {
 
       expect(await _count(db, 'local_chess_databases'), 1);
       expect(await _count(db, 'local_chess_games'), 1);
-      expect(await _count(db, 'local_chess_tree_moves'), 2);
+      expect(await _count(db, 'local_chess_tree_moves'), 0);
       expect(
         await db.select(
           'SELECT 1 FROM local_chess_migrations WHERE name = ?',
@@ -349,7 +442,7 @@ void main() {
 
       expect(await _count(db, 'local_chess_databases'), 1);
       expect(await _count(db, 'local_chess_games'), 1);
-      expect(await _count(db, 'local_chess_tree_moves'), 2);
+      expect(await _count(db, 'local_chess_tree_moves'), 0);
       final rows = await db.select('SELECT path FROM local_chess_databases');
       expect(rows.single['path'], pgnFile.path);
     },
@@ -444,7 +537,7 @@ void main() {
 
       expect(await _count(db, 'local_chess_databases'), 1);
       expect(await _count(db, 'local_chess_games'), 1);
-      expect(await _count(db, 'local_chess_tree_moves'), 2);
+      expect(await _count(db, 'local_chess_tree_moves'), 0);
     },
   );
 
@@ -500,6 +593,257 @@ void main() {
         const <Object?>['local_chess_resqlite_cache_generation_%'],
       );
       expect(generationMarkers, hasLength(1));
+    },
+  );
+
+  test(
+    'schema invalidates only stale position-key trees and preserves games',
+    () async {
+      final pgnFile = File('${temp.path}/stale-position-keys.pgn');
+      await pgnFile.writeAsString(_samplePgn);
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(fileNode, sourceLabel: source.label);
+
+      final now = DateTime.now();
+      await repo.saveLocalGameAnalysis(
+        LocalChessGameAnalysis(
+          gameId: fileNode.games.first.id,
+          databaseId: pgnFile.path,
+          analysisState: const <String, Object?>{'keep': true},
+          variationComments: const <String, String>{},
+          moveNags: const <String, List<int>>{},
+          lastViewedPosition: 0,
+          notes: 'tree-only invalidation keeps analysis',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      await db.execute(
+        '''
+        INSERT OR REPLACE INTO local_chess_migrations(name, completed_at_ms)
+        VALUES (?, ?)
+        ''',
+        const <Object?>['unrelated_local_cache_state_v1', 1],
+      );
+
+      final storedKeys = await db.select(
+        'SELECT fen_key FROM local_chess_tree_nodes WHERE database_id = ?',
+        <Object?>[pgnFile.path],
+      );
+      expect(storedKeys, isNotEmpty);
+      expect(
+        storedKeys.map((row) => row['fen_key'].toString().split(' ')),
+        everyElement(hasLength(4)),
+      );
+      final gameCount = await _count(db, 'local_chess_games');
+      final playerCount = await _count(db, 'local_chess_players');
+      final eventCount = await _count(db, 'local_chess_events');
+      final siteCount = await _count(db, 'local_chess_sites');
+      final treeNodeCount = await _count(db, 'local_chess_tree_nodes');
+      final treeMoveCount = await _count(db, 'local_chess_tree_moves');
+      final positionGameCount = await _count(db, 'local_chess_position_games');
+      await db.execute(
+        'UPDATE local_chess_games SET ply_count = 100 WHERE database_id = ?',
+        <Object?>[pgnFile.path],
+      );
+
+      await db.execute(
+        'DELETE FROM local_chess_migrations WHERE name IN (?, ?)',
+        const <Object?>[_treeFen4Generation, _treeDepthGeneration],
+      );
+      await createLocalChessResqliteDatabaseSchema(db);
+
+      expect(await _count(db, 'local_chess_databases'), 1);
+      expect(await _count(db, 'local_chess_games'), gameCount);
+      expect(await _count(db, 'local_chess_players'), playerCount);
+      expect(await _count(db, 'local_chess_events'), eventCount);
+      expect(await _count(db, 'local_chess_sites'), siteCount);
+      expect(await _count(db, 'local_chess_tree_nodes'), treeNodeCount);
+      expect(await _count(db, 'local_chess_tree_moves'), treeMoveCount);
+      expect(await _count(db, 'local_chess_position_games'), positionGameCount);
+      expect(await _count(db, 'local_chess_game_analysis'), 1);
+      final databaseRows = await db.select(
+        '''
+        SELECT position_count, tree_snapshot, tree_max_ply
+        FROM local_chess_databases
+        WHERE id = ?
+        ''',
+        <Object?>[pgnFile.path],
+      );
+      expect(databaseRows.single['position_count'], 0);
+      expect(databaseRows.single['tree_snapshot'], isNull);
+      expect(databaseRows.single['tree_max_ply'], isNull);
+      expect(
+        await repo.loadOpeningTreeIndexForDatabase(databasePath: pgnFile.path),
+        isNull,
+      );
+      expect(await repo.listBuiltOpeningTrees(), isEmpty);
+      expect(
+        await db.select(
+          'SELECT 1 FROM local_chess_migrations WHERE name = ?',
+          const <Object?>[_treeFen4Generation],
+        ),
+        isNotEmpty,
+      );
+      expect(
+        await db.select(
+          'SELECT 1 FROM local_chess_migrations WHERE name = ?',
+          const <Object?>[_treeDepthGeneration],
+        ),
+        isNotEmpty,
+      );
+      expect(
+        await db.select(
+          'SELECT 1 FROM local_chess_migrations WHERE name = ?',
+          const <Object?>['unrelated_local_cache_state_v1'],
+        ),
+        isNotEmpty,
+      );
+    },
+  );
+
+  test('tree identity invalidation waits for the shared write queue', () async {
+    final pgnFile = File('${temp.path}/queued-tree-invalidation.pgn');
+    await pgnFile.writeAsString(_samplePgn);
+    final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+    final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+    final repo = LocalChessDatabaseRepository(database: () async => db);
+    await repo.persistFileNode(fileNode, sourceLabel: source.label);
+    final gameCount = await _count(db, 'local_chess_games');
+    final treeNodeCount = await _count(db, 'local_chess_tree_nodes');
+    expect(treeNodeCount, greaterThan(0));
+    await db.execute(
+      'DELETE FROM local_chess_migrations WHERE name = ?',
+      const <Object?>[_treeFen4Generation],
+    );
+
+    final queueEntered = Completer<void>();
+    final releaseQueue = Completer<void>();
+    final held = LocalChessDatabaseRepository.debugRunWriteSerialized(() async {
+      queueEntered.complete();
+      await releaseQueue.future;
+    });
+    await queueEntered.future.timeout(const Duration(seconds: 5));
+
+    var completed = false;
+    final schema = createLocalChessResqliteDatabaseSchema(db).then((_) {
+      completed = true;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(completed, isFalse);
+    expect(await _count(db, 'local_chess_tree_nodes'), greaterThan(0));
+    releaseQueue.complete();
+    await schema.timeout(const Duration(seconds: 5));
+    await held.timeout(const Duration(seconds: 5));
+
+    expect(await _count(db, 'local_chess_games'), gameCount);
+    expect(await _count(db, 'local_chess_tree_nodes'), treeNodeCount);
+    expect(
+      await repo.loadOpeningTreeIndexForDatabase(databasePath: pgnFile.path),
+      isNull,
+    );
+  });
+
+  test(
+    'invalid tree metadata prevents append replace and delete from mixing generations',
+    () async {
+      final pgnFile = File('${temp.path}/invalid-tree-mutations.pgn');
+      await pgnFile.writeAsString(_samplePgn);
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(fileNode, sourceLabel: source.label);
+
+      final staleNodeCount = await _count(db, 'local_chess_tree_nodes');
+      final staleMoveCount = await _count(db, 'local_chess_tree_moves');
+      expect(staleNodeCount, greaterThan(0));
+      expect(staleMoveCount, greaterThan(0));
+
+      await db.execute(
+        'DELETE FROM local_chess_migrations WHERE name = ?',
+        const <Object?>[_treeFen4Generation],
+      );
+      await createLocalChessResqliteDatabaseSchema(db);
+      await db.execute(
+        '''
+        UPDATE local_chess_tree_moves
+        SET white = 999, total = 999
+        WHERE database_id = ? AND node_id = 0
+        ''',
+        <Object?>[pgnFile.path],
+      );
+      final fallbackMoves = await repo.localMoveAggregatesForFen(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+      );
+      expect(fallbackMoves, hasLength(2));
+      expect(fallbackMoves.map((move) => move.total), everyElement(1));
+
+      final appendedRawPgn = _metadataPgn.trim();
+      await pgnFile.writeAsString(
+        '\n\n$appendedRawPgn\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+      expect(
+        await repo.persistAppendedPgnGames(
+          databasePath: pgnFile.path,
+          appendedPgns: <LocalChessAppendedPgn>[
+            LocalChessAppendedPgn(rawPgn: appendedRawPgn),
+          ],
+        ),
+        isTrue,
+      );
+      expect(await _count(db, 'local_chess_games'), 3);
+      expect(await _count(db, 'local_chess_tree_nodes'), staleNodeCount);
+      expect(await _count(db, 'local_chess_tree_moves'), staleMoveCount);
+      expect(
+        await repo.loadOpeningTreeIndexForDatabase(databasePath: pgnFile.path),
+        isNull,
+      );
+
+      expect(
+        await repo.replaceLocalPgnGame(
+          databasePath: pgnFile.path,
+          indexInFile: 0,
+          rawPgn: _legacyPgn,
+        ),
+        isTrue,
+      );
+      expect(await _count(db, 'local_chess_tree_nodes'), staleNodeCount);
+      expect(await _count(db, 'local_chess_tree_moves'), staleMoveCount);
+      expect(
+        await repo.loadOpeningTreeIndexForDatabase(databasePath: pgnFile.path),
+        isNull,
+      );
+
+      expect(
+        await repo.removeLocalPgnGames(
+          databasePath: pgnFile.path,
+          indexesInFile: const <int>{1},
+        ),
+        1,
+      );
+      expect(await _count(db, 'local_chess_games'), 2);
+      expect(await _count(db, 'local_chess_tree_nodes'), staleNodeCount);
+      expect(await _count(db, 'local_chess_tree_moves'), staleMoveCount);
+      expect(
+        await repo.loadOpeningTreeIndexForDatabase(databasePath: pgnFile.path),
+        isNull,
+      );
+
+      final rebuilt = await repo.rebuildOpeningTreeFromCachedGames(
+        databasePath: pgnFile.path,
+      );
+      expect(rebuilt, isNotNull);
+      expect(rebuilt!.index.positionCount, greaterThan(0));
+      expect(
+        await repo.loadOpeningTreeIndexForDatabase(databasePath: pgnFile.path),
+        isNotNull,
+      );
     },
   );
 
@@ -608,13 +952,40 @@ void main() {
     },
   );
 
-  test('development purge switch is ignored in release mode', () {
+  test('development purge switch honors opt-ins in release mode', () {
     expect(
       shouldPurgeLocalChessResqliteCacheForDevelopment(
         isReleaseMode: true,
         dartDefineEnabled: true,
+        environmentValue: null,
+        flagFileExists: false,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldPurgeLocalChessResqliteCacheForDevelopment(
+        isReleaseMode: true,
+        dartDefineEnabled: false,
         environmentValue: 'true',
+        flagFileExists: false,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldPurgeLocalChessResqliteCacheForDevelopment(
+        isReleaseMode: true,
+        dartDefineEnabled: false,
+        environmentValue: null,
         flagFileExists: true,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldPurgeLocalChessResqliteCacheForDevelopment(
+        isReleaseMode: true,
+        dartDefineEnabled: false,
+        environmentValue: null,
+        flagFileExists: false,
       ),
       isFalse,
     );
@@ -648,6 +1019,17 @@ void main() {
       ),
       isFalse,
     );
+  });
+
+  test('development purge flag is consumed after one startup', () async {
+    final flag = File(
+      p.join(temp.path, localChessDevelopmentPurgeFlagFileName),
+    );
+    await flag.writeAsString('');
+
+    expect(await consumeLocalChessDevelopmentPurgeFlagAt(flag.path), isTrue);
+    expect(await flag.exists(), isFalse);
+    expect(await consumeLocalChessDevelopmentPurgeFlagAt(flag.path), isFalse);
   });
 
   test('deletes local chess resqlite db sidecar files', () async {
@@ -782,6 +1164,49 @@ void main() {
     },
   );
 
+  test(
+    'schema upgrades pre-time-control cache before creating derived indexes',
+    () async {
+      final oldDb = await resqlite.Database.open(
+        '${temp.path}/pre_time_control_cache.db',
+      );
+      addTearDown(oldDb.close);
+      await _createPreTimeControlResqliteCache(
+        oldDb,
+        databaseId: '/tmp/hikaru-chess-com.pgn',
+      );
+
+      await createLocalChessResqliteDatabaseSchema(oldDb);
+      await createLocalChessResqliteDatabaseSchema(oldDb);
+
+      final columns = await oldDb.select(
+        'PRAGMA table_info(local_chess_games)',
+      );
+      expect(
+        columns.map((row) => row['name']?.toString()),
+        containsAll(<String>['time_control_category', 'is_online']),
+      );
+      final indexes = await oldDb.select(
+        "SELECT name FROM sqlite_master WHERE type = 'index'",
+      );
+      expect(
+        indexes.map((row) => row['name']?.toString()),
+        containsAll(<String>[
+          'idx_local_chess_games_db_time_category',
+          'idx_local_chess_games_db_online',
+        ]),
+      );
+      final games = await oldDb.select('''
+        SELECT id, time_control_category, is_online
+        FROM local_chess_games
+      ''');
+      expect(games, hasLength(1));
+      expect(games.single['id'], 'legacy-hikaru-bullet');
+      expect(games.single['time_control_category'], 'bullet');
+      expect(games.single['is_online'], 1);
+    },
+  );
+
   test('persists imported PGN games and opening tree in SQLite rows', () async {
     final pgnFile = File('${temp.path}/mini.pgn');
     await pgnFile.writeAsString(_samplePgn);
@@ -856,6 +1281,41 @@ void main() {
   });
 
   test(
+    'purging a deleted source clears every child cache row across batches',
+    () async {
+      final pgnFile = File('${temp.path}/purge-me.pgn');
+      await pgnFile.writeAsString(_bulkPgn(5));
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+
+      final source = await repo.importSingleFileSource(path: pgnFile.path);
+      expect(source, isNotNull);
+      expect(await _count(db, 'local_chess_databases'), 1);
+      expect(await _count(db, 'local_chess_games'), 5);
+
+      expect(await repo.markCachedSourceDeleted(pgnFile.path), 1);
+
+      final progress = <LocalChessScanProgress>[];
+      // A batch size below the row count forces the chunked delete loop to run
+      // several iterations. This is the path that used to SELECT a batch of
+      // rowids back to the caller (materializing them on the calling isolate)
+      // and now deletes via a writer-side subquery instead — the change that
+      // stops a heavy player removal from dropping frames.
+      final purged = await repo.purgeDeletedCaches(
+        batchSize: 2,
+        onProgress: progress.add,
+      );
+
+      expect(purged, 1);
+      expect(await _count(db, 'local_chess_games'), 0);
+      expect(await _count(db, 'local_chess_position_games'), 0);
+      expect(await _count(db, 'local_chess_tree_moves'), 0);
+      expect(await _count(db, 'local_chess_tree_nodes'), 0);
+      expect(await _count(db, 'local_chess_databases'), 0);
+      expect(progress.last.message, 'Delete complete.');
+    },
+  );
+
+  test(
     'queued import persists all PGN games while returning only preview rows',
     () async {
       final pgnFile = File('${temp.path}/bulk.pgn');
@@ -901,11 +1361,14 @@ void main() {
         <Object?>[pgnFile.path],
       );
       expect(gameRows, hasLength(5));
+      // The streaming importer now derives the UCI move line (and ply_count)
+      // from the retained PGN so the opening-explorer move-prefix fallback can
+      // filter games at non-root positions on large local databases.
       expect(
         gameRows.map((row) => jsonDecode(row['moves'] as String)),
-        everyElement(isEmpty),
+        everyElement(<String>['e2e4', 'e7e5', 'g1f3', 'b8c6']),
       );
-      expect(gameRows.map((row) => row['ply_count']), everyElement(0));
+      expect(gameRows.map((row) => row['ply_count']), everyElement(4));
       final databaseRows = await db.select(
         '''
         SELECT game_count, position_count, deleted_at_ms
@@ -1007,6 +1470,12 @@ void main() {
       final pgnFile = File('${temp.path}/worker-path-only.pgn');
       await pgnFile.writeAsString(_samplePgn);
       final workerDbPath = p.join(temp.path, 'worker-only-local-chess.db');
+      final legacyWorkerDb = await resqlite.Database.open(workerDbPath);
+      await _createPreTimeControlResqliteCache(
+        legacyWorkerDb,
+        databaseId: pgnFile.path,
+      );
+      await legacyWorkerDb.close();
       var openedAppCache = false;
       final repo = LocalChessDatabaseRepository(
         database: () async {
@@ -1946,6 +2415,18 @@ void main() {
       expect(rapidGames.data.single['event'], 'Rapid Local');
       expect(rapidGames.data.single['white'], 'Carlsen, Magnus');
 
+      // The opening tree still exposes the historical three-bucket control.
+      // A newly precise Bullet row therefore remains reachable via Blitz.
+      await db.execute(
+        '''
+        UPDATE local_chess_games
+        SET time_control_category = 'bullet'
+        WHERE database_id = ?
+          AND json_extract(headers_json, '\$.Event') = 'Online Blitz'
+        ''',
+        <Object?>[pgnFile.path],
+      );
+
       const carlsenBlackOnlineBlitz = PlayerOpeningTreeFilterCriteria(
         playerFideIds: <String>['1503014'],
         playerNames: <String>['Carlsen, Magnus'],
@@ -2017,6 +2498,105 @@ void main() {
       );
       expect(impossibleSide, isNotNull);
       expect(impossibleSide!.metadata.totalCount, 0);
+    },
+  );
+
+  test(
+    'unclassified imports persist Unknown so derived-filter repair converges',
+    () async {
+      final pgnFile = File('${temp.path}/unknown-time-control.pgn');
+      await pgnFile.writeAsString('''
+[Event "Casual notebook game"]
+[Site "?"]
+[Date "2024.01.01"]
+[White "Player One"]
+[Black "Player Two"]
+[Result "1-0"]
+
+1. e4 e5 1-0
+''');
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(fileNode, sourceLabel: source.label);
+
+      Future<Object?> storedCategory() async {
+        final rows = await db.select(
+          'SELECT time_control_category FROM local_chess_games '
+          'WHERE database_id = ?',
+          <Object?>[pgnFile.path],
+        );
+        return rows.single['time_control_category'];
+      }
+
+      expect(await storedCategory(), 'unknown');
+      await createLocalChessResqliteDatabaseSchema(
+        db,
+      ).timeout(const Duration(seconds: 2));
+      expect(await storedCategory(), 'unknown');
+    },
+  );
+
+  test(
+    'import indexes ECO opening fallback for display search and sort',
+    () async {
+      final pgnFile = File('${temp.path}/eco-opening-fallback.pgn');
+      await pgnFile.writeAsString('''
+[Event "Opening fallback"]
+[Site "OTB Hall"]
+[Date "2024.01.01"]
+[White "Player One"]
+[Black "Player Two"]
+[ECO "C02"]
+[Result "1-0"]
+
+1. e4 e6 2. d4 d5 3. e5 1-0
+''');
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(fileNode, sourceLabel: source.label);
+
+      final all = await repo.localDatabaseGamesPage(
+        databasePath: pgnFile.path,
+        sortBy: LocalChessGameSortField.opening,
+        sortDirection: LocalChessGameSortDirection.asc,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(all, isNotNull);
+      expect(all!.games.single.game.metadata['Opening'], 'French: Advance');
+
+      final searched = await repo.localDatabaseGamesPage(
+        databasePath: pgnFile.path,
+        search: 'French Advance',
+        sortBy: LocalChessGameSortField.opening,
+        sortDirection: LocalChessGameSortDirection.asc,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(searched, isNotNull);
+      expect(searched!.totalCount, 1);
+
+      await db.execute(
+        "UPDATE local_chess_games SET headers_json = "
+        "json_remove(headers_json, '\$.Opening') WHERE database_id = ?",
+        <Object?>[pgnFile.path],
+      );
+      await db.execute(
+        'DELETE FROM local_chess_migrations WHERE name = ?',
+        const <Object?>['local_chess_opening_name_backfill_v1'],
+      );
+      await createLocalChessResqliteDatabaseSchema(db);
+      final repaired = await repo.localDatabaseGamesPage(
+        databasePath: pgnFile.path,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(
+        repaired!.games.single.game.metadata['Opening'],
+        'French: Advance',
+      );
     },
   );
 
@@ -2943,6 +3523,114 @@ void main() {
   );
 }
 
+Future<void> _createPreTimeControlResqliteCache(
+  resqlite.Database db, {
+  required String databaseId,
+}) async {
+  await db.execute('''
+    CREATE TABLE local_chess_migrations (
+      name TEXT PRIMARY KEY,
+      completed_at_ms INTEGER NOT NULL
+    )
+  ''');
+  await db.execute(
+    '''
+    INSERT INTO local_chess_migrations(name, completed_at_ms)
+    VALUES (?, ?)
+    ''',
+    const <Object?>[
+      'local_chess_resqlite_cache_generation_20260628_safe_streaming_v1',
+      1,
+    ],
+  );
+  await db.execute('''
+    CREATE TABLE local_chess_databases (
+      id TEXT PRIMARY KEY,
+      path TEXT UNIQUE NOT NULL,
+      label TEXT NOT NULL,
+      extension TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      modified_at_ms INTEGER,
+      file_count INTEGER NOT NULL DEFAULT 1,
+      game_count INTEGER NOT NULL DEFAULT 0,
+      position_count INTEGER NOT NULL DEFAULT 0,
+      tree_snapshot TEXT,
+      tree_max_ply INTEGER,
+      imported_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      deleted_at_ms INTEGER,
+      content_fingerprint TEXT
+    )
+  ''');
+  await db.execute(
+    '''
+    INSERT INTO local_chess_databases(
+      id, path, label, extension, size_bytes, game_count,
+      imported_at_ms, updated_at_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''',
+    <Object?>[databaseId, databaseId, 'Hikaru chess.com', '.pgn', 1, 1, 1, 1],
+  );
+  await db.execute('''
+    CREATE TABLE local_chess_games (
+      id TEXT PRIMARY KEY,
+      database_id TEXT NOT NULL,
+      event_id INTEGER NOT NULL DEFAULT 0,
+      site_id INTEGER NOT NULL DEFAULT 0,
+      date TEXT,
+      utc_time TEXT,
+      round TEXT,
+      white_id INTEGER NOT NULL DEFAULT 0,
+      white_elo INTEGER,
+      black_id INTEGER NOT NULL DEFAULT 0,
+      black_elo INTEGER,
+      white_material INTEGER NOT NULL DEFAULT 39,
+      black_material INTEGER NOT NULL DEFAULT 39,
+      result TEXT,
+      time_control TEXT,
+      eco TEXT,
+      ply_count INTEGER NOT NULL DEFAULT 0,
+      fen TEXT,
+      moves TEXT NOT NULL DEFAULT '[]',
+      pawn_home INTEGER NOT NULL DEFAULT 65535,
+      raw_pgn TEXT NOT NULL,
+      pgn_hash TEXT,
+      headers_json TEXT NOT NULL DEFAULT '{}',
+      source_path TEXT NOT NULL,
+      source_relative_path TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      index_in_file INTEGER NOT NULL,
+      file_game_count INTEGER NOT NULL,
+      has_moves INTEGER NOT NULL DEFAULT 0,
+      source_byte_start INTEGER,
+      source_byte_end INTEGER
+    )
+  ''');
+  await db.execute(
+    '''
+    INSERT INTO local_chess_games(
+      id, database_id, time_control, raw_pgn, headers_json, source_path,
+      source_relative_path, file_name, index_in_file, file_game_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''',
+    <Object?>[
+      'legacy-hikaru-bullet',
+      databaseId,
+      '60',
+      '[Event "Live Chess"]\n[Site "https://www.chess.com/game/live/1"]',
+      jsonEncode(<String, Object?>{
+        'Event': 'Live Chess',
+        'Site': 'https://www.chess.com/game/live/1',
+      }),
+      databaseId,
+      p.basename(databaseId),
+      p.basename(databaseId),
+      0,
+      1,
+    ],
+  );
+}
+
 Future<int> _count(resqlite.Database db, String table) async {
   final rows = await db.select('SELECT COUNT(*) AS count FROM $table');
   return rows.single['count'] as int;
@@ -3281,11 +3969,11 @@ Future<void> _seedLegacyLocalChessCache(
   final now = DateTime.now().millisecondsSinceEpoch;
   final rawPgn = _legacyPgn.trim();
   const gameId = 'local_legacy_game';
-  final initialFenKey = playerOpeningTreeFenKey(Chess.initial.fen);
-  final afterE4FenKey = playerOpeningTreeFenKey(
+  final initialFenKey = _legacyTwoFieldFenKey(Chess.initial.fen);
+  final afterE4FenKey = _legacyTwoFieldFenKey(
     Chess.initial.play(NormalMove.fromUci('e2e4')).fen,
   );
-  final afterE5FenKey = playerOpeningTreeFenKey(
+  final afterE5FenKey = _legacyTwoFieldFenKey(
     Chess.initial
         .play(NormalMove.fromUci('e2e4'))
         .play(NormalMove.fromUci('e7e5'))
@@ -3416,6 +4104,10 @@ Future<void> _seedLegacyLocalChessCache(
     'game_id': gameId,
     'ply': 0,
   });
+}
+
+String _legacyTwoFieldFenKey(String fen) {
+  return fen.trim().split(RegExp(r'\s+')).take(2).join(' ');
 }
 
 Future<void> _seedPagedLegacyLocalChessGames(

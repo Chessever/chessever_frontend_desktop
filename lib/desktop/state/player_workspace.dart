@@ -20,6 +20,7 @@ const double _standardImportPhaseSpan = 0.50;
 const double _chessEverDownloadPhaseSpan = 0.40;
 const double _chessEverImportPhaseStart = 0.40;
 const double _chessEverImportPhaseSpan = 0.55;
+const Duration _downloadedStatsRepairTimeout = Duration(seconds: 8);
 
 @immutable
 class PlayerWorkspaceState {
@@ -159,10 +160,18 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       <String, _PlayerWorkspaceOperationScope>{};
   final Set<String> _deletedPlayerIds = <String>{};
   late final Future<void> _initialLoadFuture;
+  Future<void> _playerCleanupQueue = Future<void>.value();
   bool _isDrainingCombinedRebuilds = false;
+  int _repairGeneration = 0;
+  final List<Timer> _repairTimeoutTimers = <Timer>[];
 
   @override
   void dispose() {
+    _repairGeneration++;
+    for (final timer in _repairTimeoutTimers) {
+      timer.cancel();
+    }
+    _repairTimeoutTimers.clear();
     unawaited(cancelAllOperations());
     super.dispose();
   }
@@ -207,7 +216,9 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         players: snapshot.players,
         selectedPlayerId: snapshot.selectedPlayerId,
       );
-      await _registerPlayersGeneratedDatabasesBestEffort(snapshot.players);
+      await _repairPersistedDownloadedStatsBestEffort();
+      await _registerPlayersGeneratedDatabasesBestEffort(state.players);
+      await _rebuildSelectedCombinedIfStaleBestEffort();
     } catch (error) {
       state = state.copyWith(
         isLoading: false,
@@ -234,6 +245,11 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   /// Adds a ChessEver-indexed player and returns its new player id (see
   /// [addManualPlayer]).
   Future<String> addChessEverPlayer(GamebasePlayer gamebasePlayer) async {
+    final existing = _canonicalChessEverPlayer(gamebasePlayer);
+    if (existing != null) {
+      await selectPlayer(existing.id);
+      return existing.id;
+    }
     final player = _workspaceRepository.playerFromChessEver(gamebasePlayer);
     await _upsertPlayer(player, select: false);
     return player.id;
@@ -254,16 +270,24 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     if (accounts.isEmpty) return 0;
     final player = state.selectedPlayer;
     if (player == null) return 0;
-    var latest = _latestPlayer(player);
-    var added = 0;
+    final latest = _latestPlayer(player);
+    final knownIdentityKeys = <String>{
+      for (final account in latest.allAccounts) account.identityKey,
+    };
+    final newAccounts = <PlayerWorkspaceAccount>[];
     for (final account in accounts) {
-      if (!account.source.allowsMultipleAccounts) continue;
-      latest = latest.withAccount(account);
-      added++;
+      if (!_isExternalPlayerAccountSource(account.source)) continue;
+      _ensureExternalAccountCanAttach(account, playerId: latest.id);
+      if (!knownIdentityKeys.add(account.identityKey)) continue;
+      newAccounts.add(account);
     }
-    if (added == 0) return 0;
-    await _upsertPlayer(latest, select: true);
-    return added;
+    if (newAccounts.isEmpty) return 0;
+    var updated = latest;
+    for (final account in newAccounts) {
+      updated = updated.withAccount(account);
+    }
+    await _upsertPlayer(updated, select: true);
+    return newAccounts.length;
   }
 
   Future<void> connectChessEverPlayer(GamebasePlayer gamebasePlayer) async {
@@ -299,10 +323,87 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     );
   }
 
+  /// Reconnects the only ChessEver identity permitted by this workspace and
+  /// immediately downloads its games. FIDE-less workspaces intentionally keep
+  /// using the searchable connect dialog instead.
+  Future<void> reconnectLockedChessEverSource() async {
+    final player = state.selectedPlayer;
+    if (player == null) return;
+    final lockedFideId = _normalizedPlayerFideId(player.fideId);
+    if (lockedFideId == null) {
+      throw StateError(
+        'ChessEver automatic reconnect requires a locked FIDE ID.',
+      );
+    }
+    final existing = player.account(PlayerWorkspaceSource.chessever);
+    if (existing != null) {
+      await syncAccount(existing);
+      return;
+    }
+
+    const source = PlayerWorkspaceSource.chessever;
+    final operationKey = _sourceOperationKey(source);
+    _setOperation(
+      operationKey,
+      source,
+      'Finding ChessEver player for FIDE $lockedFideId...',
+      null,
+    );
+    try {
+      final match = await _workspaceRepository.findChessEverPlayerByFideId(
+        _gamebaseRepository,
+        lockedFideId,
+      );
+      if (match == null) {
+        throw StateError(
+          'No ChessEver player was found for FIDE $lockedFideId.',
+        );
+      }
+      if (state.selectedPlayer?.id != player.id) return;
+      await connectChessEverPlayer(match);
+    } finally {
+      _clearOperation(operationKey);
+    }
+
+    if (state.selectedPlayer?.id != player.id) return;
+    final connected = state.selectedPlayer?.account(source);
+    if (connected == null) {
+      throw StateError('ChessEver player could not be connected.');
+    }
+    await syncAccount(connected);
+  }
+
   Future<void> selectPlayer(String playerId) async {
     if (!state.players.any((player) => player.id == playerId)) return;
     state = state.copyWith(selectedPlayerId: playerId);
     await _persist();
+    await _rebuildSelectedCombinedIfStaleBestEffort();
+  }
+
+  Future<void> _rebuildSelectedCombinedIfStaleBestEffort() async {
+    final player = state.selectedPlayer;
+    if (player == null) return;
+    final combinedPath = player.combinedPgnPath?.trim();
+    if (combinedPath == null || combinedPath.isEmpty) return;
+    if (await _workspaceRepository.isCombinedDatabaseCurrent(combinedPath)) {
+      return;
+    }
+    var hasReadableSource = false;
+    for (final account in player.allAccounts) {
+      final path = account.pgnPath?.trim();
+      if (path == null || path.isEmpty) continue;
+      if (await _fileExistsBestEffort(path)) {
+        hasReadableSource = true;
+        break;
+      }
+    }
+    if (!hasReadableSource) return;
+    try {
+      await _rebuildCombinedDatabaseForPlayer(player);
+    } catch (_) {
+      // The rebuild path already exposes its error in state. Keep the last
+      // readable Combined file available rather than failing workspace load.
+    }
   }
 
   Future<void> renamePlayer(String playerId, String displayName) async {
@@ -339,14 +440,15 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     _pendingCombinedRebuildPlayerIds.remove(playerId);
     _combinedRebuildGeneration++;
     final canceledScopes = _cancelPlayerOperations(playerId);
-    final players = <PlayerWorkspacePlayer>[
-      for (final player in state.players)
-        if (player.id != playerId) player,
+    final remaining = <PlayerWorkspacePlayer>[
+      for (final candidate in state.players)
+        if (candidate.id != playerId) candidate,
     ];
-    if (players.length == state.players.length) return;
+    if (remaining.length == state.players.length) return;
     final removedSelected = state.selectedPlayerId == playerId;
+
     state = state.copyWith(
-      players: List.unmodifiable(players),
+      players: List.unmodifiable(remaining),
       clearSelectedPlayerId: removedSelected,
       isLoading: false,
       clearError: true,
@@ -355,10 +457,40 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
               ? const <String, PlayerWorkspaceOperation>{}
               : _operationsWithoutPlayer(playerId),
     );
-    await _persist();
-    await _waitForScopes(canceledScopes);
-    await _deletePlayerGeneratedData(player);
+    await _workspaceRepository.saveSnapshot(
+      PlayerWorkspaceSnapshot(
+        players: remaining,
+        selectedPlayerId: state.selectedPlayerId,
+      ),
+    );
+    _schedulePlayerCleanup(player, canceledScopes);
   }
+
+  void _schedulePlayerCleanup(
+    PlayerWorkspacePlayer player,
+    List<_PlayerWorkspaceOperationScope> canceledScopes,
+  ) {
+    _playerCleanupQueue = _playerCleanupQueue.then((_) async {
+      // Let the dialog close and the player row disappear before starting
+      // filesystem or SQLite maintenance. Cleanup stays serialized so several
+      // quick removals cannot saturate the machine with competing purges.
+      await Future<void>.delayed(Duration.zero);
+      try {
+        await _waitForScopes(canceledScopes);
+        await _deletePlayerGeneratedData(player);
+      } catch (error, stackTrace) {
+        _debugPlayerWorkspaceFailure(
+          'background player cleanup',
+          error,
+          stackTrace,
+        );
+      }
+    });
+    unawaited(_playerCleanupQueue);
+  }
+
+  @visibleForTesting
+  Future<void> debugDrainPlayerCleanup() => _playerCleanupQueue;
 
   Future<void> syncDeletedLibraryPlayerFolder(
     String playerId, {
@@ -420,6 +552,10 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     }
     final player = state.selectedPlayer;
     if (player == null) return;
+    _ensureExternalAccountCanAttach(
+      PlayerWorkspaceAccount(source: source, username: username.trim()),
+      playerId: player.id,
+    );
     final operationKey = _sourceOperationKey(source);
     _setOperation(
       operationKey,
@@ -427,8 +563,9 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       'Fetching ${source.label} profile...',
       null,
     );
+    late final PlayerWorkspaceAccount account;
     try {
-      final account = switch (source) {
+      account = switch (source) {
         PlayerWorkspaceSource.lichess => await _workspaceRepository
             .fetchLichessAccount(username),
         PlayerWorkspaceSource.chesscom => await _workspaceRepository
@@ -438,11 +575,6 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         PlayerWorkspaceSource
             .combined => throw StateError('Unsupported account source.'),
       };
-      await _upsertPlayer(
-        _latestPlayer(player).withAccount(account),
-        select: true,
-      );
-      _clearOperation(operationKey);
     } catch (error) {
       _clearOperation(operationKey);
       await _upsertPlayer(
@@ -456,6 +588,15 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         select: true,
       );
       rethrow;
+    }
+    try {
+      _ensureExternalAccountCanAttach(account, playerId: player.id);
+      await _upsertPlayer(
+        _latestPlayer(player).withAccount(account),
+        select: true,
+      );
+    } finally {
+      _clearOperation(operationKey);
     }
   }
 
@@ -471,6 +612,13 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     if (player == null) return;
     final existing = _matchingAccount(player, account);
     if (existing == null) return;
+    _ensureExternalAccountCanAttach(
+      PlayerWorkspaceAccount(
+        source: existing.source,
+        username: username.trim(),
+      ),
+      playerId: player.id,
+    );
 
     final source = existing.source;
     final operationKey = _accountOperationKey(existing);
@@ -480,8 +628,9 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       'Fetching ${source.label} profile...',
       null,
     );
+    late final PlayerWorkspaceAccount fetched;
     try {
-      final fetched = switch (source) {
+      fetched = switch (source) {
         PlayerWorkspaceSource.lichess => await _workspaceRepository
             .fetchLichessAccount(username),
         PlayerWorkspaceSource.chesscom => await _workspaceRepository
@@ -491,6 +640,22 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         PlayerWorkspaceSource
             .combined => throw StateError('Unsupported account source.'),
       };
+    } catch (error) {
+      _clearOperation(operationKey);
+      final latest = state.selectedPlayer ?? player;
+      await _upsertPlayer(
+        latest.withAccount(existing.copyWith(error: error.toString())),
+        select: true,
+      );
+      rethrow;
+    }
+    try {
+      _ensureExternalAccountCanAttach(fetched, playerId: player.id);
+    } catch (_) {
+      _clearOperation(operationKey);
+      rethrow;
+    }
+    try {
       final sameIdentity =
           fetched.identityKey == existing.identityKey ||
           fetched.username.trim().toLowerCase() ==
@@ -760,10 +925,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
               playerId: existing.externalId ?? player.chesseverPlayerId ?? '',
               fideId: player.fideId,
               sinceDate: latestStoredGameDate,
-              expectedGameCount: _expectedDownloadGameCount(
-                existing,
-                reinstall: reinstall,
-              ),
+              expectedGameCount: _expectedChessEverDownloadGameCount(existing),
               onProgress:
                   (message, progress) => _setScopedOperationPhaseProgress(
                     scope,
@@ -888,6 +1050,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         unawaited(
           _registerPlayerDatabasePathBestEffort(
             player: nextPlayer,
+            source: source,
             path: imported.path,
             gameCount: imported.stats.gameCount,
             indexedAtMs: now,
@@ -1059,6 +1222,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       unawaited(
         _registerPlayerDatabasePathBestEffort(
           player: nextPlayer,
+          source: source,
           path: imported.path,
           gameCount: imported.stats.gameCount,
           indexedAtMs: now,
@@ -1137,12 +1301,16 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       _pendingCombinedRebuildPlayerIds.add(player.id);
       return;
     }
-    final paths = player.allAccounts
-        .map((account) => account.pgnPath)
-        .whereType<String>()
-        .where((path) => path.trim().isNotEmpty)
+    final combinedSources = player.allAccounts
+        .where((account) => account.pgnPath?.trim().isNotEmpty == true)
+        .map(
+          (account) => PlayerWorkspaceCombinedSource(
+            path: account.pgnPath!.trim(),
+            source: account.source,
+          ),
+        )
         .toList(growable: false);
-    if (paths.isEmpty) return;
+    if (combinedSources.isEmpty) return;
     const source = PlayerWorkspaceSource.combined;
     final generation = ++_combinedRebuildGeneration;
     final operationKey = _sourceOperationKey(source);
@@ -1160,7 +1328,8 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         playerId: player.id,
         playerName: player.displayName,
         playerFideId: player.fideId,
-        sourcePaths: paths,
+        sourcePaths: combinedSources.map((source) => source.path),
+        sources: combinedSources,
         playerAliases: _aliasesFor(player, null),
         onProgress:
             (message, progress) =>
@@ -1184,13 +1353,12 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         combinedBuiltAtMs: now,
       );
       await _upsertPlayer(nextPlayer, select: true);
-      unawaited(
-        _registerPlayerDatabasePathBestEffort(
-          player: nextPlayer,
-          path: result.path,
-          gameCount: result.stats.gameCount,
-          indexedAtMs: now,
-        ),
+      await _registerPlayerDatabasePathBestEffort(
+        player: nextPlayer,
+        source: source,
+        path: result.path,
+        gameCount: result.stats.gameCount,
+        indexedAtMs: now,
       );
       _clearOperation(operationKey);
     } catch (error) {
@@ -1266,6 +1434,62 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
 
   PlayerWorkspacePlayer _latestPlayer(PlayerWorkspacePlayer fallback) {
     return _playerById(fallback.id) ?? fallback;
+  }
+
+  PlayerWorkspacePlayer? _canonicalChessEverPlayer(GamebasePlayer player) {
+    final fideId = _normalizedPlayerFideId(player.fideId);
+    if (fideId != null) {
+      for (final candidate in state.players) {
+        if (_normalizedPlayerFideId(candidate.fideId) == fideId) {
+          return candidate;
+        }
+      }
+    }
+
+    final chessEverPlayerId = _normalizedPlayerExternalId(player.id);
+    if (chessEverPlayerId == null) return null;
+    for (final candidate in state.players) {
+      if (_normalizedPlayerExternalId(candidate.chesseverPlayerId) ==
+          chessEverPlayerId) {
+        return candidate;
+      }
+      for (final account in candidate.accountsFor(
+        PlayerWorkspaceSource.chessever,
+      )) {
+        if (_normalizedPlayerExternalId(account.externalId) ==
+            chessEverPlayerId) {
+          return candidate;
+        }
+      }
+    }
+    return null;
+  }
+
+  void _ensureExternalAccountCanAttach(
+    PlayerWorkspaceAccount account, {
+    required String playerId,
+  }) {
+    if (!_isExternalPlayerAccountSource(account.source)) return;
+    for (final candidate in state.players) {
+      if (candidate.id == playerId) continue;
+      final ownsIdentity = candidate
+          .accountsFor(account.source)
+          .any((existing) => existing.identityKey == account.identityKey);
+      if (!ownsIdentity) continue;
+      final username = account.username.trim();
+      final accountDescription =
+          username.isEmpty
+              ? '${account.source.label} account'
+              : '${account.source.label} account "$username"';
+      final ownerFideId = _normalizedPlayerFideId(candidate.fideId);
+      final ownerDescription =
+          '"${candidate.displayName}"'
+          '${ownerFideId == null ? '' : ' (FIDE $ownerFideId)'}';
+      throw StateError(
+        'The $accountDescription is already attached to $ownerDescription. '
+        'Open that player workspace to manage it.',
+      );
+    }
   }
 
   PlayerWorkspacePlayer? _playerById(String playerId) {
@@ -1509,10 +1733,28 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         player.combinedPgnPath!.trim(),
     };
     await _unregisterPlayerWorkspaceBestEffort(player, extraPaths: paths);
+    // Delete the generated PGN files first (cheap, dart:io thread pool), then
+    // clear their SQLite cache in one consolidated purge below.
     for (final path in paths) {
-      await _deleteGeneratedDatabasePath(path);
+      await _deleteGeneratedSourceFile(path);
     }
     await _workspaceRepository.deletePlayerWorkspaceDirectory(player.id);
+    // One marked-then-purged pass over every source this player owns. Small
+    // batches trade cleanup throughput for consistent foreground frame times.
+    await _localRepository.deleteCachedSourcesAwaitingPurge(
+      sourcePaths: paths,
+      batchSize: 128,
+    );
+  }
+
+  Future<void> _deleteGeneratedSourceFile(String? path) async {
+    final clean = path?.trim();
+    if (clean == null || clean.isEmpty) return;
+    try {
+      await _workspaceRepository.deleteSourcePgnFile(clean);
+    } finally {
+      await _unregisterPlayerDatabasePathBestEffort(clean);
+    }
   }
 
   Future<void> _deleteAccountGeneratedData(
@@ -1707,6 +1949,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       if (path == null || path.isEmpty) continue;
       metadataByPath[path] = _playerRegistryMetadata(
         player: player,
+        source: account.source,
         gameCount: account.gameCount,
         indexedAtMs: account.lastSyncAtMs,
       );
@@ -1715,6 +1958,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     if (combinedPath != null && combinedPath.isNotEmpty) {
       metadataByPath[combinedPath] = _playerRegistryMetadata(
         player: player,
+        source: PlayerWorkspaceSource.combined,
         gameCount: player.combinedGameCount,
         indexedAtMs: player.combinedBuiltAtMs,
       );
@@ -1722,8 +1966,142 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     await _registerPlayerDatabaseMetadataBestEffort(metadataByPath);
   }
 
+  Future<void> _repairPersistedDownloadedStatsBestEffort() async {
+    var changed = false;
+    final repairedPlayers = <PlayerWorkspacePlayer>[];
+    for (final player in state.players) {
+      var nextPlayer = player;
+      for (final account in player.allAccounts) {
+        final repaired = await _repairedDownloadedAccountStats(
+          nextPlayer,
+          account,
+        );
+        if (repaired == null) continue;
+        nextPlayer = nextPlayer.withAccount(repaired);
+        changed = true;
+      }
+      final repairedCombined = await _repairedCombinedStats(nextPlayer);
+      if (!identical(repairedCombined, nextPlayer)) {
+        nextPlayer = repairedCombined;
+        changed = true;
+      }
+      repairedPlayers.add(nextPlayer);
+    }
+    if (!changed) return;
+    state = state.copyWith(players: List.unmodifiable(repairedPlayers));
+    await _persist();
+  }
+
+  Future<PlayerWorkspaceAccount?> _repairedDownloadedAccountStats(
+    PlayerWorkspacePlayer player,
+    PlayerWorkspaceAccount account,
+  ) async {
+    final path = account.pgnPath?.trim();
+    if (path == null || path.isEmpty) return null;
+    if (!await _fileExistsBestEffort(path)) return null;
+    final gen = _repairGeneration;
+    try {
+      final stats = await _awaitWithRepairTimeout(
+        _localRepository.localDatabaseResultStats(
+          databasePath: path,
+          playerAliases: _aliasesFor(player, account),
+          playerFideId: player.fideId,
+        ),
+      );
+      if (gen != _repairGeneration || stats == null) return null;
+      if (stats.gameCount <= 0) return null;
+      if (stats.gameCount == account.gameCount &&
+          stats.winCount == account.winCount &&
+          stats.drawCount == account.drawCount &&
+          stats.lossCount == account.lossCount) {
+        return null;
+      }
+      return account.copyWith(
+        availableGameCount: _maxGameCount(<int>[
+          account.availableGameCount,
+          stats.gameCount,
+        ]),
+        gameCount: stats.gameCount,
+        winCount: stats.winCount,
+        drawCount: stats.drawCount,
+        lossCount: stats.lossCount,
+        clearError: true,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<PlayerWorkspacePlayer> _repairedCombinedStats(
+    PlayerWorkspacePlayer player,
+  ) async {
+    final combinedPath = player.combinedPgnPath?.trim();
+    if (combinedPath == null || combinedPath.isEmpty) return player;
+    if (!await _fileExistsBestEffort(combinedPath)) return player;
+    final gen = _repairGeneration;
+    try {
+      final stats = await _awaitWithRepairTimeout(
+        _localRepository.localDatabaseResultStats(
+          databasePath: combinedPath,
+          playerAliases: _aliasesFor(player, null),
+          playerFideId: player.fideId,
+        ),
+      );
+      if (gen != _repairGeneration || stats == null) return player;
+      if (stats.gameCount <= 0) return player;
+      if (stats.gameCount == player.combinedGameCount &&
+          stats.winCount == player.combinedWinCount &&
+          stats.drawCount == player.combinedDrawCount &&
+          stats.lossCount == player.combinedLossCount) {
+        return player;
+      }
+      return player.copyWith(
+        combinedGameCount: stats.gameCount,
+        combinedWinCount: stats.winCount,
+        combinedDrawCount: stats.drawCount,
+        combinedLossCount: stats.lossCount,
+      );
+    } catch (_) {
+      return player;
+    }
+  }
+
+  /// Soft timeout for stats repair that cancels its timer on [dispose] so
+  /// widget tests with FakeAsync never leave a pending 8s timer.
+  Future<T?> _awaitWithRepairTimeout<T>(Future<T> future) {
+    final completer = Completer<T?>();
+    late final Timer timer;
+    timer = Timer(_downloadedStatsRepairTimeout, () {
+      if (!completer.isCompleted) completer.complete(null);
+    });
+    _repairTimeoutTimers.add(timer);
+
+    future.then(
+      (value) {
+        if (!completer.isCompleted) completer.complete(value);
+      },
+      onError: (Object _, StackTrace __) {
+        if (!completer.isCompleted) completer.complete(null);
+      },
+    );
+
+    return completer.future.whenComplete(() {
+      timer.cancel();
+      _repairTimeoutTimers.remove(timer);
+    });
+  }
+
+  Future<bool> _fileExistsBestEffort(String path) async {
+    try {
+      return File(path).exists();
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _registerPlayerDatabasePathBestEffort({
     required PlayerWorkspacePlayer player,
+    required PlayerWorkspaceSource source,
     required String path,
     required int gameCount,
     required int? indexedAtMs,
@@ -1734,6 +2112,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       <String, LocalLibraryEntryMetadata>{
         clean: _playerRegistryMetadata(
           player: player,
+          source: source,
           gameCount: gameCount,
           indexedAtMs: indexedAtMs,
         ),
@@ -1799,12 +2178,14 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
 
 LocalLibraryEntryMetadata _playerRegistryMetadata({
   required PlayerWorkspacePlayer player,
+  required PlayerWorkspaceSource source,
   required int gameCount,
   required int? indexedAtMs,
 }) {
   return LocalLibraryEntryMetadata.playerWorkspace(
     playerId: player.id,
     playerName: player.displayName,
+    playerWorkspaceSource: source.storageKey,
     gameCount: gameCount > 0 ? gameCount : null,
     indexedAt:
         indexedAtMs == null
@@ -1860,11 +2241,21 @@ String _operationMessageForDisplay(
   if (lower.startsWith('preparing') && lower.contains('sync')) {
     return 'Preparing ${source.label} sync...';
   }
+  // Only collapse true cache/snapshot noise. Detailed Lichess/Chess.com
+  // progress ("Chess.com: 1/2 archives done; 42 games received...") must
+  // pass through so determinate download UI can show archive progress.
+  if (lower.contains('source cache') || lower.contains('source snapshot')) {
+    return 'Downloading ${source.label} games...';
+  }
   if (lower.startsWith('importing') ||
       lower.startsWith('reinstalling') ||
-      lower.contains('cache') ||
+      lower.startsWith('saving') ||
+      lower.startsWith('merging') ||
+      lower.startsWith('preparing downloaded') ||
+      lower.contains('downloaded pgn') ||
+      lower.contains('local database') ||
+      lower.contains('local cache') ||
       lower.contains('scan') ||
-      lower.contains('pgn') ||
       lower.contains('finaliz')) {
     return 'Importing ${source.label} games...';
   }
@@ -1882,9 +2273,19 @@ String _chessEverOperationMessageForDisplay(String message) {
   if (lower.startsWith('preparing') && lower.contains('sync')) {
     return 'Preparing ChessEver sync...';
   }
+  // Post-download local work: saving PGN, opening/migrating the local cache,
+  // scanning, and finalizing. Keep these under "Importing..." so the UI does
+  // not flip back to "Downloading..." while the bar is past the download phase.
   if (lower.startsWith('importing') ||
       lower.startsWith('reinstalling') ||
-      lower.contains('cache')) {
+      lower.startsWith('saving') ||
+      lower.startsWith('merging') ||
+      lower.startsWith('preparing downloaded') ||
+      lower.contains('downloaded pgn') ||
+      lower.contains('local database') ||
+      lower.contains('cache') ||
+      lower.contains('scan') ||
+      lower.contains('finaliz')) {
     return 'Importing ChessEver games...';
   }
   return 'Downloading ChessEver games...';
@@ -1918,6 +2319,17 @@ String? _normalizedPlayerFideId(String? fideId) {
   return clean;
 }
 
+String? _normalizedPlayerExternalId(String? externalId) {
+  final clean = externalId?.trim().toLowerCase();
+  if (clean == null || clean.isEmpty) return null;
+  return clean;
+}
+
+bool _isExternalPlayerAccountSource(PlayerWorkspaceSource source) {
+  return source == PlayerWorkspaceSource.lichess ||
+      source == PlayerWorkspaceSource.chesscom;
+}
+
 int? _sinceMsFromGameDate(DateTime? date) {
   if (date == null) return null;
   return DateTime.utc(date.year, date.month, date.day).millisecondsSinceEpoch;
@@ -1939,6 +2351,11 @@ int? _expectedDownloadGameCount(
   return null;
 }
 
+int? _expectedChessEverDownloadGameCount(PlayerWorkspaceAccount account) {
+  final available = account.effectiveAvailableGameCount;
+  return available > 0 ? available : null;
+}
+
 int _maxGameCount(Iterable<int> counts) {
   var max = 0;
   for (final count in counts) {
@@ -1951,16 +2368,83 @@ List<String> _aliasesFor(
   PlayerWorkspacePlayer player,
   PlayerWorkspaceAccount? account,
 ) {
-  return <String>{
-    player.displayName,
-    if (player.title != null) '${player.title} ${player.displayName}',
-    for (final sourceAccount in player.allAccounts) ...[
-      sourceAccount.username,
-      if (sourceAccount.displayName != null) sourceAccount.displayName!,
-    ],
-    if (account != null) ...[
-      account.username,
-      if (account.displayName != null) account.displayName!,
-    ],
-  }.where((alias) => alias.trim().isNotEmpty).toList(growable: false);
+  final aliases = <String>{};
+
+  void addAlias(String alias) {
+    for (final variant in _playerNameAliasVariants(alias)) {
+      aliases.add(variant);
+    }
+  }
+
+  addAlias(player.displayName);
+  if (player.title != null) addAlias('${player.title} ${player.displayName}');
+  for (final sourceAccount in player.allAccounts) {
+    addAlias(sourceAccount.username);
+    final displayName = sourceAccount.displayName;
+    if (displayName != null) addAlias(displayName);
+  }
+  if (account != null) {
+    addAlias(account.username);
+    final displayName = account.displayName;
+    if (displayName != null) addAlias(displayName);
+  }
+
+  return aliases
+      .where((alias) => alias.trim().isNotEmpty)
+      .toList(growable: false);
+}
+
+Iterable<String> _playerNameAliasVariants(String raw) sync* {
+  final clean = raw.trim();
+  if (clean.isEmpty) return;
+
+  final withoutTitle = _stripLeadingChessTitles(clean);
+  final bases = <String>{clean, withoutTitle};
+  for (final base in bases) {
+    if (base.trim().isEmpty) continue;
+    yield base;
+
+    final commaInverted = _invertCommaName(base);
+    if (commaInverted != null) yield commaInverted;
+
+    final plainInverted = _invertPlainName(base);
+    if (plainInverted != null) yield plainInverted;
+  }
+}
+
+String _stripLeadingChessTitles(String raw) {
+  var clean = raw.trim();
+  final titlePattern = RegExp(
+    r'^(?:GM|WGM|IM|WIM|FM|WFM|CM|WCM|NM|WNM|AGM|AIM|AFM|ACM)\.?\s+',
+    caseSensitive: false,
+  );
+  while (true) {
+    final next = clean.replaceFirst(titlePattern, '').trim();
+    if (next == clean) return clean;
+    clean = next;
+  }
+}
+
+String? _invertCommaName(String raw) {
+  final parts = raw
+      .split(',')
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty)
+      .toList(growable: false);
+  if (parts.length < 2) return null;
+  final last = parts.first;
+  final first = parts.skip(1).join(' ');
+  if (first.isEmpty || last.isEmpty) return null;
+  return '$first $last';
+}
+
+String? _invertPlainName(String raw) {
+  if (raw.contains(',')) return null;
+  final parts = raw
+      .split(RegExp(r'\s+'))
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty)
+      .toList(growable: false);
+  if (parts.length < 2) return null;
+  return '${parts.last} ${parts.take(parts.length - 1).join(' ')}';
 }

@@ -13,6 +13,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_stats_repository.dart';
 import 'package:chessever/desktop/services/player_workspace_repository.dart';
@@ -47,6 +49,113 @@ void main() {
   });
 
   group('Player workspace PGN helpers', () {
+    test(
+      'Combined rebuild uses the complete Combined cache instead of a partial source union',
+      () async {
+        final sourcePaths = <String>[
+          '${temp.path}/chessever.pgn',
+          '${temp.path}/lichess.pgn',
+          '${temp.path}/chesscom.pgn',
+        ];
+        await File(sourcePaths[0]).writeAsString(_mergeGameOne);
+        await File(sourcePaths[1]).writeAsString(_mergeGameTwo);
+        await File(sourcePaths[2]).writeAsString(_mergeGameThree);
+        final localRepository = _PartialSourceUnionStatsRepository(
+          database: () async => db,
+        );
+        final workspaceRepository = PlayerWorkspaceRepository(
+          supportDirectory: () async => temp,
+        );
+
+        final result = await workspaceRepository.rebuildCombinedDatabase(
+          localRepository: localRepository,
+          playerId: 'vasif-combined-authority',
+          playerName: 'GM Vasif Durarbayli',
+          playerFideId: '13402935',
+          sourcePaths: sourcePaths,
+          sources: <PlayerWorkspaceCombinedSource>[
+            PlayerWorkspaceCombinedSource(
+              path: sourcePaths[0],
+              source: PlayerWorkspaceSource.chessever,
+            ),
+            PlayerWorkspaceCombinedSource(
+              path: sourcePaths[1],
+              source: PlayerWorkspaceSource.lichess,
+            ),
+            PlayerWorkspaceCombinedSource(
+              path: sourcePaths[2],
+              source: PlayerWorkspaceSource.chesscom,
+            ),
+          ],
+          playerAliases: const <String>['GM Vasif Durarbayli', 'Durarbayli'],
+        );
+
+        expect(result.stats.gameCount, 20226);
+        expect(localRepository.combinedPathRequests, 1);
+        expect(localRepository.sourceUnionRequests, 0);
+      },
+    );
+
+    test(
+      'cold Combined rebuild keeps the UI event loop responsive',
+      () async {
+        final sourceFile = File('${temp.path}/cold-chessever-source.pgn');
+        await sourceFile.writeAsString(_largeChessEverPgn(1000));
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+
+        final stopwatch = Stopwatch()..start();
+        var lastTickUs = stopwatch.elapsedMicroseconds;
+        var maxTickGapUs = 0;
+        var tickCount = 0;
+        var phase = 'starting';
+        var phaseAtMaxGap = phase;
+        final timer = Timer.periodic(const Duration(milliseconds: 4), (_) {
+          final nowUs = stopwatch.elapsedMicroseconds;
+          final gapUs = nowUs - lastTickUs;
+          if (gapUs > maxTickGapUs) {
+            maxTickGapUs = gapUs;
+            phaseAtMaxGap = phase;
+          }
+          lastTickUs = nowUs;
+          tickCount++;
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 12));
+
+        final result = await workspaceRepository.rebuildCombinedDatabase(
+          localRepository: localRepository,
+          playerId: 'vasif-cold-install',
+          playerName: 'Vasif Durarbayli',
+          playerFideId: '13402935',
+          sourcePaths: <String>[sourceFile.path],
+          playerAliases: const <String>['Vasif Durarbayli', 'Durarbayli,Vasif'],
+          onProgress: (message, _) => phase = message,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 12));
+        timer.cancel();
+
+        expect(result.stats.gameCount, 1000);
+        expect(
+          stopwatch.elapsed,
+          lessThan(const Duration(seconds: 15)),
+          reason: 'A 1,000-game cold rebuild should complete promptly.',
+        );
+        expect(tickCount, greaterThan(10));
+        expect(
+          maxTickGapUs,
+          lessThan(25000),
+          reason:
+              'A cold Combined rebuild must not block the UI event loop for '
+              'longer than roughly one 60 Hz frame. Actual max gap: '
+              '${(maxTickGapUs / 1000).toStringAsFixed(1)} ms during '
+              '"$phaseAtMaxGap".',
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
     test('formats generated PGN file names with an upper-case source', () {
       expect(
         playerWorkspaceSourceFileName(
@@ -177,6 +286,14 @@ void main() {
       expect(stats.winCount, 1);
       expect(stats.drawCount, 1);
       expect(stats.lossCount, 1);
+    });
+
+    test('maps import worker progress into the post-save import range', () {
+      expect(mapPlayerWorkspaceImportWorkerProgress(0), closeTo(0.10, 1e-9));
+      expect(mapPlayerWorkspaceImportWorkerProgress(0.5), closeTo(0.54, 1e-9));
+      expect(mapPlayerWorkspaceImportWorkerProgress(1), closeTo(0.98, 1e-9));
+      expect(mapPlayerWorkspaceImportWorkerProgress(-1), closeTo(0.10, 1e-9));
+      expect(mapPlayerWorkspaceImportWorkerProgress(2), closeTo(0.98, 1e-9));
     });
   });
 
@@ -426,6 +543,88 @@ void main() {
 
   group('Player workspace notifier library selection', () {
     test(
+      'load repairs stale Players and Library Combined counts from the Combined path',
+      () async {
+        final registry = _CapturedLocalLibraryRegistry();
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final playerDir = Directory('${temp.path}/player-workspace/vasif');
+        await playerDir.create(recursive: true);
+        final chesseverPath = '${playerDir.path}/chessever.pgn';
+        final lichessPath = '${playerDir.path}/lichess.pgn';
+        final chessComPath = '${playerDir.path}/chesscom.pgn';
+        final combinedPath = '${playerDir.path}/combined.pgn';
+        await File(chesseverPath).writeAsString(_mergeGameOne);
+        await File(lichessPath).writeAsString(_mergeGameTwo);
+        await File(chessComPath).writeAsString(_mergeGameThree);
+        await File(combinedPath).writeAsString('''
+[Event "Combined"]
+[$playerWorkspaceCombinedVersionTag "$playerWorkspaceCombinedFormatVersion"]
+[White "Durarbayli"]
+[Black "Opponent"]
+[Result "1-0"]
+
+1. e4 e5 1-0
+''');
+        workspaceRepository.snapshot = PlayerWorkspaceSnapshot(
+          selectedPlayerId: 'vasif',
+          players: <PlayerWorkspacePlayer>[
+            PlayerWorkspacePlayer(
+              id: 'vasif',
+              displayName: 'GM Vasif Durarbayli',
+              createdAtMs: 1,
+              fideId: '13402935',
+              accounts: <PlayerWorkspaceSource, PlayerWorkspaceAccount>{
+                PlayerWorkspaceSource.chessever: PlayerWorkspaceAccount(
+                  source: PlayerWorkspaceSource.chessever,
+                  username: 'Vasif Durarbayli',
+                  pgnPath: chesseverPath,
+                  gameCount: 3982,
+                ),
+                PlayerWorkspaceSource.lichess: PlayerWorkspaceAccount(
+                  source: PlayerWorkspaceSource.lichess,
+                  username: 'Durarbayli',
+                  pgnPath: lichessPath,
+                  gameCount: 6016,
+                ),
+                PlayerWorkspaceSource.chesscom: PlayerWorkspaceAccount(
+                  source: PlayerWorkspaceSource.chesscom,
+                  username: 'durarbayli',
+                  pgnPath: chessComPath,
+                  gameCount: 10573,
+                ),
+              },
+              combinedPgnPath: combinedPath,
+              combinedGameCount: 9998,
+              combinedBuiltAtMs: 1,
+            ),
+          ],
+        );
+        final localRepository = _PartialSourceUnionStatsRepository(
+          database: () async => db,
+        );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: localRepository,
+          localDatabaseRegistrar: registry.registerAll,
+        );
+
+        await notifier.load();
+
+        expect(notifier.state.selectedPlayer!.combinedGameCount, 20226);
+        expect(registry.registered[combinedPath]?.gameCount, 20226);
+        expect(
+          registry.registered[combinedPath]?.playerWorkspaceSource,
+          PlayerWorkspaceSource.combined.storageKey,
+        );
+        expect(
+          workspaceRepository.snapshot.players.single.combinedGameCount,
+          20226,
+        );
+      },
+    );
+
+    test(
       'load registers existing UUID workspace paths under player name',
       () async {
         final registry = _CapturedLocalLibraryRegistry();
@@ -476,6 +675,18 @@ void main() {
               .registered['/tmp/player-workspace/uuid/combined.pgn']
               ?.groupLabel,
           'Magnus Carlsen',
+        );
+        expect(
+          registry
+              .registered['/tmp/player-workspace/uuid/lichess.pgn']
+              ?.playerWorkspaceSource,
+          PlayerWorkspaceSource.lichess.storageKey,
+        );
+        expect(
+          registry
+              .registered['/tmp/player-workspace/uuid/combined.pgn']
+              ?.playerWorkspaceSource,
+          PlayerWorkspaceSource.combined.storageKey,
         );
         expect(
           registry.registered.values
@@ -543,6 +754,7 @@ void main() {
         );
 
         await notifier.removePlayer(player.id);
+        await notifier.debugDrainPlayerCleanup();
 
         expect(registry.unregistered, contains(sourcePath));
         expect(registry.unregistered, contains(combinedPath));
@@ -592,12 +804,54 @@ void main() {
       await notifier.selectPlayer(playerId);
 
       await notifier.removePlayer(playerId);
+      await notifier.debugDrainPlayerCleanup();
 
       expect(notifier.state.players, isEmpty);
       expect(notifier.state.selectedPlayerId, isNull);
       expect(workspaceRepository.snapshot.players, isEmpty);
       expect(workspaceRepository.snapshot.selectedPlayerId, isNull);
     });
+
+    test(
+      'removePlayer detaches silent cleanup from the visible action',
+      () async {
+        final gate = Completer<void>();
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final localRepository = _BlockingPurgeLocalRepository(db, gate);
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: localRepository,
+        );
+        await notifier.load();
+        await notifier.addManualPlayer('Heavy Prep');
+        final playerId = notifier.state.players.single.id;
+        await notifier.selectPlayer(playerId);
+
+        var visibleActionCompleted = false;
+        final removal = notifier.removePlayer(playerId);
+        removal.then((_) => visibleActionCompleted = true);
+        await pumpEventQueue();
+
+        try {
+          expect(
+            visibleActionCompleted,
+            isTrue,
+            reason:
+                'The trash action must not await the potentially long purge.',
+          );
+          expect(notifier.state.players, isEmpty);
+          expect(notifier.state.selectedPlayerId, isNull);
+          expect(workspaceRepository.snapshot.players, isEmpty);
+          expect(localRepository.purgeCalls, 1);
+          expect(localRepository.requestedBatchSize, 128);
+        } finally {
+          if (!gate.isCompleted) gate.complete();
+          await removal;
+          await notifier.debugDrainPlayerCleanup();
+        }
+      },
+    );
 
     test(
       'library source deletion removes that player account and clears combined',
@@ -902,6 +1156,7 @@ void main() {
         expect(await _count(db, 'local_chess_databases'), 2);
 
         await notifier.removePlayer(player.id);
+        await notifier.debugDrainPlayerCleanup();
 
         expect(notifier.state.players, isEmpty);
         expect(await File(sourcePath).exists(), isFalse);
@@ -1257,6 +1512,50 @@ void main() {
       },
     );
 
+    test('sync treats an empty incremental delta as already current', () async {
+      final sourcePgns = <String, String>{
+        'alpha': '$_mergeGameOne\n\n$_mergeGameTwo',
+      };
+      final workspaceRepository = _FakePlayerWorkspaceRepository(
+        root: temp,
+        lichessPgnByUsername: sourcePgns,
+      );
+      final notifier = PlayerWorkspaceNotifier(
+        workspaceRepository: workspaceRepository,
+        gamebaseRepository: GamebaseRepository(Dio()),
+        localRepository: LocalChessDatabaseRepository(database: () async => db),
+      );
+      await notifier.load();
+      await notifier.addManualPlayer('Prep Target');
+      await notifier.selectPlayer(notifier.state.players.single.id);
+      await notifier.connectExternalAccount(
+        source: PlayerWorkspaceSource.lichess,
+        username: 'alpha',
+      );
+
+      var account =
+          notifier.state.selectedPlayer!.account(
+            PlayerWorkspaceSource.lichess,
+          )!;
+      await notifier.syncAccount(account);
+      final firstPlayer = notifier.state.selectedPlayer!;
+      final firstCombinedBuiltAt = firstPlayer.combinedBuiltAtMs;
+      final firstPath =
+          firstPlayer.account(PlayerWorkspaceSource.lichess)!.pgnPath!;
+
+      sourcePgns['alpha'] = '';
+      account =
+          notifier.state.selectedPlayer!.account(
+            PlayerWorkspaceSource.lichess,
+          )!;
+      await notifier.syncAccount(account);
+
+      final nextPlayer = notifier.state.selectedPlayer!;
+      expect(workspaceRepository.replaceExistingRequests, hasLength(1));
+      expect(nextPlayer.combinedBuiltAtMs, firstCombinedBuiltAt);
+      expect(splitPgnGames(await File(firstPath).readAsString()), hasLength(2));
+    });
+
     test(
       'reinstall redownloads a source from scratch and replaces it',
       () async {
@@ -1417,6 +1716,196 @@ void main() {
       },
     );
 
+    test('ChessEver sync counts title-stripped no-FIDE name aliases', () async {
+      final workspaceRepository = _FakePlayerWorkspaceRepository(
+        root: temp,
+        chessEverPgnByPlayerId: const <String, String>{
+          'ce-vasif': _vasifChessEverMixedFidePgn,
+        },
+      );
+      final notifier = PlayerWorkspaceNotifier(
+        workspaceRepository: workspaceRepository,
+        gamebaseRepository: GamebaseRepository(Dio()),
+        localRepository: LocalChessDatabaseRepository(database: () async => db),
+      );
+      await notifier.load();
+      await notifier.addManualPlayer('GM Vasif Durarbayli');
+      await notifier.selectPlayer(notifier.state.players.single.id);
+      await notifier.connectChessEverPlayer(
+        const GamebasePlayer(
+          id: 'ce-vasif',
+          fideId: '13402935',
+          name: 'Durarbayli, Vasif',
+          gender: PlayerGender.male,
+          fed: 'AZE',
+          title: 'GM',
+        ),
+      );
+
+      final account =
+          notifier.state.selectedPlayer!.account(
+            PlayerWorkspaceSource.chessever,
+          )!;
+      await notifier.syncAccount(account);
+
+      final chessever =
+          notifier.state.selectedPlayer!.account(
+            PlayerWorkspaceSource.chessever,
+          )!;
+      expect(chessever.gameCount, 2);
+      expect(chessever.availableGameCount, 2);
+      expect(chessever.remainingGameCount, 0);
+      expect(chessever.downloadProgress, 1.0);
+    });
+
+    test(
+      'load repairs stale downloaded ChessEver stats from local cache',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+        final path = p.join(temp.path, 'repair-chessever.pgn');
+        await workspaceRepository.mergeIntoLocalDatabase(
+          localRepository: localRepository,
+          path: path,
+          sourceLabel: 'GM Vasif Durarbayli ChessEver',
+          pgn: _vasifChessEverMixedFidePgn,
+          playerAliases: const <String>['Durarbayli, Vasif'],
+          playerFideId: '13402935',
+          replaceExisting: true,
+        );
+        const playerId = 'player-vasif';
+        final stalePlayer = PlayerWorkspacePlayer(
+          id: playerId,
+          displayName: 'GM Vasif Durarbayli',
+          createdAtMs: 1,
+          fideId: '13402935',
+          title: 'GM',
+          accounts: <PlayerWorkspaceSource, PlayerWorkspaceAccount>{
+            PlayerWorkspaceSource.chessever: PlayerWorkspaceAccount(
+              source: PlayerWorkspaceSource.chessever,
+              username: 'GM Vasif Durarbayli',
+              externalId: 'ce-vasif',
+              displayName: 'GM Vasif Durarbayli',
+              pgnPath: path,
+              lastSyncAtMs: 2,
+              availableGameCount: 2,
+              gameCount: 1,
+            ),
+          },
+        );
+        workspaceRepository.snapshot = PlayerWorkspaceSnapshot(
+          players: <PlayerWorkspacePlayer>[stalePlayer],
+          selectedPlayerId: playerId,
+        );
+
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: localRepository,
+        );
+        await notifier.load();
+
+        final chessever =
+            notifier.state.selectedPlayer!.account(
+              PlayerWorkspaceSource.chessever,
+            )!;
+        expect(chessever.gameCount, 2);
+        expect(chessever.availableGameCount, 2);
+        expect(chessever.remainingGameCount, 0);
+        expect(chessever.downloadProgress, 1.0);
+
+        final repairedSnapshot = await workspaceRepository.loadSnapshot();
+        expect(
+          repairedSnapshot.players.single
+              .account(PlayerWorkspaceSource.chessever)!
+              .gameCount,
+          2,
+        );
+      },
+    );
+
+    test(
+      'load rebuilds a stale Combined index from its typed sources',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+        const playerId = 'player-stale-combined';
+        final sourcePath = await workspaceRepository.sourcePgnPath(
+          playerId: playerId,
+          playerName: 'GM Vasif Durarbayli',
+          fideId: '13402935',
+          source: PlayerWorkspaceSource.chessever,
+        );
+        await workspaceRepository.mergeIntoLocalDatabase(
+          localRepository: localRepository,
+          path: sourcePath,
+          sourceLabel: 'GM Vasif Durarbayli ChessEver',
+          pgn: _vasifGeographicChessEverPgn,
+          playerAliases: const <String>['Durarbayli, Vasif'],
+          playerFideId: '13402935',
+          replaceExisting: true,
+        );
+        final combinedPath = await workspaceRepository.combinedPgnPath(
+          playerId: playerId,
+          playerName: 'GM Vasif Durarbayli',
+          fideId: '13402935',
+        );
+        await File(combinedPath).writeAsString(_vasifGeographicChessEverPgn);
+        expect(
+          await workspaceRepository.isCombinedDatabaseCurrent(combinedPath),
+          isFalse,
+        );
+        workspaceRepository.snapshot = PlayerWorkspaceSnapshot(
+          selectedPlayerId: playerId,
+          players: <PlayerWorkspacePlayer>[
+            PlayerWorkspacePlayer(
+              id: playerId,
+              displayName: 'GM Vasif Durarbayli',
+              createdAtMs: 1,
+              fideId: '13402935',
+              accounts: <PlayerWorkspaceSource, PlayerWorkspaceAccount>{
+                PlayerWorkspaceSource.chessever: PlayerWorkspaceAccount(
+                  source: PlayerWorkspaceSource.chessever,
+                  username: 'GM Vasif Durarbayli',
+                  externalId: 'ce-vasif',
+                  pgnPath: sourcePath,
+                  gameCount: 2,
+                ),
+              },
+              combinedPgnPath: combinedPath,
+              combinedGameCount: 2,
+              combinedBuiltAtMs: 1,
+            ),
+          ],
+        );
+
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: localRepository,
+        );
+        await notifier.load();
+
+        expect(
+          await workspaceRepository.isCombinedDatabaseCurrent(combinedPath),
+          isTrue,
+        );
+        final combinedPgn = await File(combinedPath).readAsString();
+        expect(
+          combinedPgn,
+          contains('[$playerWorkspaceCombinedSourceTag "chessever"]'),
+        );
+        expect(
+          combinedPgn,
+          contains('[$playerWorkspaceCombinedTimeControlTag "classical"]'),
+        );
+      },
+    );
+
     test(
       'FIDE-locked player rejects a different ChessEver source after deletion',
       () async {
@@ -1531,6 +2020,121 @@ void main() {
         expect(player.fideId, '13402935');
         expect(chessever.externalId, 'ce-vasif-reindexed');
         expect(chessever.displayName, 'GM Vasif Durarbayli');
+      },
+    );
+
+    test(
+      'FIDE-locked reconnect resolves exact identity and downloads immediately',
+      () async {
+        const reindexed = GamebasePlayer(
+          id: 'ce-vasif-reindexed',
+          fideId: '13402935',
+          name: 'Durarbayli, Vasif',
+          gender: PlayerGender.male,
+          fed: 'AZE',
+          title: 'GM',
+        );
+        final workspaceRepository = _FakePlayerWorkspaceRepository(
+          root: temp,
+          chessEverPgnByPlayerId: const <String, String>{
+            'ce-vasif-reindexed': '$_mergeGameOne\n\n$_mergeGameTwo',
+          },
+          chessEverPlayersByFideId: const <String, GamebasePlayer>{
+            '13402935': reindexed,
+          },
+        );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: LocalChessDatabaseRepository(
+            database: () async => db,
+          ),
+        );
+        await notifier.load();
+        await notifier.addManualPlayer('GM Vasif Durarbayli');
+        await notifier.selectPlayer(notifier.state.players.single.id);
+        await notifier.connectChessEverPlayer(
+          const GamebasePlayer(
+            id: 'ce-vasif-old',
+            fideId: '13402935',
+            name: 'Durarbayli, Vasif',
+            gender: PlayerGender.male,
+            fed: 'AZE',
+            title: 'GM',
+          ),
+        );
+        final oldAccount =
+            notifier.state.selectedPlayer!.account(
+              PlayerWorkspaceSource.chessever,
+            )!;
+        await notifier.removeAccountEntry(oldAccount);
+
+        await notifier.reconnectLockedChessEverSource();
+
+        final player = notifier.state.selectedPlayer!;
+        final reconnected = player.account(PlayerWorkspaceSource.chessever)!;
+        expect(workspaceRepository.chessEverFideIdRequests, ['13402935']);
+        expect(reconnected.externalId, 'ce-vasif-reindexed');
+        expect(reconnected.gameCount, 2);
+        expect(reconnected.pgnPath, isNotNull);
+        expect(player.combinedGameCount, 2);
+        expect(player.combinedPgnPath, isNotNull);
+      },
+    );
+
+    test(
+      'FIDE-locked reconnect rejects a mismatched lookup response',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(
+            root: temp,
+            chessEverPlayersByFideId: const <String, GamebasePlayer>{
+              '13402935': GamebasePlayer(
+                id: 'ce-carlsen',
+                fideId: '1503014',
+                name: 'Carlsen, Magnus',
+                gender: PlayerGender.male,
+                fed: 'NOR',
+                title: 'GM',
+              ),
+            },
+          )
+          ..snapshot = const PlayerWorkspaceSnapshot(
+            selectedPlayerId: 'vasif',
+            players: <PlayerWorkspacePlayer>[
+              PlayerWorkspacePlayer(
+                id: 'vasif',
+                displayName: 'GM Vasif Durarbayli',
+                createdAtMs: 1,
+                fideId: '13402935',
+              ),
+            ],
+          );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: LocalChessDatabaseRepository(
+            database: () async => db,
+          ),
+        );
+        await notifier.load();
+
+        await expectLater(
+          notifier.reconnectLockedChessEverSource(),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('locked to FIDE 13402935'),
+            ),
+          ),
+        );
+        expect(
+          notifier.state.selectedPlayer!.account(
+            PlayerWorkspaceSource.chessever,
+          ),
+          isNull,
+        );
+        expect(notifier.state.operations, isEmpty);
       },
     );
 
@@ -1659,6 +2263,159 @@ void main() {
       );
     });
 
+    test(
+      'Combined preserves source classification and resolves ECO opening names',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(
+          root: temp,
+          chessEverPgnByPlayerId: const <String, String>{
+            'ce-vasif': _vasifGeographicChessEverPgn,
+          },
+          chessComPgnByUsername: const <String, String>{
+            'vasifdurarbayli': _vasifClassifiedChessComPgn,
+          },
+        );
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: localRepository,
+        );
+        await notifier.load();
+        await notifier.addManualPlayer('GM Vasif Durarbayli');
+        await notifier.selectPlayer(notifier.state.players.single.id);
+        await notifier.connectChessEverPlayer(
+          const GamebasePlayer(
+            id: 'ce-vasif',
+            fideId: '13402935',
+            name: 'Durarbayli, Vasif',
+            gender: PlayerGender.male,
+            fed: 'AZE',
+            title: 'GM',
+          ),
+        );
+        await notifier.connectExternalAccount(
+          source: PlayerWorkspaceSource.chesscom,
+          username: 'vasifdurarbayli',
+        );
+
+        await notifier.syncAccount(
+          notifier.state.selectedPlayer!.account(
+            PlayerWorkspaceSource.chessever,
+          )!,
+        );
+        await notifier.syncAccount(
+          notifier.state.selectedPlayer!.account(
+            PlayerWorkspaceSource.chesscom,
+          )!,
+        );
+
+        final player = notifier.state.selectedPlayer!;
+        final combinedPath = player.combinedPgnPath!;
+        final statsRepository = PlayerStatsRepository(database: () async => db);
+        final all = await statsRepository.computePlayerStats(
+          databasePath: combinedPath,
+          aliases: const <String>[
+            'GM Vasif Durarbayli',
+            'Durarbayli, Vasif',
+            'vasifdurarbayli',
+          ],
+          playerFideId: '13402935',
+        );
+        final classical = await statsRepository.computePlayerStats(
+          databasePath: combinedPath,
+          aliases: const <String>[
+            'GM Vasif Durarbayli',
+            'Durarbayli, Vasif',
+            'vasifdurarbayli',
+          ],
+          playerFideId: '13402935',
+          timeControlCategory: 'classical',
+        );
+
+        expect(player.combinedGameCount, 4);
+        expect(all.games, 4);
+        expect(classical.games, 2);
+        expect(classical.overall.wins, 1);
+        expect(classical.overall.draws, 1);
+        expect(classical.ratingSeries.map((spot) => spot.rating), [2600, 2605]);
+        expect(
+          {
+            for (final source in all.years.single.sources)
+              source.label: source.count,
+          },
+          <String, int>{'ChessEver': 2, 'Chess.com': 2},
+        );
+        expect({
+          for (final opening in all.openings) opening.eco: opening.name,
+        }, containsPair('C02', 'French: Advance'));
+        expect({
+          for (final opening in all.openings) opening.eco: opening.name,
+        }, containsPair('B20', 'Sicilian Defense'));
+        expect({
+          for (final opening in all.openings) opening.eco: opening.name,
+        }, containsPair('C45', 'Scotch Game'));
+        expect(
+          all.openings.map((opening) => opening.name),
+          isNot(contains(anyOf(isNull, startsWith('Unknown')))),
+        );
+
+        final classicalPage = await localRepository.localDatabaseGamesPage(
+          databasePath: combinedPath,
+          filter: LocalChessGameFilter(timeControlCategory: 'classical'),
+          playerFideId: '13402935',
+          playerAliases: const <String>['Durarbayli, Vasif'],
+          sortBy: LocalChessGameSortField.date,
+          sortDirection: LocalChessGameSortDirection.desc,
+          pageNumber: 0,
+          pageSize: 50,
+        );
+        expect(classicalPage, isNotNull);
+        expect(classicalPage!.totalCount, 2);
+        expect(
+          classicalPage.games.map(
+            (game) => game.game.metadata['Date']?.toString(),
+          ),
+          <String>['2025.02.02', '2025.01.01'],
+        );
+
+        final openingSearch = await localRepository.localDatabaseGamesPage(
+          databasePath: combinedPath,
+          search: 'French Advance',
+          playerFideId: '13402935',
+          playerAliases: const <String>['Durarbayli, Vasif'],
+          sortBy: LocalChessGameSortField.opening,
+          sortDirection: LocalChessGameSortDirection.asc,
+          pageNumber: 0,
+          pageSize: 50,
+        );
+        expect(openingSearch, isNotNull);
+        expect(openingSearch!.totalCount, 1);
+        expect(openingSearch.games.single.game.metadata['ECO'], 'C02');
+
+        final openingSort = await localRepository.localDatabaseGamesPage(
+          databasePath: combinedPath,
+          sortBy: LocalChessGameSortField.opening,
+          sortDirection: LocalChessGameSortDirection.asc,
+          pageNumber: 0,
+          pageSize: 50,
+        );
+        expect(
+          openingSort!.games.map(
+            (game) => game.game.metadata['Opening']?.toString(),
+          ),
+          <String>[
+            'French: Advance',
+            'Modern Defense',
+            'Scotch Game',
+            'Sicilian Defense',
+          ],
+        );
+      },
+    );
+
     test('ChessEver sync replaces the single source snapshot', () async {
       final sourcePgns = <String, String>{
         'ce-carlsen': '$_mergeGameOne\n\n$_mergeGameTwo',
@@ -1761,6 +2518,51 @@ void main() {
         expect(operation.message.toLowerCase(), isNot(contains('hydrat')));
         expect(operation.message.toLowerCase(), isNot(contains('pgn')));
         expect(operation.percent, 20);
+
+        workspaceRepository.finishDownload();
+        await syncFuture.timeout(const Duration(seconds: 5));
+      },
+    );
+
+    test(
+      'Chess.com source-cache wait stays in download phase above zero',
+      () async {
+        final workspaceRepository = _HoldingChessComSnapshotWorkspaceRepository(
+          root: temp,
+          chessComPgnByUsername: const <String, String>{
+            'durarbayli': _mergeGameOne,
+          },
+        );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: LocalChessDatabaseRepository(
+            database: () async => db,
+          ),
+        );
+        await notifier.load();
+        await notifier.addManualPlayer('GM Vasif Durarbayli');
+        await notifier.selectPlayer(notifier.state.players.single.id);
+        await notifier.connectExternalAccount(
+          source: PlayerWorkspaceSource.chesscom,
+          username: 'durarbayli',
+        );
+        final account =
+            notifier.state.selectedPlayer!.account(
+              PlayerWorkspaceSource.chesscom,
+            )!;
+
+        final syncFuture = notifier.syncAccount(account);
+        await workspaceRepository.downloadStarted.future.timeout(
+          const Duration(seconds: 5),
+        );
+
+        final operation = notifier.state.operations.values.singleWhere(
+          (item) => item.source == PlayerWorkspaceSource.chesscom,
+        );
+        expect(operation.message, 'Downloading Chess.com games...');
+        expect(operation.percent, greaterThan(0));
+        expect(operation.percent, lessThan(45));
 
         workspaceRepository.finishDownload();
         await syncFuture.timeout(const Duration(seconds: 5));
@@ -2017,10 +2819,13 @@ void main() {
           'DrNykterstein': '$_mergeGameOne\n\n$_mergeGameTwo',
         },
       );
+      final localRepository = LocalChessDatabaseRepository(
+        database: () async => db,
+      );
       final notifier = PlayerWorkspaceNotifier(
         workspaceRepository: workspaceRepository,
         gamebaseRepository: GamebaseRepository(Dio()),
-        localRepository: LocalChessDatabaseRepository(database: () async => db),
+        localRepository: localRepository,
       );
       await notifier.load();
       await notifier.addManualPlayer('Prep Target');
@@ -2038,6 +2843,7 @@ void main() {
       await notifier.syncAccount(account);
 
       final player = notifier.state.selectedPlayer!;
+      expect(player.fideId, isNull);
       expect(player.combinedGameCount, 2);
       expect(player.combinedPgnPath, isNotNull);
 
@@ -2051,6 +2857,28 @@ void main() {
       expect(stats.games, 2);
       expect(stats.overall.wins, 1);
       expect(stats.overall.losses, 1);
+
+      final filtered = await localRepository.localDatabaseGamesPage(
+        databasePath: player.combinedPgnPath!,
+        search: 'Opponent',
+        filter: LocalChessGameFilter(
+          playerOutcome: LocalPlayerOutcomeFilter.win,
+        ),
+        playerAliases: const <String>['Prep Target', 'DrNykterstein'],
+        sortBy: LocalChessGameSortField.date,
+        sortDirection: LocalChessGameSortDirection.desc,
+        pageNumber: 0,
+        pageSize: 50,
+      );
+      expect(filtered, isNotNull);
+      expect(filtered!.totalCount, 1);
+      expect(filtered.games.single.game.metadata['White'], 'DrNykterstein');
+
+      final tree = await localRepository.rebuildOpeningTreeFromCachedGames(
+        databasePath: player.combinedPgnPath!,
+      );
+      expect(tree, isNotNull);
+      expect(tree!.index.downloadedGameCount, 2);
     });
 
     test('Chess.com sync creates combined stats for the overview', () async {
@@ -2232,10 +3060,91 @@ void main() {
         await notifier.removePlayer(playerId);
         workspaceRepository.finishDownload();
         await sync.timeout(const Duration(seconds: 5));
+        await notifier.debugDrainPlayerCleanup();
 
         expect(notifier.state.players, isEmpty);
         expect(workspaceRepository.snapshot.players, isEmpty);
         expect(notifier.state.operations, isEmpty);
+      },
+    );
+
+    test(
+      'addChessEverPlayer reuses FIDE identity and ChessEver id fallback',
+      () async {
+        final workspaceRepository =
+            _FakePlayerWorkspaceRepository()
+              ..snapshot = const PlayerWorkspaceSnapshot(
+                players: [
+                  PlayerWorkspacePlayer(
+                    id: 'fide-owner',
+                    displayName: 'GM Existing FIDE Player',
+                    createdAtMs: 2,
+                    fideId: '1503014',
+                    chesseverPlayerId: 'ce-before-reindex',
+                    accounts: {
+                      PlayerWorkspaceSource.chessever: PlayerWorkspaceAccount(
+                        source: PlayerWorkspaceSource.chessever,
+                        username: 'Existing FIDE Player',
+                        externalId: 'ce-before-reindex',
+                      ),
+                    },
+                  ),
+                  PlayerWorkspacePlayer(
+                    id: 'chessever-owner',
+                    displayName: 'Existing No-FIDE Player',
+                    createdAtMs: 1,
+                    fideId: '?',
+                    chesseverPlayerId: 'ce-stable-id',
+                    accounts: {
+                      PlayerWorkspaceSource.chessever: PlayerWorkspaceAccount(
+                        source: PlayerWorkspaceSource.chessever,
+                        username: 'Existing No-FIDE Player',
+                        externalId: 'ce-stable-id',
+                      ),
+                    },
+                  ),
+                ],
+              );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: LocalChessDatabaseRepository(
+            database: () async => db,
+          ),
+        );
+        await notifier.load();
+
+        final fideOwnerId = await notifier.addChessEverPlayer(
+          const GamebasePlayer(
+            id: 'ce-after-reindex',
+            fideId: '1503014',
+            name: 'Player, Existing FIDE',
+            gender: PlayerGender.male,
+            fed: 'NOR',
+            title: 'GM',
+          ),
+        );
+        final chessEverOwnerId = await notifier.addChessEverPlayer(
+          const GamebasePlayer(
+            id: 'ce-stable-id',
+            fideId: '?',
+            name: 'Player, Existing No-FIDE',
+            gender: PlayerGender.male,
+            fed: 'USA',
+          ),
+        );
+
+        expect(fideOwnerId, 'fide-owner');
+        expect(chessEverOwnerId, 'chessever-owner');
+        expect(notifier.state.players, hasLength(2));
+        expect(notifier.state.selectedPlayerId, 'chessever-owner');
+        expect(workspaceRepository.snapshot.players, hasLength(2));
+        expect(
+          notifier.state.players
+              .singleWhere((player) => player.id == 'fide-owner')
+              .chesseverPlayerId,
+          'ce-before-reindex',
+        );
       },
     );
 
@@ -2311,6 +3220,170 @@ void main() {
     );
 
     test(
+      'attachFetchedAccounts counts only genuinely new identity keys',
+      () async {
+        final workspaceRepository =
+            _FakePlayerWorkspaceRepository()
+              ..snapshot = const PlayerWorkspaceSnapshot(
+                selectedPlayerId: 'target',
+                players: [
+                  PlayerWorkspacePlayer(
+                    id: 'target',
+                    displayName: 'Prep Target',
+                    createdAtMs: 1,
+                    accounts: {
+                      PlayerWorkspaceSource.lichess: PlayerWorkspaceAccount(
+                        source: PlayerWorkspaceSource.lichess,
+                        username: 'Alpha',
+                      ),
+                      PlayerWorkspaceSource.chesscom: PlayerWorkspaceAccount(
+                        source: PlayerWorkspaceSource.chesscom,
+                        username: 'OldHandle',
+                        externalId: 'chess-account-42',
+                      ),
+                    },
+                  ),
+                ],
+              );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: LocalChessDatabaseRepository(
+            database: () async => db,
+          ),
+        );
+        await notifier.load();
+
+        final added = await notifier.attachFetchedAccounts(const [
+          PlayerWorkspaceAccount(
+            source: PlayerWorkspaceSource.lichess,
+            username: 'alpha',
+          ),
+          PlayerWorkspaceAccount(
+            source: PlayerWorkspaceSource.chesscom,
+            username: 'RenamedHandle',
+            externalId: 'chess-account-42',
+          ),
+          PlayerWorkspaceAccount(
+            source: PlayerWorkspaceSource.lichess,
+            username: 'Beta',
+          ),
+          PlayerWorkspaceAccount(
+            source: PlayerWorkspaceSource.lichess,
+            username: 'beta',
+          ),
+        ]);
+
+        expect(added, 1);
+        final player = notifier.state.selectedPlayer!;
+        expect(
+          player
+              .accountsFor(PlayerWorkspaceSource.lichess)
+              .map((account) => account.username),
+          <String>['Alpha', 'Beta'],
+        );
+        expect(
+          player.accountsFor(PlayerWorkspaceSource.chesscom).single.username,
+          'OldHandle',
+        );
+        expect(
+          workspaceRepository.snapshot.players.single.allAccounts,
+          hasLength(3),
+        );
+      },
+    );
+
+    for (final source in const <PlayerWorkspaceSource>[
+      PlayerWorkspaceSource.lichess,
+      PlayerWorkspaceSource.chesscom,
+    ]) {
+      test(
+        '${source.label} identity cannot move to another player workspace',
+        () async {
+          final ownerAccount = PlayerWorkspaceAccount(
+            source: source,
+            username:
+                source == PlayerWorkspaceSource.lichess
+                    ? 'SharedHandle'
+                    : 'PreviousHandle',
+            externalId:
+                source == PlayerWorkspaceSource.chesscom
+                    ? 'shared-account-id'
+                    : null,
+          );
+          final fetchedAccount = PlayerWorkspaceAccount(
+            source: source,
+            username:
+                source == PlayerWorkspaceSource.lichess
+                    ? 'sharedhandle'
+                    : 'CurrentHandle',
+            externalId:
+                source == PlayerWorkspaceSource.chesscom
+                    ? 'shared-account-id'
+                    : null,
+          );
+          final workspaceRepository =
+              _FakePlayerWorkspaceRepository()
+                ..snapshot = PlayerWorkspaceSnapshot(
+                  selectedPlayerId: 'target',
+                  players: [
+                    PlayerWorkspacePlayer(
+                      id: 'owner',
+                      displayName: 'GM Existing Owner',
+                      createdAtMs: 2,
+                      fideId: '1503014',
+                      accounts: {source: ownerAccount},
+                    ),
+                    const PlayerWorkspacePlayer(
+                      id: 'target',
+                      displayName: 'New Target',
+                      createdAtMs: 1,
+                    ),
+                  ],
+                );
+          final notifier = PlayerWorkspaceNotifier(
+            workspaceRepository: workspaceRepository,
+            gamebaseRepository: GamebaseRepository(Dio()),
+            localRepository: LocalChessDatabaseRepository(
+              database: () async => db,
+            ),
+          );
+          await notifier.load();
+
+          await expectLater(
+            notifier.attachFetchedAccounts([fetchedAccount]),
+            throwsA(
+              isA<StateError>()
+                  .having(
+                    (error) => error.message.toString(),
+                    'message',
+                    contains(source.label),
+                  )
+                  .having(
+                    (error) => error.message.toString(),
+                    'message',
+                    contains('GM Existing Owner'),
+                  )
+                  .having(
+                    (error) => error.message.toString(),
+                    'message',
+                    contains('FIDE 1503014'),
+                  ),
+            ),
+          );
+
+          expect(notifier.state.selectedPlayer!.allAccounts, isEmpty);
+          expect(
+            workspaceRepository.snapshot.players
+                .singleWhere((player) => player.id == 'target')
+                .allAccounts,
+            isEmpty,
+          );
+        },
+      );
+    }
+
+    test(
       'attachFetchedAccounts is a no-op without a selected player',
       () async {
         final workspaceRepository = _FakePlayerWorkspaceRepository();
@@ -2344,6 +3417,55 @@ void main() {
   });
 
   group('Player workspace local import', () {
+    test(
+      'reports save progress before importing a full source snapshot',
+      () async {
+        final pgnFile = File(p.join(temp.path, 'progress-source.pgn'));
+        final workspaceRepository = PlayerWorkspaceRepository(
+          supportDirectory: () async => temp,
+        );
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+        final progress = <({String message, double? progress})>[];
+
+        await workspaceRepository.mergeIntoLocalDatabase(
+          localRepository: localRepository,
+          path: pgnFile.path,
+          sourceLabel: 'Progress Source',
+          pgn: '$_mergeGameOne\n\n$_mergeGameTwo',
+          playerAliases: const <String>['Carlsen, Magnus'],
+          replaceExisting: true,
+          onProgress:
+              (message, value) =>
+                  progress.add((message: message, progress: value)),
+        );
+
+        expect(
+          progress.map((item) => item.message),
+          anyElement(startsWith('Saving downloaded PGN')),
+        );
+        expect(
+          progress.map((item) => item.message),
+          contains('Downloaded PGN saved.'),
+        );
+        expect(
+          progress.map((item) => item.message),
+          anyElement(startsWith('Reinstalling Progress Source')),
+        );
+        final fractions =
+            progress.map((item) => item.progress).whereType<double>().toList();
+        expect(fractions, isNotEmpty);
+        expect(fractions.first, 0.0);
+        expect(fractions, contains(0.08));
+        expect(fractions, contains(0.10));
+        // Worker progress is remapped above the save range so the import phase
+        // does not sit on the download→import handoff value forever.
+        expect(fractions.any((value) => value > 0.10), isTrue);
+        expect(fractions.last, greaterThanOrEqualTo(0.98));
+      },
+    );
+
     test('merges downloaded PGNs without duplicating cached games', () async {
       final workspaceRepository = PlayerWorkspaceRepository();
       final localRepository = LocalChessDatabaseRepository(
@@ -2445,6 +3567,168 @@ $_mergeGameOne
         final combined = await File(result.path).readAsString();
         expect(combined, contains('This is a comment, not a game'));
         expect(combined, contains('Lichess import 1'));
+      },
+    );
+
+    test(
+      'Combined rebuild canonically deduplicates equivalent games across sources',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+        final chessEver = File('${temp.path}/chessever-dedupe.pgn');
+        final lichess = File('${temp.path}/lichess-dedupe.pgn');
+        await chessEver.writeAsString(_crossSourceCanonicalGame);
+        await lichess.writeAsString(
+          '$_crossSourceEquivalentGame\n\n$_mergeGameThree',
+        );
+        final progress = <({String message, double? fraction})>[];
+
+        final result = await workspaceRepository.rebuildCombinedDatabase(
+          localRepository: localRepository,
+          playerId: 'cross-source-dedupe',
+          playerName: 'DrNykterstein',
+          sourcePaths: <String>[chessEver.path, lichess.path],
+          sources: <PlayerWorkspaceCombinedSource>[
+            // Deliberately reversed: provenance priority follows the visible
+            // source rail, not incidental map/insertion order.
+            PlayerWorkspaceCombinedSource(
+              path: lichess.path,
+              source: PlayerWorkspaceSource.lichess,
+            ),
+            PlayerWorkspaceCombinedSource(
+              path: chessEver.path,
+              source: PlayerWorkspaceSource.chessever,
+            ),
+          ],
+          playerAliases: const <String>['DrNykterstein'],
+          onProgress:
+              (message, fraction) =>
+                  progress.add((message: message, fraction: fraction)),
+        );
+
+        final games = splitPgnGames(await File(result.path).readAsString());
+        expect(games, hasLength(2));
+        expect(result.stats.gameCount, 2);
+        expect(await _count(db, 'local_chess_games'), 2);
+        expect(
+          games.first,
+          contains('[$playerWorkspaceCombinedSourceTag "chessever"]'),
+        );
+        for (final game in games) {
+          expect(
+            RegExp(
+              RegExp.escape('[$playerWorkspaceCombinedVersionTag '),
+            ).allMatches(game),
+            hasLength(1),
+          );
+          expect(
+            RegExp(
+              RegExp.escape('[$playerWorkspaceCombinedSourceTag '),
+            ).allMatches(game),
+            hasLength(1),
+          );
+        }
+        expect(
+          progress.where(
+            (item) => item.message.startsWith('Combining source '),
+          ),
+          isNotEmpty,
+        );
+        final preparationFractions = progress
+            .where((item) => item.message.startsWith('Combining source '))
+            .map((item) => item.fraction)
+            .whereType<double>()
+            .toList(growable: false);
+        expect(preparationFractions.toSet().length, greaterThanOrEqualTo(3));
+        expect(
+          preparationFractions,
+          orderedEquals(<double>[...preparationFractions]..sort()),
+        );
+        expect(preparationFractions.last, 0.10);
+      },
+    );
+
+    test(
+      'Combined preparation failure preserves the previous database',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+        const playerId = 'failure-safe-combined';
+        final combinedPath = await workspaceRepository.combinedPgnPath(
+          playerId: playerId,
+          playerName: 'DrNykterstein',
+        );
+        const previous = '[Event "Last good Combined"]\n\n1. e4 1-0\n';
+        await File(combinedPath).writeAsString(previous);
+        final validSource = File('${temp.path}/valid-before-failure.pgn');
+        await validSource.writeAsString(_mergeGameOne);
+
+        await expectLater(
+          workspaceRepository.rebuildCombinedDatabase(
+            localRepository: localRepository,
+            playerId: playerId,
+            playerName: 'DrNykterstein',
+            sourcePaths: <String>[
+              validSource.path,
+              '${temp.path}/missing-source.pgn',
+            ],
+            playerAliases: const <String>['DrNykterstein'],
+          ),
+          throwsA(anything),
+        );
+
+        expect(await File(combinedPath).readAsString(), previous);
+      },
+    );
+
+    test(
+      'canceling Combined preparation preserves output and removes temp files',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+        const playerId = 'cancel-safe-combined';
+        final combinedPath = await workspaceRepository.combinedPgnPath(
+          playerId: playerId,
+          playerName: 'DrNykterstein',
+        );
+        const previous = '[Event "Last good Combined"]\n\n1. d4 1-0\n';
+        await File(combinedPath).writeAsString(previous);
+        final source = File('${temp.path}/cancel-source.pgn');
+        await source.writeAsString(_largeChessEverPgn(1000));
+        final token = OperationCancellationToken();
+
+        await expectLater(
+          workspaceRepository.rebuildCombinedDatabase(
+            localRepository: localRepository,
+            playerId: playerId,
+            playerName: 'DrNykterstein',
+            sourcePaths: <String>[source.path],
+            playerAliases: const <String>['DrNykterstein'],
+            cancellationToken: token,
+            onProgress: (message, _) {
+              if (message.startsWith('Combining source ')) token.cancel();
+            },
+          ),
+          throwsA(isA<OperationCanceledException>()),
+        );
+
+        expect(await File(combinedPath).readAsString(), previous);
+        final leftovers =
+            await File(combinedPath).parent
+                .list()
+                .where(
+                  (entity) => p
+                      .basename(entity.path)
+                      .startsWith('${p.basename(combinedPath)}.tmp-'),
+                )
+                .toList();
+        expect(leftovers, isEmpty);
       },
     );
 
@@ -2602,6 +3886,52 @@ $_mergeGameOne
   });
 
   group('Player workspace public API downloads', () {
+    test(
+      'external Gamebase PGN request forwards cursor and delta header',
+      () async {
+        RequestOptions? request;
+        final dio = Dio();
+        dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              request = options;
+              handler.resolve(
+                Response<String>(
+                  requestOptions: options,
+                  data: _mergeGameThree,
+                  statusCode: 200,
+                  headers: Headers.fromMap(<String, List<String>>{
+                    'x-game-count': <String>['1'],
+                    'x-pgn-cache': <String>['refresh'],
+                    'x-pgn-snapshot': <String>['delta'],
+                  }),
+                ),
+              );
+            },
+          ),
+        );
+        final repository = GamebaseRepository(
+          dio,
+          baseUrl: 'https://gamebase.test',
+        );
+
+        final export = await repository.getExternalPlayerGamesPgn(
+          source: GamebaseExternalPlayerSource.lichess,
+          username: 'DrNykterstein',
+          sinceMs: 1782864000000,
+        );
+
+        expect(
+          request?.uri.path,
+          '/api/player/lichess/DrNykterstein/games.pgn',
+        );
+        expect(request?.queryParameters['since'], 1782864000000);
+        expect(export?.gameCount, 1);
+        expect(export?.cacheStatus, 'refresh');
+        expect(export?.snapshotStatus, 'delta');
+      },
+    );
+
     test('downloads ChessEver games by hydrating Gamebase PGNs', () async {
       final gamebaseRepository = _FakeGamebaseRepository(const <String, String>{
         'ce-1': _mergeGameOne,
@@ -2660,15 +3990,49 @@ $_mergeGameOne
         expect(downloaded.gameCount, 2);
         expect(downloaded.pgn, contains('Lichess import 1'));
         expect(downloaded.pgn, contains('Lichess import 2'));
-        expect(downloaded.replaceExistingSource, isTrue);
+        expect(downloaded.replaceExistingSource, isFalse);
         expect(gamebaseRepository.exportPlayerIds, <String>['ce-player']);
         expect(gamebaseRepository.exportFideIds, <String?>['1503014']);
-        expect(gamebaseRepository.exportDateFrom, <String?>[null]);
+        expect(gamebaseRepository.exportDateFrom, <String?>['2026-06-02']);
         expect(gamebaseRepository.requestedPlayerIds, isEmpty);
         expect(gamebaseRepository.hydratedIds, isEmpty);
         expect(
           progressMessages,
           contains('ChessEver: downloaded 2 games as PGN.'),
+        );
+      },
+    );
+
+    test(
+      'falls back to paged ChessEver download when PGN export is short',
+      () async {
+        final gamebaseRepository = _FakeGamebaseRepository(
+          const <String, String>{'ce-1': _mergeGameOne, 'ce-2': _mergeGameTwo},
+          pgnExport: _mergeGameOne,
+        );
+        final progressMessages = <String>[];
+        final workspaceRepository = PlayerWorkspaceRepository();
+
+        final downloaded = await workspaceRepository.downloadChessEverGames(
+          repository: gamebaseRepository,
+          playerId: 'ce-player',
+          fideId: '1503014',
+          expectedGameCount: 2,
+          onProgress: (message, _) => progressMessages.add(message),
+        );
+
+        expect(downloaded.source, PlayerWorkspaceSource.chessever);
+        expect(downloaded.gameCount, 2);
+        expect(downloaded.pgn, contains('Lichess import 1'));
+        expect(downloaded.pgn, contains('Lichess import 2'));
+        expect(gamebaseRepository.exportPlayerIds, <String>['ce-player']);
+        expect(gamebaseRepository.requestedPlayerIds, <String>['ce-player']);
+        expect(gamebaseRepository.hydratedIds, <String>['ce-1', 'ce-2']);
+        expect(
+          progressMessages,
+          contains(
+            'ChessEver: PGN export had 1 of 2 games; loading pages instead...',
+          ),
         );
       },
     );
@@ -2793,6 +4157,7 @@ $_mergeGameOne
                 pgn: _mergeGameOne,
                 gameCount: 1,
                 cacheStatus: 'miss',
+                snapshotStatus: 'delta',
               ),
               GamebaseExternalPlayerSource.chesscom: GamebasePlayerPgnExport(
                 pgn: _mergeGameTwo,
@@ -2811,20 +4176,56 @@ $_mergeGameOne
 
       final lichess = await workspaceRepository.downloadLichessGames(
         username: 'DrNykterstein',
+        sinceMs: 1782864000000,
       );
+      final chessComProgress = <({String message, double? progress})>[];
       final chessCom = await workspaceRepository.downloadChessComGames(
         username: 'Hikaru',
+        onProgress:
+            (message, progress) =>
+                chessComProgress.add((message: message, progress: progress)),
       );
 
       expect(lichess.source, PlayerWorkspaceSource.lichess);
       expect(lichess.pgn, _mergeGameOne);
-      expect(lichess.replaceExistingSource, isTrue);
+      expect(lichess.replaceExistingSource, isFalse);
       expect(lichess.remoteUnchanged, isFalse);
       expect(chessCom.source, PlayerWorkspaceSource.chesscom);
       expect(chessCom.pgn, _mergeGameTwo);
       expect(chessCom.replaceExistingSource, isTrue);
       expect(chessCom.remoteUnchanged, isTrue);
+      expect(chessComProgress.first.message, contains('source cache'));
+      expect(chessComProgress.first.progress, greaterThan(0));
+      expect(gamebaseRepository.externalSinceMs, <int?>[1782864000000, null]);
       expect(directClientRequests, 0);
+    });
+
+    test('empty Gamebase delta is reported as already current', () async {
+      final gamebaseRepository = _FakeGamebaseRepository(
+        const <String, String>{},
+        externalExports:
+            const <GamebaseExternalPlayerSource, GamebasePlayerPgnExport>{
+              GamebaseExternalPlayerSource.lichess: GamebasePlayerPgnExport(
+                pgn: '',
+                gameCount: 0,
+                cacheStatus: 'refresh',
+                snapshotStatus: 'delta',
+              ),
+            },
+      );
+      final workspaceRepository = PlayerWorkspaceRepository(
+        gamebaseRepository: gamebaseRepository,
+      );
+
+      final downloaded = await workspaceRepository.downloadLichessGames(
+        username: 'DrNykterstein',
+        sinceMs: 1782864000000,
+      );
+
+      expect(downloaded.gameCount, 0);
+      expect(downloaded.pgn, isEmpty);
+      expect(downloaded.replaceExistingSource, isFalse);
+      expect(downloaded.remoteUnchanged, isTrue);
     });
 
     test(
@@ -2951,13 +4352,13 @@ $_mergeGameOne
       );
     });
 
-    test('downloads Chess.com monthly archives concurrently', () async {
-      final pending = <String, Completer<http.Response>>{};
-      final allArchivesStarted = Completer<void>();
+    test('downloads Chess.com monthly archives serially', () async {
+      final requestedPaths = <String>[];
       var inFlight = 0;
       var maxInFlight = 0;
       final workspaceRepository = PlayerWorkspaceRepository(
         client: MockClient((request) async {
+          requestedPaths.add(request.url.path);
           if (request.url.path == '/pub/player/hikaru/games/archives') {
             return http.Response(
               jsonEncode({
@@ -2971,37 +4372,34 @@ $_mergeGameOne
             );
           }
           final path = request.url.path;
-          final completer = Completer<http.Response>();
-          pending[path] = completer;
           inFlight += 1;
           if (inFlight > maxInFlight) maxInFlight = inFlight;
-          if (pending.length == 3 && !allArchivesStarted.isCompleted) {
-            allArchivesStarted.complete();
-          }
-          final response = await completer.future;
+          await Future<void>.delayed(const Duration(milliseconds: 1));
           inFlight -= 1;
-          return response;
+          return http.Response(switch (path) {
+            '/pub/player/hikaru/games/2026/05/pgn' => _mergeGameOne,
+            '/pub/player/hikaru/games/2026/06/pgn' => _mergeGameTwo,
+            '/pub/player/hikaru/games/2026/07/pgn' => _mergeGameThree,
+            _ => throw StateError('Unexpected path $path'),
+          }, 200);
         }),
       );
 
-      final future = workspaceRepository.downloadChessComGames(
+      final progressUpdates = <({String message, double? progress})>[];
+      final downloaded = await workspaceRepository.downloadChessComGames(
         username: 'Hikaru',
+        onProgress:
+            (message, progress) =>
+                progressUpdates.add((message: message, progress: progress)),
       );
-      await allArchivesStarted.future.timeout(const Duration(seconds: 5));
 
-      expect(maxInFlight, greaterThan(1));
-
-      pending['/pub/player/hikaru/games/2026/07/pgn']!.complete(
-        http.Response(_mergeGameThree, 200),
-      );
-      pending['/pub/player/hikaru/games/2026/05/pgn']!.complete(
-        http.Response(_mergeGameOne, 200),
-      );
-      pending['/pub/player/hikaru/games/2026/06/pgn']!.complete(
-        http.Response(_mergeGameTwo, 200),
-      );
-      final downloaded = await future.timeout(const Duration(seconds: 5));
-
+      expect(maxInFlight, 1);
+      expect(requestedPaths, <String>[
+        '/pub/player/hikaru/games/archives',
+        '/pub/player/hikaru/games/2026/05/pgn',
+        '/pub/player/hikaru/games/2026/06/pgn',
+        '/pub/player/hikaru/games/2026/07/pgn',
+      ]);
       expect(downloaded.gameCount, 3);
       expect(
         downloaded.pgn.indexOf('Lichess import 1'),
@@ -3011,8 +4409,37 @@ $_mergeGameOne
         downloaded.pgn.indexOf('Lichess import 2'),
         lessThan(downloaded.pgn.indexOf('Lichess import 3')),
       );
+      expect(progressUpdates.first.progress, greaterThan(0));
+      expect(
+        progressUpdates.map((update) => update.progress).whereType<double>(),
+        contains(1.0),
+      );
     });
   });
+}
+
+String _largeChessEverPgn(int gameCount) {
+  final buffer = StringBuffer();
+  for (var index = 0; index < gameCount; index++) {
+    if (index > 0) buffer.writeln();
+    final day = (index % 28) + 1;
+    final result = index.isEven ? '1-0' : '0-1';
+    buffer
+      ..writeln('[Event "ChessEver cold game $index"]')
+      ..writeln('[Site "ChessEver"]')
+      ..writeln('[Date "2025.01.${day.toString().padLeft(2, '0')}"]')
+      ..writeln('[Round "${index + 1}"]')
+      ..writeln('[White "Durarbayli,Vasif"]')
+      ..writeln('[Black "Opponent $index"]')
+      ..writeln('[WhiteFideId "13402935"]')
+      ..writeln('[BlackFideId "${20000000 + index}"]')
+      ..writeln('[WhiteElo "2600"]')
+      ..writeln('[BlackElo "2500"]')
+      ..writeln('[Result "$result"]')
+      ..writeln()
+      ..writeln('1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 $result');
+  }
+  return buffer.toString();
 }
 
 Future<int> _count(resqlite.Database db, String table) async {
@@ -3056,6 +4483,31 @@ const String _mergeGameThree = '''
 1. c4 c5 2. Nc3 Nc6 1/2-1/2
 ''';
 
+const String _crossSourceCanonicalGame = '''
+[Event "Canonical cross-source game"]
+[Site "Local"]
+[Date "2026.07.11"]
+[Round "1"]
+[White "DrNykterstein"]
+[Black "Opponent"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. O-O Nf6 5. Re1 1-0
+''';
+
+const String _crossSourceEquivalentGame = '''
+[Black "Opponent"]
+[White "DrNykterstein"]
+[Round "1"]
+[Date "2026.07.11"]
+[Site "Local"]
+[Event "Canonical cross-source game"]
+[Result "1-0"]
+
+1. e4 {same game from another source} e5 2. Nf3 (2. Bc4) Nc6
+3. Bc4 Bc5 4. 0-0 Nf6 5. Re1+ 1-0
+''';
+
 const String _vasifChessEverPgn = '''
 [Event "ChessEver FIDE source 1"]
 [Site "ChessEver"]
@@ -3075,6 +4527,28 @@ const String _vasifChessEverPgn = '''
 [Black "Durarbayli,Vasif"]
 [WhiteFideId "2016192"]
 [BlackFideId "13402935"]
+[Result "0-1"]
+
+1. d4 d5 0-1
+''';
+
+const String _vasifChessEverMixedFidePgn = '''
+[Event "ChessEver FIDE source 1"]
+[Site "ChessEver"]
+[Date "2026.04.01"]
+[White "Durarbayli,V"]
+[Black "Nakamura,Hi"]
+[WhiteFideId "13402935"]
+[BlackFideId "2016192"]
+[Result "1-0"]
+
+1. e4 e5 1-0
+
+[Event "ChessEver no-FIDE source 2"]
+[Site "ChessEver"]
+[Date "2026.04.02"]
+[White "Nakamura,Hi"]
+[Black "Durarbayli, Vasif"]
 [Result "0-1"]
 
 1. d4 d5 0-1
@@ -3100,6 +4574,64 @@ const String _vasifChessComPgn = '''
 1. Nf3 d5 0-1
 ''';
 
+const String _vasifGeographicChessEverPgn = '''
+[Event "Baku Open"]
+[Site "Baku, Azerbaijan"]
+[Date "2025.01.01"]
+[White "Durarbayli, Vasif"]
+[Black "Opponent, One"]
+[WhiteFideId "13402935"]
+[BlackFideId "10000001"]
+[WhiteElo "2600"]
+[BlackElo "2500"]
+[ECO "C02"]
+[Result "1-0"]
+
+1. e4 e6 2. d4 d5 3. e5 1-0
+
+[Event "Baku Masters"]
+[Site "Baku, Azerbaijan"]
+[Date "2025.02.02"]
+[White "Opponent, Two"]
+[Black "Durarbayli, Vasif"]
+[WhiteFideId "10000002"]
+[BlackFideId "13402935"]
+[WhiteElo "2510"]
+[BlackElo "2605"]
+[ECO "B20"]
+[Result "1/2-1/2"]
+
+1. e4 c5 2. Nf3 1/2-1/2
+''';
+
+const String _vasifClassifiedChessComPgn = '''
+[Event "Live Chess"]
+[Site "https://www.chess.com/game/live/1"]
+[Date "2025.03.03"]
+[White "Vasif_Durarbayli"]
+[Black "Opponent Three"]
+[WhiteElo "2700"]
+[BlackElo "2650"]
+[TimeControl "300+0"]
+[ECO "C45"]
+[Result "0-1"]
+
+1. e4 e5 2. Nf3 Nc6 3. d4 0-1
+
+[Event "Live Chess"]
+[Site "https://www.chess.com/game/live/2"]
+[Date "2025.04.04"]
+[White "Opponent Four"]
+[Black "Vasif_Durarbayli"]
+[WhiteElo "2660"]
+[BlackElo "2710"]
+[TimeControl "300+0"]
+[ECO "B06"]
+[Result "0-1"]
+
+1. e4 g6 2. d4 Bg7 0-1
+''';
+
 class _HangingStatsLocalChessDatabaseRepository
     extends LocalChessDatabaseRepository {
   _HangingStatsLocalChessDatabaseRepository({required super.database})
@@ -3118,10 +4650,96 @@ class _HangingStatsLocalChessDatabaseRepository
   }
 }
 
+class _PartialSourceUnionStatsRepository extends LocalChessDatabaseRepository {
+  _PartialSourceUnionStatsRepository({required super.database});
+
+  var combinedPathRequests = 0;
+  var sourceUnionRequests = 0;
+
+  @override
+  Future<LocalChessDatabaseResultStats> localDatabaseResultStats({
+    required String databasePath,
+    required Iterable<String> playerAliases,
+    String? playerFideId,
+  }) async {
+    final lower = p.basename(databasePath).toLowerCase();
+    if (lower.contains('combined')) {
+      combinedPathRequests++;
+      return const LocalChessDatabaseResultStats(
+        gameCount: 20226,
+        winCount: 11237,
+        drawCount: 2011,
+        lossCount: 6978,
+      );
+    }
+    final count = switch (lower) {
+      String value when value.contains('chessever') => 3982,
+      String value when value.contains('lichess') => 6016,
+      String value when value.contains('chesscom') => 10573,
+      _ => 1,
+    };
+    return LocalChessDatabaseResultStats(
+      gameCount: count,
+      winCount: count,
+      drawCount: 0,
+      lossCount: 0,
+    );
+  }
+
+  @override
+  Future<LocalChessDatabaseResultStats> resultStatsForDatabases({
+    required Iterable<String> databasePaths,
+    required Iterable<String> playerAliases,
+    String? playerFideId,
+  }) async {
+    sourceUnionRequests++;
+    return const LocalChessDatabaseResultStats(
+      gameCount: 9998,
+      winCount: 5628,
+      drawCount: 1122,
+      lossCount: 3248,
+    );
+  }
+}
+
+/// Local repository whose consolidated cache purge blocks on [gate], so a test
+/// can observe the notifier's in-flight removing state before the purge
+/// finishes. Emits one progress event before blocking to prove the progress
+/// plumbing reaches the removing indicator.
+class _BlockingPurgeLocalRepository extends LocalChessDatabaseRepository {
+  _BlockingPurgeLocalRepository(resqlite.Database db, this.gate)
+    : super(database: (() async => db));
+
+  final Completer<void> gate;
+  int purgeCalls = 0;
+  int? requestedBatchSize;
+
+  @override
+  Future<int> deleteCachedSourcesAwaitingPurge({
+    required Iterable<String> sourcePaths,
+    int batchSize = 4096,
+    bool cleanupOrphanMetadata = false,
+    bool checkpoint = false,
+    void Function(LocalChessScanProgress progress)? onProgress,
+  }) async {
+    purgeCalls += 1;
+    requestedBatchSize = batchSize;
+    onProgress?.call(
+      LocalChessScanProgress(fraction: 0.5, message: 'Deleting games…'),
+    );
+    await gate.future;
+    onProgress?.call(
+      LocalChessScanProgress(fraction: 1, message: 'Delete complete.'),
+    );
+    return sourcePaths.length;
+  }
+}
+
 class _FakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   _FakePlayerWorkspaceRepository({
     Directory? root,
     this.chessEverPgnByPlayerId = const <String, String>{},
+    this.chessEverPlayersByFideId = const <String, GamebasePlayer>{},
     this.lichessPgnByUsername = const <String, String>{},
     this.chessComPgnByUsername = const <String, String>{},
     this.loadGate,
@@ -3129,6 +4747,7 @@ class _FakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
 
   final Directory root;
   final Map<String, String> chessEverPgnByPlayerId;
+  final Map<String, GamebasePlayer> chessEverPlayersByFideId;
   final Map<String, String> lichessPgnByUsername;
   final Map<String, String> chessComPgnByUsername;
   final Completer<void>? loadGate;
@@ -3136,6 +4755,7 @@ class _FakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   final lichessSinceMsRequests = <int?>[];
   final chessComSinceMsRequests = <int?>[];
   final chessEverSinceDateRequests = <DateTime?>[];
+  final chessEverFideIdRequests = <String>[];
   final replaceExistingRequests = <bool>[];
   int _counter = 0;
 
@@ -3148,6 +4768,15 @@ class _FakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   @override
   Future<void> saveSnapshot(PlayerWorkspaceSnapshot snapshot) async {
     this.snapshot = snapshot;
+  }
+
+  @override
+  Future<GamebasePlayer?> findChessEverPlayerByFideId(
+    GamebaseRepository repository,
+    String fideId,
+  ) async {
+    chessEverFideIdRequests.add(fideId);
+    return chessEverPlayersByFideId[fideId.trim()];
   }
 
   @override
@@ -3234,6 +4863,7 @@ class _FakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
       source: PlayerWorkspaceSource.lichess,
       pgn: pgn,
       gameCount: splitPgnGames(pgn).length,
+      remoteUnchanged: pgn.trim().isEmpty,
     );
   }
 
@@ -3406,6 +5036,8 @@ class _CoalescingPlayerWorkspaceRepository
     required String playerName,
     String? playerFideId,
     required Iterable<String> sourcePaths,
+    Iterable<PlayerWorkspaceCombinedSource> sources =
+        const <PlayerWorkspaceCombinedSource>[],
     required Iterable<String> playerAliases,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
@@ -3503,6 +5135,8 @@ class _HoldingMergePlayerWorkspaceRepository
     required String playerName,
     String? playerFideId,
     required Iterable<String> sourcePaths,
+    Iterable<PlayerWorkspaceCombinedSource> sources =
+        const <PlayerWorkspaceCombinedSource>[],
     required Iterable<String> playerAliases,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
@@ -3560,6 +5194,50 @@ class _HoldingChessEverWorkspaceRepository
     final pgn = chessEverPgnByPlayerId[playerId] ?? '';
     return PlayerWorkspaceDownloadedPgn(
       source: PlayerWorkspaceSource.chessever,
+      pgn: pgn,
+      gameCount: splitPgnGames(pgn).length,
+      replaceExistingSource: true,
+    );
+  }
+}
+
+class _HoldingChessComSnapshotWorkspaceRepository
+    extends _FakePlayerWorkspaceRepository {
+  _HoldingChessComSnapshotWorkspaceRepository({
+    required super.root,
+    required super.chessComPgnByUsername,
+  });
+
+  final downloadStarted = Completer<void>();
+  final _finishDownload = Completer<void>();
+
+  void finishDownload() {
+    if (!_finishDownload.isCompleted) _finishDownload.complete();
+  }
+
+  @override
+  Future<PlayerWorkspaceDownloadedPgn> downloadChessComGames({
+    required String username,
+    int? sinceMs,
+    PlayerWorkspaceProgress? onProgress,
+    OperationCancellationToken? cancellationToken,
+  }) async {
+    chessComSinceMsRequests.add(sinceMs);
+    onProgress?.call('Chess.com: checking source cache...', 0.05);
+    if (!downloadStarted.isCompleted) downloadStarted.complete();
+    if (cancellationToken == null) {
+      await _finishDownload.future;
+    } else {
+      await Future.any<void>(<Future<void>>[
+        _finishDownload.future,
+        cancellationToken.whenCanceled.then((_) {
+          throw const OperationCanceledException();
+        }),
+      ]);
+    }
+    final pgn = chessComPgnByUsername[username.trim().toLowerCase()] ?? '';
+    return PlayerWorkspaceDownloadedPgn(
+      source: PlayerWorkspaceSource.chesscom,
       pgn: pgn,
       gameCount: splitPgnGames(pgn).length,
       replaceExistingSource: true,
@@ -3767,6 +5445,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
   final exportPlayerIds = <String>[];
   final exportFideIds = <String?>[];
   final exportDateFrom = <String?>[];
+  final externalSinceMs = <int?>[];
   final requestedProfileIds = <String>[];
   final requestedPlayerIds = <String>[];
   final requestedIncludeData = <bool>[];
@@ -3802,7 +5481,9 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     required GamebaseExternalPlayerSource source,
     required String username,
     bool refresh = false,
+    int? sinceMs,
   }) async {
+    externalSinceMs.add(sinceMs);
     return externalExports[source];
   }
 

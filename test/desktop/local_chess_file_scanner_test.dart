@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -590,6 +591,109 @@ void main() {
       expect(scanned.message, contains('over the 64 MB scan limit'));
     });
 
+    test(
+      'streaming import scan keeps the caller isolate responsive',
+      () async {
+        const gameCount = 12000;
+        final file = File('${temp.path}/heartbeat.pgn');
+        await file.writeAsString(_bulkPgn(gameCount));
+
+        Timer? heartbeat;
+        var heartbeatCount = 0;
+        var heartbeatsBeforeFirstBatch = -1;
+
+        try {
+          final scanned = await scanLocalChessFileNodeForImportWithProgress(
+            path: file.path,
+            rootPath: temp.path,
+            maxGames: gameCount,
+            previewGameLimit: 8,
+            // Hold the only batch until all parsing and fingerprinting is done.
+            // On an inline implementation that work starves this timer.
+            batchSize: gameCount + 1,
+            onImportStart: (_) async {
+              heartbeat = Timer.periodic(const Duration(milliseconds: 1), (_) {
+                heartbeatCount++;
+              });
+            },
+            onGameBatch: (_) async {
+              heartbeatsBeforeFirstBatch = heartbeatCount;
+            },
+          );
+
+          expect(scanned.status, LocalChessFileStatus.parsed);
+          expect(scanned.gameCount, gameCount);
+          expect(scanned.games, hasLength(8));
+          expect(
+            heartbeatsBeforeFirstBatch,
+            greaterThan(0),
+            reason:
+                'PGN parsing/fingerprinting must not starve the caller isolate.',
+          );
+        } finally {
+          heartbeat?.cancel();
+        }
+      },
+      timeout: const Timeout(Duration(minutes: 1)),
+    );
+
+    test('streaming import batches use callback ACK backpressure', () async {
+      final file = File('${temp.path}/backpressure.pgn');
+      await file.writeAsString(_bulkPgn(5));
+      final firstBatchEntered = Completer<void>();
+      final releaseFirstBatch = Completer<void>();
+      final batchSizes = <int>[];
+      final acceptedCounts = <int>[];
+      final totalEntries = <int>[];
+      var scanCompleted = false;
+
+      final scan = scanLocalChessFileNodeForImportWithProgress(
+        path: file.path,
+        rootPath: temp.path,
+        previewGameLimit: 5,
+        batchSize: 2,
+        onGameBatch: (batch) async {
+          batchSizes.add(batch.games.length);
+          acceptedCounts.add(batch.acceptedCount);
+          totalEntries.add(batch.totalEntries);
+          if (batchSizes.length == 1) {
+            firstBatchEntered.complete();
+            await releaseFirstBatch.future;
+          }
+        },
+      ).whenComplete(() => scanCompleted = true);
+
+      await firstBatchEntered.future;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(batchSizes, <int>[2]);
+      expect(scanCompleted, isFalse);
+
+      releaseFirstBatch.complete();
+      final scanned = await scan;
+
+      expect(batchSizes, <int>[2, 2, 1]);
+      expect(acceptedCounts, <int>[2, 4, 5]);
+      expect(totalEntries, everyElement(5));
+      expect(scanned.gameCount, 5);
+      expect(scanned.games, hasLength(5));
+    });
+
+    test('streaming import preserves callback cancellation errors', () async {
+      final file = File('${temp.path}/cancel.pgn');
+      await file.writeAsString(_bulkPgn(2));
+      final cancellation = StateError('test cancellation');
+
+      await expectLater(
+        scanLocalChessFileNodeForImportWithProgress(
+          path: file.path,
+          rootPath: temp.path,
+          batchSize: 1,
+          onGameBatch: (_) async => throw cancellation,
+        ),
+        throwsA(same(cancellation)),
+      );
+    });
+
     test('gzip-compressed PGN databases are rejected', () async {
       final file = File('${temp.path}/archive.pgn.gz');
       await file.writeAsBytes(gzip.encode(utf8.encode(_samplePgn)));
@@ -651,6 +755,24 @@ void main() {
       );
     });
   });
+}
+
+String _bulkPgn(int gameCount) {
+  final buffer = StringBuffer();
+  for (var index = 0; index < gameCount; index++) {
+    buffer
+      ..writeln('[Event "Heartbeat $index"]')
+      ..writeln('[Site "Local"]')
+      ..writeln('[Date "2026.07.10"]')
+      ..writeln('[Round "$index"]')
+      ..writeln('[White "White $index"]')
+      ..writeln('[Black "Black $index"]')
+      ..writeln('[Result "*"]')
+      ..writeln()
+      ..writeln('1. e4 e5 2. Nf3 Nc6 *')
+      ..writeln();
+  }
+  return buffer.toString();
 }
 
 Uint8List _zstdFrameDeclaringSize(int size) {

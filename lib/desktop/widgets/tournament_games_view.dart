@@ -1380,15 +1380,14 @@ class _MatchHeaderBanner extends StatelessWidget {
 /// Opens a tournament game in a Board tab.
 ///
 /// Opens a Board tab keyed to this game after resolving the freshest available
-/// PGN/FEN snapshot. Event/source rail context is deliberately capped around the
-/// selected game so opening one card does not render or retain a whole large
-/// tournament.
+/// PGN/FEN snapshot. Event rails retain the full tournament so every round is
+/// available; broader route/source lists remain capped around the selection.
 ///
 /// Plain clicks use [replaceActive] so a game opens in the tab the user is
 /// currently reading, even if another copy of that game is already open.
 /// Explicit new-tab gestures (Cmd/Ctrl-click, middle-click, tab-strip drop)
 /// pass `replaceActive: false` and `reuseExisting: false`.
-const int _kBoardRailContextRadius = 30;
+const int _kRouteRailContextRadius = 30;
 
 BoardTabGameArgs buildTournamentBoardTabArgs(
   WidgetRef ref,
@@ -1409,6 +1408,7 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
     normalizedGame,
     eventGames,
     fallbackToSelected: true,
+    retainAll: true,
   );
   final routeContextGames = _boardRailContextGames(
     normalizedGame,
@@ -1574,6 +1574,7 @@ List<GamesTourModel> _boardRailContextGames(
   GamesTourModel selected,
   List<GamesTourModel> games, {
   required bool fallbackToSelected,
+  bool retainAll = false,
 }) {
   if (games.isEmpty) {
     return fallbackToSelected ? <GamesTourModel>[selected] : const [];
@@ -1583,14 +1584,20 @@ List<GamesTourModel> _boardRailContextGames(
   );
   if (selectedIndex < 0) return <GamesTourModel>[selected];
 
+  if (retainAll) {
+    final context = List<GamesTourModel>.from(games);
+    context[selectedIndex] = selected;
+    return context;
+  }
+
   final start =
-      selectedIndex - _kBoardRailContextRadius < 0
+      selectedIndex - _kRouteRailContextRadius < 0
           ? 0
-          : selectedIndex - _kBoardRailContextRadius;
+          : selectedIndex - _kRouteRailContextRadius;
   final end =
-      selectedIndex + _kBoardRailContextRadius + 1 > games.length
+      selectedIndex + _kRouteRailContextRadius + 1 > games.length
           ? games.length
-          : selectedIndex + _kBoardRailContextRadius + 1;
+          : selectedIndex + _kRouteRailContextRadius + 1;
   final context = games.sublist(start, end);
   final contextSelectedIndex = selectedIndex - start;
   if (contextSelectedIndex >= 0 && contextSelectedIndex < context.length) {

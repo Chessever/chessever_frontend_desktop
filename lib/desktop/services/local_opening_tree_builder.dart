@@ -878,9 +878,7 @@ class _PositionKey {
   const _PositionKey(this.fenKey);
 
   factory _PositionKey.fromPosition(Position position) {
-    return _PositionKey(
-      '${position.board.fen} ${position.turn == Side.white ? 'w' : 'b'}',
-    );
+    return _PositionKey(playerOpeningTreeFenKey(position.fen));
   }
 
   final String fenKey;

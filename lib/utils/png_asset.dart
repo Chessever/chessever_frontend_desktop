@@ -8,5 +8,7 @@ class PngAsset {
   static const blitzIcon = 'assets/pngs/blitz.png';
   static const classicalIcon = 'assets/pngs/classical.png';
   static const rapidIcon = 'assets/pngs/rapid.png';
+  static const bulletIcon = 'assets/pngs/bullet.png';
+  static const ultraBulletIcon = 'assets/pngs/ultra_bullet.png';
   static const bK = 'assets/pngs/bK.png';
 }

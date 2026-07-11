@@ -168,19 +168,24 @@ class LibraryTableEcoCell extends StatelessWidget {
 }
 
 /// Centered result glyph (`1 – 0`, `½ – ½`, …).
+///
+/// Colorful W/D/L palette aligned with players Overview:
+/// white wins → brand primary, black wins → red, draws → slate.
 class LibraryTableResultPill extends StatelessWidget {
   const LibraryTableResultPill({super.key, required this.result});
 
   final String result;
 
+  static const Color _kDraw = Color(0xFF8B93A7);
+
   @override
   Widget build(BuildContext context) {
     final r = result.trim();
     final (label, color) = switch (r) {
-      '1-0' => ('1 – 0', kWhiteColor),
-      '0-1' => ('0 – 1', kWhiteColor),
-      '1/2-1/2' || '½-½' => ('½ – ½', kWhiteColor70),
-      '*' => ('•', kGreenColor),
+      '1-0' => ('1 – 0', kPrimaryColor),
+      '0-1' => ('0 – 1', kRedColor),
+      '1/2-1/2' || '½-½' => ('½ – ½', _kDraw),
+      '*' => ('•', kPrimaryColor),
       _ => ('—', kLightGreyColor),
     };
     return Center(
@@ -189,7 +194,7 @@ class LibraryTableResultPill extends StatelessWidget {
         style: TextStyle(
           color: color,
           fontSize: 12,
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w800,
           fontFeatures: const [FontFeature.tabularFigures()],
         ),
       ),
