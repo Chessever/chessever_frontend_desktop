@@ -67,6 +67,9 @@ void main() {
         ),
       );
 
+      // The progress bar eases to its target, so let the animation finish
+      // before asserting the settled percentage.
+      await tester.pumpAndSettle();
       expect(find.text('50% · 2/4'), findsOneWidget);
       expect(find.text('Game report'), findsNothing);
       await tester.tap(find.text('Cancel'));

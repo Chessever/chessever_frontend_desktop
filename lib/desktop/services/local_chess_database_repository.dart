@@ -3671,67 +3671,118 @@ class LocalChessDatabaseRepository {
     final fideId = _normalizeFideIdForStats(playerFideId);
     final db = await _database();
     final placeholders = List.filled(databaseIds.length, '?').join(', ');
+    final aliasList = aliases.toList(growable: false);
+    final hasAliases = aliasList.isNotEmpty;
+    final aliasPlaceholders = List.filled(aliasList.length, '?').join(', ');
+
+    // Counting happens entirely in SQL so only four integers cross the isolate
+    // boundary. The previous implementation `SELECT`ed every game row of the
+    // target databases and deduplicated/classified them in a Dart loop on the
+    // UI isolate — for prolific players' Combined databases (tens of thousands
+    // of games) that pinned the main thread for seconds (App Hang) and could
+    // exhaust the heap, because the Players workspace repairs stats for every
+    // player on open. The predicates below mirror that classification exactly
+    // (locked by the resultStatsForDatabases regression tests): FIDE id takes
+    // priority, a present-but-different FIDE id excludes the row even when the
+    // name matches, and names are normalized with the same stripping rule as
+    // `_normalizePlayerAliasForStats`.
+    final params = <Object?>[];
+    final whiteName = _statsNameNormalizationSql('wp.name');
+    final blackName = _statsNameNormalizationSql('bp.name');
+    const whiteFide =
+        "NULLIF(LOWER(TRIM(COALESCE("
+        "json_extract(g.headers_json, '\$.WhiteFideId'), ''))), '')";
+    const blackFide =
+        "NULLIF(LOWER(TRIM(COALESCE("
+        "json_extract(g.headers_json, '\$.BlackFideId'), ''))), '')";
+
+    String sidePredicate({
+      required String fideExpression,
+      required String nameExpression,
+      required bool matchesEverythingWhenUnfiltered,
+    }) {
+      if (fideId != null) {
+        params.add(fideId);
+        if (hasAliases) {
+          params.addAll(aliasList);
+          return 'COALESCE($fideExpression = ? OR ($fideExpression IS NULL '
+              'AND $nameExpression IN ($aliasPlaceholders)), 0)';
+        }
+        return 'COALESCE($fideExpression = ?, 0)';
+      }
+      if (!hasAliases) {
+        return matchesEverythingWhenUnfiltered ? '1' : '0';
+      }
+      params.addAll(aliasList);
+      return 'COALESCE($nameExpression IN ($aliasPlaceholders), 0)';
+    }
+
+    final isWhite = sidePredicate(
+      fideExpression: whiteFide,
+      nameExpression: whiteName,
+      matchesEverythingWhenUnfiltered: true,
+    );
+    final isBlack = sidePredicate(
+      fideExpression: blackFide,
+      nameExpression: blackName,
+      matchesEverythingWhenUnfiltered: false,
+    );
+    params.addAll(databaseIds);
+
+    // Innermost: one row per game with the player-side flags and dedup key.
+    // Middle: keep only the player's games, collapse duplicates (same
+    // fingerprint across sources) via GROUP BY. Then classify each distinct
+    // game once (draw wins ties over win/loss, matching the old precedence) and
+    // sum. COALESCE keeps the flags 0 instead of NULL when a FIDE compare is
+    // against a NULL id.
     final rows = await db.select(
       '''
       SELECT
-        g.id AS id,
-        g.pgn_hash AS pgn_hash,
-        g.result AS result,
-        json_extract(g.headers_json, '\$.WhiteFideId') AS white_fide_id,
-        json_extract(g.headers_json, '\$.BlackFideId') AS black_fide_id,
-        wp.name AS white,
-        bp.name AS black
-      FROM $localChessGamesTable g
-      INNER JOIN $localChessDatabasesTable d ON d.id = g.database_id
-      LEFT JOIN $localChessPlayersTable wp ON wp.id = g.white_id
-      LEFT JOIN $localChessPlayersTable bp ON bp.id = g.black_id
-      WHERE g.database_id IN ($placeholders)
-        AND d.deleted_at_ms IS NULL
+        COUNT(*) AS games,
+        COALESCE(SUM(CASE WHEN outcome = 'w' THEN 1 ELSE 0 END), 0) AS wins,
+        COALESCE(SUM(CASE WHEN outcome = 'd' THEN 1 ELSE 0 END), 0) AS draws,
+        COALESCE(SUM(CASE WHEN outcome = 'l' THEN 1 ELSE 0 END), 0) AS losses
+      FROM (
+        SELECT
+          CASE
+            WHEN res IN ('1/2-1/2', '1/2', '½-½') THEN 'd'
+            WHEN (res = '1-0' AND iw = 1) OR (res = '0-1' AND ib = 1) THEN 'w'
+            WHEN (res = '0-1' AND iw = 1) OR (res = '1-0' AND ib = 1) THEN 'l'
+            ELSE 'o'
+          END AS outcome
+        FROM (
+          SELECT MAX(iw) AS iw, MAX(ib) AS ib, MIN(res) AS res
+          FROM (
+            SELECT
+              CASE
+                WHEN TRIM(COALESCE(g.pgn_hash, '')) = ''
+                  THEN 'id:' || CAST(g.id AS TEXT)
+                ELSE 'hash:' || TRIM(g.pgn_hash)
+              END AS dedup_key,
+              $isWhite AS iw,
+              $isBlack AS ib,
+              TRIM(COALESCE(g.result, '')) AS res
+            FROM $localChessGamesTable g
+            INNER JOIN $localChessDatabasesTable d ON d.id = g.database_id
+            LEFT JOIN $localChessPlayersTable wp ON wp.id = g.white_id
+            LEFT JOIN $localChessPlayersTable bp ON bp.id = g.black_id
+            WHERE g.database_id IN ($placeholders)
+              AND d.deleted_at_ms IS NULL
+          )
+          WHERE iw = 1 OR ib = 1
+          GROUP BY dedup_key
+        )
+      )
       ''',
-      <Object?>[...databaseIds],
+      params,
     );
 
-    final seen = <String>{};
-    var games = 0;
-    var wins = 0;
-    var draws = 0;
-    var losses = 0;
-    for (final row in rows) {
-      final white = _normalizePlayerAliasForStats(row['white']?.toString());
-      final black = _normalizePlayerAliasForStats(row['black']?.toString());
-      final whiteFide = _normalizeFideIdForStats(row['white_fide_id']);
-      final blackFide = _normalizeFideIdForStats(row['black_fide_id']);
-      final isWhite =
-          fideId == null
-              ? aliases.isEmpty || aliases.contains(white)
-              : whiteFide == fideId ||
-                  (whiteFide == null && aliases.contains(white));
-      final isBlack =
-          fideId == null
-              ? aliases.contains(black)
-              : blackFide == fideId ||
-                  (blackFide == null && aliases.contains(black));
-      if (!isWhite && !isBlack) continue;
-      final hash = row['pgn_hash']?.toString().trim() ?? '';
-      final dedupKey = hash.isEmpty ? 'id:${row['id']}' : 'hash:$hash';
-      if (!seen.add(dedupKey)) continue;
-      games++;
-      final result = row['result']?.toString().trim() ?? '';
-      if (result == '1/2-1/2' || result == '1/2' || result == '½-½') {
-        draws++;
-      } else if (!isWhite && !isBlack) {
-        continue;
-      } else if ((result == '1-0' && isWhite) || (result == '0-1' && isBlack)) {
-        wins++;
-      } else if ((result == '0-1' && isWhite) || (result == '1-0' && isBlack)) {
-        losses++;
-      }
-    }
+    final row = rows.isEmpty ? const <String, Object?>{} : rows.first;
     return LocalChessDatabaseResultStats(
-      gameCount: games,
-      winCount: wins,
-      drawCount: draws,
-      lossCount: losses,
+      gameCount: _readInt(row['games']),
+      winCount: _readInt(row['wins']),
+      drawCount: _readInt(row['draws']),
+      lossCount: _readInt(row['losses']),
     );
   }
 
@@ -8115,6 +8166,33 @@ String _normalizePlayerAliasForStats(String? value) {
       .toLowerCase()
       .replaceAll(RegExp(r'[\s,._-]+'), '')
       .trim();
+}
+
+/// SQL expression that normalizes [column] the same way
+/// [_normalizePlayerAliasForStats] normalizes a Dart string: lower-cased with
+/// every whitespace character and `, . _ -` separator stripped, so
+/// "Carlsen, Magnus" and "magnus carlsen" compare equal. Kept in lockstep with
+/// the regex above (`[\s,._-]`, where `\s` is space/tab/LF/VT/FF/CR) so the
+/// in-SQL alias match in [LocalChessDatabaseRepository.resultStatsForDatabases]
+/// stays byte-identical to the old on-isolate comparison.
+String _statsNameNormalizationSql(String column) {
+  const separators = <String>[
+    "' '",
+    'char(9)',
+    'char(10)',
+    'char(11)',
+    'char(12)',
+    'char(13)',
+    "','",
+    "'.'",
+    "'_'",
+    "'-'",
+  ];
+  var expression = "LOWER(COALESCE($column, ''))";
+  for (final separator in separators) {
+    expression = "REPLACE($expression, $separator, '')";
+  }
+  return expression;
 }
 
 String? _normalizeFideIdForStats(Object? value) {

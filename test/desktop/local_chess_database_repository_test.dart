@@ -3822,6 +3822,78 @@ void main() {
       expect(stats.lossCount, 0);
     },
   );
+
+  test(
+    'resultStatsForDatabases classifies wins, losses, draws and unknown results '
+    'from both colors',
+    () async {
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await _seedStatsDatabase(
+        db,
+        databaseId: 'srcOutcomes',
+        player: 'Test, Player',
+        games: const <_StatsGame>[
+          _StatsGame(hash: 'o-win-white', opponent: 'Rival', result: '1-0'),
+          _StatsGame(
+            hash: 'o-win-black',
+            opponent: 'Rival',
+            result: '0-1',
+            aliasIsWhite: false,
+          ),
+          _StatsGame(hash: 'o-loss-white', opponent: 'Rival', result: '0-1'),
+          _StatsGame(
+            hash: 'o-loss-black',
+            opponent: 'Rival',
+            result: '1-0',
+            aliasIsWhite: false,
+          ),
+          _StatsGame(hash: 'o-draw', opponent: 'Rival', result: '1/2-1/2'),
+          // Unknown result still counts toward the total but not W/D/L.
+          _StatsGame(hash: 'o-unknown', opponent: 'Rival', result: '*'),
+        ],
+      );
+
+      final stats = await repo.localDatabaseResultStats(
+        databasePath: 'srcOutcomes',
+        playerAliases: const <String>['Test, Player'],
+      );
+
+      expect(stats.gameCount, 6);
+      expect(stats.winCount, 2);
+      expect(stats.lossCount, 2);
+      expect(stats.drawCount, 1);
+    },
+  );
+
+  test(
+    'resultStatsForDatabases with no aliases or FIDE id counts every game as '
+    'the player',
+    () async {
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await _seedStatsDatabase(
+        db,
+        databaseId: 'srcUnfiltered',
+        player: 'Anyone',
+        games: const <_StatsGame>[
+          _StatsGame(hash: 'u-1', opponent: 'A', result: '1-0'),
+          _StatsGame(hash: 'u-2', opponent: 'B', result: '0-1'),
+          _StatsGame(hash: 'u-3', opponent: 'C', result: '1/2-1/2'),
+        ],
+      );
+
+      final stats = await repo.localDatabaseResultStats(
+        databasePath: 'srcUnfiltered',
+        playerAliases: const <String>[],
+      );
+
+      // Every game is treated as the (unnamed) player playing White, matching
+      // the previous in-Dart `aliases.isEmpty` fallthrough.
+      expect(stats.gameCount, 3);
+      expect(stats.winCount, 1);
+      expect(stats.lossCount, 1);
+      expect(stats.drawCount, 1);
+    },
+  );
 }
 
 Future<void> _createPreTimeControlResqliteCache(

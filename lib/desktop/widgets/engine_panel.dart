@@ -113,7 +113,8 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     if (!mounted) return;
     final reportState = _reportController.state;
     final running = reportState.isRunning;
-    if (running != _lastReportedRunning) {
+    final runningChanged = running != _lastReportedRunning;
+    if (runningChanged) {
       _lastReportedRunning = running;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || _lastReportedRunning != running) return;
@@ -121,14 +122,19 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       });
     }
     final report = reportState.report;
-    if (!identical(report, _lastPublishedReport)) {
+    final reportChanged = !identical(report, _lastPublishedReport);
+    if (reportChanged) {
       _lastPublishedReport = report;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !identical(_lastPublishedReport, report)) return;
         widget.onReportChanged?.call(report);
       });
     }
-    setState(() {});
+    // Progress-only ticks stream in as fast as the engine reports; those are
+    // absorbed by the scoped ListenableBuilder around the progress bar (see
+    // GameReportView), so the whole panel only rebuilds on structural
+    // transitions — start, finish, cancel, fail — never per node update.
+    if (runningChanged || reportChanged) setState(() {});
   }
 
   Future<void> _analyze() async {
@@ -230,6 +236,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
           flex: engineOn ? 3 : 1,
           child: GameReportView(
             state: _reportController.state,
+            progressController: _reportController,
             game: widget.game,
             headers: widget.headers,
             activePly: widget.activePly,
@@ -352,9 +359,16 @@ class GameReportView extends StatefulWidget {
     required this.onAnalyze,
     required this.onCancel,
     required this.onJumpToPly,
+    this.progressController,
   });
 
   final GameReportState state;
+
+  /// Optional live source for the running progress bar. When provided, only the
+  /// bar re-renders on each engine tick (via a scoped ListenableBuilder) so the
+  /// high-frequency node updates never rebuild the surrounding panel. Tests may
+  /// omit it and drive the view purely off [state].
+  final GameAnalysisReportController? progressController;
   final ChessGame? game;
   final Map<String, String> headers;
   final int activePly;
@@ -396,10 +410,7 @@ class _GameReportViewState extends State<GameReportView> {
         moveCount: game.mainline.length,
         onAnalyze: widget.onAnalyze,
       ),
-      GameReportStatus.running => _ReportProgress(
-        state: widget.state,
-        onCancel: widget.onCancel,
-      ),
+      GameReportStatus.running => _runningProgress(),
       GameReportStatus.cancelled => _ReportMessage(
         icon: Icons.cancel_outlined,
         title: 'Analysis cancelled',
@@ -418,6 +429,23 @@ class _GameReportViewState extends State<GameReportView> {
       ),
       GameReportStatus.completed => _completed(widget.state.report!),
     };
+  }
+
+  /// Renders the running progress bar. When a live controller is available the
+  /// bar subscribes to it directly, so the stream of node-count ticks rebuilds
+  /// only this subtree — the surrounding panel stays put until the report ends.
+  Widget _runningProgress() {
+    final controller = widget.progressController;
+    if (controller == null) {
+      return _ReportProgress(state: widget.state, onCancel: widget.onCancel);
+    }
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) => _ReportProgress(
+        state: controller.state,
+        onCancel: widget.onCancel,
+      ),
+    );
   }
 
   Widget _completed(GameAnalysisReport report) {
@@ -590,7 +618,7 @@ class _ReportProgress extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final percentage = (state.progress * 100).clamp(0, 100).round();
+    final target = state.progress.clamp(0.0, 1.0);
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -606,21 +634,39 @@ class _ReportProgress extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 9),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(999),
-          child: SizedBox(
-            height: 6,
-            child: LinearProgressIndicator(
-              value: state.progress,
-              color: kPrimaryColor,
-              backgroundColor: kBlack3Color,
-            ),
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          '$percentage% · ${state.completedPositions}/${state.totalPositions}',
-          style: const TextStyle(color: kWhiteColor70, fontSize: 11),
+        // Ease between the progress values the controller streams so the bar
+        // glides rather than snapping. The node-driven updates already arrive
+        // densely, so a short ease is enough to smooth the micro-steps and the
+        // occasional whole-slice jump (cached or terminal positions). On each
+        // new target the builder animates from the current displayed value, so
+        // it never jumps backwards.
+        TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: 0, end: target),
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+          builder: (context, value, _) {
+            final percentage = (value * 100).clamp(0, 100).round();
+            return Column(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: SizedBox(
+                    height: 6,
+                    child: LinearProgressIndicator(
+                      value: value,
+                      color: kPrimaryColor,
+                      backgroundColor: kBlack3Color,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '$percentage% · ${state.completedPositions}/${state.totalPositions}',
+                  style: const TextStyle(color: kWhiteColor70, fontSize: 11),
+                ),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 10),
         FButton(

@@ -129,6 +129,7 @@ typedef GameReportEvaluator =
       required int depth,
       required int multiPv,
       required String ownerId,
+      void Function(int reachedDepth, int knodes)? onProgress,
     });
 
 /// Owns one board tab's session-only whole-game analysis.
@@ -141,6 +142,14 @@ class GameAnalysisReportController extends ChangeNotifier {
 
   static const int reportDepth = 16;
   static const int reportMultiPv = 3;
+
+  /// Node count (in thousands) at which one position's search is treated as
+  /// ~63% complete. Stockfish reports cumulative `nodes` on nearly every info
+  /// line, so a node-driven fraction advances the bar on every engine tick —
+  /// far smoother than the 16 discrete depth steps, which leave the bar flat
+  /// through the long final-depth tail. The exact value only shapes the curve;
+  /// the per-position completion always snaps to the full slice regardless.
+  static const double reportKnodeReference = 500;
 
   final StockfishSingleton _stockfish;
   final GameReportEvaluator? _evaluator;
@@ -209,18 +218,35 @@ class GameAnalysisReportController extends ChangeNotifier {
                 depth: reportDepth,
                 multiPv: reportMultiPv,
                 ownerId: _ownerId,
+                // Advance the bar on every engine tick using the cumulative
+                // node count, so a single slow position (e.g. the cold-hash
+                // first search) keeps creeping continuously instead of sitting
+                // frozen until depth 16 finally reports. Node count grows on
+                // nearly every info line, giving the highest-frequency signal
+                // the engine offers.
+                onProgress: (reached, knodes) {
+                  if (knodes <= 0) return;
+                  final within = 1 - 1 / (1 + knodes / reportKnodeReference);
+                  _reportProgress(
+                    generation: generation,
+                    progress: (i + within) / fens.length,
+                    completedPositions: i,
+                    totalPositions: fens.length,
+                    message: 'Analyzing position ${i + 1} of ${fens.length}',
+                  );
+                },
               );
               break;
             } on _ReportPositionPreempted {
               if (_disposed || generation != _generation) return;
-              _setState(
-                GameReportState(
-                  status: GameReportStatus.running,
-                  progress: i / fens.length,
-                  completedPositions: i,
-                  totalPositions: fens.length,
-                  message: 'Waiting for live position analysis…',
-                ),
+              // Hold the bar where it is (never regress) while the live board
+              // search borrows the engine.
+              _reportProgress(
+                generation: generation,
+                progress: _state.progress,
+                completedPositions: i,
+                totalPositions: fens.length,
+                message: 'Waiting for live position analysis…',
               );
               await Future<void>.delayed(const Duration(milliseconds: 100));
             }
@@ -229,14 +255,12 @@ class GameAnalysisReportController extends ChangeNotifier {
         if (_disposed || generation != _generation) return;
         positions.add(position);
         final done = i + 1;
-        _setState(
-          GameReportState(
-            status: GameReportStatus.running,
-            progress: done / fens.length,
-            completedPositions: done,
-            totalPositions: fens.length,
-            message: 'Analyzing position $done of ${fens.length}',
-          ),
+        _reportProgress(
+          generation: generation,
+          progress: done / fens.length,
+          completedPositions: done,
+          totalPositions: fens.length,
+          message: 'Analyzing position $done of ${fens.length}',
         );
       }
 
@@ -271,6 +295,7 @@ class GameAnalysisReportController extends ChangeNotifier {
     required int depth,
     required int multiPv,
     required String ownerId,
+    void Function(int reachedDepth, int knodes)? onProgress,
   }) async {
     final customEvaluator = _evaluator;
     final result =
@@ -280,6 +305,7 @@ class GameAnalysisReportController extends ChangeNotifier {
               depth: depth,
               multiPv: multiPv,
               ownerId: ownerId,
+              onProgress: onProgress,
             )
             : await _stockfish.evaluatePosition(
               fen,
@@ -292,6 +318,7 @@ class GameAnalysisReportController extends ChangeNotifier {
               isCurrentPosition: false,
               allowCache: true,
               ownerId: ownerId,
+              onDepthUpdate: onProgress,
             );
     if (result.isCancelled) {
       throw const _ReportPositionPreempted();
@@ -320,6 +347,32 @@ class GameAnalysisReportController extends ChangeNotifier {
   void _fail(String message) {
     _setState(
       GameReportState(status: GameReportStatus.failed, message: message),
+    );
+  }
+
+  /// Pushes a running-progress update. Refuses to move the bar backwards and
+  /// drops only exact-duplicate writes, so the bar streams forward as fast as
+  /// the engine reports while ignoring node callbacks that arrive after a
+  /// cancel/supersede.
+  void _reportProgress({
+    required int generation,
+    required double progress,
+    required int completedPositions,
+    required int totalPositions,
+    required String message,
+  }) {
+    if (_disposed || generation != _generation) return;
+    final nextProgress = math.max(progress, _state.progress);
+    final advanced = nextProgress > _state.progress;
+    if (!advanced && message == _state.message) return;
+    _setState(
+      GameReportState(
+        status: GameReportStatus.running,
+        progress: nextProgress,
+        completedPositions: completedPositions,
+        totalPositions: totalPositions,
+        message: message,
+      ),
     );
   }
 

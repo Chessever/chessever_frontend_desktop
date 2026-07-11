@@ -1,5 +1,7 @@
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
+import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -64,6 +66,66 @@ void main() {
       final draw = terminalGameReportPosition('7k/5Q2/6K1/8/8/8/8/8 b - - 0 1');
       expect(mate?.bestLine.mate, 1);
       expect(draw?.bestLine.centipawns, 0);
+    });
+  });
+
+  group('report progress', () {
+    // Fake evaluator that mirrors Stockfish: it streams many info ticks with a
+    // growing cumulative node count (several per depth) before returning, so
+    // the controller reports sub-position progress the way it does live.
+    Future<EnhancedCloudEval> deepeningEvaluator(
+      String fen, {
+      required int depth,
+      required int multiPv,
+      required String ownerId,
+      void Function(int reachedDepth, int knodes)? onProgress,
+    }) async {
+      var knodes = 0;
+      for (var d = 1; d <= depth; d++) {
+        for (var tick = 0; tick < 4; tick++) {
+          knodes += 25 * d; // nodes accumulate faster at deeper iterations
+          onProgress?.call(d, knodes);
+        }
+      }
+      return EnhancedCloudEval(
+        fen: fen,
+        knodes: knodes,
+        depth: depth,
+        pvs: [Pv(moves: 'e2e4', cp: 20)],
+        requestedMultiPv: multiPv,
+      );
+    }
+
+    test('advances within each search and never moves backwards', () async {
+      final game = ChessGame.fromPgn('smooth', '1. e4 e5 2. Nf3 Nc6 *');
+      final positionCount = gameReportFens(game).length;
+      final controller = GameAnalysisReportController(
+        evaluator: deepeningEvaluator,
+      );
+      addTearDown(controller.dispose);
+
+      final progresses = <double>[];
+      controller.addListener(() {
+        if (controller.state.status == GameReportStatus.running) {
+          progresses.add(controller.state.progress);
+        }
+      });
+
+      await controller.analyze(game);
+
+      expect(controller.state.status, GameReportStatus.completed);
+      expect(controller.state.progress, 1.0);
+
+      // Monotonic: the bar only ever eases forward.
+      for (var i = 1; i < progresses.length; i++) {
+        expect(progresses[i], greaterThanOrEqualTo(progresses[i - 1]));
+      }
+
+      // Sub-position granularity: far more updates than positions proves the
+      // bar creeps *during* a search instead of only jumping when a whole
+      // position finishes — the fix for the "stuck then jumps" stall.
+      expect(progresses.length, greaterThan(positionCount * 2));
+      expect(progresses.toSet().length, greaterThan(positionCount));
     });
   });
 
