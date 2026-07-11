@@ -8,10 +8,16 @@ import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/player_workspace_repository.dart';
+import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
+import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
+import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
+import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
+import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/utils/responsive_helper.dart';
 import 'package:flutter/material.dart';
@@ -19,6 +25,57 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 void main() {
+  test('places Combined immediately above Manual PGN in the source rail', () {
+    expect(playerWorkspaceSourceRailOrder, <PlayerWorkspaceSource>[
+      PlayerWorkspaceSource.chessever,
+      PlayerWorkspaceSource.lichess,
+      PlayerWorkspaceSource.chesscom,
+      PlayerWorkspaceSource.combined,
+      PlayerWorkspaceSource.manual,
+    ]);
+  });
+
+  group('player library row labels', () {
+    test('keeps the title chip value out of the white player name', () {
+      expect(
+        playerWorkspaceDisplayName(
+          const PlayerWorkspacePlayer(
+            id: 'hikaru',
+            displayName: 'GM Hikaru Nakamura',
+            createdAtMs: 1,
+            title: 'GM',
+          ),
+        ),
+        'Hikaru Nakamura',
+      );
+      expect(
+        playerWorkspaceDisplayName(
+          const PlayerWorkspacePlayer(
+            id: 'vasif',
+            displayName: 'gm Vasif Durarbayli',
+            createdAtMs: 1,
+            title: 'GM',
+          ),
+        ),
+        'Vasif Durarbayli',
+      );
+    });
+
+    test('keeps an unprefixed player name unchanged', () {
+      expect(
+        playerWorkspaceDisplayName(
+          const PlayerWorkspacePlayer(
+            id: 'judit',
+            displayName: 'Judit Polgar',
+            createdAtMs: 1,
+            title: 'GM',
+          ),
+        ),
+        'Judit Polgar',
+      );
+    });
+  });
+
   testWidgets('connects a Lichess account without framework exceptions', (
     tester,
   ) async {
@@ -103,6 +160,7 @@ void main() {
       lichessPath: 2,
       chessComPath: 3,
     });
+    final registry = LocalLibraryRegistryNotifier(_PaneMemoryAppDatabase());
 
     await tester.binding.setSurfaceSize(const Size(1200, 800));
     addTearDown(() async {
@@ -117,6 +175,7 @@ void main() {
           localChessDatabaseRepositoryProvider.overrideWithValue(
             localRepository,
           ),
+          localLibraryRegistryProvider.overrideWith((ref) => registry),
           localChessLibraryProvider.overrideWith(
             (ref) => LocalChessLibraryNotifier(
               localDatabaseRepository: localRepository,
@@ -137,9 +196,21 @@ void main() {
 
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
+    expect(
+      find.widgetWithText(DesktopHeaderActionButton, 'Add player'),
+      findsOneWidget,
+    );
     await tester.tap(find.text('Prep Target').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
+    expect(
+      find.widgetWithText(DesktopHeaderActionButton, 'All players'),
+      findsNothing,
+    );
+    expect(
+      find.widgetWithText(DesktopHeaderActionButton, 'Add player'),
+      findsNothing,
+    );
     await tester.tap(find.text('Build Tree').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
@@ -149,6 +220,9 @@ void main() {
     expect(
       find.widgetWithText(LocalTreeActionButton, 'Build Tree'),
       findsNWidgets(2),
+    );
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(PlayerWorkspacePane)),
     );
 
     await tester.tap(
@@ -162,6 +236,25 @@ void main() {
     final firstBuiltPath = localRepository.indexes.keys.single;
     expect(firstBuiltPath, isIn([lichessPath, chessComPath]));
     expect(find.widgetWithText(LocalTreeActionButton, 'Tree'), findsOneWidget);
+    final firstBoardTabs = container
+        .read(desktopTabsProvider)
+        .tabs
+        .where((tab) => tab.kind == TabKind.board)
+        .toList(growable: false);
+    expect(firstBoardTabs, hasLength(1));
+    expect(
+      container.read(desktopTabsProvider).activeId,
+      firstBoardTabs.single.id,
+    );
+    final openedTree =
+        container
+            .read(boardTabGameArgsByTabIdProvider)[firstBoardTabs.single.id]
+            ?.localOpeningTreeIndex;
+    expect(openedTree?.playerId, firstBuiltPath);
+    expect(
+      container.read(rightRailActivePageProvider(firstBoardTabs.single.id)),
+      1,
+    );
 
     await tester.tap(
       find.widgetWithText(LocalTreeActionButton, 'Build Tree').first,
@@ -946,6 +1039,21 @@ class _PaneFakeLocalChessDatabaseRepository
       openingTreeIndex: index,
     );
   }
+}
+
+class _PaneMemoryAppDatabase implements AppDatabase {
+  final Map<String, Object?> _values = <String, Object?>{};
+
+  @override
+  Future<T?> getJson<T>(String key) async => _values[key] as T?;
+
+  @override
+  Future<void> setJson(String key, Object value) async {
+    _values[key] = value;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _PaneMutableTreeLocalChessDatabaseRepository

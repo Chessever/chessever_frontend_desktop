@@ -1155,6 +1155,41 @@ void main() {
   });
 
   test(
+    'purging a deleted source clears every child cache row across batches',
+    () async {
+      final pgnFile = File('${temp.path}/purge-me.pgn');
+      await pgnFile.writeAsString(_bulkPgn(5));
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+
+      final source = await repo.importSingleFileSource(path: pgnFile.path);
+      expect(source, isNotNull);
+      expect(await _count(db, 'local_chess_databases'), 1);
+      expect(await _count(db, 'local_chess_games'), 5);
+
+      expect(await repo.markCachedSourceDeleted(pgnFile.path), 1);
+
+      final progress = <LocalChessScanProgress>[];
+      // A batch size below the row count forces the chunked delete loop to run
+      // several iterations. This is the path that used to SELECT a batch of
+      // rowids back to the caller (materializing them on the calling isolate)
+      // and now deletes via a writer-side subquery instead — the change that
+      // stops a heavy player removal from dropping frames.
+      final purged = await repo.purgeDeletedCaches(
+        batchSize: 2,
+        onProgress: progress.add,
+      );
+
+      expect(purged, 1);
+      expect(await _count(db, 'local_chess_games'), 0);
+      expect(await _count(db, 'local_chess_position_games'), 0);
+      expect(await _count(db, 'local_chess_tree_moves'), 0);
+      expect(await _count(db, 'local_chess_tree_nodes'), 0);
+      expect(await _count(db, 'local_chess_databases'), 0);
+      expect(progress.last.message, 'Delete complete.');
+    },
+  );
+
+  test(
     'queued import persists all PGN games while returning only preview rows',
     () async {
       final pgnFile = File('${temp.path}/bulk.pgn');
@@ -1200,11 +1235,14 @@ void main() {
         <Object?>[pgnFile.path],
       );
       expect(gameRows, hasLength(5));
+      // The streaming importer now derives the UCI move line (and ply_count)
+      // from the retained PGN so the opening-explorer move-prefix fallback can
+      // filter games at non-root positions on large local databases.
       expect(
         gameRows.map((row) => jsonDecode(row['moves'] as String)),
-        everyElement(isEmpty),
+        everyElement(<String>['e2e4', 'e7e5', 'g1f3', 'b8c6']),
       );
-      expect(gameRows.map((row) => row['ply_count']), everyElement(0));
+      expect(gameRows.map((row) => row['ply_count']), everyElement(4));
       final databaseRows = await db.select(
         '''
         SELECT game_count, position_count, deleted_at_ms

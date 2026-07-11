@@ -305,7 +305,7 @@ const int _kSqlWriteBatchSize = 4096;
 // row-materialization batches small enough that JSON encoding, metadata-set
 // construction, and resqlite request packing yield within a frame budget. The
 // wider 4096-row SQL batch remains appropriate for non-interactive maintenance.
-const int _kInteractiveImportBatchSize = 128;
+const int _kInteractiveImportBatchSize = 16;
 const int _kEagerPositionRefLoadLimit = 250000;
 const int _kEagerTreeMoveLoadLimit = 250000;
 const int _kCachedFileNodeGamePreviewLimit = 1000;
@@ -2608,6 +2608,61 @@ class LocalChessDatabaseRepository {
           () => purgeDeletedCaches(sourcePath: path, onProgress: onProgress),
     );
     return marked;
+  }
+
+  /// Marks every path in [sourcePaths] deleted and then runs a single purge
+  /// pass over the marked databases on one dedicated connection, awaiting
+  /// completion and reporting [onProgress].
+  ///
+  /// Removing a player that owns several generated sources used to enqueue one
+  /// fire-and-forget [scheduleCachedSourceDelete] per source, and each of those
+  /// opened (and closed) its own dedicated resqlite connection — spawning a
+  /// reader pool + writer isolate every time. Doing the whole player in one
+  /// marked-then-purged pass collapses that to a single connection open, and
+  /// because it is awaitable the caller can show honest progress and keep the
+  /// row on screen until the cleanup actually finishes.
+  Future<int> deleteCachedSourcesAwaitingPurge({
+    required Iterable<String> sourcePaths,
+    int batchSize = 4096,
+    bool cleanupOrphanMetadata = false,
+    bool checkpoint = false,
+    void Function(LocalChessScanProgress progress)? onProgress,
+  }) async {
+    final paths = <String>{
+      for (final path in sourcePaths)
+        if (path.trim().isNotEmpty) path.trim(),
+    };
+    if (paths.isEmpty) {
+      onProgress?.call(
+        LocalChessScanProgress(fraction: 1, message: 'Delete complete.'),
+      );
+      return 0;
+    }
+    var marked = 0;
+    for (final path in paths) {
+      marked += await _retryWhenSqliteBusy(
+        operation: 'mark local source deleted',
+        context: <String, Object?>{'sourcePath': path},
+        action: () => markCachedSourceDeleted(path),
+      );
+    }
+    if (marked == 0) {
+      onProgress?.call(
+        LocalChessScanProgress(fraction: 1, message: 'Delete complete.'),
+      );
+      return 0;
+    }
+    return _retryWhenSqliteBusy(
+      operation: 'purge deleted local sources',
+      context: <String, Object?>{'sourcePaths': paths.length},
+      action:
+          () => purgeDeletedCaches(
+            batchSize: batchSize,
+            cleanupOrphanMetadata: cleanupOrphanMetadata,
+            checkpoint: checkpoint,
+            onProgress: onProgress,
+          ),
+    );
   }
 
   void scheduleCachedSourceDelete({
@@ -5061,29 +5116,25 @@ class LocalChessDatabaseRepository {
     required int batchSize,
     void Function(String table, int deletedRows)? onDeletedRows,
   }) async {
+    // Delete in bounded batches, but let the writer isolate pick the rows via a
+    // subquery instead of SELECTing a batch of rowids back to the caller and
+    // echoing them into an `IN (?, ?, …)` list. Materializing 4096-row id
+    // batches on the calling (UI) isolate and re-encoding them per batch across
+    // the millions of rows a heavy player can hold is what dropped frames while
+    // a removal's cache purge ran. The `Future.delayed(Duration.zero)` between
+    // batches still yields the event loop so the purge stays cooperative.
     while (true) {
-      final rows = await db.select(
+      final result = await db.execute(
         '''
-        SELECT rowid
-        FROM $table
-        WHERE database_id = ?
-        LIMIT ?
+        DELETE FROM $table
+        WHERE rowid IN (
+          SELECT rowid FROM $table WHERE database_id = ? LIMIT ?
+        )
         ''',
         <Object?>[databaseId, batchSize],
       );
-      if (rows.isEmpty) return;
-      final rowIds = <Object?>[for (final row in rows) row['rowid']];
-      final placeholders = List<String>.filled(rowIds.length, '?').join(', ');
-      final result = await db.execute(
-        'DELETE FROM $table WHERE rowid IN ($placeholders)',
-        rowIds,
-      );
       final deletedRows = result.affectedRows;
-      if (deletedRows <= 0) {
-        throw StateError(
-          'Local chess purge could not delete selected rows from $table.',
-        );
-      }
+      if (deletedRows <= 0) return;
       onDeletedRows?.call(table, deletedRows);
       await Future<void>.delayed(Duration.zero);
     }
@@ -5213,12 +5264,15 @@ class LocalChessDatabaseRepository {
     required String idSql,
     required int batchSize,
   }) async {
+    // Same rationale as _deleteDatabaseRowsInChunks: nest the id selection
+    // (`idSql` already ends in `LIMIT ?`) as a subquery so the writer isolate
+    // deletes each batch without shipping a batch of ids back to the caller.
     while (true) {
-      final rows = await db.select(idSql, <Object?>[batchSize]);
-      if (rows.isEmpty) return;
-      final ids = <Object?>[for (final row in rows) row['id']];
-      final placeholders = List<String>.filled(ids.length, '?').join(', ');
-      await db.execute('DELETE FROM $table WHERE id IN ($placeholders)', ids);
+      final result = await db.execute(
+        'DELETE FROM $table WHERE id IN ($idSql)',
+        <Object?>[batchSize],
+      );
+      if (result.affectedRows <= 0) return;
       await Future<void>.delayed(Duration.zero);
     }
   }
@@ -6253,7 +6307,16 @@ class LocalChessDatabaseRepository {
         playerIds: playerIds,
         eventIds: eventIds,
         siteIds: siteIds,
-        parseRawPgnLineFallback: false,
+        // Derive the UCI move line (and ply_count) from the retained PGN. The
+        // opening-explorer games list for large local databases (> the
+        // position-game-ref limit, where per-position refs are skipped) is
+        // served by _localPositionGamesResponseFromMovePrefix, which matches
+        // the board's move prefix against g.moves. Persisting an empty moves
+        // array here left that fallback with nothing to match, so every
+        // non-root position reported "No Games Found" while the FEN-keyed move
+        // tree still rendered. See regression test in
+        // local_chess_position_games_move_prefix_test.dart.
+        parseRawPgnLineFallback: true,
       );
     });
   }

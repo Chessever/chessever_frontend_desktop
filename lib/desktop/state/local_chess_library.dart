@@ -140,6 +140,8 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   Object? _scanToken;
   final Set<String> _activeTreeBuilds = <String>{};
   final Set<String> _pendingTreeBuilds = <String>{};
+  final Map<String, List<Completer<PlayerOpeningTreeIndex?>>>
+  _treeBuildWaiters = <String, List<Completer<PlayerOpeningTreeIndex?>>>{};
   int _treeBuildGeneration = 0;
 
   Future<bool> pickFolder() async {
@@ -390,6 +392,32 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     return _scheduleTreeBuild(node, source, force: true);
   }
 
+  /// Starts an explicit tree rebuild and resolves with that build's usable
+  /// index. Background rebuild callers keep using [rebuildOpeningTree], while
+  /// user-initiated surfaces can await this result before navigating.
+  Future<PlayerOpeningTreeIndex?> rebuildOpeningTreeAndWait(String path) {
+    final source = state.source;
+    final node = source?.nodeForPath(path);
+    if (source == null ||
+        node is! LocalChessFileNode ||
+        !node.isPlayable ||
+        localDatabaseRepository == null) {
+      return Future<PlayerOpeningTreeIndex?>.value();
+    }
+
+    final key = localChessInputPathKey(path);
+    final completer = Completer<PlayerOpeningTreeIndex?>();
+    (_treeBuildWaiters[key] ??= <Completer<PlayerOpeningTreeIndex?>>[]).add(
+      completer,
+    );
+    final scheduled = _scheduleTreeBuild(node, source, force: true);
+    if (!scheduled && !_activeTreeBuilds.contains(key)) {
+      _removeTreeBuildWaiter(key, completer);
+      completer.complete();
+    }
+    return completer.future;
+  }
+
   /// Imports pure PGN/file lists through the same resqlite cache path single
   /// file import uses. Multi-file picks used to fall straight into the slower
   /// scanner path and skip `importSingleFileSource`, which made large multi-PGN
@@ -440,11 +468,11 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         onProgress: (progress) {
           publish(
             LocalChessScanProgress(
-              fraction: (start + (progress.fraction * span))
-                  .clamp(0.0, 1.0)
-                  .toDouble(),
-              message:
-                  'File ${index + 1} of $total: ${progress.message}',
+              fraction:
+                  (start + (progress.fraction * span))
+                      .clamp(0.0, 1.0)
+                      .toDouble(),
+              message: 'File ${index + 1} of $total: ${progress.message}',
             ),
           );
         },
@@ -761,6 +789,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         );
       }
       _removeTreeBuildProgress(path);
+      _completeTreeBuildWaiters(path, index);
     } catch (e) {
       _setTreeBuildProgress(
         LocalChessTreeBuildProgress(
@@ -772,6 +801,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
           error: localChessOpenErrorMessage(e),
         ),
       );
+      _completeTreeBuildWaiters(path, null);
     }
   }
 
@@ -817,6 +847,38 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   void _invalidateTreeBuilds() {
     _treeBuildGeneration++;
     _pendingTreeBuilds.clear();
+    _completeAllTreeBuildWaiters(null);
+  }
+
+  void _removeTreeBuildWaiter(
+    String key,
+    Completer<PlayerOpeningTreeIndex?> completer,
+  ) {
+    final waiters = _treeBuildWaiters[key];
+    waiters?.remove(completer);
+    if (waiters?.isEmpty == true) _treeBuildWaiters.remove(key);
+  }
+
+  void _completeTreeBuildWaiters(String path, PlayerOpeningTreeIndex? index) {
+    final waiters = _treeBuildWaiters.remove(localChessInputPathKey(path));
+    if (waiters == null) return;
+    for (final completer in waiters) {
+      if (!completer.isCompleted) completer.complete(index);
+    }
+  }
+
+  void _completeAllTreeBuildWaiters(PlayerOpeningTreeIndex? index) {
+    final waiters = _treeBuildWaiters.values.expand((items) => items).toList();
+    _treeBuildWaiters.clear();
+    for (final completer in waiters) {
+      if (!completer.isCompleted) completer.complete(index);
+    }
+  }
+
+  @override
+  void dispose() {
+    _completeAllTreeBuildWaiters(null);
+    super.dispose();
   }
 
   bool _isCurrentTreeBuild(String path, int generation) {

@@ -12,6 +12,7 @@ import 'package:screenshot/screenshot.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
+import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/widgets/gif_export_worker.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/pgn_clock_utils.dart';
@@ -197,6 +198,19 @@ class BoardShareService {
           frameEvaluations != null && i < frameEvaluations.length
               ? frameEvaluations[i]
               : null;
+      // Per-frame evals govern when the caller supplies [frameEvaluations]:
+      // a null frame eval means "no eval for this position" and must render a
+      // neutral bar — never borrow the single top-level [evaluation], which
+      // belongs to one live position and would smear across the whole GIF.
+      // The single top-level value only applies when no per-frame list exists.
+      final double? resolvedEvaluation =
+          frameEvaluations != null ? frameEval?.evaluation : evaluation;
+      final int? resolvedMate =
+          frameEvaluations != null ? frameEval?.mate : mate;
+      final bool resolvedIsEvaluating =
+          frameEvaluations != null
+              ? (frameEval?.isEvaluating ?? false)
+              : isEvaluating;
       final Widget board =
           includePlayerBars
               ? BoardShareCard(
@@ -222,9 +236,9 @@ class BoardShareService {
                 sideToMove: _sideToMoveFromFen(frame.fen),
                 flipped: flipped,
                 boardSize: boardSize,
-                evaluation: frameEval?.evaluation ?? evaluation,
-                mate: frameEval?.mate ?? mate,
-                isEvaluating: frameEval?.isEvaluating ?? isEvaluating,
+                evaluation: resolvedEvaluation,
+                mate: resolvedMate,
+                isEvaluating: resolvedIsEvaluating,
                 showEvalBar: showEvalBar,
               )
               : cg.StaticChessboard(
@@ -318,6 +332,130 @@ String _ensureExtension(String path, String extension) {
   return path.toLowerCase().endsWith(normalizedExtension)
       ? path
       : '$path$normalizedExtension';
+}
+
+/// Per-frame data for a shared board GIF, produced by replaying a game's
+/// mainline from its starting position.
+///
+/// All four lists are the same length and index-aligned. Index 0 is the
+/// starting position (no move played); indices 1..n follow each replayed ply.
+class BoardShareGifFrames {
+  const BoardShareGifFrames({
+    required this.frames,
+    required this.durationsCs,
+    required this.clocks,
+    required this.evaluations,
+  });
+
+  final List<({String fen, Move? lastMove})> frames;
+  final List<int> durationsCs;
+  final List<({String? whiteClock, String? blackClock})> clocks;
+  final List<({double? evaluation, int? mate, bool isEvaluating})> evaluations;
+}
+
+/// Parses a PGN `[%eval …]` payload into a share-frame evaluation record.
+///
+/// Accepts centipawn floats (`0.34`, `-1.2`) and mate strings (`#3`, `M-2`).
+/// Returns null when the text is empty or unrecognised.
+({double? evaluation, int? mate, bool isEvaluating})? parseBoardShareMoveEval(
+  String? raw,
+) {
+  final text = raw?.trim();
+  if (text == null || text.isEmpty) return null;
+  final mateMatch = RegExp(
+    r'^(?:#|M)([+-]?\d+)$',
+    caseSensitive: false,
+  ).firstMatch(text);
+  if (mateMatch != null) {
+    final mate = int.tryParse(mateMatch.group(1)!);
+    if (mate != null) {
+      return (evaluation: null, mate: mate, isEvaluating: false);
+    }
+  }
+  final cp = double.tryParse(text);
+  if (cp == null) return null;
+  return (evaluation: cp, mate: null, isEvaluating: false);
+}
+
+/// Replays [mainline] from [startingFen] to build every GIF frame together with
+/// its last move (for board highlighting), running clocks, and evaluation.
+///
+/// The last move is captured for every ply so each frame highlights its own
+/// from/to squares. Evaluations come solely from PGN `[%eval]` annotations and
+/// are carried forward between annotated plies; frames with no known eval stay
+/// neutral (null) instead of borrowing an unrelated position's number, so the
+/// shared eval bar stays honest as the animation steps through the game.
+///
+/// Replay stops cleanly at the first SAN that cannot be parsed from the current
+/// position rather than skipping it, which would desync every later frame.
+BoardShareGifFrames buildBoardShareGifFrames({
+  required String startingFen,
+  required List<ChessMove> mainline,
+  int initialHoldCs = 80,
+  int moveHoldCs = 50,
+  int finalHoldCs = 160,
+}) {
+  final frames = <({String fen, Move? lastMove})>[];
+  final clocks = <({String? whiteClock, String? blackClock})>[];
+  final evaluations = <({double? evaluation, int? mate, bool isEvaluating})>[];
+  final durations = <int>[];
+
+  String? whiteClock;
+  String? blackClock;
+
+  Position pos;
+  try {
+    pos = Chess.fromSetup(Setup.parseFen(startingFen));
+  } catch (_) {
+    pos = Chess.initial;
+  }
+
+  // Starting position: no move played yet, no eval known.
+  frames.add((fen: pos.fen, lastMove: null));
+  clocks.add((whiteClock: whiteClock, blackClock: blackClock));
+  evaluations.add((evaluation: null, mate: null, isEvaluating: false));
+  durations.add(initialHoldCs);
+
+  ({double? evaluation, int? mate, bool isEvaluating})? lastEval;
+
+  for (var i = 0; i < mainline.length; i++) {
+    final moveData = mainline[i];
+    final move = pos.parseSan(moveData.san);
+    if (move == null) break; // Replay diverged — stop rather than desync.
+    pos = pos.play(move);
+
+    final clockTime = moveData.clockTime?.trim();
+    if (clockTime != null && clockTime.isNotEmpty) {
+      if (moveData.turn == ChessColor.white) {
+        whiteClock = clockTime;
+      } else if (moveData.turn == ChessColor.black) {
+        blackClock = clockTime;
+      }
+    }
+
+    lastEval = parseBoardShareMoveEval(moveData.eval) ?? lastEval;
+
+    final last =
+        move is NormalMove ? NormalMove(from: move.from, to: move.to) : null;
+    frames.add((fen: pos.fen, lastMove: last));
+    clocks.add((whiteClock: whiteClock, blackClock: blackClock));
+    evaluations.add(
+      lastEval ?? (evaluation: null, mate: null, isEvaluating: false),
+    );
+    durations.add(moveHoldCs);
+  }
+
+  // Hold the final position a little longer so shared GIFs land on it.
+  if (durations.length > 1) {
+    durations[durations.length - 1] = finalHoldCs;
+  }
+
+  return BoardShareGifFrames(
+    frames: frames,
+    durationsCs: durations,
+    clocks: clocks,
+    evaluations: evaluations,
+  );
 }
 
 Side? _sideToMoveFromFen(String fen) {

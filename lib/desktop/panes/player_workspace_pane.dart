@@ -51,6 +51,32 @@ import 'package:chessever/widgets/player_initials_avatar.dart';
 
 const _startingFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
+@visibleForTesting
+String playerWorkspaceDisplayName(PlayerWorkspacePlayer player) {
+  final displayName = player.displayName.trim();
+  final title = player.title?.trim();
+  if (displayName.isEmpty || title == null || title.isEmpty) {
+    return displayName;
+  }
+  return displayName.replaceFirst(
+    RegExp('^${RegExp.escape(title)}\\s+', caseSensitive: false),
+    '',
+  );
+}
+
+/// Canonical visual order for sources in the player-detail rail.
+///
+/// Kept as a single testable value so the generated Combined database cannot
+/// silently drift below Manual PGN again when source cards are rearranged.
+@visibleForTesting
+const playerWorkspaceSourceRailOrder = <PlayerWorkspaceSource>[
+  PlayerWorkspaceSource.chessever,
+  PlayerWorkspaceSource.lichess,
+  PlayerWorkspaceSource.chesscom,
+  PlayerWorkspaceSource.combined,
+  PlayerWorkspaceSource.manual,
+];
+
 enum _PlayerWorkspaceTab { overview, accounts, games, buildTree }
 
 final _cachedPlayerWorkspaceTreeIndexProvider = FutureProvider.autoDispose
@@ -87,8 +113,17 @@ class PlayerWorkspacePane extends HookConsumerWidget {
     final error = ref.watch(
       playerWorkspaceProvider.select((state) => state.error),
     );
+    final removals = ref.watch(
+      playerWorkspaceProvider.select((state) => state.removals),
+    );
     final openedPlayerId = useState<String?>(null);
-    final selected = _playerById(players, openedPlayerId.value);
+    // A player mid-removal stays in `players` (so its row can show the removing
+    // spinner) but its detail view must close — it is being torn down and its
+    // cache is being purged. Treat an opened-but-removing player as unopened.
+    final selected =
+        removals.containsKey(openedPlayerId.value)
+            ? null
+            : _playerById(players, openedPlayerId.value);
     final tab = useState(_PlayerWorkspaceTab.overview);
     final gamesFilter = useState(LocalChessGameFilter());
     final gamesSourcePath = useState<String?>(null);
@@ -119,15 +154,17 @@ class PlayerWorkspacePane extends HookConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _Header(
-            player: selected,
-            onBackToLibrary:
-                selected == null ? null : () => openedPlayerId.value = null,
-            onAddPlayer:
-                () => unawaited(
-                  _showAddPlayerDialog(context, ref, onOpenPlayer: openPlayer),
-                ),
-          ),
+          if (selected == null)
+            _Header(
+              onAddPlayer:
+                  () => unawaited(
+                    _showAddPlayerDialog(
+                      context,
+                      ref,
+                      onOpenPlayer: openPlayer,
+                    ),
+                  ),
+            ),
           Expanded(
             child:
                 isLoading
@@ -137,6 +174,7 @@ class PlayerWorkspacePane extends HookConsumerWidget {
                     : selected == null
                     ? _PlayerLibraryHome(
                       players: players,
+                      removals: removals,
                       error: error,
                       onAddPlayer:
                           () => unawaited(
@@ -157,7 +195,7 @@ class PlayerWorkspacePane extends HookConsumerWidget {
                           ),
                     )
                     : Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
@@ -165,8 +203,6 @@ class PlayerWorkspacePane extends HookConsumerWidget {
                             width: 330,
                             child: _PlayerSourceRail(
                               player: selected,
-                              players: players,
-                              onSelectPlayer: openPlayer,
                               onAddAccount:
                                   (source) => unawaited(
                                     _showAccountConnectFlow(
@@ -271,32 +307,16 @@ class PlayerWorkspacePane extends HookConsumerWidget {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({
-    required this.player,
-    required this.onBackToLibrary,
-    required this.onAddPlayer,
-  });
+  const _Header({required this.onAddPlayer});
 
-  final PlayerWorkspacePlayer? player;
-  final VoidCallback? onBackToLibrary;
   final VoidCallback onAddPlayer;
 
   @override
   Widget build(BuildContext context) {
-    final openedPlayer = player;
-    final title = player?.displayName ?? 'Players';
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
       child: Row(
         children: [
-          if (onBackToLibrary != null) ...[
-            DesktopHeaderActionButton(
-              label: 'All players',
-              icon: Icons.arrow_back_rounded,
-              onPress: onBackToLibrary,
-            ),
-            const SizedBox(width: 12),
-          ],
           const Icon(
             Icons.person_search_outlined,
             size: 18,
@@ -311,7 +331,7 @@ class _Header extends StatelessWidget {
               children: [
                 Flexible(
                   child: Text(
-                    title,
+                    'Players',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -322,17 +342,6 @@ class _Header extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (openedPlayer != null) ...[
-                  const SizedBox(width: 10),
-                  Text(
-                    '${_formatInt(openedPlayer.totalGames)} games',
-                    style: const TextStyle(
-                      color: kWhiteColor70,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
               ],
             ),
           ),
@@ -352,6 +361,7 @@ class _Header extends StatelessWidget {
 class _PlayerLibraryHome extends HookWidget {
   const _PlayerLibraryHome({
     required this.players,
+    required this.removals,
     required this.error,
     required this.onAddPlayer,
     required this.onOpenPlayer,
@@ -360,6 +370,7 @@ class _PlayerLibraryHome extends HookWidget {
   });
 
   final List<PlayerWorkspacePlayer> players;
+  final Map<String, PlayerWorkspaceRemoval> removals;
   final String? error;
   final VoidCallback onAddPlayer;
   final ValueChanged<String> onOpenPlayer;
@@ -405,6 +416,7 @@ class _PlayerLibraryHome extends HookWidget {
                       )
                       : _PlayerLibraryList(
                         players: filtered,
+                        removals: removals,
                         onOpenPlayer: onOpenPlayer,
                         onRenamePlayer: onRenamePlayer,
                         onRemovePlayer: onRemovePlayer,
@@ -576,12 +588,14 @@ class _LibraryMetric extends StatelessWidget {
 class _PlayerLibraryList extends StatelessWidget {
   const _PlayerLibraryList({
     required this.players,
+    required this.removals,
     required this.onOpenPlayer,
     required this.onRenamePlayer,
     required this.onRemovePlayer,
   });
 
   final List<PlayerWorkspacePlayer> players;
+  final Map<String, PlayerWorkspaceRemoval> removals;
   final ValueChanged<String> onOpenPlayer;
   final ValueChanged<PlayerWorkspacePlayer> onRenamePlayer;
   final ValueChanged<PlayerWorkspacePlayer> onRemovePlayer;
@@ -608,6 +622,7 @@ class _PlayerLibraryList extends StatelessWidget {
                 final player = players[index];
                 return _PlayerLibraryRow(
                   player: player,
+                  removal: removals[player.id],
                   onOpen: () => onOpenPlayer(player.id),
                   onRename: () => onRenamePlayer(player),
                   onRemove: () => onRemovePlayer(player),
@@ -630,6 +645,15 @@ const double _kSourcesColWidth = 176;
 const double _kGamesColWidth = 92;
 const double _kLastSyncColWidth = 120;
 const double _kRowActionsWidth = 112;
+// Combined width of the four trailing slots plus the four gaps between them.
+// The removing indicator fills exactly this so a row mid-removal keeps its
+// player column the same width as every other row.
+const double _kTrailingTotalWidth =
+    _kColGap * 4 +
+    _kSourcesColWidth +
+    _kGamesColWidth +
+    _kLastSyncColWidth +
+    _kRowActionsWidth;
 
 class _PlayerLibraryHeaderRow extends StatelessWidget {
   const _PlayerLibraryHeaderRow();
@@ -688,12 +712,14 @@ class _TableHeaderLabel extends StatelessWidget {
 class _PlayerLibraryRow extends StatefulWidget {
   const _PlayerLibraryRow({
     required this.player,
+    required this.removal,
     required this.onOpen,
     required this.onRename,
     required this.onRemove,
   });
 
   final PlayerWorkspacePlayer player;
+  final PlayerWorkspaceRemoval? removal;
   final VoidCallback onOpen;
   final VoidCallback onRename;
   final VoidCallback onRemove;
@@ -709,106 +735,209 @@ class _PlayerLibraryRowState extends State<_PlayerLibraryRow>
   @override
   Widget build(BuildContext context) {
     final player = widget.player;
+    final removal = widget.removal;
+    final isRemoving = removal != null;
     return MouseRegion(
-      onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
-      onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
+      // While a player is being torn down its row is inert: no hover, no tap,
+      // no per-row actions — just the removing indicator. The rest of the pane
+      // stays interactive so the user can keep working during a heavy cleanup.
+      onEnter:
+          isRemoving
+              ? null
+              : (_) => setStateAfterPointerEvent(() => _hovered = true),
+      onExit:
+          isRemoving
+              ? null
+              : (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: widget.onOpen,
+        onTap: isRemoving ? null : widget.onOpen,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 120),
           curve: Curves.easeOut,
-          color: _hovered ? kBlack3Color : kBlack2Color,
+          color: _hovered && !isRemoving ? kBlack3Color : kBlack2Color,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             children: [
               Expanded(
-                child: Row(
-                  children: [
-                    _PlayerAvatar(player: player, size: 40),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Row(
-                            children: [
-                              if (player.title != null) ...[
-                                DesktopPlayerTitleChip(
-                                  title: player.title!,
-                                  compact: true,
-                                ),
-                                const SizedBox(width: 6),
-                              ],
-                              Expanded(
-                                child: Text(
-                                  player.displayName,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: kWhiteColor,
-                                    fontSize: 13.5,
-                                    fontWeight: FontWeight.w800,
+                child: Opacity(
+                  opacity: isRemoving ? 0.45 : 1,
+                  child: Row(
+                    children: [
+                      _PlayerAvatar(player: player, size: 40),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Row(
+                              children: [
+                                if (player.title != null) ...[
+                                  DesktopPlayerTitleChip(
+                                    title: player.title!,
+                                    compact: true,
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                                Expanded(
+                                  child: Text(
+                                    playerWorkspaceDisplayName(player),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: kWhiteColor,
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w800,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 5),
-                          _PlayerFacets(player: player),
-                        ],
+                              ],
+                            ),
+                            const SizedBox(height: 5),
+                            _PlayerFacets(player: player),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(width: _kColGap),
-              SizedBox(
-                width: _kSourcesColWidth,
-                child: _SourceChipRow(player: player),
-              ),
-              const SizedBox(width: _kColGap),
-              SizedBox(
-                width: _kGamesColWidth,
-                child: _GamesCell(player: player),
-              ),
-              const SizedBox(width: _kColGap),
-              SizedBox(
-                width: _kLastSyncColWidth,
-                child: _LastSyncCell(ms: player.lastSyncAtMs),
-              ),
-              const SizedBox(width: _kColGap),
-              SizedBox(
-                width: _kRowActionsWidth,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    DesktopDialogIconButton(
-                      icon: Icons.edit_outlined,
-                      tooltip: 'Rename player',
-                      onPress: widget.onRename,
-                    ),
-                    const SizedBox(width: 4),
-                    DesktopDialogIconButton(
-                      icon: Icons.delete_outline_rounded,
-                      tooltip: 'Remove player',
-                      tone: DesktopDialogButtonTone.danger,
-                      onPress: widget.onRemove,
-                    ),
-                    const SizedBox(width: 6),
-                    DesktopDialogIconButton(
-                      icon: Icons.chevron_right_rounded,
-                      tooltip: 'Open player',
-                      tone: DesktopDialogButtonTone.primary,
-                      onPress: widget.onOpen,
-                    ),
-                  ],
+              if (removal != null)
+                // Replace the whole data/actions strip with the removing
+                // indicator. It occupies exactly the combined width of the
+                // columns it stands in for, so the player column keeps the same
+                // width as every other row and the grid never shifts.
+                SizedBox(
+                  width: _kTrailingTotalWidth,
+                  child: _PlayerRemovingIndicator(removal: removal),
+                )
+              else ...[
+                const SizedBox(width: _kColGap),
+                SizedBox(
+                  width: _kSourcesColWidth,
+                  child: _SourceChipRow(player: player),
                 ),
-              ),
+                const SizedBox(width: _kColGap),
+                SizedBox(
+                  width: _kGamesColWidth,
+                  child: _GamesCell(player: player),
+                ),
+                const SizedBox(width: _kColGap),
+                SizedBox(
+                  width: _kLastSyncColWidth,
+                  child: _LastSyncCell(ms: player.lastSyncAtMs),
+                ),
+                const SizedBox(width: _kColGap),
+                SizedBox(
+                  width: _kRowActionsWidth,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      DesktopDialogIconButton(
+                        icon: Icons.edit_outlined,
+                        tooltip: 'Rename player',
+                        onPress: widget.onRename,
+                      ),
+                      const SizedBox(width: 4),
+                      DesktopDialogIconButton(
+                        icon: Icons.delete_outline_rounded,
+                        tooltip: 'Remove player',
+                        tone: DesktopDialogButtonTone.danger,
+                        onPress: widget.onRemove,
+                      ),
+                      const SizedBox(width: 6),
+                      DesktopDialogIconButton(
+                        icon: Icons.chevron_right_rounded,
+                        tooltip: 'Open player',
+                        tone: DesktopDialogButtonTone.primary,
+                        onPress: widget.onOpen,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Inline "Removing…" strip shown in place of a player row's data/action
+/// columns while its downloaded sources and SQLite cache are being torn down.
+/// Spinner + message + progress reflect the real cache-purge progress, so a
+/// heavy removal reads as deliberate work rather than a freeze.
+class _PlayerRemovingIndicator extends StatelessWidget {
+  const _PlayerRemovingIndicator({required this.removal});
+
+  final PlayerWorkspaceRemoval removal;
+
+  @override
+  Widget build(BuildContext context) {
+    final percent = removal.percent;
+    return Padding(
+      padding: const EdgeInsets.only(left: _kColGap),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(kPrimaryColor),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        removal.message,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: kWhiteColor,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    if (percent != null) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        '$percent%',
+                        style: const TextStyle(
+                          color: kWhiteColor70,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(3),
+                  child: LinearProgressIndicator(
+                    value: removal.progress,
+                    minHeight: 4,
+                    backgroundColor: kBlack3Color,
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      kPrimaryColor,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1217,8 +1346,6 @@ class _EmptyPlayerWorkspace extends StatelessWidget {
 class _PlayerSourceRail extends ConsumerWidget {
   const _PlayerSourceRail({
     required this.player,
-    required this.players,
-    required this.onSelectPlayer,
     required this.onAddAccount,
     required this.onEditAccount,
     required this.onRefreshAccount,
@@ -1230,8 +1357,6 @@ class _PlayerSourceRail extends ConsumerWidget {
   });
 
   final PlayerWorkspacePlayer player;
-  final List<PlayerWorkspacePlayer> players;
-  final ValueChanged<String> onSelectPlayer;
   final ValueChanged<PlayerWorkspaceSource> onAddAccount;
   final ValueChanged<PlayerWorkspaceAccount> onEditAccount;
   final ValueChanged<PlayerWorkspaceAccount> onRefreshAccount;
@@ -1256,67 +1381,51 @@ class _PlayerSourceRail extends ConsumerWidget {
         padding: const EdgeInsets.all(14),
         children: [
           _PlayerIdentityCard(player: player),
-          if (players.length > 1) ...[
-            const SizedBox(height: 14),
-            const _RailSectionLabel('Workspace players'),
-            const SizedBox(height: 8),
-            for (final item in players.take(8))
-              _PlayerMiniRow(
-                player: item,
-                selected: item.id == player.id,
-                onTap: () => onSelectPlayer(item.id),
-              ),
-          ],
           const SizedBox(height: 14),
           const _RailSectionLabel('Sources'),
           const SizedBox(height: 8),
-          for (final source in const [
-            PlayerWorkspaceSource.chessever,
-            PlayerWorkspaceSource.lichess,
-            PlayerWorkspaceSource.chesscom,
-            PlayerWorkspaceSource.manual,
-          ]) ...[
-            for (final account in player.accountsFor(source))
-              _SourceCard(
-                source: source,
-                account: account,
-                operation: _operationForAccount(operations, account),
-                onAddAccount: () => onAddAccount(source),
-                onEditAccount: () => onEditAccount(account),
-                onRefreshAccount: () => onRefreshAccount(account),
-                onRemoveAccount: () => onRemoveAccount(account),
-                onSync: () => onSync(account),
-                onReinstall: () => onReinstall(account),
-                onCancelOperation: () => onCancelOperation(account),
-              ),
-            if (player.accountsFor(source).isEmpty)
-              _SourceCard(
-                source: source,
-                account: null,
+          for (final source in playerWorkspaceSourceRailOrder) ...[
+            if (source == PlayerWorkspaceSource.combined)
+              _CombinedCard(
+                player: player,
                 operation: _operationForSource(operations, source),
-                onAddAccount: () => onAddAccount(source),
-                onEditAccount: null,
-                onRefreshAccount: null,
-                onRemoveAccount: null,
-                onSync: null,
-                onReinstall: null,
-                onCancelOperation: null,
+                onRebuild: onRebuildCombined,
               )
-            else if (source.allowsMultipleAccounts)
-              _AddSourceAccountButton(
-                source: source,
-                onPress: () => onAddAccount(source),
-              ),
+            else ...[
+              for (final account in player.accountsFor(source))
+                _SourceCard(
+                  source: source,
+                  account: account,
+                  operation: _operationForAccount(operations, account),
+                  onAddAccount: () => onAddAccount(source),
+                  onEditAccount: () => onEditAccount(account),
+                  onRefreshAccount: () => onRefreshAccount(account),
+                  onRemoveAccount: () => onRemoveAccount(account),
+                  onSync: () => onSync(account),
+                  onReinstall: () => onReinstall(account),
+                  onCancelOperation: () => onCancelOperation(account),
+                ),
+              if (player.accountsFor(source).isEmpty)
+                _SourceCard(
+                  source: source,
+                  account: null,
+                  operation: _operationForSource(operations, source),
+                  onAddAccount: () => onAddAccount(source),
+                  onEditAccount: null,
+                  onRefreshAccount: null,
+                  onRemoveAccount: null,
+                  onSync: null,
+                  onReinstall: null,
+                  onCancelOperation: null,
+                )
+              else if (source.allowsMultipleAccounts)
+                _AddSourceAccountButton(
+                  source: source,
+                  onPress: () => onAddAccount(source),
+                ),
+            ],
             const SizedBox(height: 8),
           ],
-          _CombinedCard(
-            player: player,
-            operation: _operationForSource(
-              operations,
-              PlayerWorkspaceSource.combined,
-            ),
-            onRebuild: onRebuildCombined,
-          ),
         ],
       ),
     );
@@ -1330,6 +1439,10 @@ class _PlayerIdentityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final title = player.title?.trim();
+    final country = player.country?.trim();
+    final hasTitle = title != null && title.isNotEmpty;
+    final hasCountry = country != null && country.isNotEmpty;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: kBlack3Color.withValues(alpha: 0.72),
@@ -1350,7 +1463,7 @@ class _PlayerIdentityCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        player.displayName,
+                        playerWorkspaceDisplayName(player),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -1360,21 +1473,31 @@ class _PlayerIdentityCard extends StatelessWidget {
                           height: 1.15,
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        [
-                          if (player.title != null) player.title!,
-                          if (player.country != null) player.country!,
-                          if (player.fideId != null) 'FIDE ${player.fideId}',
-                        ].join(' · '),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: kWhiteColor70,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
+                      if (hasTitle || hasCountry) ...[
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            if (hasTitle)
+                              Text(
+                                title,
+                                style: const TextStyle(
+                                  color: kWhiteColor70,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            if (hasTitle && hasCountry)
+                              const SizedBox(width: 8),
+                            if (hasCountry)
+                              FederationFlag(
+                                federation: country,
+                                width: 18,
+                                height: 13,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                          ],
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
@@ -1519,72 +1642,6 @@ class _RailSectionLabel extends StatelessWidget {
         fontSize: 10,
         fontWeight: FontWeight.w800,
         letterSpacing: 0,
-      ),
-    );
-  }
-}
-
-class _PlayerMiniRow extends StatelessWidget {
-  const _PlayerMiniRow({
-    required this.player,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final PlayerWorkspacePlayer player;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Container(
-        height: 42,
-        margin: const EdgeInsets.only(bottom: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          color: selected ? kPrimaryColor.withValues(alpha: 0.10) : null,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color:
-                selected
-                    ? kPrimaryColor.withValues(alpha: 0.35)
-                    : Colors.transparent,
-          ),
-        ),
-        child: Row(
-          children: [
-            _FidePhotoAvatar(
-              fideId: int.tryParse(player.fideId?.trim() ?? ''),
-              initials: _initials(player.displayName),
-              size: 26,
-              fallbackAvatarUrl: player.bestAvatarUrl,
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Text(
-                player.displayName,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: selected ? kWhiteColor : kWhiteColor70,
-                  fontSize: 13,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                ),
-              ),
-            ),
-            if (player.totalGames > 0)
-              Text(
-                _formatInt(player.totalGames),
-                style: const TextStyle(
-                  color: kLightGreyColor,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-          ],
-        ),
       ),
     );
   }
@@ -2585,6 +2642,10 @@ class _EmbeddedLocalGames extends ConsumerWidget {
             onFilterChanged: onFilterChanged,
             playerFideId: playerFideId,
             playerAliases: playerAliases,
+            // The Players Games tab already identifies the source and count via
+            // the source chips; the header's "N entries · M indexed positions"
+            // line is redundant here, so suppress it.
+            showCountMeta: false,
           ),
     );
   }
@@ -3118,7 +3179,16 @@ class _TreeTargetCard extends ConsumerWidget {
                         player: player,
                       )
                       : null,
-              onBuild: () => unawaited(_buildLocalTree(ref, target, player)),
+              onBuild:
+                  () => unawaited(
+                    _buildLocalTree(
+                      context,
+                      ref,
+                      target,
+                      player,
+                      preparationSide: preparationSide,
+                    ),
+                  ),
             ),
           ],
         ),
@@ -3591,24 +3661,33 @@ String _disabledTreeActionLabel(String reason) {
 }
 
 Future<void> _buildLocalTree(
+  BuildContext context,
   WidgetRef ref,
   _DatabaseTarget target,
-  PlayerWorkspacePlayer player,
-) async {
-  final opened = await ref
-      .read(localChessLibraryProvider.notifier)
-      .openPaths(
-        <String>[target.path],
-        sourceLabel: target.title,
-        registryMetadata: LocalLibraryEntryMetadata.playerWorkspace(
-          playerId: player.id,
-          playerName: player.displayName,
-          gameCount: target.gameCount,
-          playerWorkspaceSource: target.source.storageKey,
-        ),
-      );
-  if (!opened) return;
-  ref.read(localChessLibraryProvider.notifier).rebuildOpeningTree(target.path);
+  PlayerWorkspacePlayer player, {
+  required PlayerBuildTreePreparationSide preparationSide,
+}) async {
+  final notifier = ref.read(localChessLibraryProvider.notifier);
+  final opened = await notifier.openPaths(
+    <String>[target.path],
+    sourceLabel: target.title,
+    registryMetadata: LocalLibraryEntryMetadata.playerWorkspace(
+      playerId: player.id,
+      playerName: player.displayName,
+      gameCount: target.gameCount,
+      playerWorkspaceSource: target.source.storageKey,
+    ),
+  );
+  if (!opened || !context.mounted) return;
+  final index = await notifier.rebuildOpeningTreeAndWait(target.path);
+  if (!context.mounted || index?.isUsable != true) return;
+  _openLocalTree(
+    ref,
+    target,
+    index!,
+    preparationSide: preparationSide,
+    player: player,
+  );
 }
 
 void _openLocalTree(

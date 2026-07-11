@@ -1176,7 +1176,20 @@ class PlayerWorkspaceRepository {
     for (final input in inputs) {
       uniqueInputs.putIfAbsent(p.normalize(input.path), () => input);
     }
-    final preparedInputs = uniqueInputs.values.toList(growable: false);
+    // Provenance for a duplicate is deterministic and follows the visible
+    // source rail, rather than depending on map insertion or account load
+    // order. Manual PGN intentionally comes after the connected providers.
+    final preparedInputs = <PlayerWorkspaceCombinedSource>[
+      for (final source in const <PlayerWorkspaceSource>[
+        PlayerWorkspaceSource.chessever,
+        PlayerWorkspaceSource.lichess,
+        PlayerWorkspaceSource.chesscom,
+        PlayerWorkspaceSource.manual,
+        PlayerWorkspaceSource.combined,
+      ])
+        for (final input in uniqueInputs.values)
+          if (input.source == source) input,
+    ];
     final combinedPath = await combinedPgnPath(
       playerId: playerId,
       playerName: playerName,
@@ -1188,6 +1201,8 @@ class PlayerWorkspaceRepository {
       combinedPath: combinedPath,
       playerAliases: playerAliases,
       playerFideId: playerFideId,
+      onProgress: onProgress,
+      cancellationToken: cancellationToken,
     );
     cancellationToken?.throwIfCanceled();
     final source = await localRepository.importSingleFileSource(
@@ -1195,7 +1210,10 @@ class PlayerWorkspaceRepository {
       sourceLabel: '$playerName Combined',
       cancellationToken: cancellationToken,
       onProgress:
-          (progress) => onProgress?.call(progress.message, progress.fraction),
+          (progress) => onProgress?.call(
+            progress.message,
+            mapPlayerWorkspaceImportWorkerProgress(progress.fraction),
+          ),
     );
     cancellationToken?.throwIfCanceled();
     onProgress?.call('Finalizing combined database...', 0.99);
@@ -1984,6 +2002,57 @@ class _PreparedCombinedPgnImport {
   final PlayerWorkspaceImportStats stats;
 }
 
+@immutable
+class _CombinedPreparationRequest {
+  const _CombinedPreparationRequest({
+    required this.sendPort,
+    required this.inputs,
+    required this.combinedPath,
+    required this.aliases,
+    required this.playerFideId,
+  });
+
+  final SendPort sendPort;
+  final List<PlayerWorkspaceCombinedSource> inputs;
+  final String combinedPath;
+  final List<String> aliases;
+  final String? playerFideId;
+}
+
+@immutable
+class _CombinedPreparationProgress {
+  const _CombinedPreparationProgress({
+    required this.sourceIndex,
+    required this.sourceCount,
+    required this.source,
+    required this.fraction,
+    required this.uniqueGames,
+    required this.duplicateGames,
+  });
+
+  final int sourceIndex;
+  final int sourceCount;
+  final PlayerWorkspaceSource source;
+  final double fraction;
+  final int uniqueGames;
+  final int duplicateGames;
+}
+
+@immutable
+class _CombinedPreparationStarted {
+  const _CombinedPreparationStarted(this.tempPath);
+
+  final String tempPath;
+}
+
+@immutable
+class _CombinedPreparationFailure {
+  const _CombinedPreparationFailure(this.error, this.stackTrace);
+
+  final String error;
+  final String stackTrace;
+}
+
 Future<_PreparedPgnImport> _preparePgnImport({
   required String pgn,
   required Iterable<String> playerAliases,
@@ -2024,52 +2093,170 @@ Future<_PreparedCombinedPgnImport> _prepareCombinedPgnImport({
   required String combinedPath,
   required Iterable<String> playerAliases,
   String? playerFideId,
-}) {
+  PlayerWorkspaceProgress? onProgress,
+  OperationCancellationToken? cancellationToken,
+}) async {
+  cancellationToken?.throwIfCanceled();
   final inputs = sources.toList(growable: false);
   final aliases = playerAliases.toList(growable: false);
-  return Isolate.run(
-    () => _prepareCombinedPgnImportSync(
-      inputs,
-      combinedPath,
-      aliases,
-      playerFideId,
-    ),
-  );
+  final receivePort = ReceivePort();
+  final completer = Completer<_PreparedCombinedPgnImport>();
+  String? workerTempPath;
+  late final StreamSubscription<Object?> subscription;
+  subscription = receivePort.listen((message) {
+    if (message is _CombinedPreparationStarted) {
+      workerTempPath = message.tempPath;
+    } else if (message is _CombinedPreparationProgress) {
+      final detail =
+          message.fraction >= 1
+              ? '${message.uniqueGames} unique games; '
+                  '${message.duplicateGames} duplicates removed'
+              : message.source.label;
+      onProgress?.call(
+        'Combining source ${message.sourceIndex}/${message.sourceCount}: '
+        '$detail...',
+        (0.02 + (message.fraction * 0.08)).clamp(0.02, 0.10),
+      );
+    } else if (message is _PreparedCombinedPgnImport) {
+      if (!completer.isCompleted) completer.complete(message);
+    } else if (message is _CombinedPreparationFailure) {
+      if (!completer.isCompleted) {
+        completer.completeError(RemoteError(message.error, message.stackTrace));
+      }
+    }
+  });
+  Isolate? isolate;
+  VoidCallback? removeCancellationListener;
+  try {
+    isolate = await Isolate.spawn(
+      _prepareCombinedPgnImportWorker,
+      _CombinedPreparationRequest(
+        sendPort: receivePort.sendPort,
+        inputs: inputs,
+        combinedPath: combinedPath,
+        aliases: aliases,
+        playerFideId: playerFideId,
+      ),
+    );
+    removeCancellationListener = cancellationToken?.addListener(() {
+      isolate?.kill(priority: Isolate.immediate);
+      if (!completer.isCompleted) {
+        completer.completeError(const OperationCanceledException());
+      }
+    });
+    return await completer.future;
+  } finally {
+    removeCancellationListener?.call();
+    await subscription.cancel();
+    receivePort.close();
+    isolate?.kill(priority: Isolate.immediate);
+    final tempPath = workerTempPath;
+    if (tempPath != null) {
+      try {
+        await File(tempPath).delete();
+      } on FileSystemException {
+        // Normal completion renames the temp file; cancellation may leave it.
+      }
+    }
+  }
+}
+
+void _prepareCombinedPgnImportWorker(_CombinedPreparationRequest request) {
+  try {
+    final result = _prepareCombinedPgnImportSync(
+      request.inputs,
+      request.combinedPath,
+      request.aliases,
+      request.playerFideId,
+      onStarted:
+          (tempPath) =>
+              request.sendPort.send(_CombinedPreparationStarted(tempPath)),
+      onProgress: request.sendPort.send,
+    );
+    request.sendPort.send(result);
+  } catch (error, stackTrace) {
+    request.sendPort.send(
+      _CombinedPreparationFailure(error.toString(), stackTrace.toString()),
+    );
+  }
 }
 
 _PreparedCombinedPgnImport _prepareCombinedPgnImportSync(
   List<PlayerWorkspaceCombinedSource> inputs,
   String combinedPath,
   List<String> aliases,
-  String? playerFideId,
-) {
+  String? playerFideId, {
+  void Function(String tempPath)? onStarted,
+  void Function(_CombinedPreparationProgress progress)? onProgress,
+}) {
   final output = File(combinedPath);
   output.parent.createSync(recursive: true);
+  final sourceSizes = <int>[
+    for (final input in inputs) File(input.path).lengthSync(),
+  ];
   final tempPath =
       '$combinedPath.tmp-${DateTime.now().microsecondsSinceEpoch}-${Isolate.current.hashCode}';
+  onStarted?.call(tempPath);
   final temp = File(tempPath);
   final writer = temp.openSync(mode: FileMode.write);
   final seen = <String>{};
   final stats = _PgnStatsCounter(aliases, playerFideId: playerFideId);
+  final totalBytes = sourceSizes.fold<int>(0, (sum, size) => sum + size);
+  var completedBytes = 0;
+  var duplicateGames = 0;
   var wroteAny = false;
   try {
-    for (final input in inputs) {
+    for (var sourceOffset = 0; sourceOffset < inputs.length; sourceOffset++) {
+      final input = inputs[sourceOffset];
+      final sourceBytes = sourceSizes[sourceOffset];
+      var sourceCharactersRead = 0;
+      var sourceGamesRead = 0;
+
+      void reportProgress({required bool complete}) {
+        final estimatedSourceBytes =
+            complete ? sourceBytes : sourceCharactersRead.clamp(0, sourceBytes);
+        final processedBytes = completedBytes + estimatedSourceBytes;
+        final fraction =
+            totalBytes <= 0
+                ? (sourceOffset + (complete ? 1 : 0)) / inputs.length
+                : processedBytes / totalBytes;
+        onProgress?.call(
+          _CombinedPreparationProgress(
+            sourceIndex: sourceOffset + 1,
+            sourceCount: inputs.length,
+            source: input.source,
+            fraction: fraction.clamp(0.0, 1.0).toDouble(),
+            uniqueGames: seen.length,
+            duplicateGames: duplicateGames,
+          ),
+        );
+      }
+
+      reportProgress(complete: false);
       for (final chunk in _readPgnGamesFromFileSync(input.path)) {
         final trimmed = chunk.trim();
         if (trimmed.isEmpty) continue;
+        sourceCharactersRead += chunk.length;
+        sourceGamesRead++;
         final fingerprint = localChessPgnFingerprint(trimmed);
-        if (!seen.add(fingerprint)) continue;
+        if (!seen.add(fingerprint)) {
+          duplicateGames++;
+          if (sourceGamesRead % 128 == 0) reportProgress(complete: false);
+          continue;
+        }
         if (wroteAny) writer.writeStringSync('\n\n');
         writer.writeStringSync(_withCombinedMetadata(trimmed, input.source));
         stats.add(trimmed);
         wroteAny = true;
+        if (sourceGamesRead % 128 == 0) reportProgress(complete: false);
       }
+      reportProgress(complete: true);
+      completedBytes += sourceBytes;
     }
     if (wroteAny) writer.writeStringSync('\n');
     writer.flushSync();
     writer.closeSync();
-    if (output.existsSync()) output.deleteSync();
-    temp.renameSync(combinedPath);
+    _replaceCombinedOutputSync(temp: temp, output: output);
     return _PreparedCombinedPgnImport(
       path: combinedPath,
       stats: stats.toStats(),
@@ -2082,6 +2269,31 @@ _PreparedCombinedPgnImport _prepareCombinedPgnImportSync(
       temp.deleteSync();
     } catch (_) {}
     rethrow;
+  }
+}
+
+void _replaceCombinedOutputSync({required File temp, required File output}) {
+  if (!output.existsSync()) {
+    temp.renameSync(output.path);
+    return;
+  }
+  final backup = File(
+    '${output.path}.backup-${DateTime.now().microsecondsSinceEpoch}',
+  );
+  output.renameSync(backup.path);
+  try {
+    temp.renameSync(output.path);
+  } catch (_) {
+    if (!output.existsSync() && backup.existsSync()) {
+      backup.renameSync(output.path);
+    }
+    rethrow;
+  }
+  try {
+    backup.deleteSync();
+  } on FileSystemException {
+    // The Combined output is already installed. A stale backup is preferable
+    // to reporting failure after a successful replacement.
   }
 }
 

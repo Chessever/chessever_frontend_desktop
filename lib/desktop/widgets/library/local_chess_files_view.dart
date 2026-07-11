@@ -50,12 +50,18 @@ class LocalChessFilesView extends HookConsumerWidget {
     this.onFilterChanged,
     this.playerFideId,
     this.playerAliases = const <String>[],
+    this.showCountMeta = true,
   });
 
   final String selectedPath;
   final ValueChanged<String> onSelectPath;
   final LocalChessLibraryState? stateOverride;
   final Future<void> Function()? onRefreshOverride;
+
+  /// Whether the header renders the "N entries · M indexed positions" count
+  /// line. Disabled when the view is embedded somewhere that already surfaces
+  /// the game count (e.g. the Players Games tab), where the count is redundant.
+  final bool showCountMeta;
 
   /// Seeded filters (e.g. from players Overview tap). Applied on first build
   /// and whenever the instance identity / value changes via [useEffect].
@@ -389,6 +395,7 @@ class LocalChessFilesView extends HookConsumerWidget {
                 _LocalHeader(
                   source: source,
                   node: node,
+                  showCountMeta: showCountMeta,
                   onOpenFolder: pickFolder,
                   onOpenFiles: pickFiles,
                   onRefresh: () {
@@ -545,6 +552,7 @@ class _LocalHeader extends StatelessWidget {
   const _LocalHeader({
     required this.source,
     required this.node,
+    required this.showCountMeta,
     required this.onOpenFolder,
     required this.onOpenFiles,
     required this.onRefresh,
@@ -557,6 +565,7 @@ class _LocalHeader extends StatelessWidget {
 
   final LocalChessSource source;
   final LocalChessNode node;
+  final bool showCountMeta;
   final VoidCallback onOpenFolder;
   final VoidCallback onOpenFiles;
   final VoidCallback onRefresh;
@@ -584,28 +593,30 @@ class _LocalHeader extends StatelessWidget {
       ),
       _ => (0, 0, 0),
     };
-    late final String countLabel;
+    // The entry count is hidden when embedded where the game count is already
+    // surfaced (e.g. the Players Games tab). The internal "indexed positions"
+    // metric is never shown — it reads as redundant in every context. Tree-build
+    // progress and the "recognized only" note stay.
+    final metaParts = <String>[];
+    final treeProgress = treeBuildProgress;
     if (selectedDatabase == null) {
-      countLabel = '$fileCount files · ${localChessEntryCountLabel(gameCount)}';
+      if (showCountMeta) {
+        metaParts.add('$fileCount files · ${localChessEntryCountLabel(gameCount)}');
+      }
     } else {
-      final entryCountLabel = localChessEntryCountLabel(
-        selectedDatabase.gameCount,
-      );
-      final treeIndex = selectedDatabase.openingTreeIndex;
-      final treeProgress = treeBuildProgress;
+      if (showCountMeta) {
+        metaParts.add(localChessEntryCountLabel(selectedDatabase.gameCount));
+      }
       if (treeProgress?.isActive == true) {
-        countLabel = '$entryCountLabel · tree ${treeProgress!.percent}%';
+        metaParts.add('tree ${treeProgress!.percent}%');
       } else if (treeProgress?.phase == LocalChessTreeBuildPhase.failed) {
-        countLabel = '$entryCountLabel · tree rebuild failed';
-      } else {
-        countLabel =
-            treeIndex != null && treeIndex.positionCount > 0
-                ? '$entryCountLabel · ${treeIndex.positionCount} indexed positions'
-                : entryCountLabel;
+        metaParts.add('tree rebuild failed');
       }
     }
-    final meta =
-        '$countLabel${unsupportedCount == 0 ? '' : ' · $unsupportedCount recognized only'}';
+    if (unsupportedCount != 0) {
+      metaParts.add('$unsupportedCount recognized only');
+    }
+    final meta = metaParts.join(' · ');
     return LibraryChromeBar(
       icon: _iconFor(node),
       title: node.name.isEmpty ? source.label : node.name,

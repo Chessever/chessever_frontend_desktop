@@ -192,10 +192,10 @@ void main() {
         });
         addTearDown(subscription.cancel);
 
-        final opened = await notifier.openPaths(
-          <String>[first.path, second.path],
-          sourceLabel: '2 PGN files',
-        );
+        final opened = await notifier.openPaths(<String>[
+          first.path,
+          second.path,
+        ], sourceLabel: '2 PGN files');
 
         expect(opened, isTrue);
         expect(repo.importSingleFileSourceCalls, 2);
@@ -205,14 +205,8 @@ void main() {
         ]);
         expect(repo.loadFreshSourceCalls, greaterThanOrEqualTo(2));
         expect(repo.persistSourceCalls, 0);
-        expect(
-          progressMessages,
-          anyElement(contains('Importing file 1 of 2')),
-        );
-        expect(
-          progressMessages,
-          anyElement(contains('Importing file 2 of 2')),
-        );
+        expect(progressMessages, anyElement(contains('Importing file 1 of 2')));
+        expect(progressMessages, anyElement(contains('Importing file 2 of 2')));
         expect(notifier.state.source?.paths, hasLength(2));
         notifier.clear();
       },
@@ -337,9 +331,10 @@ void main() {
 
       final opened = await notifier.openPaths(<String>[file.path]);
       expect(opened, isTrue);
-      expect(notifier.rebuildOpeningTree(file.path), isTrue);
+      final awaitedBuild = notifier.rebuildOpeningTreeAndWait(file.path);
       await treeStarted.future.timeout(const Duration(seconds: 2));
       notifier.clear();
+      expect(await awaitedBuild, isNull);
       releaseTree.complete();
       await treeRebuildReturned.future.timeout(const Duration(seconds: 2));
       await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -637,10 +632,14 @@ void main() {
         );
 
         expect(await notifier.openPaths(<String>[file.path]), isTrue);
-        expect(notifier.rebuildOpeningTree(file.path), isTrue);
+        final awaitedIndex = await notifier.rebuildOpeningTreeAndWait(
+          file.path,
+        );
 
-        final rebuilt = await _waitForLocalTree(notifier, file.path);
+        final rebuilt =
+            notifier.state.source!.nodeForPath(file.path) as LocalChessFileNode;
 
+        expect(awaitedIndex, same(rebuilt.openingTreeIndex));
         expect(rebuilt.openingTreeIndex, isNotNull);
         expect(rebuilt.openingTreeIndex!.downloadedGameCount, 1);
         expect(repo.rebuildOpeningTreeCalls, 1);

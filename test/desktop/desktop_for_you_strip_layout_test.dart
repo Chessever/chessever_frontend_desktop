@@ -1,4 +1,6 @@
+import 'package:chessever/desktop/widgets/desktop_for_you_game_context.dart';
 import 'package:chessever/desktop/widgets/desktop_for_you_strip_layout.dart';
+import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -41,4 +43,61 @@ void main() {
       expect(layout.cardWidth, DesktopForYouStripLayout.maxCardWidth);
     });
   });
+
+  test(
+    'For You preview stays on the latest round while board context keeps every round',
+    () {
+      final round1 = _game('game-1', round: 1);
+      final round9 = _game('game-9', round: 9);
+      final upcomingRound10 = _game(
+        'game-10',
+        round: 10,
+        status: GameStatus.unknown,
+      );
+
+      final context = buildDesktopForYouGameContext(
+        snapshotGames: [round9],
+        fullVisibleGames: [round1, round9],
+        fullEventGames: [round1, round9, upcomingRound10],
+      );
+
+      expect(context.stripGames.map((game) => game.roundId), ['round-9']);
+      expect(context.boardGames.map((game) => game.roundId), [
+        'round-1',
+        'round-9',
+        'round-10',
+      ]);
+    },
+  );
+}
+
+GamesTourModel _game(
+  String gameId, {
+  required int round,
+  GameStatus status = GameStatus.whiteWins,
+}) {
+  return GamesTourModel(
+    gameId: gameId,
+    whitePlayer: _player('White $round'),
+    blackPlayer: _player('Black $round'),
+    whiteTimeDisplay: '',
+    blackTimeDisplay: '',
+    whiteClockCentiseconds: 0,
+    blackClockCentiseconds: 0,
+    gameStatus: status,
+    roundId: 'round-$round',
+    roundSlug: 'round-$round',
+    tourId: 'tour-1',
+  );
+}
+
+PlayerCard _player(String name) {
+  return PlayerCard(
+    name: name,
+    federation: '',
+    title: '',
+    rating: 0,
+    countryCode: '',
+    team: null,
+  );
 }

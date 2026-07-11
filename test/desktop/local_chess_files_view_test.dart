@@ -87,6 +87,83 @@ void main() {
   });
 
   testWidgets(
+    'showCountMeta:false hides the header entries/indexed-positions line',
+    (tester) async {
+      final treeIndex = _usableTreeIndex();
+      expect(treeIndex.positionCount, greaterThan(0));
+      final source = _sourceWithGame(
+        _localGame(
+          id: 'fallback',
+          white: 'Hou, Yifan',
+          black: 'Gukesh, D',
+          sourcePath: '/tmp/view.pgn',
+        ),
+        gameCount: 42,
+        openingTreeIndex: treeIndex,
+      );
+      final repository = _FakeLocalChessDatabaseRepository(
+        page: LocalChessGameQueryPage(
+          games: <LocalChessGame>[
+            _localGame(
+              id: 'database',
+              white: 'Database Only',
+              black: 'Gukesh, D',
+              sourcePath: '/tmp/view.pgn',
+            ),
+          ],
+          totalCount: 1,
+          pageNumber: 0,
+          pageSize: 1,
+        ),
+      );
+
+      Widget build({required bool showCountMeta}) => ProviderScope(
+        overrides: [
+          localChessDatabaseRepositoryProvider.overrideWithValue(repository),
+          localChessLibraryProvider.overrideWith(
+            (ref) => LocalChessLibraryNotifier(),
+          ),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 1100,
+              height: 700,
+              child: LocalChessFilesView(
+                selectedPath: source.root.path,
+                onSelectPath: (_) {},
+                stateOverride: LocalChessLibraryState(
+                  source: source,
+                  selectedPath: source.root.path,
+                ),
+                onRefreshOverride: () async {},
+                showCountMeta: showCountMeta,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Default (Library) keeps the entry count but never the internal
+      // "indexed positions" metric, even with a populated tree index.
+      await tester.pumpWidget(build(showCountMeta: true));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text('42 entries'), findsOneWidget);
+      expect(find.textContaining('indexed positions'), findsNothing);
+
+      // Embedded (Players Games tab) suppresses the redundant count line while
+      // still rendering the rows.
+      await tester.pumpWidget(build(showCountMeta: false));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text('42 entries'), findsNothing);
+      expect(find.textContaining('indexed positions'), findsNothing);
+      expect(find.text('Only, D.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'selected local database loads more games when scrolled near the bottom',
     (tester) async {
       final source = _sourceWithGame(

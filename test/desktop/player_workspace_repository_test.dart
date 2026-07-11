@@ -13,6 +13,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_stats_repository.dart';
@@ -136,6 +137,11 @@ void main() {
         timer.cancel();
 
         expect(result.stats.gameCount, 1000);
+        expect(
+          stopwatch.elapsed,
+          lessThan(const Duration(seconds: 15)),
+          reason: 'A 1,000-game cold rebuild should complete promptly.',
+        );
         expect(tickCount, greaterThan(10));
         expect(
           maxTickGapUs,
@@ -802,6 +808,45 @@ void main() {
       expect(notifier.state.selectedPlayerId, isNull);
       expect(workspaceRepository.snapshot.players, isEmpty);
       expect(workspaceRepository.snapshot.selectedPlayerId, isNull);
+    });
+
+    test('removePlayer keeps the row with a removing indicator until cleanup '
+        'finishes', () async {
+      final gate = Completer<void>();
+      final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+      final localRepository = _BlockingPurgeLocalRepository(db, gate);
+      final notifier = PlayerWorkspaceNotifier(
+        workspaceRepository: workspaceRepository,
+        gamebaseRepository: GamebaseRepository(Dio()),
+        localRepository: localRepository,
+      );
+      await notifier.load();
+      await notifier.addManualPlayer('Heavy Prep');
+      final playerId = notifier.state.players.single.id;
+      await notifier.selectPlayer(playerId);
+
+      // Do not await — the cache purge is gated so we can observe the
+      // in-flight removing state.
+      final removal = notifier.removePlayer(playerId);
+      await pumpEventQueue();
+
+      // The row stays on screen, flagged as removing, and its detail view is
+      // closed. The *persisted* snapshot has already dropped the player.
+      expect(notifier.state.players.map((p) => p.id), contains(playerId));
+      expect(notifier.state.removals.containsKey(playerId), isTrue);
+      expect(notifier.state.selectedPlayerId, isNull);
+      expect(workspaceRepository.snapshot.players, isEmpty);
+      // Purge progress is surfaced on the removing indicator.
+      expect(notifier.state.removals[playerId]!.message, 'Deleting games…');
+      expect(notifier.state.removals[playerId]!.progress, 0.5);
+
+      gate.complete();
+      await removal;
+
+      // Exactly one consolidated purge, and the row + indicator are gone.
+      expect(localRepository.purgeCalls, 1);
+      expect(notifier.state.players, isEmpty);
+      expect(notifier.state.removals.containsKey(playerId), isFalse);
     });
 
     test(
@@ -2013,9 +2058,10 @@ void main() {
             title: 'GM',
           ),
         );
-        final oldAccount = notifier.state.selectedPlayer!.account(
-          PlayerWorkspaceSource.chessever,
-        )!;
+        final oldAccount =
+            notifier.state.selectedPlayer!.account(
+              PlayerWorkspaceSource.chessever,
+            )!;
         await notifier.removeAccountEntry(oldAccount);
 
         await notifier.reconnectLockedChessEverSource();
@@ -2031,57 +2077,61 @@ void main() {
       },
     );
 
-    test('FIDE-locked reconnect rejects a mismatched lookup response', () async {
-      final workspaceRepository = _FakePlayerWorkspaceRepository(
-        root: temp,
-        chessEverPlayersByFideId: const <String, GamebasePlayer>{
-          '13402935': GamebasePlayer(
-            id: 'ce-carlsen',
-            fideId: '1503014',
-            name: 'Carlsen, Magnus',
-            gender: PlayerGender.male,
-            fed: 'NOR',
-            title: 'GM',
+    test(
+      'FIDE-locked reconnect rejects a mismatched lookup response',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(
+            root: temp,
+            chessEverPlayersByFideId: const <String, GamebasePlayer>{
+              '13402935': GamebasePlayer(
+                id: 'ce-carlsen',
+                fideId: '1503014',
+                name: 'Carlsen, Magnus',
+                gender: PlayerGender.male,
+                fed: 'NOR',
+                title: 'GM',
+              ),
+            },
+          )
+          ..snapshot = const PlayerWorkspaceSnapshot(
+            selectedPlayerId: 'vasif',
+            players: <PlayerWorkspacePlayer>[
+              PlayerWorkspacePlayer(
+                id: 'vasif',
+                displayName: 'GM Vasif Durarbayli',
+                createdAtMs: 1,
+                fideId: '13402935',
+              ),
+            ],
+          );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: LocalChessDatabaseRepository(
+            database: () async => db,
           ),
-        },
-      )..snapshot = const PlayerWorkspaceSnapshot(
-        selectedPlayerId: 'vasif',
-        players: <PlayerWorkspacePlayer>[
-          PlayerWorkspacePlayer(
-            id: 'vasif',
-            displayName: 'GM Vasif Durarbayli',
-            createdAtMs: 1,
-            fideId: '13402935',
-          ),
-        ],
-      );
-      final notifier = PlayerWorkspaceNotifier(
-        workspaceRepository: workspaceRepository,
-        gamebaseRepository: GamebaseRepository(Dio()),
-        localRepository: LocalChessDatabaseRepository(
-          database: () async => db,
-        ),
-      );
-      await notifier.load();
+        );
+        await notifier.load();
 
-      await expectLater(
-        notifier.reconnectLockedChessEverSource(),
-        throwsA(
-          isA<StateError>().having(
-            (error) => error.message,
-            'message',
-            contains('locked to FIDE 13402935'),
+        await expectLater(
+          notifier.reconnectLockedChessEverSource(),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('locked to FIDE 13402935'),
+            ),
           ),
-        ),
-      );
-      expect(
-        notifier.state.selectedPlayer!.account(
-          PlayerWorkspaceSource.chessever,
-        ),
-        isNull,
-      );
-      expect(notifier.state.operations, isEmpty);
-    });
+        );
+        expect(
+          notifier.state.selectedPlayer!.account(
+            PlayerWorkspaceSource.chessever,
+          ),
+          isNull,
+        );
+        expect(notifier.state.operations, isEmpty);
+      },
+    );
 
     test(
       'FIDE-locked player rejects ChessEver refresh identity drift',
@@ -3515,6 +3565,168 @@ $_mergeGameOne
     );
 
     test(
+      'Combined rebuild canonically deduplicates equivalent games across sources',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+        final chessEver = File('${temp.path}/chessever-dedupe.pgn');
+        final lichess = File('${temp.path}/lichess-dedupe.pgn');
+        await chessEver.writeAsString(_crossSourceCanonicalGame);
+        await lichess.writeAsString(
+          '$_crossSourceEquivalentGame\n\n$_mergeGameThree',
+        );
+        final progress = <({String message, double? fraction})>[];
+
+        final result = await workspaceRepository.rebuildCombinedDatabase(
+          localRepository: localRepository,
+          playerId: 'cross-source-dedupe',
+          playerName: 'DrNykterstein',
+          sourcePaths: <String>[chessEver.path, lichess.path],
+          sources: <PlayerWorkspaceCombinedSource>[
+            // Deliberately reversed: provenance priority follows the visible
+            // source rail, not incidental map/insertion order.
+            PlayerWorkspaceCombinedSource(
+              path: lichess.path,
+              source: PlayerWorkspaceSource.lichess,
+            ),
+            PlayerWorkspaceCombinedSource(
+              path: chessEver.path,
+              source: PlayerWorkspaceSource.chessever,
+            ),
+          ],
+          playerAliases: const <String>['DrNykterstein'],
+          onProgress:
+              (message, fraction) =>
+                  progress.add((message: message, fraction: fraction)),
+        );
+
+        final games = splitPgnGames(await File(result.path).readAsString());
+        expect(games, hasLength(2));
+        expect(result.stats.gameCount, 2);
+        expect(await _count(db, 'local_chess_games'), 2);
+        expect(
+          games.first,
+          contains('[$playerWorkspaceCombinedSourceTag "chessever"]'),
+        );
+        for (final game in games) {
+          expect(
+            RegExp(
+              RegExp.escape('[$playerWorkspaceCombinedVersionTag '),
+            ).allMatches(game),
+            hasLength(1),
+          );
+          expect(
+            RegExp(
+              RegExp.escape('[$playerWorkspaceCombinedSourceTag '),
+            ).allMatches(game),
+            hasLength(1),
+          );
+        }
+        expect(
+          progress.where(
+            (item) => item.message.startsWith('Combining source '),
+          ),
+          isNotEmpty,
+        );
+        final preparationFractions = progress
+            .where((item) => item.message.startsWith('Combining source '))
+            .map((item) => item.fraction)
+            .whereType<double>()
+            .toList(growable: false);
+        expect(preparationFractions.toSet().length, greaterThanOrEqualTo(3));
+        expect(
+          preparationFractions,
+          orderedEquals(<double>[...preparationFractions]..sort()),
+        );
+        expect(preparationFractions.last, 0.10);
+      },
+    );
+
+    test(
+      'Combined preparation failure preserves the previous database',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+        const playerId = 'failure-safe-combined';
+        final combinedPath = await workspaceRepository.combinedPgnPath(
+          playerId: playerId,
+          playerName: 'DrNykterstein',
+        );
+        const previous = '[Event "Last good Combined"]\n\n1. e4 1-0\n';
+        await File(combinedPath).writeAsString(previous);
+        final validSource = File('${temp.path}/valid-before-failure.pgn');
+        await validSource.writeAsString(_mergeGameOne);
+
+        await expectLater(
+          workspaceRepository.rebuildCombinedDatabase(
+            localRepository: localRepository,
+            playerId: playerId,
+            playerName: 'DrNykterstein',
+            sourcePaths: <String>[
+              validSource.path,
+              '${temp.path}/missing-source.pgn',
+            ],
+            playerAliases: const <String>['DrNykterstein'],
+          ),
+          throwsA(anything),
+        );
+
+        expect(await File(combinedPath).readAsString(), previous);
+      },
+    );
+
+    test(
+      'canceling Combined preparation preserves output and removes temp files',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+        const playerId = 'cancel-safe-combined';
+        final combinedPath = await workspaceRepository.combinedPgnPath(
+          playerId: playerId,
+          playerName: 'DrNykterstein',
+        );
+        const previous = '[Event "Last good Combined"]\n\n1. d4 1-0\n';
+        await File(combinedPath).writeAsString(previous);
+        final source = File('${temp.path}/cancel-source.pgn');
+        await source.writeAsString(_largeChessEverPgn(1000));
+        final token = OperationCancellationToken();
+
+        await expectLater(
+          workspaceRepository.rebuildCombinedDatabase(
+            localRepository: localRepository,
+            playerId: playerId,
+            playerName: 'DrNykterstein',
+            sourcePaths: <String>[source.path],
+            playerAliases: const <String>['DrNykterstein'],
+            cancellationToken: token,
+            onProgress: (message, _) {
+              if (message.startsWith('Combining source ')) token.cancel();
+            },
+          ),
+          throwsA(isA<OperationCanceledException>()),
+        );
+
+        expect(await File(combinedPath).readAsString(), previous);
+        final leftovers =
+            await File(combinedPath).parent
+                .list()
+                .where(
+                  (entity) => p
+                      .basename(entity.path)
+                      .startsWith('${p.basename(combinedPath)}.tmp-'),
+                )
+                .toList();
+        expect(leftovers, isEmpty);
+      },
+    );
+
+    test(
       'source import completes with fallback count when post-import stats hang',
       () async {
         final workspaceRepository = PlayerWorkspaceRepository(
@@ -4265,6 +4477,31 @@ const String _mergeGameThree = '''
 1. c4 c5 2. Nc3 Nc6 1/2-1/2
 ''';
 
+const String _crossSourceCanonicalGame = '''
+[Event "Canonical cross-source game"]
+[Site "Local"]
+[Date "2026.07.11"]
+[Round "1"]
+[White "DrNykterstein"]
+[Black "Opponent"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. O-O Nf6 5. Re1 1-0
+''';
+
+const String _crossSourceEquivalentGame = '''
+[Black "Opponent"]
+[White "DrNykterstein"]
+[Round "1"]
+[Date "2026.07.11"]
+[Site "Local"]
+[Event "Canonical cross-source game"]
+[Result "1-0"]
+
+1. e4 {same game from another source} e5 2. Nf3 (2. Bc4) Nc6
+3. Bc4 Bc5 4. 0-0 Nf6 5. Re1+ 1-0
+''';
+
 const String _vasifChessEverPgn = '''
 [Event "ChessEver FIDE source 1"]
 [Site "ChessEver"]
@@ -4456,6 +4693,37 @@ class _PartialSourceUnionStatsRepository extends LocalChessDatabaseRepository {
       drawCount: 1122,
       lossCount: 3248,
     );
+  }
+}
+
+/// Local repository whose consolidated cache purge blocks on [gate], so a test
+/// can observe the notifier's in-flight removing state before the purge
+/// finishes. Emits one progress event before blocking to prove the progress
+/// plumbing reaches the removing indicator.
+class _BlockingPurgeLocalRepository extends LocalChessDatabaseRepository {
+  _BlockingPurgeLocalRepository(resqlite.Database db, this.gate)
+    : super(database: (() async => db));
+
+  final Completer<void> gate;
+  int purgeCalls = 0;
+
+  @override
+  Future<int> deleteCachedSourcesAwaitingPurge({
+    required Iterable<String> sourcePaths,
+    int batchSize = 4096,
+    bool cleanupOrphanMetadata = false,
+    bool checkpoint = false,
+    void Function(LocalChessScanProgress progress)? onProgress,
+  }) async {
+    purgeCalls += 1;
+    onProgress?.call(
+      LocalChessScanProgress(fraction: 0.5, message: 'Deleting games…'),
+    );
+    await gate.future;
+    onProgress?.call(
+      LocalChessScanProgress(fraction: 1, message: 'Delete complete.'),
+    );
+    return sourcePaths.length;
   }
 }
 

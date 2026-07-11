@@ -75,6 +75,27 @@ class PlayerWorkspaceOperation {
       progress == null ? null : (progress!.clamp(0, 1) * 100).round();
 }
 
+/// Tracks the in-flight teardown of a player: while a player's downloaded
+/// sources and SQLite cache are being deleted, its row stays on screen with a
+/// spinner and this progress instead of vanishing and then janking silently.
+@immutable
+class PlayerWorkspaceRemoval {
+  const PlayerWorkspaceRemoval({this.message = 'Removing…', this.progress});
+
+  final String message;
+  final double? progress;
+
+  int? get percent =>
+      progress == null ? null : (progress!.clamp(0, 1) * 100).round();
+
+  PlayerWorkspaceRemoval copyWith({String? message, double? progress}) {
+    return PlayerWorkspaceRemoval(
+      message: message ?? this.message,
+      progress: progress ?? this.progress,
+    );
+  }
+}
+
 @immutable
 class PlayerWorkspaceAccount {
   const PlayerWorkspaceAccount({
