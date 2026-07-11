@@ -46,8 +46,10 @@ import 'package:chessever/widgets/backfilled_federation_flag.dart';
 
 const Duration _kSidebarLiveActivityWindow = Duration(minutes: 120);
 
+typedef _EventRoundExpansionKey = ({String id, bool initiallyExpanded});
+
 final _eventRoundExpandedProvider = StateProvider.autoDispose
-    .family<bool, String>((ref, key) => true);
+    .family<bool, _EventRoundExpansionKey>((ref, key) => key.initiallyExpanded);
 
 final _gameRailTabProvider = StateProvider.autoDispose
     .family<_GameRailTab?, String>((ref, tabId) => null);
@@ -866,14 +868,25 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
               groupByRound: resolved.kind == _GameListKind.event,
               preserveInputOrder: preserveEventInputOrder,
             );
-    // Mobile Games-tab parity: every round group is rendered — the focus
-    // round leads, started rounds follow newest-first, upcoming rounds sit
-    // at the bottom (see `_buildRoundGroups`). No separate upcoming toggle.
+    // Every published round group is rendered. Upcoming headers lead the
+    // rail, while their rows default to collapsed whenever another round is
+    // actively live/ongoing.
     final roundGroups = allRoundGroups;
     final showBoardColumn = resolved.kind == _GameListKind.event;
+    final expansionKeys = <String, _EventRoundExpansionKey>{
+      for (final group in roundGroups)
+        group.id: _eventRoundExpansionKey(
+          group,
+          groups: roundGroups,
+          collapseUpcomingDuringActiveRound:
+              resolved.kind == _GameListKind.event,
+        ),
+    };
     final expandedByGroup = <String, bool>{
       for (final group in roundGroups)
-        group.id: ref.watch(_eventRoundExpandedProvider(group.id)),
+        group.id: ref.watch(
+          _eventRoundExpandedProvider(expansionKeys[group.id]!),
+        ),
     };
     final visibleRoundGroups = [
       for (final group in roundGroups)
@@ -1126,6 +1139,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
                         )
                         : _buildRoundGroupsList(
                           roundGroups: roundGroups,
+                          expansionKeys: expansionKeys,
                           selectedGameId: selectedGameId,
                           liveSummaries: liveSummaries,
                           eventGames:
@@ -1159,6 +1173,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
   /// round sections.
   Widget _buildRoundGroupsList({
     required List<_EventRoundGroup> roundGroups,
+    required Map<String, _EventRoundExpansionKey> expansionKeys,
     required String? selectedGameId,
     required _EventLiveSummaries liveSummaries,
     required List<TournamentGameSummary> eventGames,
@@ -1200,6 +1215,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
         final group = roundGroups[index];
         return _EventRoundSection(
           group: group,
+          expansionKey: expansionKeys[group.id]!,
           selectedGameId: selectedGameId,
           selectedGameIds: _highlightedGameIds,
           highlightedGameId: _highlightedGameId,
@@ -1404,8 +1420,16 @@ Future<void> navigateActiveEventGame(
   // the active tab re-renders.
   if (resolved.kind == _GameListKind.event) {
     final roundKey = _roundKeyResolverFor(resolved.games)(nextGame);
-    if (!ref.read(_eventRoundExpandedProvider(roundKey))) {
-      ref.read(_eventRoundExpandedProvider(roundKey).notifier).state = true;
+    final roundGroup = groupsForOrdering.firstWhere(
+      (group) => group.id == roundKey,
+    );
+    final expansionKey = _eventRoundExpansionKey(
+      roundGroup,
+      groups: groupsForOrdering,
+      collapseUpcomingDuringActiveRound: true,
+    );
+    if (!ref.read(_eventRoundExpandedProvider(expansionKey))) {
+      ref.read(_eventRoundExpandedProvider(expansionKey).notifier).state = true;
     }
   } else if (resolved.kind == _GameListKind.favorites) {
     final bucket = nextGame.lastMoveTime ?? nextGame.startsAt;
@@ -1413,8 +1437,9 @@ Future<void> navigateActiveEventGame(
         bucket == null
             ? 'fav-day-0000-00-00'
             : 'fav-day-${DateFormat('yyyy-MM-dd').format(bucket)}';
-    if (!ref.read(_eventRoundExpandedProvider(dayKey))) {
-      ref.read(_eventRoundExpandedProvider(dayKey).notifier).state = true;
+    final expansionKey = (id: dayKey, initiallyExpanded: true);
+    if (!ref.read(_eventRoundExpandedProvider(expansionKey))) {
+      ref.read(_eventRoundExpandedProvider(expansionKey).notifier).state = true;
     }
   }
 
@@ -1931,7 +1956,7 @@ class _EventRoundGroup {
   final List<TournamentGameSummary> games;
 
   /// True for upcoming rounds whose rows are published pairings with no
-  /// moves yet (mobile's pairing-only round cards). Always rendered last.
+  /// moves yet (mobile's pairing-only round cards).
   final bool pairingOnly;
 
   /// Matchup slices for team / knockout rounds; null for plain rounds.
@@ -1996,8 +2021,7 @@ List<_EventRoundGroup> _buildRoundGroups(
   // `sortRoundsForDisplay`):
   //  - a round shows its board-visible games (resolved players + a played
   //    position);
-  //  - upcoming rounds with published pairings surface those pairings but
-  //    always render last, soonest first;
+  //  - upcoming rounds with published pairings surface those pairings;
   //  - rounds whose rows are all "?" placeholders stay hidden until real
   //    pairings or moves arrive.
   final playedGroups = <_EventRoundGroup>[];
@@ -2020,9 +2044,8 @@ List<_EventRoundGroup> _buildRoundGroups(
     pairingGroups.add(group);
   }
 
-  // Played rounds ordered exactly like the mobile Games tab: focus round
-  // (live / just-started / next-up) first, other started rounds
-  // newest-first, not-yet-started rounds soonest-first at the bottom.
+  // First retain the mobile Games-tab ordering within played rounds. The
+  // desktop-specific upcoming-first placement is applied below.
   final models = [
     for (final group in playedGroups)
       GamesAppBarModel(
@@ -2043,7 +2066,8 @@ List<_EventRoundGroup> _buildRoundGroups(
     (a, b) => (orderById[a.id] ?? 0).compareTo(orderById[b.id] ?? 0),
   );
 
-  // Pairing-only rounds always come last, soonest first (mobile parity).
+  // Pairing-only rounds are ordered soonest first before all upcoming groups
+  // are lifted above the active and completed rounds for the desktop rail.
   pairingGroups.sort((a, b) {
     final aStart = a.startsAt;
     final bStart = b.startsAt;
@@ -2054,7 +2078,46 @@ List<_EventRoundGroup> _buildRoundGroups(
     return cmp != 0 ? cmp : a.title.compareTo(b.title);
   });
 
-  return [...playedGroups, ...pairingGroups];
+  final orderedGroups = [...playedGroups, ...pairingGroups];
+  final upcomingGroups =
+      orderedGroups
+          .where((group) => group.status == RoundStatus.upcoming)
+          .toList()
+        ..sort(_compareUpcomingEventRoundGroups);
+  final startedGroups = orderedGroups
+      .where((group) => group.status != RoundStatus.upcoming)
+      .toList(growable: false);
+
+  return [...upcomingGroups, ...startedGroups];
+}
+
+int _compareUpcomingEventRoundGroups(_EventRoundGroup a, _EventRoundGroup b) {
+  final aStart = a.startsAt;
+  final bStart = b.startsAt;
+  if (aStart == null && bStart == null) return a.title.compareTo(b.title);
+  if (aStart == null) return 1;
+  if (bStart == null) return -1;
+  final startCompare = aStart.compareTo(bStart);
+  return startCompare != 0 ? startCompare : a.title.compareTo(b.title);
+}
+
+_EventRoundExpansionKey _eventRoundExpansionKey(
+  _EventRoundGroup group, {
+  required List<_EventRoundGroup> groups,
+  required bool collapseUpcomingDuringActiveRound,
+}) {
+  final hasActiveRound =
+      collapseUpcomingDuringActiveRound &&
+      groups.any((candidate) {
+        final gameStatus = _roundStatus(candidate.games);
+        return gameStatus == RoundStatus.live ||
+            gameStatus == RoundStatus.ongoing;
+      });
+  return (
+    id: group.id,
+    initiallyExpanded:
+        !(hasActiveRound && group.status == RoundStatus.upcoming),
+  );
 }
 
 _EventRoundGroup _eventRoundGroupFor(
@@ -3814,6 +3877,7 @@ class _EventRoundTable extends StatelessWidget {
 class _EventRoundSection extends ConsumerWidget {
   const _EventRoundSection({
     required this.group,
+    required this.expansionKey,
     required this.selectedGameId,
     required this.selectedGameIds,
     required this.highlightedGameId,
@@ -3829,6 +3893,7 @@ class _EventRoundSection extends ConsumerWidget {
   });
 
   final _EventRoundGroup group;
+  final _EventRoundExpansionKey expansionKey;
   final String? selectedGameId;
   final Set<String> selectedGameIds;
   final String? highlightedGameId;
@@ -3844,7 +3909,7 @@ class _EventRoundSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final expanded = ref.watch(_eventRoundExpandedProvider(group.id));
+    final expanded = ref.watch(_eventRoundExpandedProvider(expansionKey));
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -3857,7 +3922,9 @@ class _EventRoundSection extends ConsumerWidget {
             onToggle:
                 () =>
                     ref
-                        .read(_eventRoundExpandedProvider(group.id).notifier)
+                        .read(
+                          _eventRoundExpandedProvider(expansionKey).notifier,
+                        )
                         .state = !expanded,
           ),
           if (expanded)

@@ -280,7 +280,7 @@ void main() {
     final now = DateTime.now();
     final games = [
       // Round 5 — tomorrow, resolved pairings without moves → pairing-only,
-      // pinned to the bottom with boards ascending.
+      // pinned to the top with boards ascending.
       _summary(
         id: 'r5-g1',
         roundLabel: 'Round 5',
@@ -299,38 +299,44 @@ void main() {
         hasStarted: false,
         boardNumber: 1,
       ),
-      // Round 4 — later today but all "?" placeholder pairings → hidden,
+      // Round 6 — later this week but all "?" placeholder pairings → hidden,
       // even though the pre-created rows claim to be ongoing.
       _summary(
-        id: 'r4-g1',
-        roundLabel: 'Round 4',
-        roundStartsAt: now.add(const Duration(hours: 3)),
+        id: 'r6-g1',
+        roundLabel: 'Round 6',
+        roundStartsAt: now.add(const Duration(days: 2)),
         whitePlayer: '?',
         blackPlayer: '?',
         pgn: '',
         status: GameStatus.ongoing,
         hasStarted: true,
       ),
-      // Round 3 — live right now → focus round on top.
+      // Round 4 — live right now → first started round beneath Round 5.
       _summary(
-        id: 'r3-g1',
-        roundLabel: 'Round 3',
+        id: 'r4-g1',
+        roundLabel: 'Round 4',
         roundStartsAt: now.subtract(const Duration(hours: 1)),
         status: GameStatus.ongoing,
         hasStarted: true,
         lastMoveTime: now.subtract(const Duration(minutes: 5)),
       ),
-      // Rounds 2 and 1 — played, newest first below the focus round.
+      // Rounds 3, 2, and 1 — played, newest first below the focus round.
+      _summary(
+        id: 'r3-g1',
+        roundLabel: 'Round 3',
+        roundStartsAt: now.subtract(const Duration(days: 1)),
+        status: GameStatus.whiteWins,
+      ),
       _summary(
         id: 'r2-g1',
         roundLabel: 'Round 2',
-        roundStartsAt: now.subtract(const Duration(days: 1, hours: 1)),
+        roundStartsAt: now.subtract(const Duration(days: 2)),
         status: GameStatus.draw,
       ),
       _summary(
         id: 'r1-g1',
         roundLabel: 'Round 1',
-        roundStartsAt: now.subtract(const Duration(days: 2)),
+        roundStartsAt: now.subtract(const Duration(days: 3)),
         status: GameStatus.whiteWins,
       ),
     ];
@@ -338,17 +344,20 @@ void main() {
     final groups = eventRailRoundGroupsForTesting(games);
 
     expect(groups.map((group) => group.title).toList(), [
+      'Round 5',
+      'Round 4',
       'Round 3',
       'Round 2',
       'Round 1',
-      'Round 5',
     ]);
-    expect(groups.first.status, 'live');
-    expect(groups[1].status, 'completed');
-    expect(groups[2].status, 'completed');
-    expect(groups.last.status, 'upcoming');
-    expect(groups.last.pairingOnly, isTrue);
-    expect(groups.last.gameIds, ['r5-g2', 'r5-g1']);
+    expect(groups.first.status, 'upcoming');
+    expect(groups.first.pairingOnly, isTrue);
+    expect(groups.first.gameIds, ['r5-g2', 'r5-g1']);
+    expect(groups[1].status, 'live');
+    expect(
+      groups.skip(2).map((group) => group.status),
+      everyElement('completed'),
+    );
   });
 
   test('event rail groups team rounds into matchups with running scores', () {
@@ -1144,9 +1153,10 @@ void main() {
     expect(board2Top, lessThan(board10Top));
   });
 
-  testWidgets('upcoming event rounds render below played rounds', (
+  testWidgets('upcoming event headers lead but collapse during a live round', (
     tester,
   ) async {
+    final now = DateTime.now();
     await tester.pumpWidget(
       _wrap(
         BoardTabGameArgs(
@@ -1160,14 +1170,21 @@ void main() {
             _summary(
               id: 'round-2-game',
               roundLabel: 'R2',
-              startsAt: DateTime(2026, 1, 2, 10),
+              whitePlayer: 'Live White',
+              blackPlayer: 'Live Black',
+              status: GameStatus.ongoing,
+              hasStarted: true,
+              roundStartsAt: now.subtract(const Duration(hours: 1)),
+              lastMoveTime: now.subtract(const Duration(minutes: 1)),
             ),
             _summary(
               id: 'round-4-game',
               roundLabel: 'R4',
+              whitePlayer: 'Future White',
+              blackPlayer: 'Future Black',
               status: GameStatus.ongoing,
               hasStarted: false,
-              startsAt: DateTime(2030, 1, 4, 10),
+              roundStartsAt: now.add(const Duration(days: 1)),
             ),
           ],
           gameListSelectedId: 'round-2-game',
@@ -1176,15 +1193,62 @@ void main() {
     );
     await tester.pump();
 
-    // Mobile Games-tab parity: no upcoming toggle; future rounds are always
-    // rendered, sorted below the played rounds.
-    expect(find.textContaining('upcoming round'), findsNothing);
     expect(find.text('Round 2'), findsOneWidget);
     expect(find.text('Round 4'), findsOneWidget);
     expect(
       tester.getTopLeft(find.text('Round 4')).dy,
-      greaterThan(tester.getTopLeft(find.text('Round 2')).dy),
+      lessThan(tester.getTopLeft(find.text('Round 2')).dy),
     );
+    expect(find.text('Live White'), findsOneWidget);
+    expect(find.text('Future White'), findsNothing);
+
+    await tester.tap(find.text('Round 4'));
+    await tester.pump();
+
+    expect(find.text('Future White'), findsOneWidget);
+  });
+
+  testWidgets('upcoming event rows expand when the latest round is finished', (
+    tester,
+  ) async {
+    final now = DateTime.now();
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'round-2-game',
+          pgn: '1. e4 e5 *',
+          label: 'Event game',
+          whiteName: 'Finished White',
+          blackName: 'Finished Black',
+          tournamentTitle: 'Event',
+          eventGames: [
+            _summary(
+              id: 'round-2-game',
+              roundLabel: 'R2',
+              whitePlayer: 'Finished White',
+              blackPlayer: 'Finished Black',
+              status: GameStatus.draw,
+              roundStartsAt: now.subtract(const Duration(days: 1)),
+            ),
+            _summary(
+              id: 'round-3-game',
+              roundLabel: 'R3',
+              whitePlayer: 'Next White',
+              blackPlayer: 'Next Black',
+              pgn: '',
+              status: GameStatus.unknown,
+              hasStarted: false,
+              roundStartsAt: now.add(const Duration(days: 1)),
+            ),
+          ],
+          gameListSelectedId: 'round-2-game',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Round 3'), findsOneWidget);
+    expect(find.text('Next White'), findsOneWidget);
   });
 
   testWidgets('event game rows are tappable in the fixed table rail', (
