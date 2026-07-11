@@ -267,6 +267,10 @@ workflows:
       - name: Build Windows release
         script: |
           powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_build_windows_release.ps1
+      - name: Upload Windows native symbols
+        ignore_failure: true
+        script: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_upload_windows_symbols.ps1
       - name: Install Inno Setup
         script: |
           $isccOnPath = Get-Command iscc.exe -ErrorAction SilentlyContinue

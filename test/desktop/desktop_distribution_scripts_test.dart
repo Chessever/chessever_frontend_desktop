@@ -89,7 +89,12 @@ void main() {
           File(
             'scripts/codemagic_build_windows_release.ps1',
           ).readAsStringSync();
+      final symbolScript =
+          File(
+            'scripts/codemagic_upload_windows_symbols.ps1',
+          ).readAsStringSync();
       final codemagic = File('codemagic.yaml').readAsStringSync();
+      final windowsCmake = File('windows/CMakeLists.txt').readAsStringSync();
 
       expect(script, contains(r'ReleaseVersion = "$version+$build"'));
       expect(script, contains(r'ArchiveName = "$version+$build-windows"'));
@@ -165,6 +170,52 @@ void main() {
         buildScript,
         contains(r'dist\$build\$packageName-$version+$build-windows'),
       );
+      expect(windowsCmake, contains(r'$<$<CONFIG:Release>:/Zi>'));
+      expect(windowsCmake, contains(r'$<$<CONFIG:Release>:/DEBUG:FULL>'));
+      expect(buildScript, contains("Join-Path \$BuildRoot 'native-symbols'"));
+      expect(
+        symbolScript,
+        contains(r'build\windows\x64\native-symbols\$releaseVersion'),
+      );
+      expect(buildScript, contains('flutter_windows.dll.pdb'));
+      expect(buildScript, contains(r"-Filter '*.pdb'"));
+      expect(buildScript, contains(r'Remove-Item -LiteralPath $_.FullName'));
+      expect(buildScript, contains('Assert-NoRuntimePdbs'));
+      expect(symbolScript, contains('SENTRY_AUTH_TOKEN'));
+      expect(symbolScript, contains('SENTRY_ORG'));
+      expect(symbolScript, contains('SENTRY_PROJECT'));
+      expect(symbolScript, contains('Write-Warning'));
+      expect(symbolScript, contains('chessever-desktop-release'));
+      expect(symbolScript, isNot(contains('--auth-token')));
+      expect(
+        symbolScript,
+        contains(r'@("debug-files", "upload", "--wait", $symbolDir)'),
+      );
+      expect(symbolScript, contains('Get-Command sentry'));
+      expect(symbolScript, contains('Get-Command sentry-cli'));
+      expect(symbolScript, contains("install --global 'sentry'"));
+
+      final symbolsStepName = codemagic.indexOf(
+        '- name: Upload Windows native symbols',
+      );
+      final symbolsStep = codemagic.indexOf(
+        r'powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_upload_windows_symbols.ps1',
+      );
+      final publishStep = codemagic.indexOf(
+        r'powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_publish_windows.ps1',
+      );
+      final installInnoStep = codemagic.indexOf(
+        '- name: Install Inno Setup',
+        symbolsStep,
+      );
+      expect(symbolsStepName, greaterThanOrEqualTo(0));
+      expect(symbolsStep, greaterThanOrEqualTo(0));
+      expect(installInnoStep, greaterThan(symbolsStep));
+      expect(
+        codemagic.substring(symbolsStepName, installInnoStep),
+        contains('ignore_failure: true'),
+      );
+      expect(symbolsStep, lessThan(publishStep));
       expect(codemagic, isNot(contains('--dart-define-from-file')));
     });
 
@@ -340,11 +391,13 @@ void main() {
         authGate,
         contains('return const MandatoryUpdateGate(child: DesktopShell());'),
       );
-      expect(authGate, contains('return const DesktopWelcomeScreen();'));
       expect(
         authGate,
-        contains('return const DesktopPremiumRequiredScreen();'),
+        contains(
+          'return const DesktopStandaloneWindowChrome(child: DesktopWelcomeScreen());',
+        ),
       );
+      expect(authGate, contains('child: DesktopPremiumRequiredScreen(),'));
       expect(shell, isNot(contains('MandatoryUpdateGate')));
     });
 
