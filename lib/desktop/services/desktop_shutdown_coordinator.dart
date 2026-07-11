@@ -78,12 +78,10 @@ class DesktopShutdownCoordinator with WidgetsBindingObserver, WindowListener {
     DesktopShutdownWindowController? windowController,
     @visibleForTesting Future<void> Function()? cancelPlayerOperations,
     @visibleForTesting Future<void> Function()? stopTournamentServer,
-    @visibleForTesting void Function()? disposeContainer,
   }) : _windowController =
            windowController ?? const _SystemDesktopShutdownWindowController(),
        _cancelPlayerOperationsOverride = cancelPlayerOperations,
-       _stopTournamentServerOverride = stopTournamentServer,
-       _disposeContainerOverride = disposeContainer;
+       _stopTournamentServerOverride = stopTournamentServer;
 
   static DesktopShutdownCoordinator? instance;
 
@@ -91,10 +89,8 @@ class DesktopShutdownCoordinator with WidgetsBindingObserver, WindowListener {
   final DesktopShutdownWindowController _windowController;
   final Future<void> Function()? _cancelPlayerOperationsOverride;
   final Future<void> Function()? _stopTournamentServerOverride;
-  final void Function()? _disposeContainerOverride;
   bool _started = false;
   bool _shuttingDown = false;
-  bool _containerDisposed = false;
 
   bool get _supportsWindowManager => _windowController.isSupported;
 
@@ -139,32 +135,19 @@ class DesktopShutdownCoordinator with WidgetsBindingObserver, WindowListener {
     return closeInterceptionDisabled;
   }
 
-  Future<void> shutdown({
-    bool destroyWindow = false,
-    bool disposeContainer = false,
-  }) async {
+  Future<void> shutdown({bool destroyWindow = false}) async {
     if (_shuttingDown) return;
     _shuttingDown = true;
-    final isTerminalShutdown = destroyWindow || disposeContainer;
+    final isTerminalShutdown = destroyWindow;
     try {
       var closeInterceptionDisabled = true;
       await _cancelPlayerWorkspaceOperations();
       await _stopTournamentServer();
-      if (disposeContainer && !_containerDisposed) {
-        _containerDisposed = true;
-        final dispose = _disposeContainerOverride ?? _container.dispose;
-        try {
-          dispose();
-        } catch (error, stackTrace) {
-          ErrorReporter.report(
-            error,
-            stackTrace: stackTrace,
-            tag: 'desktop_shutdown_container_dispose',
-          );
-        }
-      }
-
-      if (disposeContainer || destroyWindow) {
+      // The container is still mounted by UncontrolledProviderScope while
+      // native close/lifecycle callbacks can race a final widget build. The
+      // process/window teardown owns its lifetime; disposing it here makes
+      // those builds read an already-disposed provider graph.
+      if (destroyWindow) {
         closeInterceptionDisabled = await _disposeCoordinator();
       }
 
@@ -239,7 +222,6 @@ class DesktopShutdownCoordinator with WidgetsBindingObserver, WindowListener {
   }
 
   Future<void> _stopTournamentServer() async {
-    if (_containerDisposed) return;
     try {
       final stop =
           _stopTournamentServerOverride ??
@@ -253,7 +235,6 @@ class DesktopShutdownCoordinator with WidgetsBindingObserver, WindowListener {
   }
 
   Future<void> _cancelPlayerWorkspaceOperations() async {
-    if (_containerDisposed) return;
     try {
       final cancel =
           _cancelPlayerOperationsOverride ??
@@ -271,13 +252,13 @@ class DesktopShutdownCoordinator with WidgetsBindingObserver, WindowListener {
 
   @override
   Future<void> onWindowClose() async {
-    await shutdown(destroyWindow: true, disposeContainer: true);
+    await shutdown(destroyWindow: true);
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.detached) {
-      unawaited(shutdown(disposeContainer: true));
+      unawaited(shutdown());
     }
   }
 }

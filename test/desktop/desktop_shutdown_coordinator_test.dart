@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
@@ -10,7 +11,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
-    'Windows terminal shutdown closes HWND once and stays single-flight',
+    'Windows native close keeps the provider container alive and stays single-flight',
     () async {
       final events = <String>[];
       final closeStarted = Completer<void>();
@@ -25,37 +26,26 @@ void main() {
       );
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      var containerDisposeCount = 0;
+      final providerProbe = Provider<int>((ref) => 42);
       final coordinator = DesktopShutdownCoordinator(
         container,
         windowController: window,
         cancelPlayerOperations: () async => events.add('cancel-players'),
         stopTournamentServer: () async => events.add('stop-server'),
-        disposeContainer: () {
-          containerDisposeCount++;
-          events.add('dispose-container');
-        },
       );
 
       await coordinator.start();
       events.clear();
 
-      final firstShutdown = coordinator.shutdown(
-        destroyWindow: true,
-        disposeContainer: true,
-      );
+      final firstShutdown = coordinator.onWindowClose();
       await closeStarted.future;
-      final overlappingShutdown = coordinator.shutdown(
-        destroyWindow: true,
-        disposeContainer: true,
-      );
+      final overlappingShutdown = coordinator.onWindowClose();
       await overlappingShutdown;
 
-      expect(containerDisposeCount, 1);
+      expect(container.read(providerProbe), 42);
       expect(events, <String>[
         'cancel-players',
         'stop-server',
-        'dispose-container',
         'remove-listener',
         'prevent-close:false',
         'close',
@@ -64,9 +54,9 @@ void main() {
 
       allowCloseToFinish.complete();
       await firstShutdown;
-      await coordinator.shutdown(destroyWindow: true, disposeContainer: true);
+      await coordinator.onWindowClose();
 
-      expect(containerDisposeCount, 1);
+      expect(container.read(providerProbe), 42);
       expect(window.closeCount, 1);
       expect(window.destroyCount, 0);
     },
@@ -86,12 +76,11 @@ void main() {
       windowController: window,
       cancelPlayerOperations: () async {},
       stopTournamentServer: () async {},
-      disposeContainer: () {},
     );
 
     await coordinator.start();
     events.clear();
-    await coordinator.shutdown(destroyWindow: true, disposeContainer: true);
+    await coordinator.onWindowClose();
 
     expect(events, containsAllInOrder(<String>['close', 'destroy']));
     expect(window.closeCount, 1);
@@ -117,12 +106,11 @@ void main() {
         windowController: window,
         cancelPlayerOperations: () async {},
         stopTournamentServer: () async {},
-        disposeContainer: () {},
       );
 
       await coordinator.start();
       events.clear();
-      await coordinator.shutdown(destroyWindow: true, disposeContainer: true);
+      await coordinator.onWindowClose();
 
       expect(
         events,
@@ -138,7 +126,7 @@ void main() {
     },
   );
 
-  test('provider disposal failure cannot strand terminal close', () async {
+  test('service cleanup failures cannot strand native close', () async {
     final events = <String>[];
     final window = _FakeShutdownWindowController(
       isWindows: true,
@@ -146,31 +134,68 @@ void main() {
     );
     final container = ProviderContainer();
     addTearDown(container.dispose);
+    final providerProbe = Provider<int>((ref) => 42);
     final coordinator = DesktopShutdownCoordinator(
       container,
       windowController: window,
-      cancelPlayerOperations: () async {},
-      stopTournamentServer: () async {},
-      disposeContainer: () {
-        events.add('dispose-container');
-        throw StateError('provider disposal failed');
+      cancelPlayerOperations: () async {
+        events.add('cancel-players');
+        throw StateError('player cleanup failed');
+      },
+      stopTournamentServer: () async {
+        events.add('stop-server');
+        throw StateError('server cleanup failed');
       },
     );
 
     await coordinator.start();
     events.clear();
-    await coordinator.shutdown(destroyWindow: true, disposeContainer: true);
+    await coordinator.onWindowClose();
 
     expect(
       events,
       containsAllInOrder(<String>[
-        'dispose-container',
+        'cancel-players',
+        'stop-server',
         'remove-listener',
         'prevent-close:false',
         'close',
       ]),
     );
+    expect(container.read(providerProbe), 42);
     expect(window.closeCount, 1);
+    expect(window.destroyCount, 0);
+  });
+
+  test('detached lifecycle keeps the provider container alive', () async {
+    final events = <String>[];
+    final cleanupFinished = Completer<void>();
+    final window = _FakeShutdownWindowController(
+      isWindows: false,
+      events: events,
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final providerProbe = Provider<int>((ref) => 42);
+    final coordinator = DesktopShutdownCoordinator(
+      container,
+      windowController: window,
+      cancelPlayerOperations: () async => events.add('cancel-players'),
+      stopTournamentServer: () async {
+        events.add('stop-server');
+        cleanupFinished.complete();
+      },
+    );
+
+    await coordinator.start();
+    events.clear();
+    coordinator.didChangeAppLifecycleState(AppLifecycleState.detached);
+    await cleanupFinished.future;
+    await pumpEventQueue();
+
+    expect(container.read(providerProbe), 42);
+    expect(events, <String>['cancel-players', 'stop-server']);
+    expect(window.closeCount, 0);
     expect(window.destroyCount, 0);
   });
 
@@ -187,12 +212,11 @@ void main() {
       windowController: window,
       cancelPlayerOperations: () async {},
       stopTournamentServer: () async {},
-      disposeContainer: () {},
     );
 
     await coordinator.start();
     events.clear();
-    await coordinator.shutdown(destroyWindow: true, disposeContainer: true);
+    await coordinator.onWindowClose();
 
     expect(window.closeCount, 0);
     expect(window.destroyCount, 1);
@@ -214,12 +238,11 @@ void main() {
       windowController: window,
       cancelPlayerOperations: () async {},
       stopTournamentServer: () async {},
-      disposeContainer: () {},
     );
 
     await coordinator.start();
     events.clear();
-    await coordinator.shutdown(destroyWindow: true, disposeContainer: true);
+    await coordinator.onWindowClose();
 
     expect(events, containsAllInOrder(<String>['destroy', 'exit:0']));
     expect(window.destroyCount, 1);
