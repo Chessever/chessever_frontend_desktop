@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
@@ -220,23 +221,58 @@ class _SidebarHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // A 72 px collapsed rail cannot fit both the native macOS traffic lights
+    // and a 40 px toggle. In that state the traffic-light area remains a
+    // draggable title surface and DesktopTabBar renders the toggle beside its
+    // history controls instead.
+    if (Platform.isMacOS && !expanded) {
+      return const DragToMoveArea(child: SizedBox.expand());
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Row(
+        children: [
+          if (Platform.isMacOS) const SizedBox(width: 64),
+          const Expanded(child: DragToMoveArea(child: SizedBox.expand())),
+          DesktopSidebarToggleButton(
+            expanded: expanded,
+            autoCollapsed: autoCollapsed,
+            onTap: onToggleExpanded,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shell-native sidebar toggle shared by the sidebar header and the tab strip
+/// when the collapsed macOS rail is occupied by native traffic lights.
+class DesktopSidebarToggleButton extends StatelessWidget {
+  const DesktopSidebarToggleButton({
+    super.key,
+    required this.expanded,
+    required this.autoCollapsed,
+    required this.onTap,
+  });
+
+  final bool expanded;
+  final bool autoCollapsed;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
     final tooltip =
         autoCollapsed && !expanded
             ? 'Sidebar auto-collapsed for compact width (⌘B)'
             : (expanded ? 'Collapse sidebar (⌘B)' : 'Expand sidebar (⌘B)');
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Align(
-        alignment: expanded ? Alignment.centerRight : Alignment.center,
-        child: DesktopTooltip(
-          message: tooltip,
-          child: SizedBox.square(
-            dimension: 40,
-            child: _SidebarHeaderButton(
-              icon: expanded ? Icons.menu_open_rounded : Icons.menu_rounded,
-              onTap: onToggleExpanded,
-            ),
-          ),
+    return DesktopTooltip(
+      message: tooltip,
+      child: SizedBox.square(
+        dimension: 40,
+        child: _SidebarHeaderButton(
+          icon: expanded ? Icons.menu_open_rounded : Icons.menu_rounded,
+          onTap: onTap,
         ),
       ),
     );

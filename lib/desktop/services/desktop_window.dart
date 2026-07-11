@@ -37,7 +37,8 @@ class DesktopWindow {
       title: windowTitle,
       backgroundColor: const Color(0xFF0C0C0E),
       skipTaskbar: false,
-      titleBarStyle: TitleBarStyle.normal,
+      titleBarStyle: TitleBarStyle.hidden,
+      windowButtonVisibility: Platform.isMacOS,
     );
 
     await windowManager.waitUntilReadyToShow(options, () async {

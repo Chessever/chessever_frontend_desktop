@@ -11,6 +11,7 @@ import 'package:chessever/desktop/services/desktop_offline_access_cache.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/shell/desktop_shell.dart';
 import 'package:chessever/desktop/widgets/mandatory_update_gate.dart';
+import 'package:chessever/desktop/widgets/desktop_window_frame.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -58,20 +59,24 @@ class DesktopAuthGate extends HookConsumerWidget {
       };
     }, const []);
 
-    if (loading.value) return const _GateLoading();
+    if (loading.value) {
+      return const DesktopStandaloneWindowChrome(child: _GateLoading());
+    }
 
     final s = session.value;
 
     if (s == null) {
-      return const DesktopWelcomeScreen();
+      return const DesktopStandaloneWindowChrome(child: DesktopWelcomeScreen());
     }
 
     final subscription = ref.watch(subscriptionProvider);
     if (shouldShowDesktopSubscriptionGateLoading(subscription)) {
-      return const _GateLoading();
+      return const DesktopStandaloneWindowChrome(child: _GateLoading());
     }
     if (!subscription.isSubscribed) {
-      return const DesktopPremiumRequiredScreen();
+      return const DesktopStandaloneWindowChrome(
+        child: DesktopPremiumRequiredScreen(),
+      );
     }
 
     return const MandatoryUpdateGate(child: DesktopShell());

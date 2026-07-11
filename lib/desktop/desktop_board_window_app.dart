@@ -5,6 +5,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/shell/desktop_shell.dart';
 import 'package:chessever/desktop/services/desktop_board_window_payload.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/widgets/desktop_window_frame.dart';
 import 'package:chessever/services/analytics/analytics_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/responsive_helper.dart';
@@ -32,7 +33,9 @@ class DesktopBoardWindowApp extends ConsumerWidget {
         ResponsiveHelper.init(context);
         return FTheme(
           data: FThemes.zinc.dark,
-          child: FToaster(child: child ?? const SizedBox.shrink()),
+          child: FToaster(
+            child: DesktopWindowFrame(child: child ?? const SizedBox.shrink()),
+          ),
         );
       },
       home: _BoardWindowHome(payload: payload, tabId: tabId),
@@ -50,13 +53,16 @@ class _BoardWindowHome extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: kBackgroundColor,
-      body: SafeArea(
-        child: resolveDesktopTabContent(
-          DesktopTab(
-            id: tabId,
-            kind: payload.kind,
-            title: payload.title,
-            subtitle: payload.subtitle,
+      body: DesktopStandaloneWindowChrome(
+        child: SafeArea(
+          top: false,
+          child: resolveDesktopTabContent(
+            DesktopTab(
+              id: tabId,
+              kind: payload.kind,
+              title: payload.title,
+              subtitle: payload.subtitle,
+            ),
           ),
         ),
       ),

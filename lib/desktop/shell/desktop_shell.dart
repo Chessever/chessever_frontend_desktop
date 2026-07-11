@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -629,6 +630,10 @@ class DesktopShell extends HookConsumerWidget {
                                     DesktopTabBar(
                                       onOpenUserProfile:
                                           () => openCurrentUserProfileTab(ref),
+                                      showSidebarToggle:
+                                          Platform.isMacOS && !sidebarExpanded,
+                                      sidebarAutoCollapsed: autoCollapsed,
+                                      onToggleSidebar: toggleSidebar,
                                     ),
                                   Expanded(
                                     // One cursor-proximity field over all pane content:

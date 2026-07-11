@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:collection/collection.dart';
@@ -7,9 +8,11 @@ import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
+import 'package:chessever/desktop/shell/desktop_sidebar.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
@@ -23,6 +26,7 @@ import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_update_chip.dart';
 import 'package:chessever/desktop/widgets/desktop_user_profile_button.dart';
+import 'package:chessever/desktop/widgets/desktop_window_frame.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
@@ -51,9 +55,18 @@ import 'package:chessever/widgets/backfilled_federation_flag.dart';
 /// brightens and a chip-shaped placeholder is rendered at the tail to
 /// telegraph the landing slot.
 class DesktopTabBar extends ConsumerStatefulWidget {
-  const DesktopTabBar({super.key, this.onOpenUserProfile});
+  const DesktopTabBar({
+    super.key,
+    this.onOpenUserProfile,
+    this.showSidebarToggle = false,
+    this.sidebarAutoCollapsed = false,
+    this.onToggleSidebar,
+  });
 
   final VoidCallback? onOpenUserProfile;
+  final bool showSidebarToggle;
+  final bool sidebarAutoCollapsed;
+  final VoidCallback? onToggleSidebar;
 
   @override
   ConsumerState<DesktopTabBar> createState() => _DesktopTabBarState();
@@ -114,6 +127,15 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
             ),
             child: Row(
               children: [
+                if (widget.showSidebarToggle && widget.onToggleSidebar != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 6),
+                    child: DesktopSidebarToggleButton(
+                      expanded: false,
+                      autoCollapsed: widget.sidebarAutoCollapsed,
+                      onTap: widget.onToggleSidebar!,
+                    ),
+                  ),
                 const _TabHistoryControls(),
                 Expanded(
                   child: LayoutBuilder(
@@ -123,69 +145,89 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                         boardArgsByTab: boardArgsByTab,
                         availableWidth: constraints.maxWidth,
                       );
-                      return ReorderableListView.builder(
-                        scrollDirection: Axis.horizontal,
-                        buildDefaultDragHandles: false,
-                        padding: const EdgeInsets.only(left: 6, right: 6),
-                        proxyDecorator: (child, index, animation) {
-                          // While being dragged, the proxy gets a slight scale +
-                          // raised shadow so the user feels the lift.
-                          return AnimatedBuilder(
-                            animation: animation,
-                            builder: (context, _) {
-                              final t = Curves.easeOut.transform(
-                                animation.value,
-                              );
-                              return Material(
-                                color: Colors.transparent,
-                                elevation: 6 * t,
-                                shadowColor: Colors.black.withValues(
-                                  alpha: 0.4,
-                                ),
-                                child: Transform.scale(
-                                  scale: 1 + 0.03 * t,
-                                  filterQuality: FilterQuality.medium,
-                                  child: child,
-                                ),
-                              );
-                            },
-                          );
-                        },
-                        // Keep legacy callback here because desktopTabsProvider.reorder
-                        // still expects Flutter's pre-removal newIndex semantics.
-                        // ignore: deprecated_member_use
-                        onReorder: notifier.reorder,
-                        itemCount: state.tabs.length,
-                        itemBuilder: (context, i) {
-                          final tab = state.tabs[i];
-                          // Chrome-style: pointer-down on the chip immediately
-                          // arms a horizontal drag (`ReorderableDragStartListener`
-                          // uses ImmediateMultiDragGestureRecognizer). Short
-                          // taps without movement still bubble through to the
-                          // chip's GestureDetector so click-to-activate keeps
-                          // working — only sustained motion past the touch-slop
-                          // commits to a reorder gesture.
-                          return SizedBox(
-                            key: ValueKey(tab.id),
-                            width: widths[tab.id],
-                            child: ReorderableDragStartListener(
-                              index: i,
-                              child: _TabChip(
-                                tab: tab,
-                                active: tab.id == state.activeId,
-                                onActivate: () => notifier.activate(tab.id),
-                                onClose:
-                                    tab.closable
-                                        ? () => unawaited(
-                                          _closeTabWithUnsavedAnalysisGuard(
-                                            tab.id,
-                                          ),
-                                        )
-                                        : null,
-                              ),
+                      final desiredListWidth = widths.values.fold<double>(
+                        _tabListHorizontalPadding,
+                        (total, width) => total + width,
+                      );
+                      final listWidth = math.min(
+                        constraints.maxWidth,
+                        desiredListWidth,
+                      );
+                      return Row(
+                        children: [
+                          SizedBox(
+                            width: listWidth,
+                            child: ReorderableListView.builder(
+                              scrollDirection: Axis.horizontal,
+                              buildDefaultDragHandles: false,
+                              padding: const EdgeInsets.only(left: 6, right: 6),
+                              proxyDecorator: (child, index, animation) {
+                                // While being dragged, the proxy gets a slight scale +
+                                // raised shadow so the user feels the lift.
+                                return AnimatedBuilder(
+                                  animation: animation,
+                                  builder: (context, _) {
+                                    final t = Curves.easeOut.transform(
+                                      animation.value,
+                                    );
+                                    return Material(
+                                      color: Colors.transparent,
+                                      elevation: 6 * t,
+                                      shadowColor: Colors.black.withValues(
+                                        alpha: 0.4,
+                                      ),
+                                      child: Transform.scale(
+                                        scale: 1 + 0.03 * t,
+                                        filterQuality: FilterQuality.medium,
+                                        child: child,
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
+                              // Keep legacy callback here because desktopTabsProvider.reorder
+                              // still expects Flutter's pre-removal newIndex semantics.
+                              // ignore: deprecated_member_use
+                              onReorder: notifier.reorder,
+                              itemCount: state.tabs.length,
+                              itemBuilder: (context, i) {
+                                final tab = state.tabs[i];
+                                // Chrome-style: pointer-down on the chip immediately
+                                // arms a horizontal drag (`ReorderableDragStartListener`
+                                // uses ImmediateMultiDragGestureRecognizer). Short
+                                // taps without movement still bubble through to the
+                                // chip's GestureDetector so click-to-activate keeps
+                                // working — only sustained motion past the touch-slop
+                                // commits to a reorder gesture.
+                                return SizedBox(
+                                  key: ValueKey(tab.id),
+                                  width: widths[tab.id],
+                                  child: ReorderableDragStartListener(
+                                    index: i,
+                                    child: _TabChip(
+                                      tab: tab,
+                                      active: tab.id == state.activeId,
+                                      onActivate:
+                                          () => notifier.activate(tab.id),
+                                      onClose:
+                                          tab.closable
+                                              ? () => unawaited(
+                                                _closeTabWithUnsavedAnalysisGuard(
+                                                  tab.id,
+                                                ),
+                                              )
+                                              : null,
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
-                          );
-                        },
+                          ),
+                          if (listWidth < constraints.maxWidth)
+                            const Expanded(
+                              child: DragToMoveArea(child: SizedBox.expand()),
+                            ),
+                        ],
                       );
                     },
                   ),
@@ -202,6 +244,8 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                   ),
                 ],
                 const SizedBox(width: 8),
+                if (Platform.isWindows || Platform.isLinux)
+                  const SizedBox(width: kDesktopWindowControlsWidth),
               ],
             ),
           ),
