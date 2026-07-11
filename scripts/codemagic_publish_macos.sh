@@ -266,5 +266,9 @@ rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
 rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
   "$DMG_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever.dmg"
 
+# Prune only after both the immutable versioned download and stable website
+# alias are safely in place. The server owns version ordering and deletion.
+ssh "${SSH_OPTS[@]}" "$REMOTE" "prune-downloads macos"
+
 echo "Published macOS desktop_updater archive $RELEASE_VERSION"
 echo "Published macOS DMG: https://chessever.com/updates/desktop/downloads/Chessever.dmg"

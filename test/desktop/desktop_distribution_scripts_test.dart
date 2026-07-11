@@ -31,6 +31,12 @@ void main() {
       expect(script, contains(r'entry.get("path") or entry.get("filePath")'));
       expect(script, contains(r'desktop/archive/$ARCHIVE_NAME/'));
       expect(script, contains(r'ingest macos $ARCHIVE_NAME $RELEASE_VERSION'));
+      _expectInstallerUploadsBeforePrune(
+        script: script,
+        platform: 'macos',
+        versionedUpload: r'desktop/downloads/Chessever-${RELEASE_VERSION}.dmg',
+        stableUpload: r'desktop/downloads/Chessever.dmg',
+      );
       expect(script, isNot(contains('SUPARKLE')));
       expect(script, isNot(contains('sign_update')));
       expect(codemagic, contains('macos-desktop-release:'));
@@ -125,6 +131,12 @@ void main() {
       expect(script, contains('windows\\installer\\chessever.iss'));
       expect(script, contains('Chessever-Setup.exe'));
       expect(script, isNot(contains('Chessever-windows.zip')));
+      _expectInstallerUploadsBeforePrune(
+        script: script,
+        platform: 'windows',
+        versionedUpload: r'desktop/downloads/$versionedInstallerName',
+        stableUpload: 'desktop/downloads/Chessever-Setup.exe',
+      );
       expect(codemagic, contains('windows-desktop-release:'));
       expect(codemagic, contains('max_build_duration: 120'));
       expect(codemagic, contains('choco install innosetup'));
@@ -207,6 +219,13 @@ void main() {
       expect(script, contains('StartupNotify=true'));
       expect(script, isNot(contains('com.chessever.desktop.desktop')));
       expect(script, isNot(contains(r'Exec=/opt/chessever/$PACKAGE_BINARY')));
+      _expectInstallerUploadsBeforePrune(
+        script: script,
+        platform: 'linux',
+        versionedUpload:
+            r'desktop/downloads/Chessever-${RELEASE_VERSION}-amd64.deb',
+        stableUpload: r'desktop/downloads/Chessever.deb',
+      );
     });
 
     test('Linux bundle includes ONNX Runtime SONAME libraries', () {
@@ -229,9 +248,18 @@ void main() {
         contains('/usr/local/bin/codemagic-finalize clear-legacy'),
       );
       expect(wrapper, contains('/usr/local/bin/codemagic-finalize ingest'));
+      expect(wrapper, contains('KEEP_LAST_N=2'));
+      expect(wrapper, isNot(contains('KEEP_LAST_N=3')));
       expect(wrapper, contains(r'--keep-last-n "$KEEP_LAST_N"'));
       expect(wrapper, contains('macos | windows | linux'));
       expect(wrapper, contains('bad archive'));
+      expect(wrapper, contains('"prune-downloads "*'));
+      expect(wrapper, contains('too many prune-downloads arguments'));
+      expect(
+        wrapper,
+        contains('/usr/local/bin/codemagic-finalize prune-downloads'),
+      );
+      expect(wrapper, contains(r'"$platform" --keep-last-n "$KEEP_LAST_N"'));
     });
   });
 
@@ -396,4 +424,26 @@ String _pubspecValue(String key) {
     'pubspec.yaml',
   ).readAsLinesSync().firstWhere((line) => line.startsWith('$key:'));
   return line.split(':').skip(1).join(':').trim().replaceAll("'", '');
+}
+
+void _expectInstallerUploadsBeforePrune({
+  required String script,
+  required String platform,
+  required String versionedUpload,
+  required String stableUpload,
+}) {
+  final versionedUploadIndex = script.indexOf(versionedUpload);
+  final stableUploadIndex = script.indexOf(stableUpload);
+  final pruneCommand = 'prune-downloads $platform';
+  final pruneIndex = script.indexOf(pruneCommand);
+
+  expect(versionedUploadIndex, greaterThanOrEqualTo(0));
+  expect(stableUploadIndex, greaterThan(versionedUploadIndex));
+  expect(pruneIndex, greaterThan(stableUploadIndex));
+  expect(
+    RegExp(
+      r'prune-downloads (macos|windows|linux)',
+    ).allMatches(script).map((match) => match.group(1)).toList(),
+    <String?>[platform],
+  );
 }
