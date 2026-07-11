@@ -113,17 +113,8 @@ class PlayerWorkspacePane extends HookConsumerWidget {
     final error = ref.watch(
       playerWorkspaceProvider.select((state) => state.error),
     );
-    final removals = ref.watch(
-      playerWorkspaceProvider.select((state) => state.removals),
-    );
     final openedPlayerId = useState<String?>(null);
-    // A player mid-removal stays in `players` (so its row can show the removing
-    // spinner) but its detail view must close — it is being torn down and its
-    // cache is being purged. Treat an opened-but-removing player as unopened.
-    final selected =
-        removals.containsKey(openedPlayerId.value)
-            ? null
-            : _playerById(players, openedPlayerId.value);
+    final selected = _playerById(players, openedPlayerId.value);
     final tab = useState(_PlayerWorkspaceTab.overview);
     final gamesFilter = useState(LocalChessGameFilter());
     final gamesSourcePath = useState<String?>(null);
@@ -174,7 +165,6 @@ class PlayerWorkspacePane extends HookConsumerWidget {
                     : selected == null
                     ? _PlayerLibraryHome(
                       players: players,
-                      removals: removals,
                       error: error,
                       onAddPlayer:
                           () => unawaited(
@@ -361,7 +351,6 @@ class _Header extends StatelessWidget {
 class _PlayerLibraryHome extends HookWidget {
   const _PlayerLibraryHome({
     required this.players,
-    required this.removals,
     required this.error,
     required this.onAddPlayer,
     required this.onOpenPlayer,
@@ -370,7 +359,6 @@ class _PlayerLibraryHome extends HookWidget {
   });
 
   final List<PlayerWorkspacePlayer> players;
-  final Map<String, PlayerWorkspaceRemoval> removals;
   final String? error;
   final VoidCallback onAddPlayer;
   final ValueChanged<String> onOpenPlayer;
@@ -416,7 +404,6 @@ class _PlayerLibraryHome extends HookWidget {
                       )
                       : _PlayerLibraryList(
                         players: filtered,
-                        removals: removals,
                         onOpenPlayer: onOpenPlayer,
                         onRenamePlayer: onRenamePlayer,
                         onRemovePlayer: onRemovePlayer,
@@ -588,14 +575,12 @@ class _LibraryMetric extends StatelessWidget {
 class _PlayerLibraryList extends StatelessWidget {
   const _PlayerLibraryList({
     required this.players,
-    required this.removals,
     required this.onOpenPlayer,
     required this.onRenamePlayer,
     required this.onRemovePlayer,
   });
 
   final List<PlayerWorkspacePlayer> players;
-  final Map<String, PlayerWorkspaceRemoval> removals;
   final ValueChanged<String> onOpenPlayer;
   final ValueChanged<PlayerWorkspacePlayer> onRenamePlayer;
   final ValueChanged<PlayerWorkspacePlayer> onRemovePlayer;
@@ -622,7 +607,6 @@ class _PlayerLibraryList extends StatelessWidget {
                 final player = players[index];
                 return _PlayerLibraryRow(
                   player: player,
-                  removal: removals[player.id],
                   onOpen: () => onOpenPlayer(player.id),
                   onRename: () => onRenamePlayer(player),
                   onRemove: () => onRemovePlayer(player),
@@ -645,15 +629,6 @@ const double _kSourcesColWidth = 176;
 const double _kGamesColWidth = 92;
 const double _kLastSyncColWidth = 120;
 const double _kRowActionsWidth = 112;
-// Combined width of the four trailing slots plus the four gaps between them.
-// The removing indicator fills exactly this so a row mid-removal keeps its
-// player column the same width as every other row.
-const double _kTrailingTotalWidth =
-    _kColGap * 4 +
-    _kSourcesColWidth +
-    _kGamesColWidth +
-    _kLastSyncColWidth +
-    _kRowActionsWidth;
 
 class _PlayerLibraryHeaderRow extends StatelessWidget {
   const _PlayerLibraryHeaderRow();
@@ -712,14 +687,12 @@ class _TableHeaderLabel extends StatelessWidget {
 class _PlayerLibraryRow extends StatefulWidget {
   const _PlayerLibraryRow({
     required this.player,
-    required this.removal,
     required this.onOpen,
     required this.onRename,
     required this.onRemove,
   });
 
   final PlayerWorkspacePlayer player;
-  final PlayerWorkspaceRemoval? removal;
   final VoidCallback onOpen;
   final VoidCallback onRename;
   final VoidCallback onRemove;
@@ -735,84 +708,61 @@ class _PlayerLibraryRowState extends State<_PlayerLibraryRow>
   @override
   Widget build(BuildContext context) {
     final player = widget.player;
-    final removal = widget.removal;
-    final isRemoving = removal != null;
     return MouseRegion(
-      // While a player is being torn down its row is inert: no hover, no tap,
-      // no per-row actions — just the removing indicator. The rest of the pane
-      // stays interactive so the user can keep working during a heavy cleanup.
-      onEnter:
-          isRemoving
-              ? null
-              : (_) => setStateAfterPointerEvent(() => _hovered = true),
-      onExit:
-          isRemoving
-              ? null
-              : (_) => setStateAfterPointerEvent(() => _hovered = false),
+      onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
+      onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: isRemoving ? null : widget.onOpen,
+        onTap: widget.onOpen,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 120),
           curve: Curves.easeOut,
-          color: _hovered && !isRemoving ? kBlack3Color : kBlack2Color,
+          color: _hovered ? kBlack3Color : kBlack2Color,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             children: [
               Expanded(
-                child: Opacity(
-                  opacity: isRemoving ? 0.45 : 1,
-                  child: Row(
-                    children: [
-                      _PlayerAvatar(player: player, size: 40),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Row(
-                              children: [
-                                if (player.title != null) ...[
-                                  DesktopPlayerTitleChip(
-                                    title: player.title!,
-                                    compact: true,
-                                  ),
-                                  const SizedBox(width: 6),
-                                ],
-                                Expanded(
-                                  child: Text(
-                                    playerWorkspaceDisplayName(player),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: kWhiteColor,
-                                      fontSize: 13.5,
-                                      fontWeight: FontWeight.w800,
-                                    ),
+                child: Row(
+                  children: [
+                    _PlayerAvatar(player: player, size: 40),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            children: [
+                              if (player.title != null) ...[
+                                DesktopPlayerTitleChip(
+                                  title: player.title!,
+                                  compact: true,
+                                ),
+                                const SizedBox(width: 6),
+                              ],
+                              Expanded(
+                                child: Text(
+                                  playerWorkspaceDisplayName(player),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: kWhiteColor,
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w800,
                                   ),
                                 ),
-                              ],
-                            ),
-                            const SizedBox(height: 5),
-                            _PlayerFacets(player: player),
-                          ],
-                        ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 5),
+                          _PlayerFacets(player: player),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
-              if (removal != null)
-                // Replace the whole data/actions strip with the removing
-                // indicator. It occupies exactly the combined width of the
-                // columns it stands in for, so the player column keeps the same
-                // width as every other row and the grid never shifts.
-                SizedBox(
-                  width: _kTrailingTotalWidth,
-                  child: _PlayerRemovingIndicator(removal: removal),
-                )
-              else ...[
+              ...[
                 const SizedBox(width: _kColGap),
                 SizedBox(
                   width: _kSourcesColWidth,
@@ -860,84 +810,6 @@ class _PlayerLibraryRowState extends State<_PlayerLibraryRow>
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// Inline "Removing…" strip shown in place of a player row's data/action
-/// columns while its downloaded sources and SQLite cache are being torn down.
-/// Spinner + message + progress reflect the real cache-purge progress, so a
-/// heavy removal reads as deliberate work rather than a freeze.
-class _PlayerRemovingIndicator extends StatelessWidget {
-  const _PlayerRemovingIndicator({required this.removal});
-
-  final PlayerWorkspaceRemoval removal;
-
-  @override
-  Widget build(BuildContext context) {
-    final percent = removal.percent;
-    return Padding(
-      padding: const EdgeInsets.only(left: _kColGap),
-      child: Row(
-        children: [
-          const SizedBox(
-            width: 16,
-            height: 16,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              valueColor: AlwaysStoppedAnimation<Color>(kPrimaryColor),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        removal.message,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: kWhiteColor,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    if (percent != null) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        '$percent%',
-                        style: const TextStyle(
-                          color: kWhiteColor70,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 6),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(3),
-                  child: LinearProgressIndicator(
-                    value: removal.progress,
-                    minHeight: 4,
-                    backgroundColor: kBlack3Color,
-                    valueColor: const AlwaysStoppedAnimation<Color>(
-                      kPrimaryColor,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }

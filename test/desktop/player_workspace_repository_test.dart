@@ -754,6 +754,7 @@ void main() {
         );
 
         await notifier.removePlayer(player.id);
+        await notifier.debugDrainPlayerCleanup();
 
         expect(registry.unregistered, contains(sourcePath));
         expect(registry.unregistered, contains(combinedPath));
@@ -803,6 +804,7 @@ void main() {
       await notifier.selectPlayer(playerId);
 
       await notifier.removePlayer(playerId);
+      await notifier.debugDrainPlayerCleanup();
 
       expect(notifier.state.players, isEmpty);
       expect(notifier.state.selectedPlayerId, isNull);
@@ -810,44 +812,46 @@ void main() {
       expect(workspaceRepository.snapshot.selectedPlayerId, isNull);
     });
 
-    test('removePlayer keeps the row with a removing indicator until cleanup '
-        'finishes', () async {
-      final gate = Completer<void>();
-      final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
-      final localRepository = _BlockingPurgeLocalRepository(db, gate);
-      final notifier = PlayerWorkspaceNotifier(
-        workspaceRepository: workspaceRepository,
-        gamebaseRepository: GamebaseRepository(Dio()),
-        localRepository: localRepository,
-      );
-      await notifier.load();
-      await notifier.addManualPlayer('Heavy Prep');
-      final playerId = notifier.state.players.single.id;
-      await notifier.selectPlayer(playerId);
+    test(
+      'removePlayer detaches silent cleanup from the visible action',
+      () async {
+        final gate = Completer<void>();
+        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+        final localRepository = _BlockingPurgeLocalRepository(db, gate);
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: localRepository,
+        );
+        await notifier.load();
+        await notifier.addManualPlayer('Heavy Prep');
+        final playerId = notifier.state.players.single.id;
+        await notifier.selectPlayer(playerId);
 
-      // Do not await — the cache purge is gated so we can observe the
-      // in-flight removing state.
-      final removal = notifier.removePlayer(playerId);
-      await pumpEventQueue();
+        var visibleActionCompleted = false;
+        final removal = notifier.removePlayer(playerId);
+        removal.then((_) => visibleActionCompleted = true);
+        await pumpEventQueue();
 
-      // The row stays on screen, flagged as removing, and its detail view is
-      // closed. The *persisted* snapshot has already dropped the player.
-      expect(notifier.state.players.map((p) => p.id), contains(playerId));
-      expect(notifier.state.removals.containsKey(playerId), isTrue);
-      expect(notifier.state.selectedPlayerId, isNull);
-      expect(workspaceRepository.snapshot.players, isEmpty);
-      // Purge progress is surfaced on the removing indicator.
-      expect(notifier.state.removals[playerId]!.message, 'Deleting games…');
-      expect(notifier.state.removals[playerId]!.progress, 0.5);
-
-      gate.complete();
-      await removal;
-
-      // Exactly one consolidated purge, and the row + indicator are gone.
-      expect(localRepository.purgeCalls, 1);
-      expect(notifier.state.players, isEmpty);
-      expect(notifier.state.removals.containsKey(playerId), isFalse);
-    });
+        try {
+          expect(
+            visibleActionCompleted,
+            isTrue,
+            reason:
+                'The trash action must not await the potentially long purge.',
+          );
+          expect(notifier.state.players, isEmpty);
+          expect(notifier.state.selectedPlayerId, isNull);
+          expect(workspaceRepository.snapshot.players, isEmpty);
+          expect(localRepository.purgeCalls, 1);
+          expect(localRepository.requestedBatchSize, 128);
+        } finally {
+          if (!gate.isCompleted) gate.complete();
+          await removal;
+          await notifier.debugDrainPlayerCleanup();
+        }
+      },
+    );
 
     test(
       'library source deletion removes that player account and clears combined',
@@ -1152,6 +1156,7 @@ void main() {
         expect(await _count(db, 'local_chess_databases'), 2);
 
         await notifier.removePlayer(player.id);
+        await notifier.debugDrainPlayerCleanup();
 
         expect(notifier.state.players, isEmpty);
         expect(await File(sourcePath).exists(), isFalse);
@@ -3055,6 +3060,7 @@ void main() {
         await notifier.removePlayer(playerId);
         workspaceRepository.finishDownload();
         await sync.timeout(const Duration(seconds: 5));
+        await notifier.debugDrainPlayerCleanup();
 
         expect(notifier.state.players, isEmpty);
         expect(workspaceRepository.snapshot.players, isEmpty);
@@ -4706,6 +4712,7 @@ class _BlockingPurgeLocalRepository extends LocalChessDatabaseRepository {
 
   final Completer<void> gate;
   int purgeCalls = 0;
+  int? requestedBatchSize;
 
   @override
   Future<int> deleteCachedSourcesAwaitingPurge({
@@ -4716,6 +4723,7 @@ class _BlockingPurgeLocalRepository extends LocalChessDatabaseRepository {
     void Function(LocalChessScanProgress progress)? onProgress,
   }) async {
     purgeCalls += 1;
+    requestedBatchSize = batchSize;
     onProgress?.call(
       LocalChessScanProgress(fraction: 0.5, message: 'Deleting games…'),
     );

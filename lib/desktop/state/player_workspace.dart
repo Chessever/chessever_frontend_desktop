@@ -30,7 +30,6 @@ class PlayerWorkspaceState {
     this.isLoading = false,
     this.error,
     this.operations = const <String, PlayerWorkspaceOperation>{},
-    this.removals = const <String, PlayerWorkspaceRemoval>{},
   });
 
   final List<PlayerWorkspacePlayer> players;
@@ -38,11 +37,6 @@ class PlayerWorkspaceState {
   final bool isLoading;
   final String? error;
   final Map<String, PlayerWorkspaceOperation> operations;
-
-  /// Players whose teardown is in flight, keyed by player id. A present entry
-  /// means the row should render as removing (spinner + progress) rather than
-  /// disappear, until its cache purge finishes.
-  final Map<String, PlayerWorkspaceRemoval> removals;
 
   PlayerWorkspacePlayer? get selectedPlayer {
     final id = selectedPlayerId;
@@ -61,7 +55,6 @@ class PlayerWorkspaceState {
     String? error,
     bool clearError = false,
     Map<String, PlayerWorkspaceOperation>? operations,
-    Map<String, PlayerWorkspaceRemoval>? removals,
   }) {
     return PlayerWorkspaceState(
       players: players ?? this.players,
@@ -72,7 +65,6 @@ class PlayerWorkspaceState {
       isLoading: isLoading ?? this.isLoading,
       error: clearError ? null : (error ?? this.error),
       operations: operations ?? this.operations,
-      removals: removals ?? this.removals,
     );
   }
 }
@@ -168,6 +160,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       <String, _PlayerWorkspaceOperationScope>{};
   final Set<String> _deletedPlayerIds = <String>{};
   late final Future<void> _initialLoadFuture;
+  Future<void> _playerCleanupQueue = Future<void>.value();
   bool _isDrainingCombinedRebuilds = false;
   int _repairGeneration = 0;
   final List<Timer> _repairTimeoutTimers = <Timer>[];
@@ -454,12 +447,8 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     if (remaining.length == state.players.length) return;
     final removedSelected = state.selectedPlayerId == playerId;
 
-    // Keep the row on screen with a removing indicator instead of yanking it
-    // optimistically. The cache purge below can run for seconds when a player
-    // owns several downloaded sources, and a silent disappear-then-jank reads
-    // as a freeze. The *persisted* snapshot, however, drops the player right
-    // now so a crash mid-purge can never resurrect a half-deleted player.
     state = state.copyWith(
+      players: List.unmodifiable(remaining),
       clearSelectedPlayerId: removedSelected,
       isLoading: false,
       clearError: true,
@@ -467,10 +456,6 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
           removedSelected
               ? const <String, PlayerWorkspaceOperation>{}
               : _operationsWithoutPlayer(playerId),
-      removals: <String, PlayerWorkspaceRemoval>{
-        ...state.removals,
-        playerId: const PlayerWorkspaceRemoval(),
-      },
     );
     await _workspaceRepository.saveSnapshot(
       PlayerWorkspaceSnapshot(
@@ -478,50 +463,34 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         selectedPlayerId: state.selectedPlayerId,
       ),
     );
-    await _waitForScopes(canceledScopes);
-    try {
-      await _deletePlayerGeneratedData(
-        player,
-        onProgress: (progress) => _updateRemovalProgress(playerId, progress),
-      );
-    } finally {
-      _finishRemoval(playerId);
-    }
+    _schedulePlayerCleanup(player, canceledScopes);
   }
 
-  void _updateRemovalProgress(
-    String playerId,
-    LocalChessScanProgress progress,
+  void _schedulePlayerCleanup(
+    PlayerWorkspacePlayer player,
+    List<_PlayerWorkspaceOperationScope> canceledScopes,
   ) {
-    if (!mounted) return;
-    final current = state.removals[playerId];
-    if (current == null) return;
-    state = state.copyWith(
-      removals: <String, PlayerWorkspaceRemoval>{
-        ...state.removals,
-        playerId: current.copyWith(
-          message: progress.message,
-          progress: progress.fraction,
-        ),
-      },
-    );
+    _playerCleanupQueue = _playerCleanupQueue.then((_) async {
+      // Let the dialog close and the player row disappear before starting
+      // filesystem or SQLite maintenance. Cleanup stays serialized so several
+      // quick removals cannot saturate the machine with competing purges.
+      await Future<void>.delayed(Duration.zero);
+      try {
+        await _waitForScopes(canceledScopes);
+        await _deletePlayerGeneratedData(player);
+      } catch (error, stackTrace) {
+        _debugPlayerWorkspaceFailure(
+          'background player cleanup',
+          error,
+          stackTrace,
+        );
+      }
+    });
+    unawaited(_playerCleanupQueue);
   }
 
-  void _finishRemoval(String playerId) {
-    if (!mounted) return;
-    final stillListed = state.players.any((p) => p.id == playerId);
-    final stillRemoving = state.removals.containsKey(playerId);
-    if (!stillListed && !stillRemoving) return;
-    final removals = <String, PlayerWorkspaceRemoval>{...state.removals}
-      ..remove(playerId);
-    state = state.copyWith(
-      players: List.unmodifiable(<PlayerWorkspacePlayer>[
-        for (final candidate in state.players)
-          if (candidate.id != playerId) candidate,
-      ]),
-      removals: removals,
-    );
-  }
+  @visibleForTesting
+  Future<void> debugDrainPlayerCleanup() => _playerCleanupQueue;
 
   Future<void> syncDeletedLibraryPlayerFolder(
     String playerId, {
@@ -1756,10 +1725,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     return _localRepository.latestLocalGameDate(databasePath: path);
   }
 
-  Future<void> _deletePlayerGeneratedData(
-    PlayerWorkspacePlayer player, {
-    void Function(LocalChessScanProgress progress)? onProgress,
-  }) async {
+  Future<void> _deletePlayerGeneratedData(PlayerWorkspacePlayer player) async {
     final paths = <String>{
       for (final account in player.allAccounts)
         if (account.pgnPath?.trim().isNotEmpty == true) account.pgnPath!.trim(),
@@ -1773,12 +1739,11 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       await _deleteGeneratedSourceFile(path);
     }
     await _workspaceRepository.deletePlayerWorkspaceDirectory(player.id);
-    // One marked-then-purged pass over every source this player owns: a single
-    // dedicated connection instead of one per source, awaited so the removing
-    // indicator can track real progress and drop the row only when it is done.
+    // One marked-then-purged pass over every source this player owns. Small
+    // batches trade cleanup throughput for consistent foreground frame times.
     await _localRepository.deleteCachedSourcesAwaitingPurge(
       sourcePaths: paths,
-      onProgress: onProgress,
+      batchSize: 128,
     );
   }
 
