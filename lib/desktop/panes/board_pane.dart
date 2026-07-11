@@ -2752,6 +2752,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                 move.classification!,
               ),
               comment: '',
+              useClassificationIcon: true,
             ),
     };
     final moveAnnotations = <int, LichessMoveAnnotation>{

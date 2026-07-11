@@ -1340,6 +1340,7 @@ class _LineBlock extends StatelessWidget {
                   ? _mergedMainlineNagsFor(
                     ply: whitePointer.last,
                     baseNags: whiteMove?.nags ?? const [],
+                    lichessAnnotations: lichessAnnotations,
                     userNags: userNags,
                   )
                   : (whiteMove?.nags ?? const <int>[]),
@@ -1359,6 +1360,7 @@ class _LineBlock extends StatelessWidget {
                   ? _mergedMainlineNagsFor(
                     ply: blackPointer.last,
                     baseNags: blackMove?.nags ?? const [],
+                    lichessAnnotations: lichessAnnotations,
                     userNags: userNags,
                   )
                   : (blackMove?.nags ?? const <int>[]),
@@ -2026,6 +2028,7 @@ class _InlineNotationBlock extends StatelessWidget {
                 ? _mergedMainlineNagsFor(
                   ply: pointer.last,
                   baseNags: move.nags ?? const <int>[],
+                  lichessAnnotations: lichessAnnotations,
                   userNags: userNags,
                 )
                 : (move.nags ?? const <int>[]),
@@ -3688,7 +3691,8 @@ class _LadderChipState extends State<_LadderChip>
     final clockText = widget.clockText;
     final children = <Widget>[
       if (widget.compact) sanText else Flexible(child: sanText),
-      if (!annotationsHidden && widget.annotation != null) ...[
+      if (!annotationsHidden &&
+          widget.annotation?.useClassificationIcon == true) ...[
         const SizedBox(width: 4),
         _NotationClassificationIcon(annotation: widget.annotation!),
       ],
@@ -4368,9 +4372,16 @@ String? _formatGameResult(String? raw) {
 List<int> _mergedMainlineNagsFor({
   required int ply,
   required List<int> baseNags,
+  required Map<int, LichessMoveAnnotation> lichessAnnotations,
   required Map<int, List<int>> userNags,
 }) {
+  final lichess = lichessAnnotations[ply];
+  final lichessNag =
+      lichess == null || lichess.useClassificationIcon
+          ? null
+          : _nagForLichessAnnotation(lichess.type);
   final user = userNags[ply] ?? const <int>[];
+  final userHasQuality = user.any((n) => n >= 1 && n <= 7);
   final out = <int>[];
   final seen = <int>{};
 
@@ -4381,9 +4392,24 @@ List<int> _mergedMainlineNagsFor({
   }
 
   addAll(baseNags);
+  if (lichessNag != null && !userHasQuality) {
+    addAll(<int>[lichessNag]);
+  }
   addAll(user);
   return out;
 }
+
+int? _nagForLichessAnnotation(LichessMoveAnnotationType type) => switch (type) {
+  LichessMoveAnnotationType.brilliant => 3,
+  LichessMoveAnnotationType.missedWin => 4,
+  LichessMoveAnnotationType.blunder => 4,
+  LichessMoveAnnotationType.mistake => 2,
+  LichessMoveAnnotationType.inaccuracy => 6,
+  LichessMoveAnnotationType.goodMove => 1,
+  LichessMoveAnnotationType.bestMove => 1,
+  LichessMoveAnnotationType.forced => null,
+  LichessMoveAnnotationType.bookMove => null,
+};
 
 List<InlineSpan> _sanSpans(
   String san, {
