@@ -332,6 +332,11 @@ const String _localChessOpeningNameBackfillName =
 const String _localChessTimeControlBackfillName =
     'local_chess_source_time_control_backfill_v2';
 
+bool _localChessTreeMetadataIsUsable({
+  required int positionCount,
+  required int? maxPly,
+}) => positionCount > 0 && maxPly != null && maxPly > 0;
+
 typedef LocalChessLegacySqfliteDatabaseFactory =
     Future<sqflite.Database> Function();
 typedef LocalChessScanProgressSink =
@@ -784,37 +789,32 @@ Future<void> _ensureLocalChessTreePositionIdentityGeneration(
   );
   if (markerRows.isNotEmpty && !invalidateExisting) return;
 
-  final treeRows = await tx.select('''
-    SELECT
-      (SELECT COUNT(*) FROM $localChessTreeNodesTable) AS node_count,
-      (SELECT COUNT(*) FROM $localChessTreeMovesTable) AS move_count,
-      (SELECT COUNT(*) FROM $localChessPositionGamesTable) AS ref_count,
-      (
-        SELECT COUNT(*)
-        FROM $localChessDatabasesTable
-        WHERE position_count > 0
-          OR tree_snapshot IS NOT NULL
-          OR tree_max_ply IS NOT NULL
-      ) AS metadata_count
-    ''');
-  final treeState = treeRows.single;
-  final hasGeneratedTreeState =
-      _readInt(treeState['node_count']) > 0 ||
-      _readInt(treeState['move_count']) > 0 ||
-      _readInt(treeState['ref_count']) > 0 ||
-      _readInt(treeState['metadata_count']) > 0;
-  if (hasGeneratedTreeState) {
+  // Do not count or delete the generated tree tables here. A large desktop
+  // cache can contain millions of rows, and schema opening runs on the app's
+  // startup path. Clearing only the small per-database metadata makes every
+  // loader reject the old identity generation immediately; the stale rows are
+  // reclaimed when that database is explicitly rebuilt, replaced, or purged.
+  final invalidatedMetadata = await tx.execute(
+    '''
+    UPDATE $localChessDatabasesTable
+    SET position_count = 0,
+        tree_snapshot = NULL,
+        tree_max_ply = NULL,
+        updated_at_ms = ?
+    WHERE position_count <> 0
+       OR tree_snapshot IS NOT NULL
+       OR tree_max_ply IS NOT NULL
+    ''',
+    <Object?>[DateTime.now().millisecondsSinceEpoch],
+  );
+  if (invalidatedMetadata.affectedRows > 0) {
     localChessLog.info(
-      'Invalidating local chess trees with stale position identity',
+      'Marked stale local chess trees for lazy rebuild',
       context: <String, Object?>{
-        'nodes': _readInt(treeState['node_count']),
-        'moves': _readInt(treeState['move_count']),
-        'positionRefs': _readInt(treeState['ref_count']),
-        'databases': _readInt(treeState['metadata_count']),
+        'databases': invalidatedMetadata.affectedRows,
         'generation': _localChessTreePositionIdentityGenerationName,
       },
     );
-    await _clearLocalChessTreeCache(tx);
   }
 
   await tx.execute(
@@ -837,6 +837,28 @@ Future<void> _ensureLocalChessTreeDepthGeneration(
     const <Object?>[_localChessTreeDepthGenerationName],
   );
   if (markerRows.isNotEmpty) return;
+
+  final usableMetadataRows = await tx.select('''
+    SELECT 1
+    FROM $localChessDatabasesTable
+    WHERE position_count > 0
+      AND tree_max_ply IS NOT NULL
+      AND tree_max_ply > 0
+    LIMIT 1
+    ''');
+  if (usableMetadataRows.isEmpty) {
+    await tx.execute(
+      '''
+      INSERT OR REPLACE INTO $_localChessMigrationsTable(name, completed_at_ms)
+      VALUES (?, ?)
+      ''',
+      <Object?>[
+        _localChessTreeDepthGenerationName,
+        DateTime.now().millisecondsSinceEpoch,
+      ],
+    );
+    return;
+  }
 
   final treeRows = await tx.select(
     'SELECT COALESCE(MAX(ply), 0) AS max_ply FROM $localChessTreeNodesTable',
@@ -996,10 +1018,6 @@ Future<void> _migrateLegacyLocalChessSqfliteCacheUnlocked(
         legacy,
         localChessGamesTable,
       );
-      final positionColumns = await _legacyColumnNames(
-        legacy,
-        localChessPositionGamesTable,
-      );
 
       await target.transaction((tx) async {
         await _copyLegacyTable(
@@ -1038,27 +1056,10 @@ Future<void> _migrateLegacyLocalChessSqfliteCacheUnlocked(
           onCopiedRows:
               (rows) => emit(0.52, 'Migrating local games... $rows rows'),
         );
-        await _copyLegacyTable(
-          tx,
-          legacy,
-          localChessTreeNodesTable,
-          onCopiedRows:
-              (rows) => emit(0.66, 'Migrating opening tree... $rows rows'),
-        );
-        await _copyLegacyTable(
-          tx,
-          legacy,
-          localChessTreeMovesTable,
-          onCopiedRows:
-              (rows) => emit(0.72, 'Migrating tree moves... $rows rows'),
-        );
-        await _copyLegacyPositionGames(
-          tx,
-          legacy,
-          positionColumns,
-          onCopiedRows:
-              (rows) => emit(0.80, 'Migrating positions... $rows rows'),
-        );
+        // Opening trees are derived data and the legacy cache uses the old
+        // position identity. Do not spend startup time copying millions of
+        // rows that must remain unusable; games are retained and each tree is
+        // rebuilt explicitly on demand.
         await _copyLegacyTable(
           tx,
           legacy,
@@ -1067,7 +1068,6 @@ Future<void> _migrateLegacyLocalChessSqfliteCacheUnlocked(
               (rows) => emit(0.88, 'Migrating local analysis... $rows rows'),
         );
         emit(0.94, 'Finalizing local database migration...');
-        await _backfillPositionGameNextUci(tx);
         await _ensureLocalChessTreePositionIdentityGeneration(
           tx,
           invalidateExisting: true,
@@ -1458,46 +1458,6 @@ Future<void> _copyLegacyGames(
     );
     onCopiedRows?.call(offset + rows.length);
     if (rows.length < _kLegacyMigrationGamePageSize) return;
-    offset += rows.length;
-    await _yieldAfterSqlBatch();
-  }
-}
-
-Future<void> _copyLegacyPositionGames(
-  resqlite.Transaction tx,
-  sqflite.Database legacy,
-  Set<String> legacyColumns, {
-  void Function(int copiedRows)? onCopiedRows,
-}) async {
-  if (!await _legacyTableExists(legacy, localChessPositionGamesTable)) return;
-  var offset = 0;
-  while (true) {
-    final rows = await legacy.query(
-      localChessPositionGamesTable,
-      orderBy: 'rowid ASC',
-      limit: _kLegacyMigrationRowPageSize,
-      offset: offset,
-    );
-    if (rows.isEmpty) return;
-    await _insertOrReplaceBatch(
-      tx,
-      localChessPositionGamesTable,
-      rows
-          .map(
-            (row) => <String, Object?>{
-              'database_id': row['database_id'],
-              'fen_key': row['fen_key'],
-              'fen': row['fen'],
-              'game_id': row['game_id'],
-              'ply': row['ply'],
-              'next_uci':
-                  legacyColumns.contains('next_uci') ? row['next_uci'] : null,
-            },
-          )
-          .toList(growable: false),
-    );
-    onCopiedRows?.call(offset + rows.length);
-    if (rows.length < _kLegacyMigrationRowPageSize) return;
     offset += rows.length;
     await _yieldAfterSqlBatch();
   }
@@ -3705,6 +3665,10 @@ class LocalChessDatabaseRepository {
     final now = DateTime.now().millisecondsSinceEpoch;
 
     await _lockedTransaction(db, (txn) async {
+      final updateOpeningTree = await _transactionHasUsableOpeningTreeMetadata(
+        txn,
+        databaseId,
+      );
       final playerNames = <String>{};
       final eventNames = <String>{};
       final siteNames = <String>{};
@@ -3749,10 +3713,12 @@ class LocalChessDatabaseRepository {
         eventIds: eventIds,
         siteIds: siteIds,
       );
-      await _upsertTreeDelta(txn, databaseId, index);
-      await _insertPositionGameRefs(txn, databaseId, index, <String>{
-        for (final game in games) game.id,
-      });
+      if (updateOpeningTree) {
+        await _upsertTreeDelta(txn, databaseId, index);
+        await _insertPositionGameRefs(txn, databaseId, index, <String>{
+          for (final game in games) game.id,
+        });
+      }
       await txn.execute(
         '''
         UPDATE $localChessGamesTable
@@ -3761,14 +3727,18 @@ class LocalChessDatabaseRepository {
         ''',
         <Object?>[nextFileGameCount, databaseId],
       );
-      final positionCountRows = await txn.select(
-        '''
-        SELECT COUNT(*) AS count
-        FROM $localChessTreeNodesTable
-        WHERE database_id = ?
-        ''',
-        <Object?>[databaseId],
-      );
+      var nextPositionCount = 0;
+      if (updateOpeningTree) {
+        final positionCountRows = await txn.select(
+          '''
+          SELECT COUNT(*) AS count
+          FROM $localChessTreeNodesTable
+          WHERE database_id = ?
+          ''',
+          <Object?>[databaseId],
+        );
+        nextPositionCount = _readInt(positionCountRows.single['count']);
+      }
       await txn.execute(
         '''
         UPDATE $localChessDatabasesTable
@@ -3786,8 +3756,8 @@ class LocalChessDatabaseRepository {
           stat.size,
           stat.modified.millisecondsSinceEpoch,
           games.length,
-          _readInt(positionCountRows.single['count']),
-          treeMaxPly,
+          nextPositionCount,
+          updateOpeningTree ? treeMaxPly : null,
           now,
           databaseId,
         ],
@@ -3958,6 +3928,10 @@ class LocalChessDatabaseRepository {
     final now = DateTime.now().millisecondsSinceEpoch;
 
     await _lockedTransaction(db, (txn) async {
+      final updateOpeningTree = await _transactionHasUsableOpeningTreeMetadata(
+        txn,
+        databaseId,
+      );
       await txn.execute(
         'DELETE FROM $localChessPositionGamesTable WHERE database_id = ? AND game_id = ?',
         <Object?>[databaseId, targetId],
@@ -3970,8 +3944,10 @@ class LocalChessDatabaseRepository {
         'DELETE FROM $localChessGamesTable WHERE database_id = ? AND id = ?',
         <Object?>[databaseId, targetId],
       );
-      await _subtractTreeDelta(txn, databaseId, oldDelta.index);
-      await _deleteUnreferencedTreeNodes(txn, databaseId);
+      if (updateOpeningTree) {
+        await _subtractTreeDelta(txn, databaseId, oldDelta.index);
+        await _deleteUnreferencedTreeNodes(txn, databaseId);
+      }
 
       final treeRow = newDelta.index.gameRowsById[targetId];
       final playerNames = <String>{};
@@ -4013,10 +3989,12 @@ class LocalChessDatabaseRepository {
         eventIds: eventIds,
         siteIds: siteIds,
       );
-      await _upsertTreeDelta(txn, databaseId, newDelta.index);
-      await _insertPositionGameRefs(txn, databaseId, newDelta.index, <String>{
-        targetId,
-      });
+      if (updateOpeningTree) {
+        await _upsertTreeDelta(txn, databaseId, newDelta.index);
+        await _insertPositionGameRefs(txn, databaseId, newDelta.index, <String>{
+          targetId,
+        });
+      }
       await _executeBatchChunked(
         txn,
         '''
@@ -4040,14 +4018,18 @@ class LocalChessDatabaseRepository {
             ],
         ],
       );
-      final positionCountRows = await txn.select(
-        '''
-        SELECT COUNT(*) AS count
-        FROM $localChessTreeNodesTable
-        WHERE database_id = ?
-        ''',
-        <Object?>[databaseId],
-      );
+      var nextPositionCount = 0;
+      if (updateOpeningTree) {
+        final positionCountRows = await txn.select(
+          '''
+          SELECT COUNT(*) AS count
+          FROM $localChessTreeNodesTable
+          WHERE database_id = ?
+          ''',
+          <Object?>[databaseId],
+        );
+        nextPositionCount = _readInt(positionCountRows.single['count']);
+      }
       await txn.execute(
         '''
         UPDATE $localChessDatabasesTable
@@ -4065,8 +4047,8 @@ class LocalChessDatabaseRepository {
           nextStat.size,
           nextStat.modified.millisecondsSinceEpoch,
           fileGameCount,
-          _readInt(positionCountRows.single['count']),
-          treeMaxPly,
+          nextPositionCount,
+          updateOpeningTree ? treeMaxPly : null,
           now,
           databaseId,
         ],
@@ -4157,6 +4139,10 @@ class LocalChessDatabaseRepository {
         await _deleteFileCache(txn, databasePath);
         return;
       }
+      final updateOpeningTree = await _transactionHasUsableOpeningTreeMetadata(
+        txn,
+        databaseId,
+      );
 
       await _executeBatchChunked(
         txn,
@@ -4179,8 +4165,10 @@ class LocalChessDatabaseRepository {
           for (final id in deletedIds) <Object?>[databaseId, id],
         ],
       );
-      await _subtractTreeDelta(txn, databaseId, deleteDelta.index);
-      await _deleteUnreferencedTreeNodes(txn, databaseId);
+      if (updateOpeningTree) {
+        await _subtractTreeDelta(txn, databaseId, deleteDelta.index);
+        await _deleteUnreferencedTreeNodes(txn, databaseId);
+      }
       await _executeBatchChunked(
         txn,
         '''
@@ -4204,14 +4192,18 @@ class LocalChessDatabaseRepository {
             ],
         ],
       );
-      final positionCountRows = await txn.select(
-        '''
-        SELECT COUNT(*) AS count
-        FROM $localChessTreeNodesTable
-        WHERE database_id = ?
-        ''',
-        <Object?>[databaseId],
-      );
+      var nextPositionCount = 0;
+      if (updateOpeningTree) {
+        final positionCountRows = await txn.select(
+          '''
+          SELECT COUNT(*) AS count
+          FROM $localChessTreeNodesTable
+          WHERE database_id = ?
+          ''',
+          <Object?>[databaseId],
+        );
+        nextPositionCount = _readInt(positionCountRows.single['count']);
+      }
       await txn.execute(
         '''
         UPDATE $localChessDatabasesTable
@@ -4229,8 +4221,8 @@ class LocalChessDatabaseRepository {
           stat.size,
           stat.modified.millisecondsSinceEpoch,
           keptRows.length,
-          _readInt(positionCountRows.single['count']),
-          treeMaxPly,
+          nextPositionCount,
+          updateOpeningTree ? treeMaxPly : null,
           now,
           databaseId,
         ],
@@ -4249,6 +4241,18 @@ class LocalChessDatabaseRepository {
   }) async {
     final databaseId = _databaseId(databasePath);
     final db = await _database();
+    final hasUsableTree = await _databaseHasUsableOpeningTreeMetadata(
+      db,
+      databaseId,
+    );
+    if (!hasUsableTree) {
+      return _localMoveAggregatesForMovePrefix(
+        db,
+        databaseId: databaseId,
+        moves: moves,
+        filters: filters,
+      );
+    }
     if (!filters.hasFilters) {
       return _localTreeMoveAggregatesForFen(
         db,
@@ -4444,7 +4448,7 @@ class LocalChessDatabaseRepository {
     final db = await _database();
     final databaseRows = await db.select(
       '''
-      SELECT 1
+      SELECT position_count, tree_max_ply
       FROM $localChessDatabasesTable
       WHERE id = ? AND deleted_at_ms IS NULL
       LIMIT 1
@@ -4452,6 +4456,24 @@ class LocalChessDatabaseRepository {
       <Object?>[databaseId],
     );
     if (databaseRows.isEmpty) return null;
+    final databaseRow = databaseRows.single;
+    if (!_localChessTreeMetadataIsUsable(
+      positionCount: _readInt(databaseRow['position_count']),
+      maxPly: _readNullableInt(databaseRow['tree_max_ply']),
+    )) {
+      return _localPositionGamesResponseFromMovePrefix(
+        db,
+        databaseId: databaseId,
+        fen: fen,
+        moves: moves,
+        uci: uci,
+        filters: filters,
+        sortBy: sortBy,
+        sortDirection: sortDirection,
+        pageNumber: pageNumber,
+        pageSize: pageSize,
+      );
+    }
 
     final availableRefRows = await db.select(
       'SELECT 1 FROM $localChessPositionGamesTable WHERE database_id = ? LIMIT 1',
@@ -5766,6 +5788,15 @@ class LocalChessDatabaseRepository {
     required int expectedGameCount,
     required int? expectedMaxPly,
   }) async {
+    // Metadata is the cheap validity boundary. Generation migrations clear it
+    // without touching potentially millions of stale tree rows, so reject the
+    // cache before issuing any count or materialization query against them.
+    if (!_localChessTreeMetadataIsUsable(
+      positionCount: expectedPositionCount,
+      maxPly: expectedMaxPly,
+    )) {
+      throw const _LocalChessCacheMiss();
+    }
     final nodeStatsRows = await db.select(
       '''
       SELECT COUNT(*) AS count, MAX(ply) AS max_ply
@@ -5993,7 +6024,7 @@ class LocalChessDatabaseRepository {
   ) async {
     final databaseRows = await db.select(
       '''
-      SELECT tree_max_ply
+      SELECT position_count, tree_max_ply
       FROM $localChessDatabasesTable
       WHERE id = ? AND deleted_at_ms IS NULL
       LIMIT 1
@@ -6001,20 +6032,58 @@ class LocalChessDatabaseRepository {
       <Object?>[databaseId],
     );
     if (databaseRows.isNotEmpty) {
-      final stored = _readNullableInt(databaseRows.single['tree_max_ply']);
-      if (stored != null && stored > 0) return stored;
+      final row = databaseRows.single;
+      final stored = _readNullableInt(row['tree_max_ply']);
+      if (_localChessTreeMetadataIsUsable(
+        positionCount: _readInt(row['position_count']),
+        maxPly: stored,
+      )) {
+        return stored!;
+      }
     }
+    return localOpeningTreeDefaultMaxPly;
+  }
 
+  Future<bool> _databaseHasUsableOpeningTreeMetadata(
+    resqlite.Database db,
+    String databaseId,
+  ) async {
     final rows = await db.select(
       '''
-      SELECT MAX(ply) AS max_ply
-      FROM $localChessTreeNodesTable
-      WHERE database_id = ?
+      SELECT position_count, tree_max_ply
+      FROM $localChessDatabasesTable
+      WHERE id = ? AND deleted_at_ms IS NULL
+      LIMIT 1
       ''',
       <Object?>[databaseId],
     );
-    final maxPly = rows.isEmpty ? 0 : _readInt(rows.single['max_ply']);
-    return maxPly > 0 ? maxPly : localOpeningTreeDefaultMaxPly;
+    if (rows.isEmpty) return false;
+    final row = rows.single;
+    return _localChessTreeMetadataIsUsable(
+      positionCount: _readInt(row['position_count']),
+      maxPly: _readNullableInt(row['tree_max_ply']),
+    );
+  }
+
+  Future<bool> _transactionHasUsableOpeningTreeMetadata(
+    resqlite.Transaction txn,
+    String databaseId,
+  ) async {
+    final rows = await txn.select(
+      '''
+      SELECT position_count, tree_max_ply
+      FROM $localChessDatabasesTable
+      WHERE id = ? AND deleted_at_ms IS NULL
+      LIMIT 1
+      ''',
+      <Object?>[databaseId],
+    );
+    if (rows.isEmpty) return false;
+    final row = rows.single;
+    return _localChessTreeMetadataIsUsable(
+      positionCount: _readInt(row['position_count']),
+      maxPly: _readNullableInt(row['tree_max_ply']),
+    );
   }
 
   LocalChessGame _localGameFromRow(Map<String, Object?> row) {

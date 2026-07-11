@@ -21,6 +21,7 @@ const String _legacySqfliteMigrationV1 = 'legacy_sqflite_local_chess_v1';
 const String _legacySqfliteMigrationV2 =
     'legacy_sqflite_local_chess_v2_desktop_path_scan';
 const String _treeFen4Generation = 'local_chess_tree_position_identity_fen4_v1';
+const String _treeDepthGeneration = 'local_chess_tree_depth_50_v1';
 
 void main() {
   late resqlite.Database db;
@@ -199,7 +200,8 @@ void main() {
       databasePath: pgnFile.path,
       fen: Chess.initial.fen,
     );
-    expect(moves, isEmpty);
+    expect(moves.map((move) => move.uci), <String>['e2e4']);
+    expect(moves.single.total, 1);
   });
 
   test(
@@ -639,10 +641,17 @@ void main() {
       final playerCount = await _count(db, 'local_chess_players');
       final eventCount = await _count(db, 'local_chess_events');
       final siteCount = await _count(db, 'local_chess_sites');
+      final treeNodeCount = await _count(db, 'local_chess_tree_nodes');
+      final treeMoveCount = await _count(db, 'local_chess_tree_moves');
+      final positionGameCount = await _count(db, 'local_chess_position_games');
+      await db.execute(
+        'UPDATE local_chess_games SET ply_count = 100 WHERE database_id = ?',
+        <Object?>[pgnFile.path],
+      );
 
       await db.execute(
-        'DELETE FROM local_chess_migrations WHERE name = ?',
-        const <Object?>[_treeFen4Generation],
+        'DELETE FROM local_chess_migrations WHERE name IN (?, ?)',
+        const <Object?>[_treeFen4Generation, _treeDepthGeneration],
       );
       await createLocalChessResqliteDatabaseSchema(db);
 
@@ -651,9 +660,9 @@ void main() {
       expect(await _count(db, 'local_chess_players'), playerCount);
       expect(await _count(db, 'local_chess_events'), eventCount);
       expect(await _count(db, 'local_chess_sites'), siteCount);
-      expect(await _count(db, 'local_chess_tree_nodes'), 0);
-      expect(await _count(db, 'local_chess_tree_moves'), 0);
-      expect(await _count(db, 'local_chess_position_games'), 0);
+      expect(await _count(db, 'local_chess_tree_nodes'), treeNodeCount);
+      expect(await _count(db, 'local_chess_tree_moves'), treeMoveCount);
+      expect(await _count(db, 'local_chess_position_games'), positionGameCount);
       expect(await _count(db, 'local_chess_game_analysis'), 1);
       final databaseRows = await db.select(
         '''
@@ -667,9 +676,21 @@ void main() {
       expect(databaseRows.single['tree_snapshot'], isNull);
       expect(databaseRows.single['tree_max_ply'], isNull);
       expect(
+        await repo.loadOpeningTreeIndexForDatabase(databasePath: pgnFile.path),
+        isNull,
+      );
+      expect(await repo.listBuiltOpeningTrees(), isEmpty);
+      expect(
         await db.select(
           'SELECT 1 FROM local_chess_migrations WHERE name = ?',
           const <Object?>[_treeFen4Generation],
+        ),
+        isNotEmpty,
+      );
+      expect(
+        await db.select(
+          'SELECT 1 FROM local_chess_migrations WHERE name = ?',
+          const <Object?>[_treeDepthGeneration],
         ),
         isNotEmpty,
       );
@@ -691,7 +712,8 @@ void main() {
     final repo = LocalChessDatabaseRepository(database: () async => db);
     await repo.persistFileNode(fileNode, sourceLabel: source.label);
     final gameCount = await _count(db, 'local_chess_games');
-    expect(await _count(db, 'local_chess_tree_nodes'), greaterThan(0));
+    final treeNodeCount = await _count(db, 'local_chess_tree_nodes');
+    expect(treeNodeCount, greaterThan(0));
     await db.execute(
       'DELETE FROM local_chess_migrations WHERE name = ?',
       const <Object?>[_treeFen4Generation],
@@ -718,8 +740,112 @@ void main() {
     await held.timeout(const Duration(seconds: 5));
 
     expect(await _count(db, 'local_chess_games'), gameCount);
-    expect(await _count(db, 'local_chess_tree_nodes'), 0);
+    expect(await _count(db, 'local_chess_tree_nodes'), treeNodeCount);
+    expect(
+      await repo.loadOpeningTreeIndexForDatabase(databasePath: pgnFile.path),
+      isNull,
+    );
   });
+
+  test(
+    'invalid tree metadata prevents append replace and delete from mixing generations',
+    () async {
+      final pgnFile = File('${temp.path}/invalid-tree-mutations.pgn');
+      await pgnFile.writeAsString(_samplePgn);
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(fileNode, sourceLabel: source.label);
+
+      final staleNodeCount = await _count(db, 'local_chess_tree_nodes');
+      final staleMoveCount = await _count(db, 'local_chess_tree_moves');
+      expect(staleNodeCount, greaterThan(0));
+      expect(staleMoveCount, greaterThan(0));
+
+      await db.execute(
+        'DELETE FROM local_chess_migrations WHERE name = ?',
+        const <Object?>[_treeFen4Generation],
+      );
+      await createLocalChessResqliteDatabaseSchema(db);
+      await db.execute(
+        '''
+        UPDATE local_chess_tree_moves
+        SET white = 999, total = 999
+        WHERE database_id = ? AND node_id = 0
+        ''',
+        <Object?>[pgnFile.path],
+      );
+      final fallbackMoves = await repo.localMoveAggregatesForFen(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+      );
+      expect(fallbackMoves, hasLength(2));
+      expect(fallbackMoves.map((move) => move.total), everyElement(1));
+
+      final appendedRawPgn = _metadataPgn.trim();
+      await pgnFile.writeAsString(
+        '\n\n$appendedRawPgn\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+      expect(
+        await repo.persistAppendedPgnGames(
+          databasePath: pgnFile.path,
+          appendedPgns: <LocalChessAppendedPgn>[
+            LocalChessAppendedPgn(rawPgn: appendedRawPgn),
+          ],
+        ),
+        isTrue,
+      );
+      expect(await _count(db, 'local_chess_games'), 3);
+      expect(await _count(db, 'local_chess_tree_nodes'), staleNodeCount);
+      expect(await _count(db, 'local_chess_tree_moves'), staleMoveCount);
+      expect(
+        await repo.loadOpeningTreeIndexForDatabase(databasePath: pgnFile.path),
+        isNull,
+      );
+
+      expect(
+        await repo.replaceLocalPgnGame(
+          databasePath: pgnFile.path,
+          indexInFile: 0,
+          rawPgn: _legacyPgn,
+        ),
+        isTrue,
+      );
+      expect(await _count(db, 'local_chess_tree_nodes'), staleNodeCount);
+      expect(await _count(db, 'local_chess_tree_moves'), staleMoveCount);
+      expect(
+        await repo.loadOpeningTreeIndexForDatabase(databasePath: pgnFile.path),
+        isNull,
+      );
+
+      expect(
+        await repo.removeLocalPgnGames(
+          databasePath: pgnFile.path,
+          indexesInFile: const <int>{1},
+        ),
+        1,
+      );
+      expect(await _count(db, 'local_chess_games'), 2);
+      expect(await _count(db, 'local_chess_tree_nodes'), staleNodeCount);
+      expect(await _count(db, 'local_chess_tree_moves'), staleMoveCount);
+      expect(
+        await repo.loadOpeningTreeIndexForDatabase(databasePath: pgnFile.path),
+        isNull,
+      );
+
+      final rebuilt = await repo.rebuildOpeningTreeFromCachedGames(
+        databasePath: pgnFile.path,
+      );
+      expect(rebuilt, isNotNull);
+      expect(rebuilt!.index.positionCount, greaterThan(0));
+      expect(
+        await repo.loadOpeningTreeIndexForDatabase(databasePath: pgnFile.path),
+        isNotNull,
+      );
+    },
+  );
 
   test(
     'schema invalidates shallow cached tree depth while preserving games',
