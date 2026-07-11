@@ -26,7 +26,7 @@ void main() {
               sideToMove: 'w',
               game: game,
               headers: const {'White': 'Ada', 'Black': 'Grace'},
-              selectedTab: EnginePanelTab.report,
+              reportVisible: true,
               autoAnalysisAllowed: false,
             ),
           ),

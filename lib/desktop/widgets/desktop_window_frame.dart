@@ -97,11 +97,16 @@ class _DesktopWindowFrameState extends State<DesktopWindowFrame>
               right: 0,
               width: kDesktopWindowControlsWidth,
               height: kDesktopChromeBarHeight,
-              child: _DesktopWindowControls(
-                isMaximized: _isMaximized,
-                onMinimize: () => _runWindowAction(windowManager.minimize),
-                onToggleMaximized: _toggleMaximized,
-                onClose: () => _runWindowAction(windowManager.close),
+              // Isolate the caption strip's raster from the heavy shell
+              // repainting behind it so a partial repaint of the pane can never
+              // bleed a stale frame into the window controls.
+              child: RepaintBoundary(
+                child: _DesktopWindowControls(
+                  isMaximized: _isMaximized,
+                  onMinimize: () => _runWindowAction(windowManager.minimize),
+                  onToggleMaximized: _toggleMaximized,
+                  onClose: () => _runWindowAction(windowManager.close),
+                ),
               ),
             ),
         ],
@@ -235,16 +240,35 @@ class _DesktopCaptionButtonState extends State<_DesktopCaptionButton> {
 
   @override
   Widget build(BuildContext context) {
-    final background =
-        _pressed
-            ? (widget.destructive
-                ? const Color(0xFFC70F20)
-                : kWhiteColor.withValues(alpha: 0.12))
-            : _hovered
-            ? (widget.destructive
-                ? const Color(0xFFE81123)
-                : kWhiteColor.withValues(alpha: 0.07))
-            : Colors.transparent;
+    // Opaque fills only — never `Colors.transparent`, never an implicit fade.
+    //
+    // The caption strip sits over the Windows client edge of a hidden-native-
+    // title-bar window. A semi-transparent or animated fill can freeze on a
+    // mid-blend frame when the engine stops pumping frames (window occluded or
+    // blurred on alt-tab / focus loss, which is constant on Windows), leaving a
+    // muddy grey box where the close glyph should be — reported as "the X turns
+    // grey". Solid colours give every state a fully defined, deterministic
+    // frame, so nothing can be left half-composited. The close button is the
+    // only one this ever showed on because its hover fill (red) is the only
+    // strongly opaque one; the resting fill matches the strip so the swap is
+    // seamless. Values below are the old translucent overlays pre-blended over
+    // `kBlack2Color` so the look is unchanged.
+    final Color background;
+    if (widget.destructive) {
+      background =
+          _pressed
+              ? const Color(0xFFC70F20)
+              : _hovered
+              ? const Color(0xFFE81123)
+              : kBlack2Color;
+    } else {
+      background =
+          _pressed
+              ? const Color(0xFF353537) // kWhiteColor @12% over kBlack2Color
+              : _hovered
+              ? const Color(0xFF2A2A2C) // kWhiteColor @7% over kBlack2Color
+              : kBlack2Color;
+    }
     final foreground =
         widget.destructive && (_hovered || _pressed)
             ? kWhiteColor
@@ -270,8 +294,10 @@ class _DesktopCaptionButtonState extends State<_DesktopCaptionButton> {
                 onTapDown: (_) => setState(() => _pressed = true),
                 onTapUp: (_) => setState(() => _pressed = false),
                 onTapCancel: () => setState(() => _pressed = false),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 90),
+                // Not AnimatedContainer: the hover/press swap is instant so no
+                // in-flight colour tween can be frozen mid-blend by a window
+                // occlusion. Native Windows caption buttons snap instantly too.
+                child: Container(
                   color: background,
                   alignment: Alignment.center,
                   child: IconTheme(
@@ -364,7 +390,13 @@ class _CaptionGlyphPainter extends CustomPainter {
         Paint()
           ..color = color
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.15;
+          ..strokeWidth = 1.15
+          ..isAntiAlias = true
+          // Round caps/joins keep the thin diagonal close-glyph strokes crisp
+          // under the Windows ANGLE rasteriser instead of washing out at the
+          // fractional-pixel endpoints.
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round;
     if (close) {
       canvas.drawLine(Offset.zero, Offset(size.width, size.height), paint);
       canvas.drawLine(Offset(size.width, 0), Offset(0, size.height), paint);

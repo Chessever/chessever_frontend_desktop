@@ -36,13 +36,28 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_gr
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_mode_provider.dart';
-import 'package:chessever/screens/tour_detail/games_tour/providers/round_expansion_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/round_ordering.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
     show pgnHasMoves;
 import 'package:chessever/theme/app_theme.dart';
+
+/// Per-round expansion for the desktop Games tab.
+///
+/// Keyed by `(roundId, initiallyExpanded)` so the default follows round status
+/// — future rounds collapse while a round is live / the latest one is finished,
+/// past + focus rounds stay open — and re-seeds when that live-state flips (the
+/// key changes), while still honouring a manual toggle until then. Kept local
+/// to the desktop tab so the shared `roundExpansionProvider` (mobile app-bar
+/// scroll logic) is left untouched.
+typedef _TournamentRoundExpansionKey = ({String id, bool initiallyExpanded});
+
+final _tournamentRoundExpandedProvider = StateProvider.autoDispose
+    .family<bool, _TournamentRoundExpansionKey>(
+      (ref, key) => key.initiallyExpanded,
+    );
 
 /// Games sub-view of the Tournament Detail.
 ///
@@ -77,6 +92,14 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   bool _headerCollapsed = false;
   GroupedGamesData? _lastStableGrouped;
   String? _searchReplayInFlight;
+
+  // GlobalKeys per round section so we can `Scrollable.ensureVisible` the focus
+  // round on load / when a new round goes live.
+  final Map<String, GlobalKey> _roundSectionKeys = <String, GlobalKey>{};
+  // The focus round we've already scrolled to; guards against re-scrolling on
+  // every live-card rebuild. `_pendingFocusScrollId` is the one in flight.
+  String? _lastScrolledFocusId;
+  String? _pendingFocusScrollId;
 
   // Captured once. liveGameCardsPaused is global, so a reason recomputed from a
   // changing widget.tabId could strand a stale reason in the pause set and
@@ -183,6 +206,50 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
   }
 
+  GlobalKey _sectionKey(String roundId) => _roundSectionKeys.putIfAbsent(
+    roundId,
+    () => GlobalKey(debugLabel: 'round-section-$roundId'),
+  );
+
+  /// Requests a scroll so the focus round (live, else latest finished) sits at
+  /// the top of the viewport — future rounds collapsed above it, past rounds
+  /// expanded below. Called once per focus round; `focusId` changes when a new
+  /// round goes live, which re-triggers the scroll.
+  void _scheduleFocusScroll(String focusId) {
+    if (focusId == _lastScrolledFocusId || focusId == _pendingFocusScrollId) {
+      return;
+    }
+    _pendingFocusScrollId = focusId;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _runFocusScroll());
+  }
+
+  void _runFocusScroll([int attempt = 0]) {
+    if (!mounted) return;
+    final id = _pendingFocusScrollId;
+    if (id == null) return;
+    final context = _roundSectionKeys[id]?.currentContext;
+    if (context == null) {
+      // Section not laid out yet (lazy sliver). Retry a few frames before
+      // giving up so a focus round below the first viewport still lands.
+      if (attempt >= 4) {
+        _pendingFocusScrollId = null;
+        return;
+      }
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _runFocusScroll(attempt + 1),
+      );
+      return;
+    }
+    _lastScrolledFocusId = id;
+    _pendingFocusScrollId = null;
+    Scrollable.ensureVisible(
+      context,
+      alignment: 0.0,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     ref.listen<AsyncValue<GamesScreenModel>>(gamesTourScreenProvider, (
@@ -263,17 +330,43 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
         roundStartsAtById.putIfAbsent(gameRoundId, () => round.startsAt);
       }
     }
+    // Desktop Games tab shows rounds strictly newest-first (Round N on top,
+    // Round 1 at the bottom) so unplayed future rounds pin to the top. The
+    // "current" round is expressed via expansion + scroll, not by hoisting it
+    // to index 0 (see `pickDesktopGamesFocusRound`).
+    final displayRounds = sortRoundsForDescendingDisplay(
+      grouped.filteredRounds,
+      resolveDate: (model) => model.startsAt,
+    );
+    final focusRound = pickDesktopGamesFocusRound(
+      displayRounds,
+      resolveDate: (model) => model.startsAt,
+    );
+    final focusRoundId = focusRound?.id;
+    // Default expansion: the focus round plus every already-started (past /
+    // live) round open; future (upcoming) rounds collapsed. Keyed so a manual
+    // toggle sticks until the live-state changes.
+    bool initialExpanded(GamesAppBarModel round) =>
+        round.id == focusRoundId || round.roundStatus != RoundStatus.upcoming;
+    bool isRoundExpanded(GamesAppBarModel round) => ref.watch(
+      _tournamentRoundExpandedProvider((
+        id: round.id,
+        initiallyExpanded: initialExpanded(round),
+      )),
+    );
+
+    if (focusRoundId != null) {
+      _scheduleFocusScroll(focusRoundId);
+    }
+
     // Keyboard nav must only step through games that are currently visible.
-    // When a round is collapsed via `roundExpansionProvider` its games stay
-    // in `grouped.allGames` but the rows aren't rendered — stepping into
-    // those would land the highlight on an invisible item with no
-    // `currentContext` for `Scrollable.ensureVisible`. Filter to expanded
-    // rounds only. Rounds default to expanded when unset (matches
-    // `_RoundSection.build`).
-    final roundExpansion = ref.watch(roundExpansionProvider);
+    // When a round is collapsed its games stay in `grouped.allGames` but the
+    // rows aren't rendered — stepping into those would land the highlight on an
+    // invisible item with no `currentContext` for `Scrollable.ensureVisible`.
+    // Filter to expanded rounds only, in on-screen (descending) order.
     final keyboardGames = <GamesTourModel>[
-      for (final round in grouped.filteredRounds)
-        if (roundExpansion[round.id] ?? true)
+      for (final round in displayRounds)
+        if (isRoundExpanded(round))
           ...(grouped.gamesByRound[round.id] ?? const <GamesTourModel>[]),
     ];
 
@@ -378,14 +471,15 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                               _MatchHeaderBanner(
                                 match: grouped.matchFormatHeader!,
                               ),
-                            for (final round in grouped.filteredRounds)
+                            for (final round in displayRounds)
                               _RoundSection(
-                                key: ValueKey('round-${round.id}'),
+                                key: _sectionKey(round.id),
                                 scopeId: 'tournament:${widget.tournamentId}',
                                 selectedGameId: selectedGameId,
                                 onSelectGame: selectGame,
                                 keyForGame: keyForGame,
                                 round: round,
+                                initiallyExpanded: initialExpanded(round),
                                 games:
                                     grouped.gamesByRound[round.id] ?? const [],
                                 eventGames: grouped.allGames,
@@ -554,6 +648,7 @@ class _RoundSection extends ConsumerWidget {
     required this.onSelectGame,
     required this.keyForGame,
     required this.round,
+    required this.initiallyExpanded,
     required this.games,
     required this.eventGames,
     required this.tournamentTitle,
@@ -570,6 +665,11 @@ class _RoundSection extends ConsumerWidget {
   final ValueChanged<String> onSelectGame;
   final Key Function(String gameId) keyForGame;
   final GamesAppBarModel round;
+
+  /// Status-derived default open/closed state. Also the second half of the
+  /// `_tournamentRoundExpandedProvider` key, so a manual toggle survives until
+  /// this default flips (i.e. the round's live-state changes).
+  final bool initiallyExpanded;
   final List<GamesTourModel> games;
   final List<GamesTourModel> eventGames;
   final String tournamentTitle;
@@ -582,7 +682,8 @@ class _RoundSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final expanded = ref.watch(roundExpansionProvider)[round.id] ?? true;
+    final expansionKey = (id: round.id, initiallyExpanded: initiallyExpanded);
+    final expanded = ref.watch(_tournamentRoundExpandedProvider(expansionKey));
 
     // For knockout-style stages, group repeated head-to-head games into
     // match cards (Carlsen vs Nepo: Game 1 / Game 2 / Tiebreak).
@@ -600,9 +701,14 @@ class _RoundSection extends ConsumerWidget {
             gameCount: games.length,
             expanded: expanded,
             onToggle:
-                () => ref
-                    .read(roundExpansionProvider.notifier)
-                    .toggleRound(round.id),
+                () =>
+                    ref
+                        .read(
+                          _tournamentRoundExpandedProvider(
+                            expansionKey,
+                          ).notifier,
+                        )
+                        .state = !expanded,
           ),
           if (expanded) ...[
             const SizedBox(height: 8),

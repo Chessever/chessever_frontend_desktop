@@ -3661,9 +3661,106 @@ class _BoardPaneContent extends HookConsumerWidget {
                 collapsedIcon: Icons.analytics_outlined,
                 child: KeyedSubtree(
                   key: rightRailAnalysisKey,
-                  child: _RightRailAnalysis(
+                  child: NotationOpeningPanel(
+                    tabId: activeTabId,
+                    explorerScope: boardExplorerScope,
+                    localOpeningTreeIndex: boardArgs?.localOpeningTreeIndex,
+                    localOpeningTreeTitle:
+                        boardArgs?.localOpeningTreeTitle ?? '',
+                    enableLocalOpeningTreePicker:
+                        boardArgs?.enableLocalOpeningTreePicker ?? false,
+                    notationChild: buildNotationLadder(
+                      scrollController: notationScrollController,
+                      activePointer: pointer.value,
+                      onJump: jumpToPointer,
+                      layoutModeController: notationLayoutController,
+                    ),
+                    currentFen: position.fen,
+                    startingFen: chessGame.value.startingFen,
+                    lineUcis: lineUcis,
+                    previewLineStep: explorerPreviewLineStep.value,
+                    previewLineAutoplay: explorerPreviewLineAutoplay.value,
+                    onPlayUciMove:
+                        (uci) => playUci(uci, requestPaneFocus: false),
+                    onPlayEngineMove: playTopEngineMoveAction,
+                    onPlayUciLine: playUciLine,
+                    onPreviewUciMove: (uci) {
+                      explorerPreviewLine.value = const <String>[];
+                      explorerPreviewLineStep.value = 0;
+                      explorerPreviewLineAutoplay.value = true;
+                      explorerPreviewSoundKey.value = null;
+                      explorerPreviewUci.value = uci;
+                    },
+                    onPreviewUciLine: (ucis, {autoplay = true, step}) {
+                      explorerPreviewUci.value = null;
+                      explorerPreviewLineStep.value =
+                          (step ?? 0)
+                              .clamp(0, ucis.isEmpty ? 0 : ucis.length - 1)
+                              .toInt();
+                      explorerPreviewLineAutoplay.value = autoplay;
+                      explorerPreviewSoundKey.value = null;
+                      explorerPreviewLine.value = List<String>.unmodifiable(
+                        ucis
+                            .map((uci) => uci.trim().toLowerCase())
+                            .where((uci) => uci.isNotEmpty),
+                      );
+                    },
+                    onClearPreviewUciMove: () {
+                      explorerPreviewUci.value = null;
+                      explorerPreviewLine.value = const <String>[];
+                      explorerPreviewLineStep.value = 0;
+                      explorerPreviewLineAutoplay.value = true;
+                      explorerPreviewSoundKey.value = null;
+                    },
+                    onNotationVertical: goNotationLine,
+                    onNotationStep: stepNotationHorizontally,
+                    onNotationJumpToHead: goFirst,
+                    onNotationJumpToTip: goLast,
+                    canGoBack: canBack,
+                    canGoForward: canForward,
+                    onFirstMove: goFirstManually,
+                    onPreviousMove: goPrevManually,
+                    onNextMove: () => unawaited(goNextManually()),
+                    onLastMove: goLastManually,
+                    onPreviousGame: navigatePreviousGameManually,
+                    onNextGame: navigateNextGameManually,
+                    openExplorerShortcutLabel: shortcutLabelFor(
+                      BoardActionKey.openExplorer,
+                    ),
+                    firstMoveShortcutLabel: shortcutLabelFor(
+                      BoardActionKey.firstMove,
+                    ),
+                    previousMoveShortcutLabel: shortcutLabelFor(
+                      BoardActionKey.prevMove,
+                    ),
+                    nextMoveShortcutLabel: shortcutLabelFor(
+                      BoardActionKey.nextMove,
+                    ),
+                    lastMoveShortcutLabel: shortcutLabelFor(
+                      BoardActionKey.lastMove,
+                    ),
+                    previousGameShortcutLabel: shortcutLabelFor(
+                      BoardActionKey.prevGame,
+                    ),
+                    nextGameShortcutLabel: shortcutLabelFor(
+                      BoardActionKey.nextGame,
+                    ),
                     reportSelected:
                         allowGameAnalysis && reportTabSelected.value,
+                    reportEnabled: true,
+                    showReport: allowGameAnalysis,
+                    onToggleReport: () {
+                      if (!allowGameAnalysis) return;
+                      final selectingReport = !reportTabSelected.value;
+                      if (selectingReport) {
+                        openedReportFingerprints.value = <String>{
+                          ...openedReportFingerprints.value,
+                          gameReportFingerprint(chessGame.value),
+                        };
+                      }
+                      reportTabSelected.value = selectingReport;
+                    },
+                    trailingActions: boardActionCluster,
                     showEngine: ref.watch(
                       engineSettingsProviderNew.select(
                         (s) =>
@@ -3671,107 +3768,10 @@ class _BoardPaneContent extends HookConsumerWidget {
                             const EngineSettings().showEngineAnalysis,
                       ),
                     ),
-                    notationPanel: NotationOpeningPanel(
-                      tabId: activeTabId,
-                      explorerScope: boardExplorerScope,
-                      localOpeningTreeIndex: boardArgs?.localOpeningTreeIndex,
-                      localOpeningTreeTitle:
-                          boardArgs?.localOpeningTreeTitle ?? '',
-                      enableLocalOpeningTreePicker:
-                          boardArgs?.enableLocalOpeningTreePicker ?? false,
-                      notationChild: buildNotationLadder(
-                        scrollController: notationScrollController,
-                        activePointer: pointer.value,
-                        onJump: jumpToPointer,
-                        layoutModeController: notationLayoutController,
-                      ),
-                      currentFen: position.fen,
-                      startingFen: chessGame.value.startingFen,
-                      lineUcis: lineUcis,
-                      previewLineStep: explorerPreviewLineStep.value,
-                      previewLineAutoplay: explorerPreviewLineAutoplay.value,
-                      onPlayUciMove:
-                          (uci) => playUci(uci, requestPaneFocus: false),
-                      onPlayEngineMove: playTopEngineMoveAction,
-                      onPlayUciLine: playUciLine,
-                      onPreviewUciMove: (uci) {
-                        explorerPreviewLine.value = const <String>[];
-                        explorerPreviewLineStep.value = 0;
-                        explorerPreviewLineAutoplay.value = true;
-                        explorerPreviewSoundKey.value = null;
-                        explorerPreviewUci.value = uci;
-                      },
-                      onPreviewUciLine: (ucis, {autoplay = true, step}) {
-                        explorerPreviewUci.value = null;
-                        explorerPreviewLineStep.value =
-                            (step ?? 0)
-                                .clamp(0, ucis.isEmpty ? 0 : ucis.length - 1)
-                                .toInt();
-                        explorerPreviewLineAutoplay.value = autoplay;
-                        explorerPreviewSoundKey.value = null;
-                        explorerPreviewLine.value = List<String>.unmodifiable(
-                          ucis
-                              .map((uci) => uci.trim().toLowerCase())
-                              .where((uci) => uci.isNotEmpty),
-                        );
-                      },
-                      onClearPreviewUciMove: () {
-                        explorerPreviewUci.value = null;
-                        explorerPreviewLine.value = const <String>[];
-                        explorerPreviewLineStep.value = 0;
-                        explorerPreviewLineAutoplay.value = true;
-                        explorerPreviewSoundKey.value = null;
-                      },
-                      onNotationVertical: goNotationLine,
-                      onNotationStep: stepNotationHorizontally,
-                      onNotationJumpToHead: goFirst,
-                      onNotationJumpToTip: goLast,
-                      canGoBack: canBack,
-                      canGoForward: canForward,
-                      onFirstMove: goFirstManually,
-                      onPreviousMove: goPrevManually,
-                      onNextMove: () => unawaited(goNextManually()),
-                      onLastMove: goLastManually,
-                      onPreviousGame: navigatePreviousGameManually,
-                      onNextGame: navigateNextGameManually,
-                      openExplorerShortcutLabel: shortcutLabelFor(
-                        BoardActionKey.openExplorer,
-                      ),
-                      firstMoveShortcutLabel: shortcutLabelFor(
-                        BoardActionKey.firstMove,
-                      ),
-                      previousMoveShortcutLabel: shortcutLabelFor(
-                        BoardActionKey.prevMove,
-                      ),
-                      nextMoveShortcutLabel: shortcutLabelFor(
-                        BoardActionKey.nextMove,
-                      ),
-                      lastMoveShortcutLabel: shortcutLabelFor(
-                        BoardActionKey.lastMove,
-                      ),
-                      previousGameShortcutLabel: shortcutLabelFor(
-                        BoardActionKey.prevGame,
-                      ),
-                      nextGameShortcutLabel: shortcutLabelFor(
-                        BoardActionKey.nextGame,
-                      ),
-                      reportSelected:
-                          allowGameAnalysis && reportTabSelected.value,
-                      reportEnabled: true,
-                      showReport: allowGameAnalysis,
-                      onToggleReport: () {
-                        if (!allowGameAnalysis) return;
-                        final selectingReport = !reportTabSelected.value;
-                        if (selectingReport) {
-                          openedReportFingerprints.value = <String>{
-                            ...openedReportFingerprints.value,
-                            gameReportFingerprint(chessGame.value),
-                          };
-                        }
-                        reportTabSelected.value = selectingReport;
-                      },
-                      trailingActions: boardActionCluster,
-                    ),
+                    onRestoreEngine:
+                        () => ref
+                            .read(engineSettingsProviderNew.notifier)
+                            .toggleEngineAnalysis(true),
                     enginePanel: EnginePanel(
                       fen: boardPosition.fen,
                       sideToMove: boardPosition.turn == Side.white ? 'w' : 'b',
@@ -3790,14 +3790,9 @@ class _BoardPaneContent extends HookConsumerWidget {
                       onReportChanged: (report) {
                         gameReport.value = report;
                       },
-                      selectedTab:
-                          allowGameAnalysis && reportTabSelected.value
-                              ? EnginePanelTab.report
-                              : EnginePanelTab.moves,
+                      reportVisible:
+                          allowGameAnalysis && reportTabSelected.value,
                       autoAnalysisAllowed: allowGameAnalysis,
-                      onTabChanged: (tab) {
-                        reportTabSelected.value = tab == EnginePanelTab.report;
-                      },
                     ),
                   ),
                 ),
@@ -3819,111 +3814,6 @@ class _BoardPaneContent extends HookConsumerWidget {
 /// need a Riverpod instance because BoardPane already owns its own
 /// `chessGame` / `pointer` `useState` hooks; the navigator here is a
 /// one-shot mutator scoped to a single user gesture.
-/// Right-rail analysis container. When the engine is disabled the engine
-/// section collapses to the same restorable rail affordance used by dismissed
-/// split panes, so the user has a clear one-click way to bring it back.
-class _RightRailAnalysis extends ConsumerStatefulWidget {
-  const _RightRailAnalysis({
-    required this.reportSelected,
-    required this.showEngine,
-    required this.notationPanel,
-    required this.enginePanel,
-  });
-
-  final bool reportSelected;
-  final bool showEngine;
-  final Widget notationPanel;
-  final Widget enginePanel;
-
-  @override
-  ConsumerState<_RightRailAnalysis> createState() => _RightRailAnalysisState();
-}
-
-class _RightRailAnalysisState extends ConsumerState<_RightRailAnalysis> {
-  final ResizableSplitViewController _splitController =
-      ResizableSplitViewController();
-  double? _preReportEngineSize;
-
-  @override
-  void initState() {
-    super.initState();
-    _syncEngineRailAfterLayout();
-  }
-
-  @override
-  void didUpdateWidget(covariant _RightRailAnalysis oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.showEngine != widget.showEngine) {
-      _syncEngineRailAfterLayout(restoreWhenEnabled: !oldWidget.showEngine);
-    }
-    if (oldWidget.reportSelected != widget.reportSelected) {
-      _syncReportSizeAfterLayout();
-    }
-  }
-
-  void _syncReportSizeAfterLayout() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (widget.reportSelected) {
-        _preReportEngineSize = _splitController.sizeOf(0);
-        // Game Analysis stacks a compact Stockfish preview above the report;
-        // reserve the bottom quarter for notation.
-        _splitController.setFraction(0, 0.75, persist: false);
-        return;
-      }
-      final previous = _preReportEngineSize;
-      _preReportEngineSize = null;
-      if (previous != null && previous > 0) {
-        _splitController.setSize(0, previous, persist: false);
-      }
-    });
-  }
-
-  void _syncEngineRailAfterLayout({bool restoreWhenEnabled = false}) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (widget.showEngine) {
-        if (!restoreWhenEnabled) return;
-        _splitController.restore(0);
-        return;
-      }
-      _splitController.collapse(0, persist: false);
-    });
-  }
-
-  void _resumeEngineFromRail() {
-    unawaited(
-      ref.read(engineSettingsProviderNew.notifier).toggleEngineAnalysis(true),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ResizableSplitView(
-      axis: Axis.vertical,
-      controller: _splitController,
-      storageKey: 'board_pane.right_rail.engine_top.v1',
-      children: [
-        SplitChild(
-          minSize: 120,
-          initialWeight: 0.34,
-          label: 'Engine',
-          collapsedIcon: Icons.memory_rounded,
-          onRestore: _resumeEngineFromRail,
-          child: widget.enginePanel,
-        ),
-        SplitChild(
-          minSize: 240,
-          initialWeight: 0.66,
-          label: 'Notation',
-          collapsedIcon: Icons.format_list_numbered_rounded,
-          child: widget.notationPanel,
-        ),
-      ],
-    );
-  }
-}
-
 class _LocalChessGameNavigator extends ChessGameNavigator {
   _LocalChessGameNavigator(super.game);
   ChessGameNavigatorState get currentState => state;

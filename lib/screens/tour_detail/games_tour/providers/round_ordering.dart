@@ -77,6 +77,67 @@ List<GamesAppBarModel> sortRoundsForDisplay(
   return [focusRound, ...startedOthers, ...futureOthers];
 }
 
+/// Strict newest-first ordering for the desktop Games tab: the latest round
+/// (highest "Round N" number, or most recent start) sits on top and Round 1 at
+/// the bottom, so unplayed future rounds naturally pin to the top.
+///
+/// Unlike [sortRoundsForDisplay] this deliberately does NOT hoist a focus round
+/// to index 0 — the desktop tab expresses "current round" through expansion and
+/// scroll position instead of reordering (see [pickDesktopGamesFocusRound]).
+List<GamesAppBarModel> sortRoundsForDescendingDisplay(
+  List<GamesAppBarModel> models, {
+  required RoundDateResolver resolveDate,
+}) {
+  if (models.length <= 1) return List<GamesAppBarModel>.from(models);
+
+  final useGenericRoundOrder = _shouldUseGenericRoundOrder(models);
+  final sorted = List<GamesAppBarModel>.from(models)..sort((a, b) {
+    if (useGenericRoundOrder) {
+      // `_compareByGenericRoundNumber` already orders higher numbers first.
+      final roundCompare = _compareByGenericRoundNumber(a, b);
+      if (roundCompare != 0) return roundCompare;
+    }
+    // Descending by start (later = nearer the top).
+    return _compareByStart(a, b, false, resolveDate);
+  });
+  return sorted;
+}
+
+/// Round the desktop Games tab should expand and scroll to on load.
+///
+/// Priority: the live round if one is running, otherwise the most recently
+/// started round (the latest finished/in-window round), otherwise the soonest
+/// upcoming round. This differs from [pickPreferredRoundForSelection], which
+/// jumps ahead to a not-yet-started round within a 2h window — here a finished
+/// round stays the focus until the next round actually goes live.
+GamesAppBarModel? pickDesktopGamesFocusRound(
+  List<GamesAppBarModel> models, {
+  required RoundDateResolver resolveDate,
+  DateTime? now,
+}) {
+  if (models.isEmpty) return null;
+  final effectiveNow = now ?? DateTime.now();
+
+  final liveRounds =
+      models.where((m) => m.roundStatus == RoundStatus.live).toList()
+        ..sort((a, b) => _compareByStart(a, b, false, resolveDate));
+  if (liveRounds.isNotEmpty) return liveRounds.first;
+
+  final startedRounds =
+      models
+          .where((m) => _isStartedRound(m, effectiveNow, resolveDate))
+          .toList()
+        ..sort((a, b) => _compareByStart(a, b, false, resolveDate));
+  if (startedRounds.isNotEmpty) return startedRounds.first;
+
+  final upcomingRounds =
+      models.where((m) => m.roundStatus == RoundStatus.upcoming).toList()
+        ..sort((a, b) => _compareByStart(a, b, true, resolveDate));
+  if (upcomingRounds.isNotEmpty) return upcomingRounds.first;
+
+  return models.first;
+}
+
 GamesAppBarModel? pickPreferredRoundForSelection(
   List<GamesAppBarModel> models, {
   required RoundDateResolver resolveDate,

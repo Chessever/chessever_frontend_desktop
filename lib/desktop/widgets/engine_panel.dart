@@ -11,6 +11,7 @@ import 'package:motor/motor.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/engine_settings_popover.dart';
 import 'package:chessever/desktop/widgets/move_hover_preview.dart';
@@ -20,8 +21,6 @@ import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/theme/app_theme.dart';
-
-enum EnginePanelTab { moves, report }
 
 /// Live engine evaluation panel for the active board position.
 ///
@@ -46,8 +45,7 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.onJumpToPly,
     this.onReportRunningChanged,
     this.onReportChanged,
-    this.onTabChanged,
-    this.selectedTab = EnginePanelTab.moves,
+    this.reportVisible = false,
     this.autoAnalysisAllowed = true,
   });
 
@@ -70,8 +68,13 @@ class EnginePanel extends ConsumerStatefulWidget {
   final ValueChanged<int>? onJumpToPly;
   final ValueChanged<bool>? onReportRunningChanged;
   final ValueChanged<GameAnalysisReport?>? onReportChanged;
-  final ValueChanged<EnginePanelTab>? onTabChanged;
-  final EnginePanelTab selectedTab;
+
+  /// Whether the session-scoped game-analysis report is currently shown.
+  /// Fully independent of the engine on/off state — closing the engine lines
+  /// never removes the report, and vice versa. The toggle itself lives beside
+  /// the explorer button in the notation panel's segment bar.
+  final bool reportVisible;
+
   final bool autoAnalysisAllowed;
 
   @override
@@ -100,11 +103,6 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       _gameFingerprint = nextFingerprint;
       _autoStartedFingerprint = null;
       _reportController.invalidate();
-      if (widget.selectedTab == EnginePanelTab.report && widget.game == null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) widget.onTabChanged?.call(EnginePanelTab.moves);
-        });
-      }
     }
   }
 
@@ -187,122 +185,159 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     final asyncSettings = ref.watch(engineSettingsProviderNew);
     final settings = asyncSettings.valueOrNull;
     if (settings != null) _scheduleAutomaticAnalysis(settings);
-    final selectedTab = widget.selectedTab;
+    final engineOn =
+        settings?.showEngineAnalysis ??
+        const EngineSettings().showEngineAnalysis;
+    final reportOn = widget.reportVisible;
+
+    // The engine readout (live dot / score / depth) only means anything once
+    // Stockfish can search this position. When it can't we still keep the
+    // header on screen so both independent toggles stay reachable.
+    final engineReady = StockfishSingleton().isEngineHealthy;
+    final engineActive = engineOn && (engineReady || widget.fen.isNotEmpty);
+    final evalState =
+        engineActive ? ref.watch(boardEvalProvider(widget.fen)) : null;
+
+    final children = <Widget>[
+      _buildHeader(
+        engineOn: engineOn,
+        engineActive: engineActive,
+        evalState: evalState,
+      ),
+    ];
+
+    // Engine lines are governed solely by the engine switch.
+    if (engineOn) {
+      children.add(
+        Expanded(
+          flex: reportOn ? 2 : 1,
+          child:
+              engineActive
+                  ? _buildEngineLines(evalState!)
+                  : const _EngineNotReady(),
+        ),
+      );
+    }
+
+    // The report is governed solely by its own switch — closing the engine
+    // never removes it, and closing it never removes the engine lines.
+    if (reportOn) {
+      if (engineOn) {
+        children.add(const Divider(height: 1, color: kDividerColor));
+      }
+      children.add(
+        Expanded(
+          flex: engineOn ? 3 : 1,
+          child: GameReportView(
+            state: _reportController.state,
+            game: widget.game,
+            headers: widget.headers,
+            activePly: widget.activePly,
+            onAnalyze: _analyze,
+            onCancel: _reportController.cancel,
+            onJumpToPly: widget.onJumpToPly,
+          ),
+        ),
+      );
+    }
+
     return Container(
       color: kBlack2Color,
-      child:
-          selectedTab == EnginePanelTab.moves
-              ? _buildMoves()
-              : Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SizedBox(height: 168, child: _buildMoves()),
-                  const Divider(height: 1, color: kDividerColor),
-                  Expanded(
-                    child: GameReportView(
-                      state: _reportController.state,
-                      game: widget.game,
-                      headers: widget.headers,
-                      activePly: widget.activePly,
-                      onAnalyze: _analyze,
-                      onCancel: _reportController.cancel,
-                      onJumpToPly: widget.onJumpToPly,
-                    ),
-                  ),
-                ],
-              ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: children,
+      ),
     );
   }
 
-  Widget _buildMoves() {
-    final settings =
-        ref.watch(engineSettingsProviderNew).valueOrNull ??
-        const EngineSettings();
-    if (!settings.showEngineAnalysis) {
-      return const _EngineDisabled();
-    }
-
-    final ready = StockfishSingleton().isEngineHealthy;
-    if (!ready && widget.fen.isEmpty) {
-      return const _EngineNotReady();
-    }
-
-    final state = ref.watch(boardEvalProvider(widget.fen));
-    final pvs = state.pvs;
-    final topScore = _formatScore(state.evaluation, state.mate);
-
+  /// Persistent header carrying the two independent toggles (engine on/off
+  /// and report on/off) plus the engine gear. The engine readout collapses
+  /// away when the engine is off so the report can own the panel alone.
+  Widget _buildHeader({
+    required bool engineOn,
+    required bool engineActive,
+    required BoardEvalState? evalState,
+  }) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 6,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: state.isEvaluating ? kGreenColor : kLightGreyColor,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'Stockfish',
-                style: TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const Spacer(),
-              Text(
-                topScore,
-                style: const TextStyle(
-                  color: kPrimaryColor,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                ),
-              ),
-              const SizedBox(width: 8),
-              _DepthChip(depth: state.depth, isEvaluating: state.isEvaluating),
-              const SizedBox(width: 6),
-              _EngineQuickToggle(enabled: settings.showEngineAnalysis),
-              const SizedBox(width: 4),
-              const EngineSettingsPopover(),
-            ],
-          ),
-          const SizedBox(height: 10),
-          if (pvs.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Text(
-                state.isEvaluating
-                    ? 'Searching…'
-                    : (state.statusText ?? 'No engine line for this position.'),
-                style: const TextStyle(color: kWhiteColor70, fontSize: 12),
-              ),
-            )
-          else ...[
-            Flexible(
-              child: ListView.separated(
-                physics: const DesktopScrollPhysics(),
-                padding: const EdgeInsets.only(right: 8),
-                itemCount: pvs.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 6),
-                itemBuilder:
-                    (context, i) => _PvLine(
-                      rank: i + 1,
-                      pv: pvs[i],
-                      fen: widget.fen,
-                      onPlayUci: widget.onPlayUci,
-                    ),
+          if (engineActive) ...[
+            Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(
+                color: evalState!.isEvaluating ? kGreenColor : kLightGreyColor,
+                shape: BoxShape.circle,
               ),
             ),
+            const SizedBox(width: 8),
           ],
+          Expanded(
+            child: Text(
+              'Stockfish',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: engineOn ? kWhiteColor : kWhiteColor70,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          if (engineActive) ...[
+            const SizedBox(width: 8),
+            Text(
+              _formatScore(evalState!.evaluation, evalState.mate),
+              style: const TextStyle(
+                color: kPrimaryColor,
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+            const SizedBox(width: 8),
+            _DepthChip(
+              depth: evalState.depth,
+              isEvaluating: evalState.isEvaluating,
+            ),
+          ],
+          const SizedBox(width: 6),
+          _EngineQuickToggle(enabled: engineOn),
+          const SizedBox(width: 4),
+          const EngineSettingsPopover(),
         ],
       ),
+    );
+  }
+
+  Widget _buildEngineLines(BoardEvalState state) {
+    final pvs = state.pvs;
+    if (pvs.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 8, 12),
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: Text(
+            state.isEvaluating
+                ? 'Searching…'
+                : (state.statusText ?? 'No engine line for this position.'),
+            style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+          ),
+        ),
+      );
+    }
+    return ListView.separated(
+      physics: const DesktopScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      itemCount: pvs.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 6),
+      itemBuilder:
+          (context, i) => _PvLine(
+            rank: i + 1,
+            pv: pvs[i],
+            fen: widget.fen,
+            onPlayUci: widget.onPlayUci,
+          ),
     );
   }
 }
@@ -391,7 +426,7 @@ class _GameReportViewState extends State<GameReportView> {
     final opening = [
       _header('ECO', ''),
       _header('Opening', ''),
-    ].where((part) => part.isNotEmpty).join(' · ');
+    ].where((part) => part.isNotEmpty && part != '?').join(' · ');
 
     return ListView(
       physics: const DesktopScrollPhysics(),
@@ -414,11 +449,11 @@ class _GameReportViewState extends State<GameReportView> {
               ),
             ),
             const Spacer(),
-            FButton(
-              style: FButtonStyle.ghost(),
+            DesktopToolbarPillButton(
+              label: 'Analyze Again',
+              icon: Icons.refresh_rounded,
               onPress: widget.onAnalyze,
-              prefix: const Icon(Icons.refresh_rounded, size: 14),
-              child: const Text('Analyze Again'),
+              tooltip: 'Re-run Stockfish analysis on this game',
             ),
           ],
         ),
@@ -1401,39 +1436,6 @@ class _MenuRow extends StatelessWidget {
         const SizedBox(width: 10),
         Text(label, style: const TextStyle(color: kWhiteColor, fontSize: 13)),
       ],
-    );
-  }
-}
-
-class _EngineDisabled extends StatelessWidget {
-  const _EngineDisabled();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: kBlack2Color,
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [
-          Row(
-            children: [
-              Text(
-                'Engine analysis off',
-                style: TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Spacer(),
-              _EngineQuickToggle(enabled: false),
-              SizedBox(width: 4),
-              EngineSettingsPopover(),
-            ],
-          ),
-        ],
-      ),
     );
   }
 }

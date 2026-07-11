@@ -82,6 +82,14 @@ class GamesTourModel {
   final DateTime? lastMoveTime;
   final DateTime? dateStart;
   final DateTime? gameDay;
+
+  /// Canonical scheduled start for the round that owns this game, propagated
+  /// from the `rounds.starts_at` row via the `round_schedule` embed.
+  ///
+  /// Unlike [dateStart] (a date-only broadcast pairing-upload day that parses
+  /// to local midnight), this carries the real round wall-clock time, so round
+  /// headers can show the hour/minute instead of `00:00`.
+  final DateTime? roundStartsAt;
   final String? eco;
   final String? openingName;
   final String?
@@ -114,6 +122,7 @@ class GamesTourModel {
     this.lastMoveTime,
     this.dateStart,
     this.gameDay,
+    this.roundStartsAt,
     this.eco,
     this.openingName,
     this.timeControl,
@@ -156,6 +165,7 @@ class GamesTourModel {
     DateTime? lastMoveTime,
     DateTime? dateStart,
     DateTime? gameDay,
+    DateTime? roundStartsAt,
     String? eco,
     String? openingName,
     String? timeControl,
@@ -189,6 +199,7 @@ class GamesTourModel {
       lastMoveTime: lastMoveTime ?? this.lastMoveTime,
       dateStart: dateStart ?? this.dateStart,
       gameDay: gameDay ?? this.gameDay,
+      roundStartsAt: roundStartsAt ?? this.roundStartsAt,
       eco: eco ?? this.eco,
       openingName: openingName ?? this.openingName,
       timeControl: timeControl ?? this.timeControl,
@@ -325,6 +336,7 @@ class GamesTourModel {
         lastMoveTime: game.lastMoveTime ?? game.gameDay ?? game.dateStart,
         dateStart: game.dateStart,
         gameDay: game.gameDay,
+        roundStartsAt: game.roundStartsAt,
         eco: resolvedEco,
         openingName: resolvedOpening,
         timeControl: game.timeControl,

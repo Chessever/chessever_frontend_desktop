@@ -108,6 +108,9 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.reportEnabled = true,
     this.showReport = true,
     this.onToggleReport,
+    this.enginePanel,
+    this.showEngine = true,
+    this.onRestoreEngine,
   });
 
   /// Board tab id used to persist the active right-rail page. Null routes to
@@ -166,10 +169,29 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   /// Used by the desktop board to keep Save / Play-from-here / Info visible
   /// without consuming a separate board chrome row.
   final Widget? trailingActions;
+
+  /// Report toggle state. The report itself renders in the engine panel and is
+  /// fully independent of the engine on/off switch; this button (beside the
+  /// explorer book icon) is only its control surface.
   final bool reportSelected;
   final bool reportEnabled;
   final bool showReport;
   final VoidCallback? onToggleReport;
+
+  /// The engine panel, hosted as the top pane of this panel's internal
+  /// engine ↕ notation split. It lives here (rather than in a sibling split)
+  /// so the segment bar can be a **pinned footer** below the split —
+  /// collapsing the notation pane no longer takes the bottom bar with it.
+  /// When null (e.g. in isolated widget tests) the engine split is omitted and
+  /// the notation content fills the pane directly.
+  final Widget? enginePanel;
+
+  /// Whether engine analysis is on. Drives collapse/restore of the engine
+  /// pane so it reclaims space when both it and the report are off.
+  final bool showEngine;
+
+  /// Invoked when the collapsed engine rail is restored (turns the engine on).
+  final VoidCallback? onRestoreEngine;
 
   final String currentFen;
   final String startingFen;
@@ -232,6 +254,12 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
   );
   final FocusNode _notationFocusNode = FocusNode(debugLabel: 'notation-page');
   final _explorerSourceController = _ExplorerSourceController();
+
+  /// Controller for the internal engine ↕ notation split (index 0 = engine).
+  final ResizableSplitViewController _railController =
+      ResizableSplitViewController();
+  double? _preReportEngineSize;
+
   late int _page = _readStoredPage();
   bool _buildExplorerPage = false;
   int _pageRestoreToken = 0;
@@ -252,7 +280,42 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
   void initState() {
     super.initState();
     _rememberBuiltPage(_page);
+    _syncEngineRailAfterLayout();
   }
+
+  /// Keep the engine ↕ notation split expanded while either the engine lines
+  /// or the report is on; collapse the engine pane only when both are off.
+  void _syncEngineRailAfterLayout({bool restoreWhenEnabled = false}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (widget.showEngine || widget.reportSelected) {
+        if (!restoreWhenEnabled) return;
+        _railController.restore(0);
+        return;
+      }
+      _railController.collapse(0, persist: false);
+    });
+  }
+
+  /// Give the report room by growing the engine pane when the report opens,
+  /// and restore the prior size when it closes.
+  void _syncReportSizeAfterLayout() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (widget.reportSelected) {
+        _preReportEngineSize = _railController.sizeOf(0);
+        _railController.setFraction(0, 0.75, persist: false);
+        return;
+      }
+      final previous = _preReportEngineSize;
+      _preReportEngineSize = null;
+      if (previous != null && previous > 0) {
+        _railController.setSize(0, previous, persist: false);
+      }
+    });
+  }
+
+  void _resumeEngineFromRail() => widget.onRestoreEngine?.call();
 
   void _rememberBuiltPage(int page) {
     if (page > 0) _buildExplorerPage = true;
@@ -266,16 +329,16 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
   @override
   void didUpdateWidget(covariant NotationOpeningPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!oldWidget.reportSelected && widget.reportSelected) {
-      _cancelPageRestoreLock();
-      _setCurrentPage(0);
-      _buildExplorerPage = false;
-      _writeStoredPage(0);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        widget.onClearPreviewUciMove?.call();
-        _focusActivePage();
-      });
+    // Engine ↕ notation split: expand while either engine or report is on;
+    // collapse the engine pane only when both are off. The segment bar below
+    // the split is never affected.
+    final wasExpanded = oldWidget.showEngine || oldWidget.reportSelected;
+    final nowExpanded = widget.showEngine || widget.reportSelected;
+    if (wasExpanded != nowExpanded) {
+      _syncEngineRailAfterLayout(restoreWhenEnabled: !wasExpanded);
+    }
+    if (oldWidget.reportSelected != widget.reportSelected) {
+      _syncReportSizeAfterLayout();
     }
     final positionChanged =
         _positionKey(oldWidget.currentFen) != _positionKey(widget.currentFen) ||
@@ -543,6 +606,34 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
               : const ColoredBox(color: kBlack2Color),
     );
     final buildTreeScoped = widget.explorerScope != null;
+    final Widget notationContent =
+        explorerVisible
+            ? ResizableSplitView(
+              axis: Axis.vertical,
+              storageKey:
+                  buildTreeScoped
+                      ? 'desktop.board.right-rail.notation-explorer-stack.build-tree.v1'
+                      : 'desktop.board.right-rail.notation-explorer-stack.v1',
+              gutterThickness: 6,
+              children: [
+                SplitChild(
+                  minSize: 150,
+                  initialWeight: 0.42,
+                  initialCollapsed: buildTreeScoped,
+                  label: 'Notation',
+                  collapsedIcon: Icons.format_list_numbered_rounded,
+                  child: notationPane,
+                ),
+                SplitChild(
+                  minSize: 220,
+                  initialWeight: 0.58,
+                  label: 'Explorer',
+                  collapsedIcon: Icons.menu_book_outlined,
+                  child: explorerPane,
+                ),
+              ],
+            )
+            : notationPane;
     return Focus(
       onKeyEvent: _handleRailKey,
       child: Container(
@@ -550,35 +641,35 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Engine ↕ notation split. The segment bar below is NOT part of
+            // this split, so collapsing the notation pane keeps the bottom
+            // toolbar pinned and visible.
             Expanded(
               child:
-                  explorerVisible
-                      ? ResizableSplitView(
+                  widget.enginePanel == null
+                      ? notationContent
+                      : ResizableSplitView(
                         axis: Axis.vertical,
-                        storageKey:
-                            buildTreeScoped
-                                ? 'desktop.board.right-rail.notation-explorer-stack.build-tree.v1'
-                                : 'desktop.board.right-rail.notation-explorer-stack.v1',
-                        gutterThickness: 6,
+                        controller: _railController,
+                        storageKey: 'board_pane.right_rail.engine_top.v1',
                         children: [
                           SplitChild(
-                            minSize: 150,
-                            initialWeight: 0.42,
-                            initialCollapsed: buildTreeScoped,
-                            label: 'Notation',
-                            collapsedIcon: Icons.format_list_numbered_rounded,
-                            child: notationPane,
+                            minSize: 120,
+                            initialWeight: 0.34,
+                            label: 'Engine',
+                            collapsedIcon: Icons.memory_rounded,
+                            onRestore: _resumeEngineFromRail,
+                            child: widget.enginePanel!,
                           ),
                           SplitChild(
-                            minSize: 220,
-                            initialWeight: 0.58,
-                            label: 'Explorer',
-                            collapsedIcon: Icons.menu_book_outlined,
-                            child: explorerPane,
+                            minSize: 240,
+                            initialWeight: 0.66,
+                            label: 'Notation',
+                            collapsedIcon: Icons.format_list_numbered_rounded,
+                            child: notationContent,
                           ),
                         ],
-                      )
-                      : notationPane,
+                      ),
             ),
             _SegmentBar(
               explorerOpen: explorerVisible,

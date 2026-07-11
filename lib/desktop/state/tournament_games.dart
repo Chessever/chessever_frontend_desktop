@@ -83,7 +83,10 @@ class TournamentGameSummary {
       openingName: game.openingName ?? game.eco,
       lastMoveTime: game.lastMoveTime,
       startsAt: game.dateStart,
-      roundStartsAt: roundStartsAt,
+      // Explicit round schedule (Tournament Detail passes a rounds map) wins;
+      // otherwise fall back to the round time the model carried from its
+      // source `Games` row so board-side round headers show real times.
+      roundStartsAt: roundStartsAt ?? game.roundStartsAt,
       hasStarted: game.hasStarted,
       whiteTeam: game.whitePlayer.team?.trim() ?? '',
       blackTeam: game.blackPlayer.team?.trim() ?? '',

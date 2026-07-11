@@ -51,6 +51,40 @@ void main() {
   });
 
   test(
+    'round start survives the GamesTourModel hop so headers avoid 00:00',
+    () {
+      // Regression: board-pane rails seed summaries via GamesTourModel, which
+      // used to drop `roundStartsAt`. `_roundHeaderStartsAt` then fell back to
+      // the date-only `date_start`, rendering every round header at midnight.
+      final game = Games.fromJson({
+        'id': 'game-1',
+        'round_id': 'round-1',
+        'round_slug': 'round-1',
+        'tour_id': 'tour-1',
+        'tour_slug': 'biel-2026',
+        'players': [
+          {'name': 'Aronian,L', 'title': 'GM', 'fed': 'USA', 'rating': 2735},
+          {'name': 'Finek,V', 'title': 'IM', 'fed': 'CZE', 'rating': 2454},
+        ],
+        'date_start': '2026-07-11',
+        'rounds': {'starts_at': '2026-07-11T12:00:00Z'},
+        'status': 'ONGOING',
+        'pgn': '1. e4 e5 *',
+        'last_move': 'e5',
+      });
+
+      final model = GamesTourModel.fromGame(game);
+      expect(model.roundStartsAt, DateTime.parse('2026-07-11T12:00:00Z'));
+
+      // No explicit round map (the board-pane path) — the model's own value
+      // must carry through instead of collapsing to midnight `date_start`.
+      final summary = TournamentGameSummary.fromGamesTourModel(model);
+      expect(summary.roundStartsAt, DateTime.parse('2026-07-11T12:00:00Z'));
+      expect(summary.roundStartsAt!.toUtc().hour, 12);
+    },
+  );
+
+  test(
     'event rail board opens keep newer live summaries over stale fetches',
     () {
       final liveTime = DateTime.utc(2026, 7, 7, 15, 2);

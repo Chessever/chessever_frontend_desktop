@@ -470,4 +470,135 @@ void main() {
       expect(id, 'knockout-stage-tour-1-quarter-finals');
     });
   });
+
+  group('sortRoundsForDescendingDisplay (desktop Games tab)', () {
+    List<GamesAppBarModel> bielRounds() {
+      final base = DateTime(2026, 7, 11, 7);
+      return [
+        _round(
+          id: 'r1',
+          name: 'Round 1',
+          startsAt: base,
+          status: RoundStatus.completed,
+        ),
+        _round(
+          id: 'r2',
+          name: 'Round 2',
+          startsAt: base.add(const Duration(minutes: 50)),
+          status: RoundStatus.completed,
+        ),
+        _round(
+          id: 'r3',
+          name: 'Round 3',
+          startsAt: base.add(const Duration(minutes: 100)),
+          status: RoundStatus.live,
+        ),
+        _round(
+          id: 'r4',
+          name: 'Round 4',
+          startsAt: base.add(const Duration(minutes: 150)),
+          status: RoundStatus.upcoming,
+        ),
+        _round(
+          id: 'r5',
+          name: 'Round 5',
+          startsAt: base.add(const Duration(minutes: 200)),
+          status: RoundStatus.upcoming,
+        ),
+      ];
+    }
+
+    test('orders rounds strictly newest-first regardless of status', () {
+      // Input is deliberately shuffled to prove sort, not input order, wins.
+      final rounds = bielRounds();
+      final shuffled = [rounds[2], rounds[0], rounds[4], rounds[1], rounds[3]];
+
+      final sorted = sortRoundsForDescendingDisplay(
+        shuffled,
+        resolveDate: (round) => round.startsAt,
+      );
+
+      expect(_ids(sorted), ['r5', 'r4', 'r3', 'r2', 'r1']);
+    });
+
+    test('does not hoist the live round to the top', () {
+      final sorted = sortRoundsForDescendingDisplay(
+        bielRounds(),
+        resolveDate: (round) => round.startsAt,
+      );
+
+      // Unlike sortRoundsForDisplay, the live round stays in numeric position.
+      expect(sorted.first.id, 'r5');
+      expect(sorted[2].id, 'r3');
+    });
+  });
+
+  group('pickDesktopGamesFocusRound', () {
+    final base = DateTime(2026, 7, 11, 7);
+    GamesAppBarModel r(String id, int index, RoundStatus status) => _round(
+      id: id,
+      name: 'Round $index',
+      startsAt: base.add(Duration(minutes: 50 * index)),
+      status: status,
+    );
+
+    test('returns the live round when one is running', () {
+      final rounds = [
+        r('r1', 1, RoundStatus.completed),
+        r('r2', 2, RoundStatus.completed),
+        r('r3', 3, RoundStatus.live),
+        r('r4', 4, RoundStatus.upcoming),
+        r('r5', 5, RoundStatus.upcoming),
+      ];
+
+      final focus = pickDesktopGamesFocusRound(
+        rounds,
+        resolveDate: (round) => round.startsAt,
+        now: base.add(const Duration(minutes: 110)),
+      );
+
+      expect(focus?.id, 'r3');
+    });
+
+    test(
+      'returns the latest finished round when nothing is live, not the '
+      'soon-upcoming one',
+      () {
+        final now = base.add(const Duration(minutes: 160));
+        final rounds = [
+          r('r1', 1, RoundStatus.completed),
+          r('r2', 2, RoundStatus.completed),
+          r('r3', 3, RoundStatus.completed),
+          // Round 4 starts within 2h — pickPreferredRoundForSelection would
+          // jump to it; the desktop focus must stay on the finished round 3.
+          r('r4', 4, RoundStatus.upcoming),
+          r('r5', 5, RoundStatus.upcoming),
+        ];
+
+        final focus = pickDesktopGamesFocusRound(
+          rounds,
+          resolveDate: (round) => round.startsAt,
+          now: now,
+        );
+
+        expect(focus?.id, 'r3');
+      },
+    );
+
+    test('falls back to the soonest upcoming round before any play', () {
+      final rounds = [
+        r('r1', 1, RoundStatus.upcoming),
+        r('r2', 2, RoundStatus.upcoming),
+        r('r3', 3, RoundStatus.upcoming),
+      ];
+
+      final focus = pickDesktopGamesFocusRound(
+        rounds,
+        resolveDate: (round) => round.startsAt,
+        now: base.subtract(const Duration(hours: 1)),
+      );
+
+      expect(focus?.id, 'r1');
+    });
+  });
 }
