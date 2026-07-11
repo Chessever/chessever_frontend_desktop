@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:chessground/chessground.dart' as cg;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -100,6 +102,34 @@ void main() {
       );
       expect(boardShareVisibleUrl('   '), isNull);
       expect(boardShareVisibleUrl(null), isNull);
+    });
+  });
+
+  group('exact board image', () {
+    test('uses the live rendered crop without rebuilding the board', () async {
+      final exact = Uint8List.fromList([1, 2, 3]);
+      var fallbackCalls = 0;
+
+      final result = await resolveBoardSharePngBytes(
+        exactImageBytes: exact,
+        captureFallback: () async {
+          fallbackCalls++;
+          return Uint8List.fromList([9]);
+        },
+      );
+
+      expect(result, same(exact));
+      expect(fallbackCalls, 0);
+    });
+
+    test('falls back to the reconstructed card outside a live board', () async {
+      final fallback = Uint8List.fromList([9, 8]);
+
+      final result = await resolveBoardSharePngBytes(
+        captureFallback: () async => fallback,
+      );
+
+      expect(result, same(fallback));
     });
   });
 

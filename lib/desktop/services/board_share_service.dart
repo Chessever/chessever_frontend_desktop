@@ -5,6 +5,7 @@ import 'package:chessground/chessground.dart' as cg;
 import 'package:dartchess/dartchess.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pasteboard/pasteboard.dart';
@@ -52,6 +53,25 @@ class BoardShareService {
       pixelRatio: pixelRatio,
       context: null,
     );
+  }
+
+  /// Capture an already-rendered board region so every visible overlay,
+  /// player photo, highlight, and active theme is preserved exactly.
+  static Future<Uint8List?> captureBoundary(
+    GlobalKey boundaryKey, {
+    double pixelRatio = 2.0,
+  }) async {
+    final boundary =
+        boundaryKey.currentContext?.findRenderObject()
+            as RenderRepaintBoundary?;
+    if (boundary == null || boundary.debugNeedsPaint) return null;
+    final image = await boundary.toImage(pixelRatio: pixelRatio);
+    try {
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      return data?.buffer.asUint8List();
+    } finally {
+      image.dispose();
+    }
   }
 
   /// Share PNG bytes via the native share sheet.

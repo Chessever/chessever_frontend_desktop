@@ -19,6 +19,7 @@ import 'package:chessever/desktop/panes/board_editor_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
 import 'package:chessever/desktop/services/board_pgn_clipboard.dart';
 import 'package:chessever/desktop/services/board_pgn_paste.dart';
+import 'package:chessever/desktop/services/board_share_service.dart';
 import 'package:chessever/desktop/services/board_tab_pgn_resolver.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
@@ -323,6 +324,8 @@ class _BoardPaneContent extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final activeTabId =
         tabId ?? ref.watch(desktopTabsProvider.select((s) => s.activeId));
+    final boardShareCaptureKey = useMemoized(GlobalKey.new);
+    final isCapturingBoardShare = useState(false);
     final isForegroundTab =
         activeTabId != null &&
         ref.watch(
@@ -2387,7 +2390,19 @@ class _BoardPaneContent extends HookConsumerWidget {
       gameId: activeGameId,
     );
 
-    void shareGameAction() {
+    Future<void> shareGameAction() async {
+      Uint8List? exactImageBytes;
+      isCapturingBoardShare.value = true;
+      await WidgetsBinding.instance.endOfFrame;
+      try {
+        exactImageBytes = await BoardShareService.captureBoundary(
+          boardShareCaptureKey,
+          pixelRatio: 2.0,
+        );
+      } finally {
+        isCapturingBoardShare.value = false;
+      }
+      if (!context.mounted) return;
       final shareEngineSettings =
           ref.read(engineSettingsProviderNew).valueOrNull ??
           const EngineSettings();
@@ -2402,7 +2417,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                 isEvaluating: false,
                 depth: 0,
               );
-      showBoardShareDialog(
+      await showBoardShareDialog(
         context,
         chessGame: chessGame.value,
         headers: pgnHeaders.value,
@@ -2414,6 +2429,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         mate: shareEvalState.mate,
         isEvaluating: shareEvalState.isEvaluating,
         showEvalBar: shareShowEvalBar,
+        exactImageBytes: exactImageBytes,
         shareUrl: shareUrl,
       );
     }
@@ -3536,6 +3552,8 @@ class _BoardPaneContent extends HookConsumerWidget {
                           );
                         },
                         child: _BoardArea(
+                          shareCaptureKey: boardShareCaptureKey,
+                          isShareCapture: isCapturingBoardShare.value,
                           tabId: activeTabId ?? 'board-default',
                           boardRenderKey: boardRenderKey,
                           fen: boardPosition.fen,
@@ -5188,6 +5206,8 @@ String? _firstClockDisplay(
 
 class _BoardArea extends ConsumerWidget {
   const _BoardArea({
+    required this.shareCaptureKey,
+    required this.isShareCapture,
     required this.tabId,
     required this.boardRenderKey,
     required this.fen,
@@ -5227,6 +5247,8 @@ class _BoardArea extends ConsumerWidget {
     this.viewSource = ChessboardView.tour,
   });
 
+  final GlobalKey shareCaptureKey;
+  final bool isShareCapture;
   final String tabId;
   final String boardRenderKey;
   final String fen;
@@ -5703,65 +5725,80 @@ class _BoardArea extends ConsumerWidget {
               if (shouldClear) clearGraphicCommentaryForCurrentPosition();
             },
             child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  chromeRow(
-                    height: topRowHeight,
-                    header:
-                        hasHeaders
-                            ? _PlayerHeader(
-                              name: topName,
-                              federation: topFed,
-                              title: topTitle,
-                              rating: topRating,
-                              fideId: topIsWhite ? whiteFideId : blackFideId,
-                              resultScore: topResultScore,
-                              isWhite: topIsWhite,
-                              isToMove:
-                                  (topIsWhite && sideToMove == Side.white) ||
-                                  (!topIsWhite && sideToMove == Side.black),
-                              clockText: topClock,
-                              trailingControl: focusButton,
-                              activeGameId: activeGameId,
-                              useLiveClock: isForegroundTab && isLiveAtTip,
-                              boardArgs: boardArgs,
-                              sourceGame: sourceGame,
-                              viewSource: viewSource,
-                            )
-                            : null,
-                    trailing: null,
+              child: RepaintBoundary(
+                key: shareCaptureKey,
+                child: ColoredBox(
+                  color: kBackgroundColor,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      chromeRow(
+                        height: topRowHeight,
+                        header:
+                            hasHeaders
+                                ? _PlayerHeader(
+                                  name: topName,
+                                  federation: topFed,
+                                  title: topTitle,
+                                  rating: topRating,
+                                  fideId:
+                                      topIsWhite ? whiteFideId : blackFideId,
+                                  resultScore: topResultScore,
+                                  isWhite: topIsWhite,
+                                  isToMove:
+                                      (topIsWhite &&
+                                          sideToMove == Side.white) ||
+                                      (!topIsWhite && sideToMove == Side.black),
+                                  clockText: topClock,
+                                  trailingControl:
+                                      isShareCapture ? null : focusButton,
+                                  activeGameId: activeGameId,
+                                  useLiveClock: isForegroundTab && isLiveAtTip,
+                                  boardArgs: boardArgs,
+                                  sourceGame: sourceGame,
+                                  viewSource: viewSource,
+                                )
+                                : null,
+                        trailing: null,
+                      ),
+                      SizedBox(height: _BoardArea.headerGap),
+                      boardRow,
+                      SizedBox(height: _BoardArea.headerGap),
+                      chromeRow(
+                        height: bottomRowHeight,
+                        header:
+                            hasHeaders
+                                ? _PlayerHeader(
+                                  name: bottomName,
+                                  federation: bottomFed,
+                                  title: bottomTitle,
+                                  rating: bottomRating,
+                                  fideId:
+                                      bottomIsWhite ? whiteFideId : blackFideId,
+                                  resultScore: bottomResultScore,
+                                  isWhite: bottomIsWhite,
+                                  isToMove:
+                                      (bottomIsWhite &&
+                                          sideToMove == Side.white) ||
+                                      (!bottomIsWhite &&
+                                          sideToMove == Side.black),
+                                  clockText: bottomClock,
+                                  trailingControl:
+                                      isShareCapture || focusMode
+                                          ? null
+                                          : resizeHandle,
+                                  activeGameId: activeGameId,
+                                  useLiveClock: isForegroundTab && isLiveAtTip,
+                                  boardArgs: boardArgs,
+                                  sourceGame: sourceGame,
+                                  viewSource: viewSource,
+                                )
+                                : null,
+                        trailing: null,
+                      ),
+                    ],
                   ),
-                  SizedBox(height: _BoardArea.headerGap),
-                  boardRow,
-                  SizedBox(height: _BoardArea.headerGap),
-                  chromeRow(
-                    height: bottomRowHeight,
-                    header:
-                        hasHeaders
-                            ? _PlayerHeader(
-                              name: bottomName,
-                              federation: bottomFed,
-                              title: bottomTitle,
-                              rating: bottomRating,
-                              fideId: bottomIsWhite ? whiteFideId : blackFideId,
-                              resultScore: bottomResultScore,
-                              isWhite: bottomIsWhite,
-                              isToMove:
-                                  (bottomIsWhite && sideToMove == Side.white) ||
-                                  (!bottomIsWhite && sideToMove == Side.black),
-                              clockText: bottomClock,
-                              trailingControl: focusMode ? null : resizeHandle,
-                              activeGameId: activeGameId,
-                              useLiveClock: isForegroundTab && isLiveAtTip,
-                              boardArgs: boardArgs,
-                              sourceGame: sourceGame,
-                              viewSource: viewSource,
-                            )
-                            : null,
-                    trailing: null,
-                  ),
-                ],
+                ),
               ),
             ),
           );

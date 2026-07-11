@@ -35,6 +35,7 @@ class BoardShareDialog extends ConsumerStatefulWidget {
     this.mate,
     this.isEvaluating = false,
     this.showEvalBar = true,
+    this.exactImageBytes,
     this.shareUrl,
   });
 
@@ -48,6 +49,7 @@ class BoardShareDialog extends ConsumerStatefulWidget {
   final int? mate;
   final bool isEvaluating;
   final bool showEvalBar;
+  final Uint8List? exactImageBytes;
   final String? shareUrl;
 
   @override
@@ -110,6 +112,13 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
   bool get _hasMoves => widget.chessGame.mainline.isNotEmpty;
 
   Future<Uint8List> _captureImageBytes() async {
+    return resolveBoardSharePngBytes(
+      exactImageBytes: widget.exactImageBytes,
+      captureFallback: _captureFallbackImageBytes,
+    );
+  }
+
+  Future<Uint8List> _captureFallbackImageBytes() async {
     final settings =
         ref.read(boardSettingsProviderNew).valueOrNull ??
         const BoardSettingsNew();
@@ -481,22 +490,31 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: cg.StaticChessboard(
-                      size: 240,
-                      settings: cg.StaticChessboardSettings.fromBoardSettings(
-                        cg.ChessboardSettings(
-                          enableCoordinates: true,
-                          animationDuration: Duration.zero,
-                          colorScheme: settings.colorScheme,
-                          pieceAssets: settings.pieceAssets,
-                          borderRadius: BorderRadius.zero,
-                          boxShadow: const [],
-                        ),
-                      ),
-                      orientation: Side.white,
-                      fen: widget.position.fen,
-                      lastMove: widget.lastMove,
-                    ),
+                    child:
+                        widget.exactImageBytes != null
+                            ? Image.memory(
+                              widget.exactImageBytes!,
+                              width: 300,
+                              fit: BoxFit.contain,
+                              gaplessPlayback: true,
+                            )
+                            : cg.StaticChessboard(
+                              size: 240,
+                              settings: cg
+                                  .StaticChessboardSettings.fromBoardSettings(
+                                cg.ChessboardSettings(
+                                  enableCoordinates: true,
+                                  animationDuration: Duration.zero,
+                                  colorScheme: settings.colorScheme,
+                                  pieceAssets: settings.pieceAssets,
+                                  borderRadius: BorderRadius.zero,
+                                  boxShadow: const [],
+                                ),
+                              ),
+                              orientation: Side.white,
+                              fen: widget.position.fen,
+                              lastMove: widget.lastMove,
+                            ),
                   ),
                 ),
               ),
@@ -667,6 +685,15 @@ String? boardShareVisibleUrl(String? shareUrl) {
   return url == null || url.isEmpty ? null : url;
 }
 
+@visibleForTesting
+Future<Uint8List> resolveBoardSharePngBytes({
+  Uint8List? exactImageBytes,
+  required Future<Uint8List> Function() captureFallback,
+}) async {
+  if (exactImageBytes != null) return exactImageBytes;
+  return captureFallback();
+}
+
 String _sanitizeFilename(String input) {
   return input
       .replaceAll(RegExp(r'[^\w\s-]'), '')
@@ -702,6 +729,7 @@ Future<void> showBoardShareDialog(
   int? mate,
   bool isEvaluating = false,
   bool showEvalBar = true,
+  Uint8List? exactImageBytes,
   String? shareUrl,
 }) {
   return showDesktopDialog<void>(
@@ -718,6 +746,7 @@ Future<void> showBoardShareDialog(
           mate: mate,
           isEvaluating: isEvaluating,
           showEvalBar: showEvalBar,
+          exactImageBytes: exactImageBytes,
           shareUrl: shareUrl,
         ),
   );
