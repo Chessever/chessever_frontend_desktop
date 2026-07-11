@@ -434,6 +434,10 @@ class _BoardPaneContent extends HookConsumerWidget {
     final rightRailAnalysisKey = useMemoized(GlobalKey.new, const []);
     final reportTabSelected = useState(false);
     final gameReport = useState<GameAnalysisReport?>(null);
+    // Auto analysis may finish before the user asks to see it. Keep its
+    // classifications private until Game Analysis has been opened at least
+    // once for this game, then retain that choice for the tab session.
+    final openedReportFingerprints = useState<Set<String>>(<String>{});
     // Controller for the outer board pane split — used so the in-pane
     // close button on the left games rail can collapse the rail itself.
     final mainSplitController = useMemoized<ResizableSplitViewController>(
@@ -2732,11 +2736,15 @@ class _BoardPaneContent extends HookConsumerWidget {
     final lichessAnnotations =
         annotationsAsync.valueOrNull ?? const <int, LichessMoveAnnotation>{};
     final completedReport = gameReport.value;
+    final currentReportFingerprint = gameReportFingerprint(chessGame.value);
     final reportMatchesGame =
         completedReport != null &&
-        completedReport.fingerprint == gameReportFingerprint(chessGame.value);
+        completedReport.fingerprint == currentReportFingerprint;
+    final reportOutputVisible = openedReportFingerprints.value.contains(
+      currentReportFingerprint,
+    );
     final reportAnnotations = <int, LichessMoveAnnotation>{
-      if (reportMatchesGame)
+      if (reportMatchesGame && reportOutputVisible)
         for (final move in completedReport.moves)
           if (move.classification != null)
             move.ply - 1: LichessMoveAnnotation(
@@ -2744,6 +2752,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                 move.classification!,
               ),
               comment: '',
+              useClassificationIcon: true,
             ),
     };
     final moveAnnotations = <int, LichessMoveAnnotation>{
@@ -3752,7 +3761,14 @@ class _BoardPaneContent extends HookConsumerWidget {
                       showReport: allowGameAnalysis,
                       onToggleReport: () {
                         if (!allowGameAnalysis) return;
-                        reportTabSelected.value = !reportTabSelected.value;
+                        final selectingReport = !reportTabSelected.value;
+                        if (selectingReport) {
+                          openedReportFingerprints.value = <String>{
+                            ...openedReportFingerprints.value,
+                            gameReportFingerprint(chessGame.value),
+                          };
+                        }
+                        reportTabSelected.value = selectingReport;
                       },
                       trailingActions: boardActionCluster,
                     ),

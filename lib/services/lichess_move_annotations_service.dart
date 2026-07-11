@@ -16,8 +16,13 @@ enum LichessMoveAnnotationType {
 class LichessMoveAnnotation {
   final LichessMoveAnnotationType type;
   final String comment;
+  final bool useClassificationIcon;
 
-  const LichessMoveAnnotation({required this.type, required this.comment});
+  const LichessMoveAnnotation({
+    required this.type,
+    required this.comment,
+    this.useClassificationIcon = false,
+  });
 }
 
 class LichessMoveAnnotationsService {
