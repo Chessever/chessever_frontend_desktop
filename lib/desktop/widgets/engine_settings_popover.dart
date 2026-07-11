@@ -98,6 +98,13 @@ class _PopoverBody extends ConsumerWidget {
             value: settings.showPvArrows,
             onChange: notifier.togglePvArrows,
           ),
+          const SizedBox(height: 10),
+          _SwitchRow(
+            label: 'Auto game analysis',
+            description: 'Analyze loaded games automatically.',
+            value: settings.autoGameAnalysis,
+            onChange: notifier.toggleAutoGameAnalysis,
+          ),
           const Divider(height: 24, color: kDividerColor),
           _SegmentedRow(
             label: 'Engine lines',
@@ -218,18 +225,20 @@ class _SegmentedRow extends StatelessWidget {
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 6),
                       decoration: BoxDecoration(
-                        color: i == selectedIndex
-                            ? kPrimaryColor
-                            : Colors.transparent,
+                        color:
+                            i == selectedIndex
+                                ? kPrimaryColor
+                                : Colors.transparent,
                         borderRadius: BorderRadius.circular(4),
                       ),
                       alignment: Alignment.center,
                       child: Text(
                         options[i],
                         style: TextStyle(
-                          color: i == selectedIndex
-                              ? kBackgroundColor
-                              : kWhiteColor70,
+                          color:
+                              i == selectedIndex
+                                  ? kBackgroundColor
+                                  : kWhiteColor70,
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
                         ),

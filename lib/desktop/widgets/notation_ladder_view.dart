@@ -1,6 +1,7 @@
 import 'package:chessground/chessground.dart' show PieceAssets;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:forui/forui.dart';
 
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -1339,7 +1340,6 @@ class _LineBlock extends StatelessWidget {
                   ? _mergedMainlineNagsFor(
                     ply: whitePointer.last,
                     baseNags: whiteMove?.nags ?? const [],
-                    lichessAnnotations: lichessAnnotations,
                     userNags: userNags,
                   )
                   : (whiteMove?.nags ?? const <int>[]),
@@ -1359,7 +1359,6 @@ class _LineBlock extends StatelessWidget {
                   ? _mergedMainlineNagsFor(
                     ply: blackPointer.last,
                     baseNags: blackMove?.nags ?? const [],
-                    lichessAnnotations: lichessAnnotations,
                     userNags: userNags,
                   )
                   : (blackMove?.nags ?? const <int>[]),
@@ -2027,7 +2026,6 @@ class _InlineNotationBlock extends StatelessWidget {
                 ? _mergedMainlineNagsFor(
                   ply: pointer.last,
                   baseNags: move.nags ?? const <int>[],
-                  lichessAnnotations: lichessAnnotations,
                   userNags: userNags,
                 )
                 : (move.nags ?? const <int>[]),
@@ -2661,6 +2659,7 @@ class _InlineMove extends StatelessWidget {
           depth: depth,
           onTap: () => onJump(pointer),
           nags: nags,
+          annotation: annotation,
           annotationComment: annotation?.comment,
           commentText: _firstPgnComment(move.comments),
           userHasQualityNag: userHasQualityNag,
@@ -3161,6 +3160,7 @@ class _PairRow extends StatelessWidget {
                         depth: depth,
                         onTap: () => onJump(whitePointer!),
                         nags: whiteNags,
+                        annotation: whiteAnnotation,
                         annotationComment: whiteAnnotation?.comment,
                         commentText: _firstPgnComment(whiteMove!.comments),
                         userHasQualityNag: whiteUserHasQuality,
@@ -3222,6 +3222,7 @@ class _PairRow extends StatelessWidget {
                         depth: depth,
                         onTap: () => onJump(blackPointer!),
                         nags: blackNags,
+                        annotation: blackAnnotation,
                         annotationComment: blackAnnotation?.comment,
                         commentText: _firstPgnComment(blackMove!.comments),
                         userHasQualityNag: blackUserHasQuality,
@@ -3286,6 +3287,7 @@ class _LadderChip extends StatefulWidget {
     required this.depth,
     required this.onTap,
     required this.nags,
+    required this.annotation,
     required this.annotationComment,
     required this.commentText,
     required this.userHasQualityNag,
@@ -3313,6 +3315,7 @@ class _LadderChip extends StatefulWidget {
   final int depth;
   final VoidCallback onTap;
   final List<int> nags;
+  final LichessMoveAnnotation? annotation;
   final String? annotationComment;
   final String? commentText;
   final bool userHasQualityNag;
@@ -3685,6 +3688,10 @@ class _LadderChipState extends State<_LadderChip>
     final clockText = widget.clockText;
     final children = <Widget>[
       if (widget.compact) sanText else Flexible(child: sanText),
+      if (!annotationsHidden && widget.annotation != null) ...[
+        const SizedBox(width: 4),
+        _NotationClassificationIcon(annotation: widget.annotation!),
+      ],
       if (hasPositionArrows) ...[
         const SizedBox(width: 4),
         _BoardMarksBadge(selected: widget.selected),
@@ -3753,6 +3760,69 @@ class _LadderChipState extends State<_LadderChip>
     return chip;
   }
 }
+
+class _NotationClassificationIcon extends StatelessWidget {
+  const _NotationClassificationIcon({required this.annotation});
+
+  final LichessMoveAnnotation annotation;
+
+  @override
+  Widget build(BuildContext context) {
+    final type = annotation.type;
+    return DesktopTooltip(
+      message: _annotationLabel(type),
+      child: Container(
+        width: 17,
+        height: 17,
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: _annotationBadgeColor(type),
+          shape: BoxShape.circle,
+        ),
+        child: SvgPicture.asset(
+          _annotationBadgeAsset(type),
+          fit: BoxFit.contain,
+        ),
+      ),
+    );
+  }
+}
+
+String _annotationLabel(LichessMoveAnnotationType type) => switch (type) {
+  LichessMoveAnnotationType.brilliant => 'Brilliant',
+  LichessMoveAnnotationType.goodMove => 'Good Move',
+  LichessMoveAnnotationType.bestMove => 'Best move',
+  LichessMoveAnnotationType.forced => 'Forced',
+  LichessMoveAnnotationType.inaccuracy => 'Inaccuracy',
+  LichessMoveAnnotationType.mistake => 'Mistake',
+  LichessMoveAnnotationType.blunder => 'Blunder',
+  LichessMoveAnnotationType.missedWin => 'Missed Win',
+  LichessMoveAnnotationType.bookMove => 'Book move',
+};
+
+String _annotationBadgeAsset(LichessMoveAnnotationType type) => switch (type) {
+  LichessMoveAnnotationType.brilliant => 'assets/svgs/brilliant.svg',
+  LichessMoveAnnotationType.goodMove => 'assets/svgs/good_move.svg',
+  LichessMoveAnnotationType.bestMove => 'assets/svgs/best_move.svg',
+  LichessMoveAnnotationType.forced => 'assets/svgs/forced_move.svg',
+  LichessMoveAnnotationType.inaccuracy => 'assets/svgs/inaccuracy.svg',
+  LichessMoveAnnotationType.mistake => 'assets/svgs/mistake.svg',
+  LichessMoveAnnotationType.blunder => 'assets/svgs/blunder.svg',
+  LichessMoveAnnotationType.missedWin => 'assets/svgs/missed_win.svg',
+  LichessMoveAnnotationType.bookMove => 'assets/svgs/book_move.svg',
+};
+
+Color _annotationBadgeColor(LichessMoveAnnotationType type) => switch (type) {
+  LichessMoveAnnotationType.brilliant => const Color(0xFF177A68),
+  LichessMoveAnnotationType.goodMove => const Color(0xFF177A68),
+  LichessMoveAnnotationType.bestMove => const Color(0xFF28833A),
+  LichessMoveAnnotationType.forced => const Color(0xFF6B7A8A),
+  LichessMoveAnnotationType.inaccuracy => const Color(0xFFFABE46),
+  LichessMoveAnnotationType.mistake => const Color(0xFFC55A1E),
+  LichessMoveAnnotationType.blunder => const Color(0xFFC9342E),
+  LichessMoveAnnotationType.missedWin => const Color(0xFF8F1E1E),
+  LichessMoveAnnotationType.bookMove => const Color(0xFF4E5B4F),
+};
 
 class _BoardMarksBadge extends StatelessWidget {
   const _BoardMarksBadge({required this.selected});
@@ -4295,38 +4365,12 @@ String? _formatGameResult(String? raw) {
   }
 }
 
-int? _nagForLichessAnnotation(LichessMoveAnnotationType type) {
-  switch (type) {
-    case LichessMoveAnnotationType.brilliant:
-      return 3;
-    case LichessMoveAnnotationType.missedWin:
-      return 4;
-    case LichessMoveAnnotationType.blunder:
-      return 4;
-    case LichessMoveAnnotationType.mistake:
-      return 2;
-    case LichessMoveAnnotationType.inaccuracy:
-      return 6;
-    case LichessMoveAnnotationType.goodMove:
-      return 1;
-    case LichessMoveAnnotationType.bestMove:
-      return 1;
-    case LichessMoveAnnotationType.bookMove:
-      return null;
-  }
-}
-
 List<int> _mergedMainlineNagsFor({
   required int ply,
   required List<int> baseNags,
-  required Map<int, LichessMoveAnnotation> lichessAnnotations,
   required Map<int, List<int>> userNags,
 }) {
-  final lichess = lichessAnnotations[ply];
-  final lichessNag =
-      lichess == null ? null : _nagForLichessAnnotation(lichess.type);
   final user = userNags[ply] ?? const <int>[];
-  final userHasQuality = user.any((n) => n >= 1 && n <= 7);
   final out = <int>[];
   final seen = <int>{};
 
@@ -4337,9 +4381,6 @@ List<int> _mergedMainlineNagsFor({
   }
 
   addAll(baseNags);
-  if (lichessNag != null && !userHasQuality) {
-    addAll(<int>[lichessNag]);
-  }
   addAll(user);
   return out;
 }

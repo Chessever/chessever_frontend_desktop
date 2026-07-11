@@ -23,6 +23,7 @@ import 'package:chessever/desktop/services/board_tab_pgn_resolver.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
+import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_library_game_updater.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -343,6 +344,7 @@ class _BoardPaneContent extends HookConsumerWidget {
             : ref.watch(
               boardExplorerScopeByTabIdProvider.select((m) => m[activeTabId]),
             );
+    final allowGameAnalysis = boardExplorerScope == null;
 
     // Source of truth for the analysis tree. `chessGame` carries the
     // mainline + sublines parsed from the most recent PGN (or grown by
@@ -430,6 +432,8 @@ class _BoardPaneContent extends HookConsumerWidget {
         );
     useEffect(() => visibleNotationMoveOrderController.dispose, const []);
     final rightRailAnalysisKey = useMemoized(GlobalKey.new, const []);
+    final reportTabSelected = useState(false);
+    final gameReport = useState<GameAnalysisReport?>(null);
     // Controller for the outer board pane split — used so the in-pane
     // close button on the left games rail can collapse the rail itself.
     final mainSplitController = useMemoized<ResizableSplitViewController>(
@@ -2727,6 +2731,25 @@ class _BoardPaneContent extends HookConsumerWidget {
             );
     final lichessAnnotations =
         annotationsAsync.valueOrNull ?? const <int, LichessMoveAnnotation>{};
+    final completedReport = gameReport.value;
+    final reportMatchesGame =
+        completedReport != null &&
+        completedReport.fingerprint == gameReportFingerprint(chessGame.value);
+    final reportAnnotations = <int, LichessMoveAnnotation>{
+      if (reportMatchesGame)
+        for (final move in completedReport.moves)
+          if (move.classification != null)
+            move.ply - 1: LichessMoveAnnotation(
+              type: _annotationTypeForReportClassification(
+                move.classification!,
+              ),
+              comment: '',
+            ),
+    };
+    final moveAnnotations = <int, LichessMoveAnnotation>{
+      ...lichessAnnotations,
+      ...reportAnnotations,
+    };
 
     // Resolve the on-board badge for the current ply: user-applied NAGs
     // take precedence (the user just typed `!` and expects to see it),
@@ -2772,9 +2795,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           pointer.value,
         );
         boardAnnotation =
-            annotationIndex == null
-                ? null
-                : lichessAnnotations[annotationIndex];
+            annotationIndex == null ? null : moveAnnotations[annotationIndex];
       }
     }
     final boardAnnotationSquare = currentPly.lastMoveSquare;
@@ -3304,7 +3325,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         onJump: onJump,
         scrollController: scrollController,
         visibleMoveOrderController: visibleNotationMoveOrderController,
-        lichessAnnotations: lichessAnnotations,
+        lichessAnnotations: moveAnnotations,
         userNags:
             ref.watch(userMoveNagsProvider)[activeTabId ?? '__none__'] ??
             const <int, List<int>>{},
@@ -3572,6 +3593,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           onBoardSizeChangeEnd: () {
                             persistBoardSizePreference();
                           },
+                          suppressEngineAnalysis: false,
                         ),
                       ),
                     ),
@@ -3631,6 +3653,8 @@ class _BoardPaneContent extends HookConsumerWidget {
                 child: KeyedSubtree(
                   key: rightRailAnalysisKey,
                   child: _RightRailAnalysis(
+                    reportSelected:
+                        allowGameAnalysis && reportTabSelected.value,
                     showEngine: ref.watch(
                       engineSettingsProviderNew.select(
                         (s) =>
@@ -3722,12 +3746,42 @@ class _BoardPaneContent extends HookConsumerWidget {
                       nextGameShortcutLabel: shortcutLabelFor(
                         BoardActionKey.nextGame,
                       ),
+                      reportSelected:
+                          allowGameAnalysis && reportTabSelected.value,
+                      reportEnabled: true,
+                      showReport: allowGameAnalysis,
+                      onToggleReport: () {
+                        if (!allowGameAnalysis) return;
+                        reportTabSelected.value = !reportTabSelected.value;
+                      },
                       trailingActions: boardActionCluster,
                     ),
                     enginePanel: EnginePanel(
                       fen: boardPosition.fen,
                       sideToMove: boardPosition.turn == Side.white ? 'w' : 'b',
                       onPlayUci: playUci,
+                      game: chessGame.value,
+                      headers: pgnHeaders.value,
+                      activePly:
+                          pointer.value.length == 1
+                              ? pointer.value.first + 1
+                              : cursor,
+                      onJumpToPly: (ply) {
+                        jumpToPointer(
+                          ply <= 0 ? const <int>[] : <int>[ply - 1],
+                        );
+                      },
+                      onReportChanged: (report) {
+                        gameReport.value = report;
+                      },
+                      selectedTab:
+                          allowGameAnalysis && reportTabSelected.value
+                              ? EnginePanelTab.report
+                              : EnginePanelTab.moves,
+                      autoAnalysisAllowed: allowGameAnalysis,
+                      onTabChanged: (tab) {
+                        reportTabSelected.value = tab == EnginePanelTab.report;
+                      },
                     ),
                   ),
                 ),
@@ -3754,11 +3808,13 @@ class _BoardPaneContent extends HookConsumerWidget {
 /// split panes, so the user has a clear one-click way to bring it back.
 class _RightRailAnalysis extends ConsumerStatefulWidget {
   const _RightRailAnalysis({
+    required this.reportSelected,
     required this.showEngine,
     required this.notationPanel,
     required this.enginePanel,
   });
 
+  final bool reportSelected;
   final bool showEngine;
   final Widget notationPanel;
   final Widget enginePanel;
@@ -3770,6 +3826,7 @@ class _RightRailAnalysis extends ConsumerStatefulWidget {
 class _RightRailAnalysisState extends ConsumerState<_RightRailAnalysis> {
   final ResizableSplitViewController _splitController =
       ResizableSplitViewController();
+  double? _preReportEngineSize;
 
   @override
   void initState() {
@@ -3783,6 +3840,27 @@ class _RightRailAnalysisState extends ConsumerState<_RightRailAnalysis> {
     if (oldWidget.showEngine != widget.showEngine) {
       _syncEngineRailAfterLayout(restoreWhenEnabled: !oldWidget.showEngine);
     }
+    if (oldWidget.reportSelected != widget.reportSelected) {
+      _syncReportSizeAfterLayout();
+    }
+  }
+
+  void _syncReportSizeAfterLayout() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (widget.reportSelected) {
+        _preReportEngineSize = _splitController.sizeOf(0);
+        // Game Analysis stacks a compact Stockfish preview above the report;
+        // reserve the bottom quarter for notation.
+        _splitController.setFraction(0, 0.75, persist: false);
+        return;
+      }
+      final previous = _preReportEngineSize;
+      _preReportEngineSize = null;
+      if (previous != null && previous > 0) {
+        _splitController.setSize(0, previous, persist: false);
+      }
+    });
   }
 
   void _syncEngineRailAfterLayout({bool restoreWhenEnabled = false}) {
@@ -4892,8 +4970,8 @@ Intent? _intentFor(BoardActionKey action) {
 }
 
 /// Compact board actions hosted in the right-rail tab strip so the board
-/// column keeps the extra vertical space. Icons stay Lichess-small; tooltips
-/// carry the labels that used to be printed on the board chrome row.
+/// column keeps the extra vertical space. Tooltips carry the labels that used
+/// to be printed on the board chrome row.
 class _RightRailBoardActions extends StatelessWidget {
   const _RightRailBoardActions({
     required this.headers,
@@ -4947,7 +5025,7 @@ class _RightRailBoardActions extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           SizedBox.square(
-            dimension: 28,
+            dimension: 36,
             child: EventInfoPopover(
               headers: headers,
               openTrigger: eventInfoTrigger,
@@ -4978,7 +5056,7 @@ class _RailIconAction extends StatelessWidget {
     return DesktopTooltip(
       message: tooltip,
       child: SizedBox.square(
-        dimension: 28,
+        dimension: 36,
         child: FButton.icon(
           style: FButtonStyle.ghost(
             (style) => style.copyWith(
@@ -4987,7 +5065,7 @@ class _RailIconAction extends StatelessWidget {
             ),
           ),
           onPress: onPress,
-          child: Icon(icon, size: 16, color: color),
+          child: Icon(icon, size: 21, color: color),
         ),
       ),
     );
@@ -5109,6 +5187,7 @@ class _BoardArea extends ConsumerWidget {
     required this.onBoardSizeChanged,
     required this.onBoardSizeReset,
     required this.onBoardSizeChangeEnd,
+    required this.suppressEngineAnalysis,
     this.onGraphicCommentaryChanged,
     this.activeGameId,
     this.boardArgs,
@@ -5175,6 +5254,7 @@ class _BoardArea extends ConsumerWidget {
   /// (any earlier move, or finished game).
   final bool isLiveAtTip;
   final bool isForegroundTab;
+  final bool suppressEngineAnalysis;
 
   /// `[%cal …]` arrows + `[%csl …]` square circles authored into the
   /// current move's PGN comment. Merged with user-drawn annotations.
@@ -5217,7 +5297,8 @@ class _BoardArea extends ConsumerWidget {
     final engineSettings =
         ref.watch(engineSettingsProviderNew).valueOrNull ??
         const EngineSettings();
-    final showEngineAnalysis = engineSettings.showEngineAnalysis;
+    final showEngineAnalysis =
+        engineSettings.showEngineAnalysis && !suppressEngineAnalysis;
     // A null-move threat FEN is illegal when the side to move is in check, so
     // degrade to the real position there (also guards navigating into check
     // while threat mode is already on) — never feed the engine an illegal FEN.
@@ -7047,6 +7128,19 @@ LichessMoveAnnotationType? _mapNagToAnnotationType(int nag) {
   }
 }
 
+LichessMoveAnnotationType _annotationTypeForReportClassification(
+  GameMoveClassification classification,
+) => switch (classification) {
+  GameMoveClassification.brilliant => LichessMoveAnnotationType.brilliant,
+  GameMoveClassification.goodMove => LichessMoveAnnotationType.goodMove,
+  GameMoveClassification.bestMove => LichessMoveAnnotationType.bestMove,
+  GameMoveClassification.forced => LichessMoveAnnotationType.forced,
+  GameMoveClassification.inaccuracy => LichessMoveAnnotationType.inaccuracy,
+  GameMoveClassification.mistake => LichessMoveAnnotationType.mistake,
+  GameMoveClassification.blunder => LichessMoveAnnotationType.blunder,
+  GameMoveClassification.missedWin => LichessMoveAnnotationType.missedWin,
+};
+
 String _annotationIconAssetPath(LichessMoveAnnotationType type) {
   switch (type) {
     case LichessMoveAnnotationType.brilliant:
@@ -7063,6 +7157,8 @@ String _annotationIconAssetPath(LichessMoveAnnotationType type) {
       return 'assets/svgs/good_move.svg';
     case LichessMoveAnnotationType.bestMove:
       return 'assets/svgs/best_move.svg';
+    case LichessMoveAnnotationType.forced:
+      return 'assets/svgs/forced_move.svg';
     case LichessMoveAnnotationType.bookMove:
       return 'assets/svgs/book_move.svg';
   }
@@ -7078,6 +7174,8 @@ Color _annotationColor(LichessMoveAnnotationType type) {
       return const Color(0xFF177A68);
     case LichessMoveAnnotationType.bestMove:
       return const Color(0xFF28833A);
+    case LichessMoveAnnotationType.forced:
+      return const Color(0xFF6B7A8A);
     case LichessMoveAnnotationType.bookMove:
       return const Color(0xFF4E5B4F);
     case LichessMoveAnnotationType.inaccuracy:

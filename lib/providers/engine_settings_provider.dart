@@ -176,6 +176,7 @@ class EngineSettings {
     this.showDepthOverlay = true,
     this.showPvArrows = false,
     this.showEngineAnalysis = false,
+    this.autoGameAnalysis = true,
     this.searchTimeIndex = 0,
     int principalVariationIndex = 4, // Default to 5 lines (index 4)
     int maxArrowsOnBoard = 2, // Default to 3 arrows (index 2)
@@ -196,6 +197,7 @@ class EngineSettings {
   final bool showPvArrows;
   final bool
   showEngineAnalysis; // Controls visibility of PV cards & arrows (computer icon)
+  final bool autoGameAnalysis;
   final int searchTimeIndex;
   final int principalVariationIndex;
   final int
@@ -317,6 +319,7 @@ class EngineSettings {
     bool? showDepthOverlay,
     bool? showPvArrows,
     bool? showEngineAnalysis,
+    bool? autoGameAnalysis,
     int? searchTimeIndex,
     int? principalVariationIndex,
     int? maxArrowsOnBoard,
@@ -326,6 +329,7 @@ class EngineSettings {
       showDepthOverlay: showDepthOverlay ?? this.showDepthOverlay,
       showPvArrows: showPvArrows ?? this.showPvArrows,
       showEngineAnalysis: showEngineAnalysis ?? this.showEngineAnalysis,
+      autoGameAnalysis: autoGameAnalysis ?? this.autoGameAnalysis,
       searchTimeIndex: searchTimeIndex ?? this.searchTimeIndex,
       principalVariationIndex: (principalVariationIndex ??
               this.principalVariationIndex)
@@ -419,6 +423,15 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
   Future<void> togglePvArrows(bool value) async {
     final currentState = state.valueOrNull ?? const EngineSettings();
     final newSettings = currentState.copyWith(showPvArrows: value);
+    state = AsyncValue.data(newSettings);
+    await _persist(newSettings);
+  }
+
+  /// Automatically generate the whole-game report when a game lands on a
+  /// regular board. Build Tree boards opt out at the caller.
+  Future<void> toggleAutoGameAnalysis(bool value) async {
+    final currentState = state.valueOrNull ?? const EngineSettings();
+    final newSettings = currentState.copyWith(autoGameAnalysis: value);
     state = AsyncValue.data(newSettings);
     await _persist(newSettings);
   }
@@ -549,6 +562,7 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
         'showDepthOverlay': settings.showDepthOverlay,
         'showPvArrows': settings.showPvArrows,
         'showEngineAnalysis': settings.showEngineAnalysis,
+        'autoGameAnalysis': settings.autoGameAnalysis,
         'searchTimeIndex': settings.searchTimeIndex,
         'principalVariationIndex': settings.principalVariationIndex,
         'maxArrowsOnBoard': settings.maxArrowsOnBoard,
@@ -590,7 +604,10 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
         showPvArrows: map['showPvArrows'] as bool? ?? defaults.showPvArrows,
         showEngineAnalysis:
             map['showEngineAnalysis'] as bool? ?? defaults.showEngineAnalysis,
-        searchTimeIndex: map['searchTimeIndex'] as int? ?? defaults.searchTimeIndex,
+        autoGameAnalysis:
+            map['autoGameAnalysis'] as bool? ?? defaults.autoGameAnalysis,
+        searchTimeIndex:
+            map['searchTimeIndex'] as int? ?? defaults.searchTimeIndex,
         principalVariationIndex:
             map['principalVariationIndex'] as int? ??
             defaults.principalVariationIndex,

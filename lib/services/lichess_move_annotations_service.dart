@@ -9,6 +9,7 @@ enum LichessMoveAnnotationType {
   inaccuracy,
   goodMove,
   bestMove,
+  forced,
   bookMove,
 }
 
@@ -146,6 +147,10 @@ class LichessMoveAnnotationsService {
       case 'best_move':
       case 'best':
         return LichessMoveAnnotationType.bestMove;
+      case 'forced':
+      case 'forced move':
+      case 'forced_move':
+        return LichessMoveAnnotationType.forced;
       case 'book move':
       case 'book_move':
       case 'book':
