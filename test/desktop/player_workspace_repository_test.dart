@@ -344,6 +344,59 @@ void main() {
       expect(lichess?.ratings['Blitz'], 3200);
     });
 
+    test('snapshot round-trips pending player deletions', () {
+      const pendingPlayer = PlayerWorkspacePlayer(
+        id: 'pending-p1',
+        displayName: 'Pending Player',
+        createdAtMs: 456,
+        accounts: <PlayerWorkspaceSource, PlayerWorkspaceAccount>{
+          PlayerWorkspaceSource.chesscom: PlayerWorkspaceAccount(
+            source: PlayerWorkspaceSource.chesscom,
+            username: 'pending-player',
+            pgnPath: '/old/player-workspace/pending-p1/CHESSCOM.pgn',
+            gameCount: 12,
+          ),
+        },
+        combinedPgnPath:
+            '/old/player-workspace/pending-p1/COMBINED_PENDING.pgn',
+        combinedGameCount: 12,
+      );
+      const snapshot = PlayerWorkspaceSnapshot(
+        pendingDeletions: <PlayerWorkspacePlayer>[pendingPlayer],
+        pendingDeletionExtraPaths: <String, List<String>>{
+          'pending-p1': <String>['/old/player-workspace/pending-p1/STALE.pgn'],
+        },
+      );
+
+      final restored = PlayerWorkspaceSnapshot.fromJson(snapshot.toJson());
+
+      expect(restored.pendingDeletions, hasLength(1));
+      expect(restored.pendingDeletions.single.id, pendingPlayer.id);
+      expect(
+        restored.pendingDeletions.single
+            .account(PlayerWorkspaceSource.chesscom)
+            ?.pgnPath,
+        '/old/player-workspace/pending-p1/CHESSCOM.pgn',
+      );
+      expect(
+        restored.pendingDeletions.single.combinedPgnPath,
+        '/old/player-workspace/pending-p1/COMBINED_PENDING.pgn',
+      );
+      expect(restored.pendingDeletionExtraPaths['pending-p1'], <String>[
+        '/old/player-workspace/pending-p1/STALE.pgn',
+      ]);
+    });
+
+    test('older snapshots default pending player deletions to empty', () {
+      final restored = PlayerWorkspaceSnapshot.fromJson(const {
+        'players': <Object?>[],
+        'selectedPlayerId': null,
+      });
+
+      expect(restored.pendingDeletions, isEmpty);
+      expect(restored.pendingDeletionExtraPaths, isEmpty);
+    });
+
     test('migrates legacy profile-only game counts to available games', () {
       final account = PlayerWorkspaceAccount.fromJson(const {
         'source': 'lichess',
@@ -426,6 +479,77 @@ void main() {
         '[Event "old combined"]\n',
       );
     });
+
+    test(
+      'preserves pending-deletion paths at their original support root',
+      () async {
+        final oldSupport = Directory(p.join(temp.path, 'pending-old-support'));
+        final newSupport = Directory(p.join(temp.path, 'pending-new-support'));
+        const playerId = 'player-456-pending-target';
+        final oldWorkspace = Directory(
+          p.join(oldSupport.path, 'player-workspace', playerId),
+        );
+        await oldWorkspace.create(recursive: true);
+        await newSupport.create(recursive: true);
+        final sourceFile = File(
+          p.join(oldWorkspace.path, 'CHESSCOM_PENDING.pgn'),
+        );
+        final combinedFile = File(
+          p.join(oldWorkspace.path, 'COMBINED_PENDING.pgn'),
+        );
+        await sourceFile.writeAsString('[Event "pending source"]\n');
+        await combinedFile.writeAsString('[Event "pending combined"]\n');
+
+        final repository = PlayerWorkspaceRepository(
+          supportDirectory: () async => newSupport,
+        );
+        final normalized = await repository
+            .normalizeGeneratedPathsForCurrentSupportRoot(
+              PlayerWorkspaceSnapshot(
+                pendingDeletions: <PlayerWorkspacePlayer>[
+                  PlayerWorkspacePlayer(
+                    id: playerId,
+                    displayName: 'Pending Target',
+                    createdAtMs: 456,
+                    accounts: <PlayerWorkspaceSource, PlayerWorkspaceAccount>{
+                      PlayerWorkspaceSource.chesscom: PlayerWorkspaceAccount(
+                        source: PlayerWorkspaceSource.chesscom,
+                        username: 'pending-target',
+                        pgnPath: sourceFile.path,
+                        gameCount: 1,
+                      ),
+                    },
+                    combinedPgnPath: combinedFile.path,
+                    combinedGameCount: 1,
+                  ),
+                ],
+              ),
+            );
+
+        final pending = normalized.pendingDeletions.single;
+        final newSourcePath = p.join(
+          newSupport.path,
+          'player-workspace',
+          playerId,
+          'CHESSCOM_PENDING.pgn',
+        );
+        final newCombinedPath = p.join(
+          newSupport.path,
+          'player-workspace',
+          playerId,
+          'COMBINED_PENDING.pgn',
+        );
+        expect(
+          pending.account(PlayerWorkspaceSource.chesscom)!.pgnPath,
+          sourceFile.path,
+        );
+        expect(pending.combinedPgnPath, combinedFile.path);
+        expect(await sourceFile.exists(), isTrue);
+        expect(await combinedFile.exists(), isTrue);
+        expect(await File(newSourcePath).exists(), isFalse);
+        expect(await File(newCombinedPath).exists(), isFalse);
+      },
+    );
 
     test('removing a source account clears stale combined database state', () {
       const player = PlayerWorkspacePlayer(
@@ -843,12 +967,21 @@ void main() {
           expect(notifier.state.players, isEmpty);
           expect(notifier.state.selectedPlayerId, isNull);
           expect(workspaceRepository.snapshot.players, isEmpty);
+          expect(
+            workspaceRepository.snapshot.pendingDeletions.map(
+              (player) => player.id,
+            ),
+            <String>[playerId],
+          );
+          expect(localRepository.purgeCalls, 0);
+          await Future<void>.delayed(const Duration(milliseconds: 300));
           expect(localRepository.purgeCalls, 1);
-          expect(localRepository.requestedBatchSize, 128);
+          expect(localRepository.requestedBatchSize, 512);
         } finally {
           if (!gate.isCompleted) gate.complete();
           await removal;
           await notifier.debugDrainPlayerCleanup();
+          expect(workspaceRepository.snapshot.pendingDeletions, isEmpty);
         }
       },
     );
@@ -1036,6 +1169,7 @@ void main() {
 
         loadGate.complete();
         await sync;
+        await notifier.debugDrainPlayerCleanup();
 
         expect(notifier.state.players, isEmpty);
         expect(workspaceRepository.snapshot.players, isEmpty);
@@ -1096,6 +1230,7 @@ void main() {
         'legacy-player-folder-name',
         deletedPaths: <String>[sourcePath, extraPath, combinedPath],
       );
+      await notifier.debugDrainPlayerCleanup();
 
       expect(notifier.state.players, isEmpty);
       expect(workspaceRepository.snapshot.players, isEmpty);
@@ -4743,7 +4878,8 @@ class _FakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     this.lichessPgnByUsername = const <String, String>{},
     this.chessComPgnByUsername = const <String, String>{},
     this.loadGate,
-  }) : root = root ?? Directory.systemTemp;
+  }) : root = root ?? Directory.systemTemp,
+       super(supportDirectory: () async => root ?? Directory.systemTemp);
 
   final Directory root;
   final Map<String, String> chessEverPgnByPlayerId;

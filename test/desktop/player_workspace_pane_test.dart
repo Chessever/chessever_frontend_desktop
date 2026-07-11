@@ -432,7 +432,7 @@ void main() {
     );
 
     await tester.pumpAndSettle();
-    await tester.tap(find.text('GM Vasif Durarbayli').first);
+    await tester.tap(find.text('Vasif Durarbayli').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Accounts'));
     await tester.pumpAndSettle();

@@ -3087,6 +3087,79 @@ void main() {
     expect(await repo.deletedCacheCount(), 1);
   });
 
+  test(
+    'markCachedSourcesDeleted tombstones several sources in one queued pass',
+    () async {
+      final firstPgn = File('${temp.path}/mark-many-first.pgn');
+      final secondPgn = File('${temp.path}/mark-many-second.pgn');
+      final untouchedPgn = File('${temp.path}/mark-many-untouched.pgn');
+      for (final file in <File>[firstPgn, secondPgn, untouchedPgn]) {
+        await file.writeAsString(_samplePgn);
+      }
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      for (final file in <File>[firstPgn, secondPgn, untouchedPgn]) {
+        final source = await scanLocalChessPaths(<String>[file.path]);
+        await repo.persistFileNode(
+          source.root.singlePlayableDatabaseInSubtree!,
+          sourceLabel: source.label,
+        );
+      }
+
+      final queueEntered = Completer<void>();
+      final releaseQueue = Completer<void>();
+      final held = LocalChessDatabaseRepository.debugRunWriteSerialized(
+        () async {
+          queueEntered.complete();
+          await releaseQueue.future;
+        },
+      );
+      await queueEntered.future.timeout(const Duration(seconds: 5));
+
+      var completed = false;
+      final marked = repo
+          .markCachedSourcesDeleted(<String>[
+            firstPgn.path,
+            secondPgn.path,
+            firstPgn.path,
+          ])
+          .then((value) {
+            completed = true;
+            return value;
+          });
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(completed, isFalse);
+      releaseQueue.complete();
+      expect(await marked.timeout(const Duration(seconds: 5)), 2);
+      await held.timeout(const Duration(seconds: 5));
+      expect(
+        await repo.deletedCacheCount(
+          sourcePaths: <String>[firstPgn.path, secondPgn.path],
+        ),
+        2,
+      );
+      expect(
+        await repo.loadFreshFileNode(firstPgn.path, rootPath: temp.path),
+        isNull,
+      );
+      expect(
+        await repo.loadFreshFileNode(secondPgn.path, rootPath: temp.path),
+        isNull,
+      );
+      expect(
+        await repo.loadFreshFileNode(untouchedPgn.path, rootPath: temp.path),
+        isNotNull,
+      );
+      expect(
+        await repo.markCachedSourcesDeleted(<String>[
+          firstPgn.path,
+          secondPgn.path,
+        ]),
+        0,
+      );
+    },
+  );
+
   test('marked deleted cache stays hidden without startup purge', () async {
     final pgnFile = File('${temp.path}/restart-hidden-delete.pgn');
     await pgnFile.writeAsString(_samplePgn);
@@ -3149,6 +3222,234 @@ void main() {
       expect(await _count(db, 'local_chess_tree_moves'), 0);
       expect(await _count(db, 'local_chess_position_games'), 0);
       expect(await _count(db, 'local_chess_game_analysis'), 0);
+    },
+  );
+
+  test(
+    'scoped cleanup blocks same-path resurrection but interleaves unrelated writes',
+    () async {
+      final deletedFile = File('${temp.path}/player/delete-me.pgn');
+      final unrelatedFile = File('${temp.path}/other/keep-working.pgn');
+      await deletedFile.parent.create(recursive: true);
+      await unrelatedFile.parent.create(recursive: true);
+      await deletedFile.writeAsString(_samplePgn);
+      await unrelatedFile.writeAsString(_samplePgn);
+      await _seedChunkedDeleteCache(db, deletedFile.path);
+
+      final deletedNode =
+          (await scanLocalChessPaths(<String>[
+            deletedFile.path,
+          ])).root.singlePlayableDatabaseInSubtree!;
+      final unrelatedNode =
+          (await scanLocalChessPaths(<String>[
+            unrelatedFile.path,
+          ])).root.singlePlayableDatabaseInSubtree!;
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      final purgeStarted = Completer<void>();
+      var cleanupCompleted = false;
+      final cleanup = repo
+          .deleteCachedSourcesAwaitingPurge(
+            sourcePaths: <String>[deletedFile.parent.path],
+            batchSize: 1,
+            onProgress: (_) {
+              if (!purgeStarted.isCompleted) purgeStarted.complete();
+            },
+          )
+          .whenComplete(() => cleanupCompleted = true);
+      await purgeStarted.future;
+
+      await expectLater(
+        repo.persistFileNode(deletedNode, sourceLabel: 'Must stay deleted'),
+        throwsA(isA<OperationCanceledException>()),
+      );
+      await repo.persistFileNode(
+        unrelatedNode,
+        sourceLabel: 'Unrelated writer',
+      );
+
+      expect(
+        cleanupCompleted,
+        isFalse,
+        reason:
+            'An unrelated write should interleave before all purge batches.',
+      );
+      await cleanup;
+      expect(
+        await db.select(
+          'SELECT path FROM local_chess_databases ORDER BY path ASC',
+        ),
+        <Map<String, Object?>>[
+          <String, Object?>{'path': unrelatedFile.path},
+        ],
+      );
+    },
+  );
+
+  test('purge cancellation is acknowledged between SQL batches', () async {
+    final databasePath = '${temp.path}/cancel-batched-delete.pgn';
+    await _seedChunkedDeleteCache(db, databasePath);
+    final repo = LocalChessDatabaseRepository(database: () async => db);
+    final token = OperationCancellationToken();
+    expect(await repo.markCachedSourceDeleted(databasePath), 1);
+
+    await expectLater(
+      repo.purgeDeletedCaches(
+        sourcePath: databasePath,
+        batchSize: 1,
+        cancellationToken: token,
+        onProgress: (progress) {
+          if (progress.message.startsWith('Deleting ')) token.cancel();
+        },
+      ),
+      throwsA(isA<OperationCanceledException>()),
+    );
+    expect(
+      await repo.deletedCacheCount(sourcePath: databasePath),
+      1,
+      reason: 'Cancellation leaves the durable tombstone retryable.',
+    );
+
+    expect(
+      await repo.purgeDeletedCaches(
+        sourcePath: databasePath,
+        batchSize: 11,
+        cleanupOrphanMetadata: false,
+        checkpoint: false,
+      ),
+      1,
+    );
+    expect(await repo.deletedCacheCount(sourcePath: databasePath), 0);
+  });
+
+  test(
+    'progress purge skips row-count scans and reports safe slow batches',
+    () async {
+      final databasePath = '${temp.path}/silent-purge-private-name.pgn';
+      await _seedChunkedDeleteCache(db, databasePath);
+      final diagnostics = <LocalChessPurgeBatchDiagnostic>[];
+      final progress = <LocalChessScanProgress>[];
+      final repo = LocalChessDatabaseRepository(
+        database: () async => db,
+        slowPurgeBatchThreshold: Duration.zero,
+        onSlowPurgeBatch: diagnostics.add,
+      );
+      expect(await repo.markCachedSourceDeleted(databasePath), 1);
+
+      final purged = await repo.purgeDeletedCaches(
+        sourcePaths: <String>[databasePath],
+        batchSize: 7,
+        cleanupOrphanMetadata: false,
+        checkpoint: false,
+        onProgress: progress.add,
+      );
+
+      expect(purged, 1);
+      expect(progress.last.percent, 100);
+      final implementation =
+          File(
+            'lib/desktop/services/local_chess_database_repository.dart',
+          ).readAsStringSync();
+      final purgeStart = implementation.indexOf(
+        'Future<int> _purgeDeletedCachesUnlocked',
+      );
+      final purgeEnd = implementation.indexOf(
+        'void scheduleDeletedCachePurge',
+        purgeStart,
+      );
+      expect(purgeStart, isNonNegative);
+      expect(purgeEnd, greaterThan(purgeStart));
+      expect(
+        implementation.substring(purgeStart, purgeEnd),
+        isNot(contains('SELECT COUNT(*)')),
+      );
+      expect(diagnostics, isNotEmpty);
+      expect(
+        diagnostics.map((event) => event.table),
+        contains('local_chess_tree_nodes'),
+      );
+      for (final event in diagnostics) {
+        expect(event.batchSize, event.table == 'local_chess_databases' ? 1 : 7);
+        expect(event.affectedRows, greaterThanOrEqualTo(0));
+        expect(event.elapsedMilliseconds, greaterThanOrEqualTo(0));
+        expect(
+          event.sentryData.keys,
+          unorderedEquals(<String>[
+            'table',
+            'batchSize',
+            'affectedRows',
+            'elapsedMs',
+          ]),
+        );
+        expect(event.sentryData.toString(), isNot(contains(temp.path)));
+        expect(
+          event.sentryData.toString(),
+          isNot(contains('silent-purge-private-name')),
+        );
+      }
+    },
+  );
+
+  test(
+    'scoped multi-source purge resumes idempotent marks without touching others',
+    () async {
+      final firstPgn = File('${temp.path}/resume-first.pgn');
+      final secondPgn = File('${temp.path}/resume-second.pgn');
+      final unrelatedPgn = File('${temp.path}/resume-unrelated.pgn');
+      for (final file in <File>[firstPgn, secondPgn, unrelatedPgn]) {
+        await file.writeAsString(_samplePgn);
+      }
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      for (final file in <File>[firstPgn, secondPgn, unrelatedPgn]) {
+        final source = await scanLocalChessPaths(<String>[file.path]);
+        await repo.persistFileNode(
+          source.root.singlePlayableDatabaseInSubtree!,
+          sourceLabel: source.label,
+        );
+      }
+      expect(
+        await repo.markCachedSourcesDeleted(<String>[
+          firstPgn.path,
+          secondPgn.path,
+          unrelatedPgn.path,
+        ]),
+        3,
+      );
+      // Restarted cleanup sees zero newly marked rows. It must still purge the
+      // two paths owned by this pending player deletion.
+      expect(
+        await repo.markCachedSourcesDeleted(<String>[
+          firstPgn.path,
+          secondPgn.path,
+        ]),
+        0,
+      );
+
+      final purged = await repo.purgeDeletedCaches(
+        sourcePaths: <String>[firstPgn.path, secondPgn.path],
+        batchSize: 1,
+        cleanupOrphanMetadata: false,
+        checkpoint: false,
+      );
+
+      expect(purged, 2);
+      expect(
+        await repo.deletedCacheCount(
+          sourcePaths: <String>[firstPgn.path, secondPgn.path],
+        ),
+        0,
+      );
+      expect(
+        await repo.deletedCacheCount(sourcePaths: <String>[unrelatedPgn.path]),
+        1,
+      );
+      expect(
+        await db.select(
+          'SELECT path FROM local_chess_databases ORDER BY path ASC',
+        ),
+        <Map<String, Object?>>[
+          <String, Object?>{'path': unrelatedPgn.path},
+        ],
+      );
     },
   );
 

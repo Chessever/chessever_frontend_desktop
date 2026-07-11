@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_workspace_repository.dart';
@@ -21,6 +22,7 @@ const double _chessEverDownloadPhaseSpan = 0.40;
 const double _chessEverImportPhaseStart = 0.40;
 const double _chessEverImportPhaseSpan = 0.55;
 const Duration _downloadedStatsRepairTimeout = Duration(seconds: 8);
+const Duration _playerCleanupQuietPeriod = Duration(milliseconds: 250);
 
 @immutable
 class PlayerWorkspaceState {
@@ -156,11 +158,25 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   var _combinedRebuildGeneration = 0;
   final Set<String> _activeAccountSyncOperationKeys = <String>{};
   final Set<String> _pendingCombinedRebuildPlayerIds = <String>{};
+  // The map owns the operation currently allowed to update each UI slot. Keep
+  // every superseded scope separately until its own finally block completes:
+  // a canceled network/import operation may ignore cancellation for a while,
+  // and player deletion must still wait for that older file owner.
   final Map<String, _PlayerWorkspaceOperationScope> _operationScopes =
       <String, _PlayerWorkspaceOperationScope>{};
+  final Set<_PlayerWorkspaceOperationScope> _inFlightOperationScopes =
+      <_PlayerWorkspaceOperationScope>{};
   final Set<String> _deletedPlayerIds = <String>{};
+  final Map<String, PlayerWorkspacePlayer> _pendingPlayerDeletions =
+      <String, PlayerWorkspacePlayer>{};
+  final Map<String, Set<String>> _pendingPlayerDeletionExtraPaths =
+      <String, Set<String>>{};
+  final Map<String, LocalChessCacheDeletionLease> _playerCleanupCacheGuards =
+      <String, LocalChessCacheDeletionLease>{};
+  final Set<String> _scheduledPlayerCleanupIds = <String>{};
   late final Future<void> _initialLoadFuture;
   Future<void> _playerCleanupQueue = Future<void>.value();
+  Future<void> _snapshotWriteQueue = Future<void>.value();
   bool _isDrainingCombinedRebuilds = false;
   int _repairGeneration = 0;
   final List<Timer> _repairTimeoutTimers = <Timer>[];
@@ -172,6 +188,10 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       timer.cancel();
     }
     _repairTimeoutTimers.clear();
+    for (final guard in _playerCleanupCacheGuards.values) {
+      guard.release();
+    }
+    _playerCleanupCacheGuards.clear();
     unawaited(cancelAllOperations());
     super.dispose();
   }
@@ -179,7 +199,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   Future<void> cancelAllOperations({
     Duration timeout = const Duration(seconds: 8),
   }) {
-    final scopes = _operationScopes.values.toList(growable: false);
+    final scopes = _inFlightOperationScopes.toList(growable: false);
     for (final scope in scopes) {
       scope.cancel();
     }
@@ -212,10 +232,42 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
       final snapshot = await _workspaceRepository.loadSnapshot();
+      _pendingPlayerDeletions
+        ..clear()
+        ..addEntries(
+          snapshot.pendingDeletions.map(
+            (player) =>
+                MapEntry<String, PlayerWorkspacePlayer>(player.id, player),
+          ),
+        );
+      _pendingPlayerDeletionExtraPaths
+        ..clear()
+        ..addEntries(
+          snapshot.pendingDeletionExtraPaths.entries.map(
+            (entry) =>
+                MapEntry<String, Set<String>>(entry.key, entry.value.toSet()),
+          ),
+        );
+      _deletedPlayerIds.addAll(_pendingPlayerDeletions.keys);
+      if (_pendingPlayerDeletions.isNotEmpty) {
+        localChessLog.breadcrumb(
+          'Player deletion cleanup resumed',
+          category: 'player.delete',
+          context: <String, Object?>{
+            'pendingCount': _pendingPlayerDeletions.length,
+          },
+        );
+      }
       state = PlayerWorkspaceState(
         players: snapshot.players,
         selectedPlayerId: snapshot.selectedPlayerId,
       );
+      for (final player in _pendingPlayerDeletions.values) {
+        _schedulePlayerCleanup(
+          player,
+          const <_PlayerWorkspaceOperationScope>[],
+        );
+      }
       await _repairPersistedDownloadedStatsBestEffort();
       await _registerPlayersGeneratedDatabasesBestEffort(state.players);
       await _rebuildSelectedCombinedIfStaleBestEffort();
@@ -435,17 +487,44 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   Future<void> removePlayer(String playerId) async {
     final index = state.players.indexWhere((player) => player.id == playerId);
     if (index < 0) return;
-    final player = state.players[index];
-    _deletedPlayerIds.add(playerId);
-    _pendingCombinedRebuildPlayerIds.remove(playerId);
+    await _queuePlayerDeletion(state.players[index]);
+  }
+
+  Future<void> _queuePlayerDeletion(
+    PlayerWorkspacePlayer player, {
+    Iterable<String> extraPaths = const <String>[],
+  }) async {
+    final cleanExtraPaths = <String>{
+      for (final path in extraPaths)
+        if (path.trim().isNotEmpty) path.trim(),
+    };
+    if (cleanExtraPaths.isNotEmpty) {
+      _pendingPlayerDeletionExtraPaths
+          .putIfAbsent(player.id, () => <String>{})
+          .addAll(cleanExtraPaths);
+    }
+    if (_isPlayerDeleted(player.id)) return;
+
+    _deletedPlayerIds.add(player.id);
+    _pendingPlayerDeletions[player.id] = player;
+    _pendingCombinedRebuildPlayerIds.remove(player.id);
     _combinedRebuildGeneration++;
-    final canceledScopes = _cancelPlayerOperations(playerId);
+    final canceledScopes = _cancelPlayerOperations(player.id);
+    localChessLog.breadcrumb(
+      'Player deletion queued',
+      category: 'player.delete',
+      context: <String, Object?>{
+        'sourceCount': _playerDeletionStoredPaths(player).length,
+        'activeOperationCount': canceledScopes.length,
+        'hasCombined': player.combinedPgnPath?.trim().isNotEmpty == true,
+      },
+    );
     final remaining = <PlayerWorkspacePlayer>[
       for (final candidate in state.players)
-        if (candidate.id != playerId) candidate,
+        if (candidate.id != player.id) candidate,
     ];
     if (remaining.length == state.players.length) return;
-    final removedSelected = state.selectedPlayerId == playerId;
+    final removedSelected = state.selectedPlayerId == player.id;
 
     state = state.copyWith(
       players: List.unmodifiable(remaining),
@@ -455,14 +534,9 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       operations:
           removedSelected
               ? const <String, PlayerWorkspaceOperation>{}
-              : _operationsWithoutPlayer(playerId),
+              : _operationsWithoutPlayer(player.id),
     );
-    await _workspaceRepository.saveSnapshot(
-      PlayerWorkspaceSnapshot(
-        players: remaining,
-        selectedPlayerId: state.selectedPlayerId,
-      ),
-    );
+    await _persist();
     _schedulePlayerCleanup(player, canceledScopes);
   }
 
@@ -470,20 +544,72 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     PlayerWorkspacePlayer player,
     List<_PlayerWorkspaceOperationScope> canceledScopes,
   ) {
+    if (!_scheduledPlayerCleanupIds.add(player.id)) return;
+    final cleanupStopwatch = Stopwatch()..start();
     _playerCleanupQueue = _playerCleanupQueue.then((_) async {
       // Let the dialog close and the player row disappear before starting
       // filesystem or SQLite maintenance. Cleanup stays serialized so several
       // quick removals cannot saturate the machine with competing purges.
       await Future<void>.delayed(Duration.zero);
       try {
-        await _waitForScopes(canceledScopes);
-        await _deletePlayerGeneratedData(player);
+        await _waitForScopesToFinish(canceledScopes);
+        // Give the dialog/list transition a clean frame and let canceled
+        // import connections finish closing before maintenance touches the
+        // same files and cache rows.
+        await Future<void>.delayed(_playerCleanupQuietPeriod);
+        localChessLog.breadcrumb(
+          'Player deletion physical cleanup started',
+          category: 'player.delete',
+          context: <String, Object?>{
+            'sourceCount': _playerDeletionStoredPaths(player).length,
+            'operationWaitMs': cleanupStopwatch.elapsedMilliseconds,
+          },
+        );
+        await _deletePlayerGeneratedData(
+          player,
+          extraPaths:
+              _pendingPlayerDeletionExtraPaths[player.id] ?? const <String>{},
+        );
+        final removedTombstone = _pendingPlayerDeletions.remove(player.id);
+        try {
+          await _persist();
+        } catch (_) {
+          if (removedTombstone != null) {
+            _pendingPlayerDeletions[player.id] = removedTombstone;
+          }
+          rethrow;
+        }
+        _pendingPlayerDeletionExtraPaths.remove(player.id);
+        _playerCleanupCacheGuards.remove(player.id)?.release();
+        cleanupStopwatch.stop();
+        localChessLog.breadcrumb(
+          'Player deletion cleanup finished',
+          category: 'player.delete',
+          context: <String, Object?>{
+            'elapsedMs': cleanupStopwatch.elapsedMilliseconds,
+          },
+        );
       } catch (error, stackTrace) {
+        cleanupStopwatch.stop();
+        final failure = error is _PlayerDeletionCleanupFailure ? error : null;
+        localChessLog.breadcrumb(
+          'Player deletion cleanup deferred for retry',
+          category: 'player.delete',
+          context: <String, Object?>{
+            'elapsedMs': cleanupStopwatch.elapsedMilliseconds,
+            'stage': failure?.stage ?? 'queue',
+            'failureClass': _playerDeletionFailureClass(
+              failure?.error ?? error,
+            ),
+          },
+        );
         _debugPlayerWorkspaceFailure(
           'background player cleanup',
-          error,
+          failure?.error ?? error,
           stackTrace,
         );
+      } finally {
+        _scheduledPlayerCleanupIds.remove(player.id);
       }
     });
     unawaited(_playerCleanupQueue);
@@ -1047,14 +1173,12 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         if (!_scopeCanUpdateOperation(scope) || _isPlayerDeleted(player.id)) {
           return;
         }
-        unawaited(
-          _registerPlayerDatabasePathBestEffort(
-            player: nextPlayer,
-            source: source,
-            path: imported.path,
-            gameCount: imported.stats.gameCount,
-            indexedAtMs: now,
-          ),
+        await _registerPlayerDatabasePathBestEffort(
+          player: nextPlayer,
+          source: source,
+          path: imported.path,
+          gameCount: imported.stats.gameCount,
+          indexedAtMs: now,
         );
         _clearOperationForScope(scope);
         sourceChanged = true;
@@ -1219,14 +1343,12 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       if (_isPlayerDeleted(player.id)) return;
       final nextPlayer = _latestPlayer(player).withAccount(nextAccount);
       await _upsertPlayer(nextPlayer, select: true);
-      unawaited(
-        _registerPlayerDatabasePathBestEffort(
-          player: nextPlayer,
-          source: source,
-          path: imported.path,
-          gameCount: imported.stats.gameCount,
-          indexedAtMs: now,
-        ),
+      await _registerPlayerDatabasePathBestEffort(
+        player: nextPlayer,
+        source: source,
+        path: imported.path,
+        gameCount: imported.stats.gameCount,
+        indexedAtMs: now,
       );
       _clearOperation(operationKey);
       _pendingCombinedRebuildPlayerIds.add(player.id);
@@ -1424,12 +1546,33 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   Future<void> _persist() async {
-    await _workspaceRepository.saveSnapshot(
-      PlayerWorkspaceSnapshot(
-        players: state.players,
-        selectedPlayerId: state.selectedPlayerId,
+    final snapshot = PlayerWorkspaceSnapshot(
+      players: state.players,
+      pendingDeletions: List<PlayerWorkspacePlayer>.unmodifiable(
+        _pendingPlayerDeletions.values,
       ),
+      pendingDeletionExtraPaths:
+          Map<String, List<String>>.unmodifiable(<String, List<String>>{
+            for (final entry in _pendingPlayerDeletionExtraPaths.entries)
+              if (_pendingPlayerDeletions.containsKey(entry.key) &&
+                  entry.value.isNotEmpty)
+                entry.key: List<String>.unmodifiable(entry.value),
+          }),
+      selectedPlayerId: state.selectedPlayerId,
     );
+    final previousWrite = _snapshotWriteQueue;
+    final write = () async {
+      try {
+        await previousWrite;
+      } catch (_) {
+        // A later state must still get a chance to persist after an earlier
+        // storage failure. The caller of that earlier write already receives
+        // its original error.
+      }
+      await _workspaceRepository.saveSnapshot(snapshot);
+    }();
+    _snapshotWriteQueue = write;
+    await write;
   }
 
   PlayerWorkspacePlayer _latestPlayer(PlayerWorkspacePlayer fallback) {
@@ -1503,7 +1646,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       _deletedPlayerIds.contains(playerId);
 
   bool _hasActiveSourceOperations(String playerId) {
-    return _operationScopes.values.any(
+    return _inFlightOperationScopes.any(
       (scope) =>
           scope.playerId == playerId &&
           scope.key != _sourceOperationKey(PlayerWorkspaceSource.combined),
@@ -1512,11 +1655,16 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
 
   void _cancelCombinedRebuildForPlayer(String playerId) {
     final key = _sourceOperationKey(PlayerWorkspaceSource.combined);
-    final scope = _operationScopes[key];
-    if (scope == null || scope.playerId != playerId) return;
+    final scopes = <_PlayerWorkspaceOperationScope>[
+      for (final scope in _inFlightOperationScopes)
+        if (scope.key == key && scope.playerId == playerId) scope,
+    ];
+    if (scopes.isEmpty) return;
     _combinedRebuildGeneration++;
-    scope.cancel();
-    _clearOperation(key);
+    for (final scope in scopes) {
+      scope.cancel();
+      _clearOperationForScope(scope);
+    }
   }
 
   _PlayerWorkspaceOperationScope _startOperationScope(
@@ -1531,10 +1679,12 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       token: OperationCancellationToken(),
     );
     _operationScopes[key] = scope;
+    _inFlightOperationScopes.add(scope);
     return scope;
   }
 
   void _finishOperationScope(_PlayerWorkspaceOperationScope scope) {
+    _inFlightOperationScopes.remove(scope);
     if (identical(_operationScopes[scope.key], scope)) {
       _operationScopes.remove(scope.key);
     }
@@ -1545,22 +1695,27 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     String playerId,
   ) {
     final scopes = <_PlayerWorkspaceOperationScope>[
-      for (final scope in _operationScopes.values)
+      for (final scope in _inFlightOperationScopes)
         if (scope.playerId == playerId) scope,
     ];
     for (final scope in scopes) {
       scope.cancel();
-      _clearOperation(scope.key);
+      _clearOperationForScope(scope);
     }
     return scopes;
   }
 
   List<_PlayerWorkspaceOperationScope> _cancelOperation(String key) {
-    final scope = _operationScopes[key];
-    if (scope == null) return const <_PlayerWorkspaceOperationScope>[];
-    scope.cancel();
+    final scopes = <_PlayerWorkspaceOperationScope>[
+      for (final scope in _inFlightOperationScopes)
+        if (scope.key == key) scope,
+    ];
+    if (scopes.isEmpty) return const <_PlayerWorkspaceOperationScope>[];
+    for (final scope in scopes) {
+      scope.cancel();
+    }
     _clearOperation(key);
-    return <_PlayerWorkspaceOperationScope>[scope];
+    return scopes;
   }
 
   Future<void> _waitForScopes(
@@ -1576,6 +1731,41 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       // Deletion and app close must continue even if a third-party request does
       // not observe cancellation promptly. Late writes are still ignored by the
       // deleted-player guard.
+    }
+  }
+
+  Future<void> _waitForScopesToFinish(
+    List<_PlayerWorkspaceOperationScope> scopes,
+  ) async {
+    if (scopes.isEmpty) return;
+    final stopwatch = Stopwatch()..start();
+    var reportedWaiting = false;
+    final timer = Timer.periodic(const Duration(seconds: 2), (_) {
+      reportedWaiting = true;
+      localChessLog.breadcrumb(
+        'Player deletion waiting for active operations',
+        category: 'player.delete',
+        context: <String, Object?>{
+          'operationCount': scopes.length,
+          'elapsedMs': stopwatch.elapsedMilliseconds,
+        },
+      );
+    });
+    try {
+      await Future.wait<void>(scopes.map((scope) => scope.done.future));
+    } finally {
+      timer.cancel();
+      stopwatch.stop();
+      if (reportedWaiting) {
+        localChessLog.breadcrumb(
+          'Player deletion active operations finished',
+          category: 'player.delete',
+          context: <String, Object?>{
+            'operationCount': scopes.length,
+            'elapsedMs': stopwatch.elapsedMilliseconds,
+          },
+        );
+      }
     }
   }
 
@@ -1635,41 +1825,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     PlayerWorkspacePlayer player, {
     Iterable<String> deletedPaths = const <String>[],
   }) async {
-    if (_isPlayerDeleted(player.id)) return;
-    _deletedPlayerIds.add(player.id);
-    _pendingCombinedRebuildPlayerIds.remove(player.id);
-    _combinedRebuildGeneration++;
-    final canceledScopes = _cancelPlayerOperations(player.id);
-    final players = <PlayerWorkspacePlayer>[
-      for (final candidate in state.players)
-        if (candidate.id != player.id) candidate,
-    ];
-    if (players.length == state.players.length) return;
-    final removedSelected = state.selectedPlayerId == player.id;
-    state = state.copyWith(
-      players: List.unmodifiable(players),
-      clearSelectedPlayerId: removedSelected,
-      isLoading: false,
-      clearError: true,
-      operations:
-          removedSelected
-              ? const <String, PlayerWorkspaceOperation>{}
-              : _operationsWithoutPlayer(player.id),
-    );
-    await _persist();
-    await _waitForScopes(canceledScopes);
-    await _unregisterPlayerWorkspaceBestEffort(
-      player,
-      extraPaths: <String>{
-        ..._generatedDatabasePaths(player),
-        for (final path in deletedPaths)
-          if (path.trim().isNotEmpty) path.trim(),
-      },
-    );
-    for (final path in _generatedDatabasePaths(player)) {
-      await _deleteGeneratedDatabasePathBestEffort(path);
-    }
-    await _deletePlayerWorkspaceDirectoryBestEffort(player.id);
+    await _queuePlayerDeletion(player, extraPaths: deletedPaths);
   }
 
   Future<void> _removeAccountAfterExternalLibraryDelete(
@@ -1725,26 +1881,78 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     return _localRepository.latestLocalGameDate(databasePath: path);
   }
 
-  Future<void> _deletePlayerGeneratedData(PlayerWorkspacePlayer player) async {
-    final paths = <String>{
-      for (final account in player.allAccounts)
-        if (account.pgnPath?.trim().isNotEmpty == true) account.pgnPath!.trim(),
-      if (player.combinedPgnPath?.trim().isNotEmpty == true)
-        player.combinedPgnPath!.trim(),
-    };
-    await _unregisterPlayerWorkspaceBestEffort(player, extraPaths: paths);
-    // Delete the generated PGN files first (cheap, dart:io thread pool), then
-    // clear their SQLite cache in one consolidated purge below.
-    for (final path in paths) {
-      await _deleteGeneratedSourceFile(path);
+  Set<String> _playerDeletionStoredPaths(PlayerWorkspacePlayer player) =>
+      <String>{
+        ..._generatedDatabasePaths(player),
+        ...?_pendingPlayerDeletionExtraPaths[player.id],
+      };
+
+  Future<void> _deletePlayerGeneratedData(
+    PlayerWorkspacePlayer player, {
+    Iterable<String> extraPaths = const <String>[],
+  }) async {
+    var stage = 'resolve_targets';
+    try {
+      final storedPaths = <String>{
+        for (final account in player.allAccounts)
+          if (account.pgnPath?.trim().isNotEmpty == true)
+            account.pgnPath!.trim(),
+        if (player.combinedPgnPath?.trim().isNotEmpty == true)
+          player.combinedPgnPath!.trim(),
+        for (final path in extraPaths)
+          if (path.trim().isNotEmpty) path.trim(),
+      };
+      final cleanup = await _workspaceRepository.playerWorkspaceCleanupTargets(
+        player.id,
+        storedPaths: storedPaths,
+      );
+      final paths = cleanup.sourcePaths;
+      final cacheScopes = cleanup.cacheScopes;
+      _playerCleanupCacheGuards.putIfAbsent(
+        player.id,
+        () => _localRepository.acquireCacheDeletionGuard(cacheScopes),
+      );
+      if (cleanup.rejectedPathCount > 0) {
+        localChessLog.breadcrumb(
+          'Player deletion rejected unowned stored paths',
+          category: 'player.delete',
+          context: <String, Object?>{
+            'rejectedPathCount': cleanup.rejectedPathCount,
+          },
+        );
+      }
+      // Hide every owned local database before removing files. Marking is cheap,
+      // idempotent, and serialized through the shared cache writer queue. A
+      // persisted pending deletion retries this sequence after a restart.
+      stage = 'mark_cache';
+      await _localRepository.markCachedSourcesDeleted(cacheScopes);
+      stage = 'unregister_library';
+      await _unregisterPlayerWorkspaceForDeletion(player, extraPaths: paths);
+      stage = 'delete_files';
+      for (final path in paths) {
+        await _deleteGeneratedSourceFile(path);
+      }
+      stage = 'delete_folder';
+      await _workspaceRepository.deleteStoredPlayerWorkspaceDirectories(
+        player.id,
+        storedPaths: paths,
+      );
+      await _workspaceRepository.deletePlayerWorkspaceDirectory(player.id);
+      // Purge exactly this player's tombstoned sources in one connection. Small
+      // batches trade throughput for predictable foreground frame times.
+      stage = 'purge_cache';
+      await _localRepository.deleteCachedSourcesAwaitingPurge(
+        sourcePaths: cacheScopes,
+        batchSize: 512,
+        cleanupOrphanMetadata: false,
+        checkpoint: false,
+      );
+    } catch (error, stackTrace) {
+      Error.throwWithStackTrace(
+        _PlayerDeletionCleanupFailure(stage, error),
+        stackTrace,
+      );
     }
-    await _workspaceRepository.deletePlayerWorkspaceDirectory(player.id);
-    // One marked-then-purged pass over every source this player owns. Small
-    // batches trade cleanup throughput for consistent foreground frame times.
-    await _localRepository.deleteCachedSourcesAwaitingPurge(
-      sourcePaths: paths,
-      batchSize: 128,
-    );
   }
 
   Future<void> _deleteGeneratedSourceFile(String? path) async {
@@ -1774,7 +1982,10 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     if (clean == null || clean.isEmpty) return;
     try {
       await _workspaceRepository.deleteSourcePgnFile(clean);
-      _localRepository.scheduleCachedSourceDelete(sourcePath: clean);
+      // Account removal may immediately rebuild Combined at the same path.
+      // Finish the exact cache delete first so its deletion guard cannot cancel
+      // that replacement import after it has already started.
+      await _localRepository.deleteCachedSource(clean);
     } finally {
       await _unregisterPlayerDatabasePathBestEffort(clean);
     }
@@ -1794,20 +2005,6 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       );
     } finally {
       await _unregisterPlayerDatabasePathBestEffort(clean);
-    }
-  }
-
-  Future<void> _deletePlayerWorkspaceDirectoryBestEffort(
-    String playerId,
-  ) async {
-    try {
-      await _workspaceRepository.deletePlayerWorkspaceDirectory(playerId);
-    } catch (error, stackTrace) {
-      _debugPlayerWorkspaceFailure(
-        'delete player workspace directory',
-        error,
-        stackTrace,
-      );
     }
   }
 
@@ -2153,7 +2350,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     }
   }
 
-  Future<void> _unregisterPlayerWorkspaceBestEffort(
+  Future<void> _unregisterPlayerWorkspaceForDeletion(
     PlayerWorkspacePlayer player, {
     Iterable<String> extraPaths = const <String>[],
   }) async {
@@ -2168,12 +2365,31 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       await unregistrar(player.id, paths: paths);
     } catch (error, stackTrace) {
       _debugPlayerWorkspaceRegistryFailure(
-        'unregister generated player workspace',
+        'unregister generated player workspace for deletion',
         error,
         stackTrace,
       );
+      rethrow;
     }
   }
+}
+
+class _PlayerDeletionCleanupFailure implements Exception {
+  const _PlayerDeletionCleanupFailure(this.stage, this.error);
+
+  final String stage;
+  final Object error;
+
+  @override
+  String toString() => 'Player deletion cleanup failed at $stage.';
+}
+
+String _playerDeletionFailureClass(Object error) {
+  if (error is FileSystemException) return 'filesystem';
+  if (isOperationCanceled(error)) return 'cancellation';
+  if (error is StateError) return 'state';
+  if (error is TimeoutException) return 'timeout';
+  return 'other';
 }
 
 LocalLibraryEntryMetadata _playerRegistryMetadata({

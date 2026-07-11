@@ -301,6 +301,9 @@ Future<int> deleteLocalChessResqliteCacheFilesAt(String dbPath) async {
 
 const int _kPositionRefInsertBatchSize = 4096;
 const int _kSqlWriteBatchSize = 4096;
+const int _kCooperativePurgeBatchSize = 512;
+const int _kMaximumAdaptivePurgeBatchSize = 4096;
+const Duration _kSlowPurgeBatchThreshold = Duration(milliseconds: 100);
 // Streaming imports run while the app is interactive. Keep their transfer and
 // row-materialization batches small enough that JSON encoding, metadata-set
 // construction, and resqlite request packing yield within a frame budget. The
@@ -346,6 +349,48 @@ typedef LocalChessDatabaseWithProgress =
       LocalChessScanProgressSink? onProgress,
     });
 typedef LocalChessDatabaseFilePathResolver = Future<String?> Function();
+
+typedef LocalChessPurgeDiagnosticSink =
+    void Function(LocalChessPurgeBatchDiagnostic diagnostic);
+
+@immutable
+class LocalChessPurgeBatchDiagnostic {
+  const LocalChessPurgeBatchDiagnostic({
+    required this.table,
+    required this.batchSize,
+    required this.affectedRows,
+    required this.elapsedMilliseconds,
+  });
+
+  final String table;
+  final int batchSize;
+  final int affectedRows;
+  final int elapsedMilliseconds;
+
+  /// Deliberately excludes database ids, source paths, and player metadata.
+  Map<String, Object> get sentryData => <String, Object>{
+    'table': table,
+    'batchSize': batchSize,
+    'affectedRows': affectedRows,
+    'elapsedMs': elapsedMilliseconds,
+  };
+}
+
+class _LocalChessPurgeDiagnostics {
+  final Set<String> _reportedTables = <String>{};
+  int slowBatchCount = 0;
+  int maxElapsedMilliseconds = 0;
+
+  int get reportedTableCount => _reportedTables.length;
+
+  bool record(LocalChessPurgeBatchDiagnostic diagnostic) {
+    slowBatchCount += 1;
+    if (diagnostic.elapsedMilliseconds > maxElapsedMilliseconds) {
+      maxElapsedMilliseconds = diagnostic.elapsedMilliseconds;
+    }
+    return _reportedTables.add(diagnostic.table);
+  }
+}
 
 class _LocalChessSingleFileImport {
   const _LocalChessSingleFileImport(this.future, this.cancellationToken);
@@ -1802,12 +1847,27 @@ bool _sideNeedsPlayerEnrichment(Map<String, dynamic> metadata, String side) {
       localPgnFederation(metadata, side).isEmpty;
 }
 
+class LocalChessCacheDeletionLease {
+  LocalChessCacheDeletionLease._(this._release);
+
+  final void Function() _release;
+  bool _released = false;
+
+  void release() {
+    if (_released) return;
+    _released = true;
+    _release();
+  }
+}
+
 class LocalChessDatabaseRepository {
   LocalChessDatabaseRepository({
     required Future<resqlite.Database> Function() database,
     LocalChessDatabaseWithProgress? databaseWithProgress,
     LocalChessDatabaseFilePathResolver? databaseFilePath,
     Future<resqlite.Database> Function()? purgeDatabase,
+    this.slowPurgeBatchThreshold = _kSlowPurgeBatchThreshold,
+    this.onSlowPurgeBatch,
     this.eagerPositionRefLoadLimit = _kEagerPositionRefLoadLimit,
     this.eagerTreeMoveLoadLimit = _kEagerTreeMoveLoadLimit,
     this.cachedFileNodeGamePreviewLimit = _kCachedFileNodeGamePreviewLimit,
@@ -1820,6 +1880,8 @@ class LocalChessDatabaseRepository {
   final LocalChessDatabaseWithProgress? _databaseWithProgress;
   final LocalChessDatabaseFilePathResolver? _databaseFilePathResolver;
   final Future<resqlite.Database> Function()? _purgeDatabase;
+  final Duration slowPurgeBatchThreshold;
+  final LocalChessPurgeDiagnosticSink? onSlowPurgeBatch;
   final int eagerPositionRefLoadLimit;
   final int eagerTreeMoveLoadLimit;
   final int cachedFileNodeGamePreviewLimit;
@@ -1840,9 +1902,62 @@ class LocalChessDatabaseRepository {
   static final Map<String, _LocalChessSingleFileImport>
   _singleFileImportsByPath = <String, _LocalChessSingleFileImport>{};
   static Future<void> _backgroundPurgeQueue = Future<void>.value();
+  static final Map<String, int> _cacheDeletionScopeRefCounts = <String, int>{};
+  static int _globalCacheDeletionGuardRefCount = 0;
   final Set<String> _reusedImportedGameRows = <String>{};
   final Map<String, String> _reusedImportedContentFingerprints =
       <String, String>{};
+
+  /// Prevents a stale Library/import worker from recreating cache rows while
+  /// a persisted player deletion is physically draining them. Unrelated paths
+  /// remain writable and can interleave between purge batches.
+  LocalChessCacheDeletionLease acquireCacheDeletionGuard(
+    Iterable<String> sourcePaths,
+  ) {
+    return _acquireCacheDeletionGuard(sourcePaths, allSources: false);
+  }
+
+  LocalChessCacheDeletionLease _acquireCacheDeletionGuard(
+    Iterable<String> sourcePaths, {
+    required bool allSources,
+  }) {
+    final scopes = <String>{
+      for (final path in _normalizedCacheSourcePaths(sourcePaths))
+        _databaseId(path),
+    };
+    if (allSources) _globalCacheDeletionGuardRefCount += 1;
+    for (final scope in scopes) {
+      _cacheDeletionScopeRefCounts.update(
+        scope,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    }
+    return LocalChessCacheDeletionLease._(() {
+      if (allSources && _globalCacheDeletionGuardRefCount > 0) {
+        _globalCacheDeletionGuardRefCount -= 1;
+      }
+      for (final scope in scopes) {
+        final count = _cacheDeletionScopeRefCounts[scope] ?? 0;
+        if (count <= 1) {
+          _cacheDeletionScopeRefCounts.remove(scope);
+        } else {
+          _cacheDeletionScopeRefCounts[scope] = count - 1;
+        }
+      }
+    });
+  }
+
+  static void _throwIfCacheSourceDeletionInProgress(String path) {
+    if (_globalCacheDeletionGuardRefCount > 0 ||
+        _cacheDeletionScopeRefCounts.keys.any(
+          (scope) => _cachePathBelongsToSource(scope, path),
+        )) {
+      throw const OperationCanceledException(
+        'Local cache source is being deleted.',
+      );
+    }
+  }
 
   Future<resqlite.Database> _openDatabase({
     LocalChessScanProgressSink? onProgress,
@@ -1935,6 +2050,7 @@ class LocalChessDatabaseRepository {
     LocalChessFileNode file, {
     required String sourceLabel,
   }) async {
+    _throwIfCacheSourceDeletionInProgress(file.path);
     if (file.isPlayable && file.games.length < file.gameCount) {
       throw StateError(
         'Refusing to persist partial local chess preview for ${file.path}: '
@@ -1943,6 +2059,7 @@ class LocalChessDatabaseRepository {
     }
     final db = await _database();
     await _lockedTransaction(db, (txn) async {
+      _throwIfCacheSourceDeletionInProgress(file.path);
       if (!file.isPlayable) {
         await _deleteFileCache(txn, file.path);
         return;
@@ -2208,6 +2325,7 @@ class LocalChessDatabaseRepository {
           start,
           sourceLabel: label,
           onProgress: emit,
+          cancellationToken: cancellationToken,
         );
         cancellationToken?.throwIfCanceled();
       },
@@ -2233,6 +2351,7 @@ class LocalChessDatabaseRepository {
           ),
           sourceLabel: label,
           onProgress: emit,
+          cancellationToken: cancellationToken,
         );
       }
       emit(
@@ -2359,6 +2478,7 @@ class LocalChessDatabaseRepository {
     required String databasePath,
     required PlayerOpeningTreeIndex index,
   }) async {
+    _throwIfCacheSourceDeletionInProgress(databasePath);
     final databaseId = _databaseId(databasePath);
     final db = await _database();
     final databaseRows = await db.select(
@@ -2373,6 +2493,7 @@ class LocalChessDatabaseRepository {
     if (databaseRows.isEmpty) return false;
 
     await _lockedTransaction(db, (txn) async {
+      _throwIfCacheSourceDeletionInProgress(databasePath);
       final gameIds =
           index.gamesByFen.isEmpty
               ? const <String>{}
@@ -2411,10 +2532,13 @@ class LocalChessDatabaseRepository {
     // through the global write lock so its BEGIN IMMEDIATE never races another
     // writer. Opening the DB happens inside (unqueued), so this does not nest.
     return _runLocalCacheWriteQueued(
-      () => _rebuildOpeningTreeFromCachedGamesUnlocked(
-        databasePath: databasePath,
-        onProgress: onProgress,
-      ),
+      () {
+        _throwIfCacheSourceDeletionInProgress(databasePath);
+        return _rebuildOpeningTreeFromCachedGamesUnlocked(
+          databasePath: databasePath,
+          onProgress: onProgress,
+        );
+      },
       onWaiting:
           onProgress == null
               ? null
@@ -2546,9 +2670,12 @@ class LocalChessDatabaseRepository {
     String path, {
     void Function(LocalChessScanProgress progress)? onProgress,
   }) async {
-    return _runLocalCacheWriteQueued(
-      () => _deleteCachedSourceUnlocked(path, onProgress: onProgress),
-    );
+    final guard = acquireCacheDeletionGuard(<String>[path]);
+    try {
+      return await _deleteCachedSourceUnlocked(path, onProgress: onProgress);
+    } finally {
+      guard.release();
+    }
   }
 
   Future<int> _deleteCachedSourceUnlocked(
@@ -2557,77 +2684,80 @@ class LocalChessDatabaseRepository {
   }) async {
     final marked = await _retryWhenSqliteBusy(
       operation: 'mark local source deleted',
-      context: <String, Object?>{'path': path.trim()},
+      context: const <String, Object?>{'sourceCount': 1},
       action: () => markCachedSourceDeleted(path),
     );
-    if (marked == 0) return 0;
-    await _retryWhenSqliteBusy(
+    final purged = await _retryWhenSqliteBusy(
       operation: 'purge deleted local source',
-      context: <String, Object?>{'path': path.trim()},
+      context: const <String, Object?>{'sourceCount': 1},
       action:
           () => purgeDeletedCaches(sourcePath: path, onProgress: onProgress),
     );
-    return marked;
+    return marked == 0 ? purged : marked;
   }
 
-  /// Marks every path in [sourcePaths] deleted and then runs a single purge
-  /// pass over the marked databases on one dedicated connection, awaiting
-  /// completion and reporting [onProgress].
+  /// Marks every path in [sourcePaths] deleted and then runs one exact,
+  /// consolidated purge pass. This remains restart-safe when every row was
+  /// already marked by a previous process.
   ///
   /// Removing a player that owns several generated sources used to enqueue one
   /// fire-and-forget [scheduleCachedSourceDelete] per source, and each of those
   /// opened (and closed) its own dedicated resqlite connection — spawning a
   /// reader pool + writer isolate every time. Doing the whole player in one
   /// marked-then-purged pass collapses that to a single connection open, and
-  /// because it is awaitable the caller can show honest progress and keep the
-  /// row on screen until the cleanup actually finishes.
+  /// because it is awaitable, background cleanup can retain its persisted
+  /// tombstone until every owned cache record is gone.
   Future<int> deleteCachedSourcesAwaitingPurge({
     required Iterable<String> sourcePaths,
-    int batchSize = 4096,
+    int batchSize = _kCooperativePurgeBatchSize,
     bool cleanupOrphanMetadata = false,
     bool checkpoint = false,
     void Function(LocalChessScanProgress progress)? onProgress,
   }) async {
-    final paths = <String>{
-      for (final path in sourcePaths)
-        if (path.trim().isNotEmpty) path.trim(),
-    };
+    final paths = _normalizedCacheSourcePaths(sourcePaths);
     if (paths.isEmpty) {
       onProgress?.call(
         LocalChessScanProgress(fraction: 1, message: 'Delete complete.'),
       );
       return 0;
     }
-    var marked = 0;
-    for (final path in paths) {
-      marked += await _retryWhenSqliteBusy(
-        operation: 'mark local source deleted',
-        context: <String, Object?>{'sourcePath': path},
-        action: () => markCachedSourceDeleted(path),
+    final guard = acquireCacheDeletionGuard(paths);
+    try {
+      await _retryWhenSqliteBusy(
+        operation: 'mark local sources deleted',
+        context: <String, Object?>{'sourceCount': paths.length},
+        action: () => markCachedSourcesDeleted(paths),
       );
-    }
-    if (marked == 0) {
-      onProgress?.call(
-        LocalChessScanProgress(fraction: 1, message: 'Delete complete.'),
+      // Do not short-circuit when this cleanup was already marked by an
+      // earlier process. The deletion guard prevents a stale same-path import
+      // from clearing the tombstone between these cooperative queue slices.
+      final purged = await _retryWhenSqliteBusy(
+        operation: 'purge deleted local sources',
+        context: <String, Object?>{'sourceCount': paths.length},
+        action:
+            () => purgeDeletedCaches(
+              sourcePaths: paths,
+              batchSize: batchSize,
+              cleanupOrphanMetadata: cleanupOrphanMetadata,
+              checkpoint: checkpoint,
+              onProgress: onProgress,
+            ),
       );
-      return 0;
+      final remaining = await deletedCacheCount(sourcePaths: paths);
+      if (remaining > 0) {
+        throw StateError(
+          'Local cache purge incomplete: $remaining database records remain.',
+        );
+      }
+      return purged;
+    } finally {
+      guard.release();
     }
-    return _retryWhenSqliteBusy(
-      operation: 'purge deleted local sources',
-      context: <String, Object?>{'sourcePaths': paths.length},
-      action:
-          () => purgeDeletedCaches(
-            batchSize: batchSize,
-            cleanupOrphanMetadata: cleanupOrphanMetadata,
-            checkpoint: checkpoint,
-            onProgress: onProgress,
-          ),
-    );
   }
 
   void scheduleCachedSourceDelete({
     required String sourcePath,
-    int batchSize = 4096,
+    int batchSize = _kCooperativePurgeBatchSize,
     bool cleanupOrphanMetadata = false,
     bool checkpoint = false,
   }) {
@@ -2640,40 +2770,22 @@ class LocalChessDatabaseRepository {
             localChessLog.info(
               'Local database background delete queued',
               context: <String, Object?>{
-                'sourcePath': trimmedSourcePath,
+                'sourceCount': 1,
                 'batchSize': batchSize,
                 'cleanupOrphanMetadata': cleanupOrphanMetadata,
                 'checkpoint': checkpoint,
               },
             );
-            final marked = await _runLocalCacheWriteQueued(
-              () => _retryWhenSqliteBusy(
-                operation: 'background mark local source deleted',
-                context: <String, Object?>{'sourcePath': trimmedSourcePath},
-                action: () => markCachedSourceDeleted(trimmedSourcePath),
-              ),
-            );
-            final purged = await _runLocalCacheWriteQueued(
-              () => _retryWhenSqliteBusy(
-                operation: 'background purge deleted local source',
-                context: <String, Object?>{
-                  'batchSize': batchSize,
-                  'sourcePath': trimmedSourcePath,
-                },
-                action:
-                    () => purgeDeletedCaches(
-                      sourcePath: trimmedSourcePath,
-                      batchSize: batchSize,
-                      cleanupOrphanMetadata: cleanupOrphanMetadata,
-                      checkpoint: checkpoint,
-                    ),
-              ),
+            final purged = await deleteCachedSourcesAwaitingPurge(
+              sourcePaths: <String>[trimmedSourcePath],
+              batchSize: batchSize,
+              cleanupOrphanMetadata: cleanupOrphanMetadata,
+              checkpoint: checkpoint,
             );
             localChessLog.info(
               'Local database background delete finished',
               context: <String, Object?>{
-                'sourcePath': trimmedSourcePath,
-                'markedDatabases': marked,
+                'sourceCount': 1,
                 'purgedDatabases': purged,
               },
             );
@@ -2683,7 +2795,7 @@ class LocalChessDatabaseRepository {
               error,
               stackTrace,
               tag: 'local_chess.background_delete',
-              context: <String, Object?>{'sourcePath': trimmedSourcePath},
+              context: const <String, Object?>{'sourceCount': 1},
             );
           }
         });
@@ -2691,18 +2803,26 @@ class LocalChessDatabaseRepository {
   }
 
   Future<int> markCachedSourceDeleted(String path) {
+    return markCachedSourcesDeleted(<String>[path]);
+  }
+
+  /// Logically deletes every cache belonging to [sourcePaths] in one shared
+  /// write-queue pass. Calling it again is safe: already-marked rows remain
+  /// hidden and contribute zero to the return value.
+  Future<int> markCachedSourcesDeleted(Iterable<String> sourcePaths) {
+    final paths = _normalizedCacheSourcePaths(sourcePaths);
+    if (paths.isEmpty) return Future<int>.value(0);
     return _runLocalCacheWriteQueued(
-      () => _markCachedSourceDeletedUnlocked(path),
+      () => _markCachedSourcesDeletedUnlocked(paths),
     );
   }
 
-  Future<int> _markCachedSourceDeletedUnlocked(String path) async {
-    final trimmed = path.trim();
-    if (trimmed.isEmpty) return 0;
+  Future<int> _markCachedSourcesDeletedUnlocked(Set<String> paths) async {
+    if (paths.isEmpty) return 0;
     final stopwatch = Stopwatch()..start();
     localChessLog.info(
       'Local database delete mark started',
-      context: <String, Object?>{'path': trimmed},
+      context: <String, Object?>{'sourceCount': paths.length},
     );
     final db = await _database();
     try {
@@ -2713,7 +2833,12 @@ class LocalChessDatabaseRepository {
       ''');
       final databaseIds = <String>[
         for (final row in rows)
-          if (_cachePathBelongsToSource(trimmed, row['path']?.toString() ?? ''))
+          if (paths.any(
+            (sourcePath) => _cachePathBelongsToSource(
+              sourcePath,
+              row['path']?.toString() ?? '',
+            ),
+          ))
             row['id'] as String,
       ];
       if (databaseIds.isEmpty) {
@@ -2721,7 +2846,7 @@ class LocalChessDatabaseRepository {
         localChessLog.info(
           'Local database delete mark skipped',
           context: <String, Object?>{
-            'path': trimmed,
+            'sourceCount': paths.length,
             'elapsedMs': stopwatch.elapsedMilliseconds,
           },
         );
@@ -2742,7 +2867,7 @@ class LocalChessDatabaseRepository {
       localChessLog.info(
         'Local database delete mark finished',
         context: <String, Object?>{
-          'path': trimmed,
+          'sourceCount': paths.length,
           'databases': databaseIds.length,
           'elapsedMs': stopwatch.elapsedMilliseconds,
         },
@@ -2756,7 +2881,7 @@ class LocalChessDatabaseRepository {
         stackTrace,
         tag: 'local_chess.mark_deleted',
         context: <String, Object?>{
-          'path': trimmed,
+          'sourceCount': paths.length,
           'elapsedMs': stopwatch.elapsedMilliseconds,
         },
       );
@@ -2764,48 +2889,85 @@ class LocalChessDatabaseRepository {
     }
   }
 
-  Future<int> deletedCacheCount() async {
+  Future<int> deletedCacheCount({
+    String? sourcePath,
+    Iterable<String>? sourcePaths,
+  }) async {
+    final scopedPaths = _normalizedOptionalCacheSourcePaths(
+      sourcePath: sourcePath,
+      sourcePaths: sourcePaths,
+    );
+    if (scopedPaths?.isEmpty == true) return 0;
     final db = await _database();
     final rows = await db.select('''
-      SELECT COUNT(*) AS count
+      SELECT path
       FROM $localChessDatabasesTable
       WHERE deleted_at_ms IS NOT NULL
       ''');
-    return rows.isEmpty ? 0 : _readInt(rows.single['count']);
+    if (scopedPaths == null) return rows.length;
+    return rows.where((row) {
+      final cachedPath = row['path']?.toString() ?? '';
+      return scopedPaths.any(
+        (path) => _cachePathBelongsToSource(path, cachedPath),
+      );
+    }).length;
   }
 
   Future<int> purgeDeletedCaches({
     String? sourcePath,
-    int batchSize = 1024,
+    Iterable<String>? sourcePaths,
+    int batchSize = _kCooperativePurgeBatchSize,
     bool cleanupOrphanMetadata = true,
     bool checkpoint = true,
     void Function(LocalChessScanProgress progress)? onProgress,
-  }) {
-    return _runLocalCacheWriteQueued(
-      () => _purgeDeletedCachesUnlocked(
-        sourcePath: sourcePath,
+    OperationCancellationToken? cancellationToken,
+  }) async {
+    final scopedPaths = _normalizedOptionalCacheSourcePaths(
+      sourcePath: sourcePath,
+      sourcePaths: sourcePaths,
+    );
+    final guard = _acquireCacheDeletionGuard(
+      scopedPaths ?? const <String>[],
+      allSources: scopedPaths == null,
+    );
+    try {
+      return await _purgeDeletedCachesUnlocked(
+        sourcePaths: scopedPaths,
         batchSize: batchSize,
         cleanupOrphanMetadata: cleanupOrphanMetadata,
         checkpoint: checkpoint,
         onProgress: onProgress,
-      ),
-    );
+        cancellationToken: cancellationToken,
+      );
+    } finally {
+      guard.release();
+    }
   }
 
   Future<int> _purgeDeletedCachesUnlocked({
-    String? sourcePath,
-    int batchSize = 1024,
+    Set<String>? sourcePaths,
+    int batchSize = _kCooperativePurgeBatchSize,
     bool cleanupOrphanMetadata = true,
     bool checkpoint = true,
     void Function(LocalChessScanProgress progress)? onProgress,
+    OperationCancellationToken? cancellationToken,
   }) async {
     final stopwatch = Stopwatch()..start();
-    final trimmedSourcePath = sourcePath?.trim();
+    final effectiveBatchSize =
+        batchSize <= 0 ? _kCooperativePurgeBatchSize : batchSize;
     resqlite.Database? dedicatedDb;
+    final slowDiagnostics = _LocalChessPurgeDiagnostics();
     try {
+      cancellationToken?.throwIfCanceled();
       onProgress?.call(
         LocalChessScanProgress(fraction: 0, message: 'Preparing delete...'),
       );
+      if (sourcePaths?.isEmpty == true) {
+        onProgress?.call(
+          LocalChessScanProgress(fraction: 1, message: 'Delete complete.'),
+        );
+        return 0;
+      }
       final purgeDatabase = _purgeDatabase;
       final db =
           purgeDatabase == null
@@ -2817,14 +2979,17 @@ class LocalChessDatabaseRepository {
       WHERE deleted_at_ms IS NOT NULL
       ORDER BY deleted_at_ms ASC
       ''');
+      cancellationToken?.throwIfCanceled();
       final rows =
-          trimmedSourcePath == null || trimmedSourcePath.isEmpty
+          sourcePaths == null
               ? allRows
               : <Map<String, Object?>>[
                 for (final row in allRows)
-                  if (_cachePathBelongsToSource(
-                    trimmedSourcePath,
-                    row['path']?.toString() ?? '',
+                  if (sourcePaths.any(
+                    (path) => _cachePathBelongsToSource(
+                      path,
+                      row['path']?.toString() ?? '',
+                    ),
                   ))
                     row,
               ];
@@ -2838,43 +3003,33 @@ class LocalChessDatabaseRepository {
         'Local database purge started',
         context: <String, Object?>{
           'databases': rows.length,
-          'batchSize': batchSize,
+          'batchSize': effectiveBatchSize,
           'cleanupOrphanMetadata': cleanupOrphanMetadata,
           'checkpoint': checkpoint,
           'dedicatedConnection': dedicatedDb != null,
-          if (trimmedSourcePath != null && trimmedSourcePath.isNotEmpty)
-            'sourcePath': trimmedSourcePath,
+          'scoped': sourcePaths != null,
+          if (sourcePaths != null) 'sourceCount': sourcePaths.length,
         },
       );
-      final unitCounts = <String, int>{};
-      var totalUnits = 0;
-      for (final row in rows) {
-        final databaseId = row['id']?.toString() ?? '';
-        if (databaseId.isEmpty) continue;
-        final units = await _databasePurgeUnitCount(db, databaseId);
-        unitCounts[databaseId] = units;
-        totalUnits += units;
-      }
-      if (totalUnits <= 0) totalUnits = rows.length;
-      var completedUnits = 0;
-      var lastProgressEmitUnits = -1;
+      // Never pre-count child rows for cosmetic percentages. Those COUNT(*)
+      // scans were themselves multi-million-row foreground work when a
+      // Chess.com replacement import supplied a progress callback.
+      var completedDatabases = 0;
+      String? lastProgressTable;
 
-      void emitProgress(String message, {bool force = false}) {
+      void emitProgress(String message) {
         if (onProgress == null) return;
-        if (!force && completedUnits == lastProgressEmitUnits) return;
-        lastProgressEmitUnits = completedUnits;
         final fraction =
-            totalUnits <= 0
-                ? 0.98
-                : (completedUnits / totalUnits).clamp(0.0, 0.98).toDouble();
+            (completedDatabases / rows.length).clamp(0.0, 0.98).toDouble();
         onProgress(
           LocalChessScanProgress(fraction: fraction, message: message),
         );
       }
 
-      emitProgress('Cleaning generated local cache...', force: true);
+      emitProgress('Cleaning generated local cache...');
       var purged = 0;
       for (final row in rows) {
+        cancellationToken?.throwIfCanceled();
         final databaseId = row['id']?.toString() ?? '';
         if (databaseId.isEmpty) continue;
         final perDatabase = Stopwatch()..start();
@@ -2882,41 +3037,53 @@ class LocalChessDatabaseRepository {
           final removed = await _purgeDeletedDatabaseCache(
             db,
             databaseId,
-            batchSize: batchSize,
-            onDeletedRows: (table, deletedRows) {
-              completedUnits += deletedRows;
-              final tableLabel = _localChessPurgeTableLabel(table);
-              final shouldEmit =
-                  completedUnits == totalUnits ||
-                  completedUnits - lastProgressEmitUnits >= batchSize * 8;
-              if (shouldEmit) {
-                emitProgress('Deleting $tableLabel...');
-              }
-            },
+            batchSize: effectiveBatchSize,
+            cancellationToken: cancellationToken,
+            onBatchCompleted:
+                (table, batchSize, affectedRows, elapsedMilliseconds) =>
+                    _recordPurgeBatchDiagnostic(
+                      slowDiagnostics,
+                      table,
+                      batchSize,
+                      affectedRows,
+                      elapsedMilliseconds,
+                    ),
+            onDeletedRows:
+                onProgress == null
+                    ? null
+                    : (table, deletedRows) {
+                      final tableLabel = _localChessPurgeTableLabel(table);
+                      if (lastProgressTable != table) {
+                        lastProgressTable = table;
+                        emitProgress('Deleting $tableLabel...');
+                      }
+                    },
           );
           if (removed) purged += 1;
+          completedDatabases += 1;
+          emitProgress('Cleaning generated local cache...');
           if (checkpoint) {
-            await _checkpointLocalChessCacheBestEffort(db);
+            await _runLocalCacheWriteQueued(
+              () => _checkpointLocalChessCacheBestEffort(db),
+            );
           }
           perDatabase.stop();
           localChessLog.info(
             'Local database purge item finished',
             context: <String, Object?>{
-              'databaseId': databaseId,
               'removed': removed,
-              'rows': unitCounts[databaseId],
               'elapsedMs': perDatabase.elapsedMilliseconds,
             },
           );
         } catch (error, stackTrace) {
           perDatabase.stop();
+          if (isOperationCanceled(error)) rethrow;
           localChessLog.error(
             'Local database purge item failed',
             error,
             stackTrace,
             tag: 'local_chess.purge_deleted_item',
             context: <String, Object?>{
-              'databaseId': databaseId,
               'elapsedMs': perDatabase.elapsedMilliseconds,
             },
           );
@@ -2924,9 +3091,23 @@ class LocalChessDatabaseRepository {
       }
       if (purged > 0 && cleanupOrphanMetadata) {
         try {
-          emitProgress('Cleaning local metadata...', force: true);
-          await _deleteOrphanLocalMetadataInChunks(db, batchSize: batchSize);
+          emitProgress('Cleaning local metadata...');
+          await _deleteOrphanLocalMetadataInChunks(
+            db,
+            batchSize: effectiveBatchSize,
+            cancellationToken: cancellationToken,
+            onBatchCompleted:
+                (table, batchSize, affectedRows, elapsedMilliseconds) =>
+                    _recordPurgeBatchDiagnostic(
+                      slowDiagnostics,
+                      table,
+                      batchSize,
+                      affectedRows,
+                      elapsedMilliseconds,
+                    ),
+          );
         } catch (error, stackTrace) {
+          if (isOperationCanceled(error)) rethrow;
           localChessLog.error(
             'Local database orphan metadata purge failed',
             error,
@@ -2937,7 +3118,9 @@ class LocalChessDatabaseRepository {
         }
       }
       if (checkpoint) {
-        await _checkpointLocalChessCacheBestEffort(db);
+        await _runLocalCacheWriteQueued(
+          () => _checkpointLocalChessCacheBestEffort(db),
+        );
       }
       stopwatch.stop();
       localChessLog.info(
@@ -2950,16 +3133,27 @@ class LocalChessDatabaseRepository {
       onProgress?.call(
         LocalChessScanProgress(fraction: 1, message: 'Delete complete.'),
       );
+      _recordPurgeDiagnosticSummary(slowDiagnostics);
       return purged;
     } catch (error, stackTrace) {
       stopwatch.stop();
+      if (isOperationCanceled(error)) {
+        localChessLog.info(
+          'Local database purge canceled',
+          context: <String, Object?>{
+            'batchSize': effectiveBatchSize,
+            'elapsedMs': stopwatch.elapsedMilliseconds,
+          },
+        );
+        rethrow;
+      }
       localChessLog.error(
         'Local database purge failed',
         error,
         stackTrace,
         tag: 'local_chess.purge_deleted',
         context: <String, Object?>{
-          'batchSize': batchSize,
+          'batchSize': effectiveBatchSize,
           'cleanupOrphanMetadata': cleanupOrphanMetadata,
           'checkpoint': checkpoint,
           'elapsedMs': stopwatch.elapsedMilliseconds,
@@ -2973,7 +3167,7 @@ class LocalChessDatabaseRepository {
 
   void scheduleDeletedCachePurge({
     String? sourcePath,
-    int batchSize = 4096,
+    int batchSize = _kCooperativePurgeBatchSize,
     bool cleanupOrphanMetadata = false,
     bool checkpoint = false,
   }) {
@@ -2988,32 +3182,30 @@ class LocalChessDatabaseRepository {
               'cleanupOrphanMetadata': cleanupOrphanMetadata,
               'checkpoint': checkpoint,
               if (trimmedSourcePath != null && trimmedSourcePath.isNotEmpty)
-                'sourcePath': trimmedSourcePath,
+                'sourceCount': 1,
             },
           );
-          final purged = await _runLocalCacheWriteQueued(
-            () => _retryWhenSqliteBusy(
-              operation: 'background purge deleted local source',
-              context: <String, Object?>{
-                'batchSize': batchSize,
-                if (trimmedSourcePath != null && trimmedSourcePath.isNotEmpty)
-                  'sourcePath': trimmedSourcePath,
-              },
-              action:
-                  () => purgeDeletedCaches(
-                    sourcePath: trimmedSourcePath,
-                    batchSize: batchSize,
-                    cleanupOrphanMetadata: cleanupOrphanMetadata,
-                    checkpoint: checkpoint,
-                  ),
-            ),
+          final purged = await _retryWhenSqliteBusy(
+            operation: 'background purge deleted local source',
+            context: <String, Object?>{
+              'batchSize': batchSize,
+              if (trimmedSourcePath != null && trimmedSourcePath.isNotEmpty)
+                'sourceCount': 1,
+            },
+            action:
+                () => purgeDeletedCaches(
+                  sourcePath: trimmedSourcePath,
+                  batchSize: batchSize,
+                  cleanupOrphanMetadata: cleanupOrphanMetadata,
+                  checkpoint: checkpoint,
+                ),
           );
           localChessLog.info(
             'Local database background purge finished',
             context: <String, Object?>{
               'purgedDatabases': purged,
               if (trimmedSourcePath != null && trimmedSourcePath.isNotEmpty)
-                'sourcePath': trimmedSourcePath,
+                'sourceCount': 1,
             },
           );
         });
@@ -3026,7 +3218,7 @@ class LocalChessDatabaseRepository {
           tag: 'local_chess.background_purge',
           context: <String, Object?>{
             if (trimmedSourcePath != null && trimmedSourcePath.isNotEmpty)
-              'sourcePath': trimmedSourcePath,
+              'sourceCount': 1,
           },
         );
       }),
@@ -3570,6 +3762,7 @@ class LocalChessDatabaseRepository {
     required String databasePath,
     required List<LocalChessAppendedPgn> appendedPgns,
   }) async {
+    _throwIfCacheSourceDeletionInProgress(databasePath);
     if (appendedPgns.isEmpty) return false;
     final databaseId = _databaseId(databasePath);
     final db = await _database();
@@ -5061,53 +5254,84 @@ class LocalChessDatabaseRepository {
     resqlite.Database db,
     String databaseId, {
     required int batchSize,
+    OperationCancellationToken? cancellationToken,
     void Function(String table, int deletedRows)? onDeletedRows,
+    void Function(
+      String table,
+      int batchSize,
+      int affectedRows,
+      int elapsedMilliseconds,
+    )?
+    onBatchCompleted,
   }) async {
+    cancellationToken?.throwIfCanceled();
     if (!await _databaseIsMarkedDeleted(db, databaseId)) return false;
-    final size = batchSize <= 0 ? 4096 : batchSize;
+    final size = batchSize <= 0 ? _kCooperativePurgeBatchSize : batchSize;
 
     await _deleteDatabaseRowsInChunks(
       db,
       localChessPositionGamesTable,
       databaseId,
       batchSize: size,
+      cancellationToken: cancellationToken,
       onDeletedRows: onDeletedRows,
+      onBatchCompleted: onBatchCompleted,
     );
     await _deleteDatabaseRowsInChunks(
       db,
       localChessTreeMovesTable,
       databaseId,
       batchSize: size,
+      cancellationToken: cancellationToken,
       onDeletedRows: onDeletedRows,
+      onBatchCompleted: onBatchCompleted,
     );
     await _deleteDatabaseRowsInChunks(
       db,
       localChessTreeNodesTable,
       databaseId,
       batchSize: size,
+      cancellationToken: cancellationToken,
       onDeletedRows: onDeletedRows,
+      onBatchCompleted: onBatchCompleted,
     );
     await _deleteDatabaseRowsInChunks(
       db,
       localChessGameAnalysisTable,
       databaseId,
       batchSize: size,
+      cancellationToken: cancellationToken,
       onDeletedRows: onDeletedRows,
+      onBatchCompleted: onBatchCompleted,
     );
     await _deleteDatabaseRowsInChunks(
       db,
       localChessGamesTable,
       databaseId,
       batchSize: size,
+      cancellationToken: cancellationToken,
       onDeletedRows: onDeletedRows,
+      onBatchCompleted: onBatchCompleted,
     );
+    cancellationToken?.throwIfCanceled();
     if (!await _databaseIsMarkedDeleted(db, databaseId)) return false;
-    final result = await db.execute(
-      '''
-      DELETE FROM $localChessDatabasesTable
-      WHERE id = ? AND deleted_at_ms IS NOT NULL
-      ''',
-      <Object?>[databaseId],
+    final stopwatch = Stopwatch()..start();
+    final result = await _runLocalCacheWriteQueued(() {
+      cancellationToken?.throwIfCanceled();
+      return db.execute(
+        '''
+          DELETE FROM $localChessDatabasesTable
+          WHERE id = ? AND deleted_at_ms IS NOT NULL
+          ''',
+        <Object?>[databaseId],
+      );
+    });
+    stopwatch.stop();
+    onBatchCompleted?.call(
+      localChessDatabasesTable,
+      1,
+      result.affectedRows,
+      stopwatch.elapsedMilliseconds,
     );
     if (result.affectedRows > 0) {
       onDeletedRows?.call(localChessDatabasesTable, result.affectedRows);
@@ -5136,7 +5360,15 @@ class LocalChessDatabaseRepository {
     String table,
     String databaseId, {
     required int batchSize,
+    OperationCancellationToken? cancellationToken,
     void Function(String table, int deletedRows)? onDeletedRows,
+    void Function(
+      String table,
+      int batchSize,
+      int affectedRows,
+      int elapsedMilliseconds,
+    )?
+    onBatchCompleted,
   }) async {
     // Delete in bounded batches, but let the writer isolate pick the rows via a
     // subquery instead of SELECTing a batch of rowids back to the caller and
@@ -5145,43 +5377,92 @@ class LocalChessDatabaseRepository {
     // the millions of rows a heavy player can hold is what dropped frames while
     // a removal's cache purge ran. The `Future.delayed(Duration.zero)` between
     // batches still yields the event loop so the purge stays cooperative.
+    var currentBatchSize = batchSize;
     while (true) {
-      final result = await db.execute(
-        '''
-        DELETE FROM $table
-        WHERE rowid IN (
-          SELECT rowid FROM $table WHERE database_id = ? LIMIT ?
-        )
-        ''',
-        <Object?>[databaseId, batchSize],
-      );
+      cancellationToken?.throwIfCanceled();
+      final stopwatch = Stopwatch()..start();
+      final result = await _runLocalCacheWriteQueued(() {
+        cancellationToken?.throwIfCanceled();
+        return db.execute(
+          '''
+            DELETE FROM $table
+            WHERE rowid IN (
+              SELECT rowid FROM $table WHERE database_id = ? LIMIT ?
+            )
+            ''',
+          <Object?>[databaseId, currentBatchSize],
+        );
+      });
+      stopwatch.stop();
       final deletedRows = result.affectedRows;
+      onBatchCompleted?.call(
+        table,
+        currentBatchSize,
+        deletedRows,
+        stopwatch.elapsedMilliseconds,
+      );
       if (deletedRows <= 0) return;
       onDeletedRows?.call(table, deletedRows);
+      if (batchSize >= 128 && deletedRows >= currentBatchSize) {
+        if (stopwatch.elapsedMilliseconds <= 4 &&
+            currentBatchSize < _kMaximumAdaptivePurgeBatchSize) {
+          currentBatchSize =
+              (currentBatchSize * 2)
+                  .clamp(batchSize, _kMaximumAdaptivePurgeBatchSize)
+                  .toInt();
+        } else if (stopwatch.elapsedMilliseconds >= 24 &&
+            currentBatchSize > batchSize) {
+          currentBatchSize =
+              (currentBatchSize ~/ 2)
+                  .clamp(batchSize, _kMaximumAdaptivePurgeBatchSize)
+                  .toInt();
+        }
+      }
+      cancellationToken?.throwIfCanceled();
       await Future<void>.delayed(Duration.zero);
     }
   }
 
-  Future<int> _databasePurgeUnitCount(
-    resqlite.Database db,
-    String databaseId,
-  ) async {
-    var total = 1;
-    for (final table in const <String>[
-      localChessPositionGamesTable,
-      localChessTreeMovesTable,
-      localChessTreeNodesTable,
-      localChessGameAnalysisTable,
-      localChessGamesTable,
-    ]) {
-      final rows = await db.select(
-        'SELECT COUNT(*) AS count FROM $table WHERE database_id = ?',
-        <Object?>[databaseId],
-      );
-      total += rows.isEmpty ? 0 : _readInt(rows.single['count']);
-      await Future<void>.delayed(Duration.zero);
+  void _recordPurgeBatchDiagnostic(
+    _LocalChessPurgeDiagnostics diagnostics,
+    String table,
+    int batchSize,
+    int affectedRows,
+    int elapsedMilliseconds,
+  ) {
+    if (elapsedMilliseconds < slowPurgeBatchThreshold.inMilliseconds) return;
+    final diagnostic = LocalChessPurgeBatchDiagnostic(
+      table: table,
+      batchSize: batchSize,
+      affectedRows: affectedRows,
+      elapsedMilliseconds: elapsedMilliseconds,
+    );
+    try {
+      onSlowPurgeBatch?.call(diagnostic);
+    } catch (_) {
+      // Diagnostics are advisory and must never interrupt physical cleanup.
     }
-    return total;
+    final firstForTable = diagnostics.record(diagnostic);
+    if (firstForTable) {
+      localChessLog.breadcrumb(
+        'Slow local cache purge batch',
+        category: 'local_chess.purge_batch',
+        context: diagnostic.sentryData,
+      );
+    }
+  }
+
+  void _recordPurgeDiagnosticSummary(_LocalChessPurgeDiagnostics diagnostics) {
+    if (diagnostics.slowBatchCount <= diagnostics.reportedTableCount) return;
+    localChessLog.breadcrumb(
+      'Local cache purge slow batch summary',
+      category: 'local_chess.purge_batch',
+      context: <String, Object?>{
+        'slowBatchCount': diagnostics.slowBatchCount,
+        'tableCount': diagnostics.reportedTableCount,
+        'maxElapsedMs': diagnostics.maxElapsedMilliseconds,
+      },
+    );
   }
 
   Future<void> _checkpointLocalChessCacheBestEffort(
@@ -5224,6 +5505,14 @@ class LocalChessDatabaseRepository {
   Future<void> _deleteOrphanLocalMetadataInChunks(
     resqlite.Database db, {
     required int batchSize,
+    OperationCancellationToken? cancellationToken,
+    void Function(
+      String table,
+      int batchSize,
+      int affectedRows,
+      int elapsedMilliseconds,
+    )?
+    onBatchCompleted,
   }) async {
     await _deleteOrphanLocalRowsInChunks(
       db,
@@ -5245,6 +5534,8 @@ class LocalChessDatabaseRepository {
         LIMIT ?
       ''',
       batchSize: batchSize,
+      cancellationToken: cancellationToken,
+      onBatchCompleted: onBatchCompleted,
     );
     await _deleteOrphanLocalRowsInChunks(
       db,
@@ -5261,6 +5552,8 @@ class LocalChessDatabaseRepository {
         LIMIT ?
       ''',
       batchSize: batchSize,
+      cancellationToken: cancellationToken,
+      onBatchCompleted: onBatchCompleted,
     );
     await _deleteOrphanLocalRowsInChunks(
       db,
@@ -5277,6 +5570,8 @@ class LocalChessDatabaseRepository {
         LIMIT ?
       ''',
       batchSize: batchSize,
+      cancellationToken: cancellationToken,
+      onBatchCompleted: onBatchCompleted,
     );
   }
 
@@ -5285,16 +5580,36 @@ class LocalChessDatabaseRepository {
     required String table,
     required String idSql,
     required int batchSize,
+    OperationCancellationToken? cancellationToken,
+    void Function(
+      String table,
+      int batchSize,
+      int affectedRows,
+      int elapsedMilliseconds,
+    )?
+    onBatchCompleted,
   }) async {
     // Same rationale as _deleteDatabaseRowsInChunks: nest the id selection
     // (`idSql` already ends in `LIMIT ?`) as a subquery so the writer isolate
     // deletes each batch without shipping a batch of ids back to the caller.
     while (true) {
-      final result = await db.execute(
-        'DELETE FROM $table WHERE id IN ($idSql)',
-        <Object?>[batchSize],
+      cancellationToken?.throwIfCanceled();
+      final stopwatch = Stopwatch()..start();
+      final result = await _runLocalCacheWriteQueued(() {
+        cancellationToken?.throwIfCanceled();
+        return db.execute('DELETE FROM $table WHERE id IN ($idSql)', <Object?>[
+          batchSize,
+        ]);
+      });
+      stopwatch.stop();
+      onBatchCompleted?.call(
+        table,
+        batchSize,
+        result.affectedRows,
+        stopwatch.elapsedMilliseconds,
       );
       if (result.affectedRows <= 0) return;
+      cancellationToken?.throwIfCanceled();
       await Future<void>.delayed(Duration.zero);
     }
   }
@@ -6213,7 +6528,10 @@ class LocalChessDatabaseRepository {
     LocalChessFileImportStart start, {
     required String sourceLabel,
     void Function(LocalChessScanProgress progress)? onProgress,
+    OperationCancellationToken? cancellationToken,
   }) async {
+    cancellationToken?.throwIfCanceled();
+    _throwIfCacheSourceDeletionInProgress(start.path);
     final databaseId = _databaseId(start.path);
     final now = DateTime.now().millisecondsSinceEpoch;
     final contentFingerprint = await _localChessFileContentFingerprint(
@@ -6297,7 +6615,8 @@ class LocalChessDatabaseRepository {
       _reusedImportedContentFingerprints.remove(databaseId);
       await purgeDeletedCaches(
         sourcePath: start.path,
-        batchSize: _kSqlWriteBatchSize,
+        batchSize: _kCooperativePurgeBatchSize,
+        cancellationToken: cancellationToken,
         onProgress:
             onProgress == null
                 ? null
@@ -6342,6 +6661,7 @@ class LocalChessDatabaseRepository {
     String databasePath,
     List<LocalChessGame> games,
   ) async {
+    _throwIfCacheSourceDeletionInProgress(databasePath);
     if (games.isEmpty) return;
     final databaseId = _databaseId(databasePath);
     if (_reusedImportedGameRows.contains(databaseId)) return;
@@ -6391,6 +6711,7 @@ class LocalChessDatabaseRepository {
   }
 
   Future<void> _completeImportedFileNode(LocalChessFileNode file) async {
+    _throwIfCacheSourceDeletionInProgress(file.path);
     final databaseId = _databaseId(file.path);
     final reusedExistingRows = _reusedImportedGameRows.remove(databaseId);
     final reusedContentFingerprint = _reusedImportedContentFingerprints.remove(
@@ -6952,6 +7273,23 @@ Object _isolateErrorMessage(Object? message) {
     return StateError('$error\n$stack');
   }
   return StateError(message?.toString() ?? 'Local tree worker failed.');
+}
+
+Set<String> _normalizedCacheSourcePaths(Iterable<String> sourcePaths) =>
+    <String>{
+      for (final path in sourcePaths)
+        if (path.trim().isNotEmpty) path.trim(),
+    };
+
+Set<String>? _normalizedOptionalCacheSourcePaths({
+  String? sourcePath,
+  Iterable<String>? sourcePaths,
+}) {
+  if (sourcePath == null && sourcePaths == null) return null;
+  return _normalizedCacheSourcePaths(<String>[
+    if (sourcePath != null) sourcePath,
+    if (sourcePaths != null) ...sourcePaths,
+  ]);
 }
 
 bool _cachePathBelongsToSource(String sourcePath, String cachedPath) {

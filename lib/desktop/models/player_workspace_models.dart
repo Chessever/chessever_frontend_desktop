@@ -629,15 +629,22 @@ _upsertPrimaryAccount(
 class PlayerWorkspaceSnapshot {
   const PlayerWorkspaceSnapshot({
     this.players = const <PlayerWorkspacePlayer>[],
+    this.pendingDeletions = const <PlayerWorkspacePlayer>[],
+    this.pendingDeletionExtraPaths = const <String, List<String>>{},
     this.selectedPlayerId,
   });
 
   final List<PlayerWorkspacePlayer> players;
+  final List<PlayerWorkspacePlayer> pendingDeletions;
+  final Map<String, List<String>> pendingDeletionExtraPaths;
   final String? selectedPlayerId;
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
       'players': players.map((player) => player.toJson()).toList(),
+      'pendingDeletions':
+          pendingDeletions.map((player) => player.toJson()).toList(),
+      'pendingDeletionExtraPaths': pendingDeletionExtraPaths,
       'selectedPlayerId': selectedPlayerId,
     };
   }
@@ -653,9 +660,44 @@ class PlayerWorkspaceSnapshot {
         if (player != null) players.add(player);
       }
     }
+    final pendingDeletions = <PlayerWorkspacePlayer>[];
+    final rawPendingDeletions = json['pendingDeletions'];
+    if (rawPendingDeletions is List) {
+      for (final rawPlayer in rawPendingDeletions) {
+        final player = PlayerWorkspacePlayer.fromJson(rawPlayer);
+        if (player != null) pendingDeletions.add(player);
+      }
+    }
+    final pendingDeletionIds = <String>{
+      for (final player in pendingDeletions) player.id,
+    };
+    final pendingDeletionExtraPaths = <String, List<String>>{};
+    final rawExtraPaths = json['pendingDeletionExtraPaths'];
+    if (rawExtraPaths is Map) {
+      for (final entry in rawExtraPaths.entries) {
+        final playerId = entry.key?.toString().trim() ?? '';
+        if (!pendingDeletionIds.contains(playerId) || entry.value is! List) {
+          continue;
+        }
+        final paths = <String>{
+          for (final path in entry.value as List)
+            if (path?.toString().trim().isNotEmpty == true)
+              path!.toString().trim(),
+        };
+        if (paths.isNotEmpty) {
+          pendingDeletionExtraPaths[playerId] = List<String>.unmodifiable(
+            paths,
+          );
+        }
+      }
+    }
     final selectedId = _stringOrNull(json['selectedPlayerId']);
     return PlayerWorkspaceSnapshot(
       players: List.unmodifiable(players),
+      pendingDeletions: List.unmodifiable(pendingDeletions),
+      pendingDeletionExtraPaths: Map<String, List<String>>.unmodifiable(
+        pendingDeletionExtraPaths,
+      ),
       selectedPlayerId:
           players.any((player) => player.id == selectedId) ? selectedId : null,
     );

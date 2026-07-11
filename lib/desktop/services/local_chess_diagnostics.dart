@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:logger/logger.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 
 import 'package:chessever/desktop/services/error_reporter.dart';
 
@@ -16,6 +19,30 @@ class LocalChessDiagnostics {
 
   void info(String message, {Map<String, Object?> context = const {}}) {
     _logger.i(_format(message, context));
+  }
+
+  /// Adds structured, non-fatal timing context to a later Sentry event.
+  /// Callers are responsible for passing only non-identifying values.
+  void breadcrumb(
+    String message, {
+    required String category,
+    Map<String, Object?> context = const {},
+  }) {
+    _logger.i(_format(message, context));
+    try {
+      unawaited(
+        Sentry.addBreadcrumb(
+          Breadcrumb(
+            message: message,
+            category: category,
+            level: SentryLevel.warning,
+            data: context,
+          ),
+        ).catchError((Object _) {}),
+      );
+    } catch (_) {
+      // Diagnostics must never interfere with application work.
+    }
   }
 
   void warning(

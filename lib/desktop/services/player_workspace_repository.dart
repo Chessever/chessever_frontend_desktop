@@ -48,6 +48,20 @@ typedef PlayerWorkspaceProgress =
     void Function(String message, double? progress);
 typedef PlayerWorkspaceSupportDirectoryResolver = Future<Directory> Function();
 
+class PlayerWorkspaceCleanupTargets {
+  const PlayerWorkspaceCleanupTargets({
+    required this.sourcePaths,
+    required this.workspaceDirectories,
+    required this.rejectedPathCount,
+  });
+
+  final Set<String> sourcePaths;
+  final Set<String> workspaceDirectories;
+  final int rejectedPathCount;
+
+  Set<String> get cacheScopes => workspaceDirectories;
+}
+
 const String playerWorkspaceCombinedFormatVersion = '2';
 const String playerWorkspaceCombinedVersionTag = 'ChessEverCombinedVersion';
 const String playerWorkspaceCombinedSourceTag = 'ChessEverSource';
@@ -129,51 +143,61 @@ class PlayerWorkspaceRepository {
     var changed = false;
     final players = <PlayerWorkspacePlayer>[];
     for (final player in snapshot.players) {
-      var playerChanged = false;
-      final accounts = <PlayerWorkspaceSource, PlayerWorkspaceAccount>{};
-      for (final entry in player.accounts.entries) {
-        final normalized = await _normalizeGeneratedWorkspaceAccountPath(
-          playerId: player.id,
-          account: entry.value,
-        );
-        accounts[entry.key] = normalized;
-        playerChanged = playerChanged || !identical(normalized, entry.value);
-      }
-
-      final additionalAccounts = <PlayerWorkspaceAccount>[];
-      for (final account in player.additionalAccounts) {
-        final normalized = await _normalizeGeneratedWorkspaceAccountPath(
-          playerId: player.id,
-          account: account,
-        );
-        additionalAccounts.add(normalized);
-        playerChanged = playerChanged || !identical(normalized, account);
-      }
-
-      final combinedPgnPath = await _normalizeGeneratedWorkspacePath(
-        playerId: player.id,
-        storedPath: player.combinedPgnPath,
-      );
-      playerChanged =
-          playerChanged || combinedPgnPath != player.combinedPgnPath;
-
-      players.add(
-        playerChanged
-            ? player.copyWith(
-              accounts: Map.unmodifiable(accounts),
-              additionalAccounts: List.unmodifiable(additionalAccounts),
-              combinedPgnPath: combinedPgnPath,
-            )
-            : player,
-      );
-      changed = changed || playerChanged;
+      final normalized = await _normalizeGeneratedWorkspacePlayerPaths(player);
+      players.add(normalized.player);
+      changed = changed || normalized.changed;
     }
 
     if (!changed) return (snapshot: snapshot, changed: false);
     return (
       snapshot: PlayerWorkspaceSnapshot(
         players: List.unmodifiable(players),
+        // A tombstone is an exact cleanup manifest, not live workspace state.
+        // Rebasing it can copy deleted data to the new support root and lose
+        // the only reference to cache rows/files at the original path.
+        pendingDeletions: snapshot.pendingDeletions,
+        pendingDeletionExtraPaths: snapshot.pendingDeletionExtraPaths,
         selectedPlayerId: snapshot.selectedPlayerId,
+      ),
+      changed: true,
+    );
+  }
+
+  Future<({PlayerWorkspacePlayer player, bool changed})>
+  _normalizeGeneratedWorkspacePlayerPaths(PlayerWorkspacePlayer player) async {
+    var changed = false;
+    final accounts = <PlayerWorkspaceSource, PlayerWorkspaceAccount>{};
+    for (final entry in player.accounts.entries) {
+      final normalized = await _normalizeGeneratedWorkspaceAccountPath(
+        playerId: player.id,
+        account: entry.value,
+      );
+      accounts[entry.key] = normalized;
+      changed = changed || !identical(normalized, entry.value);
+    }
+
+    final additionalAccounts = <PlayerWorkspaceAccount>[];
+    for (final account in player.additionalAccounts) {
+      final normalized = await _normalizeGeneratedWorkspaceAccountPath(
+        playerId: player.id,
+        account: account,
+      );
+      additionalAccounts.add(normalized);
+      changed = changed || !identical(normalized, account);
+    }
+
+    final combinedPgnPath = await _normalizeGeneratedWorkspacePath(
+      playerId: player.id,
+      storedPath: player.combinedPgnPath,
+    );
+    changed = changed || combinedPgnPath != player.combinedPgnPath;
+
+    if (!changed) return (player: player, changed: false);
+    return (
+      player: player.copyWith(
+        accounts: Map.unmodifiable(accounts),
+        additionalAccounts: List.unmodifiable(additionalAccounts),
+        combinedPgnPath: combinedPgnPath,
       ),
       changed: true,
     );
@@ -263,9 +287,111 @@ class PlayerWorkspaceRepository {
 
   Future<bool> deletePlayerWorkspaceDirectory(String playerId) async {
     final root = await _playerWorkspaceDirectory(playerId, create: false);
-    if (!await root.exists()) return false;
-    await root.delete(recursive: true);
-    return true;
+    return _deleteWorkspaceDirectoryWithoutFollowingLinks(root.path);
+  }
+
+  /// Resolves the only paths a persisted player tombstone may destroy.
+  ///
+  /// The current support-root directory is always owned by [playerId]. Stored
+  /// source paths are accepted only when they are direct children of an exact
+  /// `player-workspace/<safe player id>` directory. This both supports an old
+  /// support root and prevents corrupt/legacy state from deleting a user's
+  /// unrelated PGN.
+  Future<PlayerWorkspaceCleanupTargets> playerWorkspaceCleanupTargets(
+    String playerId, {
+    required Iterable<String> storedPaths,
+  }) async {
+    final current = await _playerWorkspaceDirectory(playerId, create: false);
+    final sourcePaths = <String>{};
+    final workspaceDirectories = <String>{p.normalize(current.path)};
+    var rejectedPathCount = 0;
+
+    for (final storedPath in storedPaths) {
+      final clean = storedPath.trim();
+      if (clean.isEmpty) continue;
+      final normalized = p.normalize(clean);
+      final directory = _validatedStoredPlayerWorkspaceDirectory(
+        playerId,
+        normalized,
+      );
+      if (directory == null) {
+        rejectedPathCount += 1;
+        continue;
+      }
+      sourcePaths.add(normalized);
+      workspaceDirectories.add(directory);
+    }
+
+    return PlayerWorkspaceCleanupTargets(
+      sourcePaths: Set<String>.unmodifiable(sourcePaths),
+      workspaceDirectories: Set<String>.unmodifiable(workspaceDirectories),
+      rejectedPathCount: rejectedPathCount,
+    );
+  }
+
+  /// Removes old support-root workspace folders referenced by a tombstone.
+  ///
+  /// Only a direct `player-workspace/<player id>/file` parent is accepted, so
+  /// malformed persisted paths can never broaden a recursive delete.
+  Future<int> deleteStoredPlayerWorkspaceDirectories(
+    String playerId, {
+    required Iterable<String> storedPaths,
+  }) async {
+    final directories = <String>{};
+    for (final storedPath in storedPaths) {
+      final clean = storedPath.trim();
+      if (clean.isEmpty) continue;
+      final directoryPath = _validatedStoredPlayerWorkspaceDirectory(
+        playerId,
+        p.normalize(clean),
+      );
+      if (directoryPath != null) directories.add(directoryPath);
+    }
+
+    var deleted = 0;
+    for (final directoryPath in directories) {
+      if (await _deleteWorkspaceDirectoryWithoutFollowingLinks(directoryPath)) {
+        deleted += 1;
+      }
+    }
+    return deleted;
+  }
+
+  String? _validatedStoredPlayerWorkspaceDirectory(
+    String playerId,
+    String storedPath,
+  ) {
+    final directoryPath = p.normalize(p.dirname(storedPath));
+    if (p.basename(directoryPath).toLowerCase() !=
+        _safeFilePart(playerId).toLowerCase()) {
+      return null;
+    }
+    if (p.basename(p.dirname(directoryPath)).toLowerCase() !=
+        'player-workspace') {
+      return null;
+    }
+    return directoryPath;
+  }
+
+  Future<bool> _deleteWorkspaceDirectoryWithoutFollowingLinks(
+    String path,
+  ) async {
+    final type = await FileSystemEntity.type(path, followLinks: false);
+    switch (type) {
+      case FileSystemEntityType.notFound:
+        return false;
+      case FileSystemEntityType.directory:
+        await Directory(path).delete(recursive: true);
+        return true;
+      case FileSystemEntityType.link:
+        await Link(path).delete();
+        return true;
+      case FileSystemEntityType.file:
+      case FileSystemEntityType.pipe:
+      case FileSystemEntityType.unixDomainSock:
+        return false;
+    }
+    return false;
   }
 
   Future<PlayerWorkspaceAccount> fetchLichessAccount(String username) async {
