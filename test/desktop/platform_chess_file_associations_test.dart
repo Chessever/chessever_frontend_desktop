@@ -71,6 +71,28 @@ void main() {
     expect(utils, contains('Utf8FromUtf16(argv[i])'));
   });
 
+  test('Windows destroys the Flutter host before uninitializing COM', () {
+    final main = File('windows/runner/main.cpp').readAsStringSync();
+    final hostStart = main.indexOf('int RunFlutterApplication(');
+    final entrypointStart = main.indexOf('int APIENTRY wWinMain(');
+
+    expect(hostStart, isNonNegative);
+    expect(entrypointStart, greaterThan(hostStart));
+
+    final host = main.substring(hostStart, entrypointStart);
+    final entrypoint = main.substring(entrypointStart);
+    expect(host, contains('flutter::DartProject project(L"data");'));
+    expect(host, contains('FlutterWindow window(project);'));
+    expect(host, isNot(contains('::CoUninitialize();')));
+    expect(entrypoint, isNot(contains('FlutterWindow window(project);')));
+    final runIndex = entrypoint.indexOf('RunFlutterApplication(');
+    final uninitializeIndex = entrypoint.indexOf('::CoUninitialize();');
+    expect(runIndex, isNonNegative);
+    expect(uninitializeIndex, isNonNegative);
+    expect(runIndex, lessThan(uninitializeIndex));
+    expect(entrypoint, contains('if (SUCCEEDED(com_result))'));
+  });
+
   test('macOS AppDelegate forwards Finder open-files events into Dart', () {
     final appDelegate =
         File('macos/Runner/AppDelegate.swift').readAsStringSync();
