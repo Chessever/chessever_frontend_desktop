@@ -101,7 +101,7 @@ void main() {
     expect(argsByTab.values.single.gameId, 'gamebase-0');
   });
 
-  testWidgets('local Explorer defaults to local source and can switch global', (
+  testWidgets('local Explorer source button switches to global', (
     tester,
   ) async {
     final repository = _FakeExplorerRepository();
@@ -122,8 +122,14 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pump(const Duration(milliseconds: 250));
 
-    expect(find.text('Global'), findsOneWidget);
-    expect(find.text('Local'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('opening-explorer-source-button')),
+      findsOneWidget,
+    );
+    expect(find.text('Hikaru Chesscom'), findsOneWidget);
+    expect(find.text('Both'), findsNothing);
+    expect(find.text('W'), findsNothing);
+    expect(find.text('B'), findsNothing);
     expect(
       tester
           .widget<DesktopOpeningExplorer>(find.byType(DesktopOpeningExplorer))
@@ -139,8 +145,16 @@ void main() {
       same(localIndex),
     );
 
+    await tester.tap(
+      find.byKey(const ValueKey('opening-explorer-source-button')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Global'), findsOneWidget);
+    expect(find.textContaining('Hikaru Chesscom'), findsWidgets);
     await tester.tap(find.text('Global'));
-    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Global'), findsOneWidget);
 
     expect(
       tester
@@ -158,6 +172,34 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('local Explorer game rows show year and notation', (
+    tester,
+  ) async {
+    final repository = _FakeExplorerRepository();
+
+    await tester.pumpWidget(
+      _harness(
+        repository: repository,
+        localOpeningTreeIndex: _testLocalOpeningTreeIndex(),
+        localOpeningTreeTitle: 'Hikaru Chesscom',
+      ),
+    );
+    await tester.pump();
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(NotationOpeningPanel)),
+    );
+    container.read(rightRailActivePageProvider('__none__').notifier).state = 1;
+    await tester.pumpAndSettle();
+
+    expect(find.text('2026'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is RichText && widget.text.toPlainText() == '1.e4',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('Explorer bottom strip navigation controls are always visible', (

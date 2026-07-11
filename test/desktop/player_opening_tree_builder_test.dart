@@ -136,6 +136,60 @@ void main() {
       expect(response.data.single['continuation'], ['e2e4', 'e7e5']);
     },
   );
+
+  test('normalizes legacy tree rows for year and notation columns', () {
+    final treeIndex = PlayerOpeningTreeIndex.fromSnapshot(
+      PlayerOpeningTreeSnapshot.fromJson(_snapshotJson()),
+    );
+    final index = treeIndex.copyWithGames(
+      PlayerOpeningTreeGamesIndex(
+        gamesByFen: <String, List<PlayerOpeningTreeGameRef>>{
+          playerOpeningTreeFenKey(Chess.initial.fen): const [
+            PlayerOpeningTreeGameRef(
+              gameId: 'legacy-game',
+              fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+              ply: 0,
+            ),
+          ],
+        },
+        gameRowsById: const <String, Map<String, dynamic>>{
+          'legacy-game': <String, dynamic>{
+            'id': 'legacy-game',
+            'white': 'Legacy White',
+            'black': 'Legacy Black',
+            'headers': <String, dynamic>{'Date': '2026.06.28'},
+            'pgn': '''
+[Event "Legacy cache"]
+[Date "2026.06.28"]
+[White "Legacy White"]
+[Black "Legacy Black"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 1-0
+''',
+          },
+        },
+      ),
+    );
+
+    final response = localPlayerTreeGamesResponse(
+      index: index,
+      fen: Chess.initial.fen,
+      uci: null,
+      sortBy: GamebaseSortField.date,
+      sortDirection: GamebaseSortDirection.desc,
+      pageNumber: 0,
+      pageSize: 10,
+    );
+
+    expect(response.data.single['date'], '2026-06-28T00:00:00.000');
+    expect(response.data.single['continuation'], [
+      'e2e4',
+      'e7e5',
+      'g1f3',
+      'b8c6',
+    ]);
+  });
 }
 
 Map<String, dynamic> _snapshotJson() {

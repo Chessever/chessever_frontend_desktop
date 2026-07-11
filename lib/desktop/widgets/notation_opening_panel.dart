@@ -25,8 +25,6 @@ import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/widgets/variation_fork_chooser.dart';
 import 'package:chessever/screens/gamebase/models/move_aggregate.dart';
-import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart'
-    show GamebasePlayerColor;
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -225,6 +223,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
     growable: false,
   );
   final FocusNode _notationFocusNode = FocusNode(debugLabel: 'notation-page');
+  final _explorerSourceController = _ExplorerSourceController();
   late int _page = _readStoredPage();
   bool _buildExplorerPage = false;
   int _pageRestoreToken = 0;
@@ -301,6 +300,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
 
   @override
   void dispose() {
+    _explorerSourceController.dispose();
     _notationFocusNode.dispose();
     for (final scope in _pageScopes) {
       scope.dispose();
@@ -518,6 +518,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                 localOpeningTreeTitle: widget.localOpeningTreeTitle,
                 enableLocalOpeningTreePicker:
                     widget.enableLocalOpeningTreePicker,
+                sourceController: _explorerSourceController,
                 exactFenSearch: !_isInitialPositionFen(widget.startingFen),
               )
               : const ColoredBox(color: kBlack2Color),
@@ -563,6 +564,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
             _SegmentBar(
               explorerOpen: explorerVisible,
               onToggleExplorer: _toggleExplorerVisibility,
+              sourceController: _explorerSourceController,
               explorerScope: widget.explorerScope,
               canGoBack: widget.canGoBack,
               canGoForward: widget.canGoForward,
@@ -667,10 +669,182 @@ bool debugShouldActivateExplorerGamesPanel({required bool pageActive}) {
   return pageActive;
 }
 
+class _ExplorerSourceController extends ChangeNotifier {
+  bool _available = false;
+  String _label = 'Global';
+  String? _selectedDatabaseId;
+  List<LocalOpeningTreeCatalogEntry> _localTrees = const [];
+  VoidCallback? _selectGlobal;
+  ValueChanged<LocalOpeningTreeCatalogEntry>? _selectLocal;
+
+  bool get available => _available;
+  String get label => _label;
+  String? get selectedDatabaseId => _selectedDatabaseId;
+  List<LocalOpeningTreeCatalogEntry> get localTrees => _localTrees;
+
+  void update({
+    required String label,
+    required String? selectedDatabaseId,
+    required List<LocalOpeningTreeCatalogEntry> localTrees,
+    required VoidCallback selectGlobal,
+    required ValueChanged<LocalOpeningTreeCatalogEntry> selectLocal,
+  }) {
+    final nextTrees = List<LocalOpeningTreeCatalogEntry>.unmodifiable(
+      localTrees,
+    );
+    final changed =
+        !_available ||
+        _label != label ||
+        _selectedDatabaseId != selectedDatabaseId ||
+        !_sameTreeCatalog(_localTrees, nextTrees);
+    _available = true;
+    _label = label;
+    _selectedDatabaseId = selectedDatabaseId;
+    _localTrees = nextTrees;
+    _selectGlobal = selectGlobal;
+    _selectLocal = selectLocal;
+    if (changed) notifyListeners();
+  }
+
+  void clear() {
+    if (!_available) return;
+    _available = false;
+    _selectGlobal = null;
+    _selectLocal = null;
+    notifyListeners();
+  }
+
+  void selectGlobal() => _selectGlobal?.call();
+
+  void selectLocal(LocalOpeningTreeCatalogEntry tree) {
+    _selectLocal?.call(tree);
+  }
+}
+
+bool _sameTreeCatalog(
+  List<LocalOpeningTreeCatalogEntry> left,
+  List<LocalOpeningTreeCatalogEntry> right,
+) {
+  if (identical(left, right)) return true;
+  if (left.length != right.length) return false;
+  for (var i = 0; i < left.length; i++) {
+    if (left[i].databaseId != right[i].databaseId ||
+        left[i].title != right[i].title ||
+        left[i].gameCount != right[i].gameCount) {
+      return false;
+    }
+  }
+  return true;
+}
+
+class _ExplorerSourceButton extends StatelessWidget {
+  const _ExplorerSourceButton({required this.controller});
+
+  final _ExplorerSourceController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        if (!controller.available) return const SizedBox.shrink();
+        return DesktopTooltip(
+          message: 'Choose opening explorer source',
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown:
+                (details) =>
+                    unawaited(_showSourceMenu(context, details.globalPosition)),
+            child: Container(
+              key: const ValueKey('opening-explorer-source-button'),
+              height: 28,
+              constraints: const BoxConstraints(minWidth: 68, maxWidth: 220),
+              padding: const EdgeInsets.symmetric(horizontal: 9),
+              decoration: BoxDecoration(
+                color: kPrimaryColor.withValues(alpha: 0.12),
+                border: Border.all(
+                  color: kPrimaryColor.withValues(alpha: 0.42),
+                ),
+                borderRadius: BorderRadius.circular(7),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.storage_rounded,
+                    size: 14,
+                    color: kPrimaryColor,
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      controller.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: kPrimaryColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(
+                    Icons.expand_more_rounded,
+                    size: 14,
+                    color: kPrimaryColor,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showSourceMenu(BuildContext context, Offset position) async {
+    final selected = controller.selectedDatabaseId;
+    final picked = await showDesktopContextMenu<String>(
+      context: context,
+      position: position,
+      width: 300,
+      entries: [
+        DesktopContextMenuItem<String>(
+          value: 'global',
+          icon: selected == null ? Icons.check_rounded : Icons.public_rounded,
+          label: 'Global',
+        ),
+        for (final tree in controller.localTrees)
+          DesktopContextMenuItem<String>(
+            value: tree.databaseId,
+            icon:
+                tree.databaseId == selected
+                    ? Icons.check_rounded
+                    : Icons.account_tree_outlined,
+            label: _treeMenuLabel(tree),
+          ),
+      ],
+    );
+    if (picked == null) return;
+    if (picked == 'global') {
+      controller.selectGlobal();
+      return;
+    }
+    for (final tree in controller.localTrees) {
+      if (tree.databaseId == picked) {
+        controller.selectLocal(tree);
+        return;
+      }
+    }
+  }
+}
+
 class _SegmentBar extends ConsumerWidget {
   const _SegmentBar({
     required this.explorerOpen,
     required this.onToggleExplorer,
+    required this.sourceController,
     required this.explorerScope,
     required this.canGoBack,
     required this.canGoForward,
@@ -692,6 +866,7 @@ class _SegmentBar extends ConsumerWidget {
 
   final bool explorerOpen;
   final VoidCallback onToggleExplorer;
+  final _ExplorerSourceController sourceController;
   final BoardExplorerScope? explorerScope;
   final bool canGoBack;
   final bool canGoForward;
@@ -743,7 +918,9 @@ class _SegmentBar extends ConsumerWidget {
             onTap: onToggleExplorer,
           ),
           if (explorerOpen) ...[
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
+            _ExplorerSourceButton(controller: sourceController),
+            const SizedBox(width: 6),
             ExplorerFiltersPopoverButton(
               compact: true,
               scopedPlayer: scopedPlayer,
@@ -1012,6 +1189,7 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
     required this.localOpeningTreeIndex,
     required this.localOpeningTreeTitle,
     required this.enableLocalOpeningTreePicker,
+    required this.sourceController,
     this.exactFenSearch = false,
   });
 
@@ -1037,6 +1215,7 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
   final PlayerOpeningTreeIndex? localOpeningTreeIndex;
   final String localOpeningTreeTitle;
   final bool enableLocalOpeningTreePicker;
+  final _ExplorerSourceController sourceController;
   final bool exactFenSearch;
 
   @override
@@ -1234,6 +1413,31 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
     }
   }
 
+  void _publishSourceControl(List<LocalOpeningTreeCatalogEntry> localTrees) {
+    final source = _visibleExplorerSource;
+    final localTitle = widget.localOpeningTreeTitle.trim();
+    final label =
+        source == _ExplorerSource.global
+            ? 'Global'
+            : localTitle.isEmpty
+            ? 'Local database'
+            : localTitle;
+    final selectedDatabaseId =
+        source == _ExplorerSource.local
+            ? widget.localOpeningTreeIndex?.playerId?.trim()
+            : null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !widget.active) return;
+      widget.sourceController.update(
+        label: label,
+        selectedDatabaseId: selectedDatabaseId,
+        localTrees: localTrees,
+        selectGlobal: () => _setExplorerSource(_ExplorerSource.global),
+        selectLocal: (entry) => unawaited(_selectLocalOpeningTree(entry)),
+      );
+    });
+  }
+
   static bool _listEquals(List<String> a, List<String> b) {
     if (identical(a, b)) return true;
     if (a.length != b.length) return false;
@@ -1245,6 +1449,7 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
 
   @override
   void dispose() {
+    widget.sourceController.clear();
     widget.onClearPreviewUciMove?.call();
     _gamesController
       ..removeListener(_onGamesControllerChanged)
@@ -1794,8 +1999,7 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
     if (!widget.active) return const SizedBox.expand();
     final effectiveLocalTree = _effectiveLocalOpeningTreeIndex;
     final localTreeCatalog =
-        widget.enableLocalOpeningTreePicker ||
-                widget.localOpeningTreeIndex != null
+        widget.enableLocalOpeningTreePicker
             ? ref.watch(localOpeningTreeCatalogProvider)
             : const AsyncValue<List<LocalOpeningTreeCatalogEntry>>.data(
               <LocalOpeningTreeCatalogEntry>[],
@@ -1807,6 +2011,15 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       current: widget.localOpeningTreeIndex,
       currentTitle: widget.localOpeningTreeTitle,
     );
+    if (widget.localOpeningTreeIndex != null ||
+        widget.enableLocalOpeningTreePicker) {
+      _publishSourceControl(localTrees);
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        widget.sourceController.clear();
+      });
+    }
     final activeContinuationStep = _activeGameContinuationStep();
     final gamesPanelActive = debugShouldActivateExplorerGamesPanel(
       pageActive: widget.active,
@@ -1884,36 +2097,6 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (widget.localOpeningTreeIndex != null ||
-                    widget.enableLocalOpeningTreePicker)
-                  _ExplorerSourceSwitcher(
-                    value: _visibleExplorerSource,
-                    localLabel: widget.localOpeningTreeTitle,
-                    localTrees: localTrees,
-                    selectedLocalTreeDatabaseId:
-                        widget.localOpeningTreeIndex?.playerId,
-                    localTreeLoading: localTreeCatalog.isLoading,
-                    localTreeError: localTreeCatalog.asError?.error,
-                    onSelectLocalTree:
-                        (entry) => unawaited(_selectLocalOpeningTree(entry)),
-                    onChanged: _setExplorerSource,
-                    prepColor: ref.watch(
-                      gamebaseExplorerProvider.select(
-                        (s) => s.filters.playerColor,
-                      ),
-                    ),
-                    onPrepChanged: (color) {
-                      final notifier = ref.read(
-                        gamebaseExplorerProvider.notifier,
-                      );
-                      notifier.updateFilters(
-                        ref
-                            .read(gamebaseExplorerProvider)
-                            .filters
-                            .copyWith(playerColor: color),
-                      );
-                    },
-                  ),
                 Expanded(
                   child: ResizableSplitView(
                     axis: Axis.vertical,
@@ -1989,324 +2172,9 @@ List<LocalOpeningTreeCatalogEntry> _catalogWithCurrentLocalTree({
   ];
 }
 
-class _ExplorerSourceSwitcher extends StatelessWidget {
-  const _ExplorerSourceSwitcher({
-    required this.value,
-    required this.localLabel,
-    required this.localTrees,
-    required this.selectedLocalTreeDatabaseId,
-    required this.localTreeLoading,
-    required this.localTreeError,
-    required this.onSelectLocalTree,
-    required this.onChanged,
-    this.prepColor,
-    this.onPrepChanged,
-  });
-
-  final _ExplorerSource value;
-  final String localLabel;
-  final List<LocalOpeningTreeCatalogEntry> localTrees;
-  final String? selectedLocalTreeDatabaseId;
-  final bool localTreeLoading;
-  final Object? localTreeError;
-  final ValueChanged<LocalOpeningTreeCatalogEntry> onSelectLocalTree;
-  final ValueChanged<_ExplorerSource> onChanged;
-
-  /// Active prep colour filter (null = both). When [onPrepChanged] is provided
-  /// the switcher shows an inline "gear" to change which colour to prep against
-  /// without leaving the game — local trees carry per-colour buckets.
-  final GamebasePlayerColor? prepColor;
-  final ValueChanged<GamebasePlayerColor?>? onPrepChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final title = localLabel.trim().isEmpty ? 'Local database' : localLabel;
-    final onPrep = onPrepChanged;
-    final canUseLocal =
-        selectedLocalTreeDatabaseId != null || localTrees.isNotEmpty;
-    return Container(
-      height: 42,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: const BoxDecoration(
-        color: kBlack2Color,
-        border: Border(bottom: BorderSide(color: kDividerColor)),
-      ),
-      child: Row(
-        children: [
-          const Icon(
-            Icons.account_tree_outlined,
-            size: 15,
-            color: kLightGreyColor,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: kWhiteColor70,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          if (onPrep != null) ...[
-            const SizedBox(width: 8),
-            const Icon(Icons.tune_rounded, size: 14, color: kLightGreyColor),
-            const SizedBox(width: 6),
-            _PrepColorSegment(
-              label: 'Both',
-              tooltip: 'Prepare vs both colours',
-              selected: prepColor == null,
-              onTap: () => onPrep(null),
-            ),
-            _PrepColorSegment(
-              label: 'W',
-              tooltip: 'Prepare vs White',
-              selected: prepColor == GamebasePlayerColor.white,
-              onTap: () => onPrep(GamebasePlayerColor.white),
-            ),
-            _PrepColorSegment(
-              label: 'B',
-              tooltip: 'Prepare vs Black',
-              selected: prepColor == GamebasePlayerColor.black,
-              onTap: () => onPrep(GamebasePlayerColor.black),
-            ),
-            const SizedBox(width: 10),
-          ],
-          const SizedBox(width: 8),
-          _ExplorerSourceSegment(
-            label: 'Global',
-            selected: value == _ExplorerSource.global,
-            onTap: () => onChanged(_ExplorerSource.global),
-          ),
-          _ExplorerSourceSegment(
-            label: 'Local',
-            selected: value == _ExplorerSource.local,
-            enabled: canUseLocal,
-            onTap: () {
-              if (selectedLocalTreeDatabaseId == null &&
-                  localTrees.isNotEmpty) {
-                onSelectLocalTree(localTrees.first);
-              }
-              onChanged(_ExplorerSource.local);
-            },
-          ),
-          _LocalTreePickerGear(
-            trees: localTrees,
-            selectedDatabaseId: selectedLocalTreeDatabaseId,
-            loading: localTreeLoading,
-            error: localTreeError,
-            onSelected: (entry) {
-              onSelectLocalTree(entry);
-              onChanged(_ExplorerSource.local);
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _LocalTreePickerGear extends StatelessWidget {
-  const _LocalTreePickerGear({
-    required this.trees,
-    required this.selectedDatabaseId,
-    required this.loading,
-    required this.error,
-    required this.onSelected,
-  });
-
-  final List<LocalOpeningTreeCatalogEntry> trees;
-  final String? selectedDatabaseId;
-  final bool loading;
-  final Object? error;
-  final ValueChanged<LocalOpeningTreeCatalogEntry> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = trees.isNotEmpty;
-    final tooltip =
-        loading
-            ? 'Loading local trees'
-            : error != null
-            ? 'Could not load local trees'
-            : enabled
-            ? 'Choose local tree'
-            : 'No local trees have been built yet';
-    return DesktopTooltip(
-      message: tooltip,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapDown:
-            enabled
-                ? (details) =>
-                    unawaited(_showTreeMenu(context, details.globalPosition))
-                : null,
-        child: Container(
-          height: 28,
-          width: 30,
-          margin: const EdgeInsets.only(left: 4),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: kBlack3Color,
-            border: Border.all(color: kDividerColor),
-            borderRadius: BorderRadius.circular(7),
-          ),
-          child: Icon(
-            Icons.settings_outlined,
-            size: 14,
-            color: enabled ? kWhiteColor70 : kLightGreyColor,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showTreeMenu(BuildContext context, Offset position) async {
-    final picked = await showDesktopContextMenu<String>(
-      context: context,
-      position: position,
-      width: 300,
-      entries: [
-        for (final tree in trees)
-          DesktopContextMenuItem<String>(
-            value: tree.databaseId,
-            icon:
-                tree.databaseId == selectedDatabaseId
-                    ? Icons.check_rounded
-                    : Icons.account_tree_outlined,
-            label: _treeMenuLabel(tree),
-          ),
-      ],
-    );
-    if (picked == null) return;
-    final tree = trees.firstWhere(
-      (entry) => entry.databaseId == picked,
-      orElse: () => trees.first,
-    );
-    onSelected(tree);
-  }
-}
-
 String _treeMenuLabel(LocalOpeningTreeCatalogEntry tree) {
   final games = NumberFormat.decimalPattern().format(tree.gameCount);
   return '${tree.title} · $games games';
-}
-
-/// Compact segment in the in-game prep-colour "gear" (Both / W / B).
-class _PrepColorSegment extends StatelessWidget {
-  const _PrepColorSegment({
-    required this.label,
-    required this.tooltip,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final String tooltip;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final fg = selected ? kPrimaryColor : kWhiteColor70;
-    return DesktopTooltip(
-      message: tooltip,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Container(
-          height: 28,
-          constraints: const BoxConstraints(minWidth: 34),
-          margin: const EdgeInsets.only(left: 4),
-          alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          decoration: BoxDecoration(
-            color:
-                selected ? kPrimaryColor.withValues(alpha: 0.12) : kBlack3Color,
-            border: Border.all(
-              color:
-                  selected
-                      ? kPrimaryColor.withValues(alpha: 0.42)
-                      : kDividerColor,
-            ),
-            borderRadius: BorderRadius.circular(7),
-          ),
-          child: Text(
-            label,
-            maxLines: 1,
-            style: TextStyle(
-              color: fg,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ExplorerSourceSegment extends StatelessWidget {
-  const _ExplorerSourceSegment({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-    this.enabled = true,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-  final bool enabled;
-
-  @override
-  Widget build(BuildContext context) {
-    final fg =
-        !enabled
-            ? kLightGreyColor
-            : selected
-            ? kPrimaryColor
-            : kWhiteColor70;
-    return DesktopTooltip(
-      message: 'Use $label opening explorer data',
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: enabled ? onTap : null,
-        child: Container(
-          height: 28,
-          width: 64,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color:
-                selected ? kPrimaryColor.withValues(alpha: 0.12) : kBlack3Color,
-            border: Border.all(
-              color:
-                  selected
-                      ? kPrimaryColor.withValues(alpha: 0.42)
-                      : kDividerColor,
-            ),
-            borderRadius: BorderRadius.horizontal(
-              left: Radius.circular(label == 'Global' ? 7 : 0),
-              right: Radius.circular(label == 'Local' ? 7 : 0),
-            ),
-          ),
-          child: Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: fg,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 /// True for a bare `Shift+→` (forward) or `Shift+←` (backward) chord — the
