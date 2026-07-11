@@ -85,6 +85,7 @@ AnnotationPresentation resolveAnnotationPresentation(
     case LichessMoveAnnotationType.brilliant:
     case LichessMoveAnnotationType.goodMove:
     case LichessMoveAnnotationType.bestMove:
+    case LichessMoveAnnotationType.forced:
     case LichessMoveAnnotationType.inaccuracy:
     case LichessMoveAnnotationType.mistake:
     case LichessMoveAnnotationType.blunder:

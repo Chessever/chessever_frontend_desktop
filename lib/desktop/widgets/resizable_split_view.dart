@@ -129,6 +129,9 @@ class ResizableSplitViewController {
   double? setSize(int index, double sizePx, {bool persist = true}) =>
       _state?._setSizeExternal(index, sizePx, persist: persist);
 
+  /// Current resolved size of [index] along the split axis, in logical pixels.
+  double? sizeOf(int index) => _state?._sizeOfExternal(index);
+
   /// Resize [index] to [fraction] of the currently available visible split
   /// area, after gutters and collapsed rails are reserved.
   void setFraction(int index, double fraction, {bool persist = true}) =>
@@ -232,6 +235,28 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
       if (persist) _scheduleSave();
     }
     return sizes[index];
+  }
+
+  double? _sizeOfExternal(int index) {
+    if (index < 0 || index >= widget.children.length) return null;
+    if (_collapsed.contains(index)) return 0;
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return null;
+    final totalAxis =
+        _isHorizontal() ? renderObject.size.width : renderObject.size.height;
+    if (!totalAxis.isFinite || totalAxis <= 0) return null;
+    final visible = <int>[
+      for (var i = 0; i < widget.children.length; i++)
+        if (!_collapsed.contains(i)) i,
+    ];
+    final separatorTotal =
+        widget.gutterThickness * (widget.children.length - 1);
+    final reservedForRails =
+        widget.collapsedRailThickness *
+        (widget.children.length - visible.length);
+    final available = totalAxis - separatorTotal - reservedForRails;
+    if (available <= 0) return null;
+    return _resolveVisibleSizes(visible, available)[index];
   }
 
   void _setFractionExternal(int index, double fraction, {bool persist = true}) {

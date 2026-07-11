@@ -174,6 +174,10 @@ void main() {
       expect(const EngineSettings().showEngineAnalysis, isFalse);
     });
 
+    test('defaults automatic whole-game analysis on', () {
+      expect(const EngineSettings().autoGameAnalysis, isTrue);
+    });
+
     test(
       'does not start board evaluation while engine settings are still loading',
       () async {

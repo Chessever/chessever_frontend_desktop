@@ -107,7 +107,7 @@ class _ExplorerFiltersPopoverButtonState
                     children: [
                       Icon(
                         Icons.tune_rounded,
-                        size: 13,
+                        size: widget.compact ? 20 : 13,
                         color: hasActive ? kPrimaryColor : kWhiteColor70,
                       ),
                       if (!widget.compact) ...[

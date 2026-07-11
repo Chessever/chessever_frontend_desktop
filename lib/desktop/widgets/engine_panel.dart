@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -12,8 +17,11 @@ import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
+import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/theme/app_theme.dart';
+
+enum EnginePanelTab { moves, report }
 
 /// Live engine evaluation panel for the active board position.
 ///
@@ -32,6 +40,15 @@ class EnginePanel extends ConsumerStatefulWidget {
     required this.fen,
     required this.sideToMove,
     this.onPlayUci,
+    this.game,
+    this.headers = const <String, String>{},
+    this.activePly = 0,
+    this.onJumpToPly,
+    this.onReportRunningChanged,
+    this.onReportChanged,
+    this.onTabChanged,
+    this.selectedTab = EnginePanelTab.moves,
+    this.autoAnalysisAllowed = true,
   });
 
   final String fen;
@@ -46,13 +63,158 @@ class EnginePanel extends ConsumerStatefulWidget {
   /// taps so both surfaces share the legality + onMove path.
   final void Function(String uci)? onPlayUci;
 
+  /// Loaded game snapshot used only by the session-scoped Report tab.
+  final ChessGame? game;
+  final Map<String, String> headers;
+  final int activePly;
+  final ValueChanged<int>? onJumpToPly;
+  final ValueChanged<bool>? onReportRunningChanged;
+  final ValueChanged<GameAnalysisReport?>? onReportChanged;
+  final ValueChanged<EnginePanelTab>? onTabChanged;
+  final EnginePanelTab selectedTab;
+  final bool autoAnalysisAllowed;
+
   @override
   ConsumerState<EnginePanel> createState() => _EnginePanelState();
 }
 
 class _EnginePanelState extends ConsumerState<EnginePanel> {
+  late final GameAnalysisReportController _reportController;
+  bool _lastReportedRunning = false;
+  GameAnalysisReport? _lastPublishedReport;
+  String? _autoStartedFingerprint;
+  String? _gameFingerprint;
+
+  @override
+  void initState() {
+    super.initState();
+    _reportController = GameAnalysisReportController()..addListener(_onReport);
+    _gameFingerprint = _fingerprint(widget.game);
+  }
+
+  @override
+  void didUpdateWidget(covariant EnginePanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nextFingerprint = _fingerprint(widget.game);
+    if (_gameFingerprint != nextFingerprint) {
+      _gameFingerprint = nextFingerprint;
+      _autoStartedFingerprint = null;
+      _reportController.invalidate();
+      if (widget.selectedTab == EnginePanelTab.report && widget.game == null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) widget.onTabChanged?.call(EnginePanelTab.moves);
+        });
+      }
+    }
+  }
+
+  String? _fingerprint(ChessGame? game) =>
+      game == null ? null : gameReportFingerprint(game);
+
+  void _onReport() {
+    if (!mounted) return;
+    final reportState = _reportController.state;
+    final running = reportState.isRunning;
+    if (running != _lastReportedRunning) {
+      _lastReportedRunning = running;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _lastReportedRunning != running) return;
+        widget.onReportRunningChanged?.call(running);
+      });
+    }
+    final report = reportState.report;
+    if (!identical(report, _lastPublishedReport)) {
+      _lastPublishedReport = report;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !identical(_lastPublishedReport, report)) return;
+        widget.onReportChanged?.call(report);
+      });
+    }
+    setState(() {});
+  }
+
+  Future<void> _analyze() async {
+    final game = widget.game;
+    if (game == null || game.mainline.isEmpty) return;
+    await _reportController.analyze(
+      game,
+      whiteRating: _headerRating('WhiteElo'),
+      blackRating: _headerRating('BlackElo'),
+    );
+  }
+
+  int? _headerRating(String key) {
+    final raw = widget.headers[key]?.replaceAll(RegExp(r'[^0-9]'), '');
+    return raw == null ? null : int.tryParse(raw);
+  }
+
+  void _scheduleAutomaticAnalysis(EngineSettings settings) {
+    final game = widget.game;
+    if (!widget.autoAnalysisAllowed ||
+        !settings.autoGameAnalysis ||
+        game == null ||
+        game.mainline.isEmpty) {
+      return;
+    }
+    final fingerprint = gameReportFingerprint(game);
+    if (_autoStartedFingerprint == fingerprint ||
+        _reportController.state.isRunning ||
+        _reportController.state.report?.fingerprint == fingerprint) {
+      return;
+    }
+    _autoStartedFingerprint = fingerprint;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !widget.autoAnalysisAllowed ||
+          widget.game == null ||
+          gameReportFingerprint(widget.game!) != fingerprint) {
+        return;
+      }
+      unawaited(_analyze());
+    });
+  }
+
+  @override
+  void dispose() {
+    _reportController
+      ..removeListener(_onReport)
+      ..dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final asyncSettings = ref.watch(engineSettingsProviderNew);
+    final settings = asyncSettings.valueOrNull;
+    if (settings != null) _scheduleAutomaticAnalysis(settings);
+    final selectedTab = widget.selectedTab;
+    return Container(
+      color: kBlack2Color,
+      child:
+          selectedTab == EnginePanelTab.moves
+              ? _buildMoves()
+              : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(height: 168, child: _buildMoves()),
+                  const Divider(height: 1, color: kDividerColor),
+                  Expanded(
+                    child: GameReportView(
+                      state: _reportController.state,
+                      game: widget.game,
+                      headers: widget.headers,
+                      activePly: widget.activePly,
+                      onAnalyze: _analyze,
+                      onCancel: _reportController.cancel,
+                      onJumpToPly: widget.onJumpToPly,
+                    ),
+                  ),
+                ],
+              ),
+    );
+  }
+
+  Widget _buildMoves() {
     final settings =
         ref.watch(engineSettingsProviderNew).valueOrNull ??
         const EngineSettings();
@@ -69,8 +231,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     final pvs = state.pvs;
     final topScore = _formatScore(state.evaluation, state.mate);
 
-    return Container(
-      color: kBlack2Color,
+    return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -145,6 +306,691 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     );
   }
 }
+
+class GameReportView extends StatefulWidget {
+  const GameReportView({
+    super.key,
+    required this.state,
+    required this.game,
+    required this.headers,
+    required this.activePly,
+    required this.onAnalyze,
+    required this.onCancel,
+    required this.onJumpToPly,
+  });
+
+  final GameReportState state;
+  final ChessGame? game;
+  final Map<String, String> headers;
+  final int activePly;
+  final Future<void> Function() onAnalyze;
+  final Future<void> Function() onCancel;
+  final ValueChanged<int>? onJumpToPly;
+
+  @override
+  State<GameReportView> createState() => _GameReportViewState();
+}
+
+class _GameReportViewState extends State<GameReportView> {
+  final Map<String, int> _recapCycle = <String, int>{};
+
+  @override
+  Widget build(BuildContext context) {
+    return FTheme(
+      data: FThemes.zinc.dark,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 11, 10, 11),
+        child: _body(),
+      ),
+    );
+  }
+
+  Widget _body() {
+    final game = widget.game;
+    if (game == null || game.mainline.isEmpty) {
+      return _ReportMessage(
+        icon: Icons.analytics_outlined,
+        title: 'No game to analyze',
+        body:
+            'Load a game with at least one main-line move to create a report.',
+      );
+    }
+
+    return switch (widget.state.status) {
+      GameReportStatus.idle => _ReportStart(
+        moveCount: game.mainline.length,
+        onAnalyze: widget.onAnalyze,
+      ),
+      GameReportStatus.running => _ReportProgress(
+        state: widget.state,
+        onCancel: widget.onCancel,
+      ),
+      GameReportStatus.cancelled => _ReportMessage(
+        icon: Icons.cancel_outlined,
+        title: 'Analysis cancelled',
+        body:
+            widget.state.message ??
+            'No partial report was saved. You can start again when ready.',
+        actionLabel: 'Analyze Game',
+        onAction: widget.onAnalyze,
+      ),
+      GameReportStatus.failed => _ReportMessage(
+        icon: Icons.error_outline_rounded,
+        title: 'Could not create report',
+        body: widget.state.message ?? 'Stockfish did not complete the report.',
+        actionLabel: 'Try Again',
+        onAction: widget.onAnalyze,
+      ),
+      GameReportStatus.completed => _completed(widget.state.report!),
+    };
+  }
+
+  Widget _completed(GameAnalysisReport report) {
+    final white = _header('White', 'White');
+    final black = _header('Black', 'Black');
+    final opening = [
+      _header('ECO', ''),
+      _header('Opening', ''),
+    ].where((part) => part.isNotEmpty).join(' · ');
+
+    return ListView(
+      physics: const DesktopScrollPhysics(),
+      padding: const EdgeInsets.only(right: 4),
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.analytics_outlined,
+              color: kPrimaryColor,
+              size: 17,
+            ),
+            const SizedBox(width: 7),
+            const Text(
+              'Game report',
+              style: TextStyle(
+                color: kWhiteColor,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const Spacer(),
+            FButton(
+              style: FButtonStyle.ghost(),
+              onPress: widget.onAnalyze,
+              prefix: const Icon(Icons.refresh_rounded, size: 14),
+              child: const Text('Analyze Again'),
+            ),
+          ],
+        ),
+        if (opening.isNotEmpty) ...[
+          const SizedBox(height: 5),
+          Text(
+            opening,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: kWhiteColor70, fontSize: 11),
+          ),
+        ],
+        const SizedBox(height: 10),
+        _ReportMetrics(white: white, black: black, report: report),
+        const SizedBox(height: 12),
+        _ReportEvaluationGraph(
+          report: report,
+          activePly: widget.activePly,
+          onJumpToPly: widget.onJumpToPly,
+        ),
+        const SizedBox(height: 12),
+        _classificationRecap(report, white, black),
+        const SizedBox(height: 4),
+      ],
+    );
+  }
+
+  Widget _classificationRecap(
+    GameAnalysisReport report,
+    String white,
+    String black,
+  ) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: kDividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Container(
+            color: kBlack3Color,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    white,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: kWhiteColor70, fontSize: 10),
+                  ),
+                ),
+                const SizedBox(width: 104),
+                Expanded(
+                  child: Text(
+                    black,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: kWhiteColor70, fontSize: 10),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          for (final classification in GameMoveClassification.values)
+            _ReportRecapRow(
+              classification: classification,
+              whiteCount: report.count(classification, white: true),
+              blackCount: report.count(classification, white: false),
+              onWhite:
+                  () => _jumpToClassification(report, classification, true),
+              onBlack:
+                  () => _jumpToClassification(report, classification, false),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _jumpToClassification(
+    GameAnalysisReport report,
+    GameMoveClassification classification,
+    bool white,
+  ) {
+    final jump = widget.onJumpToPly;
+    if (jump == null) return;
+    final matches = report.moves
+        .where(
+          (move) =>
+              move.isWhite == white && move.classification == classification,
+        )
+        .toList(growable: false);
+    if (matches.isEmpty) return;
+    final key = '${classification.name}:$white';
+    final current = _recapCycle[key] ?? 0;
+    jump(matches[current % matches.length].ply);
+    setState(() => _recapCycle[key] = current + 1);
+  }
+
+  String _header(String key, String fallback) {
+    final value = widget.headers[key]?.trim();
+    return value == null || value.isEmpty ? fallback : value;
+  }
+}
+
+class _ReportStart extends StatelessWidget {
+  const _ReportStart({required this.moveCount, required this.onAnalyze});
+
+  final int moveCount;
+  final Future<void> Function() onAnalyze;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ReportMessage(
+      icon: Icons.query_stats_rounded,
+      title: 'Analyze this game',
+      body:
+          'Stockfish will evaluate ${moveCount + 1} positions at depth 16 with '
+          'three candidate lines. Live move analysis pauses while it runs.',
+      actionLabel: 'Analyze Game',
+      onAction: onAnalyze,
+    );
+  }
+}
+
+class _ReportProgress extends StatelessWidget {
+  const _ReportProgress({required this.state, required this.onCancel});
+
+  final GameReportState state;
+  final Future<void> Function() onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final percentage = (state.progress * 100).clamp(0, 100).round();
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const Icon(Icons.memory_rounded, color: kPrimaryColor, size: 25),
+        const SizedBox(height: 10),
+        Text(
+          state.message ?? 'Analyzing game…',
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: kWhiteColor,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 9),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(999),
+          child: SizedBox(
+            height: 6,
+            child: LinearProgressIndicator(
+              value: state.progress,
+              color: kPrimaryColor,
+              backgroundColor: kBlack3Color,
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '$percentage% · ${state.completedPositions}/${state.totalPositions}',
+          style: const TextStyle(color: kWhiteColor70, fontSize: 11),
+        ),
+        const SizedBox(height: 10),
+        FButton(
+          style: FButtonStyle.outline(),
+          onPress: onCancel,
+          prefix: const Icon(Icons.stop_rounded, size: 14),
+          child: const Text('Cancel'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReportMessage extends StatelessWidget {
+  const _ReportMessage({
+    required this.icon,
+    required this.title,
+    required this.body,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final IconData icon;
+  final String title;
+  final String body;
+  final String? actionLabel;
+  final Future<void> Function()? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: kPrimaryColor, size: 26),
+            const SizedBox(height: 9),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: kWhiteColor,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              body,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 11,
+                height: 1.4,
+              ),
+            ),
+            if (actionLabel != null && onAction != null) ...[
+              const SizedBox(height: 11),
+              FButton(
+                onPress: onAction,
+                prefix: const Icon(Icons.analytics_outlined, size: 14),
+                child: Text(actionLabel!),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReportMetrics extends StatelessWidget {
+  const _ReportMetrics({
+    required this.white,
+    required this.black,
+    required this.report,
+  });
+
+  final String white;
+  final String black;
+  final GameAnalysisReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: kBlack3Color,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(child: _name(white, true)),
+              const SizedBox(width: 76),
+              Expanded(child: _name(black, false)),
+            ],
+          ),
+          const SizedBox(height: 7),
+          _metric(
+            report.whiteAccuracy.toStringAsFixed(1),
+            'Accuracy',
+            report.blackAccuracy.toStringAsFixed(1),
+            suffix: '%',
+          ),
+          if (report.whiteEstimatedRating != null &&
+              report.blackEstimatedRating != null) ...[
+            const SizedBox(height: 5),
+            _metric(
+              '${report.whiteEstimatedRating}',
+              'Game rating',
+              '${report.blackEstimatedRating}',
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _name(String value, bool white) => Text(
+    value,
+    maxLines: 1,
+    overflow: TextOverflow.ellipsis,
+    textAlign: TextAlign.center,
+    style: TextStyle(
+      color: white ? kWhiteColor : kWhiteColor70,
+      fontSize: 11,
+      fontWeight: FontWeight.w600,
+    ),
+  );
+
+  Widget _metric(
+    String left,
+    String label,
+    String right, {
+    String suffix = '',
+  }) {
+    const valueStyle = TextStyle(
+      color: kWhiteColor,
+      fontSize: 13,
+      fontWeight: FontWeight.w700,
+      fontFeatures: [FontFeature.tabularFigures()],
+    );
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            '$left$suffix',
+            textAlign: TextAlign.center,
+            style: valueStyle,
+          ),
+        ),
+        SizedBox(
+          width: 76,
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: kWhiteColor70, fontSize: 9),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            '$right$suffix',
+            textAlign: TextAlign.center,
+            style: valueStyle,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReportEvaluationGraph extends StatelessWidget {
+  const _ReportEvaluationGraph({
+    required this.report,
+    required this.activePly,
+    required this.onJumpToPly,
+  });
+
+  final GameAnalysisReport report;
+  final int activePly;
+  final ValueChanged<int>? onJumpToPly;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 92,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown:
+                onJumpToPly == null
+                    ? null
+                    : (details) {
+                      final maxPly = report.positions.length - 1;
+                      final ratio =
+                          constraints.maxWidth <= 0
+                              ? 0.0
+                              : details.localPosition.dx / constraints.maxWidth;
+                      onJumpToPly!((ratio * maxPly).round().clamp(0, maxPly));
+                    },
+            child: CustomPaint(
+              painter: _ReportGraphPainter(
+                positions: report.positions,
+                activePly: activePly,
+              ),
+              child: const SizedBox.expand(),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ReportGraphPainter extends CustomPainter {
+  const _ReportGraphPainter({required this.positions, required this.activePly});
+
+  final List<GameReportPosition> positions;
+  final int activePly;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(8)),
+      Paint()..color = kBlack3Color,
+    );
+    final mid = size.height / 2;
+    canvas.drawLine(
+      Offset(0, mid),
+      Offset(size.width, mid),
+      Paint()
+        ..color = kDividerColor
+        ..strokeWidth = 1,
+    );
+    if (positions.isEmpty) return;
+    final path = Path();
+    for (var i = 0; i < positions.length; i++) {
+      final x =
+          positions.length == 1 ? 0.0 : size.width * i / (positions.length - 1);
+      final win = gameReportWinPercentage(positions[i].bestLine);
+      final y = size.height - (win / 100 * size.height);
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    final fill =
+        Path.from(path)
+          ..lineTo(size.width, size.height)
+          ..lineTo(0, size.height)
+          ..close();
+    canvas.drawPath(fill, Paint()..color = kWhiteColor.withValues(alpha: 0.10));
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = kWhiteColor70
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+    final safePly = activePly.clamp(0, positions.length - 1);
+    final markerX =
+        positions.length == 1
+            ? 0.0
+            : size.width * safePly / (positions.length - 1);
+    canvas.drawLine(
+      Offset(markerX, 0),
+      Offset(markerX, size.height),
+      Paint()
+        ..color = kPrimaryColor.withValues(alpha: 0.75)
+        ..strokeWidth = 2,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _ReportGraphPainter oldDelegate) =>
+      oldDelegate.activePly != activePly || oldDelegate.positions != positions;
+}
+
+class _ReportRecapRow extends StatelessWidget {
+  const _ReportRecapRow({
+    required this.classification,
+    required this.whiteCount,
+    required this.blackCount,
+    required this.onWhite,
+    required this.onBlack,
+  });
+
+  final GameMoveClassification classification;
+  final int whiteCount;
+  final int blackCount;
+  final VoidCallback onWhite;
+  final VoidCallback onBlack;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _classificationColor(classification);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: kDividerColor)),
+      ),
+      child: Row(
+        children: [
+          Expanded(child: _count(whiteCount, onWhite)),
+          SizedBox(
+            width: 104,
+            child: Row(
+              children: [
+                _GameReportClassificationIcon(
+                  classification: classification,
+                  size: 20,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    classification.label,
+                    style: TextStyle(color: color, fontSize: 10),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(child: _count(blackCount, onBlack)),
+        ],
+      ),
+    );
+  }
+
+  Widget _count(int count, VoidCallback onTap) => ClickCursor(
+    enabled: count > 0,
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: count > 0 ? onTap : null,
+      child: Text(
+        '$count',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: count > 0 ? kWhiteColor : kLightGreyColor,
+          fontSize: 11,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
+    ),
+  );
+}
+
+class _GameReportClassificationIcon extends StatelessWidget {
+  const _GameReportClassificationIcon({
+    required this.classification,
+    required this.size,
+  });
+
+  final GameMoveClassification classification;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return DesktopTooltip(
+      message: classification.label,
+      child: Container(
+        width: size,
+        height: size,
+        padding: EdgeInsets.all(size * 0.23),
+        decoration: BoxDecoration(
+          color: _classificationColor(classification),
+          shape: BoxShape.circle,
+        ),
+        child: SvgPicture.asset(
+          _classificationIconAsset(classification),
+          fit: BoxFit.contain,
+        ),
+      ),
+    );
+  }
+}
+
+String _classificationIconAsset(GameMoveClassification classification) =>
+    switch (classification) {
+      GameMoveClassification.brilliant => 'assets/svgs/brilliant.svg',
+      GameMoveClassification.goodMove => 'assets/svgs/good_move.svg',
+      GameMoveClassification.bestMove => 'assets/svgs/best_move.svg',
+      GameMoveClassification.forced => 'assets/svgs/forced_move.svg',
+      GameMoveClassification.inaccuracy => 'assets/svgs/inaccuracy.svg',
+      GameMoveClassification.mistake => 'assets/svgs/mistake.svg',
+      GameMoveClassification.blunder => 'assets/svgs/blunder.svg',
+      GameMoveClassification.missedWin => 'assets/svgs/missed_win.svg',
+    };
+
+Color _classificationColor(GameMoveClassification classification) =>
+    switch (classification) {
+      GameMoveClassification.brilliant => const Color(0xFF177A68),
+      GameMoveClassification.goodMove => const Color(0xFF177A68),
+      GameMoveClassification.bestMove => const Color(0xFF28833A),
+      GameMoveClassification.forced => const Color(0xFF6B7A8A),
+      GameMoveClassification.inaccuracy => const Color(0xFFFABE46),
+      GameMoveClassification.mistake => const Color(0xFFC55A1E),
+      GameMoveClassification.blunder => const Color(0xFFC9342E),
+      GameMoveClassification.missedWin => const Color(0xFF8F1E1E),
+    };
 
 class _PvLine extends StatefulWidget {
   const _PvLine({
@@ -488,8 +1334,11 @@ class _PvLineState extends State<_PvLine> {
             value: clickable && _hovered ? 1.005 : 1.0,
             motion: DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: preview,
           ),
         ),
@@ -648,8 +1497,11 @@ class _EngineQuickToggleState extends ConsumerState<_EngineQuickToggle> {
               value: _pressed ? 0.97 : (_hovered ? 1.012 : 1.0),
               motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
               builder:
-                  (context, scale, child) =>
-                      Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                  (context, scale, child) => Transform.scale(
+                    scale: scale,
+                    filterQuality: FilterQuality.medium,
+                    child: child,
+                  ),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 110),
                 width: 28,
