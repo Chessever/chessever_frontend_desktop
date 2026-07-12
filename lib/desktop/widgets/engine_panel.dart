@@ -475,10 +475,11 @@ class _GameReportViewState extends State<GameReportView> {
     }
     return ListenableBuilder(
       listenable: controller,
-      builder: (context, _) => _ReportProgress(
-        state: controller.state,
-        onCancel: widget.onCancel,
-      ),
+      builder:
+          (context, _) => _ReportProgress(
+            state: controller.state,
+            onCancel: widget.onCancel,
+          ),
     );
   }
 
@@ -875,7 +876,7 @@ class _ReportMetrics extends StatelessWidget {
   }
 }
 
-class _ReportEvaluationGraph extends StatelessWidget {
+class _ReportEvaluationGraph extends StatefulWidget {
   const _ReportEvaluationGraph({
     required this.report,
     required this.activePly,
@@ -887,30 +888,69 @@ class _ReportEvaluationGraph extends StatelessWidget {
   final ValueChanged<int>? onJumpToPly;
 
   @override
+  State<_ReportEvaluationGraph> createState() => _ReportEvaluationGraphState();
+}
+
+class _ReportEvaluationGraphState extends State<_ReportEvaluationGraph> {
+  int? _hoveredPly;
+
+  int _plyAt(double dx, double width) {
+    final maxPly = widget.report.positions.length - 1;
+    if (maxPly <= 0 || width <= 0) return 0;
+    return ((dx / width).clamp(0.0, 1.0) * maxPly).round();
+  }
+
+  void _updateHover(double dx, double width) {
+    final ply = _plyAt(dx, width);
+    if (ply == _hoveredPly) return;
+    setState(() => _hoveredPly = ply);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return SizedBox(
       height: 92,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          return GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTapDown:
-                onJumpToPly == null
-                    ? null
-                    : (details) {
-                      final maxPly = report.positions.length - 1;
-                      final ratio =
-                          constraints.maxWidth <= 0
-                              ? 0.0
-                              : details.localPosition.dx / constraints.maxWidth;
-                      onJumpToPly!((ratio * maxPly).round().clamp(0, maxPly));
-                    },
-            child: CustomPaint(
-              painter: _ReportGraphPainter(
-                positions: report.positions,
-                activePly: activePly,
+          final hoveredPly = _hoveredPly;
+          return MouseRegion(
+            cursor:
+                widget.onJumpToPly == null
+                    ? SystemMouseCursors.basic
+                    : SystemMouseCursors.click,
+            onHover:
+                (event) =>
+                    _updateHover(event.localPosition.dx, constraints.maxWidth),
+            onExit: (_) => setState(() => _hoveredPly = null),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown:
+                  widget.onJumpToPly == null
+                      ? null
+                      : (details) => widget.onJumpToPly!(
+                        _plyAt(details.localPosition.dx, constraints.maxWidth),
+                      ),
+              child: Stack(
+                clipBehavior: Clip.hardEdge,
+                children: [
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: _ReportGraphPainter(
+                        positions: widget.report.positions,
+                        activePly: widget.activePly,
+                        hoveredPly: hoveredPly,
+                      ),
+                    ),
+                  ),
+                  if (hoveredPly != null && hoveredPly > 0)
+                    _ReportGraphHoverLabel(
+                      report: widget.report,
+                      ply: hoveredPly,
+                      graphWidth: constraints.maxWidth,
+                      graphHeight: constraints.maxHeight,
+                    ),
+                ],
               ),
-              child: const SizedBox.expand(),
             ),
           );
         },
@@ -920,10 +960,15 @@ class _ReportEvaluationGraph extends StatelessWidget {
 }
 
 class _ReportGraphPainter extends CustomPainter {
-  const _ReportGraphPainter({required this.positions, required this.activePly});
+  const _ReportGraphPainter({
+    required this.positions,
+    required this.activePly,
+    required this.hoveredPly,
+  });
 
   final List<GameReportPosition> positions;
   final int activePly;
+  final int? hoveredPly;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -978,11 +1023,116 @@ class _ReportGraphPainter extends CustomPainter {
         ..color = kPrimaryColor.withValues(alpha: 0.75)
         ..strokeWidth = 2,
     );
+    final hover = hoveredPly;
+    if (hover != null && hover >= 0 && hover < positions.length) {
+      final hoverX =
+          positions.length == 1
+              ? 0.0
+              : size.width * hover / (positions.length - 1);
+      final hoverY =
+          size.height -
+          (gameReportWinPercentage(positions[hover].bestLine) /
+              100 *
+              size.height);
+      canvas.drawLine(
+        Offset(hoverX, 0),
+        Offset(hoverX, size.height),
+        Paint()
+          ..color = kWhiteColor.withValues(alpha: 0.28)
+          ..strokeWidth = 1,
+      );
+      canvas.drawCircle(
+        Offset(hoverX, hoverY),
+        5,
+        Paint()..color = kBlackColor,
+      );
+      canvas.drawCircle(
+        Offset(hoverX, hoverY),
+        3,
+        Paint()..color = kWhiteColor,
+      );
+    }
   }
 
   @override
   bool shouldRepaint(covariant _ReportGraphPainter oldDelegate) =>
-      oldDelegate.activePly != activePly || oldDelegate.positions != positions;
+      oldDelegate.activePly != activePly ||
+      oldDelegate.hoveredPly != hoveredPly ||
+      oldDelegate.positions != positions;
+}
+
+class _ReportGraphHoverLabel extends StatelessWidget {
+  const _ReportGraphHoverLabel({
+    required this.report,
+    required this.ply,
+    required this.graphWidth,
+    required this.graphHeight,
+  });
+
+  final GameAnalysisReport report;
+  final int ply;
+  final double graphWidth;
+  final double graphHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    final move = report.moves[ply - 1];
+    final line = report.positions[ply].bestLine;
+    final win = gameReportWinPercentage(line);
+    final x = graphWidth * ply / (report.positions.length - 1);
+    final y = graphHeight - (win / 100 * graphHeight);
+    final width = (graphWidth - 8).clamp(1.0, 244.0);
+    const height = 25.0;
+    final left = (x - width / 2).clamp(4.0, graphWidth - width - 4);
+    final top = (y - height - 9).clamp(4.0, graphHeight - height - 4);
+    final moveNumber = (ply + 1) ~/ 2;
+    final movePrefix = move.isWhite ? '$moveNumber.' : '$moveNumber...';
+    final evaluation =
+        line.mate != null
+            ? 'M${line.mate}'
+            : ((line.centipawns ?? 0) / 100).toStringAsFixed(2);
+    final classification = move.classification?.label;
+    final description = [
+      '$movePrefix ${move.san}',
+      evaluation,
+      '${win.round()}% White',
+      if (classification != null) classification,
+    ].join(' ');
+
+    return Positioned(
+      left: left,
+      top: top,
+      width: width,
+      height: height,
+      child: IgnorePointer(
+        child: Container(
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF303034),
+            borderRadius: BorderRadius.circular(6),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x66000000),
+                blurRadius: 5,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Text(
+            description,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: kWhiteColor,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _ReportRecapRow extends StatelessWidget {
