@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' as io;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,8 @@ import 'package:motor/motor.dart';
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
+import 'package:chessever/desktop/services/local_library_game_updater.dart'
+    show pgnGameRanges;
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
@@ -55,6 +58,36 @@ final _gameRailTabProvider = StateProvider.autoDispose
     .family<_GameRailTab?, String>((ref, tabId) => null);
 
 bool _eventGameReplacementConfirmationOpen = false;
+
+@visibleForTesting
+Future<String?> hydrateDatabaseSummaryPgn(TournamentGameSummary game) async {
+  final inline = game.pgn?.trim() ?? '';
+  if (pgnHasMoves(inline)) return inline;
+
+  final sourcePath = game.localPgnSourcePath?.trim() ?? '';
+  final sourceIndex = game.localPgnSourceIndex;
+  final sourceFileGameCount = game.localPgnSourceFileGameCount;
+  if (sourcePath.isEmpty ||
+      sourceIndex == null ||
+      sourceIndex < 0 ||
+      sourceFileGameCount == null ||
+      sourceFileGameCount <= 0) {
+    return null;
+  }
+
+  try {
+    final text = await io.File(sourcePath).readAsString();
+    final ranges = pgnGameRanges(text);
+    if (ranges.length != sourceFileGameCount || sourceIndex >= ranges.length) {
+      return null;
+    }
+    final range = ranges[sourceIndex];
+    final hydrated = text.substring(range.start, range.end).trim();
+    return pgnHasMoves(hydrated) ? hydrated : null;
+  } on Object {
+    return null;
+  }
+}
 
 @visibleForTesting
 BoardTabLibrarySaveOrigin? librarySaveOriginFromDatabaseSummary(
@@ -3112,7 +3145,21 @@ Future<void> _openEventGame({
   final openEventGames = _replaceEventSummary(eventGames, openGame);
 
   if (kind == _GameListKind.database) {
-    final pgn = openGame.pgn?.trim() ?? '';
+    final inlinePgn = openGame.pgn?.trim() ?? '';
+    final hydratedPgn = await hydrateDatabaseSummaryPgn(openGame);
+    final pgn = hydratedPgn ?? inlinePgn;
+    final isLocalDatabaseGame =
+        openGame.localPgnSourcePath?.trim().isNotEmpty == true;
+    if (isLocalDatabaseGame && !pgnHasMoves(pgn)) {
+      if (context != null && context.mounted) {
+        showDesktopToast(
+          context,
+          'Could not load local PGN for this game.',
+          error: true,
+        );
+      }
+      return;
+    }
     final hasPlayableLocalPgn = pgnHasMoves(pgn);
     final databaseUpdateOrigin = librarySaveOriginFromDatabaseSummary(openGame);
     final inheritedUpdateOrigin =
@@ -3143,6 +3190,8 @@ Future<void> _openEventGame({
       databaseGames: openEventGames,
       databaseGamesPagination: activeArgs?.databaseGamesPagination,
       databaseGamesContinuation: activeArgs?.databaseGamesContinuation,
+      localOpeningTreeIndex: activeArgs?.localOpeningTreeIndex,
+      localOpeningTreeTitle: activeArgs?.localOpeningTreeTitle ?? '',
       gameListSelectedId: openGame.id,
       librarySaveOrigin: databaseUpdateOrigin ?? inheritedUpdateOrigin,
     );

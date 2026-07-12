@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,6 +21,50 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:dio/dio.dart';
 
 void main() {
+  test('local position rows preserve PGN source for rail navigation', () {
+    final summary = gamebasePositionGameSummaryFromRow({
+      'id': 'local_17',
+      'white': 'White',
+      'black': 'Black',
+      'sourcePath': '/tmp/combined.pgn',
+      'indexInFile': 17,
+      'fileGameCount': 48,
+    }, fallbackFen: 'start-fen');
+
+    expect(summary.localPgnSourcePath, '/tmp/combined.pgn');
+    expect(summary.localPgnSourceIndex, 17);
+    expect(summary.localPgnSourceFileGameCount, 48);
+  });
+
+  test('local PGN database rail navigation hydrates the selected game', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'chessever_local_rail_',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/combined.pgn');
+    await file.writeAsString(
+      '[Event "First"]\n[White "One"]\n[Black "Two"]\n\n1. e4 e5 *\n\n'
+      '[Event "Second"]\n[White "Three"]\n[Black "Four"]\n\n1. d4 d5 2. c4 *\n',
+    );
+
+    final hydrated = await hydrateDatabaseSummaryPgn(
+      TournamentGameSummary(
+        id: 'local_2',
+        name: 'Three vs Four',
+        whitePlayer: 'Three',
+        blackPlayer: 'Four',
+        hasPgn: false,
+        localPgnSourcePath: file.path,
+        localPgnSourceIndex: 1,
+        localPgnSourceFileGameCount: 2,
+      ),
+    );
+
+    expect(hydrated, contains('[Event "Second"]'));
+    expect(hydrated, contains('1. d4 d5 2. c4 *'));
+    expect(hydrated, isNot(contains('[Event "First"]')));
+  });
+
   test('gamebase result parsing accepts unicode dashes', () {
     expect(gamebaseStatusFromResult('0–1'), GameStatus.blackWins);
     expect(gamebaseStatusFromResult('1—0'), GameStatus.whiteWins);

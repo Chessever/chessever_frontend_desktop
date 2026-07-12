@@ -354,6 +354,12 @@ TournamentGameSummary gamebasePositionGameSummaryFromRow(
     ),
     startsAt: date,
     hasStarted: true,
+    localPgnSourcePath:
+        (row['sourcePath']?.toString().trim().isNotEmpty == true)
+            ? row['sourcePath'].toString().trim()
+            : null,
+    localPgnSourceIndex: _readNullableZeroBasedInt(row['indexInFile']),
+    localPgnSourceFileGameCount: _readNullableInt(row['fileGameCount']),
   );
 }
 
@@ -390,6 +396,16 @@ int _readInt(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.toInt();
   return int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+int? _readNullableZeroBasedInt(dynamic value) {
+  if (value is int) return value >= 0 ? value : null;
+  if (value is num) {
+    final parsed = value.toInt();
+    return parsed >= 0 ? parsed : null;
+  }
+  final parsed = int.tryParse(value?.toString() ?? '');
+  return parsed != null && parsed >= 0 ? parsed : null;
 }
 
 int? _readNullableInt(dynamic value) {
