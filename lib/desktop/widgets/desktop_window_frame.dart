@@ -6,7 +6,6 @@ import 'package:window_manager/window_manager.dart';
 
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
-import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 /// Width reserved at the right edge of title-bar surfaces for the three
@@ -191,13 +190,11 @@ class _DesktopWindowControls extends StatelessWidget {
       child: Row(
         children: [
           _DesktopCaptionButton(
-            tooltip: 'Minimize',
             semanticLabel: 'Minimize window',
             icon: const DesktopCaptionGlyph(DesktopCaptionGlyphType.minimize),
             onTap: onMinimize,
           ),
           _DesktopCaptionButton(
-            tooltip: isMaximized ? 'Restore' : 'Maximize',
             semanticLabel: isMaximized ? 'Restore window' : 'Maximize window',
             icon: DesktopCaptionGlyph(
               isMaximized
@@ -207,7 +204,6 @@ class _DesktopWindowControls extends StatelessWidget {
             onTap: onToggleMaximized,
           ),
           _DesktopCaptionButton(
-            tooltip: 'Close',
             semanticLabel: 'Close window',
             icon: const DesktopCaptionGlyph(DesktopCaptionGlyphType.close),
             onTap: onClose,
@@ -221,14 +217,12 @@ class _DesktopWindowControls extends StatelessWidget {
 
 class _DesktopCaptionButton extends StatefulWidget {
   const _DesktopCaptionButton({
-    required this.tooltip,
     required this.semanticLabel,
     required this.icon,
     required this.onTap,
     this.destructive = false,
   });
 
-  final String tooltip;
   final String semanticLabel;
   final Widget icon;
   final VoidCallback onTap;
@@ -279,35 +273,32 @@ class _DesktopCaptionButtonState extends State<_DesktopCaptionButton> {
             : (_hovered ? kWhiteColor : kWhiteColor70);
 
     return Expanded(
-      child: DesktopTooltip(
-        message: widget.tooltip,
-        child: Semantics(
-          button: true,
-          label: widget.semanticLabel,
-          child: ClickCursor(
-            child: MouseRegion(
-              onEnter: (_) => setState(() => _hovered = true),
-              onExit:
-                  (_) => setState(() {
-                    _hovered = false;
-                    _pressed = false;
-                  }),
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: widget.onTap,
-                onTapDown: (_) => setState(() => _pressed = true),
-                onTapUp: (_) => setState(() => _pressed = false),
-                onTapCancel: () => setState(() => _pressed = false),
-                // Not AnimatedContainer: the hover/press swap is instant so no
-                // in-flight colour tween can be frozen mid-blend by a window
-                // occlusion. Native Windows caption buttons snap instantly too.
-                child: Container(
-                  color: background,
-                  alignment: Alignment.center,
-                  child: IconTheme(
-                    data: IconThemeData(color: foreground, size: 14),
-                    child: widget.icon,
-                  ),
+      child: Semantics(
+        button: true,
+        label: widget.semanticLabel,
+        child: ClickCursor(
+          child: MouseRegion(
+            onEnter: (_) => setState(() => _hovered = true),
+            onExit:
+                (_) => setState(() {
+                  _hovered = false;
+                  _pressed = false;
+                }),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onTap,
+              onTapDown: (_) => setState(() => _pressed = true),
+              onTapUp: (_) => setState(() => _pressed = false),
+              onTapCancel: () => setState(() => _pressed = false),
+              // Not AnimatedContainer: the hover/press swap is instant so no
+              // in-flight colour tween can be frozen mid-blend by a window
+              // occlusion. Native Windows caption buttons snap instantly too.
+              child: Container(
+                color: background,
+                alignment: Alignment.center,
+                child: IconTheme(
+                  data: IconThemeData(color: foreground, size: 14),
+                  child: widget.icon,
                 ),
               ),
             ),
