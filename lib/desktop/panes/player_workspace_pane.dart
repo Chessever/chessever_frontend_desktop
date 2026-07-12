@@ -5013,8 +5013,8 @@ class _ConnectAccountsDialogState extends State<_ConnectAccountsDialog> {
         ),
         const SizedBox(width: 8),
         DesktopDialogButton(
-          label: 'Add',
-          icon: Icons.add_rounded,
+          label: 'Search',
+          icon: Icons.search_rounded,
           onPress: canAdd ? _add : null,
         ),
       ],

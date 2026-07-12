@@ -3894,6 +3894,38 @@ void main() {
       expect(stats.drawCount, 1);
     },
   );
+
+  test(
+    'tree_moves.sample_game_id foreign key is indexed so deleting games does '
+    'not full-scan the opening tree',
+    () async {
+      // Deleting a local_chess_games row fires the
+      // `tree_moves.sample_game_id -> games.id ON DELETE SET NULL` action.
+      // Without a covering index SQLite scans every tree move per deleted game,
+      // which took >5s per 512-row purge batch on a large tree and froze the UI
+      // isolate. The index must exist...
+      final indexes = await db.select(
+        "SELECT name FROM sqlite_master "
+        "WHERE type = 'index' AND tbl_name = 'local_chess_tree_moves'",
+      );
+      expect(
+        indexes.map((row) => row['name']?.toString()),
+        contains('idx_local_chess_tree_moves_sample_game'),
+      );
+
+      // ...and SQLite must actually use it for the sample_game_id lookup rather
+      // than scanning the whole table.
+      final plan = await db.select(
+        'EXPLAIN QUERY PLAN '
+        'SELECT 1 FROM local_chess_tree_moves WHERE sample_game_id = ?',
+        <Object?>['any-game-id'],
+      );
+      final detail =
+          plan.map((row) => row['detail']?.toString() ?? '').join(' ');
+      expect(detail, contains('idx_local_chess_tree_moves_sample_game'));
+      expect(detail.toUpperCase(), isNot(contains('SCAN LOCAL_CHESS_TREE_MOVES')));
+    },
+  );
 }
 
 Future<void> _createPreTimeControlResqliteCache(

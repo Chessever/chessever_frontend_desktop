@@ -1671,6 +1671,20 @@ const List<String> _localChessSchemaStatements = <String>[
   'CREATE INDEX IF NOT EXISTS idx_local_chess_games_eco ON $localChessGamesTable(database_id, eco)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_tree_nodes_fen ON $localChessTreeNodesTable(database_id, fen_key)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_tree_moves_total ON $localChessTreeMovesTable(database_id, node_id, total DESC)',
+  // Covers the `tree_moves.sample_game_id -> games.id ON DELETE SET NULL`
+  // foreign key. Without it, deleting each `local_chess_games` row forces a full
+  // scan of `local_chess_tree_moves` to null out referencing rows, so a
+  // player-deletion purge of 512 games could take >5s on a large opening tree
+  // and froze the UI isolate (resqlite runs the delete synchronously). See the
+  // already-present `idx_local_chess_position_games_game` for the CASCADE twin.
+  'CREATE INDEX IF NOT EXISTS idx_local_chess_tree_moves_sample_game ON $localChessTreeMovesTable(sample_game_id)',
+  // Covers the `tree_moves(database_id, child_node_id) -> tree_nodes ON DELETE
+  // CASCADE` foreign key. Same class of bug as the sample_game index above:
+  // deleting a tree node otherwise full-scans tree_moves for referencing child
+  // edges, so the tree-node step of the same player-deletion purge would stall
+  // the UI isolate on a large cache. The (database_id, node_id) parent edge is
+  // already covered by the tree_moves primary key prefix.
+  'CREATE INDEX IF NOT EXISTS idx_local_chess_tree_moves_child_node ON $localChessTreeMovesTable(database_id, child_node_id)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_position_games_fen ON $localChessPositionGamesTable(database_id, fen_key)',
   'CREATE INDEX IF NOT EXISTS idx_local_chess_position_games_game ON $localChessPositionGamesTable(game_id)',
 ];
