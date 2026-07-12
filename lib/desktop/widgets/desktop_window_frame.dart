@@ -193,19 +193,23 @@ class _DesktopWindowControls extends StatelessWidget {
           _DesktopCaptionButton(
             tooltip: 'Minimize',
             semanticLabel: 'Minimize window',
-            icon: const _MinimizeGlyph(),
+            icon: const DesktopCaptionGlyph(DesktopCaptionGlyphType.minimize),
             onTap: onMinimize,
           ),
           _DesktopCaptionButton(
             tooltip: isMaximized ? 'Restore' : 'Maximize',
             semanticLabel: isMaximized ? 'Restore window' : 'Maximize window',
-            icon: isMaximized ? const _RestoreGlyph() : const _MaximizeGlyph(),
+            icon: DesktopCaptionGlyph(
+              isMaximized
+                  ? DesktopCaptionGlyphType.restore
+                  : DesktopCaptionGlyphType.maximize,
+            ),
             onTap: onToggleMaximized,
           ),
           _DesktopCaptionButton(
             tooltip: 'Close',
             semanticLabel: 'Close window',
-            icon: const _CloseGlyph(),
+            icon: const DesktopCaptionGlyph(DesktopCaptionGlyphType.close),
             onTap: onClose,
             destructive: true,
           ),
@@ -314,123 +318,29 @@ class _DesktopCaptionButtonState extends State<_DesktopCaptionButton> {
   }
 }
 
-class _MinimizeGlyph extends StatelessWidget {
-  const _MinimizeGlyph();
+/// Glyphs used by the custom Windows/Linux caption controls.
+enum DesktopCaptionGlyphType { minimize, maximize, restore, close }
+
+/// A caption glyph backed by Flutter's bundled Material icon font.
+///
+/// Do not replace these with thin, fractionally positioned `CustomPaint`
+/// strokes. Those strokes can disappear under Windows ANGLE, particularly at
+/// non-integer display scale factors. The font glyphs are filled paths and
+/// remain visible across Windows DPI and graphics-driver combinations while
+/// the surrounding controls retain the app's custom title-bar styling.
+class DesktopCaptionGlyph extends StatelessWidget {
+  const DesktopCaptionGlyph(this.type, {super.key});
+
+  final DesktopCaptionGlyphType type;
 
   @override
   Widget build(BuildContext context) {
-    return CustomPaint(
-      size: const Size(12, 10),
-      painter: _CaptionGlyphPainter(color: IconTheme.of(context).color!),
-    );
+    final (IconData icon, double size) = switch (type) {
+      DesktopCaptionGlyphType.minimize => (Icons.remove_rounded, 16),
+      DesktopCaptionGlyphType.maximize => (Icons.crop_square_rounded, 16),
+      DesktopCaptionGlyphType.restore => (Icons.filter_none_rounded, 15),
+      DesktopCaptionGlyphType.close => (Icons.close_rounded, 17),
+    };
+    return Icon(icon, size: size);
   }
-}
-
-class _MaximizeGlyph extends StatelessWidget {
-  const _MaximizeGlyph();
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      size: const Size(12, 12),
-      painter: _CaptionGlyphPainter(
-        color: IconTheme.of(context).color!,
-        maximize: true,
-      ),
-    );
-  }
-}
-
-class _RestoreGlyph extends StatelessWidget {
-  const _RestoreGlyph();
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      size: const Size(13, 13),
-      painter: _CaptionGlyphPainter(
-        color: IconTheme.of(context).color!,
-        restore: true,
-      ),
-    );
-  }
-}
-
-class _CloseGlyph extends StatelessWidget {
-  const _CloseGlyph();
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      size: const Size(12, 12),
-      painter: _CaptionGlyphPainter(
-        color: IconTheme.of(context).color!,
-        close: true,
-      ),
-    );
-  }
-}
-
-class _CaptionGlyphPainter extends CustomPainter {
-  _CaptionGlyphPainter({
-    required this.color,
-    this.maximize = false,
-    this.restore = false,
-    this.close = false,
-  });
-
-  final Color color;
-  final bool maximize;
-  final bool restore;
-  final bool close;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint =
-        Paint()
-          ..color = color
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.15
-          ..isAntiAlias = true
-          // Round caps/joins keep the thin diagonal close-glyph strokes crisp
-          // under the Windows ANGLE rasteriser instead of washing out at the
-          // fractional-pixel endpoints.
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round;
-    if (close) {
-      canvas.drawLine(Offset.zero, Offset(size.width, size.height), paint);
-      canvas.drawLine(Offset(size.width, 0), Offset(0, size.height), paint);
-      return;
-    }
-    if (restore) {
-      canvas.drawRect(
-        Rect.fromLTWH(3.5, 0.5, size.width - 4, size.height - 4),
-        paint,
-      );
-      canvas.drawRect(
-        Rect.fromLTWH(0.5, 3.5, size.width - 4, size.height - 4),
-        paint,
-      );
-      return;
-    }
-    if (maximize) {
-      canvas.drawRect(
-        Rect.fromLTWH(0.5, 0.5, size.width - 1, size.height - 1),
-        paint,
-      );
-      return;
-    }
-    canvas.drawLine(
-      Offset(0, size.height - 1),
-      Offset(size.width, size.height - 1),
-      paint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _CaptionGlyphPainter oldDelegate) =>
-      color != oldDelegate.color ||
-      maximize != oldDelegate.maximize ||
-      restore != oldDelegate.restore ||
-      close != oldDelegate.close;
 }
