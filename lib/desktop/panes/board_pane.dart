@@ -433,7 +433,14 @@ class _BoardPaneContent extends HookConsumerWidget {
     useEffect(() => visibleNotationMoveOrderController.dispose, const []);
     final rightRailAnalysisKey = useMemoized(GlobalKey.new, const []);
     final reportTabSelected = useState(false);
+    final reportRunning = useState(false);
     final gameReport = useState<GameAnalysisReport?>(null);
+    final gameReportVisible = allowGameAnalysis && reportTabSelected.value;
+    final runLiveBoardAnalysis = shouldRunLiveBoardAnalysis(
+      isForeground: isForegroundTab,
+      reportVisible: gameReportVisible,
+      reportRunning: reportRunning.value,
+    );
     // Auto analysis may finish before the user asks to see it. Keep its
     // classifications private until Game Analysis has been opened at least
     // once for this game, then retain that choice for the tab session.
@@ -3602,7 +3609,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           onBoardSizeChangeEnd: () {
                             persistBoardSizePreference();
                           },
-                          suppressEngineAnalysis: false,
+                          suppressEngineAnalysis: !runLiveBoardAnalysis,
                         ),
                       ),
                     ),
@@ -3745,8 +3752,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                     nextGameShortcutLabel: shortcutLabelFor(
                       BoardActionKey.nextGame,
                     ),
-                    reportSelected:
-                        allowGameAnalysis && reportTabSelected.value,
+                    reportSelected: gameReportVisible,
                     reportEnabled: true,
                     showReport: allowGameAnalysis,
                     onToggleReport: () {
@@ -3790,9 +3796,15 @@ class _BoardPaneContent extends HookConsumerWidget {
                       onReportChanged: (report) {
                         gameReport.value = report;
                       },
-                      reportVisible:
-                          allowGameAnalysis && reportTabSelected.value,
-                      autoAnalysisAllowed: allowGameAnalysis,
+                      onReportRunningChanged: (running) {
+                        if (!context.mounted) return;
+                        if (reportRunning.value != running) {
+                          reportRunning.value = running;
+                        }
+                      },
+                      reportVisible: gameReportVisible,
+                      isForegroundTab: isForegroundTab,
+                      autoAnalysisAllowed: allowGameAnalysis && isForegroundTab,
                     ),
                   ),
                 ),

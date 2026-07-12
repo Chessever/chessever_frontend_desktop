@@ -70,6 +70,41 @@ void main() {
   });
 
   group('report progress', () {
+    test('visible running reports borrow the foreground board engine', () {
+      expect(
+        shouldRunLiveBoardAnalysis(
+          isForeground: true,
+          reportVisible: true,
+          reportRunning: true,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldRunLiveBoardAnalysis(
+          isForeground: true,
+          reportVisible: false,
+          reportRunning: true,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldRunLiveBoardAnalysis(
+          isForeground: true,
+          reportVisible: true,
+          reportRunning: false,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldRunLiveBoardAnalysis(
+          isForeground: false,
+          reportVisible: false,
+          reportRunning: false,
+        ),
+        isFalse,
+      );
+    });
+
     // Fake evaluator that mirrors Stockfish: it streams many info ticks with a
     // growing cumulative node count (several per depth) before returning, so
     // the controller reports sub-position progress the way it does live.

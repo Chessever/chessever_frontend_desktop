@@ -9,6 +9,16 @@ import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 
 enum GameReportStatus { idle, running, completed, cancelled, failed }
 
+/// The desktop app owns one Stockfish process, so visible whole-game reports
+/// and the live board search cannot make progress at the same time. Hidden
+/// automatic reports stay in the background; a report only borrows the engine
+/// when the user is looking at its running progress UI.
+bool shouldRunLiveBoardAnalysis({
+  required bool isForeground,
+  required bool reportVisible,
+  required bool reportRunning,
+}) => isForeground && !(reportVisible && reportRunning);
+
 enum GameMoveClassification {
   brilliant('Brilliant'),
   goodMove('Good Move'),

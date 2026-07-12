@@ -46,7 +46,9 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.onReportRunningChanged,
     this.onReportChanged,
     this.reportVisible = false,
+    this.isForegroundTab = true,
     this.autoAnalysisAllowed = true,
+    this.reportController,
   });
 
   final String fen;
@@ -75,7 +77,18 @@ class EnginePanel extends ConsumerStatefulWidget {
   /// the explorer button in the notation panel's segment bar.
   final bool reportVisible;
 
+  /// Only the foreground board tab may own the live Stockfish search. Board
+  /// tabs stay mounted in the desktop tab stack, so this prevents hidden tabs
+  /// from occupying the single engine queue.
+  final bool isForegroundTab;
+
   final bool autoAnalysisAllowed;
+
+  /// Test seam for driving report lifecycle transitions without spawning a
+  /// real Stockfish process. The controller must remain stable for this
+  /// widget's lifetime and is owned by the caller when supplied.
+  @visibleForTesting
+  final GameAnalysisReportController? reportController;
 
   @override
   ConsumerState<EnginePanel> createState() => _EnginePanelState();
@@ -83,6 +96,7 @@ class EnginePanel extends ConsumerStatefulWidget {
 
 class _EnginePanelState extends ConsumerState<EnginePanel> {
   late final GameAnalysisReportController _reportController;
+  late final bool _ownsReportController;
   bool _lastReportedRunning = false;
   GameAnalysisReport? _lastPublishedReport;
   String? _autoStartedFingerprint;
@@ -91,7 +105,10 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
   @override
   void initState() {
     super.initState();
-    _reportController = GameAnalysisReportController()..addListener(_onReport);
+    _ownsReportController = widget.reportController == null;
+    _reportController =
+        widget.reportController ?? GameAnalysisReportController();
+    _reportController.addListener(_onReport);
     _gameFingerprint = _fingerprint(widget.game);
   }
 
@@ -180,9 +197,14 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
 
   @override
   void dispose() {
-    _reportController
-      ..removeListener(_onReport)
-      ..dispose();
+    if (_lastReportedRunning) {
+      final callback = widget.onReportRunningChanged;
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => callback?.call(false),
+      );
+    }
+    _reportController.removeListener(_onReport);
+    if (_ownsReportController) _reportController.dispose();
     super.dispose();
   }
 
@@ -195,12 +217,22 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
         settings?.showEngineAnalysis ??
         const EngineSettings().showEngineAnalysis;
     final reportOn = widget.reportVisible;
+    final reportState = _reportController.state;
+    final liveAnalysisPausedForReport = reportOn && reportState.isRunning;
+    final runLiveBoardAnalysis = shouldRunLiveBoardAnalysis(
+      isForeground: widget.isForegroundTab,
+      reportVisible: reportOn,
+      reportRunning: reportState.isRunning,
+    );
 
     // The engine readout (live dot / score / depth) only means anything once
     // Stockfish can search this position. When it can't we still keep the
     // header on screen so both independent toggles stay reachable.
     final engineReady = StockfishSingleton().isEngineHealthy;
-    final engineActive = engineOn && (engineReady || widget.fen.isNotEmpty);
+    final engineActive =
+        engineOn &&
+        runLiveBoardAnalysis &&
+        (engineReady || widget.fen.isNotEmpty);
     final evalState =
         engineActive ? ref.watch(boardEvalProvider(widget.fen)) : null;
 
@@ -218,7 +250,9 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
         Expanded(
           flex: reportOn ? 2 : 1,
           child:
-              engineActive
+              liveAnalysisPausedForReport
+                  ? const _EnginePausedForReport()
+                  : engineActive
                   ? _buildEngineLines(evalState!)
                   : const _EngineNotReady(),
         ),
@@ -235,7 +269,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
         Expanded(
           flex: engineOn ? 3 : 1,
           child: GameReportView(
-            state: _reportController.state,
+            state: reportState,
             progressController: _reportController,
             game: widget.game,
             headers: widget.headers,
@@ -1602,6 +1636,23 @@ class _EngineNotReady extends StatelessWidget {
             style: TextStyle(color: kWhiteColor70, fontSize: 12, height: 1.4),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _EnginePausedForReport extends StatelessWidget {
+  const _EnginePausedForReport();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: kBlack2Color,
+      padding: const EdgeInsets.all(16),
+      alignment: Alignment.topLeft,
+      child: const Text(
+        'Live analysis paused while the game report runs.',
+        style: TextStyle(color: kWhiteColor70, fontSize: 12, height: 1.4),
       ),
     );
   }
