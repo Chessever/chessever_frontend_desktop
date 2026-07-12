@@ -106,6 +106,10 @@ class StockfishUnavailableException implements Exception {
   String toString() => message;
 }
 
+class _StockfishInitializationSuperseded implements Exception {
+  const _StockfishInitializationSuperseded();
+}
+
 @visibleForTesting
 bool shouldUseStockfishEvaluationCache({
   required bool allowCache,
@@ -140,6 +144,8 @@ class StockfishSingleton {
   int _queueGeneration = 0; // Incremented on cancelAll to signal stale loops
   bool _isInitializing =
       false; // Lock to prevent concurrent engine initialization
+  int _engineLifecycleGeneration = 0;
+  Completer<void>? _engineRecoveryCompleter;
   bool _previousJobCompleted =
       true; // Track if last job ended via bestmove (engine idle)
   Completer<void>? _initCompleter; // Completer for waiting on initialization
@@ -154,6 +160,20 @@ class StockfishSingleton {
   DateTime? _lastDisposeTime; // Track when engine was last disposed
   static const Duration _androidMinDisposalWait = Duration(milliseconds: 800);
   static const Duration _iosMinDisposalWait = Duration(milliseconds: 100);
+
+  @visibleForTesting
+  Future<void> ensureEngineReadyForTesting() => _ensureEngineReady();
+
+  @visibleForTesting
+  Future<void Function()> acquireInstanceLockForTesting() =>
+      _acquireInstanceLock();
+
+  @visibleForTesting
+  bool get instanceLockHeldForTesting =>
+      _instanceLock != null && !_instanceLock!.isCompleted;
+
+  @visibleForTesting
+  int get engineLifecycleGenerationForTesting => _engineLifecycleGeneration;
 
   /// Get the minimum disposal wait time based on platform
   Duration get _minDisposalWait {
@@ -1151,15 +1171,18 @@ class StockfishSingleton {
     }
 
     // Acquire the lock
-    _instanceLock = Completer<void>();
+    final acquiredLock = Completer<void>();
+    _instanceLock = acquiredLock;
     debugPrint('🔒 STOCKFISH: Instance lock acquired');
 
     return () {
-      if (_instanceLock != null && !_instanceLock!.isCompleted) {
-        _instanceLock!.complete();
+      if (!acquiredLock.isCompleted) {
+        acquiredLock.complete();
         debugPrint('🔓 STOCKFISH: Instance lock released');
       }
-      _instanceLock = null;
+      if (identical(_instanceLock, acquiredLock)) {
+        _instanceLock = null;
+      }
     };
   }
 
@@ -1289,6 +1312,9 @@ class StockfishSingleton {
   }
 
   Future<void> _ensureEngineReady() async {
+    final recovery = _engineRecoveryCompleter;
+    if (recovery != null) await recovery.future;
+    final lifecycleGeneration = _engineLifecycleGeneration;
     if (_isLocalEngineUnavailable) {
       throw StockfishUnavailableException(
         'Local Stockfish engine is unavailable',
@@ -1300,6 +1326,7 @@ class StockfishSingleton {
       debugPrint('🔒 STOCKFISH: Waiting for ongoing initialization...');
       try {
         await _initCompleter!.future.timeout(const Duration(seconds: 10));
+        _throwIfEngineInitializationWasSuperseded(lifecycleGeneration);
         if (_engine != null && _engine!.state.value == StockfishState.ready) {
           return;
         }
@@ -1325,6 +1352,7 @@ class StockfishSingleton {
     final maxAttempts = _isAndroid ? 7 : 3;
 
     try {
+      _throwIfEngineInitializationWasSuperseded(lifecycleGeneration);
       while (true) {
         if (_isLocalEngineUnavailable) {
           throw StockfishUnavailableException(
@@ -1347,7 +1375,12 @@ class StockfishSingleton {
             }
 
             // Create new engine instance with proper timing
-            _engine = await _createEngineInstance();
+            final engine = await _createEngineInstance();
+            if (lifecycleGeneration != _engineLifecycleGeneration) {
+              engine.dispose();
+              throw const _StockfishInitializationSuperseded();
+            }
+            _engine = engine;
             if (Stockfish.desktopEngineUnavailable) {
               throw StockfishUnavailableException(
                 'No Stockfish binary found on this machine',
@@ -1356,9 +1389,11 @@ class StockfishSingleton {
           }
 
           await _waitUntilReady();
+          _throwIfEngineInitializationWasSuperseded(lifecycleGeneration);
           _initCompleter?.complete();
           return;
         } catch (e, st) {
+          if (e is _StockfishInitializationSuperseded) rethrow;
           debugPrint(
             '⚠️ STOCKFISH INIT: Engine not ready (attempt $attempt/$maxAttempts) – $e',
           );
@@ -1418,8 +1453,16 @@ class StockfishSingleton {
         }
       }
     } finally {
-      _isInitializing = false;
+      if (lifecycleGeneration == _engineLifecycleGeneration) {
+        _isInitializing = false;
+      }
       releaseLock();
+    }
+  }
+
+  void _throwIfEngineInitializationWasSuperseded(int generation) {
+    if (generation != _engineLifecycleGeneration) {
+      throw const _StockfishInitializationSuperseded();
     }
   }
 
@@ -1674,40 +1717,56 @@ class StockfishSingleton {
   /// This will cancel all evaluations, dispose the current engine, and reinitialize.
   /// Use this when the engine is not responding and needs a hard reset.
   Future<void> forceRecovery() async {
+    final ongoingRecovery = _engineRecoveryCompleter;
+    if (ongoingRecovery != null) {
+      await ongoingRecovery.future;
+      return;
+    }
+    final recovery = Completer<void>();
+    _engineRecoveryCompleter = recovery;
     debugPrint('🔧 STOCKFISH: Force recovery initiated...');
-    _localEngineUnavailable = false;
-    Stockfish.resetDesktopEngineAvailabilityForRetry();
+    try {
+      _engineLifecycleGeneration += 1;
+      _localEngineUnavailable = false;
+      Stockfish.resetDesktopEngineAvailabilityForRetry();
 
-    // Cancel everything first
-    await cancelAllEvaluations();
+      // Cancel everything first
+      await cancelAllEvaluations();
 
-    // Force dispose with proper timing
-    if (_engine != null) {
-      await _safeDisposeEngine();
+      // Force dispose with proper timing
+      if (_engine != null) {
+        await _safeDisposeEngine();
+      }
+
+      // Clear initialization state
+      _isInitializing = false;
+      if (_initCompleter != null && !_initCompleter!.isCompleted) {
+        _initCompleter!.completeError(StateError('Force recovery'));
+        _initCompleter!.future.ignore();
+      }
+      _initCompleter = null;
+
+      // Release instance lock if held
+      if (_instanceLock != null && !_instanceLock!.isCompleted) {
+        _instanceLock!.complete();
+      }
+      _instanceLock = null;
+
+      // Extra wait time on Android to ensure native cleanup
+      if (_isAndroid) {
+        debugPrint('⏳ STOCKFISH: Extra recovery wait for Android...');
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+
+      debugPrint(
+        '✅ STOCKFISH: Force recovery complete, engine will reinitialize on next request',
+      );
+    } finally {
+      if (!recovery.isCompleted) recovery.complete();
+      if (identical(_engineRecoveryCompleter, recovery)) {
+        _engineRecoveryCompleter = null;
+      }
     }
-
-    // Clear initialization state
-    _isInitializing = false;
-    if (_initCompleter != null && !_initCompleter!.isCompleted) {
-      _initCompleter!.completeError(StateError('Force recovery'));
-    }
-    _initCompleter = null;
-
-    // Release instance lock if held
-    if (_instanceLock != null && !_instanceLock!.isCompleted) {
-      _instanceLock!.complete();
-    }
-    _instanceLock = null;
-
-    // Extra wait time on Android to ensure native cleanup
-    if (_isAndroid) {
-      debugPrint('⏳ STOCKFISH: Extra recovery wait for Android...');
-      await Future.delayed(const Duration(milliseconds: 500));
-    }
-
-    debugPrint(
-      '✅ STOCKFISH: Force recovery complete, engine will reinitialize on next request',
-    );
   }
 
   /// Check if the engine is currently in a healthy state

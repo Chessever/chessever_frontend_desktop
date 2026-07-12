@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:archive/archive.dart';
 import 'package:libcompress/libcompress.dart';
 
+import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
@@ -156,6 +157,26 @@ void main() {
       expect(source.root.gameCount, 1);
       expect(source.nodeForPath(file.path), same(source.root.files.single));
       expect(source.nodeForPath('${temp.path}/other.pgn'), isNull);
+    });
+
+    test('user-selected file and folder links are scanned', () async {
+      if (Platform.isWindows) return;
+      final targetFile = File('${temp.path}/target.pgn');
+      await targetFile.writeAsString(_samplePgn);
+      final linkedFile = Link('${temp.path}/linked.pgn');
+      await linkedFile.create(targetFile.path);
+      final targetFolder = await Directory('${temp.path}/target').create();
+      await File('${targetFolder.path}/inside.pgn').writeAsString(_samplePgn);
+      final linkedFolder = Link('${temp.path}/linked-folder');
+      await linkedFolder.create(targetFolder.path);
+
+      final fileSource = await scanLocalChessPaths(<String>[linkedFile.path]);
+      final folderSource = await scanLocalChessPaths(<String>[
+        linkedFolder.path,
+      ]);
+
+      expect(fileSource.root.playableDatabaseCount, 1);
+      expect(folderSource.root.playableDatabaseCount, 1);
     });
 
     test(
@@ -693,6 +714,77 @@ void main() {
         throwsA(same(cancellation)),
       );
     });
+
+    test('streaming watchdog pauses while a database callback runs', () async {
+      final file = File('${temp.path}/slow-database.pgn');
+      await file.writeAsString(_samplePgn);
+      var batchFinished = false;
+
+      final scanned = await scanLocalChessFileNodeForImportWithProgress(
+        path: file.path,
+        rootPath: temp.path,
+        batchSize: 1,
+        inactivityTimeout: const Duration(milliseconds: 20),
+        onGameBatch: (_) async {
+          await Future<void>.delayed(const Duration(milliseconds: 60));
+          batchFinished = true;
+        },
+      );
+
+      expect(batchFinished, isTrue);
+      expect(scanned.gameCount, 1);
+    });
+
+    test('streaming import rejects a source changed during a batch', () async {
+      final file = File('${temp.path}/changed-during-import.pgn');
+      await file.writeAsString(_samplePgn, flush: true);
+      var changed = false;
+
+      final scanned = await scanLocalChessFileNodeForImportWithProgress(
+        path: file.path,
+        rootPath: temp.path,
+        batchSize: 1,
+        onGameBatch: (_) async {
+          if (changed) return;
+          changed = true;
+          final bytes = await file.readAsBytes();
+          bytes[0] = bytes[0] == 91 ? 32 : 91;
+          await file.writeAsBytes(bytes, flush: true);
+        },
+      );
+
+      expect(changed, isTrue);
+      expect(scanned.status, LocalChessFileStatus.failed);
+      expect(scanned.message, contains('changed while ChessEver was reading'));
+    });
+
+    test(
+      'streaming import aborts a worker that stops making progress',
+      () async {
+        final file = File('${temp.path}/stalled.pgn');
+        await file.writeAsString(_samplePgn);
+        final stopwatch = Stopwatch()..start();
+
+        final scan = scanLocalChessFileNodeForImportWithProgress(
+          path: file.path,
+          rootPath: temp.path,
+          inactivityTimeout: const Duration(milliseconds: 30),
+          debugWorkerStartDelay: const Duration(seconds: 2),
+        );
+
+        await expectLater(
+          scan,
+          throwsA(
+            isA<LocalChessFileAccessException>().having(
+              (error) => error.issue,
+              'issue',
+              LocalChessFileAccessIssue.stalled,
+            ),
+          ),
+        );
+        expect(stopwatch.elapsed, lessThan(const Duration(seconds: 1)));
+      },
+    );
 
     test('gzip-compressed PGN databases are rejected', () async {
       final file = File('${temp.path}/archive.pgn.gz');

@@ -232,6 +232,7 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
     required this.engineBinaryPath,
     required this.botIdentity,
     @visibleForTesting this.bootEngine = true,
+    @visibleForTesting this.spawnEngine,
   }) : super(_initialState(config, botIdentity)) {
     if (state.activeClock != null) _ensureTicker();
     if (bootEngine) unawaited(_bootEngine());
@@ -241,10 +242,12 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
   final String engineBinaryPath;
   final BotIdentity botIdentity;
   final bool bootEngine;
+  final Future<UciEngine> Function()? spawnEngine;
 
   UciEngine? _engine;
   Maia3LocalEngine? _maia3Engine;
   StreamSubscription<String>? _engineSub;
+  int _engineBootGeneration = 0;
   Timer? _ticker;
   final Random _coinflip = Random();
 
@@ -278,11 +281,21 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
     );
   }
 
-  Future<void> _bootEngine() async {
+  Future<void> _bootEngine() {
+    final generation = ++_engineBootGeneration;
+    return _bootEngineForGeneration(generation);
+  }
+
+  Future<void> _bootEngineForGeneration(int generation) async {
     try {
       if (config.engine == BotEngineKind.maia &&
           isMaia3ModelPath(engineBinaryPath)) {
-        _maia3Engine = await Maia3LocalEngine.load(engineBinaryPath);
+        final engine = await Maia3LocalEngine.load(engineBinaryPath);
+        if (!_isCurrentEngineBoot(generation)) {
+          await engine.dispose();
+          return;
+        }
+        _maia3Engine = engine;
         state = state.copyWith(
           engineReady: true,
           engineStatus: '${config.engine.displayName} ready',
@@ -293,22 +306,36 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
         return;
       }
 
-      final engine = await UciEngine.spawn(
-        engineBinaryPath,
-        arguments: engineLaunchArguments(
-          config.engine,
-          engineBinaryPath,
-          config.elo,
-        ),
-        workingDirectory: engineWorkingDirectory(engineBinaryPath),
-      );
+      final engine =
+          await (spawnEngine?.call() ??
+              UciEngine.spawn(
+                engineBinaryPath,
+                arguments: engineLaunchArguments(
+                  config.engine,
+                  engineBinaryPath,
+                  config.elo,
+                ),
+                workingDirectory: engineWorkingDirectory(engineBinaryPath),
+              ));
+      if (!_isCurrentEngineBoot(generation)) {
+        await engine.dispose();
+        return;
+      }
       _engine = engine;
-      _engineSub = engine.lines.listen(_onEngineLine);
+      final engineSub = engine.lines.listen(_onEngineLine);
+      _engineSub = engineSub;
       final ok = await engine.initialize(
         threads: _hostThreadHint(),
         hashMb: config.engine == BotEngineKind.stockfish ? 64 : null,
         multiPv: 1,
       );
+      if (!_isCurrentEngineBoot(generation)) {
+        if (identical(_engine, engine)) _engine = null;
+        if (identical(_engineSub, engineSub)) _engineSub = null;
+        await engineSub.cancel();
+        await engine.dispose();
+        return;
+      }
       if (!ok) {
         state = state.copyWith(
           engineStatus: 'Engine handshake failed',
@@ -330,11 +357,53 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
       }
     } catch (e, st) {
       if (kDebugMode) debugPrint('Engine boot failed: $e\n$st');
+      if (!_isCurrentEngineBoot(generation)) return;
       state = state.copyWith(
         engineStatus: 'Failed to start engine',
         engineReady: false,
       );
     }
+  }
+
+  bool _isCurrentEngineBoot(int generation) =>
+      mounted && generation == _engineBootGeneration;
+
+  /// Replaces UCI process handles drained by an aborted updater handoff while
+  /// preserving the live game's board, notation, and clock state.
+  Future<void> reconnectEngineAfterExternalDrain() async {
+    if (!mounted ||
+        (config.engine == BotEngineKind.maia &&
+            isMaia3ModelPath(engineBinaryPath))) {
+      return;
+    }
+
+    // Invalidate a boot that began before the global process drain. Any engine
+    // it produces later is disposed by the generation checks above.
+    _engineBootGeneration += 1;
+    final engineSub = _engineSub;
+    _engineSub = null;
+    if (engineSub != null) {
+      try {
+        await engineSub.cancel();
+      } catch (_) {}
+    }
+    final engine = _engine;
+    _engine = null;
+    if (engine != null) {
+      try {
+        await engine.dispose();
+      } catch (_) {}
+    }
+    if (!mounted) return;
+
+    state = state.copyWith(
+      engineReady: false,
+      engineThinking: false,
+      engineStatus:
+          state.isGameOver ? state.engineStatus : 'Restarting engine…',
+    );
+    if (state.isGameOver) return;
+    await _bootEngine();
   }
 
   void _applyStrengthOptions() {
@@ -692,6 +761,7 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
 
   @override
   void dispose() {
+    _engineBootGeneration += 1;
     _ticker?.cancel();
     _ticker = null;
     final sub = _engineSub;

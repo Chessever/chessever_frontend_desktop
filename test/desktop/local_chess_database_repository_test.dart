@@ -193,9 +193,20 @@ void main() {
       pgnFile.path,
       rootPath: temp.path,
     );
-    expect(restored, isNotNull);
-    expect(restored!.games.single.game.metadata['BlackTitle'], 'IM');
-    expect(restored.openingTreeIndex, isNull);
+    expect(
+      restored,
+      isNull,
+      reason:
+          'A legacy row without a content fingerprint must be reparsed once '
+          'instead of trusting size and timestamp alone.',
+    );
+    final reimported = await repo.importSingleFileSource(path: pgnFile.path);
+    expect(reimported, isNotNull);
+    expect(
+      reimported!.root.singlePlayableDatabaseInSubtree!.games.single.game
+          .metadata['BlackTitle'],
+      'IM',
+    );
     final moves = await repo.localMoveAggregatesForFen(
       databasePath: pgnFile.path,
       fen: Chess.initial.fen,
@@ -1665,6 +1676,79 @@ void main() {
     },
   );
 
+  test('canceling during finalization discards partial import rows', () async {
+    final pgnFile = File('${temp.path}/cancel-finalizing.pgn');
+    await pgnFile.writeAsString(_bulkPgn(8));
+    final token = OperationCancellationToken();
+    final repo = LocalChessDatabaseRepository(
+      database: () async => db,
+      cachedFileNodeGamePreviewLimit: 2,
+    );
+
+    final import = repo.importSingleFileSource(
+      path: pgnFile.path,
+      cancellationToken: token,
+      onProgress: (progress) {
+        if (progress.message == 'Finalizing PGN...') token.cancel();
+      },
+    );
+
+    await expectLater(import, throwsA(isA<OperationCanceledException>()));
+    expect(await _count(db, 'local_chess_databases'), 0);
+    expect(await _count(db, 'local_chess_games'), 0);
+  });
+
+  test('canceling a reused import preserves the prior complete cache', () async {
+    final pgnFile = File('${temp.path}/cancel-reused.pgn');
+    await pgnFile.writeAsString(_bulkPgn(8));
+    final repo = LocalChessDatabaseRepository(
+      database: () async => db,
+      cachedFileNodeGamePreviewLimit: 2,
+    );
+    expect(await repo.importSingleFileSource(path: pgnFile.path), isNotNull);
+    final token = OperationCancellationToken();
+
+    final import = repo.importSingleFileSource(
+      path: pgnFile.path,
+      cancellationToken: token,
+      onProgress: (progress) {
+        if (progress.message == 'Finalizing PGN...') token.cancel();
+      },
+    );
+
+    await expectLater(import, throwsA(isA<OperationCanceledException>()));
+    expect(await _count(db, 'local_chess_databases'), 1);
+    expect(await _count(db, 'local_chess_games'), 8);
+    expect(
+      await repo.loadFreshFileNode(pgnFile.path, rootPath: temp.path),
+      isNotNull,
+    );
+  });
+
+  test('failed import finalization discards partial import rows', () async {
+    final pgnFile = File('${temp.path}/fail-finalizing.pgn');
+    await pgnFile.writeAsString(_bulkPgn(8));
+    await db.execute('''
+      CREATE TRIGGER fail_import_finalization
+      BEFORE UPDATE OF game_count ON local_chess_databases
+      WHEN NEW.game_count > 0
+      BEGIN
+        SELECT RAISE(ABORT, 'fail finalize');
+      END
+      ''');
+    final repo = LocalChessDatabaseRepository(
+      database: () async => db,
+      cachedFileNodeGamePreviewLimit: 2,
+    );
+
+    await expectLater(
+      repo.importSingleFileSource(path: pgnFile.path),
+      throwsA(anything),
+    );
+    expect(await _count(db, 'local_chess_databases'), 0);
+    expect(await _count(db, 'local_chess_games'), 0);
+  });
+
   test(
     'concurrent queued imports of the same PGN do not corrupt cache',
     () async {
@@ -2622,6 +2706,30 @@ void main() {
     },
   );
 
+  test('legacy cache without a fingerprint is reimported, not backfilled', () async {
+    final pgnFile = File('${temp.path}/legacy-no-fingerprint.pgn');
+    await pgnFile.writeAsString(_samplePgn);
+    final repo = LocalChessDatabaseRepository(database: () async => db);
+    expect(await repo.importSingleFileSource(path: pgnFile.path), isNotNull);
+    await db.execute(
+      'UPDATE local_chess_databases SET content_fingerprint = ? WHERE id = ?',
+      <Object?>['', pgnFile.path],
+    );
+
+    final restored = await repo.loadFreshFileNode(
+      pgnFile.path,
+      rootPath: temp.path,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    final rows = await db.select(
+      'SELECT content_fingerprint FROM local_chess_databases WHERE id = ?',
+      <Object?>[pgnFile.path],
+    );
+
+    expect(restored, isNull);
+    expect(rows.single['content_fingerprint'], '');
+  });
+
   test(
     'restores cached PGN rows and tree when only file timestamp changes',
     () async {
@@ -2749,6 +2857,54 @@ void main() {
       expect(restored, isNotNull);
       expect(restored!.openingTreeIndex, isNotNull);
       expect(restored.openingTreeIndex!.downloadedGameCount, 4);
+    },
+  );
+
+  test(
+    'same-size same-mtime rewrite cannot reuse stale imported rows',
+    () async {
+      final pgnFile = File('${temp.path}/same-stat-rewrite.pgn');
+      final original = _bulkPgn(2);
+      final rewritten = original.replaceFirst('White 0', 'Other 0');
+      expect(utf8.encode(rewritten), hasLength(utf8.encode(original).length));
+      final fixedModified = DateTime(2026, 7, 12, 3, 0);
+      await pgnFile.writeAsString(original, flush: true);
+      await pgnFile.setLastModified(fixedModified);
+      final repo = LocalChessDatabaseRepository(
+        database: () async => db,
+        cachedFileNodeGamePreviewLimit: 2,
+      );
+      expect(await repo.importSingleFileSource(path: pgnFile.path), isNotNull);
+
+      await pgnFile.writeAsString(rewritten, flush: true);
+      await pgnFile.setLastModified(fixedModified);
+      expect(
+        await repo.loadFreshFileNode(pgnFile.path, rootPath: temp.path),
+        isNull,
+      );
+      final progress = <LocalChessScanProgress>[];
+      final reimported = await repo.importSingleFileSource(
+        path: pgnFile.path,
+        onProgress: progress.add,
+      );
+
+      expect(reimported, isNotNull);
+      expect(
+        progress.map((event) => event.message),
+        isNot(contains('Using existing local cache...')),
+      );
+      final rows = await db.select(
+        '''
+        SELECT raw_pgn
+        FROM local_chess_games
+        WHERE database_id = ?
+        ORDER BY index_in_file ASC
+        ''',
+        <Object?>[pgnFile.path],
+      );
+      expect(rows, hasLength(2));
+      expect(rows.first['raw_pgn'], contains('Other 0'));
+      expect(rows.first['raw_pgn'], isNot(contains('White 0')));
     },
   );
 

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 
+import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 
 class DesktopFileOpenService {
@@ -30,12 +31,11 @@ class DesktopFileOpenService {
     if (!kReleaseMode) return false;
     if (initialArguments.contains(_newInstanceFlag)) return false;
 
-    if (!hasForwardableSingleInstancePayload(initialArguments)) {
+    final paths = await chessPathsFromArguments(initialArguments);
+    if (paths.isEmpty) {
       await _startSingleInstanceServer();
       return false;
     }
-
-    final paths = chessPathsFromArguments(initialArguments);
 
     try {
       final socket = await Socket.connect(
@@ -73,7 +73,7 @@ class DesktopFileOpenService {
     unawaited(() async {
       try {
         final payload = await utf8.decoder.bind(socket).join();
-        _emitForwardedPaths(chessPathsFromSingleInstancePayload(payload));
+        _emitForwardedPaths(await chessPathsFromSingleInstancePayload(payload));
       } finally {
         await socket.close();
       }
@@ -92,14 +92,14 @@ class DesktopFileOpenService {
   Future<List<String>> start({
     List<String> initialArguments = const <String>[],
   }) async {
-    final initialPaths = chessPathsFromArguments(initialArguments);
+    final initialPaths = await chessPathsFromArguments(initialArguments);
     if (_started) return _dedupePaths(initialPaths);
     _started = true;
 
     _channel.setMethodCallHandler((call) async {
       switch (call.method) {
         case 'openFiles':
-          final paths = chessPathsFromPlatformPayload(call.arguments);
+          final paths = await chessPathsFromPlatformPayload(call.arguments);
           if (paths.isNotEmpty) _controller.add(paths);
         default:
           throw MissingPluginException(
@@ -116,7 +116,7 @@ class DesktopFileOpenService {
         return _dedupePaths(<String>[
           ...initialPaths,
           ..._takePendingSingleInstancePaths(),
-          ...chessPathsFromPlatformPayload(pending),
+          ...await chessPathsFromPlatformPayload(pending),
         ]);
       } on MissingPluginException {
         return _dedupePaths(<String>[
@@ -145,10 +145,10 @@ class DesktopFileOpenService {
   }
 
   @visibleForTesting
-  static bool hasForwardableSingleInstancePayload(
+  static Future<bool> hasForwardableSingleInstancePayload(
     Iterable<String> initialArguments,
-  ) {
-    return chessPathsFromArguments(initialArguments).isNotEmpty;
+  ) async {
+    return (await chessPathsFromArguments(initialArguments)).isNotEmpty;
   }
 
   @visibleForTesting
@@ -157,11 +157,13 @@ class DesktopFileOpenService {
   }
 
   @visibleForTesting
-  static List<String> chessPathsFromSingleInstancePayload(String payload) {
+  static Future<List<String>> chessPathsFromSingleInstancePayload(
+    String payload,
+  ) async {
     try {
       final decoded = jsonDecode(payload.trim());
       if (decoded is Map<String, Object?>) {
-        return chessPathsFromPlatformPayload(decoded['paths']);
+        return await chessPathsFromPlatformPayload(decoded['paths']);
       }
     } on Object {
       return const <String>[];
@@ -169,13 +171,22 @@ class DesktopFileOpenService {
     return const <String>[];
   }
 
-  static List<String> chessPathsFromPlatformPayload(Object? payload) {
+  static Future<List<String>> chessPathsFromPlatformPayload(
+    Object? payload,
+  ) async {
     if (payload is! Iterable) return const <String>[];
     return chessPathsFromArguments(payload.whereType<String>());
   }
 
-  static List<String> chessPathsFromArguments(Iterable<String> arguments) {
-    return _dedupePaths(arguments.map(_pathFromArgument).whereType<String>());
+  static Future<List<String>> chessPathsFromArguments(
+    Iterable<String> arguments,
+  ) async {
+    final paths = <String>[];
+    for (final argument in arguments) {
+      final path = await _pathFromArgument(argument);
+      if (path != null) paths.add(path);
+    }
+    return _dedupePaths(paths);
   }
 
   static List<String> _dedupePaths(Iterable<String> paths) {
@@ -191,18 +202,33 @@ class DesktopFileOpenService {
     return uniquePaths;
   }
 
-  static String? _pathFromArgument(String raw) {
+  static Future<String?> _pathFromArgument(String raw) async {
     final trimmed = raw.trim();
     if (trimmed.isEmpty || trimmed.startsWith('--')) return null;
 
     final maybeUri = Uri.tryParse(trimmed);
+    final isWindowsDrivePath = RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(trimmed);
+    if (maybeUri != null &&
+        maybeUri.hasScheme &&
+        maybeUri.scheme != 'file' &&
+        !isWindowsDrivePath) {
+      return null;
+    }
     final path =
         maybeUri != null && maybeUri.scheme == 'file'
             ? maybeUri.toFilePath(windows: Platform.isWindows)
             : trimmed;
 
-    if (Directory(path).existsSync() ||
-        (looksLikeLocalChessFile(path) && File(path).existsSync())) {
+    // Recognized files go through the import worker even when missing or
+    // locked so the user receives its actionable error instead of a silent
+    // startup drop. Only directory detection needs an external-path probe.
+    if (looksLikeLocalChessFile(path)) return path;
+    try {
+      final probe = await probeLocalChessPathInWorker(path);
+      if (probe.isDirectory) return path;
+    } on LocalChessFileAccessException {
+      // Let the normal library intake flow report unavailable drives/shares;
+      // startup itself must remain able to render.
       return path;
     }
 

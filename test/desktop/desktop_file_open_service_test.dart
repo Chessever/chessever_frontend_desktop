@@ -20,7 +20,7 @@ void main() {
 
     test('filters startup arguments to local chess paths', () async {
       final pgn = File('${temp.path}/round.pgn');
-      final compressedPgn = File('${temp.path}/rounds.pgn.gz');
+      final compressedPgn = File('${temp.path}/rounds.pgn.bz2');
       final zip = File('${temp.path}/database.zip');
       final cbz = File('${temp.path}/archive.cbz');
       final cbh = File('${temp.path}/database.cbh');
@@ -34,41 +34,54 @@ void main() {
       await ignored.writeAsString('not chess');
       await ignoredGzip.writeAsBytes(const <int>[31, 139, 8, 0]);
 
-      final paths = DesktopFileOpenService.chessPathsFromArguments(<String>[
-        '--some-engine-flag',
-        '/updated',
-        ignored.path,
-        ignoredGzip.path,
-        pgn.path,
-        compressedPgn.path,
-        pgn.path,
-        zip.path,
-        Uri.file(cbz.path).toString(),
-        cbh.path,
-        temp.path,
-        '${temp.path}/missing.pgn',
-      ]);
+      final paths =
+          await DesktopFileOpenService.chessPathsFromArguments(<String>[
+            '--some-engine-flag',
+            '/updated',
+            ignored.path,
+            ignoredGzip.path,
+            pgn.path,
+            compressedPgn.path,
+            pgn.path,
+            zip.path,
+            Uri.file(cbz.path).toString(),
+            cbh.path,
+            temp.path,
+            '${temp.path}/missing.pgn',
+          ]);
 
       expect(paths, <String>[
         pgn.path,
         compressedPgn.path,
         cbh.path,
         temp.path,
+        '${temp.path}/missing.pgn',
       ]);
     });
 
     test('coerces platform channel payloads', () async {
-      final fen = File('${temp.path}/prep.fen');
-      await fen.writeAsString('8/8/8/8/8/8/8/K6k w - - 0 1');
+      final pgn = File('${temp.path}/prep.pgn');
+      await pgn.writeAsString('[Event "Prep"]\n\n*');
 
       expect(
-        DesktopFileOpenService.chessPathsFromPlatformPayload(<Object?>[
-          fen.path,
+        await DesktopFileOpenService.chessPathsFromPlatformPayload(<Object?>[
+          pgn.path,
           7,
           null,
           '${temp.path}/missing.txt',
         ]),
-        <String>[fen.path],
+        <String>[pgn.path],
+      );
+    });
+
+    test('keeps raw Windows drive paths from file-association argv', () async {
+      const windowsPath = r'C:\Users\Player\Documents\round.pgn';
+
+      expect(
+        await DesktopFileOpenService.chessPathsFromArguments(<String>[
+          windowsPath,
+        ]),
+        const <String>[windowsPath],
       );
     });
 
@@ -77,20 +90,21 @@ void main() {
       await pgn.writeAsString('[Event "x"]\n\n*');
 
       expect(
-        DesktopFileOpenService.hasForwardableSingleInstancePayload(const []),
+        await DesktopFileOpenService.hasForwardableSingleInstancePayload(
+          const [],
+        ),
         isFalse,
       );
       expect(
-        DesktopFileOpenService.hasForwardableSingleInstancePayload(<String>[
-          '--enable-impeller',
-          'chessever://billing/success',
-        ]),
+        await DesktopFileOpenService.hasForwardableSingleInstancePayload(
+          <String>['--enable-impeller', 'chessever://billing/success'],
+        ),
         isFalse,
       );
       expect(
-        DesktopFileOpenService.hasForwardableSingleInstancePayload(<String>[
-          pgn.path,
-        ]),
+        await DesktopFileOpenService.hasForwardableSingleInstancePayload(
+          <String>[pgn.path],
+        ),
         isTrue,
       );
     });
@@ -107,11 +121,13 @@ void main() {
         );
 
         expect(
-          DesktopFileOpenService.chessPathsFromSingleInstancePayload(payload),
+          await DesktopFileOpenService.chessPathsFromSingleInstancePayload(
+            payload,
+          ),
           <String>[pgn.path],
         );
         expect(
-          DesktopFileOpenService.chessPathsFromSingleInstancePayload(
+          await DesktopFileOpenService.chessPathsFromSingleInstancePayload(
             'not-json',
           ),
           isEmpty,

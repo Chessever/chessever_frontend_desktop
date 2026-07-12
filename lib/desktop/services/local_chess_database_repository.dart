@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:dartchess/dartchess.dart' show Chess;
@@ -14,6 +13,7 @@ import 'package:resqlite/resqlite.dart' as resqlite;
 import 'package:sqflite/sqflite.dart' as sqflite;
 
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
+import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
@@ -319,7 +319,6 @@ const int _kCachedTreeRebuildPageSize = 2048;
 const int _kSingleWorkerTreeBuildBytes = 128 * 1024 * 1024;
 const int _kLegacyMigrationGamePageSize = 256;
 const int _kLegacyMigrationRowPageSize = 4096;
-const int _kLocalChessFileFingerprintSampleBytes = 64 * 1024;
 const String _legacySqfliteMigrationV1Name = 'legacy_sqflite_local_chess_v1';
 const String _legacySqfliteMigrationName =
     'legacy_sqflite_local_chess_v2_desktop_path_scan';
@@ -1921,6 +1920,8 @@ class LocalChessDatabaseRepository {
   final Set<String> _reusedImportedGameRows = <String>{};
   final Map<String, String> _reusedImportedContentFingerprints =
       <String, String>{};
+  final Map<String, String> _activeImportedContentFingerprints =
+      <String, String>{};
 
   /// Prevents a stale Library/import worker from recreating cache rows while
   /// a persisted player deletion is physically draining them. Unrelated paths
@@ -2071,14 +2072,42 @@ class LocalChessDatabaseRepository {
         '${file.games.length} of ${file.gameCount} games are loaded.',
       );
     }
+    var preparedFile = file;
+    if (file.isPlayable && file.contentFingerprint.trim().isEmpty) {
+      final probe = await probeLocalChessPathInWorker(
+        file.path,
+        includeContentFingerprint: true,
+      );
+      if (!probe.isFile ||
+          probe.sizeBytes != file.sizeBytes ||
+          (file.modifiedAt != null && probe.modifiedAt != file.modifiedAt) ||
+          probe.contentFingerprint == null) {
+        throw LocalChessFileAccessException.changed(path: file.path);
+      }
+      preparedFile = LocalChessFileNode(
+        name: file.name,
+        path: file.path,
+        relativePath: file.relativePath,
+        extension: file.extension,
+        status: file.status,
+        games: file.games,
+        gameCount: file.gameCount,
+        sizeBytes: probe.sizeBytes!,
+        modifiedAt: probe.modifiedAt,
+        message: file.message,
+        openingTreeIndex: file.openingTreeIndex,
+        pgnOffsetIndex: file.pgnOffsetIndex,
+        contentFingerprint: probe.contentFingerprint!,
+      );
+    }
     final db = await _database();
     await _lockedTransaction(db, (txn) async {
-      _throwIfCacheSourceDeletionInProgress(file.path);
-      if (!file.isPlayable) {
-        await _deleteFileCache(txn, file.path);
+      _throwIfCacheSourceDeletionInProgress(preparedFile.path);
+      if (!preparedFile.isPlayable) {
+        await _deleteFileCache(txn, preparedFile.path);
         return;
       }
-      await _replaceFileNode(txn, file, sourceLabel: sourceLabel);
+      await _replaceFileNode(txn, preparedFile, sourceLabel: sourceLabel);
     });
   }
 
@@ -2167,11 +2196,7 @@ class LocalChessDatabaseRepository {
     final trimmed = path.trim();
     if (trimmed.isEmpty) return null;
     cancellationToken?.throwIfCanceled();
-    final type = await FileSystemEntity.type(trimmed, followLinks: false);
-    if (type != FileSystemEntityType.file ||
-        !looksLikeLocalChessFile(trimmed)) {
-      return null;
-    }
+    if (!looksLikeLocalChessFile(trimmed)) return null;
     final importKey = _databaseId(trimmed);
     final existingImport = _singleFileImportsByPath[importKey];
     if (existingImport?.isCanceled == true) {
@@ -2214,17 +2239,10 @@ class LocalChessDatabaseRepository {
     final trimmed = path.trim();
     cancellationToken?.throwIfCanceled();
     final importStopwatch = Stopwatch()..start();
-    int? fileSizeBytes;
-    try {
-      fileSizeBytes = await File(trimmed).length();
-    } on Object {
-      fileSizeBytes = null;
-    }
     localChessLog.info(
       'PGN import started',
       context: <String, Object?>{
         'path': trimmed,
-        'bytes': fileSizeBytes,
         'label': sourceLabel,
       },
     );
@@ -2288,7 +2306,6 @@ class LocalChessDatabaseRepository {
           context: <String, Object?>{
             'path': trimmed,
             'elapsedMs': importStopwatch.elapsedMilliseconds,
-            'bytes': fileSizeBytes,
           },
         );
         rethrow;
@@ -2301,7 +2318,6 @@ class LocalChessDatabaseRepository {
         context: <String, Object?>{
           'path': trimmed,
           'elapsedMs': importStopwatch.elapsedMilliseconds,
-          'bytes': fileSizeBytes,
         },
       );
       rethrow;
@@ -2324,75 +2340,93 @@ class LocalChessDatabaseRepository {
 
     final rootPath = p.dirname(path);
     final label = sourceLabel ?? localChessDatabaseDisplayNameForPath(path);
-    var importStarted = false;
-
-    final node = await scanLocalChessFileNodeForImportWithProgress(
-      path: path,
-      rootPath: rootPath,
-      previewGameLimit: cachedFileNodeGamePreviewLimit,
-      batchSize: _kInteractiveImportBatchSize,
-      onProgress: emit,
-      onImportStart: (start) async {
-        cancellationToken?.throwIfCanceled();
-        importStarted = true;
-        await writerRepository._beginImportedFileNode(
-          start,
-          sourceLabel: label,
-          onProgress: emit,
-          cancellationToken: cancellationToken,
-        );
-        cancellationToken?.throwIfCanceled();
-      },
-      onGameBatch: (batch) async {
-        cancellationToken?.throwIfCanceled();
-        await writerRepository._persistImportedGameBatch(path, batch.games);
-        cancellationToken?.throwIfCanceled();
-      },
-    );
-
-    cancellationToken?.throwIfCanceled();
-    if (node.isPlayable) {
-      if (!importStarted) {
-        await writerRepository._beginImportedFileNode(
-          LocalChessFileImportStart(
-            path: node.path,
-            relativePath: node.relativePath,
-            extension: node.extension,
-            sizeBytes: node.sizeBytes,
-            modifiedAt: node.modifiedAt,
-            totalEntries: node.gameCount,
-            pgnOffsetIndex: node.pgnOffsetIndex,
-          ),
-          sourceLabel: label,
-          onProgress: emit,
-          cancellationToken: cancellationToken,
-        );
-      }
-      emit(
-        LocalChessScanProgress(
-          fraction: 0.985,
-          message: 'Saving local cache...',
-        ),
+    _ImportedFilePreparation? preparation;
+    var finalized = false;
+    try {
+      final node = await scanLocalChessFileNodeForImportWithProgress(
+        path: path,
+        rootPath: rootPath,
+        previewGameLimit: cachedFileNodeGamePreviewLimit,
+        batchSize: _kInteractiveImportBatchSize,
+        onProgress: emit,
+        onImportStart: (start) async {
+          cancellationToken?.throwIfCanceled();
+          await writerRepository._beginImportedFileNode(
+            start,
+            sourceLabel: label,
+            onProgress: emit,
+            cancellationToken: cancellationToken,
+            onPreparationStarted: (value) => preparation = value,
+          );
+          cancellationToken?.throwIfCanceled();
+        },
+        onGameBatch: (batch) async {
+          cancellationToken?.throwIfCanceled();
+          await writerRepository._persistImportedGameBatch(path, batch.games);
+          cancellationToken?.throwIfCanceled();
+        },
       );
-      await writerRepository._completeImportedFileNode(node);
-    } else {
-      await writerRepository._discardImportedFileNode(path);
-    }
 
-    final root = LocalChessFolderNode.fromChildren(
-      name: label,
-      path: 'local-file:${_stableId(path)}',
-      relativePath: '',
-      children: <LocalChessNode>[node],
-    );
-    return LocalChessSource(
-      id: _stableId(path),
-      label: label,
-      paths: <String>[path],
-      rootPath: rootPath,
-      scannedAt: DateTime.now(),
-      root: root,
-    );
+      cancellationToken?.throwIfCanceled();
+      if (node.isPlayable) {
+        if (preparation == null) {
+          await writerRepository._beginImportedFileNode(
+            LocalChessFileImportStart(
+              path: node.path,
+              relativePath: node.relativePath,
+              extension: node.extension,
+              sizeBytes: node.sizeBytes,
+              modifiedAt: node.modifiedAt,
+              totalEntries: node.gameCount,
+              contentFingerprint: node.contentFingerprint,
+              pgnOffsetIndex: node.pgnOffsetIndex,
+            ),
+            sourceLabel: label,
+            onProgress: emit,
+            cancellationToken: cancellationToken,
+            onPreparationStarted: (value) => preparation = value,
+          );
+        }
+        emit(
+          LocalChessScanProgress(
+            fraction: 0.985,
+            message: 'Saving local cache...',
+          ),
+        );
+        await writerRepository._completeImportedFileNode(node);
+      } else {
+        await writerRepository._discardImportedFileNode(path);
+      }
+      finalized = true;
+
+      final root = LocalChessFolderNode.fromChildren(
+        name: label,
+        path: 'local-file:${_stableId(path)}',
+        relativePath: '',
+        children: <LocalChessNode>[node],
+      );
+      return LocalChessSource(
+        id: _stableId(path),
+        label: label,
+        paths: <String>[path],
+        rootPath: rootPath,
+        scannedAt: DateTime.now(),
+        root: root,
+      );
+    } finally {
+      final activePreparation = preparation;
+      if (!finalized && activePreparation != null) {
+        try {
+          await writerRepository._abortImportedFileNode(
+            path,
+            deleteCache:
+                activePreparation == _ImportedFilePreparation.replacing,
+          );
+        } catch (_) {
+          // Preserve the read, cancellation, or finalization failure.
+        }
+      }
+    }
   }
 
   /// The single, process-global write lock for the local-chess resqlite cache.
@@ -3310,8 +3344,8 @@ class LocalChessDatabaseRepository {
 
       final children = <LocalChessNode>[];
       for (final path in paths) {
-        final type = await FileSystemEntity.type(path, followLinks: false);
-        switch (type) {
+        final probe = await probeLocalChessPathInWorker(path);
+        switch (probe.type) {
           case FileSystemEntityType.directory:
             final node = await _loadFreshDirectory(
               path,
@@ -4991,8 +5025,8 @@ class LocalChessDatabaseRepository {
     String? sourceLabel,
     LocalChessScanProgressSink? onProgress,
   }) async {
-    final type = await FileSystemEntity.type(path, followLinks: false);
-    if (type == FileSystemEntityType.directory) {
+    final probe = await probeLocalChessPathInWorker(path);
+    if (probe.isDirectory) {
       final root = await _loadFreshDirectory(
         path,
         rootPath: path,
@@ -5008,7 +5042,7 @@ class LocalChessDatabaseRepository {
         root: root,
       );
     }
-    if (type != FileSystemEntityType.file) return null;
+    if (!probe.isFile) return null;
     final parent = p.dirname(path);
     final node = await _loadFreshFileNode(
       path,
@@ -5038,41 +5072,24 @@ class LocalChessDatabaseRepository {
     bool force = false,
     LocalChessScanProgressSink? onProgress,
   }) async {
-    final children = <LocalChessNode>[];
-    await for (final entity in Directory(path).list(followLinks: false)) {
-      final type = await FileSystemEntity.type(entity.path, followLinks: false);
-      switch (type) {
-        case FileSystemEntityType.directory:
-          final child = await _loadFreshDirectory(
-            entity.path,
-            rootPath: rootPath,
-            force: true,
-            onProgress: onProgress,
-          );
-          if (child.children.isNotEmpty || child.scanError != null) {
-            children.add(child);
-          }
-        case FileSystemEntityType.file:
-          final node = await _loadFreshFileNodeOrUnsupported(
-            entity.path,
-            rootPath: rootPath,
-            onProgress: onProgress,
-          );
-          if (node != null) children.add(node);
-        case FileSystemEntityType.link:
-        case FileSystemEntityType.notFound:
-        case FileSystemEntityType.pipe:
-        case FileSystemEntityType.unixDomainSock:
-          break;
-      }
+    final filePaths = await listLocalChessPgnFilesInWorker(
+      path,
+      allowedSuffixes: localChessRecognizedExtensions.toList(growable: false),
+    );
+    final files = <LocalChessFileNode>[];
+    for (final filePath in filePaths) {
+      final node = await _loadFreshFileNodeOrUnsupported(
+        filePath,
+        rootPath: rootPath,
+        onProgress: onProgress,
+      );
+      if (node is LocalChessFileNode) files.add(node);
     }
-    _sortNodes(children);
-    if (!force && children.isEmpty) throw const _LocalChessCacheMiss();
-    return LocalChessFolderNode.fromChildren(
-      name: localChessDatabaseDisplayNameForPath(path),
-      path: path,
-      relativePath: _relative(rootPath, path),
-      children: children,
+    if (!force && files.isEmpty) throw const _LocalChessCacheMiss();
+    return _freshFolderTreeFromFiles(
+      directoryPath: path,
+      rootPath: rootPath,
+      files: files,
     );
   }
 
@@ -5083,7 +5100,10 @@ class LocalChessDatabaseRepository {
   }) async {
     if (!looksLikeLocalChessFile(path)) return null;
     if (!isSupportedLocalChessFile(path)) {
-      final stat = await File(path).stat();
+      final probe = await probeLocalChessPathInWorker(path);
+      if (!probe.isFile || probe.sizeBytes == null) {
+        throw const _LocalChessCacheMiss();
+      }
       return LocalChessFileNode(
         name: localChessDatabaseDisplayNameForPath(path),
         path: path,
@@ -5091,8 +5111,8 @@ class LocalChessDatabaseRepository {
         extension: _extensionForPath(path),
         status: LocalChessFileStatus.unsupported,
         games: const <LocalChessGame>[],
-        sizeBytes: stat.size,
-        modifiedAt: stat.modified,
+        sizeBytes: probe.sizeBytes!,
+        modifiedAt: probe.modifiedAt,
         message: localChessUnsupportedFormatMessage,
       );
     }
@@ -5104,7 +5124,6 @@ class LocalChessDatabaseRepository {
     required String rootPath,
     LocalChessScanProgressSink? onProgress,
   }) async {
-    final stat = await File(path).stat();
     final databaseId = _databaseId(path);
     final db = await _openDatabase(onProgress: onProgress);
     final databaseRows = await db.select(
@@ -5122,36 +5141,34 @@ class LocalChessDatabaseRepository {
     final storedModified = _readNullableInt(databaseRow['modified_at_ms']);
     final storedContentFingerprint =
         databaseRow['content_fingerprint']?.toString().trim() ?? '';
-    final modifiedMs = stat.modified.millisecondsSinceEpoch;
-    if (storedSize != stat.size) {
+    if (storedContentFingerprint.isEmpty) {
+      // A legacy row without a content identity cannot safely distinguish a
+      // same-size/same-mtime rewrite. Reimport once instead of blessing stale
+      // game rows with a fingerprint sampled later in the background.
       throw const _LocalChessCacheMiss();
     }
+    final probe = await probeLocalChessPathInWorker(
+      path,
+      includeContentFingerprint: true,
+    );
+    if (!probe.isFile ||
+        probe.sizeBytes == null ||
+        probe.modifiedAt == null ||
+        probe.contentFingerprint != storedContentFingerprint ||
+        storedSize != probe.sizeBytes) {
+      throw const _LocalChessCacheMiss();
+    }
+    final modifiedMs = probe.modifiedAt!.millisecondsSinceEpoch;
     if (storedModified != modifiedMs) {
-      if (storedContentFingerprint.isEmpty) {
-        throw const _LocalChessCacheMiss();
-      }
-      final currentContentFingerprint = await _localChessFileContentFingerprint(
-        path,
-        stat: stat,
-      );
-      if (currentContentFingerprint != storedContentFingerprint) {
-        throw const _LocalChessCacheMiss();
-      }
-      await _refreshLocalChessDatabaseFileStat(
+      await _refreshLocalChessDatabaseFileStatIfUnchanged(
         db,
         databaseId: databaseId,
-        sizeBytes: stat.size,
+        sizeBytes: probe.sizeBytes!,
         modifiedAtMs: modifiedMs,
-        contentFingerprint: currentContentFingerprint,
-      );
-    } else if (storedContentFingerprint.isEmpty) {
-      unawaited(
-        _cacheLocalChessDatabaseContentFingerprint(
-          db,
-          databaseId: databaseId,
-          path: path,
-          stat: stat,
-        ),
+        contentFingerprint: storedContentFingerprint,
+        expectedSizeBytes: storedSize,
+        expectedModifiedAtMs: storedModified,
+        expectedContentFingerprint: storedContentFingerprint,
       );
     }
 
@@ -5207,8 +5224,8 @@ class LocalChessDatabaseRepository {
       status: LocalChessFileStatus.parsed,
       games: games,
       gameCount: gameCount,
-      sizeBytes: stat.size,
-      modifiedAt: stat.modified,
+      sizeBytes: probe.sizeBytes!,
+      modifiedAt: probe.modifiedAt,
       openingTreeIndex: index,
     );
   }
@@ -5221,6 +5238,10 @@ class LocalChessDatabaseRepository {
     final databaseId = _databaseId(file.path);
     final index = file.openingTreeIndex;
     final now = DateTime.now().millisecondsSinceEpoch;
+    final contentFingerprint =
+        file.contentFingerprint.trim().isNotEmpty
+            ? file.contentFingerprint.trim()
+            : throw StateError('Stable PGN fingerprint was not captured.');
 
     final databaseRow = <String, Object?>{
       'id': databaseId,
@@ -5229,7 +5250,7 @@ class LocalChessDatabaseRepository {
       'extension': file.extension,
       'size_bytes': file.sizeBytes,
       'modified_at_ms': file.modifiedAt?.millisecondsSinceEpoch,
-      'content_fingerprint': await _localChessFileContentFingerprint(file.path),
+      'content_fingerprint': contentFingerprint,
       'file_count': 1,
       'game_count': file.games.length,
       'position_count': index?.positionCount ?? 0,
@@ -6594,14 +6615,17 @@ class LocalChessDatabaseRepository {
     required String sourceLabel,
     void Function(LocalChessScanProgress progress)? onProgress,
     OperationCancellationToken? cancellationToken,
+    required void Function(_ImportedFilePreparation preparation)
+    onPreparationStarted,
   }) async {
     cancellationToken?.throwIfCanceled();
     _throwIfCacheSourceDeletionInProgress(start.path);
     final databaseId = _databaseId(start.path);
     final now = DateTime.now().millisecondsSinceEpoch;
-    final contentFingerprint = await _localChessFileContentFingerprint(
-      start.path,
-    );
+    final contentFingerprint = start.contentFingerprint.trim();
+    if (contentFingerprint.isEmpty) {
+      throw StateError('Stable PGN fingerprint was not captured.');
+    }
     final db = await _database();
     final existingRows = await db.select(
       '''
@@ -6628,10 +6652,6 @@ class LocalChessDatabaseRepository {
       final existingFileGameCount = _readInt(existing['file_game_count']);
       final existingFingerprint =
           existing['content_fingerprint']?.toString().trim() ?? '';
-      final statMatches =
-          _readInt(existing['size_bytes']) == start.sizeBytes &&
-          _readNullableInt(existing['modified_at_ms']) ==
-              start.modifiedAt?.millisecondsSinceEpoch;
       final fingerprintMatches =
           existingFingerprint.isNotEmpty &&
           existingFingerprint == contentFingerprint;
@@ -6641,8 +6661,10 @@ class LocalChessDatabaseRepository {
           existingRowCount == existingGameCount &&
           existingFileGameCount == start.totalEntries &&
           _readInt(existing['size_bytes']) == start.sizeBytes &&
-          (statMatches || fingerprintMatches);
+          fingerprintMatches;
       if (canReuseGameRows) {
+        onPreparationStarted(_ImportedFilePreparation.reused);
+        _activeImportedContentFingerprints[databaseId] = contentFingerprint;
         _reusedImportedGameRows.add(databaseId);
         _reusedImportedContentFingerprints[databaseId] = contentFingerprint;
         localChessLog.info(
@@ -6651,7 +6673,7 @@ class LocalChessDatabaseRepository {
             'path': start.path,
             'games': existingGameCount,
             'totalEntries': start.totalEntries,
-            'matchedBy': statMatches ? 'stat' : 'content_fingerprint',
+            'matchedBy': 'content_fingerprint',
           },
         );
         onProgress?.call(
@@ -6675,6 +6697,8 @@ class LocalChessDatabaseRepository {
           message: 'Replacing existing local cache...',
         ),
       );
+      onPreparationStarted(_ImportedFilePreparation.replacing);
+      _activeImportedContentFingerprints[databaseId] = contentFingerprint;
       await markCachedSourceDeleted(start.path);
       _reusedImportedGameRows.remove(databaseId);
       _reusedImportedContentFingerprints.remove(databaseId);
@@ -6700,6 +6724,9 @@ class LocalChessDatabaseRepository {
           message: 'Existing local cache replaced.',
         ),
       );
+    } else {
+      onPreparationStarted(_ImportedFilePreparation.replacing);
+      _activeImportedContentFingerprints[databaseId] = contentFingerprint;
     }
     await db.transaction((txn) async {
       await _upsertLocalChessDatabaseRow(txn, <String, Object?>{
@@ -6782,6 +6809,8 @@ class LocalChessDatabaseRepository {
     final reusedContentFingerprint = _reusedImportedContentFingerprints.remove(
       databaseId,
     );
+    final importedContentFingerprint = _activeImportedContentFingerprints
+        .remove(databaseId);
     final now = DateTime.now().millisecondsSinceEpoch;
     final db = await _database();
     if (reusedExistingRows) {
@@ -6799,12 +6828,17 @@ class LocalChessDatabaseRepository {
         <Object?>[
           file.sizeBytes,
           file.modifiedAt?.millisecondsSinceEpoch,
-          reusedContentFingerprint,
+          reusedContentFingerprint ?? importedContentFingerprint,
           file.gameCount,
           databaseId,
         ],
       );
       return;
+    }
+    final contentFingerprint =
+        importedContentFingerprint ?? file.contentFingerprint.trim();
+    if (contentFingerprint.isEmpty) {
+      throw StateError('Stable PGN fingerprint was lost before finalization.');
     }
     await db.execute(
       '''
@@ -6824,7 +6858,7 @@ class LocalChessDatabaseRepository {
       <Object?>[
         file.sizeBytes,
         file.modifiedAt?.millisecondsSinceEpoch,
-        await _localChessFileContentFingerprint(file.path),
+        contentFingerprint,
         file.gameCount,
         now,
         databaseId,
@@ -6834,6 +6868,18 @@ class LocalChessDatabaseRepository {
   }
 
   Future<void> _discardImportedFileNode(String path) async {
+    await _abortImportedFileNode(path, deleteCache: true);
+  }
+
+  Future<void> _abortImportedFileNode(
+    String path, {
+    required bool deleteCache,
+  }) async {
+    final databaseId = _databaseId(path);
+    _activeImportedContentFingerprints.remove(databaseId);
+    _reusedImportedGameRows.remove(databaseId);
+    _reusedImportedContentFingerprints.remove(databaseId);
+    if (!deleteCache) return;
     final db = await _database();
     await db.transaction((txn) async {
       await _deleteFileCache(txn, path);
@@ -7110,74 +7156,11 @@ class _LocalChessCacheMiss implements Exception {
   const _LocalChessCacheMiss();
 }
 
+enum _ImportedFilePreparation { reused, replacing }
+
 String _databaseId(String path) {
   final normalized = p.normalize(path.trim());
   return Platform.isWindows ? normalized.toLowerCase() : normalized;
-}
-
-Future<String> _localChessFileContentFingerprint(
-  String path, {
-  FileStat? stat,
-}) async {
-  final file = File(path);
-  final resolvedStat = stat ?? await file.stat();
-  final size = resolvedStat.size;
-  final bytes = BytesBuilder(copy: false)
-    ..add(utf8.encode('chessever-local-pgn-fingerprint-v1:$size;'));
-
-  if (size <= _kLocalChessFileFingerprintSampleBytes * 4) {
-    bytes.add(await file.readAsBytes());
-  } else {
-    final raf = await file.open();
-    try {
-      Future<void> addSample(int start) async {
-        final clampedStart = start.clamp(0, size).toInt();
-        final remaining = size - clampedStart;
-        if (remaining <= 0) return;
-        final length =
-            remaining < _kLocalChessFileFingerprintSampleBytes
-                ? remaining
-                : _kLocalChessFileFingerprintSampleBytes;
-        await raf.setPosition(clampedStart);
-        bytes.add(utf8.encode('$clampedStart:$length;'));
-        bytes.add(await raf.read(length));
-      }
-
-      await addSample(0);
-      await addSample(
-        (size ~/ 2) - (_kLocalChessFileFingerprintSampleBytes ~/ 2),
-      );
-      await addSample(size - _kLocalChessFileFingerprintSampleBytes);
-    } finally {
-      await raf.close();
-    }
-  }
-
-  return 'v1:$size:${sha256.convert(bytes.takeBytes())}';
-}
-
-Future<void> _cacheLocalChessDatabaseContentFingerprint(
-  resqlite.Database db, {
-  required String databaseId,
-  required String path,
-  required FileStat stat,
-}) async {
-  try {
-    final fingerprint = await _localChessFileContentFingerprint(
-      path,
-      stat: stat,
-    );
-    await _refreshLocalChessDatabaseFileStat(
-      db,
-      databaseId: databaseId,
-      sizeBytes: stat.size,
-      modifiedAtMs: stat.modified.millisecondsSinceEpoch,
-      contentFingerprint: fingerprint,
-    );
-  } catch (_) {
-    // The cache is still usable through exact stat matching. Fingerprinting is
-    // only an optimization for timestamp drift, so failures should be silent.
-  }
 }
 
 Future<void> _refreshLocalChessDatabaseFileStat(
@@ -7197,6 +7180,42 @@ Future<void> _refreshLocalChessDatabaseFileStat(
       WHERE id = ? AND deleted_at_ms IS NULL
       ''',
       <Object?>[sizeBytes, modifiedAtMs, contentFingerprint, databaseId],
+    ),
+  );
+}
+
+Future<void> _refreshLocalChessDatabaseFileStatIfUnchanged(
+  resqlite.Database db, {
+  required String databaseId,
+  required int sizeBytes,
+  required int modifiedAtMs,
+  required String contentFingerprint,
+  required int expectedSizeBytes,
+  required int? expectedModifiedAtMs,
+  required String expectedContentFingerprint,
+}) async {
+  await LocalChessDatabaseRepository._runLocalCacheWriteQueued(
+    () => db.execute(
+      '''
+      UPDATE $localChessDatabasesTable
+      SET size_bytes = ?,
+          modified_at_ms = ?,
+          content_fingerprint = ?
+      WHERE id = ?
+        AND deleted_at_ms IS NULL
+        AND size_bytes = ?
+        AND modified_at_ms IS ?
+        AND content_fingerprint = ?
+      ''',
+      <Object?>[
+        sizeBytes,
+        modifiedAtMs,
+        contentFingerprint,
+        databaseId,
+        expectedSizeBytes,
+        expectedModifiedAtMs,
+        expectedContentFingerprint,
+      ],
     ),
   );
 }
@@ -7982,6 +8001,41 @@ void _sortNodes(List<LocalChessNode> nodes) {
     if (af != bf) return af ? -1 : 1;
     return a.name.toLowerCase().compareTo(b.name.toLowerCase());
   });
+}
+
+LocalChessFolderNode _freshFolderTreeFromFiles({
+  required String directoryPath,
+  required String rootPath,
+  required List<LocalChessFileNode> files,
+}) {
+  final children = <LocalChessNode>[];
+  final nestedFiles = <String, List<LocalChessFileNode>>{};
+  for (final file in files) {
+    final relative = p.relative(file.path, from: directoryPath);
+    final parts = p.split(relative);
+    if (parts.length <= 1) {
+      children.add(file);
+      continue;
+    }
+    final childDirectory = p.join(directoryPath, parts.first);
+    (nestedFiles[childDirectory] ??= <LocalChessFileNode>[]).add(file);
+  }
+  for (final entry in nestedFiles.entries) {
+    children.add(
+      _freshFolderTreeFromFiles(
+        directoryPath: entry.key,
+        rootPath: rootPath,
+        files: entry.value,
+      ),
+    );
+  }
+  _sortNodes(children);
+  return LocalChessFolderNode.fromChildren(
+    name: localChessDatabaseDisplayNameForPath(directoryPath),
+    path: directoryPath,
+    relativePath: _relative(rootPath, directoryPath),
+    children: children,
+  );
 }
 
 void _addNormalizedName(Set<String> names, Object? value) {

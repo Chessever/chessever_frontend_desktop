@@ -7,6 +7,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
+import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
@@ -72,6 +73,7 @@ class LocalChessLibraryState {
     this.isScanning = false,
     this.scanProgress,
     this.error,
+    this.warning,
     this.treeBuilds = const <String, LocalChessTreeBuildProgress>{},
   });
 
@@ -80,6 +82,7 @@ class LocalChessLibraryState {
   final bool isScanning;
   final LocalChessScanProgress? scanProgress;
   final String? error;
+  final String? warning;
   final Map<String, LocalChessTreeBuildProgress> treeBuilds;
 
   LocalChessNode? get selectedNode => source?.nodeForPath(selectedPath);
@@ -95,6 +98,7 @@ class LocalChessLibraryState {
     bool? isScanning,
     Object? scanProgress = _localChessUnset,
     Object? error = _localChessUnset,
+    Object? warning = _localChessUnset,
     Map<String, LocalChessTreeBuildProgress>? treeBuilds,
   }) {
     return LocalChessLibraryState(
@@ -112,6 +116,10 @@ class LocalChessLibraryState {
               ? this.scanProgress
               : scanProgress as LocalChessScanProgress?,
       error: identical(error, _localChessUnset) ? this.error : error as String?,
+      warning:
+          identical(warning, _localChessUnset)
+              ? this.warning
+              : warning as String?,
       treeBuilds: treeBuilds ?? this.treeBuilds,
     );
   }
@@ -185,7 +193,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     // must open without ever re-showing the loading popup. Only a genuine cache
     // miss (import/scan) or a slow restore/migration — which emits progress —
     // flips `isScanning` on below.
-    state = state.copyWith(error: null);
+    state = state.copyWith(error: null, warning: null);
     try {
       final cached = await _loadFreshSourceBestEffort(
         paths,
@@ -246,12 +254,15 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       if (_scanToken != token) {
         return false;
       }
+      final outcome = _localChessSourceOpenOutcome(paths, source);
+      if (outcome.failure != null) throw outcome.failure!;
       state = state.copyWith(
         source: source,
         selectedPath: source.root.path,
         isScanning: false,
         scanProgress: null,
         error: null,
+        warning: outcome.warning,
       );
       await _registerAllBestEffort(
         paths,
@@ -268,6 +279,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         isScanning: false,
         scanProgress: null,
         error: localChessOpenErrorMessage(e),
+        warning: null,
       );
       return false;
     }
@@ -505,12 +517,11 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   Future<List<String>?> _resolvableImportFilePaths(List<String> paths) async {
     if (paths.isEmpty) return null;
     final files = <String>[];
+    final seen = <String>{};
     for (final raw in paths) {
       final path = raw.trim();
       if (path.isEmpty || !looksLikeLocalChessFile(path)) return null;
-      final type = await FileSystemEntity.type(path, followLinks: false);
-      if (type != FileSystemEntityType.file) return null;
-      files.add(path);
+      if (seen.add(localChessInputPathKey(path))) files.add(path);
     }
     return files;
   }
@@ -528,6 +539,8 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         sourceLabel: sourceLabel,
         onProgress: onProgress,
       );
+    } on LocalChessFileAccessException {
+      rethrow;
     } catch (error, stackTrace) {
       _debugLocalChessCacheFailure(
         'load local source cache',
@@ -551,6 +564,8 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         rootPath: rootPath,
         onProgress: onProgress,
       );
+    } on LocalChessFileAccessException {
+      rethrow;
     } catch (error, stackTrace) {
       _debugLocalChessCacheFailure('load local file cache', error, stackTrace);
       return null;
@@ -895,6 +910,10 @@ final localChessLibraryProvider =
     );
 
 String localChessOpenErrorMessage(Object error) {
+  if (error is LocalChessFileAccessException) {
+    return error.userMessage;
+  }
+
   if (error is ArgumentError) {
     final message = error.message;
     if (message != null) {
@@ -904,13 +923,124 @@ String localChessOpenErrorMessage(Object error) {
   }
 
   if (error is FileSystemException) {
-    final message = error.message.trim();
-    final path = error.path?.trim();
-    if (path == null || path.isEmpty) return message;
-    return '$message: $path';
+    return LocalChessFileAccessException.from(error).userMessage;
   }
 
   return error.toString();
+}
+
+({Object? failure, String? warning}) _localChessSourceOpenOutcome(
+  List<String> requestedPaths,
+  LocalChessSource source,
+) {
+  final issues = <Object>[];
+  final issueKeys = <String>{};
+
+  void addIssue(String key, Object issue) {
+    if (issueKeys.add(key)) issues.add(issue);
+  }
+
+  void visit(LocalChessNode node) {
+    switch (node) {
+      case LocalChessFolderNode(:final path, :final children, :final scanError):
+        final message = scanError?.trim();
+        if (message != null && message.isNotEmpty) {
+          final accessError = LocalChessFileAccessException.from(
+            message,
+            path: path,
+          );
+          addIssue(
+            'folder:${localChessInputPathKey(path)}',
+            accessError.issue == LocalChessFileAccessIssue.unknown
+                ? ArgumentError(message)
+                : accessError,
+          );
+        }
+        for (final child in children) {
+          visit(child);
+        }
+      case LocalChessFileNode(:final status):
+        if (status == LocalChessFileStatus.parsed) return;
+        final key = 'file:${localChessInputPathKey(node.path)}';
+        switch (status) {
+          case LocalChessFileStatus.parsed:
+            break;
+          case LocalChessFileStatus.failed:
+            final message = node.message ?? 'Could not read this PGN file.';
+            final accessError = LocalChessFileAccessException.from(
+              message,
+              path: node.path,
+            );
+            addIssue(
+              key,
+              accessError.issue == LocalChessFileAccessIssue.unknown
+                  ? ArgumentError(message)
+                  : accessError,
+            );
+          case LocalChessFileStatus.noGames:
+            addIssue(
+              key,
+              ArgumentError(
+                'No playable PGN entries were found in "${node.name}". If '
+                'another app is still saving the file, finish saving or close '
+                'it, then try again.',
+              ),
+            );
+          case LocalChessFileStatus.unsupported:
+            addIssue(
+              key,
+              ArgumentError(node.message ?? localChessUnsupportedFormatMessage),
+            );
+        }
+    }
+  }
+
+  visit(source.root);
+  for (final rawPath in requestedPaths) {
+    final path = rawPath.trim();
+    if (path.isEmpty || source.nodeForPath(path) != null) continue;
+    addIssue(
+      'missing:${localChessInputPathKey(path)}',
+      LocalChessFileAccessException(
+        issue: LocalChessFileAccessIssue.missing,
+        path: path,
+      ),
+    );
+  }
+
+  final playableCount = source.root.playableDatabaseCount;
+  if (playableCount == 0) {
+    if (issues.isEmpty) {
+      return (
+        failure: ArgumentError(
+          'No playable PGN databases were found. Choose a PGN containing '
+          'chess games and try again.',
+        ),
+        warning: null,
+      );
+    }
+    if (issues.length == 1) return (failure: issues.single, warning: null);
+    final first = localChessOpenErrorMessage(issues.first);
+    final remaining = issues.length - 1;
+    return (
+      failure: ArgumentError(
+        'No PGN files could be opened. $first $remaining other '
+        '${remaining == 1 ? 'file or folder also failed' : 'files or folders also failed'}.',
+      ),
+      warning: null,
+    );
+  }
+
+  if (issues.isEmpty) return (failure: null, warning: null);
+  final first = localChessOpenErrorMessage(issues.first);
+  final issueCount = issues.length;
+  return (
+    failure: null,
+    warning:
+        'Opened ${playableCount == 1 ? '1 PGN database' : '$playableCount PGN databases'}, '
+        'but $issueCount ${issueCount == 1 ? 'file or folder could not be opened' : 'files or folders could not be opened'}. '
+        '$first',
+  );
 }
 
 void _debugLocalChessCacheFailure(

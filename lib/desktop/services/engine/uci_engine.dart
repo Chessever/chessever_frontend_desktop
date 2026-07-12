@@ -17,18 +17,95 @@ import 'package:path_provider/path_provider.dart';
 /// the same logic can be reused once we wire the desktop engine into the
 /// shared `StockfishSingleton` façade.
 class UciEngine {
-  UciEngine._({required this.binaryPath, required Process process})
-    : _process = process,
-      _stdoutLines = StreamController<String>.broadcast() {
+  UciEngine._({
+    required this.binaryPath,
+    required Process process,
+    Duration gracefulExitTimeout = _defaultGracefulExitTimeout,
+  }) : _process = process,
+       _gracefulExitTimeout = gracefulExitTimeout,
+       _stdoutLines = StreamController<String>.broadcast() {
+    _liveEngines.add(this);
     _bindProcessStreams();
   }
 
+  @visibleForTesting
+  UciEngine.fromProcessForTesting(
+    Process process, {
+    Duration gracefulExitTimeout = _defaultGracefulExitTimeout,
+  }) : this._(
+         binaryPath: 'test-engine',
+         process: process,
+         gracefulExitTimeout: gracefulExitTimeout,
+       );
+
+  static const Duration _defaultGracefulExitTimeout = Duration(seconds: 2);
+  static final Set<UciEngine> _liveEngines = <UciEngine>{};
+  static int _inFlightProcessOperationCount = 0;
+  static Completer<void>? _processOperationDrainCompleter;
+  static int _activeDrainCount = 0;
+  static bool _spawnsSuspended = false;
+
   final String binaryPath;
   final Process _process;
+  final Duration _gracefulExitTimeout;
   final StreamController<String> _stdoutLines;
   StreamSubscription<String>? _stdoutSub;
   StreamSubscription<String>? _stderrSub;
+  Future<void>? _disposeFuture;
+  bool _disposing = false;
   bool _disposed = false;
+
+  /// Stops every subprocess still owned by a UCI driver.
+  ///
+  /// Desktop shutdown must await this before the Dart VM tears down dart:io.
+  /// On Windows, allowing a child-process exit callback to outlive dart:io
+  /// shutdown can race the SDK's process-list mutex cleanup.
+  /// See https://github.com/dart-lang/sdk/issues/60499.
+  static Future<void> disposeAll() async {
+    // Set the gate before inspecting either collection. Every tracked child
+    // process operation increments the in-flight count synchronously before
+    // its first await, so neither Process.start nor PATH discovery can slip
+    // between this gate and the drain wait.
+    _activeDrainCount += 1;
+    _spawnsSuspended = true;
+    try {
+      await _waitForProcessOperationsToDrain();
+      while (_liveEngines.isNotEmpty) {
+        final engines = List<UciEngine>.of(_liveEngines);
+        await Future.wait(engines.map((engine) => engine.dispose()));
+      }
+    } finally {
+      _activeDrainCount -= 1;
+    }
+  }
+
+  /// Re-enables process creation after an aborted external-termination flow.
+  ///
+  /// Only call this after the corresponding [disposeAll] future has completed.
+  static void resumeSpawns() {
+    // A recovery path must never reopen process creation underneath another
+    // terminal drain. The caller can retry after the drain it owns completes.
+    if (_activeDrainCount != 0) return;
+    _spawnsSuspended = false;
+  }
+
+  /// Synchronously prevents new engine-owned child processes from starting.
+  ///
+  /// The shutdown coordinator calls this before it queues asynchronous service
+  /// cleanup, closing the scheduling window before [disposeAll] takes over the
+  /// full drain.
+  static void suspendSpawns() {
+    _spawnsSuspended = true;
+  }
+
+  @visibleForTesting
+  static int get liveEngineCountForTesting => _liveEngines.length;
+
+  @visibleForTesting
+  static int get inFlightSpawnCountForTesting => _inFlightProcessOperationCount;
+
+  @visibleForTesting
+  static bool get spawnsSuspendedForTesting => _spawnsSuspended;
 
   /// Stream of stdout lines from the engine (already trimmed of `\n`).
   Stream<String> get lines => _stdoutLines.stream;
@@ -41,15 +118,100 @@ class UciEngine {
     String binaryPath, {
     List<String> arguments = const <String>[],
     String? workingDirectory,
-  }) async {
-    final process = await Process.start(
+  }) {
+    return _spawn(
       binaryPath,
-      arguments,
-      workingDirectory: workingDirectory,
-      mode: ProcessStartMode.normal,
-      runInShell: false,
+      processStarter:
+          () => Process.start(
+            binaryPath,
+            arguments,
+            workingDirectory: workingDirectory,
+            mode: ProcessStartMode.normal,
+            runInShell: false,
+          ),
     );
-    return UciEngine._(binaryPath: binaryPath, process: process);
+  }
+
+  @visibleForTesting
+  static Future<UciEngine> spawnForTesting(
+    Future<Process> Function() processStarter, {
+    Duration gracefulExitTimeout = _defaultGracefulExitTimeout,
+  }) {
+    return _spawn(
+      'test-engine',
+      processStarter: processStarter,
+      gracefulExitTimeout: gracefulExitTimeout,
+    );
+  }
+
+  static Future<UciEngine> _spawn(
+    String binaryPath, {
+    required Future<Process> Function() processStarter,
+    Duration gracefulExitTimeout = _defaultGracefulExitTimeout,
+  }) async {
+    _beginProcessOperation();
+    try {
+      final process = await processStarter();
+      final engine = UciEngine._(
+        binaryPath: binaryPath,
+        process: process,
+        gracefulExitTimeout: gracefulExitTimeout,
+      );
+      if (_spawnsSuspended) {
+        await engine.dispose();
+        throw StateError('UCI engine spawning is suspended during shutdown.');
+      }
+      return engine;
+    } finally {
+      _endProcessOperation();
+    }
+  }
+
+  static void _beginProcessOperation() {
+    if (_spawnsSuspended) {
+      throw StateError(
+        'UCI child process creation is suspended during shutdown.',
+      );
+    }
+    _inFlightProcessOperationCount += 1;
+  }
+
+  static void _endProcessOperation() {
+    _inFlightProcessOperationCount -= 1;
+    if (_inFlightProcessOperationCount == 0) {
+      _processOperationDrainCompleter?.complete();
+      _processOperationDrainCompleter = null;
+    }
+  }
+
+  static Future<void> _waitForProcessOperationsToDrain() {
+    if (_inFlightProcessOperationCount == 0) return Future<void>.value();
+    return (_processOperationDrainCompleter ??= Completer<void>()).future;
+  }
+
+  static Future<ProcessResult> _runTrackedProcess(
+    String executable,
+    List<String> arguments,
+  ) {
+    return _trackProcessOperation(() => Process.run(executable, arguments));
+  }
+
+  @visibleForTesting
+  static Future<ProcessResult> runPathLookupForTesting(
+    Future<ProcessResult> Function() processRunner,
+  ) {
+    return _trackProcessOperation(processRunner);
+  }
+
+  static Future<T> _trackProcessOperation<T>(
+    Future<T> Function() operation,
+  ) async {
+    _beginProcessOperation();
+    try {
+      return await operation();
+    } finally {
+      _endProcessOperation();
+    }
   }
 
   void _bindProcessStreams() {
@@ -73,7 +235,7 @@ class UciEngine {
   /// Sends a UCI command and a trailing newline. The caller is responsible
   /// for any handshake (`uci`, `isready`) before issuing analysis commands.
   void send(String command) {
-    if (_disposed) return;
+    if (_disposing || _disposed) return;
     _process.stdin.writeln(command);
   }
 
@@ -105,19 +267,75 @@ class UciEngine {
   }
 
   /// Stops any running search and releases the underlying process. Idempotent.
-  Future<void> dispose() async {
-    if (_disposed) return;
-    _disposed = true;
+  Future<void> dispose() {
+    final pending = _disposeFuture;
+    if (pending != null) return pending;
+
+    // Gate new public commands immediately. _disposeProcess writes the two
+    // terminal UCI commands directly so they cannot be swallowed by this gate.
+    _disposing = true;
+    final future = _disposeProcess();
+    _disposeFuture = future;
+    return future;
+  }
+
+  Future<void> _disposeProcess() async {
     try {
-      send('stop');
-      send('quit');
-    } catch (_) {}
-    await _stdoutSub?.cancel();
-    await _stderrSub?.cancel();
+      // Queue graceful termination before waiting. The previous implementation
+      // marked the engine disposed first, causing send() to drop both commands.
+      try {
+        _process.stdin.writeln('stop');
+        _process.stdin.writeln('quit');
+        await _process.stdin.flush().timeout(_gracefulExitTimeout);
+      } catch (_) {
+        // A closed stdin normally means the child has already exited. The
+        // exitCode wait below remains the authoritative lifecycle signal.
+      }
+
+      final exitedGracefully = await _waitForExit(_gracefulExitTimeout);
+      if (!exitedGracefully) {
+        try {
+          // Windows ignores the signal and terminates the child. POSIX needs
+          // SIGKILL here because the graceful SIGTERM-equivalent was `quit`.
+          _process.kill(
+            Platform.isWindows ? ProcessSignal.sigterm : ProcessSignal.sigkill,
+          );
+        } catch (_) {}
+
+        // This wait is intentionally unbounded. Future.timeout does not cancel
+        // Process.exitCode; proceeding while that callback is still pending is
+        // the exact dart:io shutdown race this barrier exists to prevent.
+        await _process.exitCode;
+      }
+    } finally {
+      // Keep the pipe readers alive until after process exit; otherwise a full
+      // pipe can prevent the child from reaching its exit path.
+      try {
+        await _process.stdin.close().timeout(_gracefulExitTimeout);
+      } catch (_) {}
+      try {
+        await _stdoutSub?.cancel();
+      } catch (_) {}
+      try {
+        await _stderrSub?.cancel();
+      } catch (_) {}
+      try {
+        await _stdoutLines.close();
+      } catch (_) {}
+      _disposed = true;
+      _liveEngines.remove(this);
+    }
+  }
+
+  Future<bool> _waitForExit(Duration timeout) async {
     try {
-      _process.kill();
-    } catch (_) {}
-    await _stdoutLines.close();
+      await _process.exitCode.timeout(timeout);
+      return true;
+    } on TimeoutException {
+      return false;
+    } catch (_) {
+      return false;
+    }
   }
 }
 
@@ -160,7 +378,9 @@ Future<String?> findStockfishBinary() async {
   // 4. PATH fallback.
   try {
     final lookupTool = Platform.isWindows ? 'where' : 'which';
-    final result = await Process.run(lookupTool, const ['stockfish']);
+    final result = await UciEngine._runTrackedProcess(lookupTool, const [
+      'stockfish',
+    ]);
     if (result.exitCode == 0) {
       final out = (result.stdout as String).trim();
       if (out.isNotEmpty) return out.split(RegExp(r'[\r\n]')).first;
@@ -185,7 +405,7 @@ Future<String?> _findSourceTreeBinary() async {
     if (!await file.exists()) continue;
     if (!Platform.isWindows) {
       try {
-        await Process.run('chmod', ['+x', file.path]);
+        await UciEngine._runTrackedProcess('chmod', ['+x', file.path]);
       } catch (_) {}
     }
     return file.path;
@@ -225,7 +445,7 @@ Future<String?> _ensureBundledBinary() async {
       );
       if (!Platform.isWindows) {
         // chmod +x on POSIX so the OS will exec the file.
-        await Process.run('chmod', ['+x', destination.path]);
+        await UciEngine._runTrackedProcess('chmod', ['+x', destination.path]);
       }
     }
     return destination.path;

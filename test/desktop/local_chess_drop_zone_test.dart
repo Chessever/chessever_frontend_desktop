@@ -27,7 +27,7 @@ void main() {
       await cbh.writeAsString('recognized but unsupported shell');
 
       expect(
-        localChessDropPaths(<String>[pgn.path, folder.path, cbh.path]),
+        await localChessDropPaths(<String>[pgn.path, folder.path, cbh.path]),
         <String>[pgn.path, folder.path, cbh.path],
       );
     });
@@ -45,7 +45,7 @@ void main() {
         await cbz.writeAsBytes(const <int>[80, 75, 3, 4]);
 
         expect(
-          localChessDropPaths(<String>[
+          await localChessDropPaths(<String>[
             '',
             '   ',
             notes.path,

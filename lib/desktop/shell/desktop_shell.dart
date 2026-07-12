@@ -41,6 +41,7 @@ import 'package:chessever/desktop/shell/desktop_shell_intents.dart';
 import 'package:chessever/desktop/shell/desktop_sidebar.dart';
 import 'package:chessever/desktop/shell/desktop_tab_bar.dart';
 import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
+import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/pane_keyboard_scroll.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -227,6 +228,40 @@ class DesktopShell extends HookConsumerWidget {
       }
     });
 
+    // File intake is available from the Library toolbar, drag-and-drop,
+    // database tiles, and shell shortcuts. Report failures at the shell so an
+    // unreadable/locked PGN is never silently mistaken for an empty database.
+    ref.listen<String?>(
+      localChessLibraryProvider.select((state) => state.error),
+      (previous, next) {
+        final message = next?.trim();
+        if (message == null || message.isEmpty || message == previous?.trim()) {
+          return;
+        }
+        showDesktopToast(
+          context,
+          message,
+          error: true,
+          duration: const Duration(seconds: 7),
+        );
+      },
+    );
+    ref.listen<String?>(
+      localChessLibraryProvider.select((state) => state.warning),
+      (previous, next) {
+        final message = next?.trim();
+        if (message == null || message.isEmpty || message == previous?.trim()) {
+          return;
+        }
+        showDesktopToast(
+          context,
+          message,
+          error: true,
+          duration: const Duration(seconds: 7),
+        );
+      },
+    );
+
     /// Sidebar nav handler — `inNewTab` is `true` when the user
     /// Cmd/Ctrl-clicks. Plain click usually navigates the *active* tab to the
     /// selected pane (main-route semantics), while protected workspace tabs
@@ -280,6 +315,15 @@ class DesktopShell extends HookConsumerWidget {
           }
         }
 
+        void showPgnOpenError(String message) {
+          showDesktopToast(
+            context,
+            message,
+            error: true,
+            duration: const Duration(seconds: 7),
+          );
+        }
+
         Future<void> openCommandPalette() {
           return CommandPalette.show(
             context,
@@ -291,7 +335,10 @@ class DesktopShell extends HookConsumerWidget {
                 case CommandAction.openPreferences:
                   openPane(DesktopPane.settings);
                 case CommandAction.importPgn:
-                  await PgnFilePicker(ref).pickAndLoad();
+                  await PgnFilePicker(
+                    ref,
+                    onError: showPgnOpenError,
+                  ).pickAndLoad();
                 case CommandAction.openLocalChessFiles:
                   final path = await pickAndOpenLibraryPgnDatabase(ref);
                   if (path != null) openPane(DesktopPane.library);
@@ -520,7 +567,10 @@ class DesktopShell extends HookConsumerWidget {
               _ImportPgnIntent: CallbackAction<_ImportPgnIntent>(
                 onInvoke: (_) {
                   () async {
-                    await PgnFilePicker(ref).pickAndLoad();
+                    await PgnFilePicker(
+                      ref,
+                      onError: showPgnOpenError,
+                    ).pickAndLoad();
                   }();
                   return null;
                 },

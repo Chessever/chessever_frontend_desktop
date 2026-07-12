@@ -12,7 +12,7 @@ void main() {
     });
 
     test(
-      'oversized PGN paths are not claimed by folder quick import',
+      'oversized PGN paths are claimed for asynchronous error feedback',
       () async {
         final temp = await Directory.systemTemp.createTemp(
           'chessever-quick-import-',
@@ -27,7 +27,7 @@ void main() {
         sink.add(List<int>.filled((32 * 1024 * 1024) + 1, 0));
         await sink.close();
 
-        expect(canQuickImportPathToFolder(file.path), isFalse);
+        expect(canQuickImportPathToFolder(file.path), isTrue);
       },
     );
   });

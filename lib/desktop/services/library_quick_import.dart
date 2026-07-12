@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/repository/library/library_repository.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
@@ -36,13 +37,10 @@ bool isPgnTooLargeForQuickFolderImport(int bytes) {
 }
 
 bool canQuickImportPathToFolder(String path) {
-  try {
-    final type = FileSystemEntity.typeSync(path, followLinks: false);
-    if (type != FileSystemEntityType.file || !_isPgnPath(path)) return true;
-    return !isPgnTooLargeForQuickFolderImport(File(path).lengthSync());
-  } catch (_) {
-    return false;
-  }
+  final trimmed = path.trim();
+  // Type, size, and directory checks happen in killable async workers. Drag
+  // hover must never perform synchronous I/O against a locked/network path.
+  return trimmed.isNotEmpty;
 }
 
 /// Reads, parses, and bulk-saves chess files at [paths] into [folder] with
@@ -63,14 +61,16 @@ Future<int> quickImportPathsToFolder({
     return 0;
   }
   if (paths.isEmpty) return 0;
-  final games = await _parseChessGamesFromPaths(paths);
+  final parsed = await _parseChessGamesFromPaths(paths);
+  final games = parsed.games;
   _quickImportLog('paths import parsed games=${games.length}');
   if (games.isEmpty) {
     if (context.mounted) {
       showDesktopToast(
         context,
-        'No PGN games found in the dropped files.',
+        parsed.fileError ?? 'No PGN games found in the dropped files.',
         error: true,
+        duration: const Duration(seconds: 7),
       );
     }
     return 0;
@@ -83,6 +83,14 @@ Future<int> quickImportPathsToFolder({
     games: games,
     verb: 'Imported',
   );
+  if (saved > 0 && parsed.fileError != null && context.mounted) {
+    showDesktopToast(
+      context,
+      'Some PGN files were skipped. ${parsed.fileError}',
+      error: true,
+      duration: const Duration(seconds: 7),
+    );
+  }
   _quickImportLog('paths import saved=$saved folder=${folder.id}');
   return saved;
 }
@@ -276,75 +284,103 @@ Future<int> _bulkSave({
   return rows.length;
 }
 
-Future<List<ChessGame>> _parseChessGamesFromPaths(List<String> paths) async {
+Future<({List<ChessGame> games, String? fileError})> _parseChessGamesFromPaths(
+  List<String> paths,
+) async {
   _quickImportLog('scan paths start count=${paths.length}');
   final games = <ChessGame>[];
+  String? firstFileError;
   for (final path in paths) {
-    _quickImportLog('scan path type check path=$path');
-    final type = FileSystemEntity.typeSync(path, followLinks: false);
-    if (type == FileSystemEntityType.directory) {
-      _quickImportLog('scan directory start path=$path');
-      try {
-        await for (final entity in Directory(
-          path,
-        ).list(recursive: true, followLinks: false)) {
-          if (entity is File && _isPgnPath(entity.path)) {
-            _quickImportLog('scan directory pgn path=${entity.path}');
-            games.addAll(await _gamesFromFile(entity.path));
-          }
-        }
-      } catch (e) {
-        _quickImportLog('scan directory failed path=$path error=$e');
-      }
-    } else if (type == FileSystemEntityType.file && _isPgnPath(path)) {
+    if (_isPgnPath(path)) {
       _quickImportLog('scan file pgn path=$path');
-      games.addAll(await _gamesFromFile(path));
-    } else {
-      _quickImportLog('scan path ignored type=$type path=$path');
+      final parsed = await _gamesFromFile(path);
+      games.addAll(parsed.games);
+      firstFileError ??= parsed.fileError;
+      continue;
+    }
+
+    _quickImportLog('scan directory start path=$path');
+    try {
+      final pgnPaths = await listLocalChessPgnFilesInWorker(path);
+      for (final pgnPath in pgnPaths) {
+        _quickImportLog('scan directory pgn path=$pgnPath');
+        final parsed = await _gamesFromFile(pgnPath);
+        games.addAll(parsed.games);
+        firstFileError ??= parsed.fileError;
+      }
+    } on LocalChessFileAccessException catch (error) {
+      _quickImportLog('scan directory failed path=$path error=$error');
+      firstFileError ??= error.userMessage;
+    } catch (error) {
+      _quickImportLog('scan directory failed path=$path error=$error');
+      firstFileError ??=
+          'ChessEver couldn\'t scan "${localChessFileNameFromPath(path)}". '
+          'Check the folder or network connection, then try again.';
     }
   }
   _quickImportLog('scan paths complete games=${games.length}');
-  return games;
+  return (games: games, fileError: firstFileError);
 }
 
 bool _isPgnPath(String path) => path.toLowerCase().endsWith('.pgn');
 
-Future<List<ChessGame>> _gamesFromFile(String path) async {
-  return Isolate.run(() async {
+Future<({List<ChessGame> games, String? fileError})> _gamesFromFile(
+  String path,
+) async {
+  try {
+    _quickImportLog('worker file start path=$path');
+    final bytes = await readStableLocalChessFileBytesInWorker(
+      path,
+      maxBytes: _kQuickImportMaxPgnBytes,
+    );
     try {
-      _quickImportLog('worker file start path=$path');
-      final stat = await File(path).stat();
-      _quickImportLog(
-        'worker file stat bytes=${stat.size} modified=${stat.modified.toIso8601String()}',
-      );
-      if (isPgnTooLargeForQuickFolderImport(stat.size)) {
+      return await Isolate.run(() {
+        _quickImportLog('worker file read bytes=${bytes.length}');
+        final utf = utf8.decode(bytes, allowMalformed: true);
+        final text =
+            utf.trim().isNotEmpty
+                ? utf
+                : latin1.decode(bytes, allowInvalid: true);
+        _quickImportLog('worker file decoded chars=${text.length}');
+        final stopwatch = Stopwatch()..start();
+        final games =
+            parsePgnsToChessGames(text).map((e) => e.chessGame).toList();
+        stopwatch.stop();
         _quickImportLog(
-          'worker file skipped too large for quick import '
-          'bytes=${stat.size} limit=$_kQuickImportMaxPgnBytes path=$path',
+          'worker file parsed games=${games.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
         );
-        return const <ChessGame>[];
-      }
-      final bytes = await File(path).readAsBytes();
-      _quickImportLog('worker file read bytes=${bytes.length}');
-      final utf = utf8.decode(bytes, allowMalformed: true);
-      final text =
-          utf.trim().isNotEmpty
-              ? utf
-              : latin1.decode(bytes, allowInvalid: true);
-      _quickImportLog('worker file decoded chars=${text.length}');
-      final stopwatch = Stopwatch()..start();
-      final games =
-          parsePgnsToChessGames(text).map((e) => e.chessGame).toList();
-      stopwatch.stop();
-      _quickImportLog(
-        'worker file parsed games=${games.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
-      );
-      return games;
+        return (games: games, fileError: null);
+      });
     } catch (e) {
-      _quickImportLog('worker file failed path=$path error=$e');
-      return const <ChessGame>[];
+      _quickImportLog('worker parse failed path=$path error=$e');
+      return (
+        games: const <ChessGame>[],
+        fileError:
+            'ChessEver couldn\'t import "${localChessFileNameFromPath(path)}". '
+            'The PGN may be incomplete or damaged.',
+      );
     }
-  });
+  } on LocalChessFileAccessException catch (e) {
+    _quickImportLog('worker file failed path=$path error=$e');
+    return (games: const <ChessGame>[], fileError: e.userMessage);
+  } on ArgumentError catch (e) {
+    _quickImportLog('worker file skipped path=$path error=$e');
+    return (
+      games: const <ChessGame>[],
+      fileError:
+          '"${localChessFileNameFromPath(path)}" is too large for quick '
+          'folder import. Open it as a local database instead.',
+    );
+  } catch (e) {
+    _quickImportLog('worker file failed path=$path error=$e');
+    return (
+      games: const <ChessGame>[],
+      fileError:
+          'ChessEver couldn\'t import "${localChessFileNameFromPath(path)}". '
+          'Close it in other apps or copy it to a local folder, then try '
+          'again.',
+    );
+  }
 }
 
 void _quickImportLog(String message) {

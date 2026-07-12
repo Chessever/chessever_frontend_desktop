@@ -1,9 +1,8 @@
 import 'dart:async';
-import 'dart:io';
-
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 
+import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -47,7 +46,9 @@ class _LocalChessDropZoneState extends State<LocalChessDropZone> {
       onDragDone: (details) async {
         if (_dropInFlight) return;
         setState(() => _hovering = false);
-        final paths = localChessDropPaths(details.files.map((x) => x.path));
+        final paths = await localChessDropPaths(
+          details.files.map((x) => x.path),
+        );
         if (paths.isEmpty) return;
         _dropInFlight = true;
         try {
@@ -68,14 +69,25 @@ class _LocalChessDropZoneState extends State<LocalChessDropZone> {
 }
 
 @visibleForTesting
-List<String> localChessDropPaths(Iterable<String> rawPaths) {
-  return rawPaths
-      .where(
-        (path) =>
-            path.trim().isNotEmpty &&
-            (looksLikeLocalChessFile(path) || Directory(path).existsSync()),
-      )
-      .toList(growable: false);
+Future<List<String>> localChessDropPaths(Iterable<String> rawPaths) async {
+  final paths = <String>[];
+  for (final rawPath in rawPaths) {
+    final path = rawPath.trim();
+    if (path.isEmpty) continue;
+    if (looksLikeLocalChessFile(path)) {
+      paths.add(path);
+      continue;
+    }
+    try {
+      final probe = await probeLocalChessPathInWorker(path);
+      if (probe.isDirectory) paths.add(path);
+    } on LocalChessFileAccessException {
+      // Preserve the path so the library intake flow can surface the same
+      // actionable drive/network guidance instead of silently dropping it.
+      paths.add(path);
+    }
+  }
+  return List<String>.unmodifiable(paths);
 }
 
 class _DropOverlay extends StatelessWidget {

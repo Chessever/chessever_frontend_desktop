@@ -30,4 +30,36 @@ void main() {
       );
     });
   });
+
+  test('superseded initialization releases the instance lock', () async {
+    final singleton = StockfishSingleton();
+    await singleton.forceRecovery();
+    final releaseHeldLock = await singleton.acquireInstanceLockForTesting();
+    final initialization = singleton.ensureEngineReadyForTesting();
+    await pumpEventQueue();
+    expect(singleton.instanceLockHeldForTesting, isTrue);
+
+    await singleton.forceRecovery();
+    await expectLater(initialization, throwsA(anything));
+
+    expect(singleton.instanceLockHeldForTesting, isFalse);
+    final releaseNextLock = await singleton
+        .acquireInstanceLockForTesting()
+        .timeout(const Duration(milliseconds: 250));
+    releaseNextLock();
+    releaseHeldLock();
+  });
+
+  test('concurrent force recovery calls share one lifecycle reset', () async {
+    final singleton = StockfishSingleton();
+    await singleton.forceRecovery();
+    final before = singleton.engineLifecycleGenerationForTesting;
+
+    await Future.wait(<Future<void>>[
+      singleton.forceRecovery(),
+      singleton.forceRecovery(),
+    ]);
+
+    expect(singleton.engineLifecycleGenerationForTesting, before + 1);
+  });
 }

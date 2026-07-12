@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:resqlite/resqlite.dart' as resqlite;
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_append.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
@@ -47,7 +48,7 @@ void main() {
         expect(missing, isFalse);
         expect(notifier.state.source, same(previousSource));
         expect(notifier.state.selectedPath, previousPath);
-        expect(notifier.state.error, contains('File or folder does not exist'));
+        expect(notifier.state.error, contains('couldn\'t find'));
         expect(notifier.state.isScanning, isFalse);
       },
     );
@@ -110,6 +111,129 @@ void main() {
         notifier.clear();
       },
     );
+
+    test(
+      'file-access cache failure is not retried through the scanner',
+      () async {
+        final file = File('${temp.path}/stalled.pgn');
+        await file.writeAsString(_samplePgn);
+        var scanCalls = 0;
+        final notifier = LocalChessLibraryNotifier(
+          localDatabaseRepository: _FailingLocalChessDatabaseRepository(
+            loadFreshSourceError: LocalChessFileAccessException.stalled(
+              path: file.path,
+            ),
+          ),
+          scanPathsWithProgress: (
+            _, {
+            sourceLabel,
+            maxDecodedBytes = 64 * 1024 * 1024,
+            maxGames = 200000,
+            buildOpeningTree = false,
+            onProgress,
+          }) async {
+            scanCalls += 1;
+            throw StateError('scanner must not retry an inaccessible path');
+          },
+        );
+
+        final opened = await notifier.openPaths(<String>[file.path]);
+
+        expect(opened, isFalse);
+        expect(scanCalls, 0);
+        expect(notifier.state.error, contains('stopped receiving data'));
+      },
+    );
+
+    test(
+      'single-file import rejects an unreadable PGN with recovery guidance',
+      () async {
+        final file = File('${temp.path}/locked-in-chessbase.pgn');
+        await file.writeAsString(_samplePgn);
+        final failedNode = LocalChessFileNode(
+          name: 'locked-in-chessbase.pgn',
+          path: file.path,
+          relativePath: 'locked-in-chessbase.pgn',
+          extension: '.pgn',
+          status: LocalChessFileStatus.failed,
+          games: const <LocalChessGame>[],
+          sizeBytes: await file.length(),
+          modifiedAt: await file.lastModified(),
+          message:
+              'Could not read this file: FileSystemException: '
+              'The process cannot access the file because it is being used '
+              'by another process. (OS Error: Sharing violation, errno = 32)',
+        );
+        final failedSource = LocalChessSource(
+          id: 'locked-source',
+          label: 'locked-in-chessbase.pgn',
+          paths: <String>[file.path],
+          rootPath: temp.path,
+          scannedAt: DateTime(2026),
+          root: LocalChessFolderNode.fromChildren(
+            name: 'locked-in-chessbase.pgn',
+            path: 'local-file:locked-source',
+            relativePath: '',
+            children: <LocalChessNode>[failedNode],
+          ),
+        );
+        final notifier = LocalChessLibraryNotifier(
+          localDatabaseRepository: _FailingLocalChessDatabaseRepository(
+            importedSource: failedSource,
+          ),
+        );
+
+        final opened = await notifier.openPaths(<String>[file.path]);
+
+        expect(opened, isFalse);
+        expect(notifier.state.source, isNull);
+        expect(notifier.state.isScanning, isFalse);
+        expect(notifier.state.scanProgress, isNull);
+        expect(notifier.state.error, contains('another app'));
+        expect(notifier.state.error, contains('Close'));
+        expect(notifier.state.error, contains('try again'));
+      },
+    );
+
+    test('single-file import preserves compressed-PGN decode errors', () async {
+      final file = File('${temp.path}/corrupt.pgn.bz2');
+      await file.writeAsBytes(<int>[1, 2, 3], flush: true);
+      final failedNode = LocalChessFileNode(
+        name: 'corrupt.pgn.bz2',
+        path: file.path,
+        relativePath: 'corrupt.pgn.bz2',
+        extension: '.pgn.bz2',
+        status: LocalChessFileStatus.failed,
+        games: const <LocalChessGame>[],
+        sizeBytes: await file.length(),
+        modifiedAt: await file.lastModified(),
+        message: 'Could not decode compressed PGN (.pgn.bz2): invalid data',
+      );
+      final failedSource = LocalChessSource(
+        id: 'corrupt-source',
+        label: 'corrupt.pgn.bz2',
+        paths: <String>[file.path],
+        rootPath: temp.path,
+        scannedAt: DateTime(2026),
+        root: LocalChessFolderNode.fromChildren(
+          name: 'corrupt.pgn.bz2',
+          path: 'local-file:corrupt-source',
+          relativePath: '',
+          children: <LocalChessNode>[failedNode],
+        ),
+      );
+      final notifier = LocalChessLibraryNotifier(
+        localDatabaseRepository: _FailingLocalChessDatabaseRepository(
+          importedSource: failedSource,
+        ),
+      );
+
+      final opened = await notifier.openPaths(<String>[file.path]);
+
+      expect(opened, isFalse);
+      expect(notifier.state.error, contains('Could not decode compressed PGN'));
+      expect(notifier.state.error, isNot(contains('Close it in other apps')));
+    });
 
     test(
       'openPaths uses worker import preview without persisting full source again',
@@ -211,6 +335,146 @@ void main() {
         notifier.clear();
       },
     );
+
+    test('multi-file import rejects a source when every PGN failed', () async {
+      final first = File('${temp.path}/first-locked.pgn');
+      final second = File('${temp.path}/second-locked.pgn');
+      await first.writeAsString(_samplePgn);
+      await second.writeAsString(_samplePgn);
+      LocalChessFileNode failedNode(File file) => LocalChessFileNode(
+        name: file.uri.pathSegments.last,
+        path: file.path,
+        relativePath: file.uri.pathSegments.last,
+        extension: '.pgn',
+        status: LocalChessFileStatus.failed,
+        games: const <LocalChessGame>[],
+        sizeBytes: 1,
+        message:
+            'FileSystemException: The process cannot access the file because '
+            'it is being used by another process. (OS Error: Sharing '
+            'violation, errno = 32)',
+      );
+
+      final failedSource = LocalChessSource(
+        id: 'all-failed',
+        label: 'Locked PGNs',
+        paths: <String>[first.path, second.path],
+        rootPath: temp.path,
+        scannedAt: DateTime(2026),
+        root: LocalChessFolderNode.fromChildren(
+          name: 'Locked PGNs',
+          path: 'local-batch:all-failed',
+          relativePath: '',
+          children: <LocalChessNode>[failedNode(first), failedNode(second)],
+        ),
+      );
+      final notifier = LocalChessLibraryNotifier(
+        localDatabaseRepository: _FailingLocalChessDatabaseRepository(
+          importedSource: failedSource,
+          multiFileLoadSource: failedSource,
+        ),
+      );
+
+      final opened = await notifier.openPaths(<String>[
+        first.path,
+        second.path,
+      ]);
+
+      expect(opened, isFalse);
+      expect(notifier.state.source, isNull);
+      expect(notifier.state.error, contains('No PGN files could be opened'));
+      expect(notifier.state.error, contains('ChessBase'));
+      expect(notifier.state.warning, isNull);
+    });
+
+    test('partial multi-file import keeps playable PGNs and warns', () async {
+      final playable = File('${temp.path}/playable.pgn');
+      final locked = File('${temp.path}/locked.pgn');
+      await playable.writeAsString(_samplePgn);
+      await locked.writeAsString(_samplePgn);
+      final scanned = await scanLocalChessPaths(<String>[playable.path]);
+      final playableNode = scanned.root.singlePlayableDatabaseInSubtree!;
+      final lockedNode = LocalChessFileNode(
+        name: 'locked.pgn',
+        path: locked.path,
+        relativePath: 'locked.pgn',
+        extension: '.pgn',
+        status: LocalChessFileStatus.failed,
+        games: const <LocalChessGame>[],
+        sizeBytes: await locked.length(),
+        message:
+            'FileSystemException: The process cannot access the file because '
+            'it is being used by another process. (OS Error: Sharing '
+            'violation, errno = 32)',
+      );
+      final partialSource = LocalChessSource(
+        id: 'partial',
+        label: 'Two PGNs',
+        paths: <String>[playable.path, locked.path],
+        rootPath: temp.path,
+        scannedAt: DateTime(2026),
+        root: LocalChessFolderNode.fromChildren(
+          name: 'Two PGNs',
+          path: 'local-batch:partial',
+          relativePath: '',
+          children: <LocalChessNode>[playableNode, lockedNode],
+        ),
+      );
+      final notifier = LocalChessLibraryNotifier(
+        localDatabaseRepository: _FailingLocalChessDatabaseRepository(
+          importedSource: partialSource,
+          multiFileLoadSource: partialSource,
+        ),
+      );
+
+      final opened = await notifier.openPaths(<String>[
+        playable.path,
+        locked.path,
+      ]);
+
+      expect(opened, isTrue);
+      expect(notifier.state.source, same(partialSource));
+      expect(notifier.state.error, isNull);
+      expect(notifier.state.warning, contains('1 PGN database'));
+      expect(notifier.state.warning, contains('ChessBase'));
+    });
+
+    test('folder scan error cannot install an empty source', () async {
+      final folder = await Directory('${temp.path}/unavailable').create();
+      final failedSource = LocalChessSource(
+        id: 'folder-failed',
+        label: 'Unavailable',
+        paths: <String>[folder.path],
+        rootPath: folder.path,
+        scannedAt: DateTime(2026),
+        root: LocalChessFolderNode.fromChildren(
+          name: 'Unavailable',
+          path: folder.path,
+          relativePath: '',
+          children: const <LocalChessNode>[],
+          scanError:
+              'FileSystemException: The network name is no longer available '
+              '(OS Error: errno = 64)',
+        ),
+      );
+      final notifier = LocalChessLibraryNotifier(
+        scanPathsWithProgress:
+            (
+              _, {
+              sourceLabel,
+              maxDecodedBytes = 64 * 1024 * 1024,
+              maxGames = 200000,
+              buildOpeningTree = false,
+              onProgress,
+            }) async => failedSource,
+      );
+
+      final opened = await notifier.openPaths(<String>[folder.path]);
+
+      expect(opened, isFalse);
+      expect(notifier.state.source, isNull);
+      expect(notifier.state.error, contains('isn\'t available'));
+    });
 
     test(
       'refreshFile updates one local database tree and persisted cache',
@@ -776,7 +1040,8 @@ void main() {
         localChessOpenErrorMessage(
           const FileSystemException('File or folder does not exist', '/tmp/db'),
         ),
-        'File or folder does not exist: /tmp/db',
+        'ChessEver couldn\'t find "db". It may have been moved or deleted. '
+        'Choose the file again.',
       );
     });
   });
@@ -789,6 +1054,7 @@ class _FailingLocalChessDatabaseRepository
     this.failPersistSource = false,
     this.failLoadFreshFileNode = false,
     this.failPersistFileNode = false,
+    this.loadFreshSourceError,
     this.importedSource,
     this.multiFileLoadSource,
     this.rebuildStarted,
@@ -800,6 +1066,7 @@ class _FailingLocalChessDatabaseRepository
   final bool failPersistSource;
   final bool failLoadFreshFileNode;
   final bool failPersistFileNode;
+  final Object? loadFreshSourceError;
   final LocalChessSource? importedSource;
   final LocalChessSource? multiFileLoadSource;
   final Completer<void>? rebuildStarted;
@@ -822,6 +1089,8 @@ class _FailingLocalChessDatabaseRepository
     void Function(LocalChessScanProgress progress)? onProgress,
   }) async {
     loadFreshSourceCalls++;
+    final configuredError = loadFreshSourceError;
+    if (configuredError != null) throw configuredError;
     if (failLoadFreshSource) {
       throw StateError('cache restore failed');
     }

@@ -259,13 +259,13 @@ class LibraryPane extends HookConsumerWidget {
       }
 
       final error = ref.read(localChessLibraryProvider).error?.trim();
-      showDesktopToast(
-        context,
-        error == null || error.isEmpty
-            ? 'Could not import PGN. Please try another file.'
-            : error,
-        error: true,
-      );
+      if (error == null || error.isEmpty) {
+        showDesktopToast(
+          context,
+          'Could not import PGN. Please try another file.',
+          error: true,
+        );
+      }
     }
 
     Future<void> openLocalFiles() async {
