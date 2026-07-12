@@ -1331,45 +1331,36 @@ class _PlayerIdentityCard extends StatelessWidget {
                 _PlayerAvatar(player: player, size: 58),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  // Flag, then title chip, then name — all on one line.
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      Text(
-                        playerWorkspaceDisplayName(player),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: kWhiteColor,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          height: 1.15,
+                      if (hasCountry) ...[
+                        FederationFlag(
+                          federation: country,
+                          width: 18,
+                          height: 13,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      if (hasTitle) ...[
+                        DesktopPlayerTitleChip(title: title),
+                        const SizedBox(width: 8),
+                      ],
+                      Expanded(
+                        child: Text(
+                          playerWorkspaceDisplayName(player),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            height: 1.15,
+                          ),
                         ),
                       ),
-                      if (hasTitle || hasCountry) ...[
-                        const SizedBox(height: 6),
-                        Row(
-                          children: [
-                            if (hasTitle)
-                              Text(
-                                title,
-                                style: const TextStyle(
-                                  color: kWhiteColor70,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            if (hasTitle && hasCountry)
-                              const SizedBox(width: 8),
-                            if (hasCountry)
-                              FederationFlag(
-                                federation: country,
-                                width: 18,
-                                height: 13,
-                                borderRadius: BorderRadius.circular(2),
-                              ),
-                          ],
-                        ),
-                      ],
                     ],
                   ),
                 ),
