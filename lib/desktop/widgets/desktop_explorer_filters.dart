@@ -388,6 +388,10 @@ class _TimeControlChips extends StatelessWidget {
         return 'Rapid';
       case TimeControl.blitz:
         return 'Blitz';
+      case TimeControl.bullet:
+        return 'Bullet';
+      case TimeControl.ultrabullet:
+        return 'Ultrabullet';
     }
   }
 
@@ -399,6 +403,10 @@ class _TimeControlChips extends StatelessWidget {
         return Icons.timer_outlined;
       case TimeControl.blitz:
         return Icons.bolt_rounded;
+      case TimeControl.bullet:
+        return Icons.flash_on_rounded;
+      case TimeControl.ultrabullet:
+        return Icons.electric_bolt_rounded;
     }
   }
 }

@@ -11,6 +11,10 @@ enum TimeControl {
   rapid,
   @MappableValue('BLITZ')
   blitz,
+  @MappableValue('BULLET')
+  bullet,
+  @MappableValue('ULTRABULLET')
+  ultrabullet,
 }
 
 extension TimeControlExtension on TimeControl {
@@ -22,6 +26,10 @@ extension TimeControlExtension on TimeControl {
         return 'Rapid';
       case TimeControl.blitz:
         return 'Blitz';
+      case TimeControl.bullet:
+        return 'Bullet';
+      case TimeControl.ultrabullet:
+        return 'Ultrabullet';
     }
   }
 }
@@ -96,6 +104,10 @@ class GamebaseGame with GamebaseGameMappable {
         return 'Rapid';
       case TimeControl.blitz:
         return 'Blitz';
+      case TimeControl.bullet:
+        return 'Bullet';
+      case TimeControl.ultrabullet:
+        return 'Ultrabullet';
     }
   }
 }

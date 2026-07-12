@@ -7730,14 +7730,11 @@ void _appendLocalPositionFilters(
 ) {
   final timeControl = filters.timeControl;
   if (timeControl != null) {
-    if (timeControl == TimeControl.blitz) {
-      // The legacy opening-tree control has only three broad buckets. Keep
-      // Bullet and UltraBullet available beneath its Blitz umbrella while the
-      // richer Players stats facets continue to expose them independently.
+    if (timeControl == TimeControl.ultrabullet) {
       where.write(
         " AND LOWER(COALESCE(g.time_control_category, '')) "
-        "IN ('blitz', 'bullet', 'ultrabullet', 'ultra_bullet', "
-        "'ultra-bullet')",
+        "IN ('ultrabullet', 'ultra_bullet', 'ultra-bullet', "
+        "'ultra bullet')",
       );
     } else {
       where.write(" AND LOWER(COALESCE(g.time_control_category, '')) = ?");

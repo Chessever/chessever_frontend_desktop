@@ -5,16 +5,32 @@ import 'package:dartchess/dartchess.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('keeps Bullet and UltraBullet inside the legacy Blitz tree bucket', () {
+  test('filters Blitz, Bullet, and Ultrabullet as distinct tree buckets', () {
     const blitz = PlayerOpeningTreeFilterCriteria(
       timeControl: TimeControl.blitz,
     );
+    const bullet = PlayerOpeningTreeFilterCriteria(
+      timeControl: TimeControl.bullet,
+    );
+    const ultrabullet = PlayerOpeningTreeFilterCriteria(
+      timeControl: TimeControl.ultrabullet,
+    );
 
     expect(blitz.matches(<String, dynamic>{'timeControl': 'blitz'}), isTrue);
-    expect(blitz.matches(<String, dynamic>{'timeControl': 'bullet'}), isTrue);
+    expect(blitz.matches(<String, dynamic>{'timeControl': 'bullet'}), isFalse);
     expect(
       blitz.matches(<String, dynamic>{'timeControl': 'ultrabullet'}),
+      isFalse,
+    );
+    expect(bullet.matches(<String, dynamic>{'timeControl': 'bullet'}), isTrue);
+    expect(bullet.matches(<String, dynamic>{'timeControl': 'blitz'}), isFalse);
+    expect(
+      ultrabullet.matches(<String, dynamic>{'timeControl': 'ultra-bullet'}),
       isTrue,
+    );
+    expect(
+      ultrabullet.matches(<String, dynamic>{'timeControl': 'bullet'}),
+      isFalse,
     );
     expect(blitz.matches(<String, dynamic>{'timeControl': 'rapid'}), isFalse);
   });

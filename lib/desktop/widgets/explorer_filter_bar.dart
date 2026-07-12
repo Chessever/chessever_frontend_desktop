@@ -50,6 +50,16 @@ class ExplorerFilterBar extends ConsumerWidget {
       label: 'Blitz',
       icon: Icons.flash_on_rounded,
     ),
+    _TimeControlChip(
+      value: TimeControl.bullet,
+      label: 'Bullet',
+      icon: Icons.electric_bolt_rounded,
+    ),
+    _TimeControlChip(
+      value: TimeControl.ultrabullet,
+      label: 'Ultrabullet',
+      icon: Icons.offline_bolt_rounded,
+    ),
   ];
 
   @override
@@ -299,6 +309,10 @@ String _shortTimeControlLabel(TimeControl value) {
       return 'Rapid';
     case TimeControl.blitz:
       return 'Blitz';
+    case TimeControl.bullet:
+      return 'Bullet';
+    case TimeControl.ultrabullet:
+      return 'Ultrabullet';
   }
 }
 

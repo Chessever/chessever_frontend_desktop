@@ -2499,8 +2499,7 @@ void main() {
       expect(rapidGames.data.single['event'], 'Rapid Local');
       expect(rapidGames.data.single['white'], 'Carlsen, Magnus');
 
-      // The opening tree still exposes the historical three-bucket control.
-      // A newly precise Bullet row therefore remains reachable via Blitz.
+      // Imported online speed categories stay independently filterable.
       await db.execute(
         '''
         UPDATE local_chess_games
@@ -2511,11 +2510,11 @@ void main() {
         <Object?>[pgnFile.path],
       );
 
-      const carlsenBlackOnlineBlitz = PlayerOpeningTreeFilterCriteria(
+      const carlsenBlackOnlineBullet = PlayerOpeningTreeFilterCriteria(
         playerFideIds: <String>['1503014'],
         playerNames: <String>['Carlsen, Magnus'],
         color: 'black',
-        timeControl: TimeControl.blitz,
+        timeControl: TimeControl.bullet,
         result: 'B',
         isOnline: true,
         yearFrom: 2025,
@@ -2523,38 +2522,38 @@ void main() {
         minRating: 2800,
         maxRating: 2900,
       );
-      final blitzMoves = await repo.localMoveAggregatesForFen(
+      final bulletMoves = await repo.localMoveAggregatesForFen(
         databasePath: pgnFile.path,
         fen: Chess.initial.fen,
-        filters: carlsenBlackOnlineBlitz,
+        filters: carlsenBlackOnlineBullet,
       );
-      expect(blitzMoves.map((move) => move.uci), ['e2e4']);
-      expect(blitzMoves.single.black, 1);
-      expect(blitzMoves.single.total, 1);
+      expect(bulletMoves.map((move) => move.uci), ['e2e4']);
+      expect(bulletMoves.single.black, 1);
+      expect(bulletMoves.single.total, 1);
 
-      final blitzGames = await repo.localPositionGamesResponse(
+      final bulletGames = await repo.localPositionGamesResponse(
         databasePath: pgnFile.path,
         fen: Chess.initial.fen,
         uci: 'e2e4',
-        filters: carlsenBlackOnlineBlitz,
+        filters: carlsenBlackOnlineBullet,
         sortBy: GamebaseSortField.date,
         sortDirection: GamebaseSortDirection.asc,
         pageNumber: 0,
         pageSize: 10,
       );
-      expect(blitzGames, isNotNull);
-      expect(blitzGames!.metadata.totalCount, 1);
-      expect(blitzGames.data.single['event'], 'Online Blitz');
-      expect(blitzGames.data.single['black'], 'Carlsen, Magnus');
+      expect(bulletGames, isNotNull);
+      expect(bulletGames!.metadata.totalCount, 1);
+      expect(bulletGames.data.single['event'], 'Online Blitz');
+      expect(bulletGames.data.single['black'], 'Carlsen, Magnus');
 
-      final nameOnlyBlitz = await repo.localPositionGamesResponse(
+      final nameOnlyBullet = await repo.localPositionGamesResponse(
         databasePath: pgnFile.path,
         fen: Chess.initial.fen,
         uci: 'e2e4',
         filters: const PlayerOpeningTreeFilterCriteria(
           playerNames: <String>['Carlsen, Magnus'],
           color: 'black',
-          timeControl: TimeControl.blitz,
+          timeControl: TimeControl.bullet,
           isOnline: true,
         ),
         sortBy: GamebaseSortField.date,
@@ -2562,8 +2561,8 @@ void main() {
         pageNumber: 0,
         pageSize: 10,
       );
-      expect(nameOnlyBlitz, isNotNull);
-      expect(nameOnlyBlitz!.metadata.totalCount, 1);
+      expect(nameOnlyBullet, isNotNull);
+      expect(nameOnlyBullet!.metadata.totalCount, 1);
 
       final impossibleSide = await repo.localPositionGamesResponse(
         databasePath: pgnFile.path,
@@ -2572,7 +2571,7 @@ void main() {
         filters: const PlayerOpeningTreeFilterCriteria(
           playerNames: <String>['Carlsen, Magnus'],
           color: 'white',
-          timeControl: TimeControl.blitz,
+          timeControl: TimeControl.bullet,
           isOnline: true,
         ),
         sortBy: GamebaseSortField.date,
@@ -2582,6 +2581,45 @@ void main() {
       );
       expect(impossibleSide, isNotNull);
       expect(impossibleSide!.metadata.totalCount, 0);
+
+      final exactBlitz = await repo.localPositionGamesResponse(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+        uci: 'e2e4',
+        filters: const PlayerOpeningTreeFilterCriteria(
+          timeControl: TimeControl.blitz,
+        ),
+        sortBy: GamebaseSortField.date,
+        sortDirection: GamebaseSortDirection.asc,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(exactBlitz, isNotNull);
+      expect(exactBlitz!.metadata.totalCount, 0);
+
+      await db.execute(
+        '''
+        UPDATE local_chess_games
+        SET time_control_category = 'ultra-bullet'
+        WHERE database_id = ?
+          AND json_extract(headers_json, '\$.Event') = 'Online Blitz'
+        ''',
+        <Object?>[pgnFile.path],
+      );
+      final ultrabulletGames = await repo.localPositionGamesResponse(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+        uci: 'e2e4',
+        filters: const PlayerOpeningTreeFilterCriteria(
+          timeControl: TimeControl.ultrabullet,
+        ),
+        sortBy: GamebaseSortField.date,
+        sortDirection: GamebaseSortDirection.asc,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(ultrabulletGames, isNotNull);
+      expect(ultrabulletGames!.metadata.totalCount, 1);
     },
   );
 

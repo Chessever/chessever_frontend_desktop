@@ -972,6 +972,11 @@ String? _normalizeBucketTimeControl(Object? value) {
     'c' || 'classical' => 'classical',
     'r' || 'rapid' => 'rapid',
     'b' || 'blitz' => 'blitz',
+    'bullet' => 'bullet',
+    'ultrabullet' ||
+    'ultra_bullet' ||
+    'ultra-bullet' ||
+    'ultra bullet' => 'ultrabullet',
     _ => raw == null || raw.isEmpty ? null : raw,
   };
 }
@@ -1267,11 +1272,6 @@ String? _playerColorForRow(Map<String, dynamic> row, String playerId) {
 
 bool _timeControlMatches(Object? rawValue, TimeControl wanted) {
   final category = classifyTimeControlCategory(rawValue);
-  if (wanted == TimeControl.blitz) {
-    return category == 'blitz' ||
-        category == 'bullet' ||
-        category == 'ultrabullet';
-  }
   return category == wanted.name.toLowerCase();
 }
 

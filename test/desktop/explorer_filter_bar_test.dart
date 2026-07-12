@@ -8,6 +8,34 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 void main() {
+  testWidgets('offers Bullet and Ultrabullet opening-tree filters', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            backgroundColor: kBackgroundColor,
+            body: ExplorerFilterBar(),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Bullet'), findsOneWidget);
+    expect(find.text('Ultrabullet'), findsOneWidget);
+
+    await tester.tap(find.text('Bullet'));
+    await tester.pump();
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(ExplorerFilterBar)),
+    );
+    expect(container.read(gamebaseExplorerProvider).filters.timeControls, [
+      TimeControl.bullet,
+    ]);
+  });
+
   testWidgets('Whole Database filter chips mutate filters (reactivated)', (
     tester,
   ) async {

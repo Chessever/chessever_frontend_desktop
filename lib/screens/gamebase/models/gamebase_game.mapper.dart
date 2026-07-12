@@ -32,6 +32,10 @@ class TimeControlMapper extends EnumMapper<TimeControl> {
         return TimeControl.rapid;
       case 'BLITZ':
         return TimeControl.blitz;
+      case 'BULLET':
+        return TimeControl.bullet;
+      case 'ULTRABULLET':
+        return TimeControl.ultrabullet;
       default:
         throw MapperException.unknownEnumValue(value);
     }
@@ -46,6 +50,10 @@ class TimeControlMapper extends EnumMapper<TimeControl> {
         return 'RAPID';
       case TimeControl.blitz:
         return 'BLITZ';
+      case TimeControl.bullet:
+        return 'BULLET';
+      case TimeControl.ultrabullet:
+        return 'ULTRABULLET';
     }
   }
 }
@@ -643,4 +651,3 @@ class _GamebaseGameWithPgnCopyWithImpl<$R, $Out>
   $chain<$R2, $Out2>(Then<$Out2, $R2> t) =>
       _GamebaseGameWithPgnCopyWithImpl<$R2, $Out2>($value, $cast, t);
 }
-
