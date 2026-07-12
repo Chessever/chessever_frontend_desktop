@@ -651,11 +651,13 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                       : ResizableSplitView(
                         axis: Axis.vertical,
                         controller: _railController,
-                        storageKey: 'board_pane.right_rail.engine_top.v1',
+                        storageKey: 'board_pane.right_rail.engine_top.v2',
+                        gutterThickness: 10,
+                        gutterColor: kWhiteColor.withValues(alpha: 0.12),
                         children: [
                           SplitChild(
                             minSize: 120,
-                            initialWeight: 0.34,
+                            initialWeight: 0.22,
                             label: 'Engine',
                             collapsedIcon: Icons.memory_rounded,
                             onRestore: _resumeEngineFromRail,
@@ -663,7 +665,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                           ),
                           SplitChild(
                             minSize: 240,
-                            initialWeight: 0.66,
+                            initialWeight: 0.78,
                             label: 'Notation',
                             collapsedIcon: Icons.format_list_numbered_rounded,
                             child: notationContent,
