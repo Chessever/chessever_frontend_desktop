@@ -278,6 +278,106 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('builds and opens the selected Games source tree', (
+    tester,
+  ) async {
+    final temp = Directory.systemTemp.createTempSync(
+      'chessever-player-games-tree-',
+    );
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    final lichessPath = '${temp.path}/lichess.pgn';
+    File(lichessPath).writeAsStringSync(_paneTestPgn('lichess_user'));
+    final repository = _PaneFakePlayerWorkspaceRepository(
+      snapshot: PlayerWorkspaceSnapshot(
+        players: [
+          PlayerWorkspacePlayer(
+            id: 'player-1',
+            displayName: 'Prep Target',
+            createdAtMs: 1,
+            accounts: {
+              PlayerWorkspaceSource.lichess: PlayerWorkspaceAccount(
+                source: PlayerWorkspaceSource.lichess,
+                username: 'lichess_user',
+                pgnPath: lichessPath,
+                gameCount: 2,
+              ),
+            },
+          ),
+        ],
+      ),
+    );
+    final localRepository = _PaneMutableTreeLocalChessDatabaseRepository({
+      lichessPath: 2,
+    });
+    final registry = LocalLibraryRegistryNotifier(_PaneMemoryAppDatabase());
+
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() async {
+      await tester.binding.setSurfaceSize(null);
+    });
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          playerWorkspaceRepositoryProvider.overrideWithValue(repository),
+          _playerWorkspaceOverride(repository),
+          localChessDatabaseRepositoryProvider.overrideWithValue(
+            localRepository,
+          ),
+          localLibraryRegistryProvider.overrideWith((ref) => registry),
+          localChessLibraryProvider.overrideWith(
+            (ref) => LocalChessLibraryNotifier(
+              localDatabaseRepository: localRepository,
+            ),
+          ),
+        ],
+        child: const MaterialApp(
+          home: _ResponsiveTestHost(
+            child: SizedBox(
+              width: 1200,
+              height: 800,
+              child: PlayerWorkspacePane(),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.text('Prep Target').first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.text('Games').last);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    await tester.tap(find.widgetWithText(LocalTreeActionButton, 'Build Tree'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(localRepository.indexes.keys, contains(lichessPath));
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(PlayerWorkspacePane)),
+    );
+    final boardTabs = container
+        .read(desktopTabsProvider)
+        .tabs
+        .where((tab) => tab.kind == TabKind.board)
+        .toList(growable: false);
+    expect(boardTabs, hasLength(1));
+    expect(container.read(desktopTabsProvider).activeId, boardTabs.single.id);
+    expect(
+      container
+          .read(boardTabGameArgsByTabIdProvider)[boardTabs.single.id]
+          ?.localOpeningTreeIndex
+          ?.playerId,
+      lichessPath,
+    );
+    expect(container.read(rightRailActivePageProvider(boardTabs.single.id)), 1);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('shows persisted tree actions for multiple player sources', (
     tester,
   ) async {

@@ -51,6 +51,9 @@ class LocalChessFilesView extends HookConsumerWidget {
     this.playerFideId,
     this.playerAliases = const <String>[],
     this.showCountMeta = true,
+    this.openingTreeIndexOverride,
+    this.onOpenTreeOverride,
+    this.onBuildTreeOverride,
   });
 
   final String selectedPath;
@@ -73,6 +76,16 @@ class LocalChessFilesView extends HookConsumerWidget {
   /// When set, colour / player-outcome filters resolve relative to this player.
   final String? playerFideId;
   final List<String> playerAliases;
+
+  /// A refreshed tree index supplied by an embedded owner whose source is not
+  /// the global local-library selection.
+  final PlayerOpeningTreeIndex? openingTreeIndexOverride;
+
+  /// Lets an embedded owner preserve its own tree opening scope.
+  final ValueChanged<PlayerOpeningTreeIndex>? onOpenTreeOverride;
+
+  /// Lets an embedded owner prepare its source before rebuilding a tree.
+  final VoidCallback? onBuildTreeOverride;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -147,8 +160,11 @@ class LocalChessFilesView extends HookConsumerWidget {
     }
 
     final selectedDatabase = selectedLocalChessDatabaseFile(node);
+    final overrideTreeIndex = openingTreeIndexOverride;
     final openableTreeIndex =
-        selectedDatabase?.openingTreeIndex?.isUsable == true
+        overrideTreeIndex?.isUsable == true
+            ? overrideTreeIndex
+            : selectedDatabase?.openingTreeIndex?.isUsable == true
             ? selectedDatabase!.openingTreeIndex
             : null;
     final treeBuildProgress = state.treeBuildForPath(selectedDatabase?.path);
@@ -360,6 +376,11 @@ class LocalChessFilesView extends HookConsumerWidget {
     void openDatabaseTree() {
       final database = selectedDatabase;
       if (database == null || openableTreeIndex == null) return;
+      final override = onOpenTreeOverride;
+      if (override != null) {
+        override(openableTreeIndex);
+        return;
+      }
       _openLocalDatabaseTree(
         ref,
         database,
@@ -369,6 +390,11 @@ class LocalChessFilesView extends HookConsumerWidget {
     }
 
     void rebuildDatabaseTree() {
+      final override = onBuildTreeOverride;
+      if (override != null) {
+        override();
+        return;
+      }
       final database = selectedDatabase;
       if (database == null) return;
       ref
@@ -601,7 +627,9 @@ class _LocalHeader extends StatelessWidget {
     final treeProgress = treeBuildProgress;
     if (selectedDatabase == null) {
       if (showCountMeta) {
-        metaParts.add('$fileCount files · ${localChessEntryCountLabel(gameCount)}');
+        metaParts.add(
+          '$fileCount files · ${localChessEntryCountLabel(gameCount)}',
+        );
       }
     } else {
       if (showCountMeta) {

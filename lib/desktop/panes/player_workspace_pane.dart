@@ -2389,6 +2389,9 @@ class _GamesTab extends HookConsumerWidget {
     }, [preferredSourcePath, filterNonce, sources.length]);
     final index = selected.value.clamp(0, sources.length - 1);
     final source = sources[index];
+    final treeTarget = _databaseTargets(
+      player,
+    ).firstWhere((target) => target.path == source.path);
     final aliases = _statsAliases(player);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2432,6 +2435,8 @@ class _GamesTab extends HookConsumerWidget {
             key: ValueKey<String>('${source.path}#$filterNonce'),
             path: source.path,
             title: source.label,
+            treeTarget: treeTarget,
+            player: player,
             revision: source.gameCount,
             initialFilter: gamesFilter,
             onFilterChanged: onFilterChanged,
@@ -2451,6 +2456,8 @@ class _EmbeddedLocalGames extends ConsumerWidget {
     super.key,
     required this.path,
     required this.title,
+    required this.treeTarget,
+    required this.player,
     this.revision = 0,
     this.initialFilter,
     this.onFilterChanged,
@@ -2460,6 +2467,8 @@ class _EmbeddedLocalGames extends ConsumerWidget {
 
   final String path;
   final String title;
+  final _DatabaseTarget treeTarget;
+  final PlayerWorkspacePlayer player;
   final int revision;
   final LocalChessGameFilter? initialFilter;
   final ValueChanged<LocalChessGameFilter>? onFilterChanged;
@@ -2469,6 +2478,8 @@ class _EmbeddedLocalGames extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final key = LocalDatabaseWorkspaceKey(path, revision: revision);
+    final treeIndex =
+        ref.watch(_cachedPlayerWorkspaceTreeIndexProvider(path)).valueOrNull;
     final async = ref.watch(localDatabaseWorkspaceSourceProvider(key));
     return async.when(
       loading:
@@ -2505,6 +2516,25 @@ class _EmbeddedLocalGames extends ConsumerWidget {
             onFilterChanged: onFilterChanged,
             playerFideId: playerFideId,
             playerAliases: playerAliases,
+            openingTreeIndexOverride: treeIndex,
+            onOpenTreeOverride:
+                (index) => _openLocalTree(
+                  ref,
+                  treeTarget,
+                  index,
+                  preparationSide: PlayerBuildTreePreparationSide.both,
+                  player: player,
+                ),
+            onBuildTreeOverride:
+                () => unawaited(
+                  _buildLocalTree(
+                    context,
+                    ref,
+                    treeTarget,
+                    player,
+                    preparationSide: PlayerBuildTreePreparationSide.both,
+                  ),
+                ),
             // The Players Games tab already identifies the source and count via
             // the source chips; the header's "N entries · M indexed positions"
             // line is redundant here, so suppress it.
