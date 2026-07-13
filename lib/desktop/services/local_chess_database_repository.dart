@@ -6526,6 +6526,10 @@ class LocalChessDatabaseRepository {
   Map<String, dynamic> _treeGameRowFromDb(Map<String, Object?> row) {
     final metadata = _jsonMap(row['headers_json']);
     String meta(String key) => metadata[key]?.toString().trim() ?? '';
+    final rawDate = row['date']?.toString().trim();
+    final date = _dateFromLocalDate(
+      rawDate == null || rawDate.isEmpty ? meta('Date') : rawDate,
+    );
     final line = _jsonList(row['moves'])
         .map((move) => move.toString().trim().toLowerCase())
         .where((move) => move.isNotEmpty)
@@ -6553,7 +6557,7 @@ class LocalChessDatabaseRepository {
       'whiteFideId': meta('WhiteFideId'),
       'blackFideId': meta('BlackFideId'),
       'result': row['result'] ?? '*',
-      'date': row['date'] ?? meta('Date'),
+      'date': date?.toIso8601String(),
       'timeControl': row['time_control'] ?? meta('TimeControl'),
       'timeControlCategory': row['time_control_category'],
       'isOnline': _readNullableInt(row['is_online']) == 1,

@@ -1887,6 +1887,7 @@ void main() {
       expect(response, isNotNull);
       expect(response!.metadata.totalCount, 1);
       expect(response.data.single['white'], 'Hou, Yifan');
+      expect(response.data.single['date'], '2024-01-03T00:00:00.000');
       expect(response.data.single['pgn'], contains('[Event "Fast tree"]'));
       final moves = await repo.localMoveAggregatesForFen(
         databasePath: pgnFile.path,
