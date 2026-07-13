@@ -24,10 +24,27 @@ void main() {
       gameListSelectedId: 'selected-1',
       eventGames: [_summary('game-1')],
       routeGames: [_summary('route-1', roundLabel: 'R2')],
-      databaseGames: [_summary('database-1', pgn: '1. d4 d5 *')],
+      databaseGames: [
+        _summary(
+          'database-1',
+          pgn: '1. d4 d5 *',
+          localPgnSource: const TournamentGameLocalPgnSource(
+            sourcePath: '/tmp/local-games.pgn',
+            sourceIndex: 4,
+            sourceFileGameCount: 12,
+            title: 'Local Carlsen vs Nakamura',
+          ),
+        ),
+      ],
       eventGamesContinuation: const BoardTabGamesContinuation.favorites(),
       routeGamesContinuation: const BoardTabGamesContinuation.countrymen(),
       databaseGamesContinuation: const BoardTabGamesContinuation.twicDatabase(),
+      librarySaveOrigin: const BoardTabLibrarySaveOrigin.localPgnFile(
+        sourcePath: '/tmp/local-games.pgn',
+        sourceIndex: 4,
+        sourceFileGameCount: 12,
+        title: 'Local Carlsen vs Nakamura',
+      ),
     );
 
     final decoded = DesktopBoardWindowPayload.decode(
@@ -56,6 +73,16 @@ void main() {
     expect(decoded.args?.routeGames.single.roundLabel, 'R2');
     expect(decoded.args?.databaseGames.single.id, 'database-1');
     expect(decoded.args?.databaseGames.single.pgn, '1. d4 d5 *');
+    expect(
+      decoded.args?.databaseGames.single.localPgnSource?.sourcePath,
+      '/tmp/local-games.pgn',
+    );
+    expect(decoded.args?.databaseGames.single.localPgnSource?.sourceIndex, 4);
+    expect(
+      decoded.args?.librarySaveOrigin?.kind,
+      BoardTabLibrarySaveOriginKind.localPgnFile,
+    );
+    expect(decoded.args?.librarySaveOrigin?.sourceIndex, 4);
     expect(
       decoded.args?.eventGamesContinuation?.kind,
       BoardTabGamesContinuationKind.favorites,
@@ -252,6 +279,7 @@ BoardTabGameArgs _args({
   BoardTabGamesContinuation? eventGamesContinuation,
   BoardTabGamesContinuation? routeGamesContinuation,
   BoardTabGamesContinuation? databaseGamesContinuation,
+  BoardTabLibrarySaveOrigin? librarySaveOrigin,
 }) {
   return BoardTabGameArgs(
     gameId: gameId,
@@ -278,6 +306,7 @@ BoardTabGameArgs _args({
     eventGamesContinuation: eventGamesContinuation,
     routeGamesContinuation: routeGamesContinuation,
     databaseGamesContinuation: databaseGamesContinuation,
+    librarySaveOrigin: librarySaveOrigin,
   );
 }
 
@@ -285,6 +314,7 @@ TournamentGameSummary _summary(
   String id, {
   String roundLabel = 'R1',
   String? pgn,
+  TournamentGameLocalPgnSource? localPgnSource,
 }) {
   return TournamentGameSummary(
     id: id,
@@ -314,5 +344,6 @@ TournamentGameSummary _summary(
     roundStartsAt: DateTime.utc(2026, 6, 19, 10),
     hasStarted: true,
     pgn: pgn,
+    localPgnSource: localPgnSource,
   );
 }

@@ -132,6 +132,7 @@ Map<String, Object?> _argsToJson(BoardTabGameArgs args) => <String, Object?>{
     args.databaseGamesContinuation,
   ),
   'gameListSelectedId': args.gameListSelectedId,
+  'librarySaveOrigin': _librarySaveOriginToJson(args.librarySaveOrigin),
 };
 
 BoardTabGameArgs _argsFromJson(Map<String, Object?> json) {
@@ -171,6 +172,7 @@ BoardTabGameArgs _argsFromJson(Map<String, Object?> json) {
       json['databaseGamesContinuation'],
     ),
     gameListSelectedId: _nullableString(json['gameListSelectedId']),
+    librarySaveOrigin: _librarySaveOriginFromJson(json['librarySaveOrigin']),
   );
 }
 
@@ -208,6 +210,7 @@ Map<String, Object?> _summaryToJson(TournamentGameSummary game) {
     'roundStartsAt': game.roundStartsAt?.toIso8601String(),
     'hasStarted': game.hasStarted,
     'pgn': game.pgn,
+    'localPgnSource': _localPgnSourceToJson(game.localPgnSource),
   };
 }
 
@@ -249,7 +252,73 @@ TournamentGameSummary _summaryFromJson(Map<String, Object?> json) {
     roundStartsAt: _date(json['roundStartsAt']),
     hasStarted: json['hasStarted'] == true,
     pgn: _nullableString(json['pgn']),
+    localPgnSource: _localPgnSourceFromJson(json['localPgnSource']),
   );
+}
+
+Map<String, Object?>? _localPgnSourceToJson(
+  TournamentGameLocalPgnSource? source,
+) {
+  if (source == null) return null;
+  return <String, Object?>{
+    'sourcePath': source.sourcePath,
+    'sourceIndex': source.sourceIndex,
+    'sourceFileGameCount': source.sourceFileGameCount,
+    'title': source.title,
+  };
+}
+
+TournamentGameLocalPgnSource? _localPgnSourceFromJson(Object? value) {
+  if (value is! Map) return null;
+  final json = value.cast<String, Object?>();
+  final sourcePath = _string(json['sourcePath']);
+  if (sourcePath.isEmpty) return null;
+  return TournamentGameLocalPgnSource(
+    sourcePath: sourcePath,
+    sourceIndex: _int(json['sourceIndex']),
+    sourceFileGameCount: _int(json['sourceFileGameCount']),
+    title: _string(json['title']),
+  );
+}
+
+Map<String, Object?>? _librarySaveOriginToJson(
+  BoardTabLibrarySaveOrigin? origin,
+) {
+  if (origin == null) return null;
+  return <String, Object?>{
+    'kind': origin.kind.name,
+    'analysisId': origin.analysisId,
+    'sourcePath': origin.sourcePath,
+    'sourceIndex': origin.sourceIndex,
+    'sourceFileGameCount': origin.sourceFileGameCount,
+    'title': origin.title,
+  };
+}
+
+BoardTabLibrarySaveOrigin? _librarySaveOriginFromJson(Object? value) {
+  if (value is! Map) return null;
+  final json = value.cast<String, Object?>();
+  final kind = _string(json['kind']);
+  final title = _string(json['title']);
+  switch (kind) {
+    case 'cloudSavedAnalysis':
+      final analysisId = _string(json['analysisId']);
+      if (analysisId.isEmpty) return null;
+      return BoardTabLibrarySaveOrigin.cloudSavedAnalysis(
+        analysisId: analysisId,
+        title: title,
+      );
+    case 'localPgnFile':
+      final sourcePath = _string(json['sourcePath']);
+      if (sourcePath.isEmpty) return null;
+      return BoardTabLibrarySaveOrigin.localPgnFile(
+        sourcePath: sourcePath,
+        sourceIndex: _int(json['sourceIndex']),
+        sourceFileGameCount: _int(json['sourceFileGameCount']),
+        title: title,
+      );
+  }
+  return null;
 }
 
 Map<String, Object?>? _continuationToJson(

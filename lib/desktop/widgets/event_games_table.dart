@@ -25,6 +25,7 @@ import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
+import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
@@ -37,6 +38,7 @@ import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
 import 'package:chessever/screens/player_profile/provider/player_profile_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/round_ordering.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
@@ -139,6 +141,14 @@ List<TournamentGameSummary> eventRailMergeFreshEventGamesForTesting(
 }
 
 @visibleForTesting
+List<TournamentGameSummary> eventRailMergeTournamentProviderGamesForTesting(
+  List<TournamentGameSummary> fallbackGames,
+  List<Games> freshGames,
+) {
+  return _mergeFreshTournamentProviderGames(fallbackGames, freshGames);
+}
+
+@visibleForTesting
 List<LiveGamesBatchKey> eventRailLiveBatchKeysForTesting({
   required String activeTabId,
   required List<TournamentGameSummary> games,
@@ -211,6 +221,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
   String? _highlightedGameId;
   String? _rangeAnchorGameId;
   Set<String> _highlightedGameIds = const <String>{};
+  String? _lastSourceCanonicalSelectionId;
+  ({String staleId, String canonicalId})? _pendingSourceHighlightSync;
   String? _databaseLoadError;
   String? _loadingContinuationKey;
   String? _continuationLoadErrorKey;
@@ -404,6 +416,54 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
       ref: ref,
       games: games,
     );
+  }
+
+  /// The source rail has a deliberately local keyboard/multiselect cursor.
+  /// Keep that cursor while the user moves through rows in the rail, but drop
+  /// it when the board's own Cmd/Ctrl navigation changes the canonical source
+  /// selection. Otherwise Enter would reopen the row highlighted before the
+  /// external navigation rather than the game currently shown on the board.
+  void _synchronizeSourceHighlight({
+    required String? canonicalSelectionId,
+    required List<TournamentGameSummary> sourceGames,
+  }) {
+    final canonicalId = canonicalSelectionId?.trim();
+    final normalizedCanonicalId =
+        canonicalId == null || canonicalId.isEmpty ? null : canonicalId;
+    final previousCanonicalId = _lastSourceCanonicalSelectionId;
+    _lastSourceCanonicalSelectionId = normalizedCanonicalId;
+
+    final highlightedId = _highlightedGameId;
+    if (highlightedId == null ||
+        normalizedCanonicalId == null ||
+        previousCanonicalId == normalizedCanonicalId ||
+        highlightedId == normalizedCanonicalId ||
+        !sourceGames.any((game) => game.id == normalizedCanonicalId)) {
+      return;
+    }
+
+    final sync = (
+      staleId: highlightedId,
+      canonicalId: normalizedCanonicalId,
+    );
+    _pendingSourceHighlightSync = sync;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _pendingSourceHighlightSync != sync) return;
+      _pendingSourceHighlightSync = null;
+      // Do not overwrite a new row selection the user made while this frame
+      // was settling.
+      if (_highlightedGameId != sync.staleId) return;
+      setState(() {
+        _highlightedGameId = null;
+        _rangeAnchorGameId = null;
+        _highlightedGameIds = const <String>{};
+      });
+    });
+  }
+
+  void _clearSourceHighlightTracking() {
+    _lastSourceCanonicalSelectionId = null;
+    _pendingSourceHighlightSync = null;
   }
 
   void _scheduleSelectedScroll({
@@ -742,8 +802,23 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
   }
 
   ({List<TournamentGameSummary>? games, bool isLoading})
-  _watchFreshTournamentEventGames() {
-    return (games: null, isLoading: false);
+  _watchFreshTournamentEventGames(BoardTabGameArgs? activeArgs) {
+    final tourId = _eventTourIdForArgs(activeArgs);
+    if (tourId.isEmpty) return (games: null, isLoading: false);
+
+    final fresh = ref.watch(gamesTourProvider(tourId));
+    final freshGames = fresh.valueOrNull;
+    if (freshGames == null) {
+      return (games: null, isLoading: fresh.isLoading);
+    }
+
+    return (
+      games: _mergeFreshTournamentProviderGames(
+        activeArgs?.eventGames ?? const <TournamentGameSummary>[],
+        freshGames,
+      ),
+      isLoading: false,
+    );
   }
 
   bool _canLoadMoreContinuation(BoardTabGamesContinuation continuation) {
@@ -824,7 +899,9 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
       fallbackGames: activeArgs?.eventGames ?? const <TournamentGameSummary>[],
       selectedGameId: activeSelectedGameId,
     );
-    final freshTournamentEventGames = _watchFreshTournamentEventGames();
+    final freshTournamentEventGames = _watchFreshTournamentEventGames(
+      activeArgs,
+    );
     final databaseContinuationSnapshot = _watchContinuationSnapshot(
       activeArgs?.databaseGamesContinuation,
       fallbackGames:
@@ -853,6 +930,14 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable> {
     final resolved = rail.resolve(selectedTab);
     if (resolved == null || resolved.games.isEmpty) {
       return const SizedBox.shrink();
+    }
+    if (resolved.kind == _GameListKind.source) {
+      _synchronizeSourceHighlight(
+        canonicalSelectionId: resolved.selectedGameId,
+        sourceGames: resolved.games,
+      );
+    } else {
+      _clearSourceHighlightTracking();
     }
     final preserveEventInputOrder =
         resolved.kind == _GameListKind.event &&
@@ -1358,6 +1443,10 @@ Future<void> navigateActiveEventGame(
 
   final rawActiveArgs = ref.read(boardTabGameArgsByTabIdProvider)[activeTabId];
   final selectedGameId = _selectedGameIdForArgs(rawActiveArgs);
+  final freshTournamentEventGames = _readFreshTournamentEventGames(
+    ref,
+    rawActiveArgs,
+  );
   final activeArgs = rawActiveArgs?.copyWith(
     routeGames: _readContinuationGames(
       ref,
@@ -1365,12 +1454,14 @@ Future<void> navigateActiveEventGame(
       fallbackGames: rawActiveArgs.routeGames,
       selectedGameId: selectedGameId,
     ),
-    eventGames: _readContinuationGames(
-      ref,
-      rawActiveArgs.eventGamesContinuation,
-      fallbackGames: rawActiveArgs.eventGames,
-      selectedGameId: selectedGameId,
-    ),
+    eventGames:
+        freshTournamentEventGames ??
+        _readContinuationGames(
+          ref,
+          rawActiveArgs.eventGamesContinuation,
+          fallbackGames: rawActiveArgs.eventGames,
+          selectedGameId: selectedGameId,
+        ),
     databaseGames: _readContinuationGames(
       ref,
       rawActiveArgs.databaseGamesContinuation,
@@ -1572,6 +1663,42 @@ String? _selectedGameIdForArgs(BoardTabGameArgs? args) {
   return gameId == null || gameId.isEmpty ? null : gameId;
 }
 
+/// Returns one canonical tour id only when the tab carries an event context
+/// for a single tournament. A Favorites tab deliberately uses `eventGames`
+/// as a cross-event source list, so it must never be refreshed as though it
+/// were one tournament rail.
+String _eventTourIdForArgs(BoardTabGameArgs? args) {
+  if (args == null ||
+      args.viewSource == ChessboardView.favScorecard ||
+      args.eventGames.isEmpty) {
+    return '';
+  }
+
+  final sourceTourId = args.sourceGame?.tourId.trim() ?? '';
+  if (sourceTourId.isNotEmpty) return sourceTourId;
+
+  final tourIds = <String>{
+    for (final game in args.eventGames)
+      if (game.tourId.trim().isNotEmpty) game.tourId.trim(),
+  };
+  return tourIds.length == 1 ? tourIds.single : '';
+}
+
+List<TournamentGameSummary>? _readFreshTournamentEventGames(
+  WidgetRef ref,
+  BoardTabGameArgs? activeArgs,
+) {
+  final tourId = _eventTourIdForArgs(activeArgs);
+  if (tourId.isEmpty) return null;
+
+  final freshGames = ref.read(gamesTourProvider(tourId)).valueOrNull;
+  if (freshGames == null) return null;
+  return _mergeFreshTournamentProviderGames(
+    activeArgs?.eventGames ?? const <TournamentGameSummary>[],
+    freshGames,
+  );
+}
+
 _ContinuationSnapshot? _continuationSnapshotForKind(
   _GameListKind kind, {
   required _ContinuationSnapshot? routeSnapshot,
@@ -1726,6 +1853,16 @@ List<LiveGamesBatchKey> _eventRailLiveBatchKeys({
   return keys;
 }
 
+List<TournamentGameSummary> _mergeFreshTournamentProviderGames(
+  List<TournamentGameSummary> fallbackGames,
+  List<Games> freshGames,
+) {
+  return _mergeFreshEventGameSummaries(
+    fallbackGames,
+    [for (final game in freshGames) TournamentGameSummary.fromGame(game)],
+  );
+}
+
 List<TournamentGameSummary> _mergeFreshEventGameSummaries(
   List<TournamentGameSummary> fallbackGames,
   List<TournamentGameSummary> freshGames,
@@ -1816,6 +1953,7 @@ TournamentGameSummary _mergeFreshEventGameSummary(
     pgn: fresh.pgn ?? current.pgn,
     whiteTeam: fresh.whiteTeam.isNotEmpty ? fresh.whiteTeam : current.whiteTeam,
     blackTeam: fresh.blackTeam.isNotEmpty ? fresh.blackTeam : current.blackTeam,
+    localPgnSource: fresh.localPgnSource ?? current.localPgnSource,
   );
 }
 
@@ -3061,8 +3199,15 @@ Future<void> _openEventGame({
   if (kind == _GameListKind.database) {
     final pgn = openGame.pgn?.trim() ?? '';
     final hasPlayableLocalPgn = pgnHasMoves(pgn);
+    final localPgnSaveOrigin = _localPgnSaveOriginForSummary(openGame);
     final args = BoardTabGameArgs(
-      gameId: hasPlayableLocalPgn ? null : openGame.id,
+      // A local database id is not a Supabase id. Keep it detached even if
+      // the file can no longer be read, so a failed local lookup never binds
+      // the board to an unrelated remote stream.
+      gameId:
+          hasPlayableLocalPgn || localPgnSaveOrigin != null
+              ? null
+              : openGame.id,
       pgn: pgn,
       label:
           openGame.name.isEmpty
@@ -3086,6 +3231,7 @@ Future<void> _openEventGame({
       databaseGamesPagination: activeArgs?.databaseGamesPagination,
       databaseGamesContinuation: activeArgs?.databaseGamesContinuation,
       gameListSelectedId: openGame.id,
+      librarySaveOrigin: localPgnSaveOrigin,
     );
 
     if (inNewWindow) {
@@ -3200,6 +3346,19 @@ Future<void> _openEventGame({
     focus: true,
     reuseExisting: false,
     replaceActive: !inNewTab,
+  );
+}
+
+BoardTabLibrarySaveOrigin? _localPgnSaveOriginForSummary(
+  TournamentGameSummary game,
+) {
+  final source = game.localPgnSource;
+  if (source == null || source.sourcePath.trim().isEmpty) return null;
+  return BoardTabLibrarySaveOrigin.localPgnFile(
+    sourcePath: source.sourcePath,
+    sourceIndex: source.sourceIndex,
+    sourceFileGameCount: source.sourceFileGameCount,
+    title: source.title,
   );
 }
 

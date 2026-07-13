@@ -4,6 +4,26 @@ import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 
+/// Stable write target for a game that came from a local PGN file.
+///
+/// Database rails pass lightweight [TournamentGameSummary] values around when
+/// users switch rows. Keeping the source coordinates here lets a newly opened
+/// row retain its own update target instead of inheriting (or losing) the
+/// original Board tab's local-file origin.
+class TournamentGameLocalPgnSource {
+  const TournamentGameLocalPgnSource({
+    required this.sourcePath,
+    required this.sourceIndex,
+    required this.sourceFileGameCount,
+    required this.title,
+  });
+
+  final String sourcePath;
+  final int sourceIndex;
+  final int sourceFileGameCount;
+  final String title;
+}
+
 /// Lightweight summary of one game inside an event or database — just the
 /// fields the BoardPane side table needs to render a row and switch games.
 class TournamentGameSummary {
@@ -38,6 +58,7 @@ class TournamentGameSummary {
     this.pgn,
     this.whiteTeam = '',
     this.blackTeam = '',
+    this.localPgnSource,
   });
 
   factory TournamentGameSummary.fromGamesTourModel(
@@ -197,12 +218,17 @@ class TournamentGameSummary {
   /// summaries usually omit this and let the board fetch the current PGN.
   final String? pgn;
 
+  /// Local PGN coordinates when this summary is a row from an imported file.
+  /// Null for cloud, Gamebase, and detached-preview entries.
+  final TournamentGameLocalPgnSource? localPgnSource;
+
   TournamentGameSummary copyWith({
     String? pgn,
     String? fen,
     DateTime? lastMoveTime,
     GameStatus? status,
     bool? hasStarted,
+    TournamentGameLocalPgnSource? localPgnSource,
   }) {
     return TournamentGameSummary(
       id: id,
@@ -235,6 +261,7 @@ class TournamentGameSummary {
       pgn: pgn ?? this.pgn,
       whiteTeam: whiteTeam,
       blackTeam: blackTeam,
+      localPgnSource: localPgnSource ?? this.localPgnSource,
     );
   }
 }

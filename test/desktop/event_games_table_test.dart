@@ -582,6 +582,55 @@ void main() {
     },
   );
 
+  test(
+    'event rail folds completed rounds from the tournament cache into context',
+    () {
+      final cached = [
+        _summary(
+          id: 'round-5-game-1',
+          roundLabel: 'R5',
+          roundName: 'Round 5',
+          tourId: 'tour-1',
+          status: GameStatus.ongoing,
+        ),
+      ];
+      final fresh = [
+        Games(
+          id: 'round-5-game-1',
+          roundId: 'round-5',
+          roundSlug: 'round-5',
+          tourId: 'tour-1',
+          tourSlug: 'event-2026',
+          status: 'D',
+          pgn: '1. e4 e5 1/2-1/2',
+        ),
+        Games(
+          id: 'round-6-game-1',
+          roundId: 'round-6',
+          roundSlug: 'round-6',
+          tourId: 'tour-1',
+          tourSlug: 'event-2026',
+          status: '1-0',
+          pgn: '1. d4 d5 2. c4 1-0',
+        ),
+      ];
+
+      final merged = eventRailMergeTournamentProviderGamesForTesting(
+        cached,
+        fresh,
+      );
+
+      expect(merged.map((game) => game.id), [
+        'round-5-game-1',
+        'round-6-game-1',
+      ]);
+      expect(merged[0].status, GameStatus.draw);
+      expect(merged[0].roundName, 'Round 5');
+      expect(merged[1].status, GameStatus.whiteWins);
+      expect(merged[1].roundLabel, 'R6');
+    },
+  );
+
   test('event rail uses shown game ids for realtime tournament rows', () {
     final games = [
       _summary(
@@ -817,6 +866,82 @@ void main() {
     },
   );
 
+  testWidgets(
+    'opening a local database row preserves its PGN update target',
+    (tester) async {
+      const firstSource = TournamentGameLocalPgnSource(
+        sourcePath: '/tmp/local-library.pgn',
+        sourceIndex: 2,
+        sourceFileGameCount: 6,
+        title: 'Local One vs Local Two',
+      );
+      const secondSource = TournamentGameLocalPgnSource(
+        sourcePath: '/tmp/local-library.pgn',
+        sourceIndex: 3,
+        sourceFileGameCount: 6,
+        title: 'Local Three vs Local Four',
+      );
+      final first = _summary(
+        id: 'local-game-1',
+        roundLabel: 'Local',
+        whitePlayer: 'Local One',
+        blackPlayer: 'Local Two',
+        localPgnSource: firstSource,
+      );
+      final second = _summary(
+        id: 'local-game-2',
+        roundLabel: 'Local',
+        whitePlayer: 'Local Three',
+        blackPlayer: 'Local Four',
+        localPgnSource: secondSource,
+      );
+
+      await tester.pumpWidget(
+        _wrap(
+          BoardTabGameArgs(
+            pgn: first.pgn!,
+            label: first.name,
+            whiteName: first.whitePlayer,
+            blackName: first.blackPlayer,
+            databaseTitle: 'Local Library',
+            databaseGames: [first, second],
+            gameListSelectedId: first.id,
+            librarySaveOrigin: const BoardTabLibrarySaveOrigin.localPgnFile(
+              sourcePath: '/tmp/local-library.pgn',
+              sourceIndex: 2,
+              sourceFileGameCount: 6,
+              title: 'Local One vs Local Two',
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('Local Three'));
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(EventGamesTable)),
+      );
+      final args = container.read(boardTabGameArgsByTabIdProvider).values.single;
+      expect(args.gameId, isNull);
+      expect(args.gameListSelectedId, second.id);
+      expect(
+        args.librarySaveOrigin?.kind,
+        BoardTabLibrarySaveOriginKind.localPgnFile,
+      );
+      expect(args.librarySaveOrigin?.sourcePath, secondSource.sourcePath);
+      expect(args.librarySaveOrigin?.sourceIndex, secondSource.sourceIndex);
+      expect(
+        args.librarySaveOrigin?.sourceFileGameCount,
+        secondSource.sourceFileGameCount,
+      );
+      expect(args.librarySaveOrigin?.title, secondSource.title);
+    },
+  );
+
   testWidgets('database games rail loads the next page only after scroll', (
     tester,
   ) async {
@@ -935,6 +1060,62 @@ void main() {
       'source-game-2',
     ]);
   });
+
+  testWidgets(
+    'source rail highlight follows an externally selected active game',
+    (tester) async {
+      final sourceGames = [
+        _summary(
+          id: 'source-game-1',
+          roundLabel: '2026',
+          whitePlayer: 'White One',
+          blackPlayer: 'Black One',
+        ),
+        _summary(
+          id: 'source-game-2',
+          roundLabel: '2026',
+          whitePlayer: 'White Two',
+          blackPlayer: 'Black Two',
+        ),
+      ];
+      final initialArgs = BoardTabGameArgs(
+        gameId: 'source-game-1',
+        pgn: '1. e4 e5 *',
+        label: 'Source game',
+        whiteName: 'White One',
+        blackName: 'Black One',
+        routeTitle: 'Player games',
+        routeGames: sourceGames,
+        gameListSelectedId: 'source-game-1',
+      );
+
+      await tester.pumpWidget(_wrap(initialArgs));
+      await tester.pump();
+
+      // Give the rail its own local highlight, then simulate Cmd/Ctrl+Down
+      // changing the canonical board selection outside the rail.
+      await tester.tap(find.text('White One'));
+      await tester.pump();
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(EventGamesTable)),
+      );
+      container.read(boardTabGameArgsByTabIdProvider.notifier).state = {
+        'tournaments-default': initialArgs.copyWith(
+          gameId: 'source-game-2',
+          gameListSelectedId: 'source-game-2',
+        ),
+      };
+      await tester.pump();
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      final args = container.read(boardTabGameArgsByTabIdProvider).values.single;
+      expect(args.gameId, 'source-game-2');
+      expect(args.gameListSelectedId, 'source-game-2');
+    },
+  );
 
   testWidgets('event games keep the board and round column', (tester) async {
     await tester.pumpWidget(
@@ -1825,6 +2006,7 @@ TournamentGameSummary _summary({
   String whiteTeam = '',
   String blackTeam = '',
   String tourId = '',
+  TournamentGameLocalPgnSource? localPgnSource,
 }) {
   return TournamentGameSummary(
     id: id,
@@ -1849,5 +2031,6 @@ TournamentGameSummary _summary({
     hasStarted: hasStarted,
     whiteTeam: whiteTeam,
     blackTeam: blackTeam,
+    localPgnSource: localPgnSource,
   );
 }
