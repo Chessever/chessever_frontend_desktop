@@ -237,13 +237,6 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
         mainline: widget.chessGame.mainline,
       );
 
-      // Only show the eval bar when the game actually carries evaluations to
-      // animate. A game with no `[%eval]` data would otherwise render a dead,
-      // permanently-centered bar across the whole GIF, which reads as broken.
-      final hasFrameEvals = gifData.evaluations.any(
-        (e) => e.evaluation != null || e.mate != null,
-      );
-
       final gifBytes = await BoardShareService.generateGif(
         frames: gifData.frames,
         durationsCs: gifData.durationsCs,
@@ -262,7 +255,12 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
         blackScore: _blackScore,
         whitePhotoUrl: photos.whitePhotoUrl,
         blackPhotoUrl: photos.blackPhotoUrl,
-        showEvalBar: widget.showEvalBar && hasFrameEvals,
+        // GIF exports own their presentation. Keep the animated evaluation
+        // bar whenever replay data contains evals, even if the live board's
+        // engine gauge is currently hidden. Tying this to [showEvalBar]
+        // accidentally removed the bar from GIFs when live-board capture was
+        // introduced.
+        showEvalBar: shouldShowBoardShareGifEvalBar(gifData.evaluations),
         flipped: widget.flipped,
         clocks: gifData.clocks,
         frameEvaluations: gifData.evaluations,
@@ -663,6 +661,15 @@ class BoardShareRaster {
     }
     return _fallbackBytes ??= _fallbackCapture();
   }
+}
+
+@visibleForTesting
+bool shouldShowBoardShareGifEvalBar(
+  List<({double? evaluation, int? mate, bool isEvaluating})> evaluations,
+) {
+  return evaluations.any(
+    (evaluation) => evaluation.evaluation != null || evaluation.mate != null,
+  );
 }
 
 @visibleForTesting

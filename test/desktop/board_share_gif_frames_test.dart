@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
 import 'package:chessever/desktop/services/board_share_service.dart';
+import 'package:chessever/desktop/widgets/board_share_dialog.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
@@ -114,6 +115,20 @@ void main() {
       for (var i = 1; i < data.frames.length; i++) {
         expect(data.frames[i].lastMove, isNotNull);
       }
+      expect(shouldShowBoardShareGifEvalBar(data.evaluations), isFalse);
+    });
+
+    test('keeps the GIF eval bar when replay frames contain evaluations', () {
+      final game = ChessGame.fromPgn(
+        'g-with-evals',
+        '1. e4 { [%eval 0.2] } e5 { [%eval 0.1] } *',
+      );
+      final data = buildBoardShareGifFrames(
+        startingFen: game.startingFen,
+        mainline: game.mainline,
+      );
+
+      expect(shouldShowBoardShareGifEvalBar(data.evaluations), isTrue);
     });
 
     test('stops replay cleanly at an unparseable SAN', () {

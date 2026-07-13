@@ -3555,6 +3555,24 @@ class _BoardPaneContent extends HookConsumerWidget {
       );
     }
 
+    void openBoardContextMenu(Offset position) {
+      showBoardContextMenu(
+        ref,
+        context,
+        position: position,
+        onShareGame: shareGameAction,
+        onFlipBoard: () => flipped.value = !flipped.value,
+        onCopyPgn: copyPgnAction,
+        onCopyFen: copyFenAction,
+        onSavePgn: savePgnAction,
+        onSaveGameToLibrary: () => unawaited(saveGameToLibraryAction()),
+        onOpenBoardSettings: openBoardSettingsTab,
+        onOpenPositionSetup: openPositionSetup,
+        canCopyOrSavePgn: chessGame.value.mainline.isNotEmpty,
+        onPlayFromHere: openPlayFromHereDialog,
+      );
+    }
+
     final boardActionCluster =
         boardFocusMode
             ? null
@@ -3662,23 +3680,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                               pressed.contains(LogicalKeyboardKey.metaLeft) ||
                               pressed.contains(LogicalKeyboardKey.metaRight);
                           if (!contextMenuModifierHeld) return;
-                          showBoardContextMenu(
-                            ref,
-                            context,
-                            position: details.globalPosition,
-                            onShareGame: shareGameAction,
-                            onFlipBoard: () => flipped.value = !flipped.value,
-                            onCopyPgn: copyPgnAction,
-                            onCopyFen: copyFenAction,
-                            onSavePgn: savePgnAction,
-                            onSaveGameToLibrary:
-                                () => unawaited(saveGameToLibraryAction()),
-                            onOpenBoardSettings: openBoardSettingsTab,
-                            onOpenPositionSetup: openPositionSetup,
-                            canCopyOrSavePgn:
-                                chessGame.value.mainline.isNotEmpty,
-                            onPlayFromHere: openPlayFromHereDialog,
-                          );
+                          openBoardContextMenu(details.globalPosition);
                         },
                         child: _BoardArea(
                           tabId: activeTabId ?? 'board-default',
@@ -3738,6 +3740,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                             ref.read(boardFocusModeProvider.notifier).state =
                                 value;
                           },
+                          onOpenContextMenu: openBoardContextMenu,
                           boardSizePreference: boardSizePreference.value,
                           onBoardSizeChanged: (size) {
                             setBoardSizePreference(size);
@@ -5374,6 +5377,7 @@ class _BoardArea extends ConsumerWidget {
     required this.focusMode,
     required this.focusShortcutLabel,
     required this.onFocusModeChanged,
+    required this.onOpenContextMenu,
     required this.boardSizePreference,
     required this.onBoardSizeChanged,
     required this.onBoardSizeReset,
@@ -5473,6 +5477,7 @@ class _BoardArea extends ConsumerWidget {
   final bool focusMode;
   final String? focusShortcutLabel;
   final ValueChanged<bool> onFocusModeChanged;
+  final ValueChanged<Offset> onOpenContextMenu;
   final double? boardSizePreference;
   final ValueChanged<double> onBoardSizeChanged;
   final VoidCallback onBoardSizeReset;
@@ -5788,6 +5793,9 @@ class _BoardArea extends ConsumerWidget {
             shortcutLabel: focusShortcutLabel,
             onChanged: onFocusModeChanged,
           );
+          final moreActionsButton = _BoardMoreActionsButton(
+            onPressed: onOpenContextMenu,
+          );
           final resizeHandle = _BoardResizeHandle(
             boardSize: boardSize,
             minSize: math.min(
@@ -5896,11 +5904,12 @@ class _BoardArea extends ConsumerWidget {
                                           (!topIsWhite &&
                                               sideToMove == Side.black),
                                       clockText: topClock,
-                                      // Reserve the focus control's space in the
+                                      // Reserve both controls' space in the
                                       // player bar, but keep the interactive
-                                      // control outside the export boundary.
-                                      trailingControl: const SizedBox.square(
-                                        dimension: _focusButtonSize,
+                                      // controls outside the export boundary.
+                                      trailingControl: const SizedBox(
+                                        width: (_focusButtonSize * 2) + 4,
+                                        height: _focusButtonSize,
                                       ),
                                       activeGameId: activeGameId,
                                       useLiveClock:
@@ -5960,7 +5969,14 @@ class _BoardArea extends ConsumerWidget {
                     Positioned(
                       top: (topRowHeight - _focusButtonSize) / 2,
                       right: 0,
-                      child: focusButton,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          moreActionsButton,
+                          const SizedBox(width: 4),
+                          focusButton,
+                        ],
+                      ),
                     ),
                   if (hasHeaders && !focusMode)
                     Positioned(
@@ -5973,6 +5989,49 @@ class _BoardArea extends ConsumerWidget {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+class _BoardMoreActionsButton extends StatefulWidget {
+  const _BoardMoreActionsButton({required this.onPressed});
+
+  final ValueChanged<Offset> onPressed;
+
+  @override
+  State<_BoardMoreActionsButton> createState() =>
+      _BoardMoreActionsButtonState();
+}
+
+class _BoardMoreActionsButtonState extends State<_BoardMoreActionsButton> {
+  final GlobalKey _anchorKey = GlobalKey();
+
+  void _openMenu() {
+    final renderObject =
+        _anchorKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderObject == null || !renderObject.hasSize) return;
+    widget.onPressed(
+      renderObject.localToGlobal(Offset(0, renderObject.size.height + 4)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FTheme(
+      data: FThemes.zinc.dark,
+      child: DesktopTooltip(
+        message: 'More board actions',
+        child: SizedBox.square(
+          key: _anchorKey,
+          dimension: _focusButtonSize,
+          child: FButton.icon(
+            key: const ValueKey<String>('desktop-board-more-actions'),
+            style: _floatingBoardIconButtonStyle(selected: false),
+            onPress: _openMenu,
+            child: const Icon(Icons.more_horiz_rounded, size: 16),
+          ),
+        ),
       ),
     );
   }
