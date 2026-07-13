@@ -41,6 +41,43 @@ class GroupedGamesData {
   });
 }
 
+/// Whether the screen-model snapshot is complete enough to replace the last
+/// rendered Games-tab snapshot.
+///
+/// In [GameDisplayMode.all], a non-empty raw provider paired with an empty
+/// screen model means the model is still catching up. Filtered modes are
+/// different: zero models is a valid result (for example, a completed event
+/// with no live games), so that empty snapshot must be rendered immediately.
+bool isGamesModelReadyForDisplay({
+  required GameDisplayMode displayMode,
+  required bool isSearchMode,
+  required int providerGameCount,
+  required int modelGameCount,
+}) {
+  return isSearchMode ||
+      displayMode != GameDisplayMode.all ||
+      providerGameCount == 0 ||
+      modelGameCount > 0;
+}
+
+/// Whether a game with [gameStatus] belongs in [displayMode].
+///
+/// Live mode is intentionally strict: an unknown/missing result is not proof
+/// that a game is live. Only the explicit ongoing status is included.
+bool isGameStatusVisible({
+  required GameDisplayMode displayMode,
+  required GameStatus gameStatus,
+}) {
+  switch (displayMode) {
+    case GameDisplayMode.hideFinishedGames:
+      return gameStatus.isOngoing;
+    case GameDisplayMode.showfinishedGame:
+      return gameStatus.isFinished;
+    case GameDisplayMode.all:
+      return true;
+  }
+}
+
 // Optimization: Move heavy grouping, filtering, and sorting off the main UI build path.
 // The UI can just watch this provider and paint.
 final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
@@ -87,7 +124,12 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
     );
   }
 
-  if (!isSearchMode && providerGameCount > 0 && modelGameCount == 0) {
+  if (!isGamesModelReadyForDisplay(
+    displayMode: displayMode,
+    isSearchMode: isSearchMode,
+    providerGameCount: providerGameCount,
+    modelGameCount: modelGameCount,
+  )) {
     return GroupedGamesData(
       filteredRounds: [],
       gamesByRound: {},
@@ -461,12 +503,5 @@ bool _isInitialFen(String fen) {
 }
 
 bool _shouldIncludeGame(GameDisplayMode mode, GamesTourModel game) {
-  switch (mode) {
-    case GameDisplayMode.hideFinishedGames:
-      return !game.gameStatus.isFinished;
-    case GameDisplayMode.showfinishedGame:
-      return game.gameStatus.isFinished;
-    case GameDisplayMode.all:
-      return true;
-  }
+  return isGameStatusVisible(displayMode: mode, gameStatus: game.gameStatus);
 }

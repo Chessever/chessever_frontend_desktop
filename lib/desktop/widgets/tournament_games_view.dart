@@ -288,6 +288,8 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
         persistedQuery.isNotEmpty &&
         !(screenModel?.isSearchMode == true &&
             screenModel?.searchQuery == persistedQuery);
+    final liveOnly =
+        screenModel?.gameDisplayMode == GameDisplayMode.hideFinishedGames;
     final grouped =
         (watchedGrouped.isLoading || isRestoringSearch) &&
                 _lastStableGrouped != null
@@ -411,7 +413,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                           ? _NoSearchResults(
                             query: _searchController.text.trim(),
                           )
-                          : const _NoRoundsState(),
+                          : TournamentGamesEmptyState(liveOnly: liveOnly),
                 ),
               ],
             ),
@@ -2300,31 +2302,43 @@ class _LoadingState extends StatelessWidget {
   }
 }
 
-class _NoRoundsState extends StatelessWidget {
-  const _NoRoundsState();
+class TournamentGamesEmptyState extends StatelessWidget {
+  const TournamentGamesEmptyState({required this.liveOnly, super.key});
+
+  final bool liveOnly;
 
   @override
   Widget build(BuildContext context) {
+    final icon =
+        liveOnly
+            ? Icons.radio_button_unchecked_rounded
+            : Icons.event_note_outlined;
+    final title = liveOnly ? 'No live games right now' : 'No rounds yet';
+    final message =
+        liveOnly
+            ? 'Switch to All to browse completed and upcoming games.'
+            : 'Tournament rounds will appear here once they\'re scheduled.';
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          children: const [
-            Icon(Icons.event_note_outlined, size: 32, color: kLightGreyColor),
-            SizedBox(height: 12),
+          children: [
+            Icon(icon, size: 32, color: kLightGreyColor),
+            const SizedBox(height: 12),
             Text(
-              'No rounds yet',
-              style: TextStyle(
+              title,
+              style: const TextStyle(
                 color: kWhiteColor,
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
               ),
             ),
-            SizedBox(height: 6),
+            const SizedBox(height: 6),
             Text(
-              'Tournament rounds will appear here once they\'re scheduled.',
-              style: TextStyle(color: kLightGreyColor, fontSize: 12),
+              message,
+              style: const TextStyle(color: kLightGreyColor, fontSize: 12),
               textAlign: TextAlign.center,
             ),
           ],
