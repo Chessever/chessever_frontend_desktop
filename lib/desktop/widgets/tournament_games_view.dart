@@ -93,14 +93,6 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   GroupedGamesData? _lastStableGrouped;
   String? _searchReplayInFlight;
 
-  // GlobalKeys per round section so we can `Scrollable.ensureVisible` the focus
-  // round on load / when a new round goes live.
-  final Map<String, GlobalKey> _roundSectionKeys = <String, GlobalKey>{};
-  // The focus round we've already scrolled to; guards against re-scrolling on
-  // every live-card rebuild. `_pendingFocusScrollId` is the one in flight.
-  String? _lastScrolledFocusId;
-  String? _pendingFocusScrollId;
-
   // Captured once. liveGameCardsPaused is global, so a reason recomputed from a
   // changing widget.tabId could strand a stale reason in the pause set and
   // freeze every live card app-wide. tabId is fixed per pane today; freeze it
@@ -206,50 +198,6 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
   }
 
-  GlobalKey _sectionKey(String roundId) => _roundSectionKeys.putIfAbsent(
-    roundId,
-    () => GlobalKey(debugLabel: 'round-section-$roundId'),
-  );
-
-  /// Requests a scroll so the focus round (live, else latest finished) sits at
-  /// the top of the viewport — future rounds collapsed above it, past rounds
-  /// expanded below. Called once per focus round; `focusId` changes when a new
-  /// round goes live, which re-triggers the scroll.
-  void _scheduleFocusScroll(String focusId) {
-    if (focusId == _lastScrolledFocusId || focusId == _pendingFocusScrollId) {
-      return;
-    }
-    _pendingFocusScrollId = focusId;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _runFocusScroll());
-  }
-
-  void _runFocusScroll([int attempt = 0]) {
-    if (!mounted) return;
-    final id = _pendingFocusScrollId;
-    if (id == null) return;
-    final context = _roundSectionKeys[id]?.currentContext;
-    if (context == null) {
-      // Section not laid out yet (lazy sliver). Retry a few frames before
-      // giving up so a focus round below the first viewport still lands.
-      if (attempt >= 4) {
-        _pendingFocusScrollId = null;
-        return;
-      }
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _runFocusScroll(attempt + 1),
-      );
-      return;
-    }
-    _lastScrolledFocusId = id;
-    _pendingFocusScrollId = null;
-    Scrollable.ensureVisible(
-      context,
-      alignment: 0.0,
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     ref.listen<AsyncValue<GamesScreenModel>>(gamesTourScreenProvider, (
@@ -332,34 +280,34 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
         roundStartsAtById.putIfAbsent(gameRoundId, () => round.startsAt);
       }
     }
-    // Desktop Games tab shows rounds strictly newest-first (Round N on top,
-    // Round 1 at the bottom) so unplayed future rounds pin to the top. The
-    // "current" round is expressed via expansion + scroll, not by hoisting it
-    // to index 0 (see `pickDesktopGamesFocusRound`).
-    final displayRounds = sortRoundsForDescendingDisplay(
+    // The list order is the source of truth: started rounds first in descending
+    // order, then future rounds in descending order. A future round is promoted
+    // only when every started board is finished and it begins within one hour.
+    final displayRounds = sortRoundsForDisplay(
       grouped.filteredRounds,
       resolveDate: (model) => model.startsAt,
+      hasGames:
+          (model) =>
+              (grouped.gamesByRound[model.id] ?? const <GamesTourModel>[])
+                  .isNotEmpty,
+      isRoundFullyPlayed: (model) {
+        final games =
+            grouped.gamesByRound[model.id] ?? const <GamesTourModel>[];
+        return games.isNotEmpty &&
+            games.every((game) => game.gameStatus.isFinished);
+      },
     );
-    final focusRound = pickDesktopGamesFocusRound(
-      displayRounds,
-      resolveDate: (model) => model.startsAt,
-    );
-    final focusRoundId = focusRound?.id;
-    // Default expansion: the focus round plus every already-started (past /
-    // live) round open; future (upcoming) rounds collapsed. Keyed so a manual
-    // toggle sticks until the live-state changes.
+    final topRoundId = displayRounds.isEmpty ? null : displayRounds.first.id;
+    // Open the actual top round plus every already-started round. There is no
+    // separate focus scroll; opening a tournament naturally starts at the top.
     bool initialExpanded(GamesAppBarModel round) =>
-        round.id == focusRoundId || round.roundStatus != RoundStatus.upcoming;
+        round.id == topRoundId || round.roundStatus != RoundStatus.upcoming;
     bool isRoundExpanded(GamesAppBarModel round) => ref.watch(
       _tournamentRoundExpandedProvider((
         id: round.id,
         initiallyExpanded: initialExpanded(round),
       )),
     );
-
-    if (focusRoundId != null) {
-      _scheduleFocusScroll(focusRoundId);
-    }
 
     // Keyboard nav must only step through games that are currently visible.
     // When a round is collapsed its games stay in `grouped.allGames` but the
@@ -475,7 +423,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                               ),
                             for (final round in displayRounds)
                               _RoundSection(
-                                key: _sectionKey(round.id),
+                                key: ValueKey<String>(round.id),
                                 scopeId: 'tournament:${widget.tournamentId}',
                                 selectedGameId: selectedGameId,
                                 onSelectGame: selectGame,

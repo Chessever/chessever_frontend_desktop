@@ -49,8 +49,6 @@ import 'package:chessever/screens/group_event/widget/filter_popup/group_event_fi
 import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
-import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_grouped_provider.dart'
-    show isEventBoardGameVisible;
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
@@ -73,63 +71,13 @@ LiveGamesBatchKey _desktopForYouLiveBatchKey({
   );
 }
 
-typedef _ForYouFullEventGames =
-    ({List<GamesTourModel> all, List<GamesTourModel> visible});
-
-/// Every valid event game plus the renderable subset, both parsed once per
-/// authoritative `gamesTourProvider` update. The complete list is board-rail
-/// context; the visible subset is only for the latest-round For You preview.
-final _forYouFullEventGamesProvider = Provider.autoDispose.family<
-  _ForYouFullEventGames,
-  String
->((ref, tourId) {
-  if (tourId.isEmpty) {
-    return (all: const <GamesTourModel>[], visible: const <GamesTourModel>[]);
-  }
-  final full = ref.watch(gamesTourProvider(tourId)).valueOrNull;
-  if (full == null || full.isEmpty) {
-    return (all: const <GamesTourModel>[], visible: const <GamesTourModel>[]);
-  }
-  final all = <GamesTourModel>[];
-  final visible = <GamesTourModel>[];
-  for (final row in full) {
-    try {
-      final model = GamesTourModel.fromGame(row);
-      all.add(model);
-      if (isEventBoardGameVisible(model)) {
-        visible.add(model);
-      }
-    } catch (_) {
-      // Skip malformed rows; one bad board must not blank the event.
-    }
-  }
-  return (
-    all: List<GamesTourModel>.unmodifiable(all),
-    visible: List<GamesTourModel>.unmodifiable(visible),
-  );
-});
-
-/// Authoritative board list for a For You event strip.
-///
-/// Prefers the full, unlimited `gamesTourProvider` set restricted to the
-/// round(s) the capped snapshot was previewing (the live/current round), so
-/// every started board of that round renders — not just the ~12 the top-games
-/// RPC returns. Falls back to `snapshot.visibleGames` while the full list is
-/// still loading (transient placeholder) or if it resolves empty, so the strip
-/// can never regress to blank or wedge on partial data.
-DesktopForYouGameContext _forYouGameContext(
-  WidgetRef ref,
-  ForYouEventGamesSnapshot snapshot,
-) {
-  final tourId = snapshot.tourId.trim();
-  final full =
-      tourId.isEmpty
-          ? (all: const <GamesTourModel>[], visible: const <GamesTourModel>[])
-          : ref.watch(_forYouFullEventGamesProvider(tourId));
+/// The bounded RPC snapshot is authoritative for both the visible strip and
+/// board navigation. The For You surface never hydrates a full tour locally.
+DesktopForYouGameContext _forYouGameContext(ForYouEventGamesSnapshot snapshot) {
   return buildDesktopForYouGameContext(
     snapshotGames: snapshot.visibleGames,
-    fullVisibleGames: full.visible,
-    fullEventGames: full.all,
+    fullVisibleGames: const [],
+    fullEventGames: const [],
   );
 }
 
@@ -2569,12 +2517,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     final snapshot =
         ref.read(forYouEventSnapshotProvider(event.id)).valueOrNull;
     if (snapshot == null) return;
-    final full = ref.read(_forYouFullEventGamesProvider(snapshot.tourId));
-    final gameContext = buildDesktopForYouGameContext(
-      snapshotGames: snapshot.visibleGames,
-      fullVisibleGames: full.visible,
-      fullEventGames: full.all,
-    );
+    final gameContext = _forYouGameContext(snapshot);
     final gameIds = _gameIdsFor(event);
     if (gameIds.isEmpty) return;
     final gamesById = {
@@ -2817,12 +2760,11 @@ class _ForYouEventSection extends ConsumerWidget {
     );
     final watchedSnapshotAsync = ref.watch(
       streamingEnabled
-          ? forYouEventSnapshotProvider(event.id)
-          : eventGamesProvider(event.id),
+          ? forYouEventGamesWithAutoRefreshProvider(event.id)
+          : forYouEventSnapshotProvider(event.id),
     );
-    // The batched top-games cache is only a fast fallback. Keep the live
-    // snapshot provider mounted while For You is active so visible games can
-    // refresh themselves on realtime row/status changes.
+    // RPC-selected membership is authoritative. Realtime only updates the
+    // bounded rendered rows and requests a targeted RPC refresh on finish.
     final AsyncValue<ForYouEventGamesSnapshot> snapshotAsync =
         watchedSnapshotAsync.when<AsyncValue<ForYouEventGamesSnapshot>>(
           data: AsyncValue.data,
@@ -3168,7 +3110,7 @@ class _GamesStrip extends ConsumerWidget {
           });
           return const SizedBox.shrink();
         }
-        final gameContext = _forYouGameContext(ref, snapshot);
+        final gameContext = _forYouGameContext(snapshot);
         if (layout != DesktopCardLayout.grid) {
           if (snapshot.isGroupEvent) {
             return _TeamGamesStrip(
@@ -3194,11 +3136,7 @@ class _GamesStrip extends ConsumerWidget {
               onVisibleGameIdsChanged: onVisibleGameIdsChanged,
             );
           }
-          // Authoritative, uncapped current-round list (falls back to the
-          // capped snapshot only while the full list loads). Every started
-          // board renders, and a busy open with hundreds of boards is handled
-          // because the visible slice below is bounded to what fits and the
-          // flow itself builds cards lazily (ListView.builder under the hood).
+          // Render only the bounded, server-selected category snapshot.
           final allGames = gameContext.stripGames;
           // Each event's strip has BOUNDED vertical space — the For You
           // feed gives every event the same hard-coded row height (see

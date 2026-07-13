@@ -1206,6 +1206,43 @@ class _GamesAppBarNotifier
     }
   }
 
+  Map<String, bool> _buildRoundCompletion(List<GamesAppBarModel> models) {
+    final rawGames =
+        tourId == null
+            ? null
+            : ref.read(gamesTourProvider(tourId!)).valueOrNull;
+    if (rawGames != null) {
+      return <String, bool>{
+        for (final model in models)
+          model.id: () {
+            final roundGames = rawGames.where(
+              (game) => game.roundId == model.id,
+            );
+            if (roundGames.isEmpty) {
+              return model.roundStatus == RoundStatus.completed;
+            }
+            return roundGames.every(
+              (game) => GameStatus.fromString(game.status).isFinished,
+            );
+          }(),
+      };
+    }
+
+    final games =
+        ref.read(gamesTourScreenProvider).valueOrNull?.gamesTourModels ??
+        const <GamesTourModel>[];
+    return <String, bool>{
+      for (final model in models)
+        model.id: () {
+          final roundGames = games.where((game) => game.roundId == model.id);
+          if (roundGames.isEmpty) {
+            return model.roundStatus == RoundStatus.completed;
+          }
+          return roundGames.every((game) => game.gameStatus.isFinished);
+        }(),
+    };
+  }
+
   bool _hasGames(String roundId, Map<String, int> counts) =>
       (counts[roundId] ?? 0) > 0;
 
@@ -1260,17 +1297,23 @@ class _GamesAppBarNotifier
     List<GamesAppBarModel> models,
     Map<String, int> counts,
   ) {
+    final completion = _buildRoundCompletion(models);
     return pickPreferredRoundForSelection(
       models,
       resolveDate: _roundEventDateTime,
       hasGames: (model) => _hasGames(model.id, counts),
+      isRoundFullyPlayed: (model) => completion[model.id] ?? false,
     );
   }
 
   void _sortRounds(List<GamesAppBarModel> models) {
+    final counts = _buildRoundGameCounts();
+    final completion = _buildRoundCompletion(models);
     final sorted = sortRoundsForDisplay(
       models,
       resolveDate: _roundEventDateTime,
+      hasGames: (model) => _hasGames(model.id, counts),
+      isRoundFullyPlayed: (model) => completion[model.id] ?? false,
     );
     models
       ..clear()
@@ -1408,10 +1451,12 @@ class _GamesAppBarNotifier
       (m) => _roundEventDateTime(m) != null,
     );
     if (allHaveStartTimes) {
+      final completion = _buildRoundCompletion(models);
       final preconfiguredFocus = pickPreferredRoundForSelection(
         models,
         resolveDate: _roundEventDateTime,
         hasGames: (model) => _hasGames(model.id, counts),
+        isRoundFullyPlayed: (model) => completion[model.id] ?? false,
       );
       if (preconfiguredFocus != null) {
         state = AsyncValue.data(

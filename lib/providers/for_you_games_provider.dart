@@ -7,41 +7,24 @@ import 'package:chessever/providers/favorite_events_provider.dart';
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/providers/for_you_games_logic.dart';
 import 'package:chessever/repository/favorites/models/favorite_player.dart';
-import 'package:chessever/repository/local_storage/tournament/games/games_local_storage.dart';
 import 'package:chessever/repository/local_storage/tournament/games/pin_games_local_storage.dart';
-import 'package:chessever/repository/local_storage/auto_pin_preferences/auto_pin_preferences_repository.dart';
-import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
-import 'package:chessever/repository/supabase/round/round.dart';
-import 'package:chessever/repository/supabase/round/round_repository.dart';
-import 'package:chessever/repository/supabase/tour/tour.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_tour_repository.dart';
-import 'package:chessever/repository/supabase/tour/tour_repository.dart';
-import 'package:chessever/providers/auth_state_provider.dart';
-import 'package:chessever/providers/auto_pin_preferences_provider.dart';
-import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/group_event/providers/live_group_broadcast_id_provider.dart';
 import 'package:chessever/screens/group_event/providers/sorting_all_event_provider.dart';
 import 'package:chessever/screens/group_event/widget/filter_popup/filter_popup_provider.dart';
-import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
-import 'package:chessever/screens/tour_detail/games_tour/providers/games_auto_pin_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_pin_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/live_rounds_id_provider.dart';
-import 'package:chessever/screens/tour_detail/games_tour/providers/live_tour_id_provider.dart';
-import 'package:chessever/screens/tour_detail/player_tour/player_tour_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
-import 'package:chessever/screens/tour_detail/provider/tour_detail_repo_provider.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
-import 'package:chessever/screens/tour_detail/provider/tour_selection_logic.dart';
-import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -49,8 +32,6 @@ const int kGamesPerEvent = 4;
 const int kDesktopForYouGamesPerEvent = 12;
 const int _kPageSize = 20;
 const Duration _kForYouStaleThreshold = Duration(minutes: 5);
-const Duration _kForYouLiveSnapshotRefreshInterval = Duration(seconds: 4);
-const Duration _kForYouLiveSnapshotRefreshFirstDelay = Duration(seconds: 2);
 
 int get _topGamesPerEventSnapshotLimit {
   if (kIsWeb) return kGamesPerEvent;
@@ -66,6 +47,33 @@ final forYouTopGamesSnapshotCacheProvider =
     StateProvider<Map<String, ForYouEventGamesSnapshot>>((ref) {
       return const <String, ForYouEventGamesSnapshot>{};
     });
+
+@visibleForTesting
+Map<String, ForYouEventGamesSnapshot> mergeForYouTopGameSnapshots({
+  required Map<String, ForYouEventGamesSnapshot> current,
+  required Map<String, ForYouEventGamesSnapshot> incoming,
+  required bool replace,
+}) {
+  var changed =
+      replace && !setEquals(current.keys.toSet(), incoming.keys.toSet());
+  final merged =
+      replace
+          ? <String, ForYouEventGamesSnapshot>{}
+          : <String, ForYouEventGamesSnapshot>{...current};
+
+  for (final entry in incoming.entries) {
+    final existing = current[entry.key];
+    if (existing != null &&
+        areEquivalentForYouSnapshots(existing, entry.value)) {
+      if (replace) merged[entry.key] = existing;
+      continue;
+    }
+    merged[entry.key] = entry.value;
+    changed = true;
+  }
+
+  return changed ? merged : current;
+}
 
 // ============================================================================
 // FOR YOU EVENTS - PAGINATED WITH SUPABASE QUERIES
@@ -107,12 +115,11 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   final Map<String, int> _sessionEventOrder = <String, int>{};
   int _nextSessionEventOrder = 0;
   bool _pendingFavoritePlayerOrderHydration = false;
-  Timer? _liveSnapshotRefreshTimer;
   bool _isRefreshingVisibleTopGameSnapshots = false;
+  final Set<String> _handledFinishedTopGameRefreshes = <String>{};
 
   ForYouNotifier(this.ref) : super(const ForYouState(isLoading: true)) {
     _setupListeners();
-    _startLiveSnapshotRefreshTimer();
     _loadInitial();
   }
 
@@ -190,21 +197,6 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
 
   Future<void> _loadInitial() async {
     await _fetchPage(isInitial: true);
-  }
-
-  void _startLiveSnapshotRefreshTimer() {
-    _liveSnapshotRefreshTimer?.cancel();
-    _liveSnapshotRefreshTimer = Timer(
-      _kForYouLiveSnapshotRefreshFirstDelay,
-      () {
-        if (!mounted) return;
-        _refreshTopGameSnapshotsForLiveSignal();
-        _liveSnapshotRefreshTimer = Timer.periodic(
-          _kForYouLiveSnapshotRefreshInterval,
-          (_) => _refreshTopGameSnapshotsForLiveSignal(),
-        );
-      },
-    );
   }
 
   Future<void> refresh() async {
@@ -471,6 +463,33 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     }
   }
 
+  Future<void> refreshTopGamesForEvent(
+    String eventId, {
+    String? finishedGameId,
+    String? finishedStatus,
+  }) async {
+    if (eventId.isEmpty) return;
+
+    final normalizedFinishedStatus = finishedStatus?.trim();
+    if (finishedGameId != null &&
+        finishedGameId.isNotEmpty &&
+        normalizedFinishedStatus != null &&
+        normalizedFinishedStatus.isNotEmpty) {
+      final refreshKey = '$eventId:$finishedGameId:$normalizedFinishedStatus';
+      if (!_handledFinishedTopGameRefreshes.add(refreshKey)) return;
+    }
+
+    GroupEventCardModel? model;
+    for (final event in state.events) {
+      if (event.id == eventId) {
+        model = event;
+        break;
+      }
+    }
+    if (model == null) return;
+    await _refreshVisibleTopGameSnapshots([model]);
+  }
+
   void _writeTopGameSnapshots({
     required List<GroupEventCardModel> models,
     required Map<String, List<Games>> gamesByEvent,
@@ -485,13 +504,12 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     }
 
     final notifier = ref.read(forYouTopGamesSnapshotCacheProvider.notifier);
-    notifier.state =
-        replace
-            ? snapshots
-            : <String, ForYouEventGamesSnapshot>{
-              ...notifier.state,
-              ...snapshots,
-            };
+    final merged = mergeForYouTopGameSnapshots(
+      current: notifier.state,
+      incoming: snapshots,
+      replace: replace,
+    );
+    if (!identical(merged, notifier.state)) notifier.state = merged;
   }
 
   List<GroupEventCardModel> _sortLikeCurrentTab(
@@ -688,12 +706,6 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
       _refreshVisibleFavoritePlayerCounts(finalizeOrderAfterRefresh: true),
     );
   }
-
-  @override
-  void dispose() {
-    _liveSnapshotRefreshTimer?.cancel();
-    super.dispose();
-  }
 }
 
 @visibleForTesting
@@ -722,20 +734,10 @@ ForYouEventGamesSnapshot _topGamesSnapshotFromGames({
   required String eventId,
   required List<Games> games,
 }) {
-  final visibleGames = <GamesTourModel>[];
-  for (final game in games.take(_topGamesPerEventSnapshotLimit)) {
-    try {
-      visibleGames.add(GamesTourModel.fromGame(game));
-    } catch (e) {
-      debugPrint('[ForYou] Skipping malformed top game ${game.id}: $e');
-    }
-  }
-
-  return ForYouEventGamesSnapshot(
+  return buildForYouTopGamesSnapshot(
     eventId: eventId,
-    tourId: games.isEmpty ? '' : games.first.tourId,
-    visibleGames: visibleGames,
-    pinnedIds: const <String>[],
+    games: games,
+    maxGames: _topGamesPerEventSnapshotLimit,
   );
 }
 
@@ -811,63 +813,6 @@ final forYouPinActionProvider = Provider.autoDispose<ForYouPinAction>(
   (ref) => _ForYouPinActionController(ref),
 );
 
-final currentTournamentDetailSelectedTourIdProvider = Provider<String?>((ref) {
-  return ref.watch(
-    tourDetailScreenProvider.select(
-      (value) => value.valueOrNull?.aboutTourModel.id,
-    ),
-  );
-});
-
-final currentSelectedTourIdForEventProvider = Provider.autoDispose
-    .family<String?, String>((ref, eventId) {
-      final isSelectedEvent = ref.watch(
-        selectedBroadcastModelProvider.select(
-          (broadcast) => broadcast?.id == eventId,
-        ),
-      );
-
-      if (!isSelectedEvent) {
-        return null;
-      }
-
-      return ref.watch(currentTournamentDetailSelectedTourIdProvider);
-    });
-
-class _ForYouComputedPinState {
-  const _ForYouComputedPinState({
-    required this.manualPins,
-    required this.autoPins,
-    required this.unpinnedOverrides,
-    required this.effectivePins,
-  });
-
-  final List<String> manualPins;
-  final List<String> autoPins;
-  final List<String> unpinnedOverrides;
-  final List<String> effectivePins;
-}
-
-class _ForYouResolvedEventData {
-  const _ForYouResolvedEventData({
-    required this.selectedTour,
-    required this.eventTours,
-    required this.selectedTourRounds,
-    required this.roundsByTourId,
-    required this.selectedTourGames,
-    required this.gamesByTourId,
-    required this.liveRoundIds,
-  });
-
-  final Tour selectedTour;
-  final List<Tour> eventTours;
-  final List<Round> selectedTourRounds;
-  final Map<String, List<Round>> roundsByTourId;
-  final List<Games> selectedTourGames;
-  final Map<String, List<Games>> gamesByTourId;
-  final List<String> liveRoundIds;
-}
-
 class _ForYouPinActionController implements ForYouPinAction {
   const _ForYouPinActionController(this._ref);
 
@@ -926,806 +871,11 @@ class _ForYouPinActionController implements ForYouPinAction {
 }
 
 // ============================================================================
-// LAZY GAMES PER EVENT PROVIDER
-// Mirrors the Games tab for the event's resolved default tour, then lets each
-// platform's UI cap visible games to the density that fits its layout.
-// ============================================================================
-
-final eventGamesProvider = StateNotifierProvider.autoDispose.family<
-  _ForYouEventGamesController,
-  AsyncValue<ForYouEventGamesSnapshot>,
-  String
->((ref, eventId) {
-  final link = ref.keepAlive();
-  final timer = Timer(const Duration(minutes: 5), link.close);
-  ref.onDispose(timer.cancel);
-
-  final controller = _ForYouEventGamesController(ref: ref, eventId: eventId);
-
-  ref.onCancel(controller.handleCancel);
-  ref.onResume(controller.handleResume);
-
-  // Per-event listeners only. Global signals (favorites version, country
-  // dropdown, auto-pin prefs, current user, live tour id, live rounds id) are
-  // funneled through `forYouEventsRefreshProvider` by `ForYouNotifier` — that
-  // collapses N×6 family listens into 6 single listens + N event listens, a
-  // ~6× reduction at typical list sizes.
-  ref.listen(eventPinRefreshProvider(eventId), (_, __) {
-    controller.requestRefresh();
-  });
-  ref.listen(forYouEventsRefreshProvider, (_, __) {
-    controller.requestRefresh();
-  });
-  ref.listen(currentSelectedTourIdForEventProvider(eventId), (_, __) {
-    controller.requestRefresh();
-  });
-
-  return controller;
-});
-
-class _ForYouEventGamesController
-    extends StateNotifier<AsyncValue<ForYouEventGamesSnapshot>> {
-  _ForYouEventGamesController({required this.ref, required this.eventId})
-    : super(const AsyncValue.loading()) {
-    requestRefresh();
-  }
-
-  final Ref ref;
-  final String eventId;
-
-  bool _isObserved = true;
-  bool _isRefreshing = false;
-  bool _queuedRefresh = false;
-  final Set<String> _handledFinishedRefreshes = <String>{};
-
-  void handleCancel() {
-    _isObserved = false;
-  }
-
-  void handleResume() {
-    _isObserved = true;
-    if (_queuedRefresh || state.valueOrNull == null) {
-      requestRefresh();
-    }
-  }
-
-  void requestRefresh() {
-    if (!mounted) {
-      return;
-    }
-
-    if (!_isObserved) {
-      _queuedRefresh = true;
-      return;
-    }
-
-    if (_isRefreshing) {
-      _queuedRefresh = true;
-      return;
-    }
-
-    unawaited(_performRefreshLoop());
-  }
-
-  void requestRefreshForFinishedGame({
-    required String gameId,
-    required String status,
-  }) {
-    final normalizedStatus = status.trim();
-    if (gameId.isEmpty || normalizedStatus.isEmpty) {
-      return;
-    }
-
-    final refreshKey = '$gameId:$normalizedStatus';
-    if (!_handledFinishedRefreshes.add(refreshKey)) {
-      return;
-    }
-
-    debugPrint(
-      '[ForYou] Game $gameId finished ($normalizedStatus), refreshing snapshot for event $eventId',
-    );
-    final cacheNotifier = ref.read(
-      forYouTopGamesSnapshotCacheProvider.notifier,
-    );
-    final updatedCache = removeForYouTopGameSnapshotFromCache(
-      cacheNotifier.state,
-      eventId,
-    );
-    if (!identical(updatedCache, cacheNotifier.state)) {
-      cacheNotifier.state = updatedCache;
-    }
-    requestRefresh();
-  }
-
-  Future<void> _performRefreshLoop() async {
-    if (_isRefreshing) {
-      return;
-    }
-
-    _isRefreshing = true;
-    try {
-      do {
-        _queuedRefresh = false;
-        await _refreshOnce();
-      } while (mounted && _isObserved && _queuedRefresh);
-    } finally {
-      _isRefreshing = false;
-    }
-  }
-
-  Future<void> _refreshOnce() async {
-    final previousSnapshot = state.valueOrNull;
-
-    if (previousSnapshot == null && !state.isLoading) {
-      state = const AsyncValue.loading();
-    }
-
-    Object? loadError;
-    StackTrace? loadStack;
-
-    try {
-      final cachedSnapshot = await _computeForYouEventGamesSnapshot(
-        ref: ref,
-        eventId: eventId,
-        loadGames: _safeGetGames,
-      );
-      // On cold start (no previous snapshot), only surface the cache result
-      // when it actually contains renderable games. An empty cache result
-      // would prematurely kill the shimmer while the network refresh below
-      // is still in-flight.
-      if (previousSnapshot == null && !cachedSnapshot.hasGames) {
-        // Stay in loading — the network refresh below will resolve the state.
-      } else {
-        final currentSnapshot = state.valueOrNull;
-        if (currentSnapshot == null ||
-            !areEquivalentForYouSnapshots(currentSnapshot, cachedSnapshot)) {
-          state = AsyncValue.data(cachedSnapshot);
-        }
-      }
-    } catch (error, stackTrace) {
-      loadError = error;
-      loadStack = stackTrace;
-      debugPrint('[ForYou] Cache-first snapshot failed for $eventId: $error');
-    }
-
-    try {
-      final refreshedSnapshot = await _computeForYouEventGamesSnapshot(
-        ref: ref,
-        eventId: eventId,
-        loadGames: _safeRefreshGames,
-      );
-      final currentSnapshot = state.valueOrNull;
-      if (currentSnapshot == null ||
-          !areEquivalentForYouSnapshots(currentSnapshot, refreshedSnapshot)) {
-        state = AsyncValue.data(refreshedSnapshot);
-      }
-      return;
-    } catch (error, stackTrace) {
-      loadError ??= error;
-      loadStack ??= stackTrace;
-      debugPrint('[ForYou] Refreshed snapshot failed for $eventId: $error');
-    }
-
-    if (state.valueOrNull == null) {
-      state = AsyncValue.error(loadError, loadStack);
-    } else if (previousSnapshot != null && mounted) {
-      state = AsyncValue.data(previousSnapshot);
-    }
-  }
-}
-
-typedef _GamesStorageLoader =
-    Future<List<Games>> Function({
-      required GamesLocalStorage gamesStorage,
-      required String tourId,
-    });
-
-Future<ForYouEventGamesSnapshot> _computeForYouEventGamesSnapshot({
-  required Ref ref,
-  required String eventId,
-  required _GamesStorageLoader loadGames,
-}) async {
-  final cachedTopGames = ref.read(forYouTopGamesSnapshotCacheProvider)[eventId];
-  if (cachedTopGames != null) {
-    return cachedTopGames;
-  }
-
-  final resolvedEventData = await _loadForYouResolvedEventData(
-    ref: ref,
-    eventId: eventId,
-    loadGames: loadGames,
-  );
-
-  if (resolvedEventData == null) {
-    return _emptyForYouEventGamesSnapshot(eventId);
-  }
-
-  final selectedTour = resolvedEventData.selectedTour;
-  final eventTours = resolvedEventData.eventTours;
-  final selectedTourRounds = resolvedEventData.selectedTourRounds;
-  final roundsByTourId = resolvedEventData.roundsByTourId;
-  final selectedTourGames = resolvedEventData.selectedTourGames;
-  final gamesByTourId = resolvedEventData.gamesByTourId;
-  final liveRoundIds = resolvedEventData.liveRoundIds;
-
-  final isKnockout = isKnockoutTour(
-    tour: selectedTour,
-    games: selectedTourGames,
-  );
-
-  final gamesForAutoPin =
-      isKnockout
-          ? gamesByTourId.values
-              .expand((games) => games)
-              .map((game) {
-                try {
-                  return GamesTourModel.fromGame(game);
-                } catch (_) {
-                  return null;
-                }
-              })
-              .whereType<GamesTourModel>()
-              .toList()
-          : sortGamesForGamesTab(games: selectedTourGames, pinnedIds: const []);
-
-  final pinState = await _loadPinnedStateForEvent(
-    ref: ref,
-    relatedTourIds:
-        isKnockout
-            ? eventTours.map((tour) => tour.id).toList(growable: false)
-            : [selectedTour.id],
-    autoPinTourId: selectedTour.id,
-    allRelevantGames: gamesForAutoPin,
-  );
-
-  final snapshot = buildForYouEventGamesSnapshot(
-    eventId: eventId,
-    selectedTour: selectedTour,
-    eventTours: eventTours,
-    selectedTourRounds: selectedTourRounds,
-    roundsByTourId: roundsByTourId,
-    selectedTourGames: selectedTourGames,
-    gamesByTourId: gamesByTourId,
-    liveRoundIds: liveRoundIds,
-    pinnedIds: pinState.effectivePins,
-    manualPinnedIds: pinState.manualPins,
-    autoPinnedIds: pinState.autoPins,
-    unpinnedOverrideIds: pinState.unpinnedOverrides,
-  );
-
-  debugPrint(
-    '[ForYou] Snapshot for $eventId resolved to ${snapshot.tourId} '
-    'with ${snapshot.visibleGames.length} visible Games-tab games',
-  );
-  return snapshot;
-}
-
-Future<_ForYouResolvedEventData?> _loadForYouResolvedEventData({
-  required Ref ref,
-  required String eventId,
-  required _GamesStorageLoader loadGames,
-}) async {
-  final groupBroadcastRepo = ref.read(groupBroadcastRepositoryProvider);
-  final gameRepository = ref.read(gameRepositoryProvider);
-  final gamesStorage = ref.read(gamesLocalStorage);
-  final roundRepository = ref.read(roundRepositoryProvider);
-  final tourRepository = ref.read(tourRepositoryProvider);
-  final liveTourIds = ref.read(liveTourIdProvider).valueOrNull ?? <String>[];
-  final liveRoundIds = ref.read(liveRoundsIdProvider).valueOrNull ?? <String>[];
-
-  final initialResults = await Future.wait<Object?>([
-    _safeLoadEventTours(
-      tourRepository: tourRepository,
-      groupBroadcastRepo: groupBroadcastRepo,
-      eventId: eventId,
-    ),
-    _safeLoadSavedTourId(ref: ref, eventId: eventId),
-  ]);
-  final eventTours = initialResults[0]! as List<Tour>;
-  final savedTourId = initialResults[1] as String?;
-
-  if (eventTours.isEmpty) {
-    return null;
-  }
-
-  final tourModels = _buildEventTourModels(eventTours, liveTourIds);
-  if (tourModels.isEmpty) {
-    return null;
-  }
-
-  final currentSelectedTourId = ref.read(
-    currentSelectedTourIdForEventProvider(eventId),
-  );
-
-  String? activityTourId;
-  if (shouldLoadDeferredActivityTourId(
-    tourModels: tourModels,
-    currentSelectedId: currentSelectedTourId,
-    savedTourId: savedTourId,
-  )) {
-    activityTourId = await _safeLoadActivityTourId(
-      gameRepository: gameRepository,
-      eventId: eventId,
-      tourIds: tourModels.map((model) => model.tour.id).toList(growable: false),
-    );
-  }
-
-  final selectedTour = selectDefaultTour(
-    tourModels: tourModels,
-    liveTourIds: liveTourIds,
-    currentSelectedId: currentSelectedTourId,
-    savedTourId: savedTourId,
-    activityTourId: activityTourId,
-  );
-
-  final selectedTourData = await Future.wait<Object?>([
-    loadGames(gamesStorage: gamesStorage, tourId: selectedTour.id),
-    _safeLoadRounds(roundRepository: roundRepository, tourId: selectedTour.id),
-  ]);
-  final selectedTourGames = selectedTourData[0]! as List<Games>;
-  final selectedTourRounds = selectedTourData[1]! as List<Round>;
-
-  final isKnockout = isKnockoutTour(
-    tour: selectedTour,
-    games: selectedTourGames,
-  );
-
-  final gamesByTourId = <String, List<Games>>{
-    selectedTour.id: selectedTourGames,
-  };
-  final roundsByTourId = <String, List<Round>>{
-    selectedTour.id: selectedTourRounds,
-  };
-
-  if (isKnockout) {
-    final siblingTours = eventTours
-        .where((tour) => tour.id != selectedTour.id)
-        .toList(growable: false);
-
-    if (siblingTours.isNotEmpty) {
-      final siblingTourIds = siblingTours
-          .map((tour) => tour.id)
-          .toList(growable: false);
-      final siblingResults = await Future.wait<Object?>([
-        Future.wait(
-          siblingTours.map(
-            (tour) => loadGames(gamesStorage: gamesStorage, tourId: tour.id),
-          ),
-        ),
-        _safeLoadRoundsByTourIds(
-          roundRepository: roundRepository,
-          tourIds: siblingTourIds,
-        ),
-      ]);
-
-      final siblingGames = siblingResults[0]! as List<List<Games>>;
-      final siblingRoundsByTourId =
-          siblingResults[1]! as Map<String, List<Round>>;
-
-      for (var i = 0; i < siblingTours.length; i++) {
-        final tourId = siblingTours[i].id;
-        gamesByTourId[tourId] = siblingGames[i];
-        roundsByTourId[tourId] =
-            siblingRoundsByTourId[tourId] ?? const <Round>[];
-      }
-    }
-  }
-
-  return _ForYouResolvedEventData(
-    selectedTour: selectedTour,
-    eventTours: eventTours,
-    selectedTourRounds: selectedTourRounds,
-    roundsByTourId: roundsByTourId,
-    selectedTourGames: selectedTourGames,
-    gamesByTourId: gamesByTourId,
-    liveRoundIds: liveRoundIds,
-  );
-}
-
-ForYouEventGamesSnapshot _emptyForYouEventGamesSnapshot(String eventId) {
-  return ForYouEventGamesSnapshot(
-    eventId: eventId,
-    tourId: '',
-    visibleGames: const [],
-    pinnedIds: const [],
-  );
-}
-
-List<TourModel> _buildEventTourModels(
-  List<Tour> tours,
-  List<String> liveTourIds,
-) {
-  final now = DateTime.now();
-  final models = <TourModel>[];
-
-  for (final tour in tours) {
-    if (tour.dates.isEmpty) {
-      final status =
-          liveTourIds.contains(tour.id)
-              ? RoundStatus.live
-              : RoundStatus.completed;
-      models.add(TourModel(tour: tour, roundStatus: status));
-      continue;
-    }
-
-    final status = calculateTourRoundStatus(
-      tourId: tour.id,
-      now: now,
-      startDate: tour.dates.first,
-      endDate: tour.dates.last,
-      liveTourIds: liveTourIds,
-    );
-    models.add(TourModel(tour: tour, roundStatus: status));
-  }
-
-  return models;
-}
-
-Future<List<Games>> _safeRefreshGames({
-  required GamesLocalStorage gamesStorage,
-  required String tourId,
-}) async {
-  try {
-    // Explicit refresh leg: bypass the recent-fetch reuse window so a
-    // just-finished game surfaces promptly (restores refresh() semantics).
-    return await gamesStorage.fetchAndSaveGames(tourId, forceRefresh: true);
-  } catch (e) {
-    debugPrint('[ForYou] Error fetching games for tour $tourId: $e');
-    return const <Games>[];
-  }
-}
-
-Future<List<Games>> _safeGetGames({
-  required GamesLocalStorage gamesStorage,
-  required String tourId,
-}) async {
-  try {
-    return await gamesStorage.getCachedGames(tourId);
-  } catch (e) {
-    debugPrint('[ForYou] Error reading cached games for tour $tourId: $e');
-    return const <Games>[];
-  }
-}
-
-Future<List<Tour>> _safeLoadEventTours({
-  required TourRepository tourRepository,
-  required GroupBroadcastRepository groupBroadcastRepo,
-  required String eventId,
-}) async {
-  List<Tour> eventTours = [];
-
-  try {
-    eventTours = await tourRepository.getTourByGroupId(eventId);
-  } catch (e) {
-    debugPrint('[ForYou] Error fetching tours: $e');
-  }
-
-  if (eventTours.isEmpty) {
-    try {
-      final tourIds = await groupBroadcastRepo.getTourIdsForGroupBroadcast(
-        eventId,
-      );
-      eventTours = await tourRepository.getToursByIds(tourIds);
-    } catch (e) {
-      debugPrint('[ForYou] Error fetching fallback tours: $e');
-    }
-  }
-
-  return eventTours;
-}
-
-Future<String?> _safeLoadSavedTourId({
-  required Ref ref,
-  required String eventId,
-}) async {
-  try {
-    return await ref.read(tourDetailRepoProvider).getSelectedTourId(eventId);
-  } catch (e) {
-    debugPrint('[ForYou] Error reading saved tour selection: $e');
-    return null;
-  }
-}
-
-Future<String?> _safeLoadActivityTourId({
-  required GameRepository gameRepository,
-  required String eventId,
-  required List<String> tourIds,
-}) async {
-  try {
-    return await gameRepository.getMostRelevantTourId(tourIds: tourIds);
-  } catch (e) {
-    debugPrint('[ForYou] Error resolving relevant tour for $eventId: $e');
-    return null;
-  }
-}
-
-Future<List<Round>> _safeLoadRounds({
-  required RoundRepository roundRepository,
-  required String tourId,
-}) async {
-  try {
-    return await roundRepository.getRoundsByTourId(tourId);
-  } catch (e) {
-    debugPrint('[ForYou] Error fetching rounds for tour $tourId: $e');
-    return const <Round>[];
-  }
-}
-
-Future<Map<String, List<Round>>> _safeLoadRoundsByTourIds({
-  required RoundRepository roundRepository,
-  required List<String> tourIds,
-}) async {
-  try {
-    return await roundRepository.getRoundsByTourIds(tourIds);
-  } catch (e) {
-    debugPrint('[ForYou] Error fetching rounds for tours $tourIds: $e');
-    return <String, List<Round>>{
-      for (final tourId in tourIds) tourId: const <Round>[],
-    };
-  }
-}
-
-Future<_ForYouComputedPinState> _loadPinnedStateForEvent({
-  required Ref ref,
-  required List<String> relatedTourIds,
-  required String autoPinTourId,
-  required List<GamesTourModel> allRelevantGames,
-}) async {
-  final pinResults = await Future.wait<Object?>([
-    _loadManualPinsForTours(ref: ref, tourIds: relatedTourIds),
-    _loadUnpinnedOverridesForTours(ref: ref, tourIds: relatedTourIds),
-    _loadAutoPins(
-      ref: ref,
-      tourId: autoPinTourId,
-      allRelevantGames: allRelevantGames,
-    ),
-  ]);
-  final manualPins = pinResults[0]! as List<String>;
-  final unpinnedOverrides = pinResults[1]! as List<String>;
-  final autoPins = pinResults[2]! as List<String>;
-  return _ForYouComputedPinState(
-    manualPins: manualPins,
-    autoPins: autoPins,
-    unpinnedOverrides: unpinnedOverrides,
-    effectivePins: mergeEffectivePins(
-      manualPins: manualPins,
-      autoPins: autoPins,
-      unpinnedOverrides: unpinnedOverrides,
-    ),
-  );
-}
-
-@visibleForTesting
-List<String> mergePinnedIdsPreservingOrder(List<List<String>> pinLists) {
-  final mergedPins = <String>[];
-  final seen = <String>{};
-
-  for (final pinIds in pinLists) {
-    for (final pinId in pinIds) {
-      if (seen.add(pinId)) {
-        mergedPins.add(pinId);
-      }
-    }
-  }
-
-  return mergedPins;
-}
-
-Future<List<String>> _loadManualPinsForTours({
-  required Ref ref,
-  required List<String> tourIds,
-}) async {
-  final storage = ref.read(forYouPinStorageProvider);
-  final pinLists = await Future.wait(
-    tourIds.map((tourId) => storage.getPinnedGameIds(tourId)),
-  );
-  return mergePinnedIdsPreservingOrder(pinLists);
-}
-
-Future<List<String>> _loadUnpinnedOverridesForTours({
-  required Ref ref,
-  required List<String> tourIds,
-}) async {
-  final storage = ref.read(forYouPinStorageProvider);
-  final overrideLists = await Future.wait(
-    tourIds.map((tourId) => storage.getUnpinnedGameIds(tourId)),
-  );
-  return mergePinListsPreservingOrder(overrideLists);
-}
-
-Future<List<String>> _loadAutoPins({
-  required Ref ref,
-  required String tourId,
-  required List<GamesTourModel> allRelevantGames,
-}) async {
-  final prefsRepo = AutoPinPreferencesRepository(AppDatabase.instance);
-  final userId = ref.read(currentUserProvider)?.id;
-  final setupResults = await Future.wait<Object?>([
-    prefsRepo.getTournamentAutoPinDisabled(tourId, userId),
-    ref.read(autoPinPreferencesProvider.future),
-  ]);
-  final autoPinDisabled = setupResults[0]! as bool;
-  if (autoPinDisabled) {
-    return const <String>[];
-  }
-
-  final prefs = setupResults[1]! as AutoPinPreferences;
-  if (!prefs.favoritePlayersAutoPinEnabled && !prefs.countrymenAutoPinEnabled) {
-    return const <String>[];
-  }
-
-  final pinnedIds = <String>{};
-  final dependencyResults = await Future.wait<Object?>([
-    prefs.favoritePlayersAutoPinEnabled
-        ? ref.read(tournamentFavoritePlayersProvider.future)
-        : Future.value(null),
-    prefs.countrymenAutoPinEnabled
-        ? _resolveAutoPinCountryCode(ref)
-        : Future.value(null),
-  ]);
-  final favoritePlayers =
-      dependencyResults[0] as List<PlayerStandingModel>? ??
-      const <PlayerStandingModel>[];
-  final countryCode = dependencyResults[1] as String?;
-
-  if (prefs.favoritePlayersAutoPinEnabled) {
-    for (final game in allRelevantGames) {
-      final matchesFavorite =
-          favoritePlayers.any(
-            (player) =>
-                player.name == game.whitePlayer.name &&
-                (player.countryCode.isEmpty ||
-                    CountryCodeMatcher.matches(
-                      game.whitePlayer.countryCode,
-                      player.countryCode,
-                    )),
-          ) ||
-          favoritePlayers.any(
-            (player) =>
-                player.name == game.blackPlayer.name &&
-                (player.countryCode.isEmpty ||
-                    CountryCodeMatcher.matches(
-                      game.blackPlayer.countryCode,
-                      player.countryCode,
-                    )),
-          );
-      if (matchesFavorite) {
-        pinnedIds.add(game.gameId);
-      }
-    }
-  }
-
-  if (prefs.countrymenAutoPinEnabled) {
-    if (countryCode != null && countryCode.isNotEmpty) {
-      final countryGames =
-          allRelevantGames
-              .where((game) {
-                return CountryCodeMatcher.matches(
-                      game.whitePlayer.countryCode,
-                      countryCode,
-                    ) ||
-                    CountryCodeMatcher.matches(
-                      game.blackPlayer.countryCode,
-                      countryCode,
-                    );
-              })
-              .map((game) => game.gameId)
-              .toList();
-
-      if (countryGames.length < allRelevantGames.length) {
-        pinnedIds.addAll(countryGames);
-      }
-    }
-  }
-
-  return pinnedIds.toList();
-}
-
-@visibleForTesting
-bool shouldLoadDeferredActivityTourId({
-  required List<TourModel> tourModels,
-  String? currentSelectedId,
-  String? savedTourId,
-}) {
-  final hasStartedTours = tourModels.any(
-    (model) => model.roundStatus != RoundStatus.upcoming,
-  );
-
-  bool canUseSelection(TourModel model) {
-    if (!hasStartedTours) {
-      return true;
-    }
-    return model.roundStatus != RoundStatus.upcoming;
-  }
-
-  Tour? findSelectableTour(String? tourId) {
-    if (tourId == null || tourId.isEmpty) {
-      return null;
-    }
-
-    for (final model in tourModels) {
-      if (model.tour.id == tourId && canUseSelection(model)) {
-        return model.tour;
-      }
-    }
-
-    return null;
-  }
-
-  if (findSelectableTour(currentSelectedId) != null) {
-    return false;
-  }
-
-  if (findSelectableTour(savedTourId) != null) {
-    return false;
-  }
-
-  if (tourModels.any((model) => model.roundStatus == RoundStatus.live)) {
-    return false;
-  }
-
-  final selectableModels =
-      hasStartedTours
-          ? tourModels
-              .where((model) => model.roundStatus != RoundStatus.upcoming)
-              .toList()
-          : List<TourModel>.from(tourModels);
-
-  if (selectableModels.isEmpty) {
-    return true;
-  }
-
-  final toursWithDates =
-      selectableModels.where((model) => model.tour.dates.isNotEmpty).toList();
-
-  if (toursWithDates.isNotEmpty) {
-    final firstStart = toursWithDates.first.tour.dates.first;
-    final allSameStart = toursWithDates.every(
-      (model) =>
-          model.tour.dates.first.year == firstStart.year &&
-          model.tour.dates.first.month == firstStart.month &&
-          model.tour.dates.first.day == firstStart.day,
-    );
-
-    if (!allSameStart) {
-      return false;
-    }
-
-    if (toursWithDates.any((model) => model.tour.avgElo != null)) {
-      return false;
-    }
-  }
-
-  if (selectableModels.any((model) => model.tour.avgElo != null)) {
-    return false;
-  }
-
-  return true;
-}
-
-Future<String?> _resolveAutoPinCountryCode(Ref ref) async {
-  final cachedCountryCode = await AppDatabase.instance.getString(
-    'selected_country_code',
-  );
-  if (cachedCountryCode != null && cachedCountryCode.isNotEmpty) {
-    return cachedCountryCode;
-  }
-
-  final countryAsync = ref.read(countryDropdownProvider);
-  if (countryAsync.hasValue && countryAsync.value != null) {
-    return countryAsync.value!.countryCode;
-  }
-
-  return countryAsync.valueOrNull?.countryCode;
-}
-
-// ============================================================================
 // LIVE GAME WATCHER - AUTO-REFRESH WHEN GAMES FINISH
 // ============================================================================
 
-/// Watches displayed live games so each visible For You section stays reactive
-/// to Supabase row updates, while still using [eventGamesProvider] for the
-/// cached/refreshed snapshot.
+/// Watches displayed live games while using only the bounded RPC snapshot as
+/// the section's membership source.
 ///
 /// The card widgets consume their own live row data, but this wrapper keeps the
 /// section subscribed to the same rendered live rows and refreshes the snapshot
@@ -1734,7 +884,7 @@ final forYouEventGamesWithAutoRefreshProvider = Provider.autoDispose.family<
   AsyncValue<ForYouEventGamesSnapshot>,
   String
 >((ref, eventId) {
-  final snapshotAsync = ref.watch(eventGamesProvider(eventId));
+  final snapshotAsync = ref.watch(forYouEventSnapshotProvider(eventId));
 
   return snapshotAsync.when(
     data: (snapshot) {
@@ -1799,10 +949,11 @@ final forYouEventGamesWithAutoRefreshProvider = Provider.autoDispose.family<
               Future.microtask(() {
                 try {
                   ref
-                      .read(eventGamesProvider(eventId).notifier)
-                      .requestRefreshForFinishedGame(
-                        gameId: status.gameId,
-                        status: status.status!,
+                      .read(forYouEventsProvider.notifier)
+                      .refreshTopGamesForEvent(
+                        eventId,
+                        finishedGameId: status.gameId,
+                        finishedStatus: status.status!,
                       );
                 } on StateError {
                   // The section can be disposed while a stream event is queued.
@@ -1890,10 +1041,14 @@ class _LiveGameStatus {
 
 /// Read-only snapshot alias for non-rendering code paths.
 final forYouEventSnapshotProvider = Provider.autoDispose
-    .family<AsyncValue<ForYouEventGamesSnapshot>, String>(
-      (ref, eventId) =>
-          ref.watch(forYouEventGamesWithAutoRefreshProvider(eventId)),
-    );
+    .family<AsyncValue<ForYouEventGamesSnapshot>, String>((ref, eventId) {
+      final snapshot = ref.watch(
+        forYouTopGamesSnapshotCacheProvider.select((cache) => cache[eventId]),
+      );
+      return snapshot == null
+          ? const AsyncValue.loading()
+          : AsyncValue.data(snapshot);
+    });
 
 bool _isFinishedStatus(String status) {
   return GameStatus.fromString(status).isFinished;

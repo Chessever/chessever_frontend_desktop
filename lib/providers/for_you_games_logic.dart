@@ -3,6 +3,7 @@ import 'package:chessever/repository/supabase/round/round.dart';
 import 'package:chessever/repository/supabase/tour/tour.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_grouped_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tournament_state_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/round_ordering.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
@@ -120,6 +121,70 @@ bool _playerCardsEqual(PlayerCard a, PlayerCard b) {
       a.fideId == b.fideId &&
       a.team == b.team &&
       a.gamebasePlayerId == b.gamebasePlayerId;
+}
+
+/// Builds a bounded RPC-backed preview while defensively enforcing the event
+/// card's one-category contract. RPC order is preserved inside the selected
+/// category so older rounds can backfill missing board slots.
+ForYouEventGamesSnapshot buildForYouTopGamesSnapshot({
+  required String eventId,
+  required List<Games> games,
+  required int maxGames,
+}) {
+  if (games.isEmpty || maxGames <= 0) {
+    return ForYouEventGamesSnapshot(
+      eventId: eventId,
+      tourId: '',
+      visibleGames: const [],
+      pinnedIds: const [],
+    );
+  }
+
+  final parsedGames = <({Games raw, GamesTourModel model})>[];
+  final seenGameIds = <String>{};
+  for (final game in games) {
+    try {
+      final model = GamesTourModel.fromGame(game);
+      if (isEventBoardGameVisible(model) && seenGameIds.add(model.gameId)) {
+        parsedGames.add((raw: game, model: model));
+      }
+    } catch (_) {
+      // Match the Games tab's resilience to malformed or stale game rows.
+    }
+  }
+
+  if (parsedGames.isEmpty) {
+    return ForYouEventGamesSnapshot(
+      eventId: eventId,
+      tourId: '',
+      visibleGames: const [],
+      pinnedIds: const [],
+    );
+  }
+
+  var selected = parsedGames.first;
+  for (final candidate in parsedGames.skip(1)) {
+    final selectedElo = selected.raw.avgElo;
+    final candidateElo = candidate.raw.avgElo;
+    if (candidateElo != null &&
+        (selectedElo == null || candidateElo > selectedElo)) {
+      selected = candidate;
+    }
+  }
+
+  final selectedTourId = selected.model.tourId;
+  final visibleGames = parsedGames
+      .where((game) => game.model.tourId == selectedTourId)
+      .map((game) => game.model)
+      .take(maxGames)
+      .toList(growable: false);
+
+  return ForYouEventGamesSnapshot(
+    eventId: eventId,
+    tourId: selectedTourId,
+    visibleGames: visibleGames,
+    pinnedIds: const [],
+  );
 }
 
 ForYouEventGamesSnapshot buildForYouEventGamesSnapshot({

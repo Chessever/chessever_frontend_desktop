@@ -1,18 +1,16 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:chessever/providers/event_pin_refresh_provider.dart';
 import 'package:chessever/providers/for_you_games_provider.dart';
 import 'package:chessever/providers/for_you_games_logic.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
-import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
+import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/repository/supabase/round/round.dart';
 import 'package:chessever/repository/supabase/round/round_repository.dart';
-import 'package:chessever/repository/supabase/tour/tour.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
-import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_pin_provider.dart';
-import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -111,6 +109,46 @@ GamesTourModel _game(String id, {String tourId = 'tour-1'}) {
   );
 }
 
+Games _rpcGame({
+  required String id,
+  required String tourId,
+  required String roundId,
+  required int avgElo,
+  required int boardNr,
+}) {
+  return Games(
+    id: id,
+    roundId: roundId,
+    roundSlug: roundId,
+    tourId: tourId,
+    tourSlug: tourId,
+    players: [
+      Player(
+        name: 'White $id',
+        title: 'GM',
+        rating: 2700,
+        fideId: 1,
+        fed: 'USA',
+        clock: 600,
+        team: '',
+      ),
+      Player(
+        name: 'Black $id',
+        title: 'GM',
+        rating: 2690,
+        fideId: 2,
+        fed: 'USA',
+        clock: 600,
+        team: '',
+      ),
+    ],
+    lastMove: 'e2e4',
+    status: 'ongoing',
+    boardNr: boardNr,
+    avgElo: avgElo,
+  );
+}
+
 ForYouEventGamesSnapshot _snapshot(
   String eventId, {
   String tourId = 'tour-1',
@@ -137,32 +175,6 @@ ForYouEventGamesSnapshot _snapshot(
   );
 }
 
-Tour _tour({
-  required String id,
-  required List<DateTime> dates,
-  int? avgElo = 2700,
-}) {
-  return Tour.fromJson({
-    'id': id,
-    'name': 'Tour $id',
-    'slug': id,
-    'info': {
-      'format': 'Swiss',
-      'tc': '90+30',
-      'players': '',
-      'location': 'Test City',
-    },
-    'created_at': DateTime(2026, 3, 25, 8).toIso8601String(),
-    'url': 'https://example.com/$id',
-    'tier': 1,
-    'dates': dates.map((date) => date.toIso8601String()).toList(),
-    'players': const <Map<String, dynamic>>[],
-    'search': const <String>[],
-    'group_broadcast_id': 'event-1',
-    'avg_elo': avgElo,
-  });
-}
-
 Round _round({
   required String id,
   required String tourId,
@@ -177,15 +189,6 @@ Round _round({
     createdAt: createdAt,
     startsAt: createdAt.add(const Duration(hours: 1)),
     url: 'https://example.com/$id',
-  );
-}
-
-GroupBroadcast _broadcast(String id) {
-  return GroupBroadcast(
-    id: id,
-    createdAt: DateTime(2026, 3, 25, 12),
-    name: 'Broadcast $id',
-    search: const <String>[],
   );
 }
 
@@ -212,170 +215,124 @@ void main() {
     return () => bumpEventPinRefreshSignal(ref, eventId);
   });
 
-  group('currentSelectedTourIdForEventProvider', () {
-    test(
-      'does not react to selected broadcast changes for unrelated events',
-      () {
-        final detailTourIdProvider = StateProvider<String?>((ref) => 'tour-a');
-        final container = ProviderContainer(
-          overrides: [
-            currentTournamentDetailSelectedTourIdProvider.overrideWith(
-              (ref) => ref.watch(detailTourIdProvider),
-            ),
-          ],
-        );
-        addTearDown(container.dispose);
-
-        final values = <String?>[];
-        final subscription = container.listen<String?>(
-          currentSelectedTourIdForEventProvider('event-y'),
-          (previous, next) => values.add(next),
-          fireImmediately: true,
-        );
-        addTearDown(subscription.close);
-
-        expect(values, [null]);
-
-        container
-            .read(selectedBroadcastModelProvider.notifier)
-            .state = _broadcast('event-x');
-
-        expect(subscription.read(), isNull);
-        expect(values, [null]);
-
-        container.read(detailTourIdProvider.notifier).state = 'tour-b';
-
-        expect(subscription.read(), isNull);
-        expect(values, [null]);
-      },
-    );
-
-    test('tracks tournament detail selection only for the active event', () {
-      final detailTourIdProvider = StateProvider<String?>((ref) => 'tour-a');
-      final container = ProviderContainer(
-        overrides: [
-          currentTournamentDetailSelectedTourIdProvider.overrideWith(
-            (ref) => ref.watch(detailTourIdProvider),
+  test(
+    'top-game snapshot keeps one category, deduplicates, and backfills rounds',
+    () {
+      final snapshot = buildForYouTopGamesSnapshot(
+        eventId: 'biel-2026',
+        maxGames: 4,
+        games: [
+          _rpcGame(
+            id: 'masters-board-1',
+            tourId: 'masters',
+            roundId: 'masters-round',
+            avgElo: 2604,
+            boardNr: 1,
+          ),
+          _rpcGame(
+            id: 'masters-board-1',
+            tourId: 'masters',
+            roundId: 'masters-round',
+            avgElo: 2604,
+            boardNr: 1,
+          ),
+          _rpcGame(
+            id: 'open-board-1',
+            tourId: 'open',
+            roundId: 'open-round',
+            avgElo: 2416,
+            boardNr: 1,
+          ),
+          _rpcGame(
+            id: 'masters-board-2',
+            tourId: 'masters',
+            roundId: 'masters-round',
+            avgElo: 2604,
+            boardNr: 2,
+          ),
+          _rpcGame(
+            id: 'masters-previous-board-1',
+            tourId: 'masters',
+            roundId: 'masters-previous-round',
+            avgElo: 2604,
+            boardNr: 1,
+          ),
+          _rpcGame(
+            id: 'masters-previous-board-2',
+            tourId: 'masters',
+            roundId: 'masters-previous-round',
+            avgElo: 2604,
+            boardNr: 2,
           ),
         ],
       );
-      addTearDown(container.dispose);
 
-      final values = <String?>[];
-      final subscription = container.listen<String?>(
-        currentSelectedTourIdForEventProvider('event-x'),
-        (previous, next) => values.add(next),
-        fireImmediately: true,
+      expect(snapshot.tourId, 'masters');
+      expect(snapshot.visibleGames.map((game) => game.gameId), [
+        'masters-board-1',
+        'masters-board-2',
+        'masters-previous-board-1',
+        'masters-previous-board-2',
+      ]);
+      expect(
+        snapshot.visibleGames.map((game) => game.gameId).toSet(),
+        hasLength(4),
       );
-      addTearDown(subscription.close);
-
-      expect(values, [null]);
-
-      container
-          .read(selectedBroadcastModelProvider.notifier)
-          .state = _broadcast('event-x');
-
-      expect(subscription.read(), 'tour-a');
-      expect(values, [null, 'tour-a']);
-
-      container.read(detailTourIdProvider.notifier).state = 'tour-b';
-
-      expect(subscription.read(), 'tour-b');
-      expect(values, [null, 'tour-a', 'tour-b']);
-
-      container
-          .read(selectedBroadcastModelProvider.notifier)
-          .state = _broadcast('event-y');
-
-      expect(subscription.read(), isNull);
-      expect(values, [null, 'tour-a', 'tour-b', null]);
-    });
-  });
-
-  group('shouldLoadDeferredActivityTourId', () {
-    test('skips activity lookup when saved selection is already valid', () {
-      final now = DateTime(2026, 3, 25, 12);
-      final tourA = _tour(
-        id: 'tour-a',
-        dates: [now.subtract(const Duration(days: 1)), now],
+      expect(
+        snapshot.visibleGames.every((game) => game.tourId == 'masters'),
+        isTrue,
       );
-      final tourB = _tour(
-        id: 'tour-b',
-        dates: [now.subtract(const Duration(days: 1)), now],
-        avgElo: 2600,
-      );
+    },
+  );
 
-      final shouldLoad = shouldLoadDeferredActivityTourId(
-        tourModels: [
-          TourModel(tour: tourA, roundStatus: RoundStatus.ongoing),
-          TourModel(tour: tourB, roundStatus: RoundStatus.ongoing),
-        ],
-        savedTourId: 'tour-b',
-      );
+  test('unchanged RPC snapshots preserve cache identity', () {
+    final current = <String, ForYouEventGamesSnapshot>{
+      'event-1': _snapshot('event-1', visibleGames: [_game('game-1')]),
+    };
+    final incoming = <String, ForYouEventGamesSnapshot>{
+      'event-1': _snapshot('event-1', visibleGames: [_game('game-1')]),
+    };
 
-      expect(shouldLoad, isFalse);
-    });
-
-    test(
-      'skips activity lookup when a live tour already resolves selection',
-      () {
-        final now = DateTime(2026, 3, 25, 12);
-        final liveTour = _tour(
-          id: 'tour-live',
-          dates: [now.subtract(const Duration(hours: 2)), now],
-        );
-        final otherTour = _tour(
-          id: 'tour-other',
-          dates: [now.subtract(const Duration(days: 1)), now],
-          avgElo: null,
-        );
-
-        final shouldLoad = shouldLoadDeferredActivityTourId(
-          tourModels: [
-            TourModel(tour: liveTour, roundStatus: RoundStatus.live),
-            TourModel(tour: otherTour, roundStatus: RoundStatus.ongoing),
-          ],
-        );
-
-        expect(shouldLoad, isFalse);
-      },
+    final merged = mergeForYouTopGameSnapshots(
+      current: current,
+      incoming: incoming,
+      replace: false,
     );
 
-    test(
-      'requires activity lookup when earlier fallbacks cannot break the tie',
-      () {
-        final now = DateTime(2026, 3, 25, 12);
-        final tourA = _tour(
-          id: 'tour-a',
-          dates: [now.subtract(const Duration(days: 3)), now],
-          avgElo: null,
-        );
-        final tourB = _tour(
-          id: 'tour-b',
-          dates: [now.subtract(const Duration(days: 3)), now],
-          avgElo: null,
-        );
-
-        final shouldLoad = shouldLoadDeferredActivityTourId(
-          tourModels: [
-            TourModel(tour: tourA, roundStatus: RoundStatus.ongoing),
-            TourModel(tour: tourB, roundStatus: RoundStatus.ongoing),
-          ],
-        );
-
-        expect(shouldLoad, isTrue);
-      },
-    );
+    expect(identical(merged, current), isTrue);
   });
 
-  test('mergePinnedIdsPreservingOrder keeps first-seen tour order', () {
-    final merged = mergePinnedIdsPreservingOrder([
-      ['game-a', 'game-b'],
-      ['game-b', 'game-c'],
-      ['game-a', 'game-d'],
-    ]);
+  test('RPC refresh replaces only changed event entries', () {
+    final event1 = _snapshot('event-1', visibleGames: [_game('game-1')]);
+    final event2 = _snapshot('event-2', visibleGames: [_game('game-2')]);
+    final current = <String, ForYouEventGamesSnapshot>{
+      'event-1': event1,
+      'event-2': event2,
+    };
 
-    expect(merged, ['game-a', 'game-b', 'game-c', 'game-d']);
+    final merged = mergeForYouTopGameSnapshots(
+      current: current,
+      incoming: {
+        'event-1': _snapshot('event-1', visibleGames: [_game('game-1')]),
+        'event-2': _snapshot('event-2', visibleGames: [_game('game-3')]),
+      },
+      replace: false,
+    );
+
+    expect(identical(merged['event-1'], event1), isTrue);
+    expect(merged['event-2']?.visibleGames.single.gameId, 'game-3');
+  });
+
+  test('For You has no per-event client hydration fallback', () {
+    final providerSource =
+        File('lib/providers/for_you_games_provider.dart').readAsStringSync();
+
+    expect(providerSource, isNot(contains('eventGamesProvider')));
+    expect(providerSource, isNot(contains('_loadForYouResolvedEventData')));
+    expect(providerSource, isNot(contains('fetchAndSaveGames')));
+    expect(providerSource, isNot(contains('getRoundsByTourId')));
+    expect(providerSource, isNot(contains('getTourByGroupId')));
+    expect(providerSource, isNot(contains('Timer.periodic')));
   });
 
   test('eventPinRefreshProvider only increments the matching event key', () {

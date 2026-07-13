@@ -1195,7 +1195,10 @@ class GameRepository extends BaseRepository {
         }
       }
 
-      return gamesByEvent;
+      return {
+        for (final entry in gamesByEvent.entries)
+          entry.key: _deduplicateGames(entry.value),
+      };
     });
   }
 

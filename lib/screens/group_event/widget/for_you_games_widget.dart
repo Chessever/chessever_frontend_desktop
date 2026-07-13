@@ -22,16 +22,21 @@ import 'package:chessever/widgets/event_card/event_card.dart';
 import 'package:chessever/widgets/generic_error_widget.dart';
 import 'package:chessever/widgets/skeleton_widget.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 
-const double _kForYouCompactCacheExtent = 1200;
-const double _kForYouBoardCacheExtent = 500;
+const ScrollCacheExtent _kForYouCompactCacheExtent = ScrollCacheExtent.viewport(
+  1.5,
+);
+const ScrollCacheExtent _kForYouBoardCacheExtent = ScrollCacheExtent.viewport(
+  1,
+);
 const Duration _kForYouScrollIdleDelay = Duration(milliseconds: 180);
 
-double _forYouCacheExtentForMode(GamesListViewMode mode) {
+ScrollCacheExtent _forYouCacheExtentForMode(GamesListViewMode mode) {
   return mode == GamesListViewMode.gamesCard
       ? _kForYouCompactCacheExtent
       : _kForYouBoardCacheExtent;
@@ -283,7 +288,7 @@ class _ForYouGamesWidgetState extends ConsumerState<ForYouGamesWidget>
         vertical: 16.sp,
       ),
       itemCount: itemCount,
-      cacheExtent: _forYouCacheExtentForMode(viewMode),
+      scrollCacheExtent: _forYouCacheExtentForMode(viewMode),
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       physics: const AlwaysScrollableScrollPhysics(
@@ -354,7 +359,7 @@ class _ForYouGamesWidgetState extends ConsumerState<ForYouGamesWidget>
         vertical: 16.sp,
       ),
       itemCount: itemCount,
-      cacheExtent: _forYouCacheExtentForMode(viewMode),
+      scrollCacheExtent: _forYouCacheExtentForMode(viewMode),
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       physics: const AlwaysScrollableScrollPhysics(
@@ -547,7 +552,9 @@ class _ForYouEventSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     // Single shared snapshot drives both visibility and content.
-    final snapshotAsync = ref.watch(forYouEventSnapshotProvider(event.id));
+    final snapshotAsync = ref.watch(
+      forYouEventGamesWithAutoRefreshProvider(event.id),
+    );
 
     // Hide section after snapshot resolves with no games.
     final shouldHide = snapshotAsync.maybeWhen(
@@ -627,7 +634,9 @@ class _ForYouTabletEventColumn extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     // Single shared snapshot drives both visibility and content.
-    final snapshotAsync = ref.watch(forYouEventSnapshotProvider(event.id));
+    final snapshotAsync = ref.watch(
+      forYouEventGamesWithAutoRefreshProvider(event.id),
+    );
 
     // Hide column after snapshot resolves with no games.
     final shouldHide = snapshotAsync.maybeWhen(

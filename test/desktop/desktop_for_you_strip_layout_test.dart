@@ -1,9 +1,19 @@
+import 'dart:io';
+
 import 'package:chessever/desktop/widgets/desktop_for_you_game_context.dart';
 import 'package:chessever/desktop/widgets/desktop_for_you_strip_layout.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('desktop For You does not hydrate full tours per event', () {
+    final source =
+        File('lib/desktop/panes/tournaments_pane.dart').readAsStringSync();
+
+    expect(source, isNot(contains('_forYouFullEventGamesProvider')));
+    expect(source, isNot(contains('ref.watch(gamesTourProvider(tourId))')));
+  });
+
   group('DesktopForYouStripLayout', () {
     test('keeps four boards on ordinary wide rows', () {
       const availableForFour =
