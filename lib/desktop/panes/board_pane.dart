@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' as io;
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:chessground/chessground.dart' as cg;
 import 'package:file_picker/file_picker.dart';
@@ -8,6 +9,7 @@ import 'package:dartchess/dartchess.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, visibleForTesting;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -131,6 +133,66 @@ final _desktopBoardPlayerPhotoProvider = FutureProvider.autoDispose
 @visibleForTesting
 bool shouldShowDesktopBoardEvalBar(EngineSettings settings) {
   return settings.showEngineAnalysis && settings.showEngineGauge;
+}
+
+/// The single engine target for the visible board position.
+///
+/// Threat analysis is a null-move probe, so every engine surface must query
+/// the same opposite-side-to-move FEN. A null move is illegal while the side
+/// to move is in check; in that case we deliberately fall back to normal
+/// analysis and keep normal PV play available.
+@visibleForTesting
+class ActiveBoardEvalTarget {
+  const ActiveBoardEvalTarget({
+    required this.fen,
+    required this.isThreatProbe,
+  });
+
+  final String fen;
+  final bool isThreatProbe;
+
+  bool get canPlayPv => !isThreatProbe;
+}
+
+@visibleForTesting
+ActiveBoardEvalTarget activeBoardEvalTarget({
+  required String fen,
+  required bool threatMode,
+  required bool isCheck,
+}) {
+  if (!threatMode || isCheck) {
+    return ActiveBoardEvalTarget(fen: fen, isThreatProbe: false);
+  }
+
+  final threatFen = threatFenForBoardEval(fen);
+  return ActiveBoardEvalTarget(
+    fen: threatFen,
+    // Keep malformed FEN input on the ordinary path rather than presenting a
+    // disabled PV UI for a probe that could not be formed.
+    isThreatProbe: threatFen != fen,
+  );
+}
+
+/// Captures the rendered board surface that is currently visible to the user.
+///
+/// The [captureKey] belongs to the Board pane's [RepaintBoundary], so this
+/// retains its theme, orientation, annotations, player bars, and whichever
+/// evaluation-gauge state is on screen.
+@visibleForTesting
+Future<Uint8List?> captureDesktopBoardShareImage(
+  GlobalKey captureKey, {
+  required double pixelRatio,
+}) async {
+  final renderObject = captureKey.currentContext?.findRenderObject();
+  if (renderObject is! RenderRepaintBoundary) return null;
+
+  final image = await renderObject.toImage(pixelRatio: pixelRatio);
+  try {
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    return byteData?.buffer.asUint8List();
+  } finally {
+    image.dispose();
+  }
 }
 
 @visibleForTesting
@@ -432,6 +494,10 @@ class _BoardPaneContent extends HookConsumerWidget {
         );
     useEffect(() => visibleNotationMoveOrderController.dispose, const []);
     final rightRailAnalysisKey = useMemoized(GlobalKey.new, const []);
+    final boardShareCaptureKey = useMemoized(
+      () => GlobalKey(debugLabel: 'desktop-board-share-capture'),
+      const [],
+    );
     final reportTabSelected = useState(false);
     final reportRunning = useState(false);
     final gameReport = useState<GameAnalysisReport?>(null);
@@ -1524,13 +1590,15 @@ class _BoardPaneContent extends HookConsumerWidget {
       return timer.cancel;
     }, [autoReplay.value, chessGame.value, pointer.value]);
 
-    void pushUndoSnapshot() {
+    void pushUndoSnapshot({Map<int, List<int>>? userNags}) {
       final stack = undoStack.value;
       stack.add(
         BoardUndoSnapshot(
           game: chessGame.value,
           pointer: List<int>.unmodifiable(pointer.value),
           dirtySinceLoad: dirtySinceLoad.value,
+          userNags:
+              userNags == null ? null : _cloneNagMap(userNags),
         ),
       );
       if (stack.length > 50) stack.removeAt(0);
@@ -1968,6 +2036,45 @@ class _BoardPaneContent extends HookConsumerWidget {
       dirtySinceLoad.value = true;
     }
 
+    /// Clears a quality symbol stored in imported PGN data, together with its
+    /// matching Chess.com analysis-effect marker. Mainline user overlays are
+    /// part of the same user gesture, so one undo restores both representations.
+    void clearMoveQualityAnnotation(ChessMovePointer target) {
+      if (target.isEmpty) return;
+
+      final currentGame = chessGame.value;
+      final nextGame = _clearImportedMoveQualityAnnotationAtPointer(
+        currentGame,
+        target,
+      );
+      final currentUserNags =
+          ref.read(userMoveNagsProvider)[editsTabId] ??
+          const <int, List<int>>{};
+      final clearsUserQuality =
+          target.length == 1 &&
+          (currentUserNags[target.last] ?? const <int>[]).any(_isQualityNag);
+      final clearsStoredQuality = !identical(nextGame, currentGame);
+      if (!clearsStoredQuality && !clearsUserQuality) return;
+
+      pushUndoSnapshot(
+        userNags: clearsUserQuality ? currentUserNags : null,
+      );
+      final undoDepthAfterSnapshot = undoStack.value.length;
+      if (clearsStoredQuality) chessGame.value = nextGame;
+
+      if (clearsUserQuality) {
+        ref
+            .read(userMoveNagsProvider.notifier)
+            .setQualityNag(editsTabId, target.last, null);
+        // The provider listener records standalone overlay edits. This gesture
+        // already has a combined snapshot above, so discard that extra entry.
+        if (undoStack.value.length > undoDepthAfterSnapshot) {
+          undoStack.value.removeLast();
+        }
+      }
+      dirtySinceLoad.value = true;
+    }
+
     void clearAllNotationCommentary() {
       pushUndoSnapshot();
       chessGame.value = chessGame.value.copyWith(
@@ -2394,21 +2501,54 @@ class _BoardPaneContent extends HookConsumerWidget {
       gameId: activeGameId,
     );
 
+    Future<void> openShareGameDialog() async {
+      try {
+        // The context menu has already dismissed when this runs. Wait for the
+        // next frame so the capture is the settled Board-pane surface, not a
+        // synthetic reconstruction or a menu-overlay snapshot.
+        await WidgetsBinding.instance.endOfFrame;
+        if (!context.mounted) return;
+
+        final pixelRatio =
+            MediaQuery.devicePixelRatioOf(context).clamp(1.0, 3.0).toDouble();
+        final liveBoardPngBytes = await captureDesktopBoardShareImage(
+          boardShareCaptureKey,
+          pixelRatio: pixelRatio,
+        );
+        if (!context.mounted) return;
+        if (liveBoardPngBytes == null) {
+          showToast('Couldn’t capture the current board', error: true);
+          return;
+        }
+
+        final shareEvalState = ref.read(boardEvalProvider(position.fen));
+        final engineSettings =
+            ref.read(engineSettingsProviderNew).valueOrNull ??
+            const EngineSettings();
+        await showBoardShareDialog(
+          context,
+          chessGame: chessGame.value,
+          headers: pgnHeaders.value,
+          position: position,
+          lastMove: lastMove,
+          pointer: pointer.value,
+          flipped: flipped.value,
+          evaluation: shareEvalState.evaluation,
+          mate: shareEvalState.mate,
+          isEvaluating: shareEvalState.isEvaluating,
+          showEvalBar: shouldShowDesktopBoardEvalBar(engineSettings),
+          liveBoardPngBytes: liveBoardPngBytes,
+          shareUrl: shareUrl,
+        );
+      } catch (_) {
+        if (context.mounted) {
+          showToast('Couldn’t capture the current board', error: true);
+        }
+      }
+    }
+
     void shareGameAction() {
-      final shareEvalState = ref.read(boardEvalProvider(position.fen));
-      showBoardShareDialog(
-        context,
-        chessGame: chessGame.value,
-        headers: pgnHeaders.value,
-        position: position,
-        lastMove: lastMove,
-        pointer: pointer.value,
-        flipped: flipped.value,
-        evaluation: shareEvalState.evaluation,
-        mate: shareEvalState.mate,
-        isEvaluating: shareEvalState.isEvaluating,
-        shareUrl: shareUrl,
-      );
+      unawaited(openShareGameDialog());
     }
 
     final sideToMove = position.turn;
@@ -2429,6 +2569,11 @@ class _BoardPaneContent extends HookConsumerWidget {
     );
     final boardPosition =
         explorerLinePreview?.position ?? explorerPreview?.position ?? position;
+    final activeEvalTarget = activeBoardEvalTarget(
+      fen: boardPosition.fen,
+      threatMode: threatMode.value,
+      isCheck: boardPosition.isCheck,
+    );
     final boardLastMove =
         explorerLinePreview?.move ?? explorerPreview?.move ?? lastMove;
     final boardPlayerSide =
@@ -3061,7 +3206,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           setQualityNagAction(6, '?!');
           return true;
         case BoardActionKey.clearAnnotation:
-          setQualityNagAction(null, '');
+          clearMoveQualityAnnotation(pointer.value);
           return true;
         case BoardActionKey.promoteVariation:
           promoteVariationAtCursorAction();
@@ -3371,6 +3516,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         },
         onToggleMoveNag: toggleMoveNag,
         onClearMoveNags: (target) => setMoveNags(target, const <int>[]),
+        onClearMoveQualityAnnotation: clearMoveQualityAnnotation,
         onClearAllCommentary: clearAllNotationCommentary,
         onSetMoveComment: setMoveComment,
         onPromoteVariation: promoteVariation,
@@ -3537,8 +3683,10 @@ class _BoardPaneContent extends HookConsumerWidget {
                         child: _BoardArea(
                           tabId: activeTabId ?? 'board-default',
                           boardRenderKey: boardRenderKey,
+                          shareCaptureKey: boardShareCaptureKey,
                           fen: boardPosition.fen,
-                          threatMode: threatMode.value,
+                          analysisFen: activeEvalTarget.fen,
+                          threatMode: activeEvalTarget.isThreatProbe,
                           flipped: flipped.value,
                           sideToMove: boardPosition.turn,
                           playerSide: boardPlayerSide,
@@ -3785,9 +3933,13 @@ class _BoardPaneContent extends HookConsumerWidget {
                             .read(engineSettingsProviderNew.notifier)
                             .toggleEngineAnalysis(true),
                     enginePanel: EnginePanel(
-                      fen: boardPosition.fen,
-                      sideToMove: boardPosition.turn == Side.white ? 'w' : 'b',
-                      onPlayUci: playUci,
+                      fen: activeEvalTarget.fen,
+                      sideToMove:
+                          activeEvalTarget.isThreatProbe
+                              ? (boardPosition.turn == Side.white ? 'b' : 'w')
+                              : (boardPosition.turn == Side.white ? 'w' : 'b'),
+                      onPlayUci:
+                          activeEvalTarget.canPlayPv ? playUci : null,
                       game: chessGame.value,
                       headers: pgnHeaders.value,
                       activePly:
@@ -4354,6 +4506,119 @@ ChessGame _setMoveNagsAtPointer(
     (move) => move.copyWith(nags: List<int>.unmodifiable(nags)),
   );
 }
+
+ChessGame _clearImportedMoveQualityAnnotationAtPointer(
+  ChessGame game,
+  ChessMovePointer pointer,
+) {
+  return _updateMoveAtPointer(
+    game,
+    pointer,
+    clearImportedMoveQualityAnnotation,
+  );
+}
+
+/// Removes quality NAGs stored on an imported move and the Chess.com
+/// `c_effect` directives that describe those same move classifications.
+///
+/// Other NAG categories, plain-language commentary, clocks, arrows, and
+/// unrelated PGN directives remain untouched. This is intentionally separate
+/// from the transient per-tab user-NAG overlay.
+@visibleForTesting
+ChessMove clearImportedMoveQualityAnnotation(ChessMove move) {
+  final existingNags = move.nags ?? const <int>[];
+  final clearedQualityNags = existingNags
+      .where(_isQualityNag)
+      .toSet();
+  if (clearedQualityNags.isEmpty) return move;
+
+  final nextNags = existingNags
+      .where((nag) => !_isQualityNag(nag))
+      .toList(growable: false);
+  final nextComments = <String>[];
+  var commentsChanged = false;
+  for (final comment in move.comments ?? const <String>[]) {
+    final nextComment = _stripMatchingPersistentAnalysisEffects(
+      comment,
+      clearedQualityNags,
+    );
+    if (nextComment != comment) commentsChanged = true;
+    if (nextComment.isNotEmpty) {
+      nextComments.add(nextComment);
+    } else if (comment.isNotEmpty) {
+      commentsChanged = true;
+    }
+  }
+
+  return move.copyWith(
+    nags: List<int>.unmodifiable(nextNags),
+    comments:
+        commentsChanged ? List<String>.unmodifiable(nextComments) : null,
+  );
+}
+
+String _stripMatchingPersistentAnalysisEffects(
+  String comment,
+  Set<int> clearedQualityNags,
+) {
+  var removed = false;
+  final stripped = comment.replaceAllMapped(_pgnNamedDirectiveRegex, (match) {
+    if (!_isMatchingPersistentAnalysisEffect(match, clearedQualityNags)) {
+      return match.group(0)!;
+    }
+    removed = true;
+    return '';
+  });
+  if (!removed) return comment;
+  return stripped.replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
+bool _isMatchingPersistentAnalysisEffect(
+  Match directive,
+  Set<int> clearedQualityNags,
+) {
+  if (directive.group(1)?.toLowerCase() != 'c_effect') return false;
+
+  final fields = (directive.group(2) ?? '')
+      .split(';')
+      .map((field) => field.trim())
+      .toList(growable: false);
+  String? type;
+  var persistent = false;
+  for (var i = 0; i + 1 < fields.length; i++) {
+    final field = fields[i].toLowerCase();
+    if (field == 'type') {
+      type = fields[i + 1];
+    } else if (field == 'persistent' &&
+        fields[i + 1].toLowerCase() == 'true') {
+      persistent = true;
+    }
+  }
+  if (!persistent || type == null) return false;
+
+  final qualityNag = _qualityNagForChessComEffectType(type);
+  return qualityNag != null && clearedQualityNags.contains(qualityNag);
+}
+
+int? _qualityNagForChessComEffectType(String rawType) {
+  final type = rawType.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
+  return switch (type) {
+    'good' ||
+    'goodmove' ||
+    'greatfind' ||
+    'bestmove' ||
+    'excellent' => 1,
+    'mistake' => 2,
+    'brilliant' => 3,
+    'blunder' || 'missedwin' => 4,
+    'interesting' => 5,
+    'inaccuracy' || 'dubious' => 6,
+    'onlymove' || 'forced' => 7,
+    _ => null,
+  };
+}
+
+final _pgnNamedDirectiveRegex = RegExp(r'\[%([a-zA-Z_]+)([^\]]*)\]');
 
 List<int> _toggleNagList(List<int> current, int nag) {
   final tapped = getNagDisplay(nag);
@@ -5084,7 +5349,9 @@ class _BoardArea extends ConsumerWidget {
   const _BoardArea({
     required this.tabId,
     required this.boardRenderKey,
+    required this.shareCaptureKey,
     required this.fen,
+    required this.analysisFen,
     required this.threatMode,
     required this.flipped,
     required this.sideToMove,
@@ -5123,7 +5390,9 @@ class _BoardArea extends ConsumerWidget {
 
   final String tabId;
   final String boardRenderKey;
+  final GlobalKey shareCaptureKey;
   final String fen;
+  final String analysisFen;
   final bool threatMode;
   final bool flipped;
   final Side sideToMove;
@@ -5223,14 +5492,13 @@ class _BoardArea extends ConsumerWidget {
         const EngineSettings();
     final showEngineAnalysis =
         engineSettings.showEngineAnalysis && !suppressEngineAnalysis;
-    // A null-move threat FEN is illegal when the side to move is in check, so
-    // degrade to the real position there (also guards navigating into check
-    // while threat mode is already on) — never feed the engine an illegal FEN.
-    final threatActive = threatMode && !isCheck;
-    final evalFen = threatActive ? threatFenForBoardEval(fen) : fen;
+    // [analysisFen] comes from [activeBoardEvalTarget] above the board and
+    // right rail, so the gauge and PV list always query the same position.
+    // A threat probe can only be active when a legal null move was formed.
+    final threatActive = threatMode;
     final evalState =
         showEngineAnalysis
-            ? ref.watch(boardEvalProvider(evalFen))
+            ? ref.watch(boardEvalProvider(analysisFen))
             : const BoardEvalState(
               pvs: <BoardPv>[],
               isEvaluating: false,
@@ -5478,7 +5746,7 @@ class _BoardArea extends ConsumerWidget {
                       evaluation: evalState.evaluation,
                       mate: evalState.mate,
                       isEvaluating: evalState.isEvaluating,
-                      positionKey: _fenPositionKey(fen),
+                      positionKey: _fenPositionKey(analysisFen),
                     ),
                   ),
                   const SizedBox(width: _evalBarGap),
@@ -5597,64 +5865,109 @@ class _BoardArea extends ConsumerWidget {
               if (shouldClear) clearGraphicCommentaryForCurrentPosition();
             },
             child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
+              child: Stack(
+                clipBehavior: Clip.none,
                 children: [
-                  chromeRow(
-                    height: topRowHeight,
-                    header:
-                        hasHeaders
-                            ? _PlayerHeader(
-                              name: topName,
-                              federation: topFed,
-                              title: topTitle,
-                              rating: topRating,
-                              fideId: topIsWhite ? whiteFideId : blackFideId,
-                              resultScore: topResultScore,
-                              isWhite: topIsWhite,
-                              isToMove:
-                                  (topIsWhite && sideToMove == Side.white) ||
-                                  (!topIsWhite && sideToMove == Side.black),
-                              clockText: topClock,
-                              trailingControl: focusButton,
-                              activeGameId: activeGameId,
-                              useLiveClock: isForegroundTab && isLiveAtTip,
-                              boardArgs: boardArgs,
-                              sourceGame: sourceGame,
-                              viewSource: viewSource,
-                            )
-                            : null,
-                    trailing: null,
+                  RepaintBoundary(
+                    key: shareCaptureKey,
+                    child: ColoredBox(
+                      color: kBackgroundColor,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          chromeRow(
+                            height: topRowHeight,
+                            header:
+                                hasHeaders
+                                    ? _PlayerHeader(
+                                      name: topName,
+                                      federation: topFed,
+                                      title: topTitle,
+                                      rating: topRating,
+                                      fideId:
+                                          topIsWhite
+                                              ? whiteFideId
+                                              : blackFideId,
+                                      resultScore: topResultScore,
+                                      isWhite: topIsWhite,
+                                      isToMove:
+                                          (topIsWhite &&
+                                              sideToMove == Side.white) ||
+                                          (!topIsWhite &&
+                                              sideToMove == Side.black),
+                                      clockText: topClock,
+                                      // Reserve the focus control's space in the
+                                      // player bar, but keep the interactive
+                                      // control outside the export boundary.
+                                      trailingControl: const SizedBox.square(
+                                        dimension: _focusButtonSize,
+                                      ),
+                                      activeGameId: activeGameId,
+                                      useLiveClock:
+                                          isForegroundTab && isLiveAtTip,
+                                      boardArgs: boardArgs,
+                                      sourceGame: sourceGame,
+                                      viewSource: viewSource,
+                                    )
+                                    : null,
+                            trailing: null,
+                          ),
+                          SizedBox(height: _BoardArea.headerGap),
+                          boardRow,
+                          SizedBox(height: _BoardArea.headerGap),
+                          chromeRow(
+                            height: bottomRowHeight,
+                            header:
+                                hasHeaders
+                                    ? _PlayerHeader(
+                                      name: bottomName,
+                                      federation: bottomFed,
+                                      title: bottomTitle,
+                                      rating: bottomRating,
+                                      fideId:
+                                          bottomIsWhite
+                                              ? whiteFideId
+                                              : blackFideId,
+                                      resultScore: bottomResultScore,
+                                      isWhite: bottomIsWhite,
+                                      isToMove:
+                                          (bottomIsWhite &&
+                                              sideToMove == Side.white) ||
+                                          (!bottomIsWhite &&
+                                              sideToMove == Side.black),
+                                      clockText: bottomClock,
+                                      trailingControl:
+                                          focusMode
+                                              ? null
+                                              : const SizedBox.square(
+                                                dimension: _resizeHandleSize,
+                                              ),
+                                      activeGameId: activeGameId,
+                                      useLiveClock:
+                                          isForegroundTab && isLiveAtTip,
+                                      boardArgs: boardArgs,
+                                      sourceGame: sourceGame,
+                                      viewSource: viewSource,
+                                    )
+                                    : null,
+                            trailing: null,
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                  SizedBox(height: _BoardArea.headerGap),
-                  boardRow,
-                  SizedBox(height: _BoardArea.headerGap),
-                  chromeRow(
-                    height: bottomRowHeight,
-                    header:
-                        hasHeaders
-                            ? _PlayerHeader(
-                              name: bottomName,
-                              federation: bottomFed,
-                              title: bottomTitle,
-                              rating: bottomRating,
-                              fideId: bottomIsWhite ? whiteFideId : blackFideId,
-                              resultScore: bottomResultScore,
-                              isWhite: bottomIsWhite,
-                              isToMove:
-                                  (bottomIsWhite && sideToMove == Side.white) ||
-                                  (!bottomIsWhite && sideToMove == Side.black),
-                              clockText: bottomClock,
-                              trailingControl: focusMode ? null : resizeHandle,
-                              activeGameId: activeGameId,
-                              useLiveClock: isForegroundTab && isLiveAtTip,
-                              boardArgs: boardArgs,
-                              sourceGame: sourceGame,
-                              viewSource: viewSource,
-                            )
-                            : null,
-                    trailing: null,
-                  ),
+                  if (hasHeaders)
+                    Positioned(
+                      top: (topRowHeight - _focusButtonSize) / 2,
+                      right: 0,
+                      child: focusButton,
+                    ),
+                  if (hasHeaders && !focusMode)
+                    Positioned(
+                      bottom: (bottomRowHeight - _resizeHandleSize) / 2,
+                      right: 0,
+                      child: resizeHandle,
+                    ),
                 ],
               ),
             ),

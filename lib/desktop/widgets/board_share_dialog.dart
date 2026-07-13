@@ -17,6 +17,8 @@ import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 
+const _defaultBoardShareShowEvalBar = false;
+
 /// Desktop-suitable share dialog for the board pane.
 ///
 /// Presents a compact preview of the current position plus a grid of
@@ -34,7 +36,8 @@ class BoardShareDialog extends ConsumerStatefulWidget {
     this.evaluation,
     this.mate,
     this.isEvaluating = false,
-    this.showEvalBar = true,
+    this.showEvalBar = _defaultBoardShareShowEvalBar,
+    this.liveBoardPngBytes,
     this.shareUrl,
   });
 
@@ -48,6 +51,11 @@ class BoardShareDialog extends ConsumerStatefulWidget {
   final int? mate;
   final bool isEvaluating;
   final bool showEvalBar;
+
+  /// One exact raster captured from the live Board pane. When supplied, both
+  /// static-image actions export these same bytes rather than rebuilding a
+  /// simplified share card.
+  final Uint8List? liveBoardPngBytes;
   final String? shareUrl;
 
   @override
@@ -57,6 +65,16 @@ class BoardShareDialog extends ConsumerStatefulWidget {
 class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
   bool _isCapturing = false;
   bool _isGeneratingGif = false;
+  late final BoardShareRaster _staticImage;
+
+  @override
+  void initState() {
+    super.initState();
+    _staticImage = BoardShareRaster(
+      liveBoardPngBytes: widget.liveBoardPngBytes,
+      fallbackCapture: _captureFallbackImageBytes,
+    );
+  }
 
   String get _whiteName => widget.headers['White']?.trim() ?? 'White';
   String get _blackName => widget.headers['Black']?.trim() ?? 'Black';
@@ -109,7 +127,10 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
 
   bool get _hasMoves => widget.chessGame.mainline.isNotEmpty;
 
-  Future<Uint8List> _captureImageBytes() async {
+  /// The Board pane supplies a real live capture. This renderer remains only
+  /// for share entry points that do not have a mounted Board pane, and for the
+  /// separately generated GIF frames below.
+  Future<Uint8List> _captureFallbackImageBytes() async {
     final settings =
         ref.read(boardSettingsProviderNew).valueOrNull ??
         const BoardSettingsNew();
@@ -161,7 +182,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
   Future<void> _copyImage() async {
     setState(() => _isCapturing = true);
     try {
-      final bytes = await _captureImageBytes();
+      final bytes = await _staticImage.bytes();
       await BoardShareService.copyPngBytesToClipboard(bytes);
       _showToast('Image copied', isError: false);
     } catch (e) {
@@ -174,7 +195,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
   Future<void> _downloadImage() async {
     setState(() => _isCapturing = true);
     try {
-      final bytes = await _captureImageBytes();
+      final bytes = await _staticImage.bytes();
       await BoardShareService.savePngBytesToDisk(
         bytes,
         defaultName: _defaultExportName('png'),
@@ -472,7 +493,9 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                 ),
               ),
               const SizedBox(height: 16),
-              // Preview
+              // Preview the exact Board-pane raster whenever one was supplied.
+              // Detached game/share entry points retain the lightweight static
+              // preview because they have no mounted live board to capture.
               Center(
                 child: Container(
                   decoration: BoxDecoration(
@@ -481,22 +504,37 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: cg.StaticChessboard(
-                      size: 240,
-                      settings: cg.StaticChessboardSettings.fromBoardSettings(
-                        cg.ChessboardSettings(
-                          enableCoordinates: true,
-                          animationDuration: Duration.zero,
-                          colorScheme: settings.colorScheme,
-                          pieceAssets: settings.pieceAssets,
-                          borderRadius: BorderRadius.zero,
-                          boxShadow: const [],
-                        ),
-                      ),
-                      orientation: Side.white,
-                      fen: widget.position.fen,
-                      lastMove: widget.lastMove,
-                    ),
+                    child:
+                        widget.liveBoardPngBytes == null
+                            ? cg.StaticChessboard(
+                              size: 240,
+                              settings: cg
+                                  .StaticChessboardSettings.fromBoardSettings(
+                                cg.ChessboardSettings(
+                                  enableCoordinates: true,
+                                  animationDuration: Duration.zero,
+                                  colorScheme: settings.colorScheme,
+                                  pieceAssets: settings.pieceAssets,
+                                  borderRadius: BorderRadius.zero,
+                                  boxShadow: const [],
+                                ),
+                              ),
+                              orientation: Side.white,
+                              fen: widget.position.fen,
+                              lastMove: widget.lastMove,
+                            )
+                            : SizedBox(
+                              width: 360,
+                              height: 260,
+                              child: Image.memory(
+                                widget.liveBoardPngBytes!,
+                                key: const ValueKey<String>(
+                                  'board-share-live-preview',
+                                ),
+                                fit: BoxFit.contain,
+                                filterQuality: FilterQuality.high,
+                              ),
+                            ),
                   ),
                 ),
               ),
@@ -597,6 +635,33 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
         ),
       ),
     );
+  }
+}
+
+/// Holds the immutable source raster for a dialog session.
+///
+/// A Board pane capture is already the exact pixels the user saw, so it is
+/// returned directly for both Copy Image and Download PNG. Non-live entry
+/// points construct their fallback card at most once so those actions still
+/// share one raster instead of recapturing independently.
+@visibleForTesting
+class BoardShareRaster {
+  BoardShareRaster({
+    required Uint8List? liveBoardPngBytes,
+    required Future<Uint8List> Function() fallbackCapture,
+  }) : _liveBoardPngBytes = liveBoardPngBytes,
+       _fallbackCapture = fallbackCapture;
+
+  final Uint8List? _liveBoardPngBytes;
+  final Future<Uint8List> Function() _fallbackCapture;
+  Future<Uint8List>? _fallbackBytes;
+
+  Future<Uint8List> bytes() {
+    final liveBoardPngBytes = _liveBoardPngBytes;
+    if (liveBoardPngBytes != null) {
+      return Future<Uint8List>.value(liveBoardPngBytes);
+    }
+    return _fallbackBytes ??= _fallbackCapture();
   }
 }
 
@@ -701,7 +766,8 @@ Future<void> showBoardShareDialog(
   double? evaluation,
   int? mate,
   bool isEvaluating = false,
-  bool showEvalBar = true,
+  bool showEvalBar = _defaultBoardShareShowEvalBar,
+  Uint8List? liveBoardPngBytes,
   String? shareUrl,
 }) {
   return showDesktopDialog<void>(
@@ -718,6 +784,7 @@ Future<void> showBoardShareDialog(
           mate: mate,
           isEvaluating: isEvaluating,
           showEvalBar: showEvalBar,
+          liveBoardPngBytes: liveBoardPngBytes,
           shareUrl: shareUrl,
         ),
   );

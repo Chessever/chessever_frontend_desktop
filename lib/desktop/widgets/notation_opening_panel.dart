@@ -36,6 +36,19 @@ final rightRailActivePageProvider = StateProvider.family<int, String>(
   (ref, _) => 0,
 );
 
+/// Versioned independently from other right-rail layouts so existing users
+/// receive the compact engine default once, while later manual resizing stays
+/// persisted under this key.
+@visibleForTesting
+const String desktopEngineRightRailSplitStorageKey =
+    'board_pane.right_rail.engine_top.v2';
+
+@visibleForTesting
+const double desktopEngineRightRailInitialWeight = 0.22;
+
+@visibleForTesting
+const double desktopEngineRightRailGutterThickness = 12;
+
 final localOpeningTreeCatalogProvider =
     FutureProvider.autoDispose<List<LocalOpeningTreeCatalogEntry>>((ref) async {
       ref.watch(localChessLibraryProvider.select((state) => state.treeBuilds));
@@ -651,11 +664,16 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                       : ResizableSplitView(
                         axis: Axis.vertical,
                         controller: _railController,
-                        storageKey: 'board_pane.right_rail.engine_top.v1',
+                        storageKey: desktopEngineRightRailSplitStorageKey,
+                        // The accent divider makes the vertical-resize affordance
+                        // discoverable without reserving any space inside the
+                        // engine output or its hover-preview overlays.
+                        gutterThickness: desktopEngineRightRailGutterThickness,
+                        gutterColor: kPrimaryColor,
                         children: [
                           SplitChild(
                             minSize: 120,
-                            initialWeight: 0.34,
+                            initialWeight: desktopEngineRightRailInitialWeight,
                             label: 'Engine',
                             collapsedIcon: Icons.memory_rounded,
                             onRestore: _resumeEngineFromRail,
@@ -663,7 +681,8 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                           ),
                           SplitChild(
                             minSize: 240,
-                            initialWeight: 0.66,
+                            initialWeight:
+                                1 - desktopEngineRightRailInitialWeight,
                             label: 'Notation',
                             collapsedIcon: Icons.format_list_numbered_rounded,
                             child: notationContent,

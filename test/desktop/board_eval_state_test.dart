@@ -124,6 +124,36 @@ void main() {
       );
     });
 
+    test('uses one threat target for the gauge and disables PV play', () {
+      const fen =
+          'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
+
+      final target = activeBoardEvalTarget(
+        fen: fen,
+        threatMode: true,
+        isCheck: false,
+      );
+
+      expect(target.fen, threatFenForBoardEval(fen));
+      expect(target.isThreatProbe, isTrue);
+      expect(target.canPlayPv, isFalse);
+    });
+
+    test('falls back to the real FEN and PV play while in check', () {
+      const fen =
+          'rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3';
+
+      final target = activeBoardEvalTarget(
+        fen: fen,
+        threatMode: true,
+        isCheck: true,
+      );
+
+      expect(target.fen, fen);
+      expect(target.isThreatProbe, isFalse);
+      expect(target.canPlayPv, isTrue);
+    });
+
     test(
       'does not clear depth tracker while provider is initializing',
       () async {

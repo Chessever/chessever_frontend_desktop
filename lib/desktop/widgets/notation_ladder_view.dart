@@ -181,6 +181,7 @@ class NotationLadderView extends StatefulWidget {
     this.onClearUserNags,
     this.onToggleMoveNag,
     this.onClearMoveNags,
+    this.onClearMoveQualityAnnotation,
     this.onClearAllCommentary,
     this.onSetMoveComment,
     this.onPromoteVariation,
@@ -259,6 +260,11 @@ class NotationLadderView extends StatefulWidget {
   /// zero-based mainline NAG overlay.
   final void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag;
   final void Function(ChessMovePointer pointer)? onClearMoveNags;
+
+  /// Clears quality symbols stored on the PGN move itself. Unlike
+  /// [onClearUserNags], this works for imported mainline NAGs and variation
+  /// moves as well as the transient mainline overlay.
+  final void Function(ChessMovePointer pointer)? onClearMoveQualityAnnotation;
   final VoidCallback? onClearAllCommentary;
 
   /// Set or clear a comment attached to a move pointer. Passing null or an
@@ -2666,6 +2672,9 @@ class _InlineMove extends StatelessWidget {
           annotationComment: annotation?.comment,
           commentText: _firstPgnComment(move.comments),
           userHasQualityNag: userHasQualityNag,
+          hasStoredQualityNag: (move.nags ?? const <int>[]).any(
+            (nag) => nag >= 1 && nag <= 7,
+          ),
           clockText: _formatClockChip(move.clockTime),
           clockSeconds: _clockSeconds(move.clockTime),
           onSetUserQualityNag:
@@ -3167,6 +3176,10 @@ class _PairRow extends StatelessWidget {
                         annotationComment: whiteAnnotation?.comment,
                         commentText: _firstPgnComment(whiteMove!.comments),
                         userHasQualityNag: whiteUserHasQuality,
+                        hasStoredQualityNag:
+                            (whiteMove!.nags ?? const <int>[]).any(
+                              (nag) => nag >= 1 && nag <= 7,
+                            ),
                         clockText: _formatClockChip(whiteMove!.clockTime),
                         clockSeconds: _clockSeconds(whiteMove!.clockTime),
                         onSetUserQualityNag:
@@ -3229,6 +3242,10 @@ class _PairRow extends StatelessWidget {
                         annotationComment: blackAnnotation?.comment,
                         commentText: _firstPgnComment(blackMove!.comments),
                         userHasQualityNag: blackUserHasQuality,
+                        hasStoredQualityNag:
+                            (blackMove!.nags ?? const <int>[]).any(
+                              (nag) => nag >= 1 && nag <= 7,
+                            ),
                         clockText: _formatClockChip(blackMove!.clockTime),
                         clockSeconds: _clockSeconds(blackMove!.clockTime),
                         onSetUserQualityNag:
@@ -3294,6 +3311,7 @@ class _LadderChip extends StatefulWidget {
     required this.annotationComment,
     required this.commentText,
     required this.userHasQualityNag,
+    required this.hasStoredQualityNag,
     required this.onSetUserQualityNag,
     required this.onToggleUserNag,
     required this.onClearNags,
@@ -3322,6 +3340,7 @@ class _LadderChip extends StatefulWidget {
   final String? annotationComment;
   final String? commentText;
   final bool userHasQualityNag;
+  final bool hasStoredQualityNag;
   final void Function(int? nag)? onSetUserQualityNag;
   final void Function(int nag)? onToggleUserNag;
   final VoidCallback? onClearNags;
@@ -3363,13 +3382,19 @@ class _LadderChipState extends State<_LadderChip>
     final canSetQuality = widget.onSetUserQualityNag != null;
     final canToggleNag = widget.onToggleUserNag != null;
     final canQualityAnnotate = canSetQuality || canToggleNag;
-    final canAnnotate = canQualityAnnotate || canToggleNag;
     final canComment = widget.onSetComment != null;
     final canPromote = widget.onPromoteVariation != null;
     final canDeleteVariation = widget.onDeleteVariation != null;
     final canTrim = widget.onTrimFromHere != null;
     final notationState =
         context.findAncestorStateOfType<_NotationLadderViewState>();
+    final clearStoredQuality =
+        notationState?.widget.onClearMoveQualityAnnotation;
+    final canClearQuality =
+        (widget.userHasQualityNag &&
+            (canSetQuality || clearStoredQuality != null)) ||
+        (widget.hasStoredQualityNag && clearStoredQuality != null);
+    final canAnnotate = canQualityAnnotate || canClearQuality;
     final canClearAllCommentary =
         notationState?.widget.onClearAllCommentary != null;
 
@@ -3484,12 +3509,13 @@ class _LadderChipState extends State<_LadderChip>
                     ? 'Show All Annotations'
                     : 'Hide All Annotations',
           ),
-          _ladderNagPaletteEntry(
-            activeNags: widget.nags.toSet(),
-            canQualityAnnotate: canQualityAnnotate,
-            canToggleNag: canToggleNag,
-          ),
-          if (canSetQuality && widget.userHasQualityNag)
+          if (canQualityAnnotate)
+            _ladderNagPaletteEntry(
+              activeNags: widget.nags.toSet(),
+              canQualityAnnotate: canQualityAnnotate,
+              canToggleNag: canToggleNag,
+            ),
+          if (canClearQuality)
             const DesktopContextMenuItem<Object>(
               value: _LadderAction.clearAnnotation,
               icon: Icons.clear_rounded,
@@ -3559,7 +3585,11 @@ class _LadderChipState extends State<_LadderChip>
       case _LadderAction.deleteTextCommentary:
         widget.onSetComment?.call(null);
       case _LadderAction.clearAnnotation:
-        widget.onSetUserQualityNag?.call(null);
+        if (clearStoredQuality != null) {
+          clearStoredQuality(widget.pointer);
+        } else {
+          widget.onSetUserQualityNag?.call(null);
+        }
       case _LadderAction.toggleAllAnnotations:
         notationState?._toggleAllAnnotationsFromMenu();
       case _LadderAction.editComment:

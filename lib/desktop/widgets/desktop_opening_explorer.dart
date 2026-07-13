@@ -644,7 +644,6 @@ class _ColumnDims {
     required this.resultBar,
     required this.gap,
     required this.horizontalPad,
-    required this.useFullCount,
     required this.showResultBar,
     required this.headerHeight,
     required this.rowMinHeight,
@@ -664,7 +663,6 @@ class _ColumnDims {
 
   final double gap;
   final double horizontalPad;
-  final bool useFullCount;
   final bool showResultBar;
   final double headerHeight;
   final double rowMinHeight;
@@ -696,14 +694,16 @@ class _ColumnDims {
       if (width >= 300) {
         const horizontalPad = 8.0;
         const move = 72.0;
-        const gamesValue = 36.0;
+        // One-decimal compact totals (for example, `58.4k`) need enough
+        // width to remain readable beside the right-aligned month/year.
+        const gamesValue = 44.0;
         const gamesIcon = 0.0;
         // Keep the month-year date visually separated from the games count.
         // The final date is right-aligned at the rail edge, so a wider LAST
         // slot shifts the games count left instead of crowding both values.
-        const last = 64.0;
+        const last = 68.0;
         const double? score = null;
-        const gap = 8.0;
+        const gap = 10.0;
         return _ColumnDims(
           move: move,
           gamesValue: gamesValue,
@@ -721,7 +721,6 @@ class _ColumnDims {
           ),
           gap: gap,
           horizontalPad: horizontalPad,
-          useFullCount: true,
           showResultBar: true,
           headerHeight: 24,
           rowMinHeight: 30,
@@ -729,11 +728,11 @@ class _ColumnDims {
       }
       const horizontalPad = 8.0;
       const move = 58.0;
-      const gamesValue = 30.0;
+      const gamesValue = 40.0;
       const gamesIcon = 0.0;
-      const last = 64.0;
+      const last = 66.0;
       const double? score = null;
-      const gap = 6.0;
+      const gap = 7.0;
       return _ColumnDims(
         move: move,
         gamesValue: gamesValue,
@@ -751,7 +750,6 @@ class _ColumnDims {
         ),
         gap: gap,
         horizontalPad: horizontalPad,
-        useFullCount: false,
         showResultBar: true,
         headerHeight: 24,
         rowMinHeight: 30,
@@ -782,7 +780,6 @@ class _ColumnDims {
         ),
         gap: gap,
         horizontalPad: horizontalPad,
-        useFullCount: true,
         showResultBar: true,
         headerHeight: 28,
         rowMinHeight: 36,
@@ -813,7 +810,6 @@ class _ColumnDims {
         ),
         gap: gap,
         horizontalPad: horizontalPad,
-        useFullCount: true,
         showResultBar: true,
         headerHeight: 28,
         rowMinHeight: 36,
@@ -844,7 +840,6 @@ class _ColumnDims {
         ),
         gap: gap,
         horizontalPad: horizontalPad,
-        useFullCount: true,
         showResultBar: true,
         headerHeight: 28,
         rowMinHeight: 34,
@@ -874,7 +869,6 @@ class _ColumnDims {
       ),
       gap: gap,
       horizontalPad: horizontalPad,
-      useFullCount: false,
       showResultBar: true,
       headerHeight: 28,
       rowMinHeight: 34,
@@ -1378,10 +1372,7 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
                 ] else ...[
                   SizedBox(
                     width: dims.gamesValue,
-                    child: _GamesCountCell(
-                      aggregate: agg,
-                      full: dims.useFullCount,
-                    ),
+                    child: _GamesCountCell(aggregate: agg),
                   ),
                   SizedBox(width: dims.gap),
                   SizedBox(
@@ -1398,10 +1389,7 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
                   SizedBox(width: dims.gap),
                   SizedBox(
                     width: dims.gamesValue,
-                    child: _GamesCountCell(
-                      aggregate: agg,
-                      full: dims.useFullCount,
-                    ),
+                    child: _GamesCountCell(aggregate: agg),
                   ),
                   // Open-games icon — always rendered when supported so the
                   // affordance is discoverable without hovering. The slot
@@ -1436,17 +1424,16 @@ class _MoveRowState extends ConsumerState<_MoveRow> {
 }
 
 class _GamesCountCell extends StatelessWidget {
-  const _GamesCountCell({required this.aggregate, required this.full});
+  const _GamesCountCell({required this.aggregate});
 
   final MoveAggregate aggregate;
-  final bool full;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(right: 4),
       child: Text(
-        _formatTotalCount(aggregate.total, full: full),
+        _formatTotalCount(aggregate.total),
         textAlign: TextAlign.right,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
@@ -1807,21 +1794,25 @@ class _ExplorerEmpty extends StatelessWidget {
   }
 }
 
-/// Header total — abbreviated (the header doesn't have room for "1,234,567").
-String _formatGamesCount(int n) {
-  if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-  if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
-  return n.toString();
+/// A compact, one-decimal total that remains legible in the right rail.
+///
+/// Keeping the same representation in the header and rows avoids a visual
+/// jump between `58.4k games` and an unrelated rounded row value such as
+/// `58k`. Values that would round to a million switch units rather than
+/// rendering the awkward `1000.0k`.
+@visibleForTesting
+String formatOpeningExplorerGameCount(int total) {
+  if (total >= 999950) {
+    return '${(total / 1000000).toStringAsFixed(1)}M';
+  }
+  if (total >= 1000) return '${(total / 1000).toStringAsFixed(1)}k';
+  return total.toString();
 }
 
-/// Per-row total — compact whole-unit counts keep the opening table from
-/// crowding the result bars and date column (`63,000` → `63k`, `29,560` →
-/// `30k`).
-String _formatTotalCount(int n, {required bool full}) {
-  if (n >= 1000000) return '${(n / 1000000).round()}M';
-  if (n >= 1000) return '${(n / 1000).round()}k';
-  return n.toString();
-}
+/// Header total — abbreviated (the header doesn't have room for "1,234,567").
+String _formatGamesCount(int total) => formatOpeningExplorerGameCount(total);
+
+String _formatTotalCount(int total) => formatOpeningExplorerGameCount(total);
 
 final DateFormat _monthYearFormat = DateFormat('MMM yyyy');
 String _formatLastPlayed(DateTime? d) {

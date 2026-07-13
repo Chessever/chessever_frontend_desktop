@@ -662,6 +662,68 @@ void main() {
     },
   );
 
+  testWidgets(
+    'clear move symbol reaches imported mainline quality NAGs',
+    (tester) async {
+      final clearedPointers = <ChessMovePointer>[];
+
+      await tester.pumpWidget(
+        _host(
+          game: _sampleGameWithMainlineNag(),
+          onJump: (_) {},
+          width: 900,
+          onClearMoveQualityAnnotation: (pointer) {
+            clearedPointers.add(List<int>.from(pointer));
+          },
+        ),
+      );
+
+      final move = find.text('Nf3', findRichText: true);
+      await tester.tapAt(
+        tester.getCenter(move),
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Clear move symbol'), findsOneWidget);
+      await tester.tap(find.text('Clear move symbol'));
+      await tester.pumpAndSettle();
+
+      expect(clearedPointers, [const <int>[2]]);
+    },
+  );
+
+  testWidgets(
+    'clear move symbol reaches imported variation quality NAGs',
+    (tester) async {
+      final clearedPointers = <ChessMovePointer>[];
+
+      await tester.pumpWidget(
+        _host(
+          game: _sampleGameWithSidelineNag(),
+          onJump: (_) {},
+          width: 900,
+          onClearMoveQualityAnnotation: (pointer) {
+            clearedPointers.add(List<int>.from(pointer));
+          },
+        ),
+      );
+
+      final move = find.text('c5', findRichText: true);
+      await tester.tapAt(
+        tester.getCenter(move),
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Clear move symbol'), findsOneWidget);
+      await tester.tap(find.text('Clear move symbol'));
+      await tester.pumpAndSettle();
+
+      expect(clearedPointers, [const <int>[0, 0, 0]]);
+    },
+  );
+
   testWidgets('move menu toggles hide and show all annotations', (
     tester,
   ) async {
@@ -910,6 +972,13 @@ ChessGame _sampleGameWithSidelineNag() {
   return game.copyWith(mainline: mainline);
 }
 
+ChessGame _sampleGameWithMainlineNag() {
+  final game = _sampleGame();
+  final mainline = List<ChessMove>.of(game.mainline);
+  mainline[2] = mainline[2].copyWith(nags: const <int>[2]);
+  return game.copyWith(mainline: mainline);
+}
+
 Widget _host({
   required ChessGame game,
   required ValueChanged<ChessMovePointer> onJump,
@@ -925,6 +994,7 @@ Widget _host({
   void Function(int ply)? onClearUserNags,
   void Function(ChessMovePointer pointer, int nag)? onToggleMoveNag,
   void Function(ChessMovePointer pointer)? onClearMoveNags,
+  void Function(ChessMovePointer pointer)? onClearMoveQualityAnnotation,
   VoidCallback? onClearAllCommentary,
   void Function(ChessMovePointer pointer, String? comment)? onSetMoveComment,
   void Function(ChessMovePointer pointer)? onPromoteVariation,
@@ -944,6 +1014,7 @@ Widget _host({
     onClearUserNags: onClearUserNags,
     onToggleMoveNag: onToggleMoveNag,
     onClearMoveNags: onClearMoveNags,
+    onClearMoveQualityAnnotation: onClearMoveQualityAnnotation,
     onClearAllCommentary: onClearAllCommentary,
     onSetMoveComment: onSetMoveComment,
     onPromoteVariation: onPromoteVariation,

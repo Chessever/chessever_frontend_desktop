@@ -7,6 +7,7 @@ import 'package:chessever/desktop/widgets/desktop_opening_explorer.dart';
 import 'package:chessever/desktop/widgets/desktop_position_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
+import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
@@ -77,6 +78,43 @@ void main() {
     expect(debugShouldActivateExplorerGamesPanel(pageActive: false), isFalse);
     expect(debugShouldActivateExplorerGamesPanel(pageActive: true), isTrue);
   });
+
+  testWidgets(
+    'engine rail uses the compact resettable default with a visible gutter',
+    (tester) async {
+      final repository = _FakeExplorerRepository();
+
+      await tester.pumpWidget(
+        _harness(
+          repository: repository,
+          enginePanel: const SizedBox(key: ValueKey<String>('engine-panel')),
+          height: 720,
+        ),
+      );
+
+      final splitFinder = find.byWidgetPredicate(
+        (widget) =>
+            widget is ResizableSplitView &&
+            widget.storageKey == desktopEngineRightRailSplitStorageKey,
+      );
+      expect(splitFinder, findsOneWidget);
+
+      final split = tester.widget<ResizableSplitView>(splitFinder);
+      expect(split.axis, Axis.vertical);
+      expect(split.gutterThickness, desktopEngineRightRailGutterThickness);
+      expect(split.gutterColor, kPrimaryColor);
+      expect(
+        split.children.first.initialWeight,
+        desktopEngineRightRailInitialWeight,
+      );
+      expect(
+        split.children.last.initialWeight,
+        1 - desktopEngineRightRailInitialWeight,
+      );
+      expect(split.children.first.minSize, 120);
+      expect(split.children.last.minSize, 240);
+    },
+  );
 
   testWidgets('PageDown from Explorer focuses the games table after load', (
     tester,
@@ -1992,6 +2030,7 @@ Widget _harness({
   double height = 360,
   PlayerOpeningTreeIndex? localOpeningTreeIndex,
   String localOpeningTreeTitle = '',
+  Widget? enginePanel,
 }) {
   return ProviderScope(
     overrides: [
@@ -2038,6 +2077,7 @@ Widget _harness({
             nextGameShortcutLabel: nextGameShortcutLabel,
             localOpeningTreeIndex: localOpeningTreeIndex,
             localOpeningTreeTitle: localOpeningTreeTitle,
+            enginePanel: enginePanel,
           ),
         ),
       ),

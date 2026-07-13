@@ -1,11 +1,17 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:chessground/chessground.dart' as cg;
+import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/board_share_service.dart';
 import 'package:chessever/desktop/widgets/board_share_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
+import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
 void main() {
   group('boardShareDisplayEvent', () {
@@ -131,5 +137,86 @@ void main() {
         isNot(contains('Share GIF')),
       );
     });
+  });
+
+  group('BoardShareRaster', () {
+    test('reuses the supplied live capture for copy and download', () async {
+      final liveCapture = Uint8List.fromList([1, 2, 3, 4]);
+      var fallbackCaptureCalls = 0;
+      final raster = BoardShareRaster(
+        liveBoardPngBytes: liveCapture,
+        fallbackCapture: () async {
+          fallbackCaptureCalls++;
+          return Uint8List.fromList([9, 9, 9]);
+        },
+      );
+
+      final copiedBytes = await raster.bytes();
+      final downloadedBytes = await raster.bytes();
+
+      expect(identical(copiedBytes, liveCapture), isTrue);
+      expect(identical(downloadedBytes, liveCapture), isTrue);
+      expect(fallbackCaptureCalls, 0);
+    });
+
+    test('captures a non-live fallback only once per dialog session', () async {
+      final fallbackCapture = Uint8List.fromList([5, 6, 7]);
+      var fallbackCaptureCalls = 0;
+      final raster = BoardShareRaster(
+        liveBoardPngBytes: null,
+        fallbackCapture: () async {
+          fallbackCaptureCalls++;
+          return fallbackCapture;
+        },
+      );
+
+      final firstExport = await raster.bytes();
+      final secondExport = await raster.bytes();
+
+      expect(identical(firstExport, fallbackCapture), isTrue);
+      expect(identical(secondExport, fallbackCapture), isTrue);
+      expect(fallbackCaptureCalls, 1);
+    });
+  });
+
+  testWidgets('previews the supplied live Board-pane raster', (tester) async {
+    final liveCapture = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL6fQAAAABJRU5ErkJggg==',
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: BoardShareDialog(
+            chessGame: ChessGame.fromPgn('share-preview', '1. e4 *'),
+            headers: const {},
+            position: Chess.initial,
+            lastMove: null,
+            pointer: const [],
+            flipped: false,
+            liveBoardPngBytes: liveCapture,
+          ),
+        ),
+      ),
+    );
+
+    final preview = tester.widget<Image>(
+      find.byKey(const ValueKey<String>('board-share-live-preview')),
+    );
+    expect(preview.image, isA<MemoryImage>());
+    expect((preview.image as MemoryImage).bytes, same(liveCapture));
+    expect(find.byType(cg.StaticChessboard), findsNothing);
+  });
+
+  test('share view defaults the eval gauge to off', () {
+    final dialog = BoardShareDialog(
+      chessGame: ChessGame.fromPgn('share-defaults', '1. e4 *'),
+      headers: const {},
+      position: Chess.initial,
+      lastMove: null,
+      pointer: const [],
+      flipped: false,
+    );
+
+    expect(dialog.showEvalBar, isFalse);
   });
 }
