@@ -3111,8 +3111,9 @@ class _BoardPaneContent extends HookConsumerWidget {
 
     latestBoardActionInvoker.value = invokeBoardAction;
     useEffect(() {
+      if (!isForegroundTab) return null;
       final dispatcher = ActiveBoardShortcutDispatcher(
-        tabId: activeTabId ?? 'board-default',
+        tabId: activeTabId,
         invoke:
             (action) => latestBoardActionInvoker.value?.call(action) ?? false,
       );
@@ -3125,7 +3126,9 @@ class _BoardPaneContent extends HookConsumerWidget {
       // current frame finishes flushing. Same teardown story.
       var assigned = false;
       Future.microtask(() {
-        if (notifier.mounted) {
+        if (context.mounted &&
+            notifier.mounted &&
+            ref.read(desktopTabsProvider).activeId == activeTabId) {
           notifier.state = dispatcher;
           assigned = true;
         }
@@ -3140,7 +3143,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           });
         }
       };
-    }, [activeTabId]);
+    }, [activeTabId, isForegroundTab]);
 
     // Re-grab focus when this board tab becomes the active tab. The
     // outer `Focus(autofocus: true)` only fires on the *first* attach,
@@ -3149,13 +3152,16 @@ class _BoardPaneContent extends HookConsumerWidget {
     // clicks the notation. Pulling focus here means ←/→ work the moment
     // the tab is visible, no notation click required.
     useEffect(() {
+      if (!isForegroundTab) return null;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (focusNode.context != null) {
+        if (context.mounted &&
+            focusNode.context != null &&
+            ref.read(desktopTabsProvider).activeId == activeTabId) {
           focusNode.requestFocus();
         }
       });
       return null;
-    }, [activeTabId]);
+    }, [activeTabId, isForegroundTab]);
 
     bool primaryFocusIsEditableText() {
       final focusContext = FocusManager.instance.primaryFocus?.context;

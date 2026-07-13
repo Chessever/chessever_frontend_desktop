@@ -189,6 +189,11 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
         focus: false,
         reuseExisting: false,
       );
+      // Let the background Players tab mount before opening the foreground
+      // board. Mounting both tab subtrees in one frame lets their autofocus
+      // nodes compete, leaving the board visible without keyboard ownership.
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
       await openOrBuildPlayerWorkspaceSourceTree(
         context: context,
         ref: ref,
