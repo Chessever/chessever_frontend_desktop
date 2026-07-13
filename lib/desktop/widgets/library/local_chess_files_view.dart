@@ -548,6 +548,7 @@ class LocalChessFilesView extends HookConsumerWidget {
                             sort: sort.value,
                             onSortChange: (next) => sort.value = next,
                             onRefresh: onRefreshOverride,
+                            onPaste: pasteIntoLocalDatabase,
                             onSelectPath: onSelectPath,
                             loadedCount: filtered.length,
                             totalCount: totalFilteredCount,
@@ -997,7 +998,7 @@ FBaseButtonStyle Function(FButtonStyle style) _localChildCardButtonStyle({
   );
 }
 
-enum _LocalGameRowAction { gameInfo, copyPgn, saveToCloud, delete }
+enum _LocalGameRowAction { gameInfo, copyPgn, pasteGames, saveToCloud, delete }
 
 class _LocalGamesTable extends HookConsumerWidget {
   const _LocalGamesTable({
@@ -1008,6 +1009,7 @@ class _LocalGamesTable extends HookConsumerWidget {
     required this.sort,
     required this.onSortChange,
     required this.onRefresh,
+    required this.onPaste,
     required this.onSelectPath,
     required this.loadedCount,
     required this.totalCount,
@@ -1023,6 +1025,7 @@ class _LocalGamesTable extends HookConsumerWidget {
   final _LocalGamesSortConfig sort;
   final ValueChanged<_LocalGamesSortConfig> onSortChange;
   final Future<void> Function()? onRefresh;
+  final Future<void> Function() onPaste;
   final ValueChanged<String> onSelectPath;
   final int loadedCount;
   final int totalCount;
@@ -1350,6 +1353,12 @@ class _LocalGamesTable extends HookConsumerWidget {
             icon: Icons.content_copy_rounded,
             label: 'Copy PGN',
           ),
+          DesktopContextMenuItem(
+            value: _LocalGameRowAction.pasteGames,
+            icon: Icons.content_paste_rounded,
+            label: 'Paste games',
+            enabled: database != null,
+          ),
           const DesktopContextMenuItem(
             value: _LocalGameRowAction.saveToCloud,
             icon: Icons.library_add_outlined,
@@ -1371,6 +1380,8 @@ class _LocalGamesTable extends HookConsumerWidget {
           unawaited(showLocalGameInfoDialog(context, game));
         case _LocalGameRowAction.copyPgn:
           unawaited(copySelectedGames(scope: rowScope));
+        case _LocalGameRowAction.pasteGames:
+          unawaited(onPaste());
         case _LocalGameRowAction.saveToCloud:
           unawaited(saveSelectedGames(scope: rowScope));
         case _LocalGameRowAction.delete:
@@ -2725,6 +2736,12 @@ TournamentGameSummary _summaryFromLocalGame(LocalChessGame localGame) {
     status: _statusFromResult(s('Result')),
     openingName: s('Opening').isNotEmpty ? s('Opening') : s('ECO'),
     hasStarted: localGame.hasMoves,
+    localPgnSource: TournamentGameLocalPgnSource(
+      sourcePath: localGame.sourcePath,
+      sourceIndex: localGame.indexInFile,
+      sourceFileGameCount: localGame.fileGameCount,
+      title: localGame.title,
+    ),
   );
 }
 

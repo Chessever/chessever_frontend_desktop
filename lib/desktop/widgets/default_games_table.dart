@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:country_flags/country_flags.dart' show FlagCode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -440,10 +441,13 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
             _selectRowInSelectionMode(game, rows, shiftPressed: shiftPressed);
             return;
           }
-          // Table view: a single click only selects/highlights the row.
-          // Opening a game belongs to double-click (Cmd/Ctrl held opens a new
-          // tab) so accidental single clicks no longer swap the active board.
+          // A plain single click only selects/highlights the row so accidental
+          // clicks never replace the active board. Cmd/Ctrl-click deliberately
+          // follows the desktop new-tab convention.
           _highlight(game);
+          if (inNewTab) {
+            _openGame(game, inNewTab: true, routeGames: routeGames);
+          }
         },
         onRowDoubleTap: (game, {required bool inNewTab}) {
           if (widget.selectionMode) {
@@ -704,17 +708,16 @@ class _DefaultGamesPlayerCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final federation = _playerFederation(player);
-    final iso2 = federation.isEmpty ? '' : CountryUtils.toIso2Code(federation);
+    final flagFederation = defaultGamePlayerFlagFederation(player);
     final title = player.title.trim();
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 170),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (iso2.isNotEmpty) ...[
+          if (flagFederation != null) ...[
             FederationFlag(
-              federation: iso2,
+              federation: flagFederation,
               height: 14,
               width: 20,
               borderRadius: BorderRadius.circular(2),
@@ -903,6 +906,39 @@ String _playerFederation(PlayerCard player) {
   final fed = player.federation.trim();
   if (fed.isNotEmpty) return fed;
   return player.countryCode.trim();
+}
+
+/// Federation value that can render in a compact default-games-table row.
+///
+/// The table needs to decide whether to reserve the flag slot before building
+/// it. Keep FID/FIDE raw so [FederationFlag] can render its bundled FIDE mark;
+/// resolve normal country values up front so an unresolvable marker does not
+/// leave an empty flag-and-gap reservation ahead of the player name.
+String? defaultGamePlayerFlagFederation(PlayerCard player) {
+  final federation = _playerFederation(player).trim();
+  if (federation.isEmpty) return null;
+
+  final normalized = federation.toUpperCase();
+  if (normalized == 'FID' || normalized == 'FIDE') return normalized;
+  if (normalized == '?' || normalized == 'UNKNOWN') return null;
+
+  String? iso2;
+  if (normalized.length == 2) {
+    iso2 = normalized;
+  } else if (normalized.length == 3) {
+    iso2 = CountryUtils.toIso2Code(normalized);
+  } else {
+    final manual = CountryUtils.countryNameToIso2(federation);
+    iso2 = manual.isNotEmpty ? manual : CountryUtils.getCountryCode(federation);
+  }
+
+  if (iso2 == null || iso2.length != 2) return null;
+  if (FlagCode.fromCountryCode(iso2) == null) return null;
+
+  // Retain the source value instead of returning [iso2]. FederationFlag has
+  // specific handling for England, Scotland, and Wales that would otherwise
+  // be flattened to the UK flag.
+  return federation;
 }
 
 int _compareText(String? a, String? b) =>

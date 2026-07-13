@@ -82,6 +82,25 @@ import 'package:chessever/widgets/player_initials_avatar.dart';
 /// - Arrow Up/Down: move selection
 /// - Home / End: jump to first / last
 /// - Enter / Space: open the selected game
+///
+/// Desktop score-card tabs carry their own context. That explicit snapshot
+/// must win over the shared legacy broadcast provider: a Favorites score card
+/// can be opened after a tournament, when the global provider still points at
+/// that old tournament.
+@visibleForTesting
+ChessboardView playerScoreCardBoardViewSource({
+  required PlayerScoreCardTabContext? tabContext,
+  required bool hasSelectedBroadcast,
+}) {
+  final hasEventContext = tabContext?.hasEventContext;
+  if (hasEventContext != null) {
+    return hasEventContext ? ChessboardView.tour : ChessboardView.favScorecard;
+  }
+  return hasSelectedBroadcast
+      ? ChessboardView.tour
+      : ChessboardView.favScorecard;
+}
+
 class PlayerScoreCardView extends ConsumerStatefulWidget {
   const PlayerScoreCardView({super.key, required this.player, this.tabContext});
 
@@ -251,6 +270,14 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
       eventGames.isEmpty ? <GamesTourModel>[game] : eventGames,
       openedGame,
     );
+    // The board rail resolves its context from the immutable tab arguments,
+    // not from the mutable legacy provider. Resolve it once before creating
+    // the args so a Favorites score card cannot inherit a previously viewed
+    // tournament and be refreshed as a one-event rail.
+    final boardViewSource = playerScoreCardBoardViewSource(
+      tabContext: widget.tabContext,
+      hasSelectedBroadcast: ref.read(selectedBroadcastModelProvider) != null,
+    );
     final args = BoardTabGameArgs(
       gameId: openedGame.gameId,
       pgn: pgn ?? '',
@@ -267,18 +294,13 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
       blackFideId: openedGame.blackPlayer.fideId,
       fenSeed: openedGame.fen,
       sourceGame: openedGame.copyWith(pgn: pgn),
-      viewSource: ref.read(chessboardViewFromProviderNew),
+      viewSource: boardViewSource,
       tournamentTitle: tournamentTitle,
       eventGames: _summariesFromGames(contextGames),
       gameListSelectedId: openedGame.gameId,
     );
-    // Set the chessboard view bucket so the underlying live-stream provider
-    // resolves to the right context (favScorecard for For You-mode, otherwise
-    // the regular tour context).
-    ref.read(chessboardViewFromProviderNew.notifier).state =
-        ref.read(selectedBroadcastModelProvider) == null
-            ? ChessboardView.favScorecard
-            : ChessboardView.tour;
+    // Keep the legacy board provider in sync with the same resolved source.
+    ref.read(chessboardViewFromProviderNew.notifier).state = boardViewSource;
 
     openBoardGameTab(
       ref,
@@ -518,10 +540,15 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
     );
 
     final tabContext = widget.tabContext;
+    // A Favorites score card intentionally has no event context. Ignore a
+    // stale broadcast snapshot in that case rather than loading one unrelated
+    // tournament's games into the Favorites/player-history view.
     final selectedBroadcast =
         tabContext == null
             ? ref.watch(selectedBroadcastModelProvider)
-            : tabContext.selectedBroadcast;
+            : (tabContext.hasEventContext
+                ? tabContext.selectedBroadcast
+                : null);
     final hasEventContext =
         tabContext == null
             ? selectedBroadcast != null ||

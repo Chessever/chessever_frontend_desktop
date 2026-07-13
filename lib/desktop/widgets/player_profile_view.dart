@@ -1599,9 +1599,6 @@ class _AboutBody extends ConsumerWidget {
       return const _EmptyAbout();
     }
 
-    final browseTotal =
-        isTwic ? analytics.resultStats.totalGames : state.allGames.length;
-
     return SingleChildScrollView(
       physics: const DesktopScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
@@ -1610,14 +1607,8 @@ class _AboutBody extends ConsumerWidget {
         children: [
           Cue.onMount(
             motion: const CueMotion.smooth(),
-            acts: const [Act.fadeIn(), Act.slideY(from: 0.08)],
-            child: _BrowseGamesCta(total: browseTotal, onTap: onShowGames),
-          ),
-          const SizedBox(height: 16),
-          Cue.onMount(
-            motion: const CueMotion.smooth(),
             acts: const [Act.fadeIn(), Act.slideY(from: 0.1)],
-            child: _ResultDonut(
+            child: DesktopPlayerProfileResultSummary(
               stats: analytics.resultStats,
               selected: state.playerResultFilter,
               onSelect: (filter) {
@@ -1679,177 +1670,14 @@ class _AboutBody extends ConsumerWidget {
   }
 }
 
-class _BrowseGamesCta extends StatefulWidget {
-  const _BrowseGamesCta({required this.total, required this.onTap});
-
-  final int total;
-  final VoidCallback onTap;
-
-  @override
-  State<_BrowseGamesCta> createState() => _BrowseGamesCtaState();
-}
-
-class _BrowseGamesCtaState extends State<_BrowseGamesCta> {
-  bool _hover = false;
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final total = widget.total;
-    final headline =
-        total == 0 ? 'No games on record yet' : 'Step into the game history';
-    final detail =
-        total == 0
-            ? 'New games will appear here as they arrive.'
-            : total == 1
-            ? 'One game waits for you to relive.'
-            : 'Browse all $total games — every move, every result, every story.';
-    final glow = _hover || _pressed;
-    return ClickCursor(
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hover = true),
-        onExit:
-            (_) => setState(() {
-              _hover = false;
-              _pressed = false;
-            }),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: total == 0 ? null : widget.onTap,
-          onTapDown: (_) => setState(() => _pressed = true),
-          onTapUp: (_) => setState(() => _pressed = false),
-          onTapCancel: () => setState(() => _pressed = false),
-          child: SingleMotionBuilder(
-            value: _pressed ? 0.985 : (glow ? 1.004 : 1.0),
-            motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-            builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 140),
-              padding: const EdgeInsets.fromLTRB(18, 14, 16, 14),
-              decoration: BoxDecoration(
-                color:
-                    glow ? kPrimaryColor.withValues(alpha: 0.12) : kBlack2Color,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color:
-                      glow
-                          ? kPrimaryColor.withValues(alpha: 0.7)
-                          : kDividerColor,
-                ),
-                boxShadow:
-                    glow
-                        ? [
-                          BoxShadow(
-                            color: kPrimaryColor.withValues(alpha: 0.18),
-                            blurRadius: 18,
-                            offset: const Offset(0, 6),
-                          ),
-                        ]
-                        : null,
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 38,
-                    height: 38,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: kPrimaryColor.withValues(alpha: 0.14),
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: kPrimaryColor.withValues(alpha: 0.5),
-                      ),
-                    ),
-                    child: const Icon(
-                      Icons.history_rounded,
-                      size: 20,
-                      color: kPrimaryColor,
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          headline,
-                          style: const TextStyle(
-                            color: kWhiteColor,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.1,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          detail,
-                          style: const TextStyle(
-                            color: kWhiteColor70,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 140),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 7,
-                    ),
-                    decoration: BoxDecoration(
-                      color:
-                          glow
-                              ? kPrimaryColor.withValues(alpha: 0.22)
-                              : kPrimaryColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: kPrimaryColor.withValues(
-                          alpha: glow ? 0.9 : 0.6,
-                        ),
-                      ),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Open game history',
-                          style: TextStyle(
-                            color: kPrimaryColor,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.2,
-                          ),
-                        ),
-                        SizedBox(width: 6),
-                        Icon(
-                          Icons.arrow_forward_rounded,
-                          size: 14,
-                          color: kPrimaryColor,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ResultDonut extends StatelessWidget {
-  const _ResultDonut({
+/// The first section of the desktop player-profile About tab.
+///
+/// Result filters deliberately stay in one horizontal row at every desktop
+/// width. This makes the W/D/L comparison scannable and avoids the previous
+/// triangular wrapping pattern in narrower profile panes.
+class DesktopPlayerProfileResultSummary extends StatelessWidget {
+  const DesktopPlayerProfileResultSummary({
+    super.key,
     required this.stats,
     required this.selected,
     required this.onSelect,
@@ -1874,7 +1702,7 @@ class _ResultDonut extends StatelessWidget {
         onTap: () => onSelect(PlayerResultFilter.win),
       ),
       _ResultPill(
-        label: 'Drew',
+        label: 'Draw',
         value: stats.draws,
         color: const Color(0xFF8B93A7),
         pct: drawPct,
@@ -1898,30 +1726,21 @@ class _ResultDonut extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: kDividerColor),
       ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final pillWrap = Wrap(spacing: 10, runSpacing: 8, children: pills);
-          final title = _SectionTitle(
-            title: 'Results',
-            subtitle: '$total completed games',
-          );
-          if (constraints.maxWidth < 560) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [title, const SizedBox(height: 12), pillWrap],
-            );
-          }
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SectionTitle(title: 'Results', subtitle: '$total completed games'),
+          const SizedBox(height: 12),
+          Row(
             children: [
-              title,
-              const Spacer(),
-              Flexible(
-                child: Align(alignment: Alignment.centerRight, child: pillWrap),
-              ),
+              Expanded(child: pills[0]),
+              const SizedBox(width: 8),
+              Expanded(child: pills[1]),
+              const SizedBox(width: 8),
+              Expanded(child: pills[2]),
             ],
-          );
-        },
+          ),
+        ],
       ),
     );
   }
@@ -1952,6 +1771,7 @@ class _ResultPill extends StatelessWidget {
         child: DesktopTooltip(
           message: selected ? 'Clear result filter' : 'Filter games by $label',
           child: Container(
+            width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: color.withValues(alpha: selected ? 0.2 : 0.12),
@@ -1960,39 +1780,44 @@ class _ResultPill extends StatelessWidget {
                 color: color.withValues(alpha: selected ? 0.72 : 0.4),
               ),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.4,
-                  ),
+            child: Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '$value',
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${(pct * 100).toStringAsFixed(0)}%',
+                      style: const TextStyle(
+                        color: kWhiteColor70,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  '$value',
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  '${(pct * 100).toStringAsFixed(0)}%',
-                  style: const TextStyle(
-                    color: kWhiteColor70,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -2146,7 +1971,11 @@ class _ColorCard extends StatelessWidget {
                   runSpacing: 8,
                   children: [
                     _MicroStat(label: 'Games', value: '$games'),
-                    _MicroStat(label: 'W', value: '$wins', color: kPrimaryColor),
+                    _MicroStat(
+                      label: 'W',
+                      value: '$wins',
+                      color: kPrimaryColor,
+                    ),
                     _MicroStat(
                       label: 'D',
                       value: '$draws',

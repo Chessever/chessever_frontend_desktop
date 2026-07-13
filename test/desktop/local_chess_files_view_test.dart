@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -84,6 +85,65 @@ void main() {
     expect(repository.queries.last.search, 'database only');
     expect(find.text('Only, D.'), findsOneWidget);
     expect(find.text('1 / 42 entries'), findsOneWidget);
+  });
+
+  testWidgets('local PGN row menus offer paste games', (tester) async {
+    final game = _localGame(
+      id: 'database',
+      white: 'Database Only',
+      black: 'Gukesh, D',
+      sourcePath: '/tmp/view.pgn',
+    );
+    final source = _sourceWithGame(game, gameCount: 1);
+    final repository = _FakeLocalChessDatabaseRepository(
+      page: LocalChessGameQueryPage(
+        games: <LocalChessGame>[game],
+        totalCount: 1,
+        pageNumber: 0,
+        pageSize: 1,
+      ),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localChessDatabaseRepositoryProvider.overrideWithValue(repository),
+          localChessLibraryProvider.overrideWith(
+            (ref) => LocalChessLibraryNotifier(),
+          ),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 1100,
+              height: 700,
+              child: LocalChessFilesView(
+                selectedPath: source.root.path,
+                onSelectPath: (_) {},
+                stateOverride: LocalChessLibraryState(
+                  source: source,
+                  selectedPath: source.root.path,
+                ),
+                onRefreshOverride: () async {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    await tester.tapAt(
+      tester.getCenter(find.text('Only, D.')),
+      buttons: kSecondaryMouseButton,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('Copy PGN'), findsOneWidget);
+    expect(find.text('Paste games'), findsOneWidget);
+    expect(find.text('Delete game'), findsOneWidget);
   });
 
   testWidgets(

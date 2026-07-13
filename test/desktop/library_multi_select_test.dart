@@ -31,6 +31,23 @@ void main() {
     });
   });
 
+  test('context-menu selection retains an already selected group', () {
+    expect(
+      LibraryMultiSelect.contextMenuSelection(
+        selectedIds: {'a', 'b'},
+        rowId: 'b',
+      ),
+      {'a', 'b'},
+    );
+    expect(
+      LibraryMultiSelect.contextMenuSelection(
+        selectedIds: {'a', 'b'},
+        rowId: 'c',
+      ),
+      {'c'},
+    );
+  });
+
   test('nextAnchor moves by one row and clamps at list edges', () {
     final rows = ['a', 'b', 'c'];
     expect(

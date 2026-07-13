@@ -12,6 +12,17 @@ class LibraryMultiSelect {
     return selected.where(visible.contains).toSet();
   }
 
+  /// Uses the desktop-file-browser convention for a row context menu: retain
+  /// the current selection when the clicked row already belongs to it;
+  /// otherwise make that row the sole selection.
+  static Set<String> contextMenuSelection({
+    required Set<String> selectedIds,
+    required String rowId,
+  }) {
+    if (selectedIds.contains(rowId)) return Set<String>.of(selectedIds);
+    return <String>{rowId};
+  }
+
   static Set<String> range({
     required List<String> rowIds,
     required int from,

@@ -6,6 +6,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/widgets/default_games_table.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/widgets/federation_flag.dart';
 
 void main() {
   test(
@@ -55,6 +56,57 @@ void main() {
     expect(find.text('ECO'), findsOneWidget);
   });
 
+  testWidgets('renders raw FID and FIDE markers as compact-table FIDE flags', (
+    tester,
+  ) async {
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+    final game = _game(0).copyWith(
+      whitePlayer: _player('White FID', federation: 'FID'),
+      blackPlayer: _player('Black FIDE', federation: 'FIDE'),
+    );
+
+    await tester.pumpWidget(
+      _wrap(controller: controller, onOpen: (_) {}, games: [game]),
+    );
+    await tester.pump();
+
+    final flags = tester.widgetList<FederationFlag>(
+      find.byType(FederationFlag),
+    );
+    expect(flags.map((flag) => flag.federation).toList(), ['FID', 'FIDE']);
+  });
+
+  testWidgets(
+    'does not reserve a compact-table flag gap for unresolvable federations',
+    (tester) async {
+      final controller = ScrollController();
+      addTearDown(controller.dispose);
+      final unknown = _game(0).copyWith(
+        whitePlayer: _player(
+          'Unknown0',
+          federation: 'Atlantis',
+          countryCode: 'Atlantis',
+        ),
+      );
+      final empty = _game(1).copyWith(
+        whitePlayer: _player('NoFed0', federation: '', countryCode: ''),
+      );
+
+      await tester.pumpWidget(
+        _wrap(controller: controller, onOpen: (_) {}, games: [unknown, empty]),
+      );
+      await tester.pump();
+
+      expect(defaultGamePlayerFlagFederation(unknown.whitePlayer), isNull);
+      expect(defaultGamePlayerFlagFederation(empty.whitePlayer), isNull);
+      expect(
+        tester.getTopLeft(find.text('Unknown0')).dx,
+        tester.getTopLeft(find.text('NoFed0')).dx,
+      );
+    },
+  );
+
   testWidgets('single click highlights and arrows move highlighted game', (
     tester,
   ) async {
@@ -77,6 +129,32 @@ void main() {
     await tester.pump();
 
     expect(opened, ['game-1']);
+  });
+
+  testWidgets('Ctrl/Cmd click opens the selected game in a new tab', (
+    tester,
+  ) async {
+    final opened = <String>[];
+    final openedInNewTabs = <bool>[];
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _wrap(
+        controller: controller,
+        onOpen: (game) => opened.add(game.gameId),
+        onOpenInNewTab: openedInNewTabs.add,
+      ),
+    );
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.tap(find.text('White0'));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+
+    expect(opened, ['game-0']);
+    expect(openedInNewTabs, [true]);
   });
 
   testWidgets('page down moves highlighted row by a fast visible chunk', (
@@ -139,6 +217,8 @@ void main() {
 Widget _wrap({
   required ScrollController controller,
   required ValueChanged<GamesTourModel> onOpen,
+  ValueChanged<bool>? onOpenInNewTab,
+  List<GamesTourModel>? games,
   bool selectionMode = false,
   Set<String> selectedIds = const <String>{},
   ValueChanged<String>? onToggleSelection,
@@ -154,14 +234,17 @@ Widget _wrap({
           height: 180,
           child: DefaultGamesTable(
             active: true,
-            games: List.generate(24, _game),
+            games: games ?? List.generate(24, _game),
             controller: controller,
             selectionMode: selectionMode,
             selectedIds: selectedIds,
             onToggleSelection: onToggleSelection,
             onReplaceSelection: onReplaceSelection,
             hiddenColumnIds: hiddenColumnIds,
-            onOpenGame: (game, {required bool inNewTab}) => onOpen(game),
+            onOpenGame: (game, {required bool inNewTab}) {
+              onOpen(game);
+              onOpenInNewTab?.call(inNewTab);
+            },
           ),
         ),
       ),
@@ -186,13 +269,17 @@ GamesTourModel _game(int index) {
   );
 }
 
-PlayerCard _player(String name) {
+PlayerCard _player(
+  String name, {
+  String federation = 'USA',
+  String? countryCode,
+}) {
   return PlayerCard(
     name: name,
-    federation: 'USA',
+    federation: federation,
     title: 'GM',
     rating: 2600,
-    countryCode: 'USA',
+    countryCode: countryCode ?? federation,
     team: null,
   );
 }

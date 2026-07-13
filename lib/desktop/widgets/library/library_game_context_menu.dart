@@ -15,6 +15,8 @@ enum LibraryGameAction {
   share,
   copyShareLink,
   copyPgn,
+  selectAll,
+  pasteGames,
   copyFen,
   exportPgn,
   delete,
@@ -30,6 +32,8 @@ class LibraryGameContextMenu extends StatelessWidget {
     required this.onAction,
     required this.child,
     this.canDelete = true,
+    this.canPaste = true,
+    this.onContextMenuOpening,
     this.useLongPress = true,
   });
 
@@ -41,12 +45,22 @@ class LibraryGameContextMenu extends StatelessWidget {
   /// them so the delete entry is disabled to make the constraint visible.
   final bool canDelete;
 
+  /// `false` for subscribed or system databases, which must not accept a
+  /// clipboard import from a row context menu.
+  final bool canPaste;
+
+  /// Invoked just before opening the menu. List surfaces use this to select an
+  /// unselected row while preserving an existing multi-selection when the
+  /// clicked row is already part of it.
+  final VoidCallback? onContextMenuOpening;
+
   /// Disable when the wrapped widget already owns long-press for another
   /// gesture (e.g. the games table reserves it for drag-to-tab spawning),
   /// so right-click stays the only path to the menu.
   final bool useLongPress;
 
   Future<void> _open(BuildContext context, Offset globalPos) async {
+    onContextMenuOpening?.call();
     final shareUrl = buildSavedAnalysisShareUrl(analysis);
     final hasMoves = analysis.chessGame.mainline.isNotEmpty;
     final action = await showDesktopContextMenu<LibraryGameAction>(
@@ -87,6 +101,17 @@ class LibraryGameContextMenu extends StatelessWidget {
           icon: Icons.content_copy_rounded,
           label: 'Copy PGN',
         ),
+        const DesktopContextMenuItem(
+          value: LibraryGameAction.selectAll,
+          icon: Icons.select_all_rounded,
+          label: 'Select all',
+        ),
+        if (canPaste)
+          const DesktopContextMenuItem(
+            value: LibraryGameAction.pasteGames,
+            icon: Icons.content_paste_rounded,
+            label: 'Paste games',
+          ),
         DesktopContextMenuItem(
           value: LibraryGameAction.copyFen,
           icon: Icons.code_rounded,

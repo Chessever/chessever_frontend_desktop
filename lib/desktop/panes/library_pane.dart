@@ -1399,6 +1399,18 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _MyDatabasesHeader(
+              folders: folders,
+              currentFolderId:
+                  currentLocalGroup == null ? currentFolderId : null,
+              localGroupLabel: currentLocalGroup?.label,
+              onNavigate: (folderId) {
+                currentLocalGroupId.value = null;
+                onNavigateToFolder(folderId);
+              },
+              onNavigateLocalRoot:
+                  currentLocalGroup == null
+                      ? null
+                      : () => currentLocalGroupId.value = null,
               onNewFolder:
                   disabledNewFolderTooltip == null ? onNewFolder : null,
               disabledNewFolderTooltip: disabledNewFolderTooltip,
@@ -1427,7 +1439,6 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
                       onSelectFolder: onSelectFolder,
                       onOpenFolder: onOpenFolder,
                       onOpenDatabase: onOpenDatabase,
-                      onNavigateToFolder: onNavigateToFolder,
                       onCurrentLocalGroupChanged:
                           (value) => currentLocalGroupId.value = value,
                       onSelectLocalPath: onSelectLocalPath,
@@ -1444,14 +1455,9 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
                         source: localSource,
                         selectedNode: selectedLocalNode,
                         selectedPath: selectedLocalPath,
-                        onOpen:
-                            selectedLocalPath == null
-                                ? null
-                                : () => onOpenLocalPath(selectedLocalPath!),
                       ),
                       _LibraryDatabaseKind.cloud => _CloudDatabaseMiniPreview(
                         folder: selectedFolder,
-                        onOpenFolder: onOpenDatabase,
                       ),
                     },
                   ),
@@ -1474,12 +1480,22 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
 
 class _MyDatabasesHeader extends StatelessWidget {
   const _MyDatabasesHeader({
+    required this.folders,
+    required this.currentFolderId,
+    required this.localGroupLabel,
+    required this.onNavigate,
+    required this.onNavigateLocalRoot,
     required this.onNewFolder,
     required this.disabledNewFolderTooltip,
     required this.onOpenLocalFiles,
     required this.onImportPgnFiles,
   });
 
+  final List<LibraryFolder> folders;
+  final String? currentFolderId;
+  final String? localGroupLabel;
+  final ValueChanged<String?> onNavigate;
+  final VoidCallback? onNavigateLocalRoot;
   final VoidCallback? onNewFolder;
   final String? disabledNewFolderTooltip;
   final VoidCallback onOpenLocalFiles;
@@ -1490,7 +1506,18 @@ class _MyDatabasesHeader extends StatelessWidget {
     return LibraryChromeBar(
       icon: Icons.storage_rounded,
       title: 'My Databases',
-      meta: 'Local & cloud',
+      titleWidget: _LibraryFolderBreadcrumb(
+        folders: folders,
+        currentFolderId: currentFolderId,
+        localGroupLabel: localGroupLabel,
+        onNavigate: onNavigate,
+        onNavigateLocalRoot: onNavigateLocalRoot,
+      ),
+      meta:
+          currentFolderId == null &&
+                  (localGroupLabel == null || localGroupLabel!.trim().isEmpty)
+              ? 'Local & cloud'
+              : null,
       trailing: LibraryActionsToolbar(
         onNewFolder: onNewFolder,
         disabledNewFolderTooltip: disabledNewFolderTooltip,
@@ -1517,7 +1544,6 @@ class _MyDatabasesBoard extends HookConsumerWidget {
     required this.onSelectFolder,
     required this.onOpenFolder,
     required this.onOpenDatabase,
-    required this.onNavigateToFolder,
     required this.onCurrentLocalGroupChanged,
     required this.onSelectLocalPath,
     required this.onOpenLocalPath,
@@ -1535,7 +1561,6 @@ class _MyDatabasesBoard extends HookConsumerWidget {
   final ValueChanged<LibraryFolder> onSelectFolder;
   final ValueChanged<LibraryFolder> onOpenFolder;
   final ValueChanged<LibraryFolder> onOpenDatabase;
-  final ValueChanged<String?> onNavigateToFolder;
   final ValueChanged<String?> onCurrentLocalGroupChanged;
   final ValueChanged<String> onSelectLocalPath;
   final ValueChanged<String> onOpenLocalPath;
@@ -2148,23 +2173,8 @@ class _MyDatabasesBoard extends HookConsumerWidget {
                   : null,
           child: ListView(
             physics: const DesktopScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
             children: [
-              _LibraryFolderBreadcrumb(
-                folders: folders,
-                currentFolderId:
-                    currentLocalGroup == null ? currentFolderId : null,
-                localGroupLabel: currentLocalGroup?.label,
-                onNavigate: (folderId) {
-                  onCurrentLocalGroupChanged(null);
-                  onNavigateToFolder(folderId);
-                },
-                onNavigateLocalRoot:
-                    currentLocalGroup == null
-                        ? null
-                        : () => onCurrentLocalGroupChanged(null),
-              ),
-              const SizedBox(height: 10),
               Wrap(
                 spacing: 10,
                 runSpacing: 10,
@@ -2212,95 +2222,84 @@ class _LibraryFolderBreadcrumb extends StatelessWidget {
     final path = libraryFolderPath(folders, currentFolderId);
     final current = path.isEmpty ? null : path.last;
     final localLabel = localGroupLabel?.trim();
-    return Row(
-      children: [
-        FButton(
-          style: FButtonStyle.ghost(),
-          onPress:
-              currentFolderId == null && localLabel == null
-                  ? null
-                  : () {
-                    onNavigateLocalRoot?.call();
-                    onNavigate(null);
-                  },
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.storage_rounded, size: 14),
-              SizedBox(width: 6),
-              Text('My Databases'),
+    return Semantics(
+      label: libraryMyDatabasesBreadcrumbText(
+        folders: folders,
+        currentFolderId: currentFolderId,
+        localGroupLabel: localGroupLabel,
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            FButton(
+              style: FButtonStyle.ghost(),
+              onPress:
+                  currentFolderId == null && localLabel == null
+                      ? null
+                      : () {
+                        onNavigateLocalRoot?.call();
+                        onNavigate(null);
+                      },
+              child: const Text('My Databases'),
+            ),
+            if (localLabel != null && localLabel.isNotEmpty) ...[
+              const _LibraryBreadcrumbChevron(),
+              FButton(
+                style: FButtonStyle.ghost(),
+                onPress: null,
+                child: Text(
+                  localLabel,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: kWhiteColor,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
             ],
-          ),
+            for (final folder in path) ...[
+              const _LibraryBreadcrumbChevron(),
+              FButton(
+                style: FButtonStyle.ghost(),
+                onPress:
+                    folder.id == currentFolderId
+                        ? null
+                        : () => onNavigate(folder.id),
+                child: Text(
+                  folder.name,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color:
+                        folder.id == current?.id ? kWhiteColor : kWhiteColor70,
+                    fontWeight:
+                        folder.id == current?.id
+                            ? FontWeight.w700
+                            : FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ],
         ),
-        if (localLabel != null && localLabel.isNotEmpty) ...[
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 4),
-            child: Icon(
-              Icons.chevron_right_rounded,
-              color: kLightGreyColor,
-              size: 15,
-            ),
-          ),
-          FButton(
-            style: FButtonStyle.ghost(),
-            onPress: null,
-            child: Text(
-              localLabel,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: kWhiteColor,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
-        for (final folder in path) ...[
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 4),
-            child: Icon(
-              Icons.chevron_right_rounded,
-              color: kLightGreyColor,
-              size: 15,
-            ),
-          ),
-          FButton(
-            style: FButtonStyle.ghost(),
-            onPress:
-                folder.id == currentFolderId
-                    ? null
-                    : () => onNavigate(folder.id),
-            child: Text(
-              folder.name,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: folder.id == current?.id ? kWhiteColor : kWhiteColor70,
-                fontWeight:
-                    folder.id == current?.id
-                        ? FontWeight.w700
-                        : FontWeight.w500,
-              ),
-            ),
-          ),
-        ],
-        if (current != null || localLabel != null) ...[
-          const Spacer(),
-          FButton(
-            style: FButtonStyle.ghost(),
-            onPress:
-                localLabel != null
-                    ? onNavigateLocalRoot
-                    : () => onNavigate(current!.parentId),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.arrow_upward_rounded, size: 14),
-                SizedBox(width: 6),
-                Text('Up'),
-              ],
-            ),
-          ),
-        ],
-      ],
+      ),
+    );
+  }
+}
+
+class _LibraryBreadcrumbChevron extends StatelessWidget {
+  const _LibraryBreadcrumbChevron();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 2),
+      child: Icon(
+        Icons.chevron_right_rounded,
+        color: kLightGreyColor,
+        size: 15,
+      ),
     );
   }
 }
@@ -3272,13 +3271,9 @@ class _LibraryKindChip extends StatelessWidget {
 }
 
 class _CloudDatabaseMiniPreview extends HookConsumerWidget {
-  const _CloudDatabaseMiniPreview({
-    required this.folder,
-    required this.onOpenFolder,
-  });
+  const _CloudDatabaseMiniPreview({required this.folder});
 
   final LibraryFolder? folder;
-  final ValueChanged<LibraryFolder> onOpenFolder;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -3298,7 +3293,7 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
       );
     }
     if (activeFolder.id == kTwicBookId) {
-      return _TwicDatabaseMiniPreview(onOpen: () => onOpenFolder(activeFolder));
+      return const _TwicDatabaseMiniPreview();
     }
     final shortcutsFocusNode = useFocusNode(
       debugLabel: 'library-mini-saved-${activeFolder.id}',
@@ -3486,7 +3481,6 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
               analysesAsync.connectionState != ConnectionState.done
                   ? 'Loading games…'
                   : '${all.length} ${all.length == 1 ? 'game' : 'games'} · mini preview',
-          onOpen: () => onOpenFolder(activeFolder),
           child:
               analysesAsync.connectionState != ConnectionState.done
                   ? const Center(
@@ -3569,9 +3563,7 @@ class _CloudDatabaseMiniPreview extends HookConsumerWidget {
 }
 
 class _TwicDatabaseMiniPreview extends HookConsumerWidget {
-  const _TwicDatabaseMiniPreview({required this.onOpen});
-
-  final VoidCallback onOpen;
+  const _TwicDatabaseMiniPreview();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -3753,7 +3745,6 @@ class _TwicDatabaseMiniPreview extends HookConsumerWidget {
               totalAsync.valueOrNull == null
                   ? 'System database · mini preview'
                   : '${formatCompactCount(totalAsync.valueOrNull!)} games · mini preview',
-          onOpen: onOpen,
           child:
               games.isEmpty && state.isLoading
                   ? const Center(
@@ -3841,13 +3832,11 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
     required this.source,
     required this.selectedNode,
     required this.selectedPath,
-    required this.onOpen,
   });
 
   final LocalChessSource? source;
   final LocalChessNode? selectedNode;
   final String? selectedPath;
-  final VoidCallback? onOpen;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -4238,7 +4227,6 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
             totalCount: previewTotalCount,
             isLoading: isLoadingPreviewPage,
           ),
-          onOpen: onOpen,
           treeBuildProgress: treeBuildProgress,
           onOpenTree:
               openableLocalTreeIndex == null
@@ -4642,7 +4630,6 @@ class _MiniDatabasePreviewFrame extends StatelessWidget {
   const _MiniDatabasePreviewFrame({
     required this.title,
     required this.subtitle,
-    required this.onOpen,
     this.treeBuildProgress,
     this.onOpenTree,
     this.onBuildTree,
@@ -4651,7 +4638,6 @@ class _MiniDatabasePreviewFrame extends StatelessWidget {
 
   final String title;
   final String subtitle;
-  final VoidCallback? onOpen;
   final LocalChessTreeBuildProgress? treeBuildProgress;
   final VoidCallback? onOpenTree;
   final VoidCallback? onBuildTree;
@@ -4679,15 +4665,6 @@ class _MiniDatabasePreviewFrame extends StatelessWidget {
                 ),
                 const SizedBox(width: 6),
               ],
-              if (onOpen != null)
-                const DesktopTooltip(
-                  message: 'Double-click or press Enter to open this database',
-                  child: Icon(
-                    Icons.keyboard_return_rounded,
-                    size: 15,
-                    color: kLightGreyColor,
-                  ),
-                ),
             ],
           ),
         ),
@@ -4844,6 +4821,21 @@ class _FolderContentView extends HookConsumerWidget {
       }
     }
 
+    void selectContextMenuRow(int rowIndex) {
+      if (visibleIds.isEmpty) return;
+      final index = rowIndex.clamp(0, visibleIds.length - 1).toInt();
+      final rowId = visibleIds[index];
+      // A context menu on one of several selected rows must retain that
+      // selection so Copy PGN still acts on the intended group.
+      if (clampedSelected.contains(rowId)) return;
+      selectedIds.value = LibraryMultiSelect.contextMenuSelection(
+        selectedIds: clampedSelected,
+        rowId: rowId,
+      );
+      selectionAnchor.value = index;
+      selectionExtent.value = index;
+    }
+
     void extendSelectionBy(int delta) {
       final next = LibraryMultiSelect.nextExtent(
         rowIds: visibleIds,
@@ -4857,6 +4849,24 @@ class _FolderContentView extends HookConsumerWidget {
     final selectedAnalyses =
         filtered.where((a) => selectedIds.value.contains(a.id)).toList();
     final copyScope = selectedAnalyses.isEmpty ? filtered : selectedAnalyses;
+
+    void pasteIntoActiveFolder() {
+      if (!isWritableLibraryFolder(activeFolder)) {
+        showDesktopToast(
+          context,
+          '"${activeFolder.name}" is read-only.',
+          error: true,
+        );
+        return;
+      }
+      unawaited(
+        quickImportClipboardToFolder(
+          context: context,
+          ref: ref,
+          folder: activeFolder,
+        ),
+      );
+    }
 
     return Container(
       color: kBackgroundColor,
@@ -4914,6 +4924,7 @@ class _FolderContentView extends HookConsumerWidget {
             child: _LibraryBodyShortcuts(
               folder: activeFolder,
               copyScope: copyScope,
+              onPaste: pasteIntoActiveFolder,
               onExtendSelectionUp: () => extendSelectionBy(-1),
               onExtendSelectionDown: () => extendSelectionBy(1),
               child: FolderDropTarget(
@@ -4938,14 +4949,42 @@ class _FolderContentView extends HookConsumerWidget {
                   selectedIds: clampedSelected,
                   onPrimeSelectionAnchor: primeSelectionAnchor,
                   onRangeSelect: setRangeSelection,
+                  onContextMenuSelect: selectContextMenuRow,
                   onGameAction: (analysis, action) {
+                    if (action == LibraryGameAction.selectAll) {
+                      selectedIds.value = visibleIds.toSet();
+                      selectionAnchor.value = visibleIds.isEmpty ? null : 0;
+                      selectionExtent.value =
+                          visibleIds.isEmpty ? null : visibleIds.length - 1;
+                      return;
+                    }
+                    if (action == LibraryGameAction.pasteGames) {
+                      pasteIntoActiveFolder();
+                      return;
+                    }
                     if (action == LibraryGameAction.copyPgn &&
-                        selectedIds.value.contains(analysis.id) &&
-                        selectedAnalyses.length > 1) {
+                        selectedIds.value.contains(analysis.id)) {
+                      // A context menu can replace selection immediately
+                      // before it dispatches this action. Resolve the scope
+                      // at dispatch time so right-clicking an unselected row
+                      // never copies a stale multi-selection.
+                      final currentSelectedAnalyses = filtered
+                          .where((item) => selectedIds.value.contains(item.id))
+                          .toList();
+                      if (currentSelectedAnalyses.length <= 1) {
+                        _onGameAction(
+                          context: context,
+                          ref: ref,
+                          analysis: analysis,
+                          action: action,
+                          onChanged: () => refreshNonce.value++,
+                        );
+                        return;
+                      }
                       unawaited(
                         copySavedAnalysesAsPgn(
                           context: context,
-                          analyses: selectedAnalyses,
+                          analyses: currentSelectedAnalyses,
                         ),
                       );
                       return;
@@ -4974,10 +5013,11 @@ class _FolderContentView extends HookConsumerWidget {
 /// search field claims focus when interacted with, so typing-into-search
 /// still pastes plain text — these shortcuts only fire when focus rests on
 /// the body region.
-class _LibraryBodyShortcuts extends HookConsumerWidget {
+class _LibraryBodyShortcuts extends HookWidget {
   const _LibraryBodyShortcuts({
     required this.folder,
     required this.copyScope,
+    required this.onPaste,
     required this.onExtendSelectionUp,
     required this.onExtendSelectionDown,
     required this.child,
@@ -4985,12 +5025,13 @@ class _LibraryBodyShortcuts extends HookConsumerWidget {
 
   final LibraryFolder folder;
   final List<SavedAnalysis> copyScope;
+  final VoidCallback onPaste;
   final VoidCallback onExtendSelectionUp;
   final VoidCallback onExtendSelectionDown;
   final Widget child;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final focusNode = useFocusNode(debugLabel: 'library_body_${folder.id}');
     // Re-claim focus when the user switches between folders so the next
     // Ctrl+V/Ctrl+C lands without having to click the empty listview first.
@@ -5000,26 +5041,6 @@ class _LibraryBodyShortcuts extends HookConsumerWidget {
       });
       return null;
     }, [folder.id]);
-
-    final canImport = isWritableLibraryFolder(folder);
-
-    void handlePaste() {
-      if (!canImport) {
-        showDesktopToast(
-          context,
-          '"${folder.name}" is read-only.',
-          error: true,
-        );
-        return;
-      }
-      unawaited(
-        quickImportClipboardToFolder(
-          context: context,
-          ref: ref,
-          folder: folder,
-        ),
-      );
-    }
 
     void handleCopy() {
       unawaited(copySavedAnalysesAsPgn(context: context, analyses: copyScope));
@@ -5035,10 +5056,9 @@ class _LibraryBodyShortcuts extends HookConsumerWidget {
         },
         child: CallbackShortcuts(
           bindings: <ShortcutActivator, VoidCallback>{
-            const SingleActivator(LogicalKeyboardKey.keyV, meta: true):
-                handlePaste,
+            const SingleActivator(LogicalKeyboardKey.keyV, meta: true): onPaste,
             const SingleActivator(LogicalKeyboardKey.keyV, control: true):
-                handlePaste,
+                onPaste,
             const SingleActivator(LogicalKeyboardKey.keyC, meta: true):
                 handleCopy,
             const SingleActivator(LogicalKeyboardKey.keyC, control: true):
@@ -5465,6 +5485,7 @@ class _GamesBody extends ConsumerWidget {
     required this.selectedIds,
     required this.onPrimeSelectionAnchor,
     required this.onRangeSelect,
+    required this.onContextMenuSelect,
     required this.onGameAction,
   });
 
@@ -5478,6 +5499,7 @@ class _GamesBody extends ConsumerWidget {
   final Set<String> selectedIds;
   final ValueChanged<int> onPrimeSelectionAnchor;
   final ValueChanged<int> onRangeSelect;
+  final ValueChanged<int> onContextMenuSelect;
   final void Function(SavedAnalysis analysis, LibraryGameAction action)
   onGameAction;
 
@@ -5544,10 +5566,11 @@ class _GamesBody extends ConsumerWidget {
                 databaseTitle: folder.name,
                 databaseAnalyses: all,
               ),
-          canDelete: !folder.isSubscribed,
+          canDelete: isWritableLibraryFolder(folder),
           selectedIds: selectedIds,
           onPrimeSelectionAnchor: onPrimeSelectionAnchor,
           onRangeSelect: onRangeSelect,
+          onContextMenuSelect: onContextMenuSelect,
           onAction: onGameAction,
         );
       case _GamesViewMode.grid:
@@ -5562,10 +5585,11 @@ class _GamesBody extends ConsumerWidget {
                 databaseTitle: folder.name,
                 databaseAnalyses: all,
               ),
-          canDelete: !folder.isSubscribed,
+          canDelete: isWritableLibraryFolder(folder),
           selectedIds: selectedIds,
           onPrimeSelectionAnchor: onPrimeSelectionAnchor,
           onRangeSelect: onRangeSelect,
+          onContextMenuSelect: onContextMenuSelect,
           onAction: onGameAction,
         );
       case _GamesViewMode.compact:
@@ -5581,10 +5605,11 @@ class _GamesBody extends ConsumerWidget {
                 databaseTitle: folder.name,
                 databaseAnalyses: all,
               ),
-          canDelete: !folder.isSubscribed,
+          canDelete: isWritableLibraryFolder(folder),
           selectedIds: selectedIds,
           onPrimeSelectionAnchor: onPrimeSelectionAnchor,
           onRangeSelect: onRangeSelect,
+          onContextMenuSelect: onContextMenuSelect,
           onAction: onGameAction,
         );
       case _GamesViewMode.list:
@@ -5600,10 +5625,11 @@ class _GamesBody extends ConsumerWidget {
                 databaseTitle: folder.name,
                 databaseAnalyses: all,
               ),
-          canDelete: !folder.isSubscribed,
+          canDelete: isWritableLibraryFolder(folder),
           selectedIds: selectedIds,
           onPrimeSelectionAnchor: onPrimeSelectionAnchor,
           onRangeSelect: onRangeSelect,
+          onContextMenuSelect: onContextMenuSelect,
           onAction: onGameAction,
         );
     }
@@ -5621,6 +5647,7 @@ class _GamesCards extends StatelessWidget {
     required this.selectedIds,
     required this.onPrimeSelectionAnchor,
     required this.onRangeSelect,
+    required this.onContextMenuSelect,
     required this.onAction,
   });
 
@@ -5637,6 +5664,7 @@ class _GamesCards extends StatelessWidget {
   final Set<String> selectedIds;
   final ValueChanged<int> onPrimeSelectionAnchor;
   final ValueChanged<int> onRangeSelect;
+  final ValueChanged<int> onContextMenuSelect;
   final void Function(SavedAnalysis analysis, LibraryGameAction action)
   onAction;
 
@@ -5651,6 +5679,8 @@ class _GamesCards extends StatelessWidget {
         return LibraryGameContextMenu(
           analysis: a,
           canDelete: canDelete,
+          canPaste: canDelete,
+          onContextMenuOpening: () => onContextMenuSelect(i),
           onAction: (action) => onAction(a, action),
           child: _SelectableLibraryGameCard(
             index: i,
@@ -5699,6 +5729,7 @@ class _GamesGrid extends StatelessWidget {
     required this.selectedIds,
     required this.onPrimeSelectionAnchor,
     required this.onRangeSelect,
+    required this.onContextMenuSelect,
     required this.onAction,
   });
 
@@ -5710,6 +5741,7 @@ class _GamesGrid extends StatelessWidget {
   final Set<String> selectedIds;
   final ValueChanged<int> onPrimeSelectionAnchor;
   final ValueChanged<int> onRangeSelect;
+  final ValueChanged<int> onContextMenuSelect;
   final void Function(SavedAnalysis analysis, LibraryGameAction action)
   onAction;
 
@@ -5737,6 +5769,8 @@ class _GamesGrid extends StatelessWidget {
             return LibraryGameContextMenu(
               analysis: a,
               canDelete: canDelete,
+              canPaste: canDelete,
+              onContextMenuOpening: () => onContextMenuSelect(i),
               onAction: (action) => onAction(a, action),
               child: _SelectableLibraryGameCard(
                 index: i,
@@ -5853,6 +5887,7 @@ class _GamesTable extends HookWidget {
     required this.selectedIds,
     required this.onPrimeSelectionAnchor,
     required this.onRangeSelect,
+    required this.onContextMenuSelect,
     required this.onAction,
   });
 
@@ -5864,6 +5899,7 @@ class _GamesTable extends HookWidget {
   final Set<String> selectedIds;
   final ValueChanged<int> onPrimeSelectionAnchor;
   final ValueChanged<int> onRangeSelect;
+  final ValueChanged<int> onContextMenuSelect;
   final void Function(SavedAnalysis analysis, LibraryGameAction action)
   onAction;
 
@@ -5915,6 +5951,7 @@ class _GamesTable extends HookWidget {
                         onPrimeSelectionAnchor:
                             (_) => onPrimeSelectionAnchor(i),
                         onRangeSelect: (_) => onRangeSelect(i),
+                        onContextMenuSelect: (_) => onContextMenuSelect(i),
                         onAction: (action) => onAction(rows[i], action),
                       ),
                 ),
@@ -6359,6 +6396,7 @@ class _GamesTableRow extends StatefulWidget {
     this.columnOrder = _defaultGamesTableColumns,
     required this.onPrimeSelectionAnchor,
     required this.onRangeSelect,
+    required this.onContextMenuSelect,
     required this.onAction,
   });
 
@@ -6371,6 +6409,7 @@ class _GamesTableRow extends StatefulWidget {
   final List<_GamesTableColumn> columnOrder;
   final ValueChanged<int> onPrimeSelectionAnchor;
   final ValueChanged<int> onRangeSelect;
+  final ValueChanged<int> onContextMenuSelect;
   final ValueChanged<LibraryGameAction> onAction;
 
   @override
@@ -6486,6 +6525,8 @@ class _GamesTableRowState extends State<_GamesTableRow>
     return LibraryGameContextMenu(
       analysis: a,
       canDelete: widget.canDelete,
+      canPaste: widget.canDelete,
+      onContextMenuOpening: () => widget.onContextMenuSelect(0),
       useLongPress: false,
       onAction: widget.onAction,
       child: ClickCursor(
@@ -6910,6 +6951,12 @@ TournamentGameSummary _summaryFromLocalPreviewGame(LocalChessGame localGame) {
     status: _statusFromResult(s('Result')),
     openingName: s('Opening').isNotEmpty ? s('Opening') : s('ECO'),
     hasStarted: localGame.hasMoves,
+    localPgnSource: TournamentGameLocalPgnSource(
+      sourcePath: localGame.sourcePath,
+      sourceIndex: localGame.indexInFile,
+      sourceFileGameCount: localGame.fileGameCount,
+      title: localGame.title,
+    ),
   );
 }
 
@@ -7110,6 +7157,11 @@ Future<void> _onGameAction({
       );
     case LibraryGameAction.copyPgn:
       await _onCopyPgn(context: context, analysis: analysis);
+    case LibraryGameAction.selectAll:
+    case LibraryGameAction.pasteGames:
+      // These are handled by the folder list, where the complete visible
+      // selection and shared Ctrl/Cmd+V import callback are available.
+      return;
     case LibraryGameAction.copyFen:
       await _onCopyFen(context: context, analysis: analysis);
     case LibraryGameAction.exportPgn:
@@ -11442,6 +11494,24 @@ List<LibraryFolder> libraryFolderPath(
     currentId = folder.parentId;
   }
   return path;
+}
+
+@visibleForTesting
+String libraryMyDatabasesBreadcrumbText({
+  required List<LibraryFolder> folders,
+  required String? currentFolderId,
+  String? localGroupLabel,
+}) {
+  final localLabel = localGroupLabel?.trim();
+  final segments = <String>['My Databases'];
+  if (localLabel != null && localLabel.isNotEmpty) {
+    segments.add(localLabel);
+  } else {
+    segments.addAll(
+      libraryFolderPath(folders, currentFolderId).map((folder) => folder.name),
+    );
+  }
+  return segments.join(' › ');
 }
 
 // =====================================================================

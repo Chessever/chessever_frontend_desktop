@@ -10,6 +10,7 @@ class LibraryChromeBar extends StatelessWidget {
     super.key,
     required this.icon,
     required this.title,
+    this.titleWidget,
     this.meta,
     this.badge,
     this.trailing,
@@ -20,6 +21,11 @@ class LibraryChromeBar extends StatelessWidget {
 
   final IconData icon;
   final String title;
+
+  /// Optional interactive replacement for [title]. This is useful for header
+  /// breadcrumbs, where each segment can remain a navigation target without
+  /// introducing a second header row below the chrome.
+  final Widget? titleWidget;
   final String? meta;
   final Widget? badge;
   final Widget? trailing;
@@ -83,18 +89,20 @@ class LibraryChromeBar extends StatelessWidget {
                   child: Row(
                     children: [
                       Flexible(
-                        child: Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: kWhiteColor,
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.15,
-                            height: 1.1,
-                          ),
-                        ),
+                        child:
+                            titleWidget ??
+                            Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: kWhiteColor,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.15,
+                                height: 1.1,
+                              ),
+                            ),
                       ),
                       if (metaText != null && metaText.isNotEmpty) ...[
                         Padding(

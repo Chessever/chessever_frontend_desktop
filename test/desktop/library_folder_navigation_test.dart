@@ -52,6 +52,21 @@ void main() {
         'Openings',
         '1.e4',
       ]);
+      expect(
+        libraryMyDatabasesBreadcrumbText(
+          folders: folders,
+          currentFolderId: 'e4',
+        ),
+        'My Databases › ChessBase › Openings › 1.e4',
+      );
+      expect(
+        libraryMyDatabasesBreadcrumbText(
+          folders: folders,
+          currentFolderId: 'e4',
+          localGroupLabel: 'Player sources',
+        ),
+        'My Databases › Player sources',
+      );
     });
 
     test(
