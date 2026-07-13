@@ -25,6 +25,29 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 void main() {
+  test('finds an existing player workspace by exact FIDE identity', () {
+    const state = PlayerWorkspaceState(
+      players: <PlayerWorkspacePlayer>[
+        PlayerWorkspacePlayer(
+          id: 'carlsen',
+          displayName: 'GM Magnus Carlsen',
+          createdAtMs: 1,
+          fideId: '1503014',
+        ),
+        PlayerWorkspacePlayer(
+          id: 'manual',
+          displayName: 'Manual Player',
+          createdAtMs: 2,
+        ),
+      ],
+    );
+
+    expect(state.playerForFideId('1503014')?.id, 'carlsen');
+    expect(state.playerForFideId(' 1503014 ')?.id, 'carlsen');
+    expect(state.playerForFideId('150301'), isNull);
+    expect(state.playerForFideId(null), isNull);
+  });
+
   test('places Combined immediately above Manual PGN in the source rail', () {
     expect(playerWorkspaceSourceRailOrder, <PlayerWorkspaceSource>[
       PlayerWorkspaceSource.chessever,

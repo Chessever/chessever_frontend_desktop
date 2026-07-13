@@ -23,6 +23,7 @@ import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_explorer_scope.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/utils/player_build_tree_filters.dart';
 import 'package:chessever/screens/gamebase/models/gamebase_player.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart'
@@ -100,7 +101,9 @@ final _cachedPlayerWorkspaceTreeIndexProvider = FutureProvider.autoDispose
     });
 
 class PlayerWorkspacePane extends HookConsumerWidget {
-  const PlayerWorkspacePane({super.key});
+  const PlayerWorkspacePane({super.key, this.tabId});
+
+  final String? tabId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -113,15 +116,46 @@ class PlayerWorkspacePane extends HookConsumerWidget {
     final error = ref.watch(
       playerWorkspaceProvider.select((state) => state.error),
     );
-    final openedPlayerId = useState<String?>(null);
-    final selected = _playerById(players, openedPlayerId.value);
+    final requestedPlayerId = ref.watch(
+      playerWorkspacePlayerByTabIdProvider.select(
+        (targets) => tabId == null ? null : targets[tabId],
+      ),
+    );
+    final openedPlayerId = useState<String?>(requestedPlayerId);
+    final visiblePlayerId = requestedPlayerId ?? openedPlayerId.value;
+    final selected = _playerById(players, visiblePlayerId);
+    final isActiveTab = ref.watch(
+      desktopTabsProvider.select(
+        (tabs) => tabId == null || tabs.activeId == tabId,
+      ),
+    );
     final tab = useState(_PlayerWorkspaceTab.overview);
     final gamesFilter = useState(LocalChessGameFilter());
     final gamesSourcePath = useState<String?>(null);
     final gamesFilterNonce = useState(0);
 
+    useEffect(() {
+      if (!isActiveTab || visiblePlayerId == null) return null;
+      unawaited(
+        Future<void>(() {
+          ref
+              .read(playerWorkspaceProvider.notifier)
+              .selectPlayer(visiblePlayerId);
+        }),
+      );
+      return null;
+    }, [isActiveTab, visiblePlayerId]);
+
     void openPlayer(String playerId) {
       openedPlayerId.value = playerId;
+      final currentTabId = tabId;
+      if (currentTabId != null) {
+        ref
+            .read(playerWorkspacePlayerByTabIdProvider.notifier)
+            .update(
+              (targets) => <String, String>{...targets, currentTabId: playerId},
+            );
+      }
       tab.value = _PlayerWorkspaceTab.overview;
       gamesFilter.value = LocalChessGameFilter();
       gamesSourcePath.value = null;

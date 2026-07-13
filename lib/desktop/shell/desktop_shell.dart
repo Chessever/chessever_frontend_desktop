@@ -58,6 +58,7 @@ import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
+import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
@@ -173,6 +174,10 @@ class DesktopShell extends HookConsumerWidget {
             if (!m.containsKey(t.id)) return m;
             final next = <String, dynamic>{...m}..remove(t.id);
             return Map<String, PlayerProfileArgs>.from(next);
+          });
+          ref.read(playerWorkspacePlayerByTabIdProvider.notifier).update((m) {
+            if (!m.containsKey(t.id)) return m;
+            return <String, String>{...m}..remove(t.id);
           });
           ref.read(boardTabGameArgsByTabIdProvider.notifier).update((m) {
             if (!m.containsKey(t.id)) return m;
@@ -906,7 +911,7 @@ Widget resolveDesktopTabContent(DesktopTab? tab) {
     case TabKind.favorites:
       return const FavoritesPane();
     case TabKind.players:
-      return const PlayerWorkspacePane();
+      return PlayerWorkspacePane(tabId: tab.id);
     case TabKind.rankings:
       return const RankingsPane();
     case TabKind.calendar:

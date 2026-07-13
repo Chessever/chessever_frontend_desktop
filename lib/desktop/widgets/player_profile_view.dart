@@ -18,6 +18,7 @@ import 'package:chessever/desktop/state/board_explorer_scope.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/desktop/utils/event_game_card_keyboard_navigation.dart';
 import 'package:chessever/desktop/utils/player_build_tree_filters.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -123,6 +124,7 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
   String? _gamebasePlayerId;
   String? _warmedOpeningTreePlayerId;
   _ProfileTab _tab = _ProfileTab.about;
+  bool _isBuildingProfile = false;
 
   @override
   void initState() {
@@ -314,6 +316,42 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
     unawaited(
       ref.read(playerByIdProvider(playerId).future).catchError((_) => null),
     );
+  }
+
+  Future<void> _openOrBuildPlayerWorkspace(int fideId) async {
+    if (_isBuildingProfile) return;
+    final normalizedFideId = fideId.toString();
+    var workspace = ref
+        .read(playerWorkspaceProvider)
+        .playerForFideId(normalizedFideId);
+
+    if (workspace == null) {
+      setState(() => _isBuildingProfile = true);
+      try {
+        await ref
+            .read(playerWorkspaceProvider.notifier)
+            .ensurePlayerWorkspaceByFideId(normalizedFideId);
+        workspace = ref
+            .read(playerWorkspaceProvider)
+            .playerForFideId(normalizedFideId);
+        if (workspace == null) {
+          throw StateError('The player profile could not be created.');
+        }
+      } catch (error) {
+        if (!mounted) return;
+        _showToast(_playerWorkspaceErrorText(error), error: true);
+        return;
+      } finally {
+        if (mounted) setState(() => _isBuildingProfile = false);
+      }
+    } else {
+      await ref
+          .read(playerWorkspaceProvider.notifier)
+          .selectPlayer(workspace.id);
+    }
+
+    if (!mounted) return;
+    openPlayerWorkspaceTab(ref, workspace);
   }
 
   Future<void> _toggleFavorite() async {
@@ -532,6 +570,12 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
     final buildTreePlayerId = _resolveGamebasePlayerId();
     _warmOpeningTreeSnapshot(buildTreePlayerId);
     final hasBuildTreeTarget = buildTreePlayerId != null;
+    final workspacePlayer = ref.watch(
+      playerWorkspaceProvider.select(
+        (state) => state.playerForFideId(effectiveFideId?.toString()),
+      ),
+    );
+    final hasFideId = effectiveFideId != null && effectiveFideId > 0;
 
     return Container(
       color: kBackgroundColor,
@@ -543,9 +587,16 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
             title: effectiveTitle,
             federation: effectiveFederation,
             isFavorite: isFavorite,
+            hasFideId: hasFideId,
+            hasPlayerWorkspace: workspacePlayer != null,
+            isBuildingProfile: _isBuildingProfile,
             hasBuildTree: hasBuildTreeTarget,
             hasActiveFilter: hasActiveFilter,
             onToggleFavorite: _toggleFavorite,
+            onOpenPlayerWorkspace:
+                hasFideId
+                    ? () => _openOrBuildPlayerWorkspace(effectiveFideId)
+                    : null,
             onBuildTree: _openBuildTreeGame,
             onSaveToLibrary: () {
               _openSaveToLibrary(
@@ -622,6 +673,19 @@ String _playerProfileTreeTitle(String playerName) {
   final player = playerName.trim();
   if (player.isEmpty) return 'Player Tree';
   return '$player Tree';
+}
+
+String _playerWorkspaceErrorText(Object error) {
+  final message = error.toString();
+  for (final prefix in const <String>[
+    'Bad state: ',
+    'Invalid argument(s): ',
+    'Invalid argument: ',
+    'Exception: ',
+  ]) {
+    if (message.startsWith(prefix)) return message.substring(prefix.length);
+  }
+  return message;
 }
 
 class _ProfileRatings {
@@ -886,9 +950,13 @@ class _Header extends StatelessWidget {
     required this.title,
     required this.federation,
     required this.isFavorite,
+    required this.hasFideId,
+    required this.hasPlayerWorkspace,
+    required this.isBuildingProfile,
     required this.hasBuildTree,
     required this.hasActiveFilter,
     required this.onToggleFavorite,
+    required this.onOpenPlayerWorkspace,
     required this.onBuildTree,
     required this.onSaveToLibrary,
   });
@@ -897,9 +965,13 @@ class _Header extends StatelessWidget {
   final String? title;
   final String? federation;
   final bool isFavorite;
+  final bool hasFideId;
+  final bool hasPlayerWorkspace;
+  final bool isBuildingProfile;
   final bool hasBuildTree;
   final bool hasActiveFilter;
   final VoidCallback onToggleFavorite;
+  final VoidCallback? onOpenPlayerWorkspace;
   final VoidCallback onBuildTree;
   final VoidCallback onSaveToLibrary;
 
@@ -972,6 +1044,23 @@ class _Header extends StatelessWidget {
             selected: isFavorite,
             onPress: onToggleFavorite,
           ),
+          if (hasFideId) ...[
+            const SizedBox(width: 8),
+            DesktopHeaderActionButton(
+              label: hasPlayerWorkspace ? 'Player Profile' : 'Build Profile',
+              icon:
+                  hasPlayerWorkspace
+                      ? Icons.person_outline_rounded
+                      : Icons.person_add_alt_1_outlined,
+              onPress: onOpenPlayerWorkspace,
+              tooltip:
+                  hasPlayerWorkspace
+                      ? 'Open this player in Players'
+                      : 'Create this FIDE player in Players',
+              accented: hasPlayerWorkspace,
+              loading: isBuildingProfile,
+            ),
+          ],
           if (hasBuildTree) ...[
             const SizedBox(width: 8),
             DesktopHeaderActionButton(

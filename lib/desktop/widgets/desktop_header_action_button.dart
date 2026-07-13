@@ -13,6 +13,7 @@ class DesktopHeaderActionButton extends StatelessWidget {
     this.tooltip,
     this.accented = false,
     this.fillWidth = false,
+    this.loading = false,
   });
 
   final String label;
@@ -21,14 +22,24 @@ class DesktopHeaderActionButton extends StatelessWidget {
   final String? tooltip;
   final bool accented;
   final bool fillWidth;
+  final bool loading;
 
   @override
   Widget build(BuildContext context) {
     final button = FButton(
       style: _labelButtonStyle(accented: accented),
-      onPress: onPress,
+      onPress: loading ? null : onPress,
       mainAxisSize: fillWidth ? MainAxisSize.max : MainAxisSize.min,
-      prefix: Icon(icon),
+      prefix:
+          loading
+              ? const SizedBox.square(
+                dimension: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: kPrimaryColor,
+                ),
+              )
+              : Icon(icon),
       child: Text(label),
     );
 

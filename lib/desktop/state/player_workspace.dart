@@ -11,6 +11,7 @@ import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_workspace_repository.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
@@ -49,6 +50,18 @@ class PlayerWorkspaceState {
     return null;
   }
 
+  /// Returns the canonical workspace for [fideId]. FIDE identity is the
+  /// stable join between rankings/profile surfaces and the Players workspace;
+  /// names are deliberately not used as a fallback here.
+  PlayerWorkspacePlayer? playerForFideId(String? fideId) {
+    final normalized = _normalizedPlayerFideId(fideId);
+    if (normalized == null) return null;
+    for (final player in players) {
+      if (_normalizedPlayerFideId(player.fideId) == normalized) return player;
+    }
+    return null;
+  }
+
   PlayerWorkspaceState copyWith({
     List<PlayerWorkspacePlayer>? players,
     String? selectedPlayerId,
@@ -76,6 +89,62 @@ final playerWorkspaceRepositoryProvider = Provider<PlayerWorkspaceRepository>(
     gamebaseRepository: ref.watch(gamebaseRepositoryProvider),
   ),
 );
+
+/// The player each Players tab should reveal, keyed by [DesktopTab.id].
+///
+/// The workspace's persisted selection remains the operation target, while
+/// this map lets a newly opened tab render the requested player on its first
+/// frame and keeps multiple desktop tabs pointed at their own player.
+final playerWorkspacePlayerByTabIdProvider = StateProvider<Map<String, String>>(
+  (_) => const <String, String>{},
+);
+
+/// Opens or focuses a Players tab for [player]. A tab already hosting this
+/// exact workspace is reused; otherwise a focused tab is created.
+String openPlayerWorkspaceTab(
+  WidgetRef ref,
+  PlayerWorkspacePlayer player, {
+  bool focus = true,
+}) {
+  final tabs = ref.read(desktopTabsProvider);
+  final playerByTab = ref.read(playerWorkspacePlayerByTabIdProvider);
+  final tabsNotifier = ref.read(desktopTabsProvider.notifier);
+
+  String? existingTabId;
+  for (final entry in playerByTab.entries) {
+    if (entry.value != player.id) continue;
+    for (final tab in tabs.tabs) {
+      if (tab.id == entry.key && tab.kind == TabKind.players) {
+        existingTabId = entry.key;
+        break;
+      }
+    }
+    if (existingTabId != null) break;
+  }
+
+  final title =
+      player.displayName.trim().isEmpty
+          ? TabKind.players.defaultTitle
+          : player.displayName.trim();
+  final String tabId;
+  if (existingTabId != null) {
+    tabId = existingTabId;
+    tabsNotifier.rename(tabId, title: title);
+    if (focus) tabsNotifier.activate(tabId);
+  } else {
+    tabId = tabsNotifier.open(
+      TabKind.players,
+      title: title,
+      reuseExisting: false,
+      focus: focus,
+    );
+  }
+
+  ref
+      .read(playerWorkspacePlayerByTabIdProvider.notifier)
+      .update((current) => <String, String>{...current, tabId: player.id});
+  return tabId;
+}
 
 typedef PlayerWorkspaceLocalDatabaseRegistrar =
     Future<void> Function(
@@ -305,6 +374,45 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     final player = _workspaceRepository.playerFromChessEver(gamebasePlayer);
     await _upsertPlayer(player, select: false);
     return player.id;
+  }
+
+  /// Resolves and creates the canonical Players workspace for [fideId].
+  ///
+  /// This is the programmatic equivalent of searching ChessEver in the
+  /// Add-player dialog and choosing the exact FIDE result. Repeated calls are
+  /// idempotent because both the preflight and [addChessEverPlayer] deduplicate
+  /// by FIDE ID.
+  Future<String> ensurePlayerWorkspaceByFideId(String fideId) async {
+    await _initialLoadFuture;
+    final normalized = _normalizedPlayerFideId(fideId);
+    if (normalized == null) {
+      throw ArgumentError.value(fideId, 'fideId', 'A FIDE ID is required.');
+    }
+
+    final existing = state.playerForFideId(normalized);
+    if (existing != null) {
+      await selectPlayer(existing.id);
+      return existing.id;
+    }
+
+    final match = await _workspaceRepository.findChessEverPlayerByFideId(
+      _gamebaseRepository,
+      normalized,
+    );
+    if (match == null) {
+      throw StateError('No ChessEver player was found for FIDE $normalized.');
+    }
+    final matchedFideId = _normalizedPlayerFideId(match.fideId);
+    if (matchedFideId != normalized) {
+      throw StateError(
+        'ChessEver returned FIDE ${matchedFideId ?? 'unknown'} while '
+        'building FIDE $normalized.',
+      );
+    }
+
+    final playerId = await addChessEverPlayer(match);
+    await selectPlayer(playerId);
+    return playerId;
   }
 
   /// Attaches one or more already-fetched external accounts (validated up front
