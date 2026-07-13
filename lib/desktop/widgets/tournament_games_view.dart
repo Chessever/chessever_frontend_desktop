@@ -1582,14 +1582,35 @@ Future<GamesTourModel> _hydrateTournamentGameForBoardOpen({
   required GameRepository gameRepo,
   required GamesTourModel game,
 }) async {
+  return hydrateTournamentGameForBoardOpen(
+    game: game,
+    fetchCanonicalGame: (gameId) async {
+      final latestRow = await gameRepo.getGameWithPGN(gameId);
+      return GamesTourModel.fromGame(latestRow);
+    },
+  );
+}
+
+/// Resolves a canonical event game before it reaches a desktop board tab.
+///
+/// Smart Event rows may be sourced from Gamebase even though their UUID maps
+/// to a real ChessEver broadcast game. Fetching that UUID supplies the full
+/// canonical PGN. Local Gamebase/TWIC rows remain offline-only and are left
+/// untouched.
+Future<GamesTourModel> hydrateTournamentGameForBoardOpen({
+  required GamesTourModel game,
+  required Future<GamesTourModel> Function(String gameId) fetchCanonicalGame,
+}) async {
   final normalizedCurrent = _withFreshestFen(game);
-  if (game.source != GameSource.supabase || game.gameId.trim().isEmpty) {
+  final shouldFetchCanonicalGame =
+      game.source == GameSource.supabase ||
+      isDesktopCanonicalGamebaseGame(game);
+  if (!shouldFetchCanonicalGame || game.gameId.trim().isEmpty) {
     return normalizedCurrent;
   }
 
   try {
-    final latestRow = await gameRepo.getGameWithPGN(game.gameId);
-    final latest = _withFreshestFen(GamesTourModel.fromGame(latestRow));
+    final latest = _withFreshestFen(await fetchCanonicalGame(game.gameId));
     return _withFreshestFen(
       selectFreshestNavigationGame(
         current: normalizedCurrent,

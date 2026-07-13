@@ -22,6 +22,15 @@ final _uuidPattern = RegExp(
 );
 final _lichessShortIdPattern = RegExp(r'^[A-Za-z0-9]{8}$');
 
+/// Smart Event rows can originate from Gamebase while retaining the canonical
+/// ChessEver game UUID. Those rows resolve through the same public game route
+/// and Supabase PGN endpoint as a normal broadcast game. Other Gamebase rows
+/// are local catalogue records and deliberately remain unshareable.
+bool isDesktopCanonicalGamebaseGame(GamesTourModel game) {
+  return game.source == GameSource.gamebase &&
+      _uuidPattern.hasMatch(game.gameId.trim());
+}
+
 String? buildDesktopGameShareUrl({
   GamesTourModel? game,
   String? gameId,
@@ -32,7 +41,8 @@ String? buildDesktopGameShareUrl({
   if (modelUrl != null && modelUrl.trim().isNotEmpty) return modelUrl;
   if (game != null &&
       game.source != GameSource.supabase &&
-      game.source != GameSource.savedAnalysis) {
+      game.source != GameSource.savedAnalysis &&
+      !isDesktopCanonicalGamebaseGame(game)) {
     return null;
   }
 
@@ -49,6 +59,37 @@ String? buildDesktopGameShareUrl({
   return queryParams.isEmpty
       ? uri.toString()
       : uri.replace(queryParameters: queryParams).toString();
+}
+
+/// Resolves export/share PGN for the desktop game dialog.
+///
+/// Canonical Smart Event games are represented as [GameSource.gamebase] in
+/// some list payloads, but their UUID belongs to the ChessEver `games` table.
+/// Prefer that full canonical PGN before falling back to the ordinary Gamebase
+/// resolver, so the board and exported PGN do not stop at the partial list
+/// row.
+Future<String> resolveDesktopGameSharePgn({
+  required GamesTourModel game,
+  SharePgnFetcher? fetchSupabasePgn,
+  SharePgnFetcher? fetchGamebasePgn,
+}) async {
+  if (isDesktopCanonicalGamebaseGame(game) && fetchSupabasePgn != null) {
+    final canonicalPgn = await resolveGameSharePgn(
+      game: game.copyWith(source: GameSource.supabase, pgn: ''),
+      analysisGame: null,
+      savedAnalysisData: null,
+      fetchSupabasePgn: fetchSupabasePgn,
+    );
+    if (pgnHasMoves(canonicalPgn)) return canonicalPgn;
+  }
+
+  return resolveGameSharePgn(
+    game: game,
+    analysisGame: null,
+    savedAnalysisData: null,
+    fetchSupabasePgn: fetchSupabasePgn,
+    fetchGamebasePgn: fetchGamebasePgn,
+  );
 }
 
 String? buildSavedAnalysisShareUrl(SavedAnalysis analysis) {
@@ -134,10 +175,8 @@ Future<void> showDesktopGameShareDialog({
   bool flipped = false,
 }) async {
   try {
-    final pgn = await resolveGameSharePgn(
+    final pgn = await resolveDesktopGameSharePgn(
       game: game,
-      analysisGame: null,
-      savedAnalysisData: null,
       fetchSupabasePgn: (gameId) async {
         try {
           return await ref.read(gameRepositoryProvider).getGamePgn(gameId);
