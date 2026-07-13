@@ -99,27 +99,30 @@ final playerWorkspacePlayerByTabIdProvider = StateProvider<Map<String, String>>(
   (_) => const <String, String>{},
 );
 
-/// Opens or focuses a Players tab for [player]. A tab already hosting this
-/// exact workspace is reused; otherwise a focused tab is created.
+/// Opens a Players tab for [player], optionally focusing it. When
+/// [reuseExisting] is true, a tab already hosting this workspace is reused.
 String openPlayerWorkspaceTab(
   WidgetRef ref,
   PlayerWorkspacePlayer player, {
   bool focus = true,
+  bool reuseExisting = true,
 }) {
   final tabs = ref.read(desktopTabsProvider);
   final playerByTab = ref.read(playerWorkspacePlayerByTabIdProvider);
   final tabsNotifier = ref.read(desktopTabsProvider.notifier);
 
   String? existingTabId;
-  for (final entry in playerByTab.entries) {
-    if (entry.value != player.id) continue;
-    for (final tab in tabs.tabs) {
-      if (tab.id == entry.key && tab.kind == TabKind.players) {
-        existingTabId = entry.key;
-        break;
+  if (reuseExisting) {
+    for (final entry in playerByTab.entries) {
+      if (entry.value != player.id) continue;
+      for (final tab in tabs.tabs) {
+        if (tab.id == entry.key && tab.kind == TabKind.players) {
+          existingTabId = entry.key;
+          break;
+        }
       }
+      if (existingTabId != null) break;
     }
-    if (existingTabId != null) break;
   }
 
   final title =
@@ -381,7 +384,8 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   /// This is the programmatic equivalent of searching ChessEver in the
   /// Add-player dialog and choosing the exact FIDE result. Repeated calls are
   /// idempotent because both the preflight and [addChessEverPlayer] deduplicate
-  /// by FIDE ID.
+  /// by FIDE ID. An existing FIDE-only workspace is upgraded by attaching its
+  /// exact ChessEver source.
   Future<String> ensurePlayerWorkspaceByFideId(String fideId) async {
     await _initialLoadFuture;
     final normalized = _normalizedPlayerFideId(fideId);
@@ -392,7 +396,9 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     final existing = state.playerForFideId(normalized);
     if (existing != null) {
       await selectPlayer(existing.id);
-      return existing.id;
+      if (existing.account(PlayerWorkspaceSource.chessever) != null) {
+        return existing.id;
+      }
     }
 
     final match = await _workspaceRepository.findChessEverPlayerByFideId(
@@ -408,6 +414,11 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
         'ChessEver returned FIDE ${matchedFideId ?? 'unknown'} while '
         'building FIDE $normalized.',
       );
+    }
+
+    if (existing != null) {
+      await connectChessEverPlayer(match);
+      return existing.id;
     }
 
     final playerId = await addChessEverPlayer(match);

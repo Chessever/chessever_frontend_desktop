@@ -3283,6 +3283,59 @@ void main() {
       },
     );
 
+    test(
+      'ensurePlayerWorkspaceByFideId attaches ChessEver to a FIDE-only player',
+      () async {
+        final workspaceRepository = _FakePlayerWorkspaceRepository(
+            chessEverPlayersByFideId: const <String, GamebasePlayer>{
+              '1503014': GamebasePlayer(
+                id: 'ce-carlsen',
+                fideId: '1503014',
+                name: 'Carlsen, Magnus',
+                gender: PlayerGender.male,
+                fed: 'NOR',
+                title: 'GM',
+              ),
+            },
+          )
+          ..snapshot = const PlayerWorkspaceSnapshot(
+            players: <PlayerWorkspacePlayer>[
+              PlayerWorkspacePlayer(
+                id: 'fide-only',
+                displayName: 'Magnus Carlsen',
+                createdAtMs: 1,
+                fideId: '1503014',
+              ),
+            ],
+          );
+        final notifier = PlayerWorkspaceNotifier(
+          workspaceRepository: workspaceRepository,
+          gamebaseRepository: GamebaseRepository(Dio()),
+          localRepository: LocalChessDatabaseRepository(
+            database: () async => db,
+          ),
+        );
+        await notifier.load();
+
+        final playerId = await notifier.ensurePlayerWorkspaceByFideId(
+          '1503014',
+        );
+
+        expect(playerId, 'fide-only');
+        expect(notifier.state.players, hasLength(1));
+        expect(notifier.state.selectedPlayerId, 'fide-only');
+        expect(workspaceRepository.chessEverFideIdRequests, <String>[
+          '1503014',
+        ]);
+        final player = notifier.state.selectedPlayer!;
+        expect(player.fideId, '1503014');
+        expect(
+          player.account(PlayerWorkspaceSource.chessever)?.externalId,
+          'ce-carlsen',
+        );
+      },
+    );
+
     test('addManualPlayer returns the created player id', () async {
       final workspaceRepository = _FakePlayerWorkspaceRepository();
       final notifier = PlayerWorkspaceNotifier(

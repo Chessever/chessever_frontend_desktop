@@ -8,15 +8,14 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
+import 'package:chessever/desktop/models/player_workspace_models.dart';
+import 'package:chessever/desktop/panes/player_workspace_pane.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
-import 'package:chessever/desktop/state/board_explorer_scope.dart';
-import 'package:chessever/desktop/state/board_pane_session.dart';
-import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/desktop/utils/event_game_card_keyboard_navigation.dart';
@@ -33,7 +32,6 @@ import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/game_view_mode_toggle.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
 import 'package:chessever/desktop/widgets/list_keyboard_scroll.dart';
-import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
@@ -48,9 +46,6 @@ import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
-import 'package:chessever/screens/gamebase/models/gamebase_player.dart';
-import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
-import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
@@ -117,14 +112,11 @@ extension on _ProfileTab {
 }
 
 class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
-  static const String _startingFen =
-      'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-
   late PlayerProfileDataSource _dataSource;
   String? _gamebasePlayerId;
-  String? _warmedOpeningTreePlayerId;
   _ProfileTab _tab = _ProfileTab.about;
   bool _isBuildingProfile = false;
+  bool _isBuildingTree = false;
 
   @override
   void initState() {
@@ -141,7 +133,6 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
       setState(() {
         _dataSource = _profileInitialDataSource();
         _gamebasePlayerId = _normalize(widget.args.gamebasePlayerId);
-        _warmedOpeningTreePlayerId = null;
         _tab = _ProfileTab.about;
       });
     }
@@ -171,155 +162,56 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
     setState(() => _tab = next);
   }
 
-  String? _resolveGamebasePlayerId() {
-    if (_gamebasePlayerId != null) return _gamebasePlayerId;
-    final twicLookupKey = _keyFor(PlayerProfileDataSource.twic);
-    return _normalize(
-      ref
-          .read(twicProfileSummaryProvider(twicLookupKey))
-          .valueOrNull
-          ?.gamebasePlayerId,
-    );
-  }
-
-  void _warmOpeningTreeSnapshot(String? playerId) {
-    final id = _normalize(playerId);
-    if (id == null) return;
-    if (_warmedOpeningTreePlayerId == id) return;
-    _warmedOpeningTreePlayerId = id;
-    Future.microtask(() {
-      if (!mounted) return;
-      ref.read(playerOpeningTreeProvider(id).notifier).start();
-    });
-  }
-
-  PlayerGender _mapSexToGender(String? sex) {
-    final normalized = sex?.trim().toLowerCase();
-    if (normalized == null || normalized.isEmpty) return PlayerGender.male;
-    if (normalized == 'f' || normalized.startsWith('female')) {
-      return PlayerGender.female;
+  Future<PlayerWorkspacePlayer> _ensurePlayerWorkspace(int fideId) async {
+    final normalizedFideId = fideId.toString();
+    await ref
+        .read(playerWorkspaceProvider.notifier)
+        .ensurePlayerWorkspaceByFideId(normalizedFideId);
+    final workspace = ref
+        .read(playerWorkspaceProvider)
+        .playerForFideId(normalizedFideId);
+    if (workspace == null) {
+      throw StateError('The player profile could not be created.');
     }
-    return PlayerGender.male;
+    return workspace;
   }
 
-  GamebasePlayer _buildExplorerFallbackPlayer(String id) {
-    final cached = ref.read(playerByIdProvider(id)).valueOrNull;
-    if (cached != null) return cached;
-
-    final activePlayerKey = _keyFor(_dataSource);
-    final activeProfile =
-        ref.read(playerProfileDataKeyProvider(activePlayerKey)).valueOrNull;
-    final fallbackChessPlayer =
-        ref.read(chessPlayerByFideIdProvider(widget.args.fideId)).valueOrNull;
-
-    final name =
-        (activeProfile?.name.trim().isNotEmpty ?? false)
-            ? activeProfile!.name.trim()
-            : ((fallbackChessPlayer?.name.trim().isNotEmpty ?? false)
-                ? fallbackChessPlayer!.name.trim()
-                : widget.args.playerName);
-
-    final fed =
-        (activeProfile?.federation?.trim().isNotEmpty ?? false)
-            ? activeProfile!.federation!.trim()
-            : ((widget.args.federation?.trim().isNotEmpty ?? false)
-                ? widget.args.federation!.trim()
-                : (fallbackChessPlayer?.country?.trim() ?? ''));
-
-    final title =
-        (activeProfile?.title?.trim().isNotEmpty ?? false)
-            ? activeProfile!.title?.trim()
-            : ((widget.args.title?.trim().isNotEmpty ?? false)
-                ? widget.args.title?.trim()
-                : fallbackChessPlayer?.title?.trim());
-
-    return GamebasePlayer(
-      id: id,
-      fideId: widget.args.fideId?.toString() ?? '',
-      name: name,
-      gender: _mapSexToGender(activeProfile?.sex),
-      fed: fed,
-      title: title,
-      ratingClassical: activeProfile?.classicalRating ?? widget.args.rating,
-      ratingRapid: activeProfile?.rapidRating,
-      ratingBlitz: activeProfile?.blitzRating,
-    );
-  }
-
-  Future<void> _openBuildTreeGame() async {
-    if (!mounted) return;
-    final playerKey = _keyFor(_dataSource);
-    final playerId = _resolveGamebasePlayerId();
-    if (playerId == null || playerId.isEmpty) {
-      _showToast('Player games are still loading.');
-      return;
-    }
-
+  Future<void> _buildChessEverPlayerTree(int fideId) async {
+    if (_isBuildingProfile || _isBuildingTree) return;
     final preparationSide = await showPlayerBuildTreePreparationDialog(
       context: context,
       playerName: widget.args.playerName,
     );
     if (preparationSide == null || !mounted) return;
 
-    final player = _buildExplorerFallbackPlayer(playerId);
-    final gameFilter =
-        ref.read(playerProfileGamesKeyProvider(playerKey)).filter;
-    final baseFilters =
-        gameFilter.hasExplorerMappableFilters
-            ? gameFilter.toGamebaseFilters()
-            : const GamebaseFilters();
-    final treeFilters = buildPlayerProfileTreeFilters(
-      baseFilters: baseFilters,
-      playerId: playerId,
-      player: player,
-      preparationSide: preparationSide,
-    );
+    setState(() => _isBuildingTree = true);
+    try {
+      final workspace = await _ensurePlayerWorkspace(fideId);
+      if (!mounted) return;
 
-    final title = _playerProfileTreeTitle(player.name);
-    final tabsNotifier = ref.read(desktopTabsProvider.notifier);
-    final tabId =
-        tabsNotifier.navigateActive(TabKind.board, title: title) ??
-        tabsNotifier.open(TabKind.board, title: title, reuseExisting: false);
-    tabsNotifier.rename(tabId, title: title);
-
-    ref.read(boardTabFenProvider.notifier).clear(tabId);
-    ref.read(boardPaneSessionByTabIdProvider.notifier).clear(tabId);
-    ref
-        .read(boardTabGameArgsByTabIdProvider.notifier)
-        .update(
-          (m) => <String, BoardTabGameArgs>{
-            ...m,
-            tabId: BoardTabGameArgs(
-              pgn: '',
-              label: title,
-              whiteName: '',
-              blackName: '',
-              fenSeed: _startingFen,
-              initialFen: _startingFen,
-              viewSource: ChessboardView.playerProfile,
-            ),
-          },
-        );
-    ref
-        .read(boardExplorerScopeByTabIdProvider.notifier)
-        .update(
-          (m) => <String, BoardExplorerScope>{
-            ...m,
-            tabId: BoardExplorerScope(
-              player: player,
-              initialFilters: treeFilters,
-            ),
-          },
-        );
-    ref.read(rightRailActivePageProvider(tabId).notifier).state = 1;
-
-    unawaited(
-      ref.read(playerByIdProvider(playerId).future).catchError((_) => null),
-    );
+      openPlayerWorkspaceTab(
+        ref,
+        workspace,
+        focus: false,
+        reuseExisting: false,
+      );
+      await openOrBuildPlayerWorkspaceSourceTree(
+        context: context,
+        ref: ref,
+        player: workspace,
+        source: PlayerWorkspaceSource.chessever,
+        preparationSide: preparationSide,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showToast(_playerWorkspaceErrorText(error), error: true);
+    } finally {
+      if (mounted) setState(() => _isBuildingTree = false);
+    }
   }
 
   Future<void> _openOrBuildPlayerWorkspace(int fideId) async {
-    if (_isBuildingProfile) return;
+    if (_isBuildingProfile || _isBuildingTree) return;
     final normalizedFideId = fideId.toString();
     var workspace = ref
         .read(playerWorkspaceProvider)
@@ -328,15 +220,7 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
     if (workspace == null) {
       setState(() => _isBuildingProfile = true);
       try {
-        await ref
-            .read(playerWorkspaceProvider.notifier)
-            .ensurePlayerWorkspaceByFideId(normalizedFideId);
-        workspace = ref
-            .read(playerWorkspaceProvider)
-            .playerForFideId(normalizedFideId);
-        if (workspace == null) {
-          throw StateError('The player profile could not be created.');
-        }
+        workspace = await _ensurePlayerWorkspace(fideId);
       } catch (error) {
         if (!mounted) return;
         _showToast(_playerWorkspaceErrorText(error), error: true);
@@ -567,9 +451,6 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
       blitz: activeProfile?.blitzRating,
     );
 
-    final buildTreePlayerId = _resolveGamebasePlayerId();
-    _warmOpeningTreeSnapshot(buildTreePlayerId);
-    final hasBuildTreeTarget = buildTreePlayerId != null;
     final workspacePlayer = ref.watch(
       playerWorkspaceProvider.select(
         (state) => state.playerForFideId(effectiveFideId?.toString()),
@@ -590,14 +471,18 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
             hasFideId: hasFideId,
             hasPlayerWorkspace: workspacePlayer != null,
             isBuildingProfile: _isBuildingProfile,
-            hasBuildTree: hasBuildTreeTarget,
+            isBuildingTree: _isBuildingTree,
+            hasBuildTree: hasFideId,
             hasActiveFilter: hasActiveFilter,
             onToggleFavorite: _toggleFavorite,
             onOpenPlayerWorkspace:
                 hasFideId
                     ? () => _openOrBuildPlayerWorkspace(effectiveFideId)
                     : null,
-            onBuildTree: _openBuildTreeGame,
+            onBuildTree:
+                effectiveFideId == null
+                    ? () {}
+                    : () => _buildChessEverPlayerTree(effectiveFideId),
             onSaveToLibrary: () {
               _openSaveToLibrary(
                 playerKey: activeKey,
@@ -667,12 +552,6 @@ String _playerProfileRouteTitle(String playerName) {
   final player = playerName.trim();
   if (player.isEmpty) return 'Player games';
   return '$player games';
-}
-
-String _playerProfileTreeTitle(String playerName) {
-  final player = playerName.trim();
-  if (player.isEmpty) return 'Player Tree';
-  return '$player Tree';
 }
 
 String _playerWorkspaceErrorText(Object error) {
@@ -953,6 +832,7 @@ class _Header extends StatelessWidget {
     required this.hasFideId,
     required this.hasPlayerWorkspace,
     required this.isBuildingProfile,
+    required this.isBuildingTree,
     required this.hasBuildTree,
     required this.hasActiveFilter,
     required this.onToggleFavorite,
@@ -968,6 +848,7 @@ class _Header extends StatelessWidget {
   final bool hasFideId;
   final bool hasPlayerWorkspace;
   final bool isBuildingProfile;
+  final bool isBuildingTree;
   final bool hasBuildTree;
   final bool hasActiveFilter;
   final VoidCallback onToggleFavorite;
@@ -1052,7 +933,7 @@ class _Header extends StatelessWidget {
                   hasPlayerWorkspace
                       ? Icons.person_outline_rounded
                       : Icons.person_add_alt_1_outlined,
-              onPress: onOpenPlayerWorkspace,
+              onPress: isBuildingTree ? null : onOpenPlayerWorkspace,
               tooltip:
                   hasPlayerWorkspace
                       ? 'Open this player in Players'
@@ -1064,11 +945,11 @@ class _Header extends StatelessWidget {
           if (hasBuildTree) ...[
             const SizedBox(width: 8),
             DesktopHeaderActionButton(
-              label: 'Build tree',
+              label: 'Build Tree',
               icon: Icons.account_tree_outlined,
-              onPress: onBuildTree,
-              tooltip: 'Choose player color scope and build player tree',
-              accented: hasActiveFilter,
+              onPress: isBuildingProfile ? null : onBuildTree,
+              tooltip: 'Build the ChessEver source tree in Players',
+              loading: isBuildingTree,
             ),
           ],
           const SizedBox(width: 8),

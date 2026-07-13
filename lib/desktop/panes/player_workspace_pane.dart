@@ -3587,6 +3587,75 @@ String _disabledTreeActionLabel(String reason) {
   return clean.endsWith('.') ? clean.substring(0, clean.length - 1) : clean;
 }
 
+/// Opens the same per-source tree used by the Players Build Tree tab, building
+/// its local index first when needed. If the source has not been downloaded
+/// yet, it is synced through [PlayerWorkspaceNotifier] before tree generation.
+Future<void> openOrBuildPlayerWorkspaceSourceTree({
+  required BuildContext context,
+  required WidgetRef ref,
+  required PlayerWorkspacePlayer player,
+  required PlayerWorkspaceSource source,
+  required PlayerBuildTreePreparationSide preparationSide,
+}) async {
+  final workspaceNotifier = ref.read(playerWorkspaceProvider.notifier);
+  await workspaceNotifier.selectPlayer(player.id);
+
+  var currentPlayer =
+      _playerById(ref.read(playerWorkspaceProvider).players, player.id) ??
+      player;
+  var choice = _treeChoiceForSource(currentPlayer, source);
+  if (choice.target == null) {
+    final account = currentPlayer.account(source);
+    if (account == null) {
+      throw StateError('${source.label} is not connected.');
+    }
+    await workspaceNotifier.syncAccount(account);
+    currentPlayer =
+        _playerById(ref.read(playerWorkspaceProvider).players, player.id) ??
+        currentPlayer;
+    choice = _treeChoiceForSource(currentPlayer, source);
+  }
+
+  final target = choice.target;
+  if (target == null) {
+    throw StateError(
+      'No ${source.label} games were available to build a tree.',
+    );
+  }
+  if (!context.mounted) return;
+
+  final cachedIndex = await ref.read(
+    _cachedPlayerWorkspaceTreeIndexProvider(target.path).future,
+  );
+  if (!context.mounted) return;
+  if (cachedIndex?.isUsable == true) {
+    _openLocalTree(
+      ref,
+      target,
+      cachedIndex!,
+      preparationSide: preparationSide,
+      player: currentPlayer,
+    );
+    return;
+  }
+
+  await _buildLocalTree(
+    context,
+    ref,
+    target,
+    currentPlayer,
+    preparationSide: preparationSide,
+  );
+}
+
+_TreeChoice _treeChoiceForSource(
+  PlayerWorkspacePlayer player,
+  PlayerWorkspaceSource source,
+) {
+  final choices = _treeChoicesForSource(source, _databaseTargets(player));
+  return choices.first;
+}
+
 Future<void> _buildLocalTree(
   BuildContext context,
   WidgetRef ref,
@@ -3658,8 +3727,8 @@ void _openLocalTree(
   );
   // Seed the opening explorer with the chosen prep colour. Local trees carry
   // per-colour buckets, so this filters the tree by side via the same
-  // BoardExplorerScope → gamebase filter seam the player-profile Build Tree
-  // uses (NotationOpeningPanel applies scope.playerColor on open).
+  // BoardExplorerScope → gamebase filter seam used by Players tree actions
+  // (NotationOpeningPanel applies scope.playerColor on open).
   final color = preparationSide.targetPlayerColor;
   if (color != null) {
     ref
