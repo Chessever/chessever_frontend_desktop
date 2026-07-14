@@ -171,7 +171,7 @@ class _SwitcherTriggerState extends State<_SwitcherTrigger> {
   }
 }
 
-class _CategoryMenu extends StatelessWidget {
+class _CategoryMenu extends StatefulWidget {
   const _CategoryMenu({
     required this.tours,
     required this.selectedId,
@@ -183,9 +183,55 @@ class _CategoryMenu extends StatelessWidget {
   final ValueChanged<String> onPick;
 
   @override
+  State<_CategoryMenu> createState() => _CategoryMenuState();
+}
+
+class _CategoryMenuState extends State<_CategoryMenu> {
+  static const double _maxMenuHeight = 560;
+
+  final ScrollController _scrollController = ScrollController();
+  GlobalKey _selectedRowKey = GlobalKey();
+  String? _revealedSelectedId;
+
+  @override
+  void didUpdateWidget(covariant _CategoryMenu oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedId == widget.selectedId) return;
+    _selectedRowKey = GlobalKey();
+    _revealedSelectedId = null;
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _revealSelectionAfterLayout() {
+    if (_revealedSelectedId == widget.selectedId) return;
+    _revealedSelectedId = widget.selectedId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final selectedContext = _selectedRowKey.currentContext;
+      if (selectedContext == null) return;
+      Scrollable.ensureVisible(
+        selectedContext,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    _revealSelectionAfterLayout();
+    final viewportHeight = MediaQuery.sizeOf(context).height;
+    final maxHeight = (_maxMenuHeight).clamp(180.0, viewportHeight - 32);
+
     return Container(
       width: 320,
+      constraints: BoxConstraints(maxHeight: maxHeight),
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
       decoration: BoxDecoration(
         color: kBlack2Color,
@@ -215,12 +261,28 @@ class _CategoryMenu extends StatelessWidget {
               ),
             ),
           ),
-          for (final model in tours)
-            _CategoryRow(
-              model: model,
-              selected: model.tour.id == selectedId,
-              onTap: () => onPick(model.tour.id),
+          Flexible(
+            child: Scrollbar(
+              controller: _scrollController,
+              thumbVisibility: true,
+              child: ListView.builder(
+                controller: _scrollController,
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
+                itemCount: widget.tours.length,
+                itemBuilder: (context, index) {
+                  final model = widget.tours[index];
+                  final selected = model.tour.id == widget.selectedId;
+                  return _CategoryRow(
+                    key: selected ? _selectedRowKey : null,
+                    model: model,
+                    selected: selected,
+                    onTap: () => widget.onPick(model.tour.id),
+                  );
+                },
+              ),
             ),
+          ),
         ],
       ),
     );
@@ -229,6 +291,7 @@ class _CategoryMenu extends StatelessWidget {
 
 class _CategoryRow extends StatefulWidget {
   const _CategoryRow({
+    super.key,
     required this.model,
     required this.selected,
     required this.onTap,
