@@ -41,6 +41,20 @@ const _localTreePgn = '''
 1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0
 ''';
 
+const _secondLocalTreePgn = '''
+[Event "Local DB"]
+[Site "Disk"]
+[Date "2024.05.03"]
+[Round "4"]
+[White "Anand"]
+[Black "Durarbayli"]
+[WhiteElo "2820"]
+[BlackElo "2670"]
+[Result "1/2-1/2"]
+
+1. d4 Nf6 2. c4 e6 3. Nc3 Bb4 1/2-1/2
+''';
+
 void main() {
   testWidgets('renders position search results as a table', (tester) async {
     final repository = _FakeGamebaseRepository();
@@ -673,7 +687,9 @@ void main() {
     final temp = io.Directory.systemTemp.createTempSync('chessever_local_row_');
     addTearDown(() => temp.deleteSync(recursive: true));
     final file = io.File('${temp.path}/local-test.pgn');
-    file.writeAsStringSync(_localTreePgn.trim());
+    file.writeAsStringSync(
+      '${_localTreePgn.trim()}\n\n${_secondLocalTreePgn.trim()}',
+    );
     final index = buildLocalOpeningTreeIndex(
       treeId: 'local:test-db',
       databaseId: 'test-db',
@@ -685,7 +701,16 @@ void main() {
           sourceRelativePath: 'local-test.pgn',
           fileName: 'local-test.pgn',
           indexInFile: 0,
-          fileGameCount: 1,
+          fileGameCount: 2,
+        ),
+        LocalOpeningTreeGameInput(
+          id: 'local-game-2',
+          rawPgn: _secondLocalTreePgn,
+          sourcePath: file.path,
+          sourceRelativePath: 'local-test.pgn',
+          fileName: 'local-test.pgn',
+          indexInFile: 1,
+          fileGameCount: 2,
         ),
       ],
     );
@@ -733,6 +758,13 @@ void main() {
     expect(args.pgn, contains('[Event "Local DB"]'));
     expect(args.localOpeningTreeIndex, same(index));
     expect(args.localOpeningTreeTitle, 'Local Test DB');
+    expect(args.databaseGames, hasLength(2));
+    final secondGame = args.databaseGames.singleWhere(
+      (game) => game.id == 'local-game-2',
+    );
+    expect(secondGame.pgn, contains('1. d4 Nf6'));
+    expect(secondGame.localPgnSource?.sourcePath, file.path);
+    expect(secondGame.localPgnSource?.sourceIndex, 1);
     expect(
       args.librarySaveOrigin?.kind,
       BoardTabLibrarySaveOriginKind.localPgnFile,

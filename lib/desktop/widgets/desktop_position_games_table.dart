@@ -17,6 +17,7 @@ import 'package:chessever/desktop/services/local_library_game_updater.dart'
     show pgnGameRanges;
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/adaptive_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/move_hover_preview.dart';
@@ -1106,9 +1107,7 @@ class _DesktopPositionGamesTableState
       continuationStep: continuationStep,
     );
     final databaseGames = _rows
-        .map(
-          (r) => gamebasePositionGameSummaryFromRow(r, fallbackFen: initialFen),
-        )
+        .map((r) => _summaryForOpenedRow(r, fallbackFen: initialFen))
         .where((g) => g.id.trim().isNotEmpty)
         .toList(growable: false);
     final query = _lastSuccessfulQuery ?? _buildQuery(pageNumber: 0);
@@ -1138,12 +1137,7 @@ class _DesktopPositionGamesTableState
       databaseTitle: databaseTitle,
       databaseGames:
           databaseGames.isEmpty
-              ? [
-                gamebasePositionGameSummaryFromRow(
-                  row,
-                  fallbackFen: initialFen,
-                ),
-              ]
+              ? [_summaryForOpenedRow(row, fallbackFen: initialFen)]
               : databaseGames,
       databaseGamesPagination: BoardTabDatabaseGamesPagination(
         query: gamebasePositionGamesQueryWithPage(query, 0),
@@ -1178,6 +1172,25 @@ class _DesktopPositionGamesTableState
       return inline;
     }
     return _readLocalPgnForRow(row);
+  }
+
+  TournamentGameSummary _summaryForOpenedRow(
+    Map<String, dynamic> row, {
+    required String fallbackFen,
+  }) {
+    if (widget.localOpeningTreeIndex == null) {
+      return gamebasePositionGameSummaryFromRow(row, fallbackFen: fallbackFen);
+    }
+
+    // The opening-tree rail outlives this table. Preserve each visible local
+    // row's PGN and source coordinates in its lightweight summary so selecting
+    // a different row can replace the Board tab without trying to hydrate the
+    // local id from Supabase/Gamebase.
+    final pgn = _pgnForOpenedRow(row);
+    return gamebasePositionGameSummaryFromRow(<String, dynamic>{
+      ...row,
+      if (pgn.isNotEmpty) 'pgn': pgn,
+    }, fallbackFen: fallbackFen);
   }
 
   String _readLocalPgnForRow(Map<String, dynamic> row) {
