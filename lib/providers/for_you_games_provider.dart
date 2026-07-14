@@ -201,7 +201,6 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
 
   Future<void> refresh() async {
     _offset = 0;
-    _resetSessionOrderingForRefresh();
     state = state.copyWith(isLoading: true, error: null);
     ref.read(forYouTopGamesSnapshotCacheProvider.notifier).state =
         const <String, ForYouEventGamesSnapshot>{};
@@ -291,6 +290,17 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
 
       // Update state
       if (isInitial) {
+        final hasGenuinelyNewEvent =
+            _sessionEventOrder.isNotEmpty &&
+            models.any((event) => !_sessionEventOrder.containsKey(event.id));
+        if (hasGenuinelyNewEvent) {
+          // Metadata-only refreshes keep the established session order, but a
+          // genuinely new card must enter through the personalized sort. If
+          // we merely appended it, a newly starred/favorite-player event
+          // would be buried below every card that happened to load earlier.
+          _sessionEventOrder.clear();
+          _nextSessionEventOrder = 0;
+        }
         state = ForYouState(
           events: _sortPageOnceForSession(models),
           isLoading: false,
@@ -575,12 +585,6 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
         events.indexed.map((entry) => MapEntry(entry.$2.id, entry.$1)),
       );
     _nextSessionEventOrder = events.length;
-  }
-
-  void _resetSessionOrderingForRefresh() {
-    _sessionEventOrder.clear();
-    _nextSessionEventOrder = 0;
-    _pendingFavoritePlayerOrderHydration = false;
   }
 
   Future<void> _refreshVisibleFavoritePlayerCounts({

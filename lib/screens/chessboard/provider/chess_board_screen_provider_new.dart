@@ -69,6 +69,12 @@ final currentlyVisiblePageIndexProvider = StateProvider<int>((ref) {
   return 0;
 });
 
+/// Allows provider tests to disable best-effort SQLite persistence during
+/// disposal. Production keeps this enabled; tests run without platform plugin
+/// channels and should not start an unawaited database open after completion.
+@visibleForTesting
+final chessBoardPersistenceEnabledProvider = Provider<bool>((ref) => true);
+
 /// Global provider to track if the board is flipped.
 /// This ensures the board orientation stays consistent when swiping between games.
 final activeBoardFlippedProvider = StateProvider<bool>((ref) {
@@ -121,6 +127,7 @@ class ChessBoardScreenNotifierNew
     this.initialFen,
   }) : super(const AsyncValue.loading()) {
     _stockfishOwnerId = StockfishSingleton.generateOwnerId(game.gameId, index);
+    _persistenceEnabled = ref.read(chessBoardPersistenceEnabledProvider);
     _initializeState();
     _setupPgnStreamListener();
   }
@@ -132,6 +139,7 @@ class ChessBoardScreenNotifierNew
   /// Unique owner ID for Stockfish job isolation.
   /// Allows this provider to cancel only its own jobs without affecting others.
   late final String _stockfishOwnerId;
+  late final bool _persistenceEnabled;
 
   /// Optional saved analysis data to restore full state.
   /// Mutable so it can be set after a first-time save from the save sheet.
@@ -822,7 +830,7 @@ class ChessBoardScreenNotifierNew
                   displayedMoveIndex == currentState.allMoves.length - 1;
               final isFollowing =
                   game.gameStatus.isOngoing
-                      ? _isFollowingLive
+                      ? _isFollowingLive || currentState.allMoves.isEmpty
                       : wasViewingLastMove;
               final newMoveIndex =
                   isFollowing
@@ -1304,6 +1312,35 @@ class ChessBoardScreenNotifierNew
 
       // Only update state if still mounted and not superseded by a newer parse
       if (!mounted || thisGeneration != _parseGeneration) return;
+
+      // A focused live-board stream may briefly replay a header-only or stale
+      // PGN while its clock/status fields are already fresh. Never let that
+      // non-monotonic snapshot erase a populated board and notation. Keep the
+      // new non-PGN row fields, but restore the last accepted PGN/mainline and
+      // wait for a later equal-or-newer movetext snapshot.
+      // Re-read at commit time: a newer update may have taken the incremental
+      // fast path while this parse was awaiting its PGN upgrade lookup.
+      final acceptedState = state.valueOrNull ?? currentState;
+      final previousMoveCount = acceptedState?.allMoves.length ?? 0;
+      final isRegressiveStreamPgn =
+          pgnOverride != null &&
+          previousMoveCount > 0 &&
+          allMoves.length < previousMoveCount;
+      if (isRegressiveStreamPgn) {
+        final previousPgn = acceptedState?.pgnData;
+        game = acceptedState?.game ?? game;
+        if (previousPgn != null && previousPgn.isNotEmpty) {
+          game = game.copyWith(pgn: previousPgn);
+        }
+        state = AsyncValue.data(
+          acceptedState!.copyWith(game: game, isLoadingMoves: false),
+        );
+        _releaseLog(
+          '⚠️ Ignoring regressive streamed PGN for ${game.gameId}: '
+          '${allMoves.length} plies < $previousMoveCount accepted plies',
+        );
+        return;
+      }
 
       // Check if there are new unseen moves
       final lastSeenMoveCount =
@@ -7302,10 +7339,12 @@ class ChessBoardScreenNotifierNew
     // are persisted. _performAutoSave short-circuits when nothing differs.
     _autoSaveTimer?.cancel();
     _autoSaveTimer = null;
-    if (savedAnalysisData?.analysisId != null) {
-      unawaited(_performAutoSave());
+    if (_persistenceEnabled) {
+      if (savedAnalysisData?.analysisId != null) {
+        unawaited(_performAutoSave());
+      }
+      unawaited(_persistAnalysisState());
     }
-    unawaited(_persistAnalysisState());
     _navigatorSubscription?.close();
     _navigatorSubscription = null;
     _cancelEvalWatchdog(resetPending: true);

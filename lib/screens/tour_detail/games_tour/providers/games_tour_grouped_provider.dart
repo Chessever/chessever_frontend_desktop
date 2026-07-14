@@ -9,6 +9,7 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/lichess_pairi
 import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tournament_state_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
+import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 class GroupedGamesData {
@@ -266,30 +267,6 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
     }
   }
 
-  if (!isSearchMode) {
-    final pinnedGameIds = screenModelAsync.valueOrNull?.pinnedGamedIs ?? [];
-    if (pinnedGameIds.isNotEmpty) {
-      final pinnedOrder = <String, int>{
-        for (var i = 0; i < pinnedGameIds.length; i++) pinnedGameIds[i]: i,
-      };
-      for (final roundId in gamesByRound.keys) {
-        final roundGames = gamesByRound[roundId]!;
-        roundGames.sort((a, b) {
-          final aPinnedIndex = pinnedOrder[a.gameId];
-          final bPinnedIndex = pinnedOrder[b.gameId];
-          final aPinned = aPinnedIndex != null;
-          final bPinned = bPinnedIndex != null;
-          if (aPinned && !bPinned) return -1;
-          if (!aPinned && bPinned) return 1;
-          if (aPinned && bPinned) {
-            return aPinnedIndex.compareTo(bPinnedIndex);
-          }
-          return 0;
-        });
-      }
-    }
-  }
-
   // Future rounds: Lichess publishes pairings for upcoming rounds ahead of
   // time. Those games never pass isEventBoardGameVisible (no played position),
   // so their rounds would be dropped entirely. Surface them as pairing-only
@@ -404,6 +381,16 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
     }
   }
 
+  // The Games tab is a board list. Its final presentation order must come
+  // from the broadcaster's authoritative board number—not arrival order,
+  // rating, status, or a local pin. Run this after every DB/fallback path has
+  // been reconciled so all cards obey one deterministic contract.
+  for (final roundId in gamesByRound.keys.toList(growable: false)) {
+    gamesByRound[roundId] = sortTournamentRoundGamesByBoard(
+      gamesByRound[roundId]!,
+    );
+  }
+
   final playedRounds =
       rounds
           .where(
@@ -443,6 +430,30 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
     upcomingPairingRoundIds: upcomingPairingRoundIds,
   );
 });
+
+@visibleForTesting
+List<GamesTourModel> sortTournamentRoundGamesByBoard(
+  Iterable<GamesTourModel> games,
+) {
+  final sorted = games.toList(growable: false);
+  sorted.sort((a, b) {
+    final aBoard = a.boardNr;
+    final bBoard = b.boardNr;
+    if (aBoard != null && bBoard != null) {
+      final boardOrder = aBoard.compareTo(bBoard);
+      if (boardOrder != 0) return boardOrder;
+    } else if (aBoard != null) {
+      return -1;
+    } else if (bBoard != null) {
+      return 1;
+    }
+
+    // Duplicate/missing board numbers can occur in malformed or hydrating
+    // feeds. A stable identity fallback stops equal cards from shuffling.
+    return a.gameId.compareTo(b.gameId);
+  });
+  return sorted;
+}
 
 /// Whether a game row is renderable as an event board: placeholder rows
 /// (unresolved "?" players or an unstarted position) must never surface as

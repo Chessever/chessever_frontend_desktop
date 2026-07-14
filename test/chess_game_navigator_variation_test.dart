@@ -25,6 +25,44 @@ ChessMove move(
 
 void main() {
   test(
+    'live game updates never replace a populated mainline with an empty one',
+    () {
+      const populatedPgn = '''
+[Event "Live Test"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 *
+''';
+      const headerOnlyPgn = '''
+[Event "Live Test"]
+[Result "*"]
+
+*
+''';
+      final populated = ChessGame.fromPgn(
+        'live',
+        populatedPgn,
+      ).copyWith(metadata: const {ChessGame.metadataIsLiveKey: true});
+      final regressive = ChessGame.fromPgn(
+        'live',
+        headerOnlyPgn,
+      ).copyWith(metadata: const {ChessGame.metadataIsLiveKey: true});
+      final navigator = ChessGameNavigator(populated)..goToTail();
+      final expectedFen = navigator.state.currentFen;
+
+      navigator.updateWithLatestGame(regressive, goToTail: true);
+
+      expect(navigator.state.currentFen, expectedFen);
+      expect(navigator.state.game.mainline.map((move) => move.san), [
+        'e4',
+        'e5',
+        'Nf3',
+      ]);
+      expect(navigator.state.movePointer, [2]);
+    },
+  );
+
+  test(
     'makeOrGoToMove appends first reply to local PGN mainline by default',
     () {
       final game = ChessGame.fromPgn('local-single-move', '1. e4');
@@ -280,23 +318,22 @@ void main() {
     'mainline user NAGs migrate to demoted continuation on variation promotion',
     () {
       final promotedLine = [move('c5', turn: ChessColor.black), move('Nc3')];
-      final game =
-          ChessGame(
-            gameId: 'g1',
-            startingFen: 'fen',
-            metadata: const {},
-            mainline: [
-              move('e4'),
-              move('e5', turn: ChessColor.black),
-              move('Nf3', nags: const [16]),
-            ],
-          ).copyWith(
-            mainline: [
-              move('e4', variations: [promotedLine]),
-              move('e5', turn: ChessColor.black),
-              move('Nf3', nags: const [16]),
-            ],
-          );
+      final game = ChessGame(
+        gameId: 'g1',
+        startingFen: 'fen',
+        metadata: const {},
+        mainline: [
+          move('e4'),
+          move('e5', turn: ChessColor.black),
+          move('Nf3', nags: const [16]),
+        ],
+      ).copyWith(
+        mainline: [
+          move('e4', variations: [promotedLine]),
+          move('e5', turn: ChessColor.black),
+          move('Nf3', nags: const [16]),
+        ],
+      );
 
       final migration = migrateMainlineNagsForVariationPromotion(
         game: game,
