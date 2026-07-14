@@ -89,4 +89,58 @@ void main() {
 
     expect(dxWithSpinner, dxWithButton);
   });
+
+  testWidgets('header divider resizes a column and double-click resets it', (
+    tester,
+  ) async {
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 700,
+            height: 400,
+            child: AdaptiveGamesTable<int>(
+              enableColumnResizing: true,
+              scrollController: controller,
+              rows: const [0],
+              columns: [
+                AdaptiveColumn<int>(
+                  id: 'a',
+                  label: 'A',
+                  cellBuilder: (_, row) => Text('r$row-a'),
+                ),
+                AdaptiveColumn<int>(
+                  id: 'b',
+                  label: 'B',
+                  cellBuilder: (_, row) => Text('r$row-b'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    const handleKey = ValueKey<String>('adaptive-column-resizer-a');
+    final handle = find.byKey(handleKey);
+    expect(handle, findsOneWidget);
+    final initialSecondColumnX = tester.getTopLeft(find.text('r0-b')).dx;
+
+    await tester.drag(handle, const Offset(100, 0));
+    await tester.pumpAndSettle();
+    final resizedSecondColumnX = tester.getTopLeft(find.text('r0-b')).dx;
+    expect(resizedSecondColumnX, closeTo(initialSecondColumnX + 100, 1));
+
+    await tester.tap(handle);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(handle);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getTopLeft(find.text('r0-b')).dx,
+      closeTo(initialSecondColumnX, 1),
+    );
+  });
 }
