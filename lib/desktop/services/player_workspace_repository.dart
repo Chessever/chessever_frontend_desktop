@@ -989,6 +989,21 @@ class PlayerWorkspaceRepository {
       return null;
     }
 
+    final indexedGameCount = await _loadChessEverIndexedGameCount(
+      repository: repository,
+      playerId: playerId,
+      dateFrom: dateFrom,
+      cancellationToken: cancellationToken,
+    );
+    cancellationToken?.throwIfCanceled();
+    if (indexedGameCount != null && indexedGameCount != gameCount) {
+      progress.exportIndexMismatch(
+        gameCount: gameCount,
+        indexedGameCount: indexedGameCount,
+      );
+      return null;
+    }
+
     progress.exportFinished(gameCount);
     return PlayerWorkspaceDownloadedPgn(
       source: PlayerWorkspaceSource.chessever,
@@ -1000,6 +1015,35 @@ class PlayerWorkspaceRepository {
               ? gameCount == 0 && export.pgn.trim().isEmpty
               : _pgnCacheStatusIsUnchanged(export.cacheStatus),
     );
+  }
+
+  Future<int?> _loadChessEverIndexedGameCount({
+    required GamebaseRepository repository,
+    required String playerId,
+    required String? dateFrom,
+    OperationCancellationToken? cancellationToken,
+  }) async {
+    if (playerId.trim().isEmpty) return null;
+    cancellationToken?.throwIfCanceled();
+    try {
+      final response = await repository.getPlayerGames(
+        playerId: playerId,
+        pageNumber: 0,
+        pageSize: 1,
+        dateFrom: dateFrom,
+      );
+      cancellationToken?.throwIfCanceled();
+      return _readTotalCount(response);
+    } catch (error, stackTrace) {
+      if (error is OperationCanceledException) rethrow;
+      localChessLog.warning(
+        'Could not verify ChessEver PGN export against player index',
+        context: <String, Object?>{'hasDateFilter': dateFrom != null},
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return null;
+    }
   }
 
   Future<PlayerWorkspaceDownloadedPgn?> _downloadExternalPlayerPgnExport({
@@ -1812,6 +1856,18 @@ class _ChessEverDownloadProgress {
     _emit(
       'ChessEver: PGN export had $gameCount of $expectedGameCount games; '
       'loading pages instead...',
+      _externalSourceInitialProgress,
+      force: true,
+    );
+  }
+
+  void exportIndexMismatch({
+    required int gameCount,
+    required int indexedGameCount,
+  }) {
+    _emit(
+      'ChessEver: PGN export had $gameCount games, but the latest player '
+      'index has $indexedGameCount; loading pages instead...',
       _externalSourceInitialProgress,
       force: true,
     );
@@ -2858,14 +2914,14 @@ int? _readTotalCount(Map<String, dynamic> response) {
         _readInt(metadata['total_count']) ??
         _readInt(metadata['total']) ??
         _readInt(metadata['count']);
-    if (count != null && count > 0) return count;
+    if (count != null && count >= 0) return count;
   }
   final count =
       _readInt(response['totalCount']) ??
       _readInt(response['total_count']) ??
       _readInt(response['total']) ??
       _readInt(response['count']);
-  return count != null && count > 0 ? count : null;
+  return count != null && count >= 0 ? count : null;
 }
 
 String _totalSuffix(int? totalCount) {

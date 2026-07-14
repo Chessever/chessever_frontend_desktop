@@ -4182,11 +4182,57 @@ $_mergeGameOne
         expect(gamebaseRepository.exportPlayerIds, <String>['ce-player']);
         expect(gamebaseRepository.exportFideIds, <String?>['1503014']);
         expect(gamebaseRepository.exportDateFrom, <String?>['2026-06-02']);
-        expect(gamebaseRepository.requestedPlayerIds, isEmpty);
+        expect(gamebaseRepository.requestedPlayerIds, <String>['ce-player']);
+        expect(gamebaseRepository.requestedIncludeData, <bool>[false]);
+        expect(gamebaseRepository.requestedPageSizes, <int>[1]);
+        expect(gamebaseRepository.requestedDateFrom, <String?>['2026-06-02']);
         expect(gamebaseRepository.hydratedIds, isEmpty);
         expect(
           progressMessages,
           contains('ChessEver: downloaded 2 games as PGN.'),
+        );
+      },
+    );
+
+    test(
+      'falls back when ChessEver PGN export is older than player index',
+      () async {
+        final gamebaseRepository = _FakeGamebaseRepository(
+          const <String, String>{'ce-1': _mergeGameOne, 'ce-2': _mergeGameTwo},
+          pgnExport: _mergeGameOne,
+          playerGamesTotalCount: 2,
+        );
+        final progressMessages = <String>[];
+        final workspaceRepository = PlayerWorkspaceRepository();
+
+        final downloaded = await workspaceRepository.downloadChessEverGames(
+          repository: gamebaseRepository,
+          playerId: 'ce-player',
+          sinceDate: DateTime.utc(2026, 3, 31),
+          expectedGameCount: 1,
+          onProgress: (message, _) => progressMessages.add(message),
+        );
+
+        expect(downloaded.gameCount, 2);
+        expect(downloaded.pgn, contains('Lichess import 1'));
+        expect(downloaded.pgn, contains('Lichess import 2'));
+        expect(gamebaseRepository.requestedPlayerIds, <String>[
+          'ce-player',
+          'ce-player',
+        ]);
+        expect(gamebaseRepository.requestedIncludeData, <bool>[false, true]);
+        expect(gamebaseRepository.requestedPageSizes, <int>[1, 1000]);
+        expect(gamebaseRepository.requestedDateFrom, <String?>[
+          '2026-03-31',
+          '2026-03-31',
+        ]);
+        expect(gamebaseRepository.hydratedIds, <String>['ce-1', 'ce-2']);
+        expect(
+          progressMessages,
+          contains(
+            'ChessEver: PGN export had 1 games, but the latest player index '
+            'has 2; loading pages instead...',
+          ),
         );
       },
     );
@@ -5621,6 +5667,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
   _FakeGamebaseRepository(
     this.pgnById, {
     this.pgnExport,
+    this.playerGamesTotalCount,
     this.externalExports =
         const <GamebaseExternalPlayerSource, GamebasePlayerPgnExport>{},
     this.playersById = const <String, GamebasePlayer>{},
@@ -5628,6 +5675,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
 
   final Map<String, String> pgnById;
   final String? pgnExport;
+  final int? playerGamesTotalCount;
   final Map<GamebaseExternalPlayerSource, GamebasePlayerPgnExport>
   externalExports;
   final Map<String, GamebasePlayer> playersById;
@@ -5709,7 +5757,10 @@ class _FakeGamebaseRepository extends GamebaseRepository {
                 for (final id in pgnById.keys) <String, dynamic>{'id': id},
               ]
               : const <Map<String, dynamic>>[],
-      'metadata': const <String, dynamic>{'hasMore': false},
+      'metadata': <String, dynamic>{
+        'hasMore': false,
+        if (playerGamesTotalCount != null) 'totalCount': playerGamesTotalCount,
+      },
     };
   }
 
