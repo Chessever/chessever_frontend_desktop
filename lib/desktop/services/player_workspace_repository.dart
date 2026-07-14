@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
@@ -26,9 +27,12 @@ import 'package:chessever/utils/eco_openings.dart';
 const String _workspaceStorageKey = 'desktop_player_workspace_v1';
 const String _httpUserAgent =
     'ChessEverDesktop/1.0 (https://chessever.com; support@chessever.com)';
-const int _lichessRangeConcurrency = 4;
-const int _lichessParallelRangeMinExpectedGames = 1500;
-const int _lichessFirstFullExportYear = 2010;
+const List<Duration> _lichessTransientRetryDelays = <Duration>[
+  Duration(seconds: 2),
+  Duration(seconds: 5),
+  Duration(seconds: 10),
+];
+const Duration _lichessRateLimitRetryDelay = Duration(minutes: 1);
 const int _chessComArchiveConcurrency = 1;
 const double _chessComArchiveProgressFloor = 0.08;
 const int _chessEverPageSize = 1000;
@@ -47,6 +51,33 @@ const List<double> _sourceSnapshotWaitProgressSteps = <double>[
 typedef PlayerWorkspaceProgress =
     void Function(String message, double? progress);
 typedef PlayerWorkspaceSupportDirectoryResolver = Future<Directory> Function();
+typedef PlayerWorkspaceRetryWait =
+    Future<void> Function(
+      Duration delay,
+      OperationCancellationToken? cancellationToken,
+    );
+
+Future<void> _waitForPlayerWorkspaceRetry(
+  Duration delay,
+  OperationCancellationToken? cancellationToken,
+) async {
+  cancellationToken?.throwIfCanceled();
+  if (delay <= Duration.zero) return;
+  final completer = Completer<void>();
+  final timer = Timer(delay, () => completer.complete());
+  final removeCancelListener = cancellationToken?.addListener(() {
+    timer.cancel();
+    if (!completer.isCompleted) {
+      completer.completeError(const OperationCanceledException());
+    }
+  });
+  try {
+    await completer.future;
+  } finally {
+    timer.cancel();
+    removeCancelListener?.call();
+  }
+}
 
 class PlayerWorkspaceCleanupTargets {
   const PlayerWorkspaceCleanupTargets({
@@ -87,13 +118,15 @@ class PlayerWorkspaceRepository {
     Duration? importStatsTimeout,
     GamebaseRepository? gamebaseRepository,
     PlayerWorkspaceSupportDirectoryResolver? supportDirectory,
+    PlayerWorkspaceRetryWait? retryWait,
   }) : chessEverHydrationTimeout =
            chessEverHydrationTimeout ?? _chessEverHydrationTimeout,
        importStatsTimeout = importStatsTimeout ?? _importStatsTimeout,
        _appDatabase = appDatabase ?? AppDatabase.instance,
        _client = client ?? http.Client(),
        _gamebaseRepository = gamebaseRepository,
-       _supportDirectory = supportDirectory ?? getApplicationSupportDirectory;
+       _supportDirectory = supportDirectory ?? getApplicationSupportDirectory,
+       _retryWait = retryWait ?? _waitForPlayerWorkspaceRetry;
 
   final AppDatabase _appDatabase;
   final http.Client _client;
@@ -101,6 +134,7 @@ class PlayerWorkspaceRepository {
   final Duration chessEverHydrationTimeout;
   final Duration importStatsTimeout;
   final PlayerWorkspaceSupportDirectoryResolver _supportDirectory;
+  final PlayerWorkspaceRetryWait _retryWait;
 
   Future<PlayerWorkspaceSnapshot> loadSnapshot() async {
     final raw = await _appDatabase.getJson<Object?>(_workspaceStorageKey);
@@ -587,29 +621,36 @@ class PlayerWorkspaceRepository {
     OperationCancellationToken? cancellationToken,
   }) async {
     cancellationToken?.throwIfCanceled();
-    final exported = await _downloadExternalPlayerPgnExport(
-      externalSource: GamebaseExternalPlayerSource.lichess,
-      workspaceSource: PlayerWorkspaceSource.lichess,
-      username: username,
-      sinceMs: sinceMs,
-      onProgress: onProgress,
-      cancellationToken: cancellationToken,
-    );
-    if (exported != null) return exported;
-    if (_gamebaseRepository != null) {
-      throw StateError('Lichess source export is not available from gamebase.');
-    }
-
-    if (sinceMs == null &&
-        expectedGameCount != null &&
-        expectedGameCount >= _lichessParallelRangeMinExpectedGames) {
-      return _downloadLichessGamesInRanges(
+    PlayerWorkspaceDownloadedPgn? exported;
+    var useDirectFallback = false;
+    try {
+      exported = await _downloadExternalPlayerPgnExport(
+        externalSource: GamebaseExternalPlayerSource.lichess,
+        workspaceSource: PlayerWorkspaceSource.lichess,
         username: username,
-        expectedGameCount: expectedGameCount,
+        sinceMs: sinceMs,
         onProgress: onProgress,
         cancellationToken: cancellationToken,
       );
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 429) {
+        throw const _PlayerWorkspaceDownloadException(
+          'Lichess is limiting downloads right now. Please wait one minute and try again.',
+        );
+      }
+      if (!_isTransientGamebaseSourceFailure(error)) rethrow;
+      useDirectFallback = true;
+      onProgress?.call(
+        'ChessEver source service is temporarily unavailable. '
+        'Downloading directly from Lichess...',
+        null,
+      );
     }
+    if (exported != null) return exported;
+    if (_gamebaseRepository != null && !useDirectFallback) {
+      throw StateError('Lichess source export is not available from gamebase.');
+    }
+
     final query = <String, String>{
       'perfType': 'ultraBullet,bullet,blitz,rapid,classical,correspondence',
       'sort': 'dateAsc',
@@ -623,142 +664,82 @@ class PlayerWorkspaceRepository {
       '/api/games/user/${username.trim()}',
       query,
     );
-    final progress = _LichessPgnStreamProgress(
+    final downloaded = await _downloadLichessPgnWithRetry(
+      uri: uri,
       expectedGameCount: expectedGameCount,
       onProgress: onProgress,
-    )..start();
-    final pgn = await _downloadText(
-      uri,
-      accept: 'application/x-chess-pgn',
-      onTextChunk: progress.addChunk,
       cancellationToken: cancellationToken,
     );
     cancellationToken?.throwIfCanceled();
-    progress.finish();
     return PlayerWorkspaceDownloadedPgn(
       source: PlayerWorkspaceSource.lichess,
-      pgn: pgn,
-      gameCount:
-          progress.receivedGames > 0
-              ? progress.receivedGames
-              : countPgnGames(pgn),
+      pgn: downloaded.pgn,
+      gameCount: downloaded.gameCount,
+      replaceExistingSource: sinceMs == null,
     );
   }
 
-  Future<PlayerWorkspaceDownloadedPgn> _downloadLichessGamesInRanges({
-    required String username,
-    required int expectedGameCount,
+  Future<({String pgn, int gameCount})> _downloadLichessPgnWithRetry({
+    required Uri uri,
+    required int? expectedGameCount,
     required PlayerWorkspaceProgress? onProgress,
     required OperationCancellationToken? cancellationToken,
   }) async {
-    final ranges = _lichessFullExportRanges(DateTime.now().toUtc());
-    if (ranges.length <= 1) {
-      return downloadLichessGames(
-        username: username,
-        expectedGameCount: null,
+    var transientRetryIndex = 0;
+    var rateLimitRetries = 0;
+    while (true) {
+      cancellationToken?.throwIfCanceled();
+      final progress = _LichessPgnStreamProgress(
+        expectedGameCount: expectedGameCount,
         onProgress: onProgress,
-        cancellationToken: cancellationToken,
-      );
-    }
-
-    final rangeCounts = List<int>.filled(ranges.length, 0);
-    final completedRanges = <int>{};
-    final throttle = _ProgressThrottle();
-    void report({bool force = false}) {
-      final received = rangeCounts.fold<int>(0, (sum, count) => sum + count);
-      if (!force && !throttle.shouldReport(received)) return;
-      onProgress?.call(
-        'Receiving Lichess games: $received of about $expectedGameCount '
-        '(${completedRanges.length}/${ranges.length} date ranges done)...',
-        (received / expectedGameCount).clamp(0.0, 1.0).toDouble(),
-      );
-    }
-
-    onProgress?.call(
-      'Opening Lichess download: ${ranges.length} date ranges '
-      '(${_lichessRangeConcurrency.clamp(1, ranges.length)} at a time)...',
-      0,
-    );
-    late final List<_IndexedPgn> downloads;
-    try {
-      downloads =
-          await _mapConcurrentIndexed<_LichessDownloadRange, _IndexedPgn>(
-            ranges,
-            concurrency: _lichessRangeConcurrency,
-            mapper: (range, index) async {
-              cancellationToken?.throwIfCanceled();
-              final query = <String, String>{
-                'perfType':
-                    'ultraBullet,bullet,blitz,rapid,classical,correspondence',
-                'sort': 'dateAsc',
-                'tags': 'true',
-                'clocks': 'true',
-                'opening': 'true',
-                'since': range.sinceMs.toString(),
-                'until': range.untilMs.toString(),
-              };
-              final counter = _PgnStreamGameCounter();
-              final uri = Uri.https(
-                'lichess.org',
-                '/api/games/user/${username.trim()}',
-                query,
-              );
-              final pgn = await _downloadText(
-                uri,
-                accept: 'application/x-chess-pgn',
-                onTextChunk: (chunk) {
-                  counter.addChunk(chunk);
-                  rangeCounts[index] = counter.receivedGames;
-                  report();
-                },
-                cancellationToken: cancellationToken,
-              );
-              cancellationToken?.throwIfCanceled();
-              counter.finish();
-              rangeCounts[index] =
-                  counter.receivedGames > 0
-                      ? counter.receivedGames
-                      : countPgnGames(pgn);
-              completedRanges.add(index);
-              report(force: true);
-              return _IndexedPgn(index, pgn);
-            },
-          );
-    } on Object catch (error) {
-      if (!isOperationCanceled(error) && error.toString().contains('(429)')) {
-        onProgress?.call(
-          'Lichess limited parallel export; falling back to one stream...',
-          null,
-        );
-        return downloadLichessGames(
-          username: username,
-          expectedGameCount: null,
-          onProgress: onProgress,
+      )..start();
+      try {
+        final pgn = await _downloadText(
+          uri,
+          accept: 'application/x-chess-pgn',
+          onTextChunk: progress.addChunk,
           cancellationToken: cancellationToken,
         );
+        cancellationToken?.throwIfCanceled();
+        progress.finish();
+        return (
+          pgn: pgn,
+          gameCount:
+              progress.receivedGames > 0
+                  ? progress.receivedGames
+                  : countPgnGames(pgn),
+        );
+      } on Object catch (error) {
+        if (isOperationCanceled(error)) rethrow;
+        final statusCode =
+            error is _HttpDownloadException ? error.statusCode : null;
+        Duration? delay;
+        String? retryMessage;
+        if (statusCode == 429 && rateLimitRetries == 0) {
+          rateLimitRetries += 1;
+          delay = _longerDuration(
+            _lichessRateLimitRetryDelay,
+            (error as _HttpDownloadException).retryAfter,
+          );
+          retryMessage =
+              'Lichess is limiting downloads. Retrying in ${_delayLabel(delay)}...';
+        } else if (_isTransientLichessDownloadFailure(error) &&
+            transientRetryIndex < _lichessTransientRetryDelays.length) {
+          delay = _longerDuration(
+            _lichessTransientRetryDelays[transientRetryIndex],
+            error is _HttpDownloadException ? error.retryAfter : null,
+          );
+          transientRetryIndex += 1;
+          retryMessage =
+              'Lichess is temporarily unavailable. Retrying in ${_delayLabel(delay)}...';
+        }
+        if (delay == null || retryMessage == null) {
+          throw _friendlyLichessDownloadFailure(error);
+        }
+        onProgress?.call(retryMessage, null);
+        await _retryWait(delay, cancellationToken);
       }
-      rethrow;
     }
-    cancellationToken?.throwIfCanceled();
-    downloads.sort((a, b) => a.index.compareTo(b.index));
-    final buffer = StringBuffer();
-    for (final download in downloads) {
-      final pgn = download.pgn.trim();
-      if (pgn.isEmpty) continue;
-      if (buffer.isNotEmpty) buffer.writeln();
-      buffer.writeln(pgn);
-    }
-    final text = buffer.toString();
-    final gameCount = rangeCounts.fold<int>(0, (sum, count) => sum + count);
-    onProgress?.call(
-      'Lichess download complete: $gameCount games received.',
-      1,
-    );
-    return PlayerWorkspaceDownloadedPgn(
-      source: PlayerWorkspaceSource.lichess,
-      pgn: text,
-      gameCount: gameCount > 0 ? gameCount : countPgnGames(text),
-    );
   }
 
   Future<PlayerWorkspaceDownloadedPgn> downloadChessComGames({
@@ -1493,8 +1474,11 @@ class PlayerWorkspaceRepository {
     cancellationToken?.throwIfCanceled();
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final body = await response.stream.bytesToString();
-      throw StateError(
-        'Request failed (${response.statusCode}) for $uri: ${body.trim()}',
+      throw _HttpDownloadException(
+        statusCode: response.statusCode,
+        uri: uri,
+        body: body.trim(),
+        retryAfter: _retryAfterDuration(response.headers['retry-after']),
       );
     }
     final buffer = StringBuffer();
@@ -1745,26 +1729,109 @@ class _ChessEverEmbeddedPgnBatch {
   final List<Map<String, dynamic>> rows;
 }
 
-@immutable
-class _LichessDownloadRange {
-  const _LichessDownloadRange({required this.sinceMs, required this.untilMs});
+class _HttpDownloadException implements Exception {
+  const _HttpDownloadException({
+    required this.statusCode,
+    required this.uri,
+    required this.body,
+    required this.retryAfter,
+  });
 
-  final int sinceMs;
-  final int untilMs;
+  final int statusCode;
+  final Uri uri;
+  final String body;
+  final Duration? retryAfter;
+
+  @override
+  String toString() =>
+      'Request failed ($statusCode) for $uri${body.isEmpty ? '' : ': $body'}';
 }
 
-List<_LichessDownloadRange> _lichessFullExportRanges(DateTime nowUtc) {
-  final endMs = nowUtc.millisecondsSinceEpoch;
-  final ranges = <_LichessDownloadRange>[];
-  for (var year = _lichessFirstFullExportYear; year <= nowUtc.year; year++) {
-    final start = DateTime.utc(year).millisecondsSinceEpoch;
-    final next = DateTime.utc(year + 1).millisecondsSinceEpoch;
-    final until = (next - 1).clamp(start, endMs).toInt();
-    if (start <= endMs && until >= start) {
-      ranges.add(_LichessDownloadRange(sinceMs: start, untilMs: until));
-    }
+class _PlayerWorkspaceDownloadException implements Exception {
+  const _PlayerWorkspaceDownloadException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+bool _isTransientGamebaseSourceFailure(DioException error) {
+  final statusCode = error.response?.statusCode;
+  if (statusCode != null) return statusCode >= 500 && statusCode <= 599;
+  return switch (error.type) {
+    DioExceptionType.connectionTimeout ||
+    DioExceptionType.sendTimeout ||
+    DioExceptionType.receiveTimeout ||
+    DioExceptionType.connectionError ||
+    DioExceptionType.unknown => true,
+    _ => false,
+  };
+}
+
+bool _isTransientLichessDownloadFailure(Object error) {
+  if (error is _HttpDownloadException) {
+    return error.statusCode >= 500 && error.statusCode <= 599;
   }
-  return List<_LichessDownloadRange>.unmodifiable(ranges);
+  return error is http.ClientException ||
+      error is SocketException ||
+      error is TimeoutException;
+}
+
+_PlayerWorkspaceDownloadException _friendlyLichessDownloadFailure(
+  Object error,
+) {
+  if (error is _HttpDownloadException && error.statusCode == 429) {
+    return const _PlayerWorkspaceDownloadException(
+      'Lichess is limiting downloads right now. '
+      'Please wait one minute and try again.',
+    );
+  }
+  if (_isTransientLichessDownloadFailure(error)) {
+    return const _PlayerWorkspaceDownloadException(
+      'Lichess is temporarily unavailable. '
+      'Please try downloading again in a few minutes.',
+    );
+  }
+  if (error is _HttpDownloadException) {
+    return _PlayerWorkspaceDownloadException(
+      'Lichess could not download games right now '
+      '(server response ${error.statusCode}). Please try again.',
+    );
+  }
+  return const _PlayerWorkspaceDownloadException(
+    'Lichess could not download games right now. Please try again.',
+  );
+}
+
+Duration _longerDuration(Duration minimum, Duration? suggested) {
+  if (suggested == null || suggested.compareTo(minimum) < 0) return minimum;
+  return suggested;
+}
+
+Duration? _retryAfterDuration(String? raw) {
+  final value = raw?.trim();
+  if (value == null || value.isEmpty) return null;
+  final seconds = int.tryParse(value);
+  if (seconds != null) {
+    return Duration(seconds: seconds.clamp(0, 86400).toInt());
+  }
+  try {
+    final retryAt = HttpDate.parse(value).toUtc();
+    final delay = retryAt.difference(DateTime.now().toUtc());
+    return delay.isNegative ? Duration.zero : delay;
+  } on FormatException {
+    return null;
+  }
+}
+
+String _delayLabel(Duration delay) {
+  if (delay.inSeconds >= 60 && delay.inSeconds % 60 == 0) {
+    final minutes = delay.inMinutes;
+    return '$minutes ${minutes == 1 ? 'minute' : 'minutes'}';
+  }
+  final seconds = delay.inSeconds <= 0 ? 1 : delay.inSeconds;
+  return '$seconds ${seconds == 1 ? 'second' : 'seconds'}';
 }
 
 @immutable
