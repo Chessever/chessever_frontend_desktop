@@ -3562,6 +3562,10 @@ class _BoardPaneContent extends HookConsumerWidget {
         position: position,
         onShareGame: shareGameAction,
         onFlipBoard: () => flipped.value = !flipped.value,
+        onToggleBoardFocus:
+            () =>
+                ref.read(boardFocusModeProvider.notifier).state =
+                    !boardFocusMode,
         onCopyPgn: copyPgnAction,
         onCopyFen: copyFenAction,
         onSavePgn: savePgnAction,
@@ -3569,6 +3573,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         onOpenBoardSettings: openBoardSettingsTab,
         onOpenPositionSetup: openPositionSetup,
         canCopyOrSavePgn: chessGame.value.mainline.isNotEmpty,
+        boardFocusMode: boardFocusMode,
         onPlayFromHere: openPlayFromHereDialog,
       );
     }
@@ -3733,13 +3738,6 @@ class _BoardPaneContent extends HookConsumerWidget {
                           viewSource:
                               boardArgs?.viewSource ?? ChessboardView.tour,
                           focusMode: boardFocusMode,
-                          focusShortcutLabel: shortcutLabelFor(
-                            BoardActionKey.toggleBoardFocus,
-                          ),
-                          onFocusModeChanged: (value) {
-                            ref.read(boardFocusModeProvider.notifier).state =
-                                value;
-                          },
                           onOpenContextMenu: openBoardContextMenu,
                           boardSizePreference: boardSizePreference.value,
                           onBoardSizeChanged: (size) {
@@ -5375,8 +5373,6 @@ class _BoardArea extends ConsumerWidget {
     required this.isLiveAtTip,
     required this.isForegroundTab,
     required this.focusMode,
-    required this.focusShortcutLabel,
-    required this.onFocusModeChanged,
     required this.onOpenContextMenu,
     required this.boardSizePreference,
     required this.onBoardSizeChanged,
@@ -5475,8 +5471,6 @@ class _BoardArea extends ConsumerWidget {
 
   final ValueChanged<int> onWheelStep;
   final bool focusMode;
-  final String? focusShortcutLabel;
-  final ValueChanged<bool> onFocusModeChanged;
   final ValueChanged<Offset> onOpenContextMenu;
   final double? boardSizePreference;
   final ValueChanged<double> onBoardSizeChanged;
@@ -5788,11 +5782,6 @@ class _BoardArea extends ConsumerWidget {
             ),
           );
 
-          final focusButton = _BoardFocusButton(
-            focusMode: focusMode,
-            shortcutLabel: focusShortcutLabel,
-            onChanged: onFocusModeChanged,
-          );
           final moreActionsButton = _BoardMoreActionsButton(
             onPressed: onOpenContextMenu,
           );
@@ -5904,12 +5893,11 @@ class _BoardArea extends ConsumerWidget {
                                           (!topIsWhite &&
                                               sideToMove == Side.black),
                                       clockText: topClock,
-                                      // Reserve both controls' space in the
-                                      // player bar, but keep the interactive
-                                      // controls outside the export boundary.
-                                      trailingControl: const SizedBox(
-                                        width: (_focusButtonSize * 2) + 4,
-                                        height: _focusButtonSize,
+                                      // Reserve the actions menu's space in
+                                      // the player bar, but keep the actual
+                                      // control outside the export boundary.
+                                      trailingControl: const SizedBox.square(
+                                        dimension: _focusButtonSize,
                                       ),
                                       activeGameId: activeGameId,
                                       useLiveClock:
@@ -5971,11 +5959,7 @@ class _BoardArea extends ConsumerWidget {
                       right: 0,
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
-                        children: [
-                          moreActionsButton,
-                          const SizedBox(width: 4),
-                          focusButton,
-                        ],
+                        children: [moreActionsButton],
                       ),
                     ),
                   if (hasHeaders && !focusMode)
@@ -6029,45 +6013,7 @@ class _BoardMoreActionsButtonState extends State<_BoardMoreActionsButton> {
             key: const ValueKey<String>('desktop-board-more-actions'),
             style: _floatingBoardIconButtonStyle(selected: false),
             onPress: _openMenu,
-            child: const Icon(Icons.more_horiz_rounded, size: 16),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BoardFocusButton extends StatelessWidget {
-  const _BoardFocusButton({
-    required this.focusMode,
-    required this.shortcutLabel,
-    required this.onChanged,
-  });
-
-  final bool focusMode;
-  final String? shortcutLabel;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return FTheme(
-      data: FThemes.zinc.dark,
-      child: DesktopTooltip(
-        message:
-            '${focusMode ? 'Exit board focus' : 'Board focus'}'
-            '${shortcutLabel == null ? '' : ' ($shortcutLabel)'}',
-        child: SizedBox.square(
-          dimension: _focusButtonSize,
-          child: FButton.icon(
-            key: const ValueKey<String>('desktop-board-focus-toggle'),
-            style: _floatingBoardIconButtonStyle(selected: focusMode),
-            onPress: () => onChanged(!focusMode),
-            child: Icon(
-              focusMode
-                  ? Icons.fullscreen_exit_rounded
-                  : Icons.fullscreen_rounded,
-              size: 16,
-            ),
+            child: const Icon(Icons.more_vert_rounded, size: 16),
           ),
         ),
       ),

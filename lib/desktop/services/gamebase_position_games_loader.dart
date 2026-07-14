@@ -329,6 +329,8 @@ TournamentGameSummary gamebasePositionGameSummaryFromRow(
       (row['fen']?.toString().trim().isNotEmpty == true)
           ? row['fen'].toString().trim()
           : fallbackFen;
+  final pgn = (row['pgn']?.toString() ?? '').trim();
+  final localPgnSource = _localPgnSourceFromPositionRow(row);
 
   return TournamentGameSummary(
     id: id,
@@ -343,7 +345,7 @@ TournamentGameSummary gamebasePositionGameSummaryFromRow(
     blackRating: _readInt(row['blackElo']),
     whiteFideId: _readNullableInt(row['whiteFideId']),
     blackFideId: _readNullableInt(row['blackFideId']),
-    hasPgn: false,
+    hasPgn: pgn.isNotEmpty,
     fen: fen.isEmpty ? null : fen,
     roundLabel: date == null ? '' : _formatYear(date),
     status: gamebaseStatusFromResult(result),
@@ -354,6 +356,37 @@ TournamentGameSummary gamebasePositionGameSummaryFromRow(
     ),
     startsAt: date,
     hasStarted: true,
+    pgn: pgn.isEmpty ? null : pgn,
+    localPgnSource: localPgnSource,
+  );
+}
+
+TournamentGameLocalPgnSource? _localPgnSourceFromPositionRow(
+  Map<String, dynamic> row,
+) {
+  final sourcePath = (row['sourcePath']?.toString() ?? '').trim();
+  final sourceIndex = _readNullableInt(row['indexInFile']);
+  final sourceFileGameCount = _readNullableInt(row['fileGameCount']);
+  if (sourcePath.isEmpty ||
+      sourceIndex == null ||
+      sourceIndex < 0 ||
+      sourceFileGameCount == null ||
+      sourceFileGameCount <= 0) {
+    return null;
+  }
+
+  final white = (row['white']?.toString() ?? '').trim();
+  final black = (row['black']?.toString() ?? '').trim();
+  final event = (row['event']?.toString() ?? '').trim();
+  final title =
+      white.isNotEmpty || black.isNotEmpty
+          ? '${white.isEmpty ? 'White' : white} vs ${black.isEmpty ? 'Black' : black}'
+          : (event.isEmpty ? 'Local PGN game' : event);
+  return TournamentGameLocalPgnSource(
+    sourcePath: sourcePath,
+    sourceIndex: sourceIndex,
+    sourceFileGameCount: sourceFileGameCount,
+    title: title,
   );
 }
 

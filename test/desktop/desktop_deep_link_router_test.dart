@@ -1,9 +1,12 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/desktop_deep_link_router.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 
 void main() {
+  final currentScheme = DesktopBuildIdentity.current.urlScheme;
+
   group('parseDesktopBroadcastDeepLink', () {
     test('parses chessever.com broadcast slug and tour id links', () {
       final parsed = parseDesktopBroadcastDeepLink(
@@ -32,7 +35,7 @@ void main() {
 
     test('parses custom-scheme broadcast links', () {
       final parsed = parseDesktopBroadcastDeepLink(
-        Uri.parse('chessever://broadcast/event-slug/4TdB92Cj'),
+        Uri.parse('$currentScheme://broadcast/event-slug/4TdB92Cj'),
       );
 
       expect(parsed, isNotNull);
@@ -72,7 +75,7 @@ void main() {
 
     test('parses custom-scheme game links', () {
       final parsed = parseDesktopGameDeepLink(
-        Uri.parse('chessever://games/5Hkz1dp9?tour=open&round=round-5'),
+        Uri.parse('$currentScheme://games/5Hkz1dp9?tour=open&round=round-5'),
       );
 
       expect(parsed, isNotNull);
@@ -99,15 +102,15 @@ void main() {
     final uris = desktopDeepLinkUrisFromArguments([
       '--updated',
       'C:/Users/me/game.pgn',
-      'chessever://broadcast/event-slug/4TdB92Cj',
+      '$currentScheme://broadcast/event-slug/4TdB92Cj',
       'https://chessever.com/broadcast/slug/group_event_123',
       'https://chessever.com/games/5Hkz1dp9?tour=open&round=round-5',
       'https://chessever.com/pricing',
-      'chessever://broadcast/event-slug/4TdB92Cj',
+      '$currentScheme://broadcast/event-slug/4TdB92Cj',
     ]);
 
     expect(uris.map((uri) => uri.toString()), [
-      'chessever://broadcast/event-slug/4TdB92Cj',
+      '$currentScheme://broadcast/event-slug/4TdB92Cj',
       'https://chessever.com/broadcast/slug/group_event_123',
       'https://chessever.com/games/5Hkz1dp9?tour=open&round=round-5',
     ]);

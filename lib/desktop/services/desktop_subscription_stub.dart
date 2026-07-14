@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
 import 'package:chessever/desktop/services/desktop_offline_access_cache.dart';
+import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 
 /// Desktop-side override of [subscriptionProvider].
@@ -37,6 +38,18 @@ class DesktopSubscriptionNotifier extends SubscriptionNotifier {
   static const _refreshPeriod = Duration(minutes: 5);
 
   void _wire() {
+    // The debug desktop shell is intentionally allowed to start without
+    // backend configuration. Riverpod can still instantiate this override
+    // from widgets inside that shell, so never touch Supabase.instance until
+    // the singleton has actually been initialized.
+    if (!DesktopSupabaseInit.isInitialized) {
+      state = SubscriptionState(
+        isLoading: false,
+        error: 'Supabase is unavailable in this desktop session.',
+      );
+      return;
+    }
+
     _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((event) {
       if (kDebugMode) {
         debugPrint(

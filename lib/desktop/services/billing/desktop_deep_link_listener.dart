@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart';
 
+import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/desktop_deep_link_router.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 
@@ -55,7 +56,8 @@ class DesktopDeepLinkListener {
   }
 
   void _dispatch(Uri uri) {
-    final isChesseverScheme = uri.scheme == 'chessever';
+    final isChesseverScheme =
+        uri.scheme == DesktopBuildIdentity.current.urlScheme;
     final isChesseverWebLink =
         (uri.scheme == 'https' || uri.scheme == 'http') &&
         (uri.host == 'chessever.com' || uri.host == 'www.chessever.com');

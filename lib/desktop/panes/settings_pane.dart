@@ -11,6 +11,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:chessever/desktop/services/auth/desktop_auth_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_billing_service.dart';
 import 'package:chessever/desktop/services/billing/desktop_pricing_provider.dart';
+import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
@@ -497,11 +498,7 @@ class _SubscriptionSection extends HookConsumerWidget {
             const SizedBox(height: 12),
             const Text(
               'Subscribe on the web or in the iOS / Android app. One plan unlocks every ChessEver surface.',
-              style: TextStyle(
-                color: kWhiteColor70,
-                fontSize: 12,
-                height: 1.4,
-              ),
+              style: TextStyle(color: kWhiteColor70, fontSize: 12, height: 1.4),
             ),
           ],
           if (error.value != null) ...[
@@ -761,7 +758,8 @@ class _UpdatesSection extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final supported = Platform.isMacOS || Platform.isWindows;
+    final development = DesktopBuildIdentity.current.isDevelopment;
+    final supported = !development && (Platform.isMacOS || Platform.isWindows);
     final update = supported ? ref.watch(desktopUpdateStateProvider) : null;
     final checking = useState<bool>(false);
     final lastCheckedAt = useState<DateTime?>(null);
@@ -803,7 +801,13 @@ class _UpdatesSection extends HookConsumerWidget {
     Color pillColor;
     String description;
 
-    if (!supported) {
+    if (development) {
+      pillLabel = 'Development build';
+      pillColor = kLightGreyColor;
+      description =
+          'Production updates are disabled so this development app cannot '
+          'replace or modify your installed ChessEver app.';
+    } else if (!supported) {
       pillLabel = 'Not available';
       pillColor = kLightGreyColor;
       description =
@@ -1134,8 +1138,11 @@ class _PrimaryButtonState extends State<_PrimaryButton> {
                 disabled ? 1.0 : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0)),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
@@ -1205,8 +1212,11 @@ class _SecondaryButtonState extends State<_SecondaryButton> {
                 disabled ? 1.0 : (_pressed ? 0.97 : (_hovered ? 1.012 : 1.0)),
             motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
             builder:
-                (context, scale, child) =>
-                    Transform.scale(scale: scale, filterQuality: FilterQuality.medium, child: child),
+                (context, scale, child) => Transform.scale(
+                  scale: scale,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(

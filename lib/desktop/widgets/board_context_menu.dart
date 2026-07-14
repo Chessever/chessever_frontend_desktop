@@ -7,6 +7,7 @@ import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 enum _BoardContextAction {
   share,
   flipBoard,
+  toggleBoardFocus,
   copyPgn,
   copyFen,
   saveGameToLibrary,
@@ -23,6 +24,7 @@ Future<void> showBoardContextMenu(
   required Offset position,
   required VoidCallback onShareGame,
   required VoidCallback onFlipBoard,
+  required VoidCallback onToggleBoardFocus,
   required VoidCallback onCopyPgn,
   required VoidCallback onCopyFen,
   required VoidCallback onSavePgn,
@@ -30,6 +32,7 @@ Future<void> showBoardContextMenu(
   required VoidCallback onOpenBoardSettings,
   required VoidCallback onOpenPositionSetup,
   required bool canCopyOrSavePgn,
+  required bool boardFocusMode,
   VoidCallback? onPlayFromHere,
 }) async {
   final shortcuts =
@@ -56,6 +59,15 @@ Future<void> showBoardContextMenu(
         value: _BoardContextAction.flipBoard,
         icon: Icons.flip_camera_android_rounded,
         label: 'Flip board',
+      ),
+      DesktopContextMenuItem(
+        value: _BoardContextAction.toggleBoardFocus,
+        icon:
+            boardFocusMode
+                ? Icons.fullscreen_exit_rounded
+                : Icons.fullscreen_rounded,
+        label: boardFocusMode ? 'Exit board focus' : 'Board focus',
+        shortcut: hintFor(BoardActionKey.toggleBoardFocus),
       ),
       const DesktopContextMenuDivider(),
       DesktopContextMenuItem(
@@ -113,6 +125,8 @@ Future<void> showBoardContextMenu(
       onShareGame();
     case _BoardContextAction.flipBoard:
       onFlipBoard();
+    case _BoardContextAction.toggleBoardFocus:
+      onToggleBoardFocus();
     case _BoardContextAction.copyPgn:
       onCopyPgn();
     case _BoardContextAction.copyFen:

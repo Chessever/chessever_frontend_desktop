@@ -1,5 +1,7 @@
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
+import 'package:chessever/desktop/widgets/resizable_split_view.dart';
+import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -17,6 +19,9 @@ void main() {
   ) async {
     await tester.pumpWidget(
       ProviderScope(
+        overrides: [
+          engineSettingsProviderNew.overrideWith(_EngineAnalysisOnNotifier.new),
+        ],
         child: MaterialApp(
           home: SizedBox(
             width: 520,
@@ -37,6 +42,18 @@ void main() {
 
     expect(find.text('Analyze Game'), findsOneWidget);
     expect(find.textContaining('three candidate lines'), findsOneWidget);
+
+    final reportSplit = tester.widget<ResizableSplitView>(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is ResizableSplitView &&
+            widget.storageKey == desktopEngineReportSplitStorageKey,
+      ),
+    );
+    expect(reportSplit.axis, Axis.vertical);
+    expect(reportSplit.gutterThickness, desktopEngineReportGutterThickness);
+    expect(reportSplit.children.first.minSize, 80);
+    expect(reportSplit.children.last.minSize, 140);
   });
 
   testWidgets(
@@ -151,6 +168,15 @@ void main() {
     await tester.tapAt(tester.getCenter(find.byType(CustomPaint).first));
     expect(jumpedPly, isNotNull);
   });
+}
+
+class _EngineAnalysisOnNotifier extends EngineSettingsNotifierNew {
+  @override
+  Future<EngineSettings> build() async {
+    const settings = EngineSettings(showEngineAnalysis: true);
+    state = const AsyncValue.data(settings);
+    return settings;
+  }
 }
 
 GameReportPosition _position(String fen, int cp) =>

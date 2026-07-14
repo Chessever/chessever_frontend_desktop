@@ -15,12 +15,20 @@ import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/engine_settings_popover.dart';
 import 'package:chessever/desktop/widgets/move_hover_preview.dart';
+import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/theme/app_theme.dart';
+
+@visibleForTesting
+const String desktopEngineReportSplitStorageKey =
+    'board_pane.engine.live_report.v1';
+
+@visibleForTesting
+const double desktopEngineReportGutterThickness = 10;
 
 /// Live engine evaluation panel for the active board position.
 ///
@@ -236,57 +244,67 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     final evalState =
         engineActive ? ref.watch(boardEvalProvider(widget.fen)) : null;
 
-    final children = <Widget>[
-      _buildHeader(
-        engineOn: engineOn,
-        engineActive: engineActive,
-        evalState: evalState,
-      ),
-    ];
+    final engineContent =
+        liveAnalysisPausedForReport
+            ? const _EnginePausedForReport()
+            : engineActive
+            ? _buildEngineLines(evalState!)
+            : const _EngineNotReady();
+    final reportContent = GameReportView(
+      state: reportState,
+      progressController: _reportController,
+      game: widget.game,
+      headers: widget.headers,
+      activePly: widget.activePly,
+      onAnalyze: _analyze,
+      onCancel: _reportController.cancel,
+      onJumpToPly: widget.onJumpToPly,
+    );
 
-    // Engine lines are governed solely by the engine switch.
-    if (engineOn) {
-      children.add(
-        Expanded(
-          flex: reportOn ? 2 : 1,
-          child:
-              liveAnalysisPausedForReport
-                  ? const _EnginePausedForReport()
-                  : engineActive
-                  ? _buildEngineLines(evalState!)
-                  : const _EngineNotReady(),
-        ),
-      );
-    }
+    final Widget? body =
+        engineOn && reportOn
+            ? ResizableSplitView(
+              axis: Axis.vertical,
+              storageKey: desktopEngineReportSplitStorageKey,
+              gutterThickness: desktopEngineReportGutterThickness,
+              gutterColor: kPrimaryColor,
+              children: [
+                SplitChild(
+                  minSize: 80,
+                  initialWeight: 0.40,
+                  label: 'Live engine',
+                  dismissible: false,
+                  child: engineContent,
+                ),
+                SplitChild(
+                  minSize: 140,
+                  initialWeight: 0.60,
+                  label: 'Game report',
+                  dismissible: false,
+                  child: reportContent,
+                ),
+              ],
+            )
+            : engineOn
+            ? engineContent
+            : reportOn
+            ? reportContent
+            : null;
 
-    // The report is governed solely by its own switch — closing the engine
-    // never removes it, and closing it never removes the engine lines.
-    if (reportOn) {
-      if (engineOn) {
-        children.add(const Divider(height: 1, color: kDividerColor));
-      }
-      children.add(
-        Expanded(
-          flex: engineOn ? 3 : 1,
-          child: GameReportView(
-            state: reportState,
-            progressController: _reportController,
-            game: widget.game,
-            headers: widget.headers,
-            activePly: widget.activePly,
-            onAnalyze: _analyze,
-            onCancel: _reportController.cancel,
-            onJumpToPly: widget.onJumpToPly,
-          ),
-        ),
-      );
-    }
-
+    // Engine lines and the report remain independently toggled; when both
+    // are visible, either can be resized without moving the notation boundary.
     return Container(
       color: kBlack2Color,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: children,
+        children: [
+          _buildHeader(
+            engineOn: engineOn,
+            engineActive: engineActive,
+            evalState: evalState,
+          ),
+          if (body != null) Expanded(child: body),
+        ],
       ),
     );
   }

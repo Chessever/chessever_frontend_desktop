@@ -1276,10 +1276,15 @@ Future<List<String>> _legacySqfliteDatabasePathCandidates() async {
   } catch (_) {
     sqfliteDatabasesPath = null;
   }
-  try {
-    documentsPath = (await getApplicationDocumentsDirectory()).path;
-  } catch (_) {
-    documentsPath = null;
+  // Documents is a shared, app-independent location. Production keeps this
+  // legacy lookup so existing users can migrate old databases, but a
+  // development build must never import production data automatically.
+  if (kReleaseMode) {
+    try {
+      documentsPath = (await getApplicationDocumentsDirectory()).path;
+    } catch (_) {
+      documentsPath = null;
+    }
   }
 
   return localChessLegacySqfliteDatabasePathCandidates(

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
@@ -13,6 +14,14 @@ bool _desktopUpdateCommandRunning = false;
 /// Runs the user-facing update command from native menus and any future
 /// command-palette entry.
 Future<void> runDesktopUpdateCommand(BuildContext context) async {
+  if (!DesktopBuildIdentity.current.updatesEnabled) {
+    showDesktopToast(
+      context,
+      'Production updates are disabled in ChessEver Development.',
+    );
+    return;
+  }
+
   final service = DesktopUpdaterService.instance;
   final initialState = service.state.value;
 
