@@ -51,6 +51,7 @@ class LocalChessFilesView extends HookConsumerWidget {
     this.playerFideId,
     this.playerAliases = const <String>[],
     this.showCountMeta = true,
+    this.showLatestGamesFirst = false,
     this.openingTreeIndexOverride,
     this.onOpenTreeOverride,
     this.onBuildTreeOverride,
@@ -65,6 +66,10 @@ class LocalChessFilesView extends HookConsumerWidget {
   /// line. Disabled when the view is embedded somewhere that already surfaces
   /// the game count (e.g. the Players Games tab), where the count is redundant.
   final bool showCountMeta;
+
+  /// Starts the table on Date descending instead of original file order.
+  /// Used by player profiles, where the newest games are the primary view.
+  final bool showLatestGamesFirst;
 
   /// Seeded filters (e.g. from players Overview tap). Applied on first build
   /// and whenever the instance identity / value changes via [useEffect].
@@ -99,10 +104,15 @@ class LocalChessFilesView extends HookConsumerWidget {
       initialFilter ?? LocalChessGameFilter(),
     );
     final sort = useState(
-      const _LocalGamesSortConfig(
-        _LocalGamesSortKey.originalOrder,
-        _LocalGamesSortDir.asc,
-      ),
+      showLatestGamesFirst
+          ? const _LocalGamesSortConfig(
+            _LocalGamesSortKey.date,
+            _LocalGamesSortDir.desc,
+          )
+          : const _LocalGamesSortConfig(
+            _LocalGamesSortKey.originalOrder,
+            _LocalGamesSortDir.asc,
+          ),
     );
     final databasePageWindow = useState(const _LocalDatabasePageWindow('', 0));
     final databaseLoadedPages = useState(
