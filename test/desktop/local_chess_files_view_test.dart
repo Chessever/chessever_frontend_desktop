@@ -223,99 +223,99 @@ void main() {
     },
   );
 
-  testWidgets(
-    'selected local database loads more games when scrolled near the bottom',
-    (tester) async {
-      final source = _sourceWithGame(
-        _localGame(
-          id: 'fallback',
-          white: 'Fallback',
-          black: 'Player',
-          sourcePath: '/tmp/view.pgn',
-        ),
-        gameCount: 2500,
-      );
-      final repository = _FakeLocalChessDatabaseRepository(
-        pageForQuery: (query) {
-          final start = query.pageNumber * query.pageSize;
-          final count = (2500 - start).clamp(0, query.pageSize);
-          return LocalChessGameQueryPage(
-            games: List<LocalChessGame>.generate(count, (i) {
-              final index = start + i;
-              return _localGame(
-                id: 'database-$index',
-                white: 'Database $index',
-                black: 'Player',
-                sourcePath: '/tmp/view.pgn',
-                indexInFile: index,
-              );
-            }),
-            totalCount: 2500,
-            pageNumber: query.pageNumber,
-            pageSize: query.pageSize,
-          );
-        },
-      );
+  testWidgets('selected local database exposes its full virtual scroll range', (
+    tester,
+  ) async {
+    final source = _sourceWithGame(
+      _localGame(
+        id: 'fallback',
+        white: 'Fallback',
+        black: 'Player',
+        sourcePath: '/tmp/view.pgn',
+      ),
+      gameCount: 2500,
+    );
+    final repository = _FakeLocalChessDatabaseRepository(
+      pageForQuery: (query) {
+        final start = query.pageNumber * query.pageSize;
+        final count = (2500 - start).clamp(0, query.pageSize);
+        return LocalChessGameQueryPage(
+          games: List<LocalChessGame>.generate(count, (i) {
+            final index = start + i;
+            return _localGame(
+              id: 'database-$index',
+              white: 'Database $index',
+              black: 'Player',
+              sourcePath: '/tmp/view.pgn',
+              indexInFile: index,
+            );
+          }),
+          totalCount: 2500,
+          pageNumber: query.pageNumber,
+          pageSize: query.pageSize,
+        );
+      },
+    );
 
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            localChessDatabaseRepositoryProvider.overrideWithValue(repository),
-            localChessLibraryProvider.overrideWith(
-              (ref) => LocalChessLibraryNotifier(),
-            ),
-          ],
-          child: MaterialApp(
-            home: Scaffold(
-              body: SizedBox(
-                width: 1100,
-                height: 700,
-                child: LocalChessFilesView(
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localChessDatabaseRepositoryProvider.overrideWithValue(repository),
+          localChessLibraryProvider.overrideWith(
+            (ref) => LocalChessLibraryNotifier(),
+          ),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 1100,
+              height: 700,
+              child: LocalChessFilesView(
+                selectedPath: source.root.path,
+                onSelectPath: (_) {},
+                stateOverride: LocalChessLibraryState(
+                  source: source,
                   selectedPath: source.root.path,
-                  onSelectPath: (_) {},
-                  stateOverride: LocalChessLibraryState(
-                    source: source,
-                    selectedPath: source.root.path,
-                  ),
-                  onRefreshOverride: () async {},
                 ),
+                onRefreshOverride: () async {},
               ),
             ),
           ),
         ),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
 
-      expect(repository.queries.single.pageSize, 200);
-      expect(repository.queries.single.pageNumber, 0);
-      expect(find.text('Load more'), findsOneWidget);
-      expect(find.text('200 / 2500 loaded'), findsOneWidget);
+    expect(repository.queries.single.pageSize, 200);
+    expect(repository.queries.single.pageNumber, 0);
+    expect(find.text('Load more'), findsNothing);
+    expect(find.text('2500 entries'), findsWidgets);
 
-      final tableScrollable = tester.state<ScrollableState>(
-        find.descendant(
-          of: find.byKey(const ValueKey('local-games-table-list')),
-          matching: find.byType(Scrollable),
-        ),
-      );
-      tableScrollable.position.jumpTo(tableScrollable.position.maxScrollExtent);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-      await tester.pump(const Duration(milliseconds: 250));
+    final tableScrollable = tester.state<ScrollableState>(
+      find.descendant(
+        of: find.byKey(const ValueKey('local-games-table-list')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    tableScrollable.position.jumpTo(tableScrollable.position.maxScrollExtent);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 250));
 
-      expect(repository.queries.last.pageNumber, 1);
-      expect(repository.queries.last.pageSize, 200);
-      expect(find.text('400 / 2500 loaded'), findsOneWidget);
+    expect(repository.queries.last.pageNumber, 12);
+    expect(repository.queries.last.pageSize, 200);
+    expect(find.text('Load more'), findsNothing);
+    expect(find.text('2500 entries'), findsWidgets);
 
-      await tester.enterText(find.byType(TextField), 'database 2');
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+    await tester.enterText(find.byType(TextField), 'database 2');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
 
-      expect(repository.queries.last.search, 'database 2');
-      expect(repository.queries.last.pageNumber, 0);
-      expect(repository.queries.last.pageSize, 200);
-    },
-  );
+    expect(repository.queries.last.search, 'database 2');
+    expect(repository.queries.last.pageNumber, 0);
+    expect(repository.queries.last.pageSize, 200);
+  });
 
   testWidgets(
     'Tree button opens a board tab scoped to the local database tree',

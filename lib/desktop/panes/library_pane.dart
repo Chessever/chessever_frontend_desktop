@@ -4222,11 +4222,6 @@ class _LocalDatabaseMiniPreview extends HookConsumerWidget {
             ),
         child: _MiniDatabasePreviewFrame(
           title: databaseTitle,
-          subtitle: _localMiniPreviewSubtitle(
-            loadedCount: visibleGames.length,
-            totalCount: previewTotalCount,
-            isLoading: isLoadingPreviewPage,
-          ),
           treeBuildProgress: treeBuildProgress,
           onOpenTree:
               openableLocalTreeIndex == null
@@ -4629,7 +4624,7 @@ class _LocalMiniPreviewTableRowState extends State<_LocalMiniPreviewTableRow>
 class _MiniDatabasePreviewFrame extends StatelessWidget {
   const _MiniDatabasePreviewFrame({
     required this.title,
-    required this.subtitle,
+    this.subtitle,
     this.treeBuildProgress,
     this.onOpenTree,
     this.onBuildTree,
@@ -4637,7 +4632,7 @@ class _MiniDatabasePreviewFrame extends StatelessWidget {
   });
 
   final String title;
-  final String subtitle;
+  final String? subtitle;
   final LocalChessTreeBuildProgress? treeBuildProgress;
   final VoidCallback? onOpenTree;
   final VoidCallback? onBuildTree;
@@ -9289,22 +9284,6 @@ Future<LocalChessGameQueryPage?> _queryLocalMiniPreviewPage(
   }
 }
 
-String _localMiniPreviewSubtitle({
-  required int loadedCount,
-  required int totalCount,
-  required bool isLoading,
-}) {
-  if (totalCount <= 0) {
-    return isLoading ? 'Loading entries...' : 'No entries';
-  }
-  final totalLabel = localChessEntryCountLabel(totalCount);
-  if (loadedCount > 0 && loadedCount < totalCount) {
-    return '$loadedCount of $totalLabel loaded';
-  }
-  if (isLoading && loadedCount == 0) return 'Loading $totalLabel';
-  return totalLabel;
-}
-
 class _LibraryRangeSelection {
   const _LibraryRangeSelection({
     required this.selectedIds,
@@ -9535,6 +9514,16 @@ class LocalDatabaseWorkspaceKey {
 final localDatabaseWorkspaceSourceProvider = FutureProvider.autoDispose
     .family<LocalChessSource, LocalDatabaseWorkspaceKey>((ref, key) async {
       final path = key.path;
+      final live = ref.watch(
+        localChessLibraryProvider.select(
+          (state) => localDatabaseWorkspaceLiveSource(state, key),
+        ),
+      );
+      final liveSource = live.source;
+      if (liveSource != null) {
+        if (!live.isIndexing) ref.keepAlive();
+        return liveSource;
+      }
       final repository = ref.read(localChessDatabaseRepositoryProvider);
       final cached = await repository.loadFreshSource(<String>[path]);
       if (cached != null) {
@@ -9556,7 +9545,21 @@ final localDatabaseWorkspaceSourceProvider = FutureProvider.autoDispose
       return source;
     });
 
-class _LocalDatabaseWorkspace extends ConsumerWidget {
+({LocalChessSource? source, bool isIndexing}) localDatabaseWorkspaceLiveSource(
+  LocalChessLibraryState state,
+  LocalDatabaseWorkspaceKey key,
+) {
+  final source =
+      state.sessionSourceForPath(key.path) ??
+      (state.source?.nodeForPath(key.path) == null ? null : state.source);
+  final isIndexing = state.backgroundImportForPath(key.path) != null;
+  if (source == null || (!isIndexing && key.revision != 0)) {
+    return (source: null, isIndexing: false);
+  }
+  return (source: source, isIndexing: isIndexing);
+}
+
+class _LocalDatabaseWorkspace extends HookConsumerWidget {
   const _LocalDatabaseWorkspace({required this.tabId, required this.args});
 
   final String tabId;
@@ -9564,6 +9567,7 @@ class _LocalDatabaseWorkspace extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final sourceRevision = useState(0);
     final localPath = args.localPath;
     if (localPath == null || localPath.isEmpty) {
       return const _LibraryEmpty(
@@ -9573,14 +9577,26 @@ class _LocalDatabaseWorkspace extends ConsumerWidget {
       );
     }
 
-    final workspaceKey = LocalDatabaseWorkspaceKey(localPath);
+    final workspaceKey = LocalDatabaseWorkspaceKey(
+      localPath,
+      revision: sourceRevision.value,
+    );
     final sourceAsync = ref.watch(
       localDatabaseWorkspaceSourceProvider(workspaceKey),
     );
+    final backgroundImportProgress = ref.watch(
+      localChessLibraryProvider.select(
+        (state) => state.backgroundImportForPath(localPath),
+      ),
+    );
 
     Future<void> refreshLocalSource() async {
-      ref.invalidate(localDatabaseWorkspaceSourceProvider(workspaceKey));
-      await ref.read(localDatabaseWorkspaceSourceProvider(workspaceKey).future);
+      sourceRevision.value++;
+      final refreshKey = LocalDatabaseWorkspaceKey(
+        localPath,
+        revision: sourceRevision.value,
+      );
+      await ref.read(localDatabaseWorkspaceSourceProvider(refreshKey).future);
     }
 
     void selectPath(String path) {
@@ -9614,6 +9630,13 @@ class _LocalDatabaseWorkspace extends ConsumerWidget {
             stateOverride: LocalChessLibraryState(
               source: source,
               selectedPath: localPath,
+              backgroundImports:
+                  backgroundImportProgress == null
+                      ? const <String, LocalChessScanProgress>{}
+                      : <String, LocalChessScanProgress>{
+                        localChessInputPathKey(localPath):
+                            backgroundImportProgress,
+                      },
             ),
             onRefreshOverride: refreshLocalSource,
           ),

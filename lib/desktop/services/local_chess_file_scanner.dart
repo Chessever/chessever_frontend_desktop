@@ -409,6 +409,7 @@ class LocalChessGame {
     required this.indexInFile,
     required this.fileGameCount,
     required this.hasMoves,
+    this.moveLine = const <String>[],
     this.pgnFingerprint = '',
     this.sourceByteStart,
     this.sourceByteEnd,
@@ -422,6 +423,10 @@ class LocalChessGame {
   final String fileName;
   final int indexInFile;
   final int fileGameCount;
+
+  /// Mainline UCI moves prepared by the import worker. Lightweight previews
+  /// leave this empty and hydrate a selected game from its byte range instead.
+  final List<String> moveLine;
   final String pgnFingerprint;
   final int? sourceByteStart;
   final int? sourceByteEnd;
@@ -890,6 +895,7 @@ Future<LocalChessFileNode> _scanLocalChessFileNodeForImportInline({
         indexInFile: sourceIndex,
         fileGameCount: fileGameCount,
         hasMoves: entry.hasMoves,
+        moveLine: _mainlineUciFromRawPgn(id, entry.rawPgn),
         pgnFingerprint: fingerprint,
         sourceByteStart: entry.sourceByteStart,
         sourceByteEnd: entry.sourceByteEnd,
@@ -1164,6 +1170,17 @@ Future<LocalChessFileNode> _scanLocalChessFileNodeForImportInline({
   }
 }
 
+List<String> _mainlineUciFromRawPgn(String id, String rawPgn) {
+  try {
+    return ChessGame.fromPgn(id, rawPgn).mainline
+        .map((move) => move.uci.trim().toLowerCase())
+        .where((move) => move.isNotEmpty)
+        .toList(growable: false);
+  } on Object {
+    return const <String>[];
+  }
+}
+
 @immutable
 class LocalChessScanProgress {
   LocalChessScanProgress({required double fraction, required this.message})
@@ -1197,6 +1214,7 @@ Future<LocalChessSource> scanLocalChessPathsWithProgress(
   int maxDecodedBytes = _kMaxParseBytes,
   int maxGames = _kMaxTotalGames,
   bool buildOpeningTree = true,
+  bool fastPgnPreview = false,
   void Function(LocalChessScanProgress progress)? onProgress,
   Duration inactivityTimeout = const Duration(minutes: 2),
 }) async {
@@ -1276,6 +1294,7 @@ Future<LocalChessSource> scanLocalChessPathsWithProgress(
         maxDecodedBytes: maxDecodedBytes,
         maxGames: maxGames,
         buildOpeningTree: buildOpeningTree,
+        fastPgnPreview: fastPgnPreview,
       ),
       onExit: receivePort.sendPort,
       errorsAreFatal: true,
@@ -1297,6 +1316,28 @@ Future<LocalChessSource> scanLocalChessPathsWithProgress(
     receivePort.close();
     await subscription.cancel();
   }
+}
+
+/// Reads only enough of a raw PGN to render its first [maxGames] games.
+///
+/// Unlike the normal scanner this deliberately does not walk the entire file,
+/// calculate the final game total, build an offset index, or fingerprint the
+/// source. The complete import performs those jobs in the background after
+/// this session-only preview is visible.
+Future<LocalChessSource> scanLocalChessPgnPreview(
+  String path, {
+  String? sourceLabel,
+  int maxGames = 200,
+  Duration inactivityTimeout = const Duration(seconds: 30),
+}) {
+  return scanLocalChessPathsWithProgress(
+    <String>[path],
+    sourceLabel: sourceLabel,
+    maxGames: maxGames,
+    buildOpeningTree: false,
+    fastPgnPreview: true,
+    inactivityTimeout: inactivityTimeout,
+  );
 }
 
 Future<LocalChessFileNode> scanLocalChessFileNodeWithProgress({
@@ -1444,6 +1485,7 @@ class _ScanWorkerRequest {
     required this.maxDecodedBytes,
     required this.maxGames,
     required this.buildOpeningTree,
+    required this.fastPgnPreview,
     this.sourceLabel,
   });
 
@@ -1453,6 +1495,7 @@ class _ScanWorkerRequest {
   final int maxDecodedBytes;
   final int maxGames;
   final bool buildOpeningTree;
+  final bool fastPgnPreview;
 }
 
 class _ScanFileWorkerRequest {
@@ -1559,6 +1602,7 @@ Future<void> _scanLocalChessPathsWorker(_ScanWorkerRequest request) async {
       maxDecodedBytes: request.maxDecodedBytes,
       maxGames: request.maxGames,
       buildOpeningTree: request.buildOpeningTree,
+      fastPgnPreview: request.fastPgnPreview,
       onProgress: emit,
     );
     emit(LocalChessScanProgress(fraction: 1, message: 'PGN ready.'));
@@ -1702,12 +1746,14 @@ Future<LocalChessSource> _runScan(
   required int maxDecodedBytes,
   required int maxGames,
   required bool buildOpeningTree,
+  bool fastPgnPreview = false,
   void Function(LocalChessScanProgress progress)? onProgress,
 }) async {
   final worker = _ScanWorker(
     maxDecodedBytes: maxDecodedBytes,
     maxGames: maxGames,
     buildOpeningTree: buildOpeningTree,
+    fastPgnPreview: fastPgnPreview,
     onProgress: onProgress,
   );
 
@@ -1754,12 +1800,14 @@ class _ScanWorker {
     required this.maxDecodedBytes,
     required this.maxGames,
     required this.buildOpeningTree,
+    this.fastPgnPreview = false,
     this.onProgress,
   });
 
   final int maxDecodedBytes;
   final int maxGames;
   final bool buildOpeningTree;
+  final bool fastPgnPreview;
   final void Function(LocalChessScanProgress progress)? onProgress;
 
   int _totalGames = 0;
@@ -1978,6 +2026,7 @@ class _ScanWorker {
         extension: extension,
         maxEntries: maxGames - _totalGames,
         maxDecodedBytes: maxDecodedBytes,
+        fastPgnPreview: fastPgnPreview,
         onPgnScanProgress:
             (fraction) =>
                 _emitProgress(0.03 + (fraction * 0.27), 'Scanning PGN...'),
@@ -2529,6 +2578,7 @@ Future<_PgnParseResult> _parseSupportedFile({
   required String extension,
   required int maxEntries,
   required int maxDecodedBytes,
+  bool fastPgnPreview = false,
   void Function(double fraction)? onPgnScanProgress,
   void Function(double fraction)? onPgnReadProgress,
 }) async {
@@ -2537,6 +2587,7 @@ Future<_PgnParseResult> _parseSupportedFile({
       return _parsePgnFile(
         path,
         maxEntries: maxEntries,
+        fastPgnPreview: fastPgnPreview,
         onScanProgress: onPgnScanProgress,
         onReadProgress: onPgnReadProgress,
       );
@@ -2640,12 +2691,14 @@ List<String> _splitPgnGameChunks(String text) {
 Future<_PgnParseResult> _parsePgnFile(
   String path, {
   required int maxEntries,
+  bool fastPgnPreview = false,
   void Function(double fraction)? onScanProgress,
   void Function(double fraction)? onReadProgress,
 }) async {
   final scan = await _scanPgnFileRanges(
     path,
     maxEntries: maxEntries,
+    stopAfterMaxEntries: fastPgnPreview,
     onScanProgress: onScanProgress,
   );
   final entries = <_ParsedLocalChessGame>[];
@@ -2658,15 +2711,22 @@ Future<_PgnParseResult> _parsePgnFile(
       },
       onReadProgress: onReadProgress,
     );
-    await validateLocalChessFileSnapshotSource(
-      path,
-      expectedStat: scan.sourceStat,
-      expectedContentFingerprint: scan.contentFingerprint,
-    );
+    if (fastPgnPreview) {
+      final after = await File(path).stat();
+      if (!_samePgnPreviewFileStat(scan.sourceStat, after)) {
+        throw LocalChessFileAccessException.changed(path: path);
+      }
+    } else {
+      await validateLocalChessFileSnapshotSource(
+        path,
+        expectedStat: scan.sourceStat,
+        expectedContentFingerprint: scan.contentFingerprint,
+      );
+    }
     return _PgnParseResult(
       entries: entries,
       totalEntries: scan.totalEntries,
-      offsetIndex: scan.offsetIndex,
+      offsetIndex: fastPgnPreview ? null : scan.offsetIndex,
       sourceStat: scan.sourceStat,
       contentFingerprint: scan.contentFingerprint,
     );
@@ -2678,6 +2738,7 @@ Future<_PgnParseResult> _parsePgnFile(
 Future<_PgnRangeScanResult> _scanPgnFileRanges(
   String path, {
   required int maxEntries,
+  bool stopAfterMaxEntries = false,
   void Function(double fraction)? onScanProgress,
   String? snapshotDirectoryPath,
 }) async {
@@ -2690,6 +2751,7 @@ Future<_PgnRangeScanResult> _scanPgnFileRanges(
   var currentHasMoveHint = false;
   var totalEntries = 0;
   var finalOffset = 0;
+  var stopRequested = false;
 
   void flushCurrent(int endOffset) {
     if (!hasCurrent || endOffset <= currentStartOffset) {
@@ -2714,6 +2776,9 @@ Future<_PgnRangeScanResult> _scanPgnFileRanges(
     if (ranges.length < maxEntries) {
       ranges.add(_PgnByteRange(start: currentStartOffset, end: endOffset));
     }
+    if (stopAfterMaxEntries && totalEntries >= maxEntries) {
+      stopRequested = true;
+    }
     hasCurrent = false;
     sawMovetext = false;
     currentHasHeader = false;
@@ -2734,6 +2799,7 @@ Future<_PgnRangeScanResult> _scanPgnFileRanges(
       flushCurrent(line.startOffset);
       sawMovetext = false;
     }
+    if (stopRequested) return;
 
     if (!hasCurrent) {
       currentStartOffset = line.contentStartOffset;
@@ -2749,6 +2815,36 @@ Future<_PgnRangeScanResult> _scanPgnFileRanges(
       sawMovetext = true;
     }
   });
+  if (stopAfterMaxEntries) {
+    final before = stat;
+    await scanner.scan(
+      path,
+      totalBytes: stat.size,
+      shouldStop: () => stopRequested,
+      onProgress: onScanProgress,
+    );
+    finalOffset = scanner.finalOffset;
+    if (!stopRequested) flushCurrent(finalOffset);
+    final after = await File(path).stat();
+    if (!_samePgnPreviewFileStat(before, after)) {
+      throw LocalChessFileAccessException.changed(path: path);
+    }
+    onScanProgress?.call(1);
+    return _PgnRangeScanResult(
+      ranges: ranges,
+      totalEntries: totalEntries,
+      offsetIndex: LocalChessPgnOffsetIndex(
+        path: path,
+        fileSizeBytes: after.size,
+        modifiedAt: after.modified,
+        totalGames: totalEntries,
+        checkpointStride: _kPgnOffsetCheckpointStride,
+        checkpointOffsets: checkpointOffsets,
+      ),
+      sourceStat: after,
+      contentFingerprint: '',
+    );
+  }
   final LocalChessFileSnapshot? inMemorySnapshot =
       stat.size <= _kFastInMemoryPgnScanBytes
           ? await readStableLocalChessFileSnapshot(
@@ -2994,6 +3090,7 @@ class _PgnByteLineScanner {
     String path, {
     int? totalBytes,
     void Function(double fraction)? onProgress,
+    bool Function()? shouldStop,
   }) async {
     var lastProgressOffset = 0;
     void emitProgress({bool force = false}) {
@@ -3004,18 +3101,22 @@ class _PgnByteLineScanner {
     }
 
     emitProgress(force: true);
+    scanLoop:
     await for (final chunk in File(path).openRead()) {
       for (final byte in chunk) {
         _readByte(byte);
+        if (shouldStop?.call() ?? false) break scanLoop;
       }
       emitProgress();
     }
-    if (_pendingCr) {
-      _flushLine(_offset);
-      _pendingCr = false;
-    }
-    if (_lineByteCount > 0 || _offset == _lineStartOffset) {
-      _flushLine(_offset);
+    if (!(shouldStop?.call() ?? false)) {
+      if (_pendingCr) {
+        _flushLine(_offset);
+        _pendingCr = false;
+      }
+      if (_lineByteCount > 0 || _offset == _lineStartOffset) {
+        _flushLine(_offset);
+      }
     }
     finalOffset = _offset;
     emitProgress(force: true);
@@ -3139,6 +3240,14 @@ class _PgnByteLineScanner {
   bool _startsWithUtf8Bom() {
     return _lineStartOffset == 0 && _lineStartsWithUtf8Bom;
   }
+}
+
+bool _samePgnPreviewFileStat(FileStat before, FileStat after) {
+  return before.type == FileSystemEntityType.file &&
+      after.type == FileSystemEntityType.file &&
+      before.size == after.size &&
+      before.modified == after.modified &&
+      before.changed == after.changed;
 }
 
 bool _isWhitespaceByte(int byte) {

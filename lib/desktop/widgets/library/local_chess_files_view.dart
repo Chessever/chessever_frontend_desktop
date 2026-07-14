@@ -173,6 +173,10 @@ class LocalChessFilesView extends HookConsumerWidget {
     final allGames = selectedDatabase?.games ?? const <LocalChessGame>[];
     final databaseEntryCount = selectedDatabase?.gameCount ?? allGames.length;
     final databaseTitle = selectedDatabase?.name ?? source.label;
+    final backgroundImportProgress = state.backgroundImportForPath(
+      selectedDatabase?.path,
+    );
+    final isBackgroundImporting = backgroundImportProgress != null;
     final enrichmentEpoch = ref.watch(localPlayerEnrichmentEpochProvider);
     final databaseQueryKey =
         Object.hash(
@@ -180,6 +184,7 @@ class LocalChessFilesView extends HookConsumerWidget {
           selectedDatabase?.gameCount,
           selectedDatabase?.sizeBytes,
           selectedDatabase?.modifiedAt?.millisecondsSinceEpoch,
+          isBackgroundImporting,
           enrichmentEpoch,
           query.value,
           sort.value.key,
@@ -206,14 +211,16 @@ class LocalChessFilesView extends HookConsumerWidget {
     }, [databaseQueryKey]);
     useEffect(() {
       final path = selectedDatabase?.path;
-      if (path == null || databaseEntryCount <= 0) return null;
+      if (path == null || databaseEntryCount <= 0 || isBackgroundImporting) {
+        return null;
+      }
       Future<void>.microtask(
         () => ref
             .read(localPlayerEnrichmentServiceProvider)
             .ensureDatabaseEnriched(path),
       );
       return null;
-    }, [selectedDatabase?.path, databaseEntryCount]);
+    }, [selectedDatabase?.path, databaseEntryCount, isBackgroundImporting]);
     final fallbackFiltered = useMemoized(() {
       final q = query.value.trim().toLowerCase();
       final base =
@@ -227,7 +234,11 @@ class LocalChessFilesView extends HookConsumerWidget {
         useMemoized<Future<LocalChessGameQueryPage?>?>(
           () {
             final database = selectedDatabase;
-            if (database == null || databaseEntryCount <= 0) return null;
+            if (database == null ||
+                databaseEntryCount <= 0 ||
+                isBackgroundImporting) {
+              return null;
+            }
             return _queryLocalDatabaseGamesPage(
               ref.read(localChessDatabaseRepositoryProvider),
               databasePath: database.path,
@@ -243,6 +254,7 @@ class LocalChessFilesView extends HookConsumerWidget {
           [
             selectedDatabase?.path,
             databaseEntryCount,
+            isBackgroundImporting,
             query.value,
             sort.value.key,
             sort.value.dir,
@@ -273,7 +285,7 @@ class LocalChessFilesView extends HookConsumerWidget {
       loaded: databaseLoadedPages.value,
       livePage: databaseGamesPage,
     );
-    final filtered = databaseRows?.games ?? fallbackFiltered;
+    final filtered = databaseRows?.loadedGames ?? fallbackFiltered;
     final totalFilteredCount =
         databaseRows?.totalCount ??
         databaseGamesPage?.totalCount ??
@@ -281,8 +293,19 @@ class LocalChessFilesView extends HookConsumerWidget {
     final isLoadingDatabasePage =
         databaseGamesPageFuture != null &&
         databaseGamesPageSnapshot.connectionState != ConnectionState.done;
-    final hasMoreDatabaseRows = databaseRows?.hasMore ?? false;
     final boardContextGames = databaseRows == null ? allGames : filtered;
+
+    void requestDatabasePage(int pageNumber) {
+      if (pageNumber < 0 || databaseRows?.hasPage(pageNumber) == true) return;
+      if (effectiveDatabasePageWindow.pageNumber == pageNumber &&
+          isLoadingDatabasePage) {
+        return;
+      }
+      databasePageWindow.value = _LocalDatabasePageWindow(
+        databaseQueryKey,
+        pageNumber,
+      );
+    }
 
     void selectLocalPath(String path) {
       ref.read(localChessLibraryProvider.notifier).selectPath(path);
@@ -435,10 +458,13 @@ class LocalChessFilesView extends HookConsumerWidget {
                   },
                   onSave: filtered.isEmpty ? null : saveVisible,
                   treeBuildProgress: treeBuildProgress,
+                  backgroundImportProgress: backgroundImportProgress,
                   onOpenTree:
                       openableTreeIndex == null ? null : openDatabaseTree,
                   onBuildTree:
-                      selectedDatabase == null || openableTreeIndex != null
+                      selectedDatabase == null ||
+                              openableTreeIndex != null ||
+                              isBackgroundImporting
                           ? null
                           : rebuildDatabaseTree,
                   onSelectPath: selectLocalPath,
@@ -508,9 +534,11 @@ class LocalChessFilesView extends HookConsumerWidget {
                               'local-chess-files-loaded-count',
                             ),
                             label: _localDatabaseCountLabel(
-                              loadedCount: filtered.length,
                               totalFilteredCount: totalFilteredCount,
                               databaseEntryCount: databaseEntryCount,
+                              isFiltered:
+                                  query.value.trim().isNotEmpty ||
+                                  gameFilter.value.hasActiveFilters,
                             ),
                           ),
                         ],
@@ -550,20 +578,10 @@ class LocalChessFilesView extends HookConsumerWidget {
                             onRefresh: onRefreshOverride,
                             onPaste: pasteIntoLocalDatabase,
                             onSelectPath: onSelectPath,
-                            loadedCount: filtered.length,
                             totalCount: totalFilteredCount,
-                            hasMore: hasMoreDatabaseRows,
-                            isLoadingMore: isLoadingDatabasePage,
-                            onLoadMore:
-                                hasMoreDatabaseRows
-                                    ? () {
-                                      databasePageWindow
-                                          .value = _LocalDatabasePageWindow(
-                                        databaseQueryKey,
-                                        databaseRows?.nextPageNumber ?? 0,
-                                      );
-                                    }
-                                    : null,
+                            virtualRows: databaseRows,
+                            pageSize: _kLocalDatabaseGameQueryPageSize,
+                            onRequestPage: requestDatabasePage,
                           ),
                 ),
               ],
@@ -585,6 +603,7 @@ class _LocalHeader extends StatelessWidget {
     required this.onRefresh,
     required this.onSave,
     required this.treeBuildProgress,
+    required this.backgroundImportProgress,
     required this.onOpenTree,
     required this.onBuildTree,
     required this.onSelectPath,
@@ -598,6 +617,7 @@ class _LocalHeader extends StatelessWidget {
   final VoidCallback onRefresh;
   final VoidCallback? onSave;
   final LocalChessTreeBuildProgress? treeBuildProgress;
+  final LocalChessScanProgress? backgroundImportProgress;
   final VoidCallback? onOpenTree;
   final VoidCallback? onBuildTree;
   final ValueChanged<String> onSelectPath;
@@ -635,6 +655,9 @@ class _LocalHeader extends StatelessWidget {
     } else {
       if (showCountMeta) {
         metaParts.add(localChessEntryCountLabel(selectedDatabase.gameCount));
+      }
+      if (backgroundImportProgress != null) {
+        metaParts.add('indexing ${backgroundImportProgress!.percent}%');
       }
       if (treeProgress?.isActive == true) {
         metaParts.add('tree ${treeProgress!.percent}%');
@@ -1011,11 +1034,10 @@ class _LocalGamesTable extends HookConsumerWidget {
     required this.onRefresh,
     required this.onPaste,
     required this.onSelectPath,
-    required this.loadedCount,
     required this.totalCount,
-    required this.hasMore,
-    required this.isLoadingMore,
-    required this.onLoadMore,
+    required this.virtualRows,
+    required this.pageSize,
+    required this.onRequestPage,
   });
 
   final String databaseTitle;
@@ -1027,17 +1049,17 @@ class _LocalGamesTable extends HookConsumerWidget {
   final Future<void> Function()? onRefresh;
   final Future<void> Function() onPaste;
   final ValueChanged<String> onSelectPath;
-  final int loadedCount;
   final int totalCount;
-  final bool hasMore;
-  final bool isLoadingMore;
-  final VoidCallback? onLoadMore;
+  final _LoadedLocalDatabasePages? virtualRows;
+  final int pageSize;
+  final ValueChanged<int> onRequestPage;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = useScrollController();
     final focusNode = useFocusNode(debugLabel: 'local-pgn-games-table');
-    final lastScrollLoadRequest = useRef<int?>(null);
+    final scheduledPages = useRef<Set<int>>(<int>{});
+    final pendingSelectionIndex = useRef<int?>(null);
     final openableTreeIndex =
         database?.openingTreeIndex?.isUsable == true
             ? database!.openingTreeIndex
@@ -1056,6 +1078,34 @@ class _LocalGamesTable extends HookConsumerWidget {
       },
       [games],
     );
+    final rowIndexById = useMemoized(
+      () => <String, int>{
+        for (var i = 0; i < games.length; i++)
+          games[i].id: virtualRows?.indexOfGame(games[i].id) ?? i,
+      },
+      [games, virtualRows],
+    );
+    final itemCount = virtualRows?.totalCount ?? totalCount;
+
+    LocalChessGame? gameAt(int index) {
+      final rows = virtualRows;
+      if (rows != null) return rows.gameAt(index);
+      return index >= 0 && index < games.length ? games[index] : null;
+    }
+
+    void requestPageForIndex(int index) {
+      final rows = virtualRows;
+      if (rows == null || index < 0 || index >= rows.totalCount) return;
+      final pageNumber = index ~/ pageSize;
+      if (rows.hasPage(pageNumber) || !scheduledPages.value.add(pageNumber)) {
+        return;
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        scheduledPages.value.remove(pageNumber);
+        onRequestPage(pageNumber);
+      });
+    }
+
     final clampedSelectedIds = _clampLocalSelection(
       selectedIds.value,
       visibleIds,
@@ -1095,28 +1145,17 @@ class _LocalGamesTable extends HookConsumerWidget {
     }, [games]);
 
     useEffect(() {
-      lastScrollLoadRequest.value = null;
+      final index = pendingSelectionIndex.value;
+      if (index == null) return null;
+      final game = gameAt(index);
+      if (game == null) return null;
+      pendingSelectionIndex.value = null;
+      selectedId.value = game.id;
+      selectedIds.value = <String>{};
+      selectionAnchor.value = index;
+      selectionExtent.value = index;
       return null;
-    }, [games.length, hasMore, isLoadingMore]);
-
-    useEffect(() {
-      void maybeLoadMore() {
-        if (!hasMore || isLoadingMore || onLoadMore == null) return;
-        if (!controller.hasClients) return;
-        final position = controller.position;
-        if (!position.hasContentDimensions) return;
-        if (position.extentAfter > _kLocalDatabaseScrollLoadMoreThreshold) {
-          return;
-        }
-        if (lastScrollLoadRequest.value == games.length) return;
-        lastScrollLoadRequest.value = games.length;
-        onLoadMore!();
-      }
-
-      controller.addListener(maybeLoadMore);
-      WidgetsBinding.instance.addPostFrameCallback((_) => maybeLoadMore());
-      return () => controller.removeListener(maybeLoadMore);
-    }, [controller, games.length, hasMore, isLoadingMore, onLoadMore]);
+    }, [games, virtualRows]);
 
     void scrollToIndex(int index) {
       if (!controller.hasClients) return;
@@ -1146,14 +1185,24 @@ class _LocalGamesTable extends HookConsumerWidget {
     }
 
     void selectIndex(int index, {bool toggle = false, bool range = false}) {
-      if (games.isEmpty) return;
-      final next = index.clamp(0, games.length - 1).toInt();
-      final id = games[next].id;
+      if (itemCount <= 0) return;
+      final next = index.clamp(0, itemCount - 1).toInt();
+      final game = gameAt(next);
+      if (game == null) {
+        pendingSelectionIndex.value = next;
+        requestPageForIndex(next);
+        scrollToIndex(next);
+        return;
+      }
+      final id = game.id;
       if (range) {
         final anchor = selectionAnchor.value ?? next;
         final start = anchor < next ? anchor : next;
         final end = anchor < next ? next : anchor;
-        selectedIds.value = {for (var i = start; i <= end; i++) games[i].id};
+        selectedIds.value = {
+          for (var i = start; i <= end; i++)
+            if (gameAt(i) case final game?) game.id,
+        };
         selectedId.value = id;
         selectionExtent.value = next;
       } else if (toggle) {
@@ -1174,19 +1223,17 @@ class _LocalGamesTable extends HookConsumerWidget {
     }
 
     bool moveSelection(int delta, {bool range = false}) {
-      if (games.isEmpty) return false;
+      if (itemCount <= 0) return false;
       final current =
-          selectionExtent.value ?? idToIndex[selectedId.value ?? ''] ?? -1;
+          selectionExtent.value ?? rowIndexById[selectedId.value ?? ''] ?? -1;
       final next =
-          (current < 0 ? 0 : current + delta)
-              .clamp(0, games.length - 1)
-              .toInt();
+          (current < 0 ? 0 : current + delta).clamp(0, itemCount - 1).toInt();
       selectIndex(next, range: range);
       return true;
     }
 
     bool selectBoundary(int index, {bool range = false}) {
-      if (games.isEmpty) return false;
+      if (itemCount <= 0) return false;
       selectIndex(index, range: range);
       return true;
     }
@@ -1229,10 +1276,7 @@ class _LocalGamesTable extends HookConsumerWidget {
         LogicalKeyboardKey.arrowDown => moveSelection(1, range: shift),
         LogicalKeyboardKey.arrowUp => moveSelection(-1, range: shift),
         LogicalKeyboardKey.home => selectBoundary(0, range: shift),
-        LogicalKeyboardKey.end => selectBoundary(
-          games.length - 1,
-          range: shift,
-        ),
+        LogicalKeyboardKey.end => selectBoundary(itemCount - 1, range: shift),
         LogicalKeyboardKey.enter ||
         LogicalKeyboardKey.numpadEnter when !shift => openSelectedGame(),
         _ => false,
@@ -1329,7 +1373,7 @@ class _LocalGamesTable extends HookConsumerWidget {
     }
 
     Future<void> openRowMenu(LocalChessGame game, Offset position) async {
-      final rowIndex = idToIndex[game.id] ?? -1;
+      final rowIndex = rowIndexById[game.id] ?? -1;
       if (rowIndex < 0) return;
       final rowScope =
           effectiveSelectedIds.contains(game.id)
@@ -1434,15 +1478,19 @@ class _LocalGamesTable extends HookConsumerWidget {
                       Expanded(
                         child: Scrollbar(
                           controller: controller,
-                          thumbVisibility: false,
+                          thumbVisibility: true,
                           child: ListView.builder(
                             key: const ValueKey('local-games-table-list'),
                             controller: controller,
                             physics: const DesktopScrollPhysics(),
                             itemExtent: _kLocalGameRowHeight,
-                            itemCount: games.length,
+                            itemCount: itemCount,
                             itemBuilder: (context, index) {
-                              final game = games[index];
+                              final game = gameAt(index);
+                              if (game == null) {
+                                requestPageForIndex(index);
+                                return _LocalGamesPlaceholderRow(index: index);
+                              }
                               return _LocalGamesDataRow(
                                 key: ValueKey('local-game-table-${game.id}'),
                                 index: index,
@@ -1502,15 +1550,6 @@ class _LocalGamesTable extends HookConsumerWidget {
                   ),
                 ),
               ),
-              if (hasMore || isLoadingMore) ...[
-                const SizedBox(height: 10),
-                _LocalGamesPaginationFooter(
-                  loadedCount: loadedCount,
-                  totalCount: totalCount,
-                  isLoading: isLoadingMore,
-                  onLoadMore: onLoadMore,
-                ),
-              ],
             ],
           ),
         ),
@@ -1521,7 +1560,7 @@ class _LocalGamesTable extends HookConsumerWidget {
 
 const double _kLocalGameRowHeight = 44;
 const int _kLocalDatabaseGameQueryPageSize = 200;
-const double _kLocalDatabaseScrollLoadMoreThreshold = 420;
+const int _kLocalDatabaseCachedPageLimit = 24;
 const String _kLocalDatabaseTreeStartingFen =
     'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -1535,60 +1574,72 @@ class _LocalDatabasePageWindow {
 class _LoadedLocalDatabasePages {
   const _LoadedLocalDatabasePages({
     required this.queryKey,
-    required this.games,
+    required this.pages,
     required this.totalCount,
-    required this.nextPageNumber,
     required this.pageSize,
   });
 
   const _LoadedLocalDatabasePages.empty()
     : queryKey = '',
-      games = const <LocalChessGame>[],
+      pages = const <int, List<LocalChessGame>>{},
       totalCount = 0,
-      nextPageNumber = 0,
       pageSize = _kLocalDatabaseGameQueryPageSize;
 
   final String queryKey;
-  final List<LocalChessGame> games;
+  final Map<int, List<LocalChessGame>> pages;
   final int totalCount;
-  final int nextPageNumber;
   final int pageSize;
 
-  bool get hasRows => games.isNotEmpty;
+  bool get hasRows => pages.values.any((page) => page.isNotEmpty);
 
-  bool get hasMore => nextPageNumber * pageSize < totalCount;
+  List<LocalChessGame> get loadedGames {
+    final pageNumbers = pages.keys.toList(growable: false)..sort();
+    return List<LocalChessGame>.unmodifiable(<LocalChessGame>[
+      for (final pageNumber in pageNumbers) ...pages[pageNumber]!,
+    ]);
+  }
+
+  bool hasPage(int pageNumber) => pages.containsKey(pageNumber);
+
+  LocalChessGame? gameAt(int index) {
+    if (index < 0 || index >= totalCount || pageSize <= 0) return null;
+    final page = pages[index ~/ pageSize];
+    if (page == null) return null;
+    final offset = index % pageSize;
+    return offset < page.length ? page[offset] : null;
+  }
+
+  int? indexOfGame(String gameId) {
+    for (final entry in pages.entries) {
+      final offset = entry.value.indexWhere((game) => game.id == gameId);
+      if (offset >= 0) return entry.key * pageSize + offset;
+    }
+    return null;
+  }
 
   _LoadedLocalDatabasePages merge({
     required String queryKey,
     required LocalChessGameQueryPage page,
   }) {
-    if (page.pageNumber == 0 || this.queryKey != queryKey) {
-      return _LoadedLocalDatabasePages(
-        queryKey: queryKey,
-        games: List<LocalChessGame>.unmodifiable(page.games),
-        totalCount: page.totalCount,
-        nextPageNumber: page.pageNumber + 1,
-        pageSize: page.pageSize,
+    final nextPages =
+        this.queryKey == queryKey
+            ? Map<int, List<LocalChessGame>>.of(pages)
+            : <int, List<LocalChessGame>>{};
+    nextPages[page.pageNumber] = List<LocalChessGame>.unmodifiable(page.games);
+    if (nextPages.length > _kLocalDatabaseCachedPageLimit) {
+      final farthestFirst = nextPages.keys.toList(growable: false)..sort(
+        (a, b) =>
+            (b - page.pageNumber).abs().compareTo((a - page.pageNumber).abs()),
       );
-    }
-    if (page.pageNumber < nextPageNumber) return this;
-    if (page.pageNumber > nextPageNumber) {
-      return _LoadedLocalDatabasePages(
-        queryKey: queryKey,
-        games: List<LocalChessGame>.unmodifiable(page.games),
-        totalCount: page.totalCount,
-        nextPageNumber: page.pageNumber + 1,
-        pageSize: page.pageSize,
-      );
+      for (final pageNumber in farthestFirst) {
+        if (nextPages.length <= _kLocalDatabaseCachedPageLimit) break;
+        if (pageNumber != page.pageNumber) nextPages.remove(pageNumber);
+      }
     }
     return _LoadedLocalDatabasePages(
       queryKey: queryKey,
-      games: List<LocalChessGame>.unmodifiable(<LocalChessGame>[
-        ...games,
-        ...page.games,
-      ]),
+      pages: Map<int, List<LocalChessGame>>.unmodifiable(nextPages),
       totalCount: page.totalCount,
-      nextPageNumber: page.pageNumber + 1,
       pageSize: page.pageSize,
     );
   }
@@ -1599,49 +1650,23 @@ _LoadedLocalDatabasePages? _visibleLocalDatabaseRows({
   required _LoadedLocalDatabasePages loaded,
   required LocalChessGameQueryPage? livePage,
 }) {
-  final hasLoadedRows = loaded.queryKey == queryKey && loaded.hasRows;
-  if (livePage == null) return hasLoadedRows ? loaded : null;
-  if (livePage.pageNumber == 0 || !hasLoadedRows) {
-    return _LoadedLocalDatabasePages(
-      queryKey: queryKey,
-      games: List<LocalChessGame>.unmodifiable(livePage.games),
-      totalCount: livePage.totalCount,
-      nextPageNumber: livePage.pageNumber + 1,
-      pageSize: livePage.pageSize,
-    );
-  }
-  if (livePage.pageNumber < loaded.nextPageNumber) return loaded;
-  if (livePage.pageNumber > loaded.nextPageNumber) {
-    return _LoadedLocalDatabasePages(
-      queryKey: queryKey,
-      games: List<LocalChessGame>.unmodifiable(livePage.games),
-      totalCount: livePage.totalCount,
-      nextPageNumber: livePage.pageNumber + 1,
-      pageSize: livePage.pageSize,
-    );
-  }
-  return _LoadedLocalDatabasePages(
-    queryKey: queryKey,
-    games: List<LocalChessGame>.unmodifiable(<LocalChessGame>[
-      ...loaded.games,
-      ...livePage.games,
-    ]),
-    totalCount: livePage.totalCount,
-    nextPageNumber: livePage.pageNumber + 1,
-    pageSize: livePage.pageSize,
-  );
+  final current =
+      loaded.queryKey == queryKey
+          ? loaded
+          : const _LoadedLocalDatabasePages.empty();
+  if (livePage == null) return current.hasRows ? current : null;
+  return current.merge(queryKey: queryKey, page: livePage);
 }
 
 String _localDatabaseCountLabel({
-  required int loadedCount,
   required int totalFilteredCount,
   required int databaseEntryCount,
+  required bool isFiltered,
 }) {
-  final entryLabel = databaseEntryCount == 1 ? 'entry' : 'entries';
-  if (loadedCount < totalFilteredCount) {
-    return '$loadedCount / $totalFilteredCount loaded';
+  if (isFiltered) {
+    return '$totalFilteredCount ${totalFilteredCount == 1 ? 'match' : 'matches'}';
   }
-  return '$totalFilteredCount / $databaseEntryCount $entryLabel';
+  return localChessEntryCountLabel(databaseEntryCount);
 }
 
 enum _LocalGamesSortKey {
@@ -1691,70 +1716,6 @@ Future<LocalChessGameQueryPage?> _queryLocalDatabaseGamesPage(
     );
   } on Object {
     return null;
-  }
-}
-
-class _LocalGamesPaginationFooter extends StatelessWidget {
-  const _LocalGamesPaginationFooter({
-    required this.loadedCount,
-    required this.totalCount,
-    required this.isLoading,
-    required this.onLoadMore,
-  });
-
-  final int loadedCount;
-  final int totalCount;
-  final bool isLoading;
-  final VoidCallback? onLoadMore;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 42,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: kBlack2Color,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: kDividerColor),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              '$loadedCount of $totalCount loaded',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: kLightGreyColor,
-                fontSize: 12,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
-          FButton(
-            style: FButtonStyle.outline(),
-            onPress: isLoading ? null : onLoadMore,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (isLoading) ...[
-                  const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  const SizedBox(width: 7),
-                ] else ...[
-                  const Icon(Icons.expand_more_rounded, size: 15),
-                  const SizedBox(width: 7),
-                ],
-                const Text('Load more'),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }
 
@@ -1912,6 +1873,45 @@ const double _kLocalColResult = 56;
 const double _kLocalColEco = 62;
 const double _kLocalColDate = 88;
 const double _kLocalColGap = 12;
+
+class _LocalGamesPlaceholderRow extends StatelessWidget {
+  const _LocalGamesPlaceholderRow({required this.index});
+
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: kDividerColor, width: 0.5)),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 56,
+            child: Text(
+              '${index + 1}',
+              style: TextStyle(
+                color: kWhiteColor.withValues(alpha: 0.30),
+                fontSize: 11,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+          Container(
+            width: 180,
+            height: 7,
+            decoration: BoxDecoration(
+              color: kWhiteColor.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _LocalGamesHeaderRow extends StatelessWidget {
   const _LocalGamesHeaderRow({required this.sort, required this.onSortChange});

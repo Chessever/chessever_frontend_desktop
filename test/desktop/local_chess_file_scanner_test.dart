@@ -159,6 +159,27 @@ void main() {
       expect(source.nodeForPath('${temp.path}/other.pgn'), isNull);
     });
 
+    test('fast PGN preview stops before building a full-file index', () async {
+      final file = File('${temp.path}/preview.pgn');
+      await file.writeAsString(
+        List<String>.generate(
+          3,
+          (index) => _samplePgn.replaceFirst(
+            '[Event "Candidates"]',
+            '[Event "Preview $index"]',
+          ),
+        ).join('\n\n'),
+      );
+
+      final source = await scanLocalChessPgnPreview(file.path, maxGames: 2);
+      final preview = source.root.files.single;
+
+      expect(preview.games, hasLength(2));
+      expect(preview.gameCount, 2);
+      expect(preview.pgnOffsetIndex, isNull);
+      expect(preview.contentFingerprint, isEmpty);
+    });
+
     test('user-selected file and folder links are scanned', () async {
       if (Platform.isWindows) return;
       final targetFile = File('${temp.path}/target.pgn');
@@ -666,6 +687,7 @@ void main() {
       final batchSizes = <int>[];
       final acceptedCounts = <int>[];
       final totalEntries = <int>[];
+      final moveLines = <List<String>>[];
       var scanCompleted = false;
 
       final scan = scanLocalChessFileNodeForImportWithProgress(
@@ -677,6 +699,7 @@ void main() {
           batchSizes.add(batch.games.length);
           acceptedCounts.add(batch.acceptedCount);
           totalEntries.add(batch.totalEntries);
+          moveLines.addAll(batch.games.map((game) => game.moveLine));
           if (batchSizes.length == 1) {
             firstBatchEntered.complete();
             await releaseFirstBatch.future;
@@ -695,6 +718,8 @@ void main() {
       expect(batchSizes, <int>[2, 2, 1]);
       expect(acceptedCounts, <int>[2, 4, 5]);
       expect(totalEntries, everyElement(5));
+      expect(moveLines, hasLength(5));
+      expect(moveLines, everyElement(isNotEmpty));
       expect(scanned.gameCount, 5);
       expect(scanned.games, hasLength(5));
     });

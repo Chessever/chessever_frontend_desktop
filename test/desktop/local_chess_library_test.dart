@@ -289,6 +289,62 @@ void main() {
       },
     );
 
+    test('large raw PGN opens before its cache import completes', () async {
+      final file = File('${temp.path}/instant.pgn');
+      await file.writeAsString(_samplePgn);
+      final scanned = await scanLocalChessPaths(<String>[file.path]);
+      await file.writeAsBytes(
+        List<int>.filled(600 * 1024, 0x20),
+        mode: FileMode.append,
+      );
+      final importStarted = Completer<void>();
+      final releaseImport = Completer<void>();
+      final repo = _FailingLocalChessDatabaseRepository(
+        importedSource: scanned,
+        importStarted: importStarted,
+        releaseImport: releaseImport,
+      );
+      var previewLimit = 0;
+      var previewCalls = 0;
+      final notifier = LocalChessLibraryNotifier(
+        localDatabaseRepository: repo,
+        scanPgnPreview: (_, {sourceLabel, maxGames = 200}) async {
+          previewCalls++;
+          previewLimit = maxGames;
+          return scanned;
+        },
+      );
+
+      final opened = await notifier.openPaths(<String>[file.path]);
+
+      expect(opened, isTrue);
+      expect(importStarted.isCompleted, isTrue);
+      expect(releaseImport.isCompleted, isFalse);
+      expect(previewLimit, 200);
+      expect(notifier.state.isScanning, isFalse);
+      expect(notifier.state.source, isNotNull);
+      expect(notifier.state.backgroundImportForPath(file.path), isNotNull);
+      expect(previewCalls, 1);
+
+      final reopened = await notifier.openPaths(<String>[file.path]);
+
+      expect(reopened, isTrue);
+      expect(previewCalls, 1);
+      expect(notifier.state.isScanning, isFalse);
+      expect(notifier.state.source, same(scanned));
+      expect(notifier.state.backgroundImportForPath(file.path), isNotNull);
+
+      final indexingFinished = notifier.stream.firstWhere(
+        (state) => state.backgroundImportForPath(file.path) == null,
+      );
+      releaseImport.complete();
+      await indexingFinished.timeout(const Duration(seconds: 2));
+
+      expect(notifier.state.backgroundImportForPath(file.path), isNull);
+      expect(notifier.state.warning, isNull);
+      notifier.clear();
+    });
+
     test(
       'openPaths imports each multi-file PGN through the cache worker path',
       () async {
@@ -1060,6 +1116,8 @@ class _FailingLocalChessDatabaseRepository
     this.rebuildStarted,
     this.releaseRebuild,
     this.rebuildReturned,
+    this.importStarted,
+    this.releaseImport,
   }) : super(database: _unusedDatabase);
 
   final bool failLoadFreshSource;
@@ -1072,6 +1130,8 @@ class _FailingLocalChessDatabaseRepository
   final Completer<void>? rebuildStarted;
   final Completer<void>? releaseRebuild;
   final Completer<void>? rebuildReturned;
+  final Completer<void>? importStarted;
+  final Completer<void>? releaseImport;
 
   int loadFreshSourceCalls = 0;
   int persistSourceCalls = 0;
@@ -1113,12 +1173,15 @@ class _FailingLocalChessDatabaseRepository
   }) async {
     importSingleFileSourceCalls++;
     importSingleFileSourcePaths.add(path);
+    if (importStarted?.isCompleted == false) importStarted!.complete();
     onProgress?.call(
       LocalChessScanProgress(
         fraction: 0.5,
         message: 'Importing ${sourceLabel ?? path}...',
       ),
     );
+    final release = releaseImport;
+    if (release != null) await release.future;
     return importedSource;
   }
 

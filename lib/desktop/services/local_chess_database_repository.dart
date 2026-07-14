@@ -304,11 +304,10 @@ const int _kSqlWriteBatchSize = 4096;
 const int _kCooperativePurgeBatchSize = 512;
 const int _kMaximumAdaptivePurgeBatchSize = 4096;
 const Duration _kSlowPurgeBatchThreshold = Duration(milliseconds: 100);
-// Streaming imports run while the app is interactive. Keep their transfer and
-// row-materialization batches small enough that JSON encoding, metadata-set
-// construction, and resqlite request packing yield within a frame budget. The
-// wider 4096-row SQL batch remains appropriate for non-interactive maintenance.
-const int _kInteractiveImportBatchSize = 16;
+// Move parsing happens on the import worker, so the caller isolate only packs
+// compact metadata and UCI strings. A moderate batch sharply reduces SQLite
+// transaction overhead while remaining small enough for interactive use.
+const int _kInteractiveImportBatchSize = 64;
 const int _kEagerPositionRefLoadLimit = 250000;
 const int _kEagerTreeMoveLoadLimit = 250000;
 const int _kCachedFileNodeGamePreviewLimit = 1000;
@@ -2947,7 +2946,8 @@ class LocalChessDatabaseRepository {
     );
     if (scopedPaths?.isEmpty == true) return 0;
     final db = await _database();
-    final rows = await db.select('''
+    final rows = await db.select(
+      '''
       SELECT path
       FROM $localChessDatabasesTable
       WHERE deleted_at_ms IS NOT NULL
@@ -3783,8 +3783,7 @@ class LocalChessDatabaseRepository {
     // game once (draw wins ties over win/loss, matching the old precedence) and
     // sum. COALESCE keeps the flags 0 instead of NULL when a FIDE compare is
     // against a NULL id.
-    final rows = await db.select(
-      '''
+    final rows = await db.select('''
       SELECT
         COUNT(*) AS games,
         COALESCE(SUM(CASE WHEN outcome = 'w' THEN 1 ELSE 0 END), 0) AS wins,
@@ -6512,6 +6511,10 @@ class LocalChessDatabaseRepository {
       indexInFile: _readInt(row['index_in_file']),
       fileGameCount: _readInt(row['file_game_count']),
       hasMoves: _readInt(row['has_moves']) == 1,
+      moveLine: _jsonList(row['moves'])
+          .map((move) => move.toString().trim().toLowerCase())
+          .where((move) => move.isNotEmpty)
+          .toList(growable: false),
       pgnFingerprint:
           row['pgn_hash']?.toString().trim().isNotEmpty == true
               ? row['pgn_hash'].toString()
@@ -7416,6 +7419,7 @@ LocalChessGame _localChessGameWithIdentity(LocalChessGame game, String id) {
     indexInFile: game.indexInFile,
     fileGameCount: game.fileGameCount,
     hasMoves: game.hasMoves,
+    moveLine: game.moveLine,
     pgnFingerprint: game.pgnFingerprint,
     sourceByteStart: game.sourceByteStart,
     sourceByteEnd: game.sourceByteEnd,
@@ -8331,6 +8335,7 @@ List<String> _lineFromLocalGame(LocalChessGame game) {
 }
 
 List<String> _inlineLineFromLocalGame(LocalChessGame game) {
+  if (game.moveLine.isNotEmpty) return game.moveLine;
   return game.game.mainline
       .map((move) => move.uci.trim().toLowerCase())
       .where((move) => move.isNotEmpty)
