@@ -1307,6 +1307,13 @@ enum _LibraryDatabaseKind { cloud, local }
 
 enum _DatabaseBoardAction { preview, open, remove }
 
+enum _LocalDatabaseBoardAction {
+  preview,
+  open,
+  removeFromMyDatabases,
+  deleteFromComputer,
+}
+
 class _MyDatabasesHomeView extends HookConsumerWidget {
   const _MyDatabasesHomeView({
     required this.folders,
@@ -1810,6 +1817,72 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       }
     }
 
+    Future<void> removeLocalEntryFromMyDatabases(
+      LocalLibraryEntry entry,
+    ) async {
+      if (isDeletingLocalDatabase) return;
+
+      try {
+        localChessLog.info(
+          'Local database library removal requested',
+          context: <String, Object?>{
+            'path': entry.path,
+            'label': entry.displayName,
+          },
+        );
+        await ref
+            .read(localLibraryRegistryProvider.notifier)
+            .unregister(entry.path);
+        clearOpenLocalSourceIfNeeded(<String>{entry.path});
+        localChessLog.info(
+          'Local database library removal finished',
+          context: <String, Object?>{
+            'path': entry.path,
+            'label': entry.displayName,
+            'sourceDeleted': false,
+            'cacheDeleted': false,
+          },
+        );
+        if (context.mounted) {
+          showDesktopToast(
+            context,
+            'Removed from My Databases. The original files were not deleted.',
+          );
+        }
+      } catch (e, st) {
+        localChessLog.error(
+          'Local database library removal failed',
+          e,
+          st,
+          tag: 'library.remove_local_database_reference',
+          context: <String, Object?>{
+            'path': entry.path,
+            'label': entry.displayName,
+          },
+        );
+        if (context.mounted) {
+          showDesktopToast(
+            context,
+            'Could not remove the database from My Databases. Please try again.',
+            error: true,
+          );
+        }
+      }
+    }
+
+    Future<void> confirmRemoveLocalEntryFromMyDatabases(
+      LocalLibraryEntry entry,
+    ) async {
+      if (isDeletingLocalDatabase) return;
+      final confirmed = await showDesktopDialog<bool>(
+        context,
+        barrierDismissible: true,
+        builder: (_) => _ConfirmRemoveLocalDatabaseDialog(entry: entry),
+      );
+      if (confirmed != true || !context.mounted) return;
+      await removeLocalEntryFromMyDatabases(entry);
+    }
+
     Future<void> confirmRemoveLocalEntry(LocalLibraryEntry entry) async {
       if (isDeletingLocalDatabase) return;
       final confirmed = await showDesktopDialog<bool>(
@@ -1949,37 +2022,45 @@ class _MyDatabasesBoard extends HookConsumerWidget {
       LocalLibraryEntry entry,
       Offset position,
     ) async {
-      final picked = await showDesktopContextMenu<_DatabaseBoardAction>(
+      final picked = await showDesktopContextMenu<_LocalDatabaseBoardAction>(
         context: context,
         position: position,
-        width: 230,
+        width: 260,
         entries: const [
           DesktopContextMenuItem(
-            value: _DatabaseBoardAction.preview,
+            value: _LocalDatabaseBoardAction.preview,
             icon: Icons.table_rows_outlined,
             label: 'Preview database',
           ),
           DesktopContextMenuItem(
-            value: _DatabaseBoardAction.open,
+            value: _LocalDatabaseBoardAction.open,
             icon: Icons.open_in_new_rounded,
             label: 'Open full database',
           ),
           DesktopContextMenuDivider(),
           DesktopContextMenuItem(
-            value: _DatabaseBoardAction.remove,
-            icon: Icons.delete_outline_rounded,
-            label: 'Delete local database',
+            value: _LocalDatabaseBoardAction.removeFromMyDatabases,
+            icon: Icons.remove_circle_outline_rounded,
+            label: 'Remove from My Databases',
+          ),
+          DesktopContextMenuDivider(),
+          DesktopContextMenuItem(
+            value: _LocalDatabaseBoardAction.deleteFromComputer,
+            icon: Icons.delete_forever_outlined,
+            label: 'Delete from computer',
             destructive: true,
           ),
         ],
       );
       if (picked == null || !context.mounted) return;
       switch (picked) {
-        case _DatabaseBoardAction.preview:
+        case _LocalDatabaseBoardAction.preview:
           await previewLocalEntry(entry);
-        case _DatabaseBoardAction.open:
+        case _LocalDatabaseBoardAction.open:
           await openLocalEntry(entry);
-        case _DatabaseBoardAction.remove:
+        case _LocalDatabaseBoardAction.removeFromMyDatabases:
+          await confirmRemoveLocalEntryFromMyDatabases(entry);
+        case _LocalDatabaseBoardAction.deleteFromComputer:
           await confirmRemoveLocalEntry(entry);
       }
     }
@@ -2441,7 +2522,7 @@ class _ConfirmDeleteLocalDatabaseDialog extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Delete ${entry.displayName}?',
+                    'Delete ${entry.displayName} from computer?',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -2476,6 +2557,90 @@ class _ConfirmDeleteLocalDatabaseDialog extends StatelessWidget {
                   label: 'Delete',
                   icon: Icons.delete_outline_rounded,
                   tone: DesktopDialogButtonTone.danger,
+                  onPress: () => Navigator.of(context).pop(true),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ConfirmRemoveLocalDatabaseDialog extends StatelessWidget {
+  const _ConfirmRemoveLocalDatabaseDialog({required this.entry});
+
+  final LocalLibraryEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        width: 440,
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+        decoration: BoxDecoration(
+          color: kBlack2Color,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: kDividerColor),
+          boxShadow: [
+            BoxShadow(
+              color: kBlackColor.withValues(alpha: 0.42),
+              blurRadius: 24,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.remove_circle_outline_rounded,
+                  color: kPrimaryColor,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Remove ${entry.displayName}?',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'This removes the database from My Databases only. The original '
+              'files stay on your computer and can be added again later.\n\n'
+              '${entry.path}',
+              style: const TextStyle(
+                color: kWhiteColor70,
+                fontSize: 12,
+                height: 1.45,
+              ),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                DesktopDialogButton(
+                  label: 'Cancel',
+                  icon: Icons.close_rounded,
+                  onPress: () => Navigator.of(context).pop(false),
+                ),
+                const SizedBox(width: 8),
+                DesktopDialogButton(
+                  label: 'Remove',
+                  icon: Icons.remove_circle_outline_rounded,
                   onPress: () => Navigator.of(context).pop(true),
                 ),
               ],
