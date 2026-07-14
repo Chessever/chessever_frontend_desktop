@@ -279,10 +279,6 @@ class PlayerWorkspacePane extends HookConsumerWidget {
                                       account,
                                     ),
                                   ),
-                              onRebuildCombined:
-                                  () => unawaited(
-                                    _runRebuildCombined(context, ref),
-                                  ),
                             ),
                           ),
                           const SizedBox(width: 16),
@@ -1259,7 +1255,6 @@ class _PlayerSourceRail extends ConsumerWidget {
     required this.onSync,
     required this.onReinstall,
     required this.onCancelOperation,
-    required this.onRebuildCombined,
   });
 
   final PlayerWorkspacePlayer player;
@@ -1270,7 +1265,6 @@ class _PlayerSourceRail extends ConsumerWidget {
   final ValueChanged<PlayerWorkspaceAccount> onSync;
   final ValueChanged<PlayerWorkspaceAccount> onReinstall;
   final ValueChanged<PlayerWorkspaceAccount> onCancelOperation;
-  final VoidCallback onRebuildCombined;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1291,13 +1285,7 @@ class _PlayerSourceRail extends ConsumerWidget {
           const _RailSectionLabel('Sources'),
           const SizedBox(height: 8),
           for (final source in playerWorkspaceSourceRailOrder) ...[
-            if (source == PlayerWorkspaceSource.combined)
-              _CombinedCard(
-                player: player,
-                operation: _operationForSource(operations, source),
-                onRebuild: onRebuildCombined,
-              )
-            else ...[
+            if (source != PlayerWorkspaceSource.combined) ...[
               for (final account in player.accountsFor(source))
                 _SourceCard(
                   source: source,
@@ -1768,82 +1756,6 @@ class _AddSourceAccountButton extends StatelessWidget {
       icon: manual ? Icons.note_add_outlined : Icons.add_link_outlined,
       fillWidth: true,
       onPress: onPress,
-    );
-  }
-}
-
-class _CombinedCard extends StatelessWidget {
-  const _CombinedCard({
-    required this.player,
-    required this.operation,
-    required this.onRebuild,
-  });
-
-  final PlayerWorkspacePlayer player;
-  final PlayerWorkspaceOperation? operation;
-  final VoidCallback onRebuild;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasSources = player.allAccounts.any(
-      (account) => account.gameCount > 0,
-    );
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: kPrimaryColor.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: kPrimaryColor.withValues(alpha: 0.24)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: const [
-                Icon(Icons.hub_outlined, size: 17, color: kPrimaryColor),
-                SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    'Combined',
-                    style: TextStyle(
-                      color: kWhiteColor,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              player.combinedGameCount > 0
-                  ? '${_formatInt(player.combinedGameCount)} deduplicated games'
-                  : 'Deduplicate all connected source databases',
-              style: const TextStyle(
-                color: kWhiteColor70,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            if (operation != null) ...[
-              const SizedBox(height: 10),
-              _OperationProgress(operation: operation!),
-            ],
-            const SizedBox(height: 10),
-            DesktopDialogButton(
-              label:
-                  player.combinedGameCount > 0
-                      ? 'Rebuild combined'
-                      : 'Build combined',
-              icon: Icons.merge_type_rounded,
-              tone: DesktopDialogButtonTone.primary,
-              fillWidth: true,
-              onPress: hasSources && operation == null ? onRebuild : null,
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -3815,17 +3727,6 @@ Future<void> _runCancelAccountOperation(
     await ref
         .read(playerWorkspaceProvider.notifier)
         .cancelAccountOperation(account);
-  } catch (error) {
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(error.toString())));
-  }
-}
-
-Future<void> _runRebuildCombined(BuildContext context, WidgetRef ref) async {
-  try {
-    await ref.read(playerWorkspaceProvider.notifier).rebuildCombinedDatabase();
   } catch (error) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(

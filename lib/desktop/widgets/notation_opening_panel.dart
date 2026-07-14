@@ -680,7 +680,9 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                             child: widget.enginePanel!,
                           ),
                           SplitChild(
-                            minSize: 240,
+                            // Compact floor so the report and notation can
+                            // both be resized meaningfully on short windows.
+                            minSize: 120,
                             initialWeight:
                                 1 - desktopEngineRightRailInitialWeight,
                             label: 'Notation',

@@ -112,7 +112,7 @@ void main() {
         1 - desktopEngineRightRailInitialWeight,
       );
       expect(split.children.first.minSize, 120);
-      expect(split.children.last.minSize, 240);
+      expect(split.children.last.minSize, 120);
     },
   );
 
