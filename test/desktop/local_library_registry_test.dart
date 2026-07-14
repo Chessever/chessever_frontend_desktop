@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -7,6 +8,28 @@ import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 
 void main() {
+  test('unregister removes only the library reference, not the source', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'chessever_registry_remove_',
+    );
+    addTearDown(() => temp.delete(recursive: true));
+    final source = File('${temp.path}${Platform.pathSeparator}database.pgn');
+    await source.writeAsString('[Event "Preserved"]');
+    final database = _DelayedRegistryDatabase(const <dynamic>[]);
+    final notifier = LocalLibraryRegistryNotifier(database);
+    await database.readStarted.future;
+    database.releaseRead();
+
+    await notifier.register(source.path);
+    expect(notifier.state.entries, hasLength(1));
+
+    await notifier.unregister(source.path);
+
+    expect(notifier.state.entries, isEmpty);
+    expect(await source.exists(), isTrue);
+    expect(await source.readAsString(), '[Event "Preserved"]');
+  });
+
   test(
     'registration waits for hydration and cannot be overwritten by it',
     () async {
