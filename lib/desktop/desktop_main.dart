@@ -20,6 +20,7 @@ import 'package:chessever/desktop/desktop_app.dart';
 import 'package:chessever/firebase_options.dart';
 import 'package:chessever/desktop/services/billing/desktop_deep_link_listener.dart';
 import 'package:chessever/desktop/services/desktop_board_window_payload.dart';
+import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/desktop_db_init.dart';
 import 'package:chessever/desktop/services/desktop_env.dart';
 import 'package:chessever/desktop/services/error_reporter.dart';
@@ -328,18 +329,26 @@ Future<void> _desktopBoot({
   // Auto-updater: bootstrap after first frame so the network probe never races
   // the window appearing. The chip in the top bar appears only after a
   // verified update is staged.
-  ForegroundTaskScheduler.schedule(
-    key: 'desktop_startup_desktop_updater',
-    delay: kStartupWarmupDelay + const Duration(seconds: 2),
-    task: () async {
-      try {
-        await DesktopUpdaterService.instance.initialize();
-      } catch (e, stack) {
-        print('[desktop] ⚠️ auto-updater init failed');
-        ErrorReporter.report(e, stackTrace: stack, tag: 'desktop.updater_init');
-      }
-    },
-  );
+  if (DesktopBuildIdentity.current.updatesEnabled) {
+    ForegroundTaskScheduler.schedule(
+      key: 'desktop_startup_desktop_updater',
+      delay: kStartupWarmupDelay + const Duration(seconds: 2),
+      task: () async {
+        try {
+          await DesktopUpdaterService.instance.initialize();
+        } catch (e, stack) {
+          print('[desktop] ⚠️ auto-updater init failed');
+          ErrorReporter.report(
+            e,
+            stackTrace: stack,
+            tag: 'desktop.updater_init',
+          );
+        }
+      },
+    );
+  } else {
+    print('[desktop] production updater disabled for development build');
+  }
 
   print('[desktop] running app');
   final container = ProviderContainer(
@@ -375,7 +384,8 @@ Future<void> _desktopBoot({
   // ignore: discarded_futures
   DesktopDeepLinkListener.instance.start(
     onLink: (uri) {
-      if (uri.scheme == 'chessever' && uri.host == 'billing') {
+      if (uri.scheme == DesktopBuildIdentity.current.urlScheme &&
+          uri.host == 'billing') {
         switch (uri.path) {
           case '/success':
           case '/portal-return':

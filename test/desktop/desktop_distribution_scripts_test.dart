@@ -65,8 +65,28 @@ void main() {
           File('macos/Runner/Configs/AppInfo.xcconfig').readAsStringSync();
       final infoPlist = File('macos/Runner/Info.plist').readAsStringSync();
       expect(appInfo, contains('PRODUCT_NAME = $packageName'));
+      expect(appInfo, contains('CHESSEVER_DISPLAY_NAME = ChessEver'));
+      expect(appInfo, contains('CHESSEVER_URL_SCHEME = chessever'));
       expect(infoPlist, contains('<key>CFBundleDisplayName</key>'));
-      expect(infoPlist, contains('<string>ChessEver</string>'));
+      expect(
+        infoPlist,
+        contains(r'<string>$(CHESSEVER_DISPLAY_NAME)</string>'),
+      );
+      expect(infoPlist, contains(r'<string>$(CHESSEVER_URL_SCHEME)</string>'));
+
+      final project =
+          File('macos/Runner.xcodeproj/project.pbxproj').readAsStringSync();
+      expect(
+        project,
+        contains(
+          'PRODUCT_BUNDLE_IDENTIFIER = '
+          'com.chessever.desktop.development;',
+        ),
+      );
+      expect(
+        project,
+        contains('CHESSEVER_DISPLAY_NAME = "ChessEver Development";'),
+      );
 
       final releaseEntitlements =
           File('macos/Runner/Release.entitlements').readAsStringSync();

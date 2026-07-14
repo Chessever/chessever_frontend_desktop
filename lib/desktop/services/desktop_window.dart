@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/services/desktop_window_geometry.dart';
 
 /// Window-manager bootstrap for desktop platforms.
@@ -15,7 +16,7 @@ class DesktopWindow {
 
   static const Size minSize = Size(1024, 720);
   static const Size defaultSize = Size(1440, 900);
-  static const String windowTitle = 'ChessEver';
+  static String get windowTitle => DesktopBuildIdentity.current.displayName;
 
   static Future<void> initialize() async {
     if (!(Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {

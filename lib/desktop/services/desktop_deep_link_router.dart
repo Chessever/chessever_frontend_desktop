@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -46,7 +47,8 @@ bool _isChesseverWebUri(Uri uri) {
 }
 
 bool _isChesseverSchemeUri(Uri uri) {
-  return uri.scheme == 'chessever' || uri.scheme == 'com.chessever.app';
+  return uri.scheme == DesktopBuildIdentity.current.urlScheme ||
+      uri.scheme == 'com.chessever.app';
 }
 
 String? _nonEmptyQueryValue(Uri uri, String key) {

@@ -10,6 +10,12 @@
 
 namespace {
 
+#ifdef CHESSEVER_DEVELOPMENT
+constexpr wchar_t kChessEverWindowTitle[] = L"ChessEver Development";
+#else
+constexpr wchar_t kChessEverWindowTitle[] = L"ChessEver";
+#endif
+
 int RunFlutterApplication(std::vector<std::string> command_line_arguments) {
   flutter::DartProject project(L"data");
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
@@ -17,7 +23,7 @@ int RunFlutterApplication(std::vector<std::string> command_line_arguments) {
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1440, 900);
-  if (!window.Create(L"ChessEver", origin, size)) {
+  if (!window.Create(kChessEverWindowTitle, origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

@@ -6,6 +6,8 @@ PRODUCT_NAME = chessever
 
 // The application's bundle identifier
 PRODUCT_BUNDLE_IDENTIFIER = com.chessever.desktop
+CHESSEVER_DISPLAY_NAME = ChessEver
+CHESSEVER_URL_SCHEME = chessever
 
 // Keep the Runner target aligned with Podfile and project-level settings.
 // Flutter uses this value when generating the plugin Swift package.

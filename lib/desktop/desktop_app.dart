@@ -3,6 +3,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_auth_gate.dart';
+import 'package:chessever/desktop/services/desktop_build_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_native_update_menu_bridge.dart';
 import 'package:chessever/desktop/widgets/desktop_window_frame.dart';
 import 'package:chessever/services/analytics/analytics_service.dart';
@@ -23,7 +24,7 @@ class DesktopApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp(
-      title: 'ChessEver',
+      title: DesktopBuildIdentity.current.displayName,
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
       darkTheme: AppTheme.darkTheme,

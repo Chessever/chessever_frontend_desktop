@@ -9,7 +9,7 @@
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleDisplayName</key>
-	<string>ChessEver</string>
+	<string>$(CHESSEVER_DISPLAY_NAME)</string>
 	<key>CFBundleIconFile</key>
 	<string></string>
 	<key>CFBundleIdentifier</key>
@@ -17,7 +17,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>ChessEver</string>
+	<string>$(CHESSEVER_DISPLAY_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -44,7 +44,7 @@
 			<string>com.chessEver.app.billing</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>chessever</string>
+				<string>$(CHESSEVER_URL_SCHEME)</string>
 			</array>
 		</dict>
 	</array>
