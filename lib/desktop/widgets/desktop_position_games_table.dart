@@ -1453,6 +1453,7 @@ class _DesktopPositionGamesTableState
     final table = AdaptiveGamesTable<Map<String, dynamic>>(
       columns: _buildColumns(boardSettings, selectedRowId),
       rows: _rows,
+      enableColumnResizing: widget.referenceLayout,
       scrollController: _scroll,
       useFixedRowAlignment: widget.useFixedRowAlignment,
       rowMinHeight: widget.referenceLayout ? 30 : 32,
@@ -1627,6 +1628,7 @@ class _DesktopPositionGamesTableState
           label: 'NOTATION',
           flex: widget.referenceLayout ? 4.6 : 5.0,
           minWidth: notationMinWidth,
+          resizeMinWidth: 180,
           cellBuilder: (_, row) {
             final rowId = (row['id']?.toString().trim() ?? '');
             final rowIndex = _rows.indexOf(row);

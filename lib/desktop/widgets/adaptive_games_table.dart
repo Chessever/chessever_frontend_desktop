@@ -40,6 +40,7 @@ class AdaptiveColumn<T> {
     this.cellAlignment = Alignment.centerLeft,
     this.flex,
     this.minWidth,
+    this.resizeMinWidth = 44,
     this.tooltip,
     this.sortField,
   });
@@ -76,6 +77,12 @@ class AdaptiveColumn<T> {
   /// columns are present; without a floor, a flex column can collapse to
   /// zero once the non-flex columns consume the table's minimum width.
   final double? minWidth;
+
+  /// Smallest width the user can reach by dragging this column's trailing
+  /// divider. This is intentionally separate from [minWidth]: [minWidth]
+  /// controls automatic table measurement, while this value controls the
+  /// explicit width selected by the user.
+  final double resizeMinWidth;
 
   /// Optional hover-tooltip rendered on the header label.
   final String? tooltip;
@@ -151,6 +158,7 @@ class AdaptiveGamesTable<T> extends StatelessWidget {
     this.emptyState,
     this.sortState,
     this.onSortChanged,
+    this.enableColumnResizing = false,
   });
 
   /// Active sort. When null, the table reads as the caller's default.
@@ -161,6 +169,11 @@ class AdaptiveGamesTable<T> extends StatelessWidget {
   /// (or null when cycling back to default) — callers translate that into a
   /// query parameter.
   final void Function(AdaptiveSortState? next)? onSortChanged;
+
+  /// Adds draggable dividers to the header. Dragging a divider changes the
+  /// column immediately; double-clicking it returns that column to its
+  /// content-derived width.
+  final bool enableColumnResizing;
 
   final List<AdaptiveColumn<T>> columns;
   final List<T> rows;
@@ -293,6 +306,7 @@ class AdaptiveGamesTable<T> extends StatelessWidget {
                 maxHeight: constraints.maxHeight,
                 sortState: sortState,
                 onSortChanged: onSortChanged,
+                enableColumnResizing: enableColumnResizing,
               ),
             ),
           ),
@@ -345,6 +359,7 @@ class _SingleTableBody<T> extends StatefulWidget {
     required this.maxHeight,
     required this.sortState,
     required this.onSortChanged,
+    required this.enableColumnResizing,
   });
 
   final List<AdaptiveColumn<T>> columns;
@@ -375,6 +390,7 @@ class _SingleTableBody<T> extends StatefulWidget {
   final double maxHeight;
   final AdaptiveSortState? sortState;
   final void Function(AdaptiveSortState? next)? onSortChanged;
+  final bool enableColumnResizing;
 
   @override
   State<_SingleTableBody<T>> createState() => _SingleTableBodyState<T>();
@@ -384,6 +400,8 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
   int? _hoveredIndex;
   bool _lastPointerDownInNewTab = false;
   bool _lastPointerDownShiftPressed = false;
+  final Map<String, double> _resizedWidths = <String, double>{};
+  final Map<String, GlobalKey> _headerCellKeys = <String, GlobalKey>{};
 
   void _captureGestureModifiers(TapDownDetails _) {
     _lastPointerDownInNewTab = isNewTabModifierPressed();
@@ -427,8 +445,21 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
       }
     }
 
+    final effectiveColumnWidths = <int, TableColumnWidth>{
+      ...widget.colWidths,
+      for (var i = 0; i < widget.columns.length; i++)
+        if (_resizedWidths[widget.columns[i].id] case final width?)
+          i: FixedColumnWidth(width),
+    };
+
     final table = Table(
-      columnWidths: widget.colWidths,
+      columnWidths: effectiveColumnWidths,
+      border:
+          widget.enableColumnResizing
+              ? const TableBorder(
+                verticalInside: BorderSide(color: kDividerColor, width: 0.5),
+              )
+              : null,
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       children: [
         if (widget.showHeader) _headerRow(),
@@ -471,20 +502,66 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
         color: kBackgroundColor,
         border: Border(bottom: BorderSide(color: kDividerColor, width: 1)),
       ),
-      children: [
-        for (final col in widget.columns)
+      children: [for (final col in widget.columns) _headerCell(col)],
+    );
+  }
+
+  Widget _headerCell(AdaptiveColumn<T> col) {
+    final canResize =
+        widget.enableColumnResizing && col.id != '__adaptive_spacer__';
+    final key = _headerCellKeys.putIfAbsent(col.id, GlobalKey.new);
+    return SizedBox(
+      key: key,
+      height: widget.headerHeight,
+      child: Stack(
+        fit: StackFit.expand,
+        clipBehavior: Clip.none,
+        children: [
           Padding(
             padding: widget.padding,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: widget.headerHeight),
-              child: Align(
-                alignment: col.headerAlignment,
-                child: _buildHeaderCell(col),
-              ),
+            child: Align(
+              alignment: col.headerAlignment,
+              child: _buildHeaderCell(col),
             ),
           ),
-      ],
+          if (canResize)
+            Positioned(
+              top: 0,
+              right: 0,
+              bottom: 0,
+              width: 9,
+              child: _ColumnResizeHandle(
+                key: ValueKey<String>('adaptive-column-resizer-${col.id}'),
+                active: _resizedWidths.containsKey(col.id),
+                onDragStart: () => _startColumnResize(col),
+                onDragUpdate: (delta) => _updateColumnResize(col, delta),
+                onReset: () => _resetColumnResize(col),
+              ),
+            ),
+        ],
+      ),
     );
+  }
+
+  void _startColumnResize(AdaptiveColumn<T> col) {
+    if (_resizedWidths.containsKey(col.id)) return;
+    final renderObject =
+        _headerCellKeys[col.id]?.currentContext?.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return;
+    _resizedWidths[col.id] = renderObject.size.width;
+  }
+
+  void _updateColumnResize(AdaptiveColumn<T> col, double delta) {
+    final current = _resizedWidths[col.id];
+    if (current == null) return;
+    final next = (current + delta).clamp(col.resizeMinWidth, 2400.0);
+    if (next == current) return;
+    setState(() => _resizedWidths[col.id] = next);
+  }
+
+  void _resetColumnResize(AdaptiveColumn<T> col) {
+    if (!_resizedWidths.containsKey(col.id)) return;
+    setState(() => _resizedWidths.remove(col.id));
   }
 
   Widget _buildHeaderCell(AdaptiveColumn<T> col) {
@@ -697,6 +774,62 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
                 ? null
                 : (d) => widget.onRowSecondaryTap!(row, d.globalPosition),
         child: child,
+      ),
+    );
+  }
+}
+
+/// Narrow hit target centered on a column boundary. The one-pixel rule stays
+/// visible at rest so the table reads as resizable before the first hover;
+/// hover and active states use the shell accent for immediate feedback.
+class _ColumnResizeHandle extends StatefulWidget {
+  const _ColumnResizeHandle({
+    super.key,
+    required this.active,
+    required this.onDragStart,
+    required this.onDragUpdate,
+    required this.onReset,
+  });
+
+  final bool active;
+  final VoidCallback onDragStart;
+  final ValueChanged<double> onDragUpdate;
+  final VoidCallback onReset;
+
+  @override
+  State<_ColumnResizeHandle> createState() => _ColumnResizeHandleState();
+}
+
+class _ColumnResizeHandleState extends State<_ColumnResizeHandle> {
+  bool _hovered = false;
+  bool _dragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final highlighted = _hovered || _dragging || widget.active;
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onDoubleTap: widget.onReset,
+        onHorizontalDragStart: (_) {
+          widget.onDragStart();
+          setState(() => _dragging = true);
+        },
+        onHorizontalDragUpdate:
+            (details) => widget.onDragUpdate(details.delta.dx),
+        onHorizontalDragEnd: (_) => setState(() => _dragging = false),
+        onHorizontalDragCancel: () => setState(() => _dragging = false),
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 80),
+            width: highlighted ? 2 : 1,
+            color: highlighted ? kPrimaryColor : kDividerColor,
+          ),
+        ),
       ),
     );
   }
