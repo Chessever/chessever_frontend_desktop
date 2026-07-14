@@ -878,12 +878,40 @@ class PlayerWorkspaceRepository {
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
-    final buffer = StringBuffer();
     final progress = _ChessEverDownloadProgress(
       onProgress: onProgress,
       expectedGameCount: expectedGameCount,
     );
     final dateFrom = _gamebaseDate(sinceDate);
+    Object? liveDownloadError;
+    StackTrace? liveDownloadStackTrace;
+    try {
+      // The live player API does not report an authoritative total count.
+      // A date-only delta therefore cannot detect or repair older gaps in a
+      // previously cached source. Always rebuild ChessEver from every live
+      // page; the endpoint embeds move data, so this remains a small number of
+      // bulk requests rather than one request per game.
+      return await _downloadChessEverLivePages(
+        repository: repository,
+        playerId: playerId,
+        dateFrom: null,
+        progress: progress,
+        expectedGameCount: expectedGameCount,
+        cancellationToken: cancellationToken,
+      );
+    } catch (error, stackTrace) {
+      if (error is OperationCanceledException) rethrow;
+      liveDownloadError = error;
+      liveDownloadStackTrace = stackTrace;
+      localChessLog.warning(
+        'ChessEver live player download failed; trying PGN fallback',
+        context: <String, Object?>{'hasDateFilter': dateFrom != null},
+        error: error,
+        stackTrace: stackTrace,
+      );
+      progress.liveDownloadFailed();
+    }
+
     final exported = await _downloadChessEverPgnExport(
       repository: repository,
       playerId: playerId,
@@ -895,6 +923,21 @@ class PlayerWorkspaceRepository {
     );
     if (exported != null) return exported;
 
+    Error.throwWithStackTrace(liveDownloadError, liveDownloadStackTrace);
+  }
+
+  Future<PlayerWorkspaceDownloadedPgn> _downloadChessEverLivePages({
+    required GamebaseRepository repository,
+    required String playerId,
+    required String? dateFrom,
+    required _ChessEverDownloadProgress progress,
+    required int? expectedGameCount,
+    OperationCancellationToken? cancellationToken,
+  }) async {
+    if (playerId.trim().isEmpty) {
+      throw StateError('ChessEver player id is unavailable.');
+    }
+    final buffer = StringBuffer();
     var page = 0;
     int? totalCount;
     while (true) {
@@ -909,10 +952,26 @@ class PlayerWorkspaceRepository {
       );
       cancellationToken?.throwIfCanceled();
       final rows = _rowsFromPlayerGamesResponse(response);
-      if (rows.isEmpty) break;
-      totalCount ??= _readTotalCount(response);
+      if (rows.isEmpty) {
+        if (page > 0) {
+          throw StateError(
+            'ChessEver returned an empty page after reporting more games.',
+          );
+        }
+        if (dateFrom == null &&
+            expectedGameCount != null &&
+            expectedGameCount > 0) {
+          throw StateError(
+            'ChessEver returned no games for a player expected to have '
+            '$expectedGameCount.',
+          );
+        }
+        break;
+      }
+      totalCount = _readTotalCount(response) ?? totalCount;
       progress.updateTotalCount(totalCount);
-      final hasMore = _readHasMore(response);
+      final hasMore =
+          _readHasMore(response) ?? rows.length >= _chessEverPageSize;
       progress.pageReturned(
         pageNumber: page + 1,
         rowsOnPage: rows.length,
@@ -946,6 +1005,8 @@ class PlayerWorkspaceRepository {
       source: PlayerWorkspaceSource.chessever,
       pgn: text,
       gameCount: countPgnGames(text),
+      replaceExistingSource: dateFrom == null,
+      remoteUnchanged: dateFrom != null && text.trim().isEmpty,
     );
   }
 
@@ -1777,7 +1838,15 @@ class _ChessEverDownloadProgress {
 
   void exportStarted() {
     _emit(
-      'ChessEver: downloading PGN export...',
+      'ChessEver: downloading PGN fallback...',
+      _externalSourceInitialProgress,
+      force: true,
+    );
+  }
+
+  void liveDownloadFailed() {
+    _emit(
+      'ChessEver: live player index unavailable; trying PGN fallback...',
       _externalSourceInitialProgress,
       force: true,
     );
