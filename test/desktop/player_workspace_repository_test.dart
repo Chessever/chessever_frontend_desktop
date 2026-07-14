@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter_test/flutter_test.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:path/path.dart' as p;
@@ -4426,6 +4426,62 @@ $_mergeGameOne
       expect(directClientRequests, 0);
     });
 
+    test(
+      'falls back from a 503 source service to one direct Lichess stream',
+      () async {
+        DioException serviceUnavailable() {
+          final options = RequestOptions(
+            path: '/api/player/lichess/DrNykterstein/games.pgn',
+          );
+          return DioException(
+            requestOptions: options,
+            response: Response<void>(
+              requestOptions: options,
+              statusCode: 503,
+            ),
+            type: DioExceptionType.badResponse,
+          );
+        }
+
+        final gamebaseRepository = _FakeGamebaseRepository(
+          const <String, String>{},
+          externalErrors: <Object>[serviceUnavailable()],
+        );
+        var directRequests = 0;
+        final waits = <Duration>[];
+        final progressMessages = <String>[];
+        final workspaceRepository = PlayerWorkspaceRepository(
+          gamebaseRepository: gamebaseRepository,
+          client: MockClient((request) async {
+            directRequests += 1;
+            expect(request.url.host, 'lichess.org');
+            expect(request.url.path, '/api/games/user/DrNykterstein');
+            return http.Response(_mergeGameOne, 200);
+          }),
+          retryWait: (delay, cancellationToken) async {
+            cancellationToken?.throwIfCanceled();
+            waits.add(delay);
+          },
+        );
+
+        final downloaded = await workspaceRepository.downloadLichessGames(
+          username: 'DrNykterstein',
+          expectedGameCount: 2,
+          onProgress: (message, _) => progressMessages.add(message),
+        );
+
+        expect(gamebaseRepository.externalRequestCount, 1);
+        expect(waits, isEmpty);
+        expect(directRequests, 1);
+        expect(downloaded.gameCount, 1);
+        expect(downloaded.pgn, contains('Lichess import 1'));
+        expect(
+          progressMessages,
+          anyElement(contains('Downloading directly from Lichess')),
+        );
+      },
+    );
+
     test('empty Gamebase delta is reported as already current', () async {
       final gamebaseRepository = _FakeGamebaseRepository(
         const <String, String>{},
@@ -4482,26 +4538,25 @@ $_mergeGameOne
       },
     );
 
-    test('large Lichess downloads use concurrent date ranges', () async {
+    test('large Lichess downloads use one streaming request', () async {
       var inFlight = 0;
       var maxInFlight = 0;
-      var rangeRequests = 0;
+      var requests = 0;
       final progressMessages = <String>[];
       final workspaceRepository = PlayerWorkspaceRepository(
         client: MockClient((request) async {
           expect(request.method, 'GET');
           expect(request.url.host, 'lichess.org');
           expect(request.url.path, '/api/games/user/durarbayli');
-          expect(request.url.queryParameters['since'], isNotNull);
-          expect(request.url.queryParameters['until'], isNotNull);
+          expect(request.url.queryParameters, isNot(contains('since')));
+          expect(request.url.queryParameters, isNot(contains('until')));
           expect(request.headers['Accept'], 'application/x-chess-pgn');
-          rangeRequests += 1;
-          final requestNumber = rangeRequests;
+          requests += 1;
           inFlight += 1;
           if (inFlight > maxInFlight) maxInFlight = inFlight;
           await Future<void>.delayed(const Duration(milliseconds: 20));
           inFlight -= 1;
-          return http.Response(requestNumber == 1 ? _mergeGameOne : '', 200);
+          return http.Response(_mergeGameOne, 200);
         }),
       );
 
@@ -4513,9 +4568,72 @@ $_mergeGameOne
 
       expect(downloaded.gameCount, 1);
       expect(downloaded.pgn, contains('Lichess import 1'));
-      expect(rangeRequests, greaterThan(1));
-      expect(maxInFlight, greaterThan(1));
-      expect(progressMessages, anyElement(contains('date ranges')));
+      expect(downloaded.replaceExistingSource, isTrue);
+      expect(requests, 1);
+      expect(maxInFlight, 1);
+      expect(progressMessages, isNot(anyElement(contains('date ranges'))));
+    });
+
+    test('retries a direct Lichess 503 before succeeding', () async {
+      var requests = 0;
+      final waits = <Duration>[];
+      final progressMessages = <String>[];
+      final workspaceRepository = PlayerWorkspaceRepository(
+        client: MockClient((_) async {
+          requests += 1;
+          if (requests == 1) return http.Response('unavailable', 503);
+          return http.Response(_mergeGameOne, 200);
+        }),
+        retryWait: (delay, cancellationToken) async {
+          cancellationToken?.throwIfCanceled();
+          waits.add(delay);
+        },
+      );
+
+      final downloaded = await workspaceRepository.downloadLichessGames(
+        username: 'DrNykterstein',
+        expectedGameCount: 2,
+        onProgress: (message, _) => progressMessages.add(message),
+      );
+
+      expect(requests, 2);
+      expect(waits, const <Duration>[Duration(seconds: 2)]);
+      expect(downloaded.gameCount, 1);
+      expect(downloaded.pgn, contains('Lichess import 1'));
+      expect(
+        progressMessages,
+        anyElement(contains('temporarily unavailable. Retrying in 2 seconds')),
+      );
+    });
+
+    test('waits a full minute before retrying a Lichess 429', () async {
+      var requests = 0;
+      final waits = <Duration>[];
+      final workspaceRepository = PlayerWorkspaceRepository(
+        client: MockClient((_) async {
+          requests += 1;
+          if (requests == 1) {
+            return http.Response(
+              'too many requests',
+              429,
+              headers: const <String, String>{'retry-after': '5'},
+            );
+          }
+          return http.Response(_mergeGameOne, 200);
+        }),
+        retryWait: (delay, cancellationToken) async {
+          cancellationToken?.throwIfCanceled();
+          waits.add(delay);
+        },
+      );
+
+      final downloaded = await workspaceRepository.downloadLichessGames(
+        username: 'DrNykterstein',
+      );
+
+      expect(requests, 2);
+      expect(waits, const <Duration>[Duration(minutes: 1)]);
+      expect(downloaded.gameCount, 1);
     });
 
     test('downloads Chess.com archives from the since month onward', () async {
@@ -5661,6 +5779,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     this.pgnExport,
     this.playerGamesError,
     this.playerGamePages,
+    this.externalErrors = const <Object>[],
     this.externalExports =
         const <GamebaseExternalPlayerSource, GamebasePlayerPgnExport>{},
     this.playersById = const <String, GamebasePlayer>{},
@@ -5670,6 +5789,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
   final String? pgnExport;
   final Object? playerGamesError;
   final List<List<String>>? playerGamePages;
+  final List<Object> externalErrors;
   final Map<GamebaseExternalPlayerSource, GamebasePlayerPgnExport>
   externalExports;
   final Map<String, GamebasePlayer> playersById;
@@ -5683,6 +5803,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
   final requestedPageSizes = <int>[];
   final requestedDateFrom = <String?>[];
   final hydratedIds = <String>[];
+  var externalRequestCount = 0;
 
   @override
   Future<GamebasePlayer?> getPlayerById(String id) async {
@@ -5715,6 +5836,11 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     int? sinceMs,
   }) async {
     externalSinceMs.add(sinceMs);
+    final requestIndex = externalRequestCount;
+    externalRequestCount += 1;
+    if (requestIndex < externalErrors.length) {
+      throw externalErrors[requestIndex];
+    }
     return externalExports[source];
   }
 
