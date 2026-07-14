@@ -57,6 +57,7 @@ void main() {
               child: LocalChessFilesView(
                 selectedPath: source.root.path,
                 onSelectPath: (_) {},
+                showLatestGamesFirst: true,
                 stateOverride: LocalChessLibraryState(
                   source: source,
                   selectedPath: source.root.path,
@@ -73,6 +74,11 @@ void main() {
 
     expect(repository.queries, hasLength(1));
     expect(repository.queries.single.search, isEmpty);
+    expect(repository.queries.single.sortBy, LocalChessGameSortField.date);
+    expect(
+      repository.queries.single.sortDirection,
+      LocalChessGameSortDirection.desc,
+    );
     expect(repository.queries.single.pageSize, 200);
     // Row player names render in the shared library-table abbreviated form.
     expect(find.text('Only, D.'), findsOneWidget);

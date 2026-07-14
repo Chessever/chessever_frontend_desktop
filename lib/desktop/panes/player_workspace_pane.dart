@@ -2485,6 +2485,7 @@ class _EmbeddedLocalGames extends ConsumerWidget {
             // the source chips; the header's "N entries · M indexed positions"
             // line is redundant here, so suppress it.
             showCountMeta: false,
+            showLatestGamesFirst: true,
           ),
     );
   }
