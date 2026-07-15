@@ -29,6 +29,7 @@ import 'package:chessever/desktop/services/desktop_file_open_service.dart';
 import 'package:chessever/desktop/services/desktop_shutdown_coordinator.dart';
 import 'package:chessever/desktop/services/desktop_subscription_stub.dart';
 import 'package:chessever/desktop/services/desktop_supabase_init.dart';
+import 'package:chessever/desktop/services/desktop_ui_stall_monitor.dart';
 import 'package:chessever/desktop/services/desktop_updater.dart';
 import 'package:chessever/desktop/services/desktop_window.dart';
 import 'package:chessever/desktop/services/window_state_persistence.dart';
@@ -215,15 +216,17 @@ Future<void> _desktopMainWithSentry({
         options.environment = kReleaseMode ? 'production' : 'debug';
         options.sendDefaultPii = true;
 
-        // Keep desktop monitoring focused on errors. Performance/session
-        // features can be enabled later once the shell is stable.
-        options.tracesSampleRate = 0.0;
-        options.enableAutoPerformanceTracing = false;
-        options.enableUserInteractionTracing = false;
-        options.attachScreenshot = false;
-        options.maxBreadcrumbs = 50;
+        // Windows has no native Sentry App Hang or frozen-frame integration.
+        // Capture full tracing, interaction context, and screenshots in local
+        // debug builds so the custom UI-stall watchdog has useful context.
+        final enableDebugFreezeDiagnostics = kDebugMode && Platform.isWindows;
+        options.tracesSampleRate = enableDebugFreezeDiagnostics ? 1.0 : 0.0;
+        options.enableAutoPerformanceTracing = enableDebugFreezeDiagnostics;
+        options.enableUserInteractionTracing = enableDebugFreezeDiagnostics;
+        options.attachScreenshot = enableDebugFreezeDiagnostics;
+        options.maxBreadcrumbs = 100;
         options.enableAutoNativeBreadcrumbs = false;
-        options.enableUserInteractionBreadcrumbs = false;
+        options.enableUserInteractionBreadcrumbs = true;
         options.enableAutoSessionTracking = false;
         options.sampleRate = 1.0;
       },
@@ -430,8 +433,14 @@ Future<void> _desktopBoot({
   }
 
   runApp(
-    UncontrolledProviderScope(container: container, child: const DesktopApp()),
+    SentryWidget(
+      child: UncontrolledProviderScope(
+        container: container,
+        child: const DesktopApp(),
+      ),
+    ),
   );
+  DesktopUiStallMonitor.instance.start();
 
   // Profile-only frame instrumentation. Surfaces any frame that blew the
   // 120 fps budget (8.3 ms), split into UI-thread build time vs raster-thread
@@ -512,11 +521,14 @@ Future<void> _desktopBoardWindowBoot(DesktopBoardWindowPayload payload) async {
               );
   _restoreDetachedTabMetadata(container, tabId, payload);
   runApp(
-    UncontrolledProviderScope(
-      container: container,
-      child: DesktopBoardWindowApp(payload: payload, tabId: tabId),
+    SentryWidget(
+      child: UncontrolledProviderScope(
+        container: container,
+        child: DesktopBoardWindowApp(payload: payload, tabId: tabId),
+      ),
     ),
   );
+  DesktopUiStallMonitor.instance.start();
 }
 
 Future<void> _initializeFirebaseForCurrentPlatform({

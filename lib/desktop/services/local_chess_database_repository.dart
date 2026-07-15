@@ -602,6 +602,17 @@ Future<void> _backfillGamePgnHashes(resqlite.Transaction tx) async {
 }
 
 Future<void> _backfillGameDerivedFilters(resqlite.Transaction tx) async {
+  // The v2 time-control migration is recorded only after this older derived
+  // filter backfill has completed. Once that marker exists, every legacy row
+  // has both derived fields and all current import paths populate them on
+  // insert. Avoid re-running the unindexed OR query on every database open:
+  // when no rows need repair SQLite otherwise scans the entire games table.
+  final completedRows = await tx.select(
+    'SELECT 1 FROM $_localChessMigrationsTable WHERE name = ? LIMIT 1',
+    const <Object?>[_localChessTimeControlBackfillName],
+  );
+  if (completedRows.isNotEmpty) return;
+
   while (true) {
     final rows = await tx.select('''
       SELECT database_id, id, time_control, time_control_category, headers_json

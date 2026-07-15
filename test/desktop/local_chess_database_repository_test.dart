@@ -22,6 +22,8 @@ const String _legacySqfliteMigrationV2 =
     'legacy_sqflite_local_chess_v2_desktop_path_scan';
 const String _treeFen4Generation = 'local_chess_tree_position_identity_fen4_v1';
 const String _treeDepthGeneration = 'local_chess_tree_depth_50_v1';
+const String _timeControlBackfill =
+    'local_chess_source_time_control_backfill_v2';
 
 void main() {
   late resqlite.Database db;
@@ -1215,6 +1217,49 @@ void main() {
       expect(games.single['id'], 'legacy-hikaru-bullet');
       expect(games.single['time_control_category'], 'bullet');
       expect(games.single['is_online'], 1);
+      expect(
+        await oldDb.select(
+          'SELECT 1 FROM local_chess_migrations WHERE name = ? LIMIT 1',
+          const <Object?>[_timeControlBackfill],
+        ),
+        isNotEmpty,
+      );
+    },
+  );
+
+  test(
+    'completed time-control migration skips repeated derived-filter repair',
+    () async {
+      await db.execute(
+        '''
+        INSERT INTO local_chess_databases(
+          id, path, label, extension, size_bytes, imported_at_ms, updated_at_ms
+        ) VALUES ('post-migration-db', 'post-migration-db', 'Post migration',
+                  '.pgn', 0, 1, 1)
+        ''',
+      );
+      await db.execute(
+        '''
+        INSERT INTO local_chess_games(
+          id, database_id, time_control_category, is_online, raw_pgn,
+          source_path, source_relative_path, file_name, index_in_file,
+          file_game_count
+        ) VALUES ('post-migration-row', 'post-migration-db', NULL, NULL, '',
+                  '', '', '', 0, 1)
+        ''',
+      );
+
+      await createLocalChessResqliteDatabaseSchema(db);
+
+      final rows = await db.select(
+        '''
+        SELECT time_control_category, is_online
+        FROM local_chess_games
+        WHERE id = 'post-migration-row'
+        ''',
+      );
+      expect(rows.single['time_control_category'], isNull);
+      expect(rows.single['is_online'], isNull);
     },
   );
 
