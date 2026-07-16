@@ -212,6 +212,48 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets('fixed local Explorer tree hides the source chooser', (
+    tester,
+  ) async {
+    final repository = _FakeExplorerRepository();
+    final localIndex = _testLocalOpeningTreeIndex();
+
+    await tester.pumpWidget(
+      _harness(
+        repository: repository,
+        localOpeningTreeIndex: localIndex,
+        localOpeningTreeTitle: 'Hikaru Chesscom',
+        hideLocalOpeningTreePicker: true,
+      ),
+    );
+    await tester.pump();
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(NotationOpeningPanel)),
+    );
+    container.read(rightRailActivePageProvider('__none__').notifier).state = 1;
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(
+      find.byKey(const ValueKey('opening-explorer-source-button')),
+      findsNothing,
+    );
+    expect(
+      tester
+          .widget<DesktopOpeningExplorer>(find.byType(DesktopOpeningExplorer))
+          .localOpeningTreeIndex,
+      same(localIndex),
+    );
+    expect(
+      tester
+          .widget<DesktopPositionGamesTable>(
+            find.byType(DesktopPositionGamesTable),
+          )
+          .localOpeningTreeIndex,
+      same(localIndex),
+    );
+  });
+
   testWidgets('local Explorer game rows show year and notation', (
     tester,
   ) async {
@@ -2030,6 +2072,7 @@ Widget _harness({
   double height = 360,
   PlayerOpeningTreeIndex? localOpeningTreeIndex,
   String localOpeningTreeTitle = '',
+  bool hideLocalOpeningTreePicker = false,
   Widget? enginePanel,
 }) {
   return ProviderScope(
@@ -2077,6 +2120,7 @@ Widget _harness({
             nextGameShortcutLabel: nextGameShortcutLabel,
             localOpeningTreeIndex: localOpeningTreeIndex,
             localOpeningTreeTitle: localOpeningTreeTitle,
+            hideLocalOpeningTreePicker: hideLocalOpeningTreePicker,
             enginePanel: enginePanel,
           ),
         ),

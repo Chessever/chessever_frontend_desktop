@@ -206,6 +206,115 @@ void main() {
       'b8c6',
     ]);
   });
+
+  test('builds and merges local v1 tree batches', () async {
+    final first = await buildPlayerOpeningTreeBatchAsync([
+      {
+        'id': 'local-1',
+        'whitePlayerId': 'player-uuid',
+        'blackPlayerId': 'other-1',
+        'timeControl': 'blitz',
+        'result': '1-0',
+        'pgn': '''
+[Event "Local one"]
+[Date "2025.01.01"]
+[White "Player"]
+[Black "Other"]
+[Result "1-0"]
+
+1. e4 e5 1-0
+''',
+      },
+    ]);
+    final second = await buildPlayerOpeningTreeBatchAsync([
+      {
+        'id': 'local-2',
+        'whitePlayerId': 'other-2',
+        'blackPlayerId': 'player-uuid',
+        'timeControl': 'rapid',
+        'result': '0-1',
+        'pgn': '''
+[Event "Local two"]
+[Date "2025.01.02"]
+[White "Other"]
+[Black "Player"]
+[Result "0-1"]
+
+1. d4 d5 0-1
+''',
+      },
+    ]);
+
+    final index = mergePlayerOpeningTreeIndexes(
+      first,
+      second,
+    ).copyWithIdentity(treeId: 'local-v1:player-uuid', playerId: 'player-uuid');
+    final moves = index.movesForFen(Chess.initial.fen);
+    final whiteBlitzMoves = index.movesForFen(
+      Chess.initial.fen,
+      filters: const PlayerOpeningTreeFilterCriteria(
+        playerId: 'player-uuid',
+        color: 'white',
+        timeControl: TimeControl.blitz,
+      ),
+    );
+
+    expect(index.isUsable, isTrue);
+    expect(index.downloadedGameCount, 2);
+    expect(
+      moves.map((move) => move.uci),
+      containsAll(<String>['e2e4', 'd2d4']),
+    );
+    expect(whiteBlitzMoves, hasLength(1));
+    expect(whiteBlitzMoves.single.uci, 'e2e4');
+    expect(whiteBlitzMoves.single.white, 1);
+  });
+
+  test(
+    'prep side includes every configured source name for one player',
+    () async {
+      final index = await buildPlayerOpeningTreeBatchAsync([
+        {
+          'id': 'chesscom-hikaru-black',
+          'result': '0-1',
+          'pgn': '''
+[Event "Chess.com"]
+[White "Opponent"]
+[Black "Hikaru"]
+[Result "0-1"]
+
+1. e4 c5 0-1
+''',
+        },
+        {
+          'id': 'chessever-hikaru-black',
+          'result': '1-0',
+          'pgn': '''
+[Event "ChessEver"]
+[White "Opponent"]
+[Black "Hikaru Nakamura"]
+[Result "1-0"]
+
+1. d4 d5 1-0
+''',
+        },
+      ]);
+
+      final blackPrepMoves = index.movesForFen(
+        Chess.initial.fen,
+        filters: const PlayerOpeningTreeFilterCriteria(
+          playerNames: ['Hikaru', 'Hikaru Nakamura'],
+          color: 'black',
+        ),
+      );
+
+      expect(
+        blackPrepMoves.map((move) => move.uci),
+        containsAll(<String>['e2e4', 'd2d4']),
+      );
+      expect(blackPrepMoves.every((move) => move.total == 1), isTrue);
+    },
+  );
 }
 
 Map<String, dynamic> _snapshotJson() {

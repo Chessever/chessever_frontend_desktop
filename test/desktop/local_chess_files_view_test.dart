@@ -12,6 +12,7 @@ import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/widgets/library/local_chess_files_view.dart';
+import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
@@ -80,9 +81,34 @@ void main() {
       LocalChessGameSortDirection.desc,
     );
     expect(repository.queries.single.pageSize, 200);
+    expect(find.byIcon(Icons.unfold_more_rounded), findsNothing);
+    expect(find.byIcon(Icons.arrow_upward_rounded), findsNothing);
+    expect(find.byIcon(Icons.arrow_downward_rounded), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('local-column-resizer-date')),
+      findsOneWidget,
+    );
     // Row player names render in the shared library-table abbreviated form.
     expect(find.text('Only, D.'), findsOneWidget);
     expect(find.text('Hou, Y.'), findsNothing);
+
+    await tester.tap(find.text('WHITE'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(repository.queries.last.sortBy, LocalChessGameSortField.white);
+    expect(
+      repository.queries.last.sortDirection,
+      LocalChessGameSortDirection.asc,
+    );
+
+    await tester.tap(find.text('DATE'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(repository.queries.last.sortBy, LocalChessGameSortField.date);
+    expect(
+      repository.queries.last.sortDirection,
+      LocalChessGameSortDirection.desc,
+    );
 
     await tester.enterText(find.byType(TextField), 'database only');
     await tester.pump();
@@ -91,6 +117,7 @@ void main() {
     expect(repository.queries.last.search, 'database only');
     expect(find.text('Only, D.'), findsOneWidget);
     expect(find.text('1 / 42 entries'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 250));
   });
 
   testWidgets('local PGN row menus offer paste games', (tester) async {
@@ -628,6 +655,35 @@ void main() {
 
     expect(find.text('Tree 42%'), findsOneWidget);
     expect(find.text('Build Tree'), findsNothing);
+  });
+
+  testWidgets('active Tree percentage button stops the build when clicked', (
+    tester,
+  ) async {
+    var stopped = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: LocalTreeActionButton(
+            progress: const LocalChessTreeBuildProgress(
+              path: '/tmp/nakamura.pgn',
+              phase: LocalChessTreeBuildPhase.building,
+              fraction: 0.93,
+              message: 'Saving tree moves...',
+              startedAtMs: 0,
+              updatedAtMs: 93000,
+            ),
+            onCancel: () => stopped = true,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Tree 93%'), findsOneWidget);
+    expect(find.textContaining('~7s'), findsNothing);
+    await tester.tap(find.byType(LocalTreeActionButton));
+    await tester.pump(const Duration(seconds: 1));
+    expect(stopped, isTrue);
   });
 }
 

@@ -76,6 +76,7 @@ class BoardTabGameArgs {
     this.localOpeningTreeIndex,
     this.localOpeningTreeTitle = '',
     this.enableLocalOpeningTreePicker = false,
+    this.hideLocalOpeningTreePicker = false,
     this.eventGamesContinuation,
     this.gameListSelectedId,
     this.librarySaveOrigin,
@@ -165,6 +166,9 @@ class BoardTabGameArgs {
   /// other built local trees even when this tab was not opened with one.
   final bool enableLocalOpeningTreePicker;
 
+  /// Keeps a fixed Player Build Tree on its selected data source.
+  final bool hideLocalOpeningTreePicker;
+
   /// Provider-backed continuation for event/favorites context.
   final BoardTabGamesContinuation? eventGamesContinuation;
 
@@ -210,6 +214,7 @@ class BoardTabGameArgs {
     PlayerOpeningTreeIndex? localOpeningTreeIndex,
     String? localOpeningTreeTitle,
     bool? enableLocalOpeningTreePicker,
+    bool? hideLocalOpeningTreePicker,
     BoardTabGamesContinuation? eventGamesContinuation,
     String? gameListSelectedId,
     BoardTabLibrarySaveOrigin? librarySaveOrigin,
@@ -252,6 +257,8 @@ class BoardTabGameArgs {
           localOpeningTreeTitle ?? this.localOpeningTreeTitle,
       enableLocalOpeningTreePicker:
           enableLocalOpeningTreePicker ?? this.enableLocalOpeningTreePicker,
+      hideLocalOpeningTreePicker:
+          hideLocalOpeningTreePicker ?? this.hideLocalOpeningTreePicker,
       eventGamesContinuation:
           eventGamesContinuation ?? this.eventGamesContinuation,
       gameListSelectedId: gameListSelectedId ?? this.gameListSelectedId,

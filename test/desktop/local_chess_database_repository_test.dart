@@ -22,6 +22,8 @@ const String _legacySqfliteMigrationV2 =
     'legacy_sqflite_local_chess_v2_desktop_path_scan';
 const String _treeFen4Generation = 'local_chess_tree_position_identity_fen4_v1';
 const String _treeDepthGeneration = 'local_chess_tree_depth_50_v1';
+const String _timeControlBackfill =
+    'local_chess_source_time_control_backfill_v2';
 
 void main() {
   late resqlite.Database db;
@@ -203,7 +205,12 @@ void main() {
     final reimported = await repo.importSingleFileSource(path: pgnFile.path);
     expect(reimported, isNotNull);
     expect(
-      reimported!.root.singlePlayableDatabaseInSubtree!.games.single.game
+      reimported!
+          .root
+          .singlePlayableDatabaseInSubtree!
+          .games
+          .single
+          .game
           .metadata['BlackTitle'],
       'IM',
     );
@@ -859,6 +866,160 @@ void main() {
   );
 
   test(
+    'cached tree rebuild uses stored UCI moves without reopening PGN files',
+    () async {
+      final pgnFile = File('${temp.path}/cached-uci-tree.pgn');
+      await pgnFile.writeAsString(
+        '$_samplePgn\n\n$_customStartPgn\n\n$_variantPgn',
+      );
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(fileNode, sourceLabel: source.label);
+      await db.execute(
+        'UPDATE local_chess_games SET raw_pgn = ?',
+        const <Object?>[''],
+      );
+      await pgnFile.delete();
+
+      final rebuilt = await repo.rebuildOpeningTreeFromCachedGames(
+        databasePath: pgnFile.path,
+      );
+
+      expect(rebuilt, isNotNull);
+      expect(rebuilt!.skippedGames, 0);
+      expect(rebuilt.index.downloadedGameCount, fileNode.games.length);
+      expect(rebuilt.index.positionCount, greaterThan(1));
+      final variantFinalFen =
+          Chess.initial
+              .play(NormalMove.fromUci('e2e4'))
+              .play(NormalMove.fromUci('e7e5'))
+              .fen;
+      final excludedRows = await db.select(
+        '''
+        SELECT COUNT(*) AS count
+        FROM local_chess_tree_nodes
+        WHERE database_id = ?
+          AND fen_key IN (?, ?)
+        ''',
+        <Object?>[
+          pgnFile.path.toLowerCase(),
+          playerOpeningTreeFenKey('4k3/8/8/8/8/8/8/4K3 w - - 0 1'),
+          playerOpeningTreeFenKey(variantFinalFen),
+        ],
+      );
+      expect(excludedRows.single['count'], 0);
+    },
+  );
+
+  test(
+    'cached tree rebuild stages refs and publishes after bounded saving',
+    () async {
+      final pgnFile = File('${temp.path}/bounded-tree-save.pgn');
+      await pgnFile.writeAsString(_samplePgn);
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(fileNode, sourceLabel: source.label);
+      final progress = <LocalChessScanProgress>[];
+
+      final rebuilt = await repo.rebuildOpeningTreeFromCachedGames(
+        databasePath: pgnFile.path,
+        onProgress: progress.add,
+      );
+
+      expect(rebuilt, isNotNull);
+      expect(rebuilt!.index.isUsable, isTrue);
+      expect(rebuilt.index.gamesByFen, isEmpty);
+      expect(rebuilt.index.gameRowsById, isEmpty);
+      expect(
+        progress.map((event) => event.message),
+        containsAllInOrder(<String>[
+          'Finalizing tree...',
+          'Preparing tree storage...',
+          'Clearing previous tree...',
+        ]),
+      );
+      expect(
+        progress.map((event) => event.message),
+        contains(
+          predicate<String>((message) {
+            return message.startsWith('Saving tree positions...');
+          }),
+        ),
+      );
+      expect(
+        progress.map((event) => event.message),
+        contains(
+          predicate<String>((message) {
+            return message.startsWith('Saving position references...');
+          }),
+        ),
+      );
+      expect(progress.last.message, 'Tree ready.');
+
+      final databaseRows = await db.select(
+        '''
+        SELECT position_count, tree_max_ply
+        FROM local_chess_databases
+        WHERE id = ?
+        ''',
+        <Object?>[rebuilt.index.playerId],
+      );
+      expect(
+        databaseRows.single['position_count'],
+        rebuilt.index.positionCount,
+      );
+      expect(databaseRows.single['tree_max_ply'], rebuilt.index.maxPly);
+
+      final rootRefs = await db.select(
+        '''
+        SELECT next_uci
+        FROM local_chess_position_games
+        WHERE database_id = ? AND fen_key = ?
+        ORDER BY next_uci ASC
+        ''',
+        <Object?>[
+          rebuilt.index.playerId,
+          playerOpeningTreeFenKey(Chess.initial.fen),
+        ],
+      );
+      expect(rootRefs.map((row) => row['next_uci']), <Object?>['d2d4', 'e2e4']);
+    },
+  );
+
+  test('cached tree rebuild waits for the shared write queue', () async {
+    final pgnFile = File('${temp.path}/queued-tree-rebuild.pgn');
+    await pgnFile.writeAsString(_samplePgn);
+    final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+    final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+    final repo = LocalChessDatabaseRepository(database: () async => db);
+    await repo.persistFileNode(fileNode, sourceLabel: source.label);
+
+    final queueEntered = Completer<void>();
+    final releaseQueue = Completer<void>();
+    final held = LocalChessDatabaseRepository.debugRunWriteSerialized(() async {
+      queueEntered.complete();
+      await releaseQueue.future;
+    });
+    await queueEntered.future.timeout(const Duration(seconds: 5));
+
+    var completed = false;
+    final rebuild = repo
+        .rebuildOpeningTreeFromCachedGames(databasePath: pgnFile.path)
+        .then((value) {
+          completed = true;
+          return value;
+        });
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(completed, isFalse);
+    releaseQueue.complete();
+    expect(await rebuild.timeout(const Duration(seconds: 10)), isNotNull);
+    await held.timeout(const Duration(seconds: 5));
+  });
+
+  test(
     'schema invalidates shallow cached tree depth while preserving games',
     () async {
       final pgnFile = File('${temp.path}/shallow-depth.pgn');
@@ -1215,6 +1376,43 @@ void main() {
       expect(games.single['id'], 'legacy-hikaru-bullet');
       expect(games.single['time_control_category'], 'bullet');
       expect(games.single['is_online'], 1);
+      expect(
+        await oldDb.select(
+          'SELECT 1 FROM local_chess_migrations WHERE name = ? LIMIT 1',
+          const <Object?>[_timeControlBackfill],
+        ),
+        isNotEmpty,
+      );
+    },
+  );
+
+  test(
+    'completed time-control migration skips repeated derived-filter repair',
+    () async {
+      await db.execute('''
+        INSERT INTO local_chess_databases(
+          id, path, label, extension, size_bytes, imported_at_ms, updated_at_ms
+        ) VALUES ('post-migration-db', 'post-migration-db', 'Post migration',
+                  '.pgn', 0, 1, 1)
+        ''');
+      await db.execute('''
+        INSERT INTO local_chess_games(
+          id, database_id, time_control_category, is_online, raw_pgn,
+          source_path, source_relative_path, file_name, index_in_file,
+          file_game_count
+        ) VALUES ('post-migration-row', 'post-migration-db', NULL, NULL, '',
+                  '', '', '', 0, 1)
+        ''');
+
+      await createLocalChessResqliteDatabaseSchema(db);
+
+      final rows = await db.select('''
+        SELECT time_control_category, is_online
+        FROM local_chess_games
+        WHERE id = 'post-migration-row'
+        ''');
+      expect(rows.single['time_control_category'], isNull);
+      expect(rows.single['is_online'], isNull);
     },
   );
 
@@ -1698,32 +1896,35 @@ void main() {
     expect(await _count(db, 'local_chess_games'), 0);
   });
 
-  test('canceling a reused import preserves the prior complete cache', () async {
-    final pgnFile = File('${temp.path}/cancel-reused.pgn');
-    await pgnFile.writeAsString(_bulkPgn(8));
-    final repo = LocalChessDatabaseRepository(
-      database: () async => db,
-      cachedFileNodeGamePreviewLimit: 2,
-    );
-    expect(await repo.importSingleFileSource(path: pgnFile.path), isNotNull);
-    final token = OperationCancellationToken();
+  test(
+    'canceling a reused import preserves the prior complete cache',
+    () async {
+      final pgnFile = File('${temp.path}/cancel-reused.pgn');
+      await pgnFile.writeAsString(_bulkPgn(8));
+      final repo = LocalChessDatabaseRepository(
+        database: () async => db,
+        cachedFileNodeGamePreviewLimit: 2,
+      );
+      expect(await repo.importSingleFileSource(path: pgnFile.path), isNotNull);
+      final token = OperationCancellationToken();
 
-    final import = repo.importSingleFileSource(
-      path: pgnFile.path,
-      cancellationToken: token,
-      onProgress: (progress) {
-        if (progress.message == 'Finalizing PGN...') token.cancel();
-      },
-    );
+      final import = repo.importSingleFileSource(
+        path: pgnFile.path,
+        cancellationToken: token,
+        onProgress: (progress) {
+          if (progress.message == 'Finalizing PGN...') token.cancel();
+        },
+      );
 
-    await expectLater(import, throwsA(isA<OperationCanceledException>()));
-    expect(await _count(db, 'local_chess_databases'), 1);
-    expect(await _count(db, 'local_chess_games'), 8);
-    expect(
-      await repo.loadFreshFileNode(pgnFile.path, rootPath: temp.path),
-      isNotNull,
-    );
-  });
+      await expectLater(import, throwsA(isA<OperationCanceledException>()));
+      expect(await _count(db, 'local_chess_databases'), 1);
+      expect(await _count(db, 'local_chess_games'), 8);
+      expect(
+        await repo.loadFreshFileNode(pgnFile.path, rootPath: temp.path),
+        isNotNull,
+      );
+    },
+  );
 
   test('failed import finalization discards partial import rows', () async {
     final pgnFile = File('${temp.path}/fail-finalizing.pgn');
@@ -2072,6 +2273,37 @@ void main() {
       expect(secondPage, isNotNull);
       expect(secondPage!.hasMore, isFalse);
       expect(secondPage.games.single.game.metadata['White'], 'Hou, Yifan');
+
+      await db.execute('''
+        UPDATE local_chess_games
+        SET date = CASE index_in_file
+          WHEN 0 THEN '2026.07.14'
+          ELSE '????.??.??'
+        END
+        ''');
+      final newestFirst = await repo.localDatabaseGamesPage(
+        databasePath: pgnFile.path,
+        sortBy: LocalChessGameSortField.date,
+        sortDirection: LocalChessGameSortDirection.desc,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(newestFirst, isNotNull);
+      expect(newestFirst!.games.map((game) => game.indexInFile), <int>[0, 1]);
+
+      await db.execute(
+        "UPDATE local_chess_games SET date = '0000.00.00' "
+        'WHERE index_in_file = 1',
+      );
+      final oldestFirst = await repo.localDatabaseGamesPage(
+        databasePath: pgnFile.path,
+        sortBy: LocalChessGameSortField.date,
+        sortDirection: LocalChessGameSortDirection.asc,
+        pageNumber: 0,
+        pageSize: 10,
+      );
+      expect(oldestFirst, isNotNull);
+      expect(oldestFirst!.games.map((game) => game.indexInFile), <int>[0, 1]);
 
       final siteMatch = await repo.localDatabaseGamesPage(
         databasePath: pgnFile.path,
@@ -2745,29 +2977,36 @@ void main() {
     },
   );
 
-  test('legacy cache without a fingerprint is reimported, not backfilled', () async {
-    final pgnFile = File('${temp.path}/legacy-no-fingerprint.pgn');
-    await pgnFile.writeAsString(_samplePgn);
-    final repo = LocalChessDatabaseRepository(database: () async => db);
-    expect(await repo.importSingleFileSource(path: pgnFile.path), isNotNull);
-    await db.execute(
-      'UPDATE local_chess_databases SET content_fingerprint = ? WHERE id = ?',
-      <Object?>['', pgnFile.path],
-    );
+  test(
+    'legacy cache without a fingerprint is reimported, not backfilled',
+    () async {
+      final pgnFile = File('${temp.path}/legacy-no-fingerprint.pgn');
+      await pgnFile.writeAsString(_samplePgn);
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      expect(await repo.importSingleFileSource(path: pgnFile.path), isNotNull);
+      final databaseId =
+          Platform.isWindows
+              ? p.normalize(pgnFile.path).toLowerCase()
+              : p.normalize(pgnFile.path);
+      await db.execute(
+        'UPDATE local_chess_databases SET content_fingerprint = ? WHERE id = ?',
+        <Object?>['', databaseId],
+      );
 
-    final restored = await repo.loadFreshFileNode(
-      pgnFile.path,
-      rootPath: temp.path,
-    );
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    final rows = await db.select(
-      'SELECT content_fingerprint FROM local_chess_databases WHERE id = ?',
-      <Object?>[pgnFile.path],
-    );
+      final restored = await repo.loadFreshFileNode(
+        pgnFile.path,
+        rootPath: temp.path,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final rows = await db.select(
+        'SELECT content_fingerprint FROM local_chess_databases WHERE id = ?',
+        <Object?>[databaseId],
+      );
 
-    expect(restored, isNull);
-    expect(rows.single['content_fingerprint'], '');
-  });
+      expect(restored, isNull);
+      expect(rows.single['content_fingerprint'], '');
+    },
+  );
 
   test(
     'restores cached PGN rows and tree when only file timestamp changes',
@@ -2848,7 +3087,7 @@ void main() {
         FROM local_chess_databases
         WHERE id = ?
         ''',
-        <Object?>[pgnFile.path],
+        <Object?>[rebuilt.index.playerId],
       );
       final beforeNodeCount = await _count(db, 'local_chess_tree_nodes');
       final beforeMoveCount = await _count(db, 'local_chess_tree_moves');
@@ -2877,7 +3116,7 @@ void main() {
         FROM local_chess_databases
         WHERE id = ?
         ''',
-        <Object?>[pgnFile.path],
+        <Object?>[rebuilt.index.playerId],
       );
       expect(
         afterRows.single['position_count'],
@@ -4091,6 +4330,34 @@ void main() {
   );
 
   test(
+    'tree schema avoids redundant indexes during bulk persistence',
+    () async {
+      final indexes = await db.select(
+        "SELECT name FROM sqlite_master "
+        "WHERE type = 'index' AND tbl_name IN "
+        "('local_chess_tree_nodes', 'local_chess_tree_moves')",
+      );
+      final names = indexes.map((row) => row['name']?.toString()).toSet();
+      expect(names, isNot(contains('idx_local_chess_tree_nodes_fen')));
+      expect(names, isNot(contains('idx_local_chess_tree_moves_total')));
+
+      final plan = await db.select(
+        'EXPLAIN QUERY PLAN '
+        'SELECT node_id FROM local_chess_tree_nodes '
+        'WHERE database_id = ? AND fen_key = ?',
+        const <Object?>['database', 'fen'],
+      );
+      final detail =
+          plan
+              .map((row) => row['detail']?.toString() ?? '')
+              .join(' ')
+              .toUpperCase();
+      expect(detail, contains('USING INDEX'));
+      expect(detail, isNot(contains('SCAN LOCAL_CHESS_TREE_NODES')));
+    },
+  );
+
+  test(
     'tree_moves.sample_game_id foreign key is indexed so deleting games does '
     'not full-scan the opening tree',
     () async {
@@ -4115,10 +4382,14 @@ void main() {
         'SELECT 1 FROM local_chess_tree_moves WHERE sample_game_id = ?',
         <Object?>['any-game-id'],
       );
-      final detail =
-          plan.map((row) => row['detail']?.toString() ?? '').join(' ');
+      final detail = plan
+          .map((row) => row['detail']?.toString() ?? '')
+          .join(' ');
       expect(detail, contains('idx_local_chess_tree_moves_sample_game'));
-      expect(detail.toUpperCase(), isNot(contains('SCAN LOCAL_CHESS_TREE_MOVES')));
+      expect(
+        detail.toUpperCase(),
+        isNot(contains('SCAN LOCAL_CHESS_TREE_MOVES')),
+      );
     },
   );
 }
@@ -4838,6 +5109,23 @@ const _samplePgn = '''
 [Result "0-1"]
 
 1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 0-1
+''';
+
+const _customStartPgn = '''
+[Event "Non-standard start"]
+[SetUp "1"]
+[FEN "4k3/8/8/8/8/8/8/4K3 w - - 0 1"]
+[Result "*"]
+
+1. Kf2 *
+''';
+
+const _variantPgn = '''
+[Event "Variant game"]
+[Variant "Atomic"]
+[Result "*"]
+
+1. e4 e5 *
 ''';
 
 const _filterPgn = '''

@@ -968,6 +968,41 @@ void main() {
       },
     );
 
+    test('click-to-stop cancels the active tree worker and waiter', () async {
+      final file = File('${temp.path}/cancel-tree.pgn');
+      await file.writeAsString(_samplePgn);
+      final rebuildStarted = Completer<void>();
+      final releaseRebuild = Completer<void>();
+      final repo = _FailingLocalChessDatabaseRepository(
+        rebuildStarted: rebuildStarted,
+        releaseRebuild: releaseRebuild,
+      );
+      final notifier = LocalChessLibraryNotifier(localDatabaseRepository: repo);
+
+      expect(await notifier.openPaths(<String>[file.path]), isTrue);
+      final result = notifier.rebuildOpeningTreeAndWait(file.path);
+      await rebuildStarted.future;
+
+      expect(notifier.state.treeBuildForPath(file.path)?.isActive, isTrue);
+      expect(notifier.cancelOpeningTreeBuild(file.path), isTrue);
+      expect(await result.timeout(const Duration(seconds: 1)), isNull);
+      expect(notifier.state.treeBuildForPath(file.path), isNull);
+      expect(repo.rebuildOpeningTreeCalls, 1);
+    });
+
+    test('tree progress estimates compact remaining time', () {
+      const progress = LocalChessTreeBuildProgress(
+        path: 'nakamura.pgn',
+        phase: LocalChessTreeBuildPhase.building,
+        fraction: 0.93,
+        message: 'Saving tree moves...',
+        startedAtMs: 0,
+        updatedAtMs: 93000,
+      );
+
+      expect(progress.compactEta, '~7s');
+    });
+
     test(
       'refreshFile uses a fresh persisted cache before rescanning',
       () async {
@@ -1231,10 +1266,17 @@ class _FailingLocalChessDatabaseRepository
   rebuildOpeningTreeFromCachedGames({
     required String databasePath,
     void Function(LocalChessScanProgress progress)? onProgress,
+    OperationCancellationToken? cancellationToken,
   }) async {
     rebuildOpeningTreeCalls++;
     if (rebuildStarted?.isCompleted == false) rebuildStarted!.complete();
-    if (releaseRebuild != null) await releaseRebuild!.future;
+    if (releaseRebuild != null) {
+      await Future.any<void>([
+        releaseRebuild!.future,
+        if (cancellationToken != null) cancellationToken.whenCanceled,
+      ]);
+      cancellationToken?.throwIfCanceled();
+    }
     onProgress?.call(
       LocalChessScanProgress(fraction: 0.5, message: 'Building tree...'),
     );

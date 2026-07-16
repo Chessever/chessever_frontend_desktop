@@ -10,6 +10,7 @@ import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/local_library_registry.dart';
 
@@ -55,6 +56,8 @@ class LocalChessTreeBuildProgress {
     required this.phase,
     required double fraction,
     required this.message,
+    this.startedAtMs,
+    this.updatedAtMs,
     this.error,
   }) : fraction =
            fraction < 0
@@ -67,11 +70,41 @@ class LocalChessTreeBuildProgress {
   final LocalChessTreeBuildPhase phase;
   final double fraction;
   final String message;
+  final int? startedAtMs;
+  final int? updatedAtMs;
   final String? error;
 
   int get percent => (fraction * 100).round().clamp(0, 100).toInt();
 
   bool get isActive => phase != LocalChessTreeBuildPhase.failed;
+
+  Duration? get estimatedRemaining {
+    final started = startedAtMs;
+    final updated = updatedAtMs;
+    if (started == null ||
+        updated == null ||
+        fraction < 0.02 ||
+        fraction >= 1) {
+      return null;
+    }
+    final elapsedMs = updated - started;
+    if (elapsedMs < 1000) return null;
+    final remainingMs = (elapsedMs * ((1 - fraction) / fraction)).round();
+    if (remainingMs <= 0) return null;
+    return Duration(milliseconds: remainingMs);
+  }
+
+  String? get compactEta {
+    final remaining = estimatedRemaining;
+    if (remaining == null) return null;
+    final seconds = remaining.inSeconds.clamp(1, 24 * 60 * 60);
+    if (seconds < 60) return '~${seconds}s';
+    final minutes = (seconds / 60).ceil();
+    if (minutes < 60) return '~${minutes}m';
+    final hours = minutes ~/ 60;
+    final remainder = minutes % 60;
+    return remainder == 0 ? '~${hours}h' : '~${hours}h ${remainder}m';
+  }
 }
 
 @immutable
@@ -179,6 +212,8 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   final Map<String, Object> _backgroundImportTokens = <String, Object>{};
   final Set<String> _activeTreeBuilds = <String>{};
   final Set<String> _pendingTreeBuilds = <String>{};
+  final Map<String, OperationCancellationToken> _treeBuildCancellationTokens =
+      <String, OperationCancellationToken>{};
   final Map<String, List<Completer<PlayerOpeningTreeIndex?>>>
   _treeBuildWaiters = <String, List<Completer<PlayerOpeningTreeIndex?>>>{};
   int _treeBuildGeneration = 0;
@@ -531,6 +566,21 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       completer.complete();
     }
     return completer.future;
+  }
+
+  bool cancelOpeningTreeBuild(String path) {
+    final key = localChessInputPathKey(path);
+    final token = _treeBuildCancellationTokens[key];
+    final wasActive =
+        token != null ||
+        _activeTreeBuilds.contains(key) ||
+        _pendingTreeBuilds.contains(key);
+    if (!wasActive) return false;
+    _pendingTreeBuilds.remove(key);
+    token?.cancel();
+    _removeTreeBuildProgress(path);
+    _completeTreeBuildWaiters(path, null);
+    return true;
   }
 
   Future<String?> _immediatePgnPreviewPath(List<String> paths) async {
@@ -938,6 +988,8 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     }
 
     final generation = _treeBuildGeneration;
+    final cancellationToken = OperationCancellationToken();
+    _treeBuildCancellationTokens[key] = cancellationToken;
     _setTreeBuildProgress(
       LocalChessTreeBuildProgress(
         path: file.path,
@@ -951,10 +1003,24 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         if (delay > Duration.zero) {
           await Future<void>.delayed(delay);
         }
-        if (!_isCurrentTreeBuild(file.path, generation)) return;
-        await _rebuildOpeningTree(path: file.path, generation: generation);
+        if (!_isCurrentTreeBuild(file.path, generation) ||
+            cancellationToken.isCanceled) {
+          return;
+        }
+        await _rebuildOpeningTree(
+          path: file.path,
+          generation: generation,
+          cancellationToken: cancellationToken,
+        );
       })().whenComplete(() {
+        if (identical(_treeBuildCancellationTokens[key], cancellationToken)) {
+          _treeBuildCancellationTokens.remove(key);
+        }
         _activeTreeBuilds.remove(key);
+        if (cancellationToken.isCanceled) {
+          _pendingTreeBuilds.remove(key);
+          return;
+        }
         if (!_pendingTreeBuilds.remove(key)) return;
         final currentSource = state.source;
         final currentNode = currentSource?.nodeForPath(file.path);
@@ -971,9 +1037,11 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   Future<void> _rebuildOpeningTree({
     required String path,
     required int generation,
+    required OperationCancellationToken cancellationToken,
   }) async {
     final repository = localDatabaseRepository;
     if (repository == null) return;
+    final startedAtMs = DateTime.now().millisecondsSinceEpoch;
     var lastProgressFraction = -1.0;
     var lastProgressPhase = LocalChessTreeBuildPhase.queued;
     var lastProgressMessage = '';
@@ -985,7 +1053,10 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       String message, {
       bool force = false,
     }) {
-      if (!_isCurrentTreeBuild(path, generation)) return;
+      if (!_isCurrentTreeBuild(path, generation) ||
+          cancellationToken.isCanceled) {
+        return;
+      }
       final now = DateTime.now();
       final fractionDelta = (fraction - lastProgressFraction).abs();
       final shouldPublish =
@@ -1006,11 +1077,14 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
           phase: phase,
           fraction: fraction,
           message: message,
+          startedAtMs: startedAtMs,
+          updatedAtMs: now.millisecondsSinceEpoch,
         ),
       );
     }
 
     try {
+      cancellationToken.throwIfCanceled();
       if (!_isCurrentTreeBuild(path, generation)) return;
       publishProgress(
         LocalChessTreeBuildPhase.building,
@@ -1020,8 +1094,12 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       );
       final result = await repository.rebuildOpeningTreeFromCachedGames(
         databasePath: path,
+        cancellationToken: cancellationToken,
         onProgress: (progress) {
-          if (!_isCurrentTreeBuild(path, generation)) return;
+          if (!_isCurrentTreeBuild(path, generation) ||
+              cancellationToken.isCanceled) {
+            return;
+          }
           final phase =
               progress.message.toLowerCase().contains('saving')
                   ? LocalChessTreeBuildPhase.persisting
@@ -1029,6 +1107,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
           publishProgress(phase, progress.fraction, progress.message);
         },
       );
+      cancellationToken.throwIfCanceled();
       if (!_isCurrentTreeBuild(path, generation)) return;
       final index = result?.index;
       if (index == null || !index.isUsable) {
@@ -1046,6 +1125,11 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       _removeTreeBuildProgress(path);
       _completeTreeBuildWaiters(path, index);
     } catch (e) {
+      if (cancellationToken.isCanceled || isOperationCanceled(e)) {
+        _removeTreeBuildProgress(path);
+        _completeTreeBuildWaiters(path, null);
+        return;
+      }
       _setTreeBuildProgress(
         LocalChessTreeBuildProgress(
           path: path,
@@ -1101,8 +1185,17 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
 
   void _invalidateTreeBuilds() {
     _treeBuildGeneration++;
+    for (final token in _treeBuildCancellationTokens.values) {
+      token.cancel();
+    }
+    _treeBuildCancellationTokens.clear();
     _pendingTreeBuilds.clear();
     _completeAllTreeBuildWaiters(null);
+    if (state.treeBuilds.isNotEmpty) {
+      state = state.copyWith(
+        treeBuilds: const <String, LocalChessTreeBuildProgress>{},
+      );
+    }
   }
 
   void _removeTreeBuildWaiter(

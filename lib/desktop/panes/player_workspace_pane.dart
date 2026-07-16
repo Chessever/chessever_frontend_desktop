@@ -20,6 +20,7 @@ import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_game_filter.dart';
+import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_explorer_scope.dart';
@@ -40,6 +41,7 @@ import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_player_title_chip.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
+import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/screens/favorites/tabs/favorites_players_tab.dart'
@@ -121,8 +123,20 @@ class PlayerWorkspacePane extends HookConsumerWidget {
         (targets) => tabId == null ? null : targets[tabId],
       ),
     );
+    final routedPlayerId = ref.watch(
+      desktopTabsProvider.select((tabs) {
+        if (tabId == null) return null;
+        for (final tab in tabs.tabs) {
+          if (tab.id == tabId) return playerWorkspacePlayerIdFromTab(tab);
+        }
+        return null;
+      }),
+    );
     final openedPlayerId = useState<String?>(requestedPlayerId);
-    final visiblePlayerId = requestedPlayerId ?? openedPlayerId.value;
+    final visiblePlayerId =
+        tabId == null
+            ? requestedPlayerId ?? openedPlayerId.value
+            : routedPlayerId;
     final selected = _playerById(players, visiblePlayerId);
     final isActiveTab = ref.watch(
       desktopTabsProvider.select(
@@ -154,6 +168,12 @@ class PlayerWorkspacePane extends HookConsumerWidget {
             .read(playerWorkspacePlayerByTabIdProvider.notifier)
             .update(
               (targets) => <String, String>{...targets, currentTabId: playerId},
+            );
+        ref
+            .read(desktopTabsProvider.notifier)
+            .navigateActive(
+              TabKind.players,
+              subtitle: playerWorkspaceRouteSubtitle(playerId),
             );
       }
       tab.value = _PlayerWorkspaceTab.overview;
@@ -1569,8 +1589,18 @@ class _SourceCard extends StatelessWidget {
         source == PlayerWorkspaceSource.chesscom;
     final gameLine =
         currentAccount == null ? null : _sourceGameCountLine(currentAccount);
-    final downloadProgress = currentAccount?.downloadProgress;
+    final showIdleDownloadProgress =
+        currentAccount != null &&
+        playerWorkspaceShowsIdleDownloadProgress(currentAccount);
     final error = currentAccount?.error;
+    final operationMessage = operation?.message.toLowerCase() ?? '';
+    final showInitialLichessDownloadNotice =
+        source == PlayerWorkspaceSource.lichess &&
+        connected &&
+        !hasGames &&
+        operation?.progress != null &&
+        !operationMessage.startsWith('importing') &&
+        !operationMessage.contains('already current');
     return DecoratedBox(
       decoration: BoxDecoration(
         color: kBackgroundColor.withValues(alpha: 0.45),
@@ -1653,10 +1683,7 @@ class _SourceCard extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              if (!working &&
-                  downloadProgress != null &&
-                  currentAccount != null &&
-                  currentAccount.remainingGameCount > 0) ...[
+              if (!working && showIdleDownloadProgress) ...[
                 const SizedBox(height: 7),
                 _DownloadProgress(account: currentAccount),
               ],
@@ -1664,6 +1691,18 @@ class _SourceCard extends StatelessWidget {
             if (operation != null) ...[
               const SizedBox(height: 10),
               _OperationProgress(operation: operation!),
+              if (showInitialLichessDownloadNotice) ...[
+                const SizedBox(height: 7),
+                const Text(
+                  'Lichess limits full-history downloads, so large accounts '
+                  'may take several minutes. Future syncs will be faster.',
+                  style: TextStyle(
+                    color: kLightGreyColor,
+                    fontSize: 10.5,
+                    height: 1.3,
+                  ),
+                ),
+              ],
               if (onCancelOperation != null) ...[
                 const SizedBox(height: 8),
                 DesktopDialogButton(
@@ -1675,7 +1714,7 @@ class _SourceCard extends StatelessWidget {
                 ),
               ],
             ],
-            if (error != null) ...[
+            if (!working && error != null) ...[
               const SizedBox(height: 8),
               Text(
                 error,
@@ -2335,9 +2374,10 @@ class _GamesTab extends HookConsumerWidget {
     }, [preferredSourcePath, filterNonce, sources.length]);
     final index = selected.value.clamp(0, sources.length - 1);
     final source = sources[index];
-    final treeTarget = _databaseTargets(
-      player,
-    ).firstWhere((target) => target.path == source.path);
+    final saveController = useMemoized(LocalChessFilesViewController.new, [
+      source.path,
+    ]);
+    useEffect(() => saveController.dispose, [saveController]);
     final aliases = _statsAliases(player);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2361,8 +2401,8 @@ class _GamesTab extends HookConsumerWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              DesktopDialogButton(
-                label: 'Open in Library',
+              DesktopToolbarPillButton(
+                label: 'Open',
                 icon: Icons.open_in_new_rounded,
                 onPress:
                     () => openDatabaseWorkspaceTab(
@@ -2373,6 +2413,16 @@ class _GamesTab extends HookConsumerWidget {
                       ),
                     ),
               ),
+              const SizedBox(width: 8),
+              DesktopToolbarPillButton(
+                label: 'Save to cloud',
+                icon: Icons.library_add_outlined,
+                tone: DesktopToolbarPillTone.primary,
+                onPress:
+                    source.gameCount <= 0
+                        ? null
+                        : saveController.saveVisibleGamesToCloud,
+              ),
             ],
           ),
         ),
@@ -2380,14 +2430,12 @@ class _GamesTab extends HookConsumerWidget {
           child: _EmbeddedLocalGames(
             key: ValueKey<String>('${source.path}#$filterNonce'),
             path: source.path,
-            title: source.label,
-            treeTarget: treeTarget,
-            player: player,
             revision: source.gameCount,
             initialFilter: gamesFilter,
             onFilterChanged: onFilterChanged,
             playerFideId: player.fideId,
             playerAliases: aliases,
+            controller: saveController,
           ),
         ),
       ],
@@ -2401,9 +2449,7 @@ class _EmbeddedLocalGames extends ConsumerWidget {
   const _EmbeddedLocalGames({
     super.key,
     required this.path,
-    required this.title,
-    required this.treeTarget,
-    required this.player,
+    required this.controller,
     this.revision = 0,
     this.initialFilter,
     this.onFilterChanged,
@@ -2412,9 +2458,7 @@ class _EmbeddedLocalGames extends ConsumerWidget {
   });
 
   final String path;
-  final String title;
-  final _DatabaseTarget treeTarget;
-  final PlayerWorkspacePlayer player;
+  final LocalChessFilesViewController controller;
   final int revision;
   final LocalChessGameFilter? initialFilter;
   final ValueChanged<LocalChessGameFilter>? onFilterChanged;
@@ -2463,28 +2507,12 @@ class _EmbeddedLocalGames extends ConsumerWidget {
             playerFideId: playerFideId,
             playerAliases: playerAliases,
             openingTreeIndexOverride: treeIndex,
-            onOpenTreeOverride:
-                (index) => _openLocalTree(
-                  ref,
-                  treeTarget,
-                  index,
-                  preparationSide: PlayerBuildTreePreparationSide.both,
-                  player: player,
-                ),
-            onBuildTreeOverride:
-                () => unawaited(
-                  _buildLocalTree(
-                    context,
-                    ref,
-                    treeTarget,
-                    player,
-                    preparationSide: PlayerBuildTreePreparationSide.both,
-                  ),
-                ),
-            // The Players Games tab already identifies the source and count via
-            // the source chips; the header's "N entries · M indexed positions"
-            // line is redundant here, so suppress it.
+            controller: controller,
+            // The Players Games tab already owns the source identity and
+            // actions, so the local database filename strip is redundant.
             showCountMeta: false,
+            showDatabaseHeader: false,
+            compactTablePadding: true,
             showLatestGamesFirst: true,
           ),
     );
@@ -2516,9 +2544,77 @@ class _BuildTreeTab extends HookConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final localState = ref.watch(localChessLibraryProvider);
+    final workspaceState = ref.watch(playerWorkspaceProvider);
     final choices = _treeChoices(player);
-    final hasAnyGames = choices.any((choice) => choice.target != null);
     final side = useState(PlayerBuildTreePreparationSide.both);
+    final combinedBuildQueued = useState(false);
+    final combinedBuildCancellation = useRef<OperationCancellationToken?>(null);
+    final backgroundPreparationPlayerId = useRef<String?>(null);
+    final combinedChoice = choices.first;
+    final combinedOperation = _operationForSource(
+      workspaceState.operations,
+      PlayerWorkspaceSource.combined,
+    );
+    final sourcePreparationOperation = _firstSourcePreparationOperation(
+      workspaceState.operations,
+    );
+    final preparationOperation =
+        combinedOperation ?? sourcePreparationOperation;
+    final hasSourceGames = _hasDownloadedSourceGames(player);
+    final canPrepareCombined =
+        combinedChoice.target == null &&
+        (hasSourceGames || preparationOperation != null);
+    final hasAnyGames =
+        choices.any((choice) => choice.target != null) || canPrepareCombined;
+
+    useEffect(() {
+      if (!hasSourceGames ||
+          combinedChoice.target != null ||
+          backgroundPreparationPlayerId.value == player.id) {
+        return null;
+      }
+      backgroundPreparationPlayerId.value = player.id;
+      unawaited(
+        ref
+            .read(playerWorkspaceProvider.notifier)
+            .prepareCombinedDatabaseForTree(player.id)
+            .catchError((_) => null),
+      );
+      return null;
+    }, [player.id, hasSourceGames, combinedChoice.target]);
+
+    void queueCombinedTreeBuild() {
+      if (combinedBuildQueued.value) return;
+      final cancellationToken = OperationCancellationToken();
+      combinedBuildCancellation.value = cancellationToken;
+      combinedBuildQueued.value = true;
+      unawaited(
+        _prepareAndBuildCombinedTree(
+          context,
+          ref,
+          player,
+          preparationSide: side.value,
+          cancellationToken: cancellationToken,
+          onPreparationFinished: () {
+            if (context.mounted &&
+                identical(combinedBuildCancellation.value, cancellationToken)) {
+              combinedBuildCancellation.value = null;
+              combinedBuildQueued.value = false;
+            }
+          },
+        ),
+      );
+    }
+
+    void stopCombinedTreeBuild() {
+      combinedBuildCancellation.value?.cancel();
+      combinedBuildCancellation.value = null;
+      combinedBuildQueued.value = false;
+      ref
+          .read(playerWorkspaceProvider.notifier)
+          .cancelCombinedDatabasePreparation(player.id);
+    }
+
     return ListView(
       padding: const EdgeInsets.all(18),
       children: [
@@ -2553,7 +2649,17 @@ class _BuildTreeTab extends HookConsumerWidget {
           const SizedBox(height: 12),
         ],
         for (final choice in choices) ...[
-          if (choice.target case final target?)
+          if (choice.source == PlayerWorkspaceSource.combined &&
+              (combinedBuildQueued.value ||
+                  (choice.target == null && canPrepareCombined)))
+            _PreparingCombinedTreeTargetCard(
+              choice: choice,
+              operation: preparationOperation,
+              queued: combinedBuildQueued.value,
+              onBuild: queueCombinedTreeBuild,
+              onStop: stopCombinedTreeBuild,
+            )
+          else if (choice.target case final target?)
             _TreeTargetCard(
               target: target,
               progress: localState.treeBuildForPath(target.path),
@@ -2806,7 +2912,7 @@ class _AccountDetailCard extends StatelessWidget {
               Text(
                 currentAccount == null
                     ? '0 games'
-                    : _accountGamesLabel(currentAccount),
+                    : playerWorkspaceAccountGamesLabel(currentAccount),
                 style: const TextStyle(
                   color: kLightGreyColor,
                   fontSize: 12,
@@ -3029,6 +3135,12 @@ class _TreeTargetCard extends ConsumerWidget {
                       preparationSide: preparationSide,
                     ),
                   ),
+              onCancel:
+                  progress?.isActive == true
+                      ? () => ref
+                          .read(localChessLibraryProvider.notifier)
+                          .cancelOpeningTreeBuild(target.path)
+                      : null,
             ),
           ],
         ),
@@ -3086,6 +3198,129 @@ class _DisabledTreeTargetCard extends StatelessWidget {
               label: _disabledTreeActionLabel(choice.disabledReason),
               icon: Icons.lock_outline_rounded,
               onPress: null,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PreparingCombinedTreeTargetCard extends StatelessWidget {
+  const _PreparingCombinedTreeTargetCard({
+    required this.choice,
+    required this.operation,
+    required this.queued,
+    required this.onBuild,
+    required this.onStop,
+  });
+
+  final _TreeChoice choice;
+  final PlayerWorkspaceOperation? operation;
+  final bool queued;
+  final VoidCallback onBuild;
+  final VoidCallback onStop;
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = operation?.progress;
+    final isPreparing = queued || operation != null;
+    final progressValue =
+        progress != null && progress > 0 && progress < 1 ? progress : null;
+    final preparationPercent = operation?.percent;
+    final message =
+        queued
+            ? '${operation?.message ?? 'Preparing combined database...'}'
+                '${preparationPercent == null ? '' : ' · $preparationPercent%'}'
+            : operation?.message ?? 'Combined database needs preparation.';
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: kBackgroundColor.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            _SourceIcon(source: choice.source),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    choice.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      if (isPreparing)
+                        SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 1.8,
+                            value: progressValue,
+                            valueColor: const AlwaysStoppedAnimation(
+                              kPrimaryColor,
+                            ),
+                            backgroundColor: kDividerColor,
+                          ),
+                        )
+                      else
+                        const Icon(
+                          Icons.hourglass_top_rounded,
+                          size: 13,
+                          color: kLightGreyColor,
+                        ),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          message,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: kLightGreyColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            DesktopToolbarPillButton(
+              key: const ValueKey('queue-combined-tree-build'),
+              label: queued ? 'Tree 0%' : 'Build Tree',
+              icon: Icons.account_tree_outlined,
+              leading:
+                  queued
+                      ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                        ),
+                      )
+                      : null,
+              onPress: queued ? onStop : onBuild,
+              busy: queued,
+              tooltip:
+                  queued
+                      ? 'Preparing the combined database. Click to stop.'
+                      : 'Build the tree after preparing the combined database',
             ),
           ],
         ),
@@ -3412,6 +3647,19 @@ List<_TreeChoice> _treeChoices(PlayerWorkspacePlayer player) {
   ];
 }
 
+bool _hasDownloadedSourceGames(PlayerWorkspacePlayer player) {
+  return player.allAccounts.any((account) => account.hasDownloadedGames);
+}
+
+PlayerWorkspaceOperation? _firstSourcePreparationOperation(
+  Map<String, PlayerWorkspaceOperation> operations,
+) {
+  for (final operation in operations.values) {
+    if (operation.source != PlayerWorkspaceSource.combined) return operation;
+  }
+  return null;
+}
+
 _DatabaseTarget? _firstDatabaseTarget(
   List<_DatabaseTarget> targets,
   PlayerWorkspaceSource source,
@@ -3569,6 +3817,59 @@ _TreeChoice _treeChoiceForSource(
   return choices.first;
 }
 
+Future<void> _prepareAndBuildCombinedTree(
+  BuildContext context,
+  WidgetRef ref,
+  PlayerWorkspacePlayer player, {
+  required PlayerBuildTreePreparationSide preparationSide,
+  required OperationCancellationToken cancellationToken,
+  required VoidCallback onPreparationFinished,
+}) async {
+  var preparationFinished = false;
+  void finishPreparation() {
+    if (preparationFinished) return;
+    preparationFinished = true;
+    onPreparationFinished();
+  }
+
+  try {
+    cancellationToken.throwIfCanceled();
+    final readyPlayer = await ref
+        .read(playerWorkspaceProvider.notifier)
+        .prepareCombinedDatabaseForTree(player.id);
+    cancellationToken.throwIfCanceled();
+    if (!context.mounted) return;
+    if (readyPlayer == null) {
+      throw StateError(
+        'No downloaded games are available for a combined tree.',
+      );
+    }
+    final choice = _treeChoiceForSource(
+      readyPlayer,
+      PlayerWorkspaceSource.combined,
+    );
+    final target = choice.target;
+    if (target == null) {
+      throw StateError('The combined database could not be prepared.');
+    }
+    finishPreparation();
+    await _buildLocalTree(
+      context,
+      ref,
+      target,
+      readyPlayer,
+      preparationSide: preparationSide,
+    );
+  } catch (error) {
+    if (!context.mounted) return;
+    finishPreparation();
+    if (isOperationCanceled(error)) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(error.toString())));
+  }
+}
+
 Future<void> _buildLocalTree(
   BuildContext context,
   WidgetRef ref,
@@ -3634,7 +3935,10 @@ void _openLocalTree(
       databaseTitle: target.title,
       localOpeningTreeIndex: index,
       localOpeningTreeTitle: target.title,
-      enableLocalOpeningTreePicker: true,
+      // A Player tree is intentionally fixed to the selected source. The
+      // library keeps its picker, but switching to Global or another tree here
+      // would silently break the player's prep scope.
+      hideLocalOpeningTreePicker: true,
     ),
     reuseExisting: false,
   );
@@ -3651,6 +3955,7 @@ void _openLocalTree(
             ...scopes,
             tabId: BoardExplorerScope(
               player: _workspaceGamebasePlayer(player),
+              playerAliases: _workspaceGamebasePlayerAliases(player),
               initialFilters: GamebaseFilters(playerColor: color),
             ),
           },
@@ -3671,6 +3976,39 @@ GamebasePlayer _workspaceGamebasePlayer(PlayerWorkspacePlayer player) {
     title: player.title,
   );
 }
+
+List<GamebasePlayer> _workspaceGamebasePlayerAliases(
+  PlayerWorkspacePlayer player,
+) {
+  final seenNames = <String>{_treePlayerAliasKey(player.displayName)};
+  final aliases = <GamebasePlayer>[];
+
+  void addAlias(PlayerWorkspaceAccount account, String? name) {
+    final trimmed = name?.trim() ?? '';
+    final key = _treePlayerAliasKey(trimmed);
+    if (key.isEmpty || !seenNames.add(key)) return;
+    aliases.add(
+      GamebasePlayer(
+        // This ID is deliberately local-only. BoardExplorerScope keeps the
+        // canonical ChessEver ID in playerIds for any remote fallback.
+        id: 'workspace-${account.identityKey}',
+        fideId: '',
+        name: trimmed,
+        gender: PlayerGender.male,
+        fed: player.country ?? '',
+      ),
+    );
+  }
+
+  for (final account in player.allAccounts) {
+    addAlias(account, account.username);
+    addAlias(account, account.displayName);
+  }
+  return List<GamebasePlayer>.unmodifiable(aliases);
+}
+
+String _treePlayerAliasKey(String value) =>
+    value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 
 Future<void> _runAccountSync(
   BuildContext context,
@@ -5799,7 +6137,13 @@ String _formatPercent(double? value) {
   return '${(value * 100).round()}%';
 }
 
-String _accountGamesLabel(PlayerWorkspaceAccount account) {
+@visibleForTesting
+String playerWorkspaceAccountGamesLabel(PlayerWorkspaceAccount account) {
+  if (account.source == PlayerWorkspaceSource.chessever &&
+      account.hasDownloadedGames) {
+    final imported = _formatInt(account.gameCount);
+    return '$imported/$imported games';
+  }
   final available = account.effectiveAvailableGameCount;
   if (available > account.gameCount) {
     return '${_formatInt(account.gameCount)} / ${_formatInt(available)} games';
@@ -5809,10 +6153,19 @@ String _accountGamesLabel(PlayerWorkspaceAccount account) {
   return '0 games';
 }
 
+@visibleForTesting
+bool playerWorkspaceShowsIdleDownloadProgress(PlayerWorkspaceAccount account) {
+  if (account.source == PlayerWorkspaceSource.chessever &&
+      account.hasDownloadedGames) {
+    return false;
+  }
+  return account.downloadProgress != null && account.remainingGameCount > 0;
+}
+
 String? _sourceGameCountLine(PlayerWorkspaceAccount account) {
   final available = account.effectiveAvailableGameCount;
   if (available <= 0) return null;
-  final label = _accountGamesLabel(account);
+  final label = playerWorkspaceAccountGamesLabel(account);
   if (account.hasDownloadedGames) {
     return '$label · ${_formatDate(account.lastSyncAtMs)}';
   }

@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:io' show Platform;
 import 'dart:isolate';
 import 'dart:math' as math;
@@ -23,7 +24,10 @@ const int localOpeningTreeLargeImportMaxPly = 50;
 class LocalOpeningTreeGameInput {
   LocalOpeningTreeGameInput({
     required this.id,
-    required this.rawPgn,
+    this.rawPgn = '',
+    List<String> uciLine = const <String>[],
+    Map<String, String> metadata = const <String, String>{},
+    this.startingFen,
     required this.sourcePath,
     required this.sourceRelativePath,
     required this.fileName,
@@ -31,12 +35,15 @@ class LocalOpeningTreeGameInput {
     required this.fileGameCount,
     this.sourceByteStart,
     this.sourceByteEnd,
-  }) {
+  }) : uciLine = List<String>.unmodifiable(uciLine),
+       metadata = Map<String, String>.unmodifiable(metadata) {
     if (id.trim().isEmpty) {
       throw ArgumentError.value(id, 'id', 'must not be empty');
     }
-    if (rawPgn.trim().isEmpty) {
-      throw ArgumentError.value(rawPgn, 'rawPgn', 'must not be empty');
+    if (rawPgn.trim().isEmpty && uciLine.isEmpty) {
+      throw ArgumentError(
+        'LocalOpeningTreeGameInput requires rawPgn or uciLine',
+      );
     }
     if (sourcePath.trim().isEmpty) {
       throw ArgumentError.value(sourcePath, 'sourcePath', 'must not be empty');
@@ -68,6 +75,9 @@ class LocalOpeningTreeGameInput {
 
   final String id;
   final String rawPgn;
+  final List<String> uciLine;
+  final Map<String, String> metadata;
+  final String? startingFen;
   final String sourcePath;
   final String sourceRelativePath;
   final String fileName;
@@ -97,12 +107,14 @@ class LocalOpeningTreeIncrementalBuilder {
     int maxPly = 0,
     bool includePositionGameRefs = true,
     bool includeGameRows = true,
+    void Function(LocalOpeningTreePositionGameRef ref)? onPositionGameRef,
   }) : _accumulator = _LocalOpeningTreeAccumulator(
          treeId: treeId,
          databaseId: databaseId,
          maxPly: maxPly,
          includePositionGameRefs: includePositionGameRefs,
          includeGameRows: includeGameRows,
+         onPositionGameRef: onPositionGameRef,
        ) {
     _validateBuildHeaderInputs(
       treeId: treeId,
@@ -119,6 +131,27 @@ class LocalOpeningTreeIncrementalBuilder {
   }
 
   LocalOpeningTreeBuildResult finish() => _accumulator.finish();
+
+  /// Finalizes while releasing accumulator values as their immutable nodes are
+  /// produced. Large cached-tree rebuilds use this after spilling position
+  /// references to SQLite so peak memory does not contain two full tree graphs.
+  LocalOpeningTreeBuildResult finishAndRelease() =>
+      _accumulator.finish(releaseAccumulator: true);
+}
+
+@immutable
+class LocalOpeningTreePositionGameRef {
+  const LocalOpeningTreePositionGameRef({
+    required this.fenKey,
+    required this.gameId,
+    required this.ply,
+    required this.nextUci,
+  });
+
+  final String fenKey;
+  final String gameId;
+  final int ply;
+  final String? nextUci;
 }
 
 @immutable
@@ -391,6 +424,7 @@ class _LocalOpeningTreeAccumulator {
     required this.maxPly,
     required this.includePositionGameRefs,
     required bool includeGameRows,
+    this.onPositionGameRef,
   }) : includeGameRows = includeGameRows || includePositionGameRefs;
 
   final String treeId;
@@ -398,12 +432,14 @@ class _LocalOpeningTreeAccumulator {
   final int maxPly;
   final bool includePositionGameRefs;
   final bool includeGameRows;
+  final void Function(LocalOpeningTreePositionGameRef ref)? onPositionGameRef;
   final Map<_PositionKey, _NodeAccumulator> _nodesByKey =
       <_PositionKey, _NodeAccumulator>{};
   final Map<String, Map<String, PlayerOpeningTreeGameRef>> _gamesByFen =
       <String, Map<String, PlayerOpeningTreeGameRef>>{};
   final Map<String, Map<String, dynamic>> _gameRowsById =
       <String, Map<String, dynamic>>{};
+  final Map<String, String?> _transitionByFenKeyAndUci = <String, String?>{};
   final List<LocalOpeningTreeSkippedGame> _skippedGames =
       <LocalOpeningTreeSkippedGame>[];
   int _nextNodeId = 0;
@@ -435,14 +471,27 @@ class _LocalOpeningTreeAccumulator {
     }
   }
 
-  LocalOpeningTreeBuildResult finish() {
+  LocalOpeningTreeBuildResult finish({bool releaseAccumulator = false}) {
     final root = _rootNode();
+    final resolvedMaxPly = maxPly <= 0 ? _maxSeenPly : maxPly;
+    _transitionByFenKeyAndUci.clear();
     final nodesById = <int, PlayerOpeningTreeNode>{};
     final frozenNodesByFen = <String, PlayerOpeningTreeNode>{};
-    for (final node in _nodesByKey.values) {
-      final frozen = node.toNode();
-      nodesById[frozen.id] = frozen;
-      frozenNodesByFen[frozen.fenKey] = frozen;
+    if (releaseAccumulator) {
+      final keys = _nodesByKey.keys.toList(growable: false);
+      for (final key in keys) {
+        final node = _nodesByKey.remove(key);
+        if (node == null) continue;
+        final frozen = node.toNode();
+        nodesById[frozen.id] = frozen;
+        frozenNodesByFen[frozen.fenKey] = frozen;
+      }
+    } else {
+      for (final node in _nodesByKey.values) {
+        final frozen = node.toNode();
+        nodesById[frozen.id] = frozen;
+        frozenNodesByFen[frozen.fenKey] = frozen;
+      }
     }
 
     final frozenGamesByFen = <String, List<PlayerOpeningTreeGameRef>>{};
@@ -455,13 +504,21 @@ class _LocalOpeningTreeAccumulator {
     final index = PlayerOpeningTreeIndex(
       treeId: treeId,
       playerId: databaseId,
-      maxPly: maxPly <= 0 ? _maxSeenPly : maxPly,
+      maxPly: resolvedMaxPly,
       rootNodeId: root.id,
       generatedAt: DateTime.now(),
-      nodesById: Map<int, PlayerOpeningTreeNode>.unmodifiable(nodesById),
-      nodesByFenKey: Map<String, PlayerOpeningTreeNode>.unmodifiable(
-        frozenNodesByFen,
-      ),
+      nodesById:
+          releaseAccumulator
+              ? UnmodifiableMapView<int, PlayerOpeningTreeNode>(nodesById)
+              : Map<int, PlayerOpeningTreeNode>.unmodifiable(nodesById),
+      nodesByFenKey:
+          releaseAccumulator
+              ? UnmodifiableMapView<String, PlayerOpeningTreeNode>(
+                frozenNodesByFen,
+              )
+              : Map<String, PlayerOpeningTreeNode>.unmodifiable(
+                frozenNodesByFen,
+              ),
       gamesByFen: Map<String, List<PlayerOpeningTreeGameRef>>.unmodifiable(
         frozenGamesByFen,
       ),
@@ -491,7 +548,11 @@ class _LocalOpeningTreeAccumulator {
   }
 
   void _addGame(LocalOpeningTreeGameInput input) {
-    final parsed = _parseGame(input, maxPly: maxPly);
+    final parsed = _parseGame(
+      input,
+      maxPly: maxPly,
+      transitionByFenKeyAndUci: _transitionByFenKeyAndUci,
+    );
     if (parsed.moves.isEmpty) {
       throw LocalOpeningTreeGameException(input, 'No legal mainline moves');
     }
@@ -529,11 +590,21 @@ class _LocalOpeningTreeAccumulator {
         date: date,
         gameId: input.id,
       );
-      _recordGameRef(key: previousKey, gameId: input.id, ply: ply);
+      _recordGameRef(
+        key: previousKey,
+        gameId: input.id,
+        ply: ply,
+        nextUci: line[ply],
+      );
       previousKey = move.key;
     }
 
-    _recordGameRef(key: previousKey, gameId: input.id, ply: pliesToIndex);
+    _recordGameRef(
+      key: previousKey,
+      gameId: input.id,
+      ply: pliesToIndex,
+      nextUci: null,
+    );
   }
 
   _NodeAccumulator _nodeForKey(_PositionKey key, int ply) {
@@ -555,7 +626,16 @@ class _LocalOpeningTreeAccumulator {
     required _PositionKey key,
     required String gameId,
     required int ply,
+    String? nextUci,
   }) {
+    onPositionGameRef?.call(
+      LocalOpeningTreePositionGameRef(
+        fenKey: key.fenKey,
+        gameId: gameId,
+        ply: ply,
+        nextUci: nextUci,
+      ),
+    );
     if (!includePositionGameRefs) return;
     final fenKey = key.fenKey;
     _gamesByFen.putIfAbsent(
@@ -669,7 +749,16 @@ class _MergedOpeningTreeAccumulator {
 _ParsedLocalGame _parseGame(
   LocalOpeningTreeGameInput input, {
   required int maxPly,
+  required Map<String, String?> transitionByFenKeyAndUci,
 }) {
+  if (input.uciLine.isNotEmpty) {
+    return _parseCachedUciGame(
+      input,
+      maxPly: maxPly,
+      transitionByFenKeyAndUci: transitionByFenKeyAndUci,
+    );
+  }
+
   final parsedHeaders = _parseHeaders(input.rawPgn);
 
   final Position start;
@@ -723,6 +812,374 @@ _ParsedLocalGame _parseGame(
     startingKey: _PositionKey.fromPosition(start),
     moves: moves,
   );
+}
+
+_ParsedLocalGame _parseCachedUciGame(
+  LocalOpeningTreeGameInput input, {
+  required int maxPly,
+  required Map<String, String?> transitionByFenKeyAndUci,
+}) {
+  final rawStartingFen = input.startingFen?.trim() ?? '';
+  final startingFen =
+      rawStartingFen.isEmpty ? Chess.initial.fen : rawStartingFen;
+  final initialFenKey = playerOpeningTreeFenKey(Chess.initial.fen);
+  final normalizedStartingFen = playerOpeningTreeFenKey(startingFen);
+  var parentFenKey =
+      normalizedStartingFen.split(' ').length >= 4
+          ? normalizedStartingFen
+          : initialFenKey;
+  final startingKey = _PositionKey(parentFenKey);
+  final moves = <_ParsedLocalMove>[];
+  final pliesToParse =
+      maxPly <= 0
+          ? input.uciLine.length
+          : math.min(input.uciLine.length, maxPly);
+
+  for (var ply = 0; ply < pliesToParse; ply++) {
+    final uci = input.uciLine[ply].trim().toLowerCase();
+    if (uci.isEmpty) {
+      throw LocalOpeningTreeGameException(
+        input,
+        'Cached an empty UCI at ply ${ply + 1}',
+      );
+    }
+    final transitionKey = '$parentFenKey|$uci';
+    String? childFenKey;
+    if (transitionByFenKeyAndUci.containsKey(transitionKey)) {
+      childFenKey = transitionByFenKeyAndUci[transitionKey];
+    } else {
+      childFenKey =
+          _applyUciToFenKey(parentFenKey, uci) ??
+          _applyUciWithDartchess(parentFenKey, uci);
+      transitionByFenKeyAndUci[transitionKey] = childFenKey;
+    }
+    if (childFenKey == null) {
+      throw LocalOpeningTreeGameException(
+        input,
+        'Could not apply cached move "$uci" at ply ${ply + 1}',
+      );
+    }
+    moves.add(_ParsedLocalMove(uci: uci, key: _PositionKey(childFenKey)));
+    parentFenKey = childFenKey;
+  }
+
+  return _ParsedLocalGame(
+    metadata: input.metadata,
+    startingFen: startingFen,
+    startingKey: startingKey,
+    moves: moves,
+  );
+}
+
+String? _applyUciWithDartchess(String parentFenKey, String uci) {
+  try {
+    final position = Chess.fromSetup(
+      Setup.parseFen('$parentFenKey 0 1'),
+      ignoreImpossibleCheck: true,
+    );
+    final move = position.normalizeMove(NormalMove.fromUci(uci));
+    return playerOpeningTreeFenKey(position.playUnchecked(move).fen);
+  } on Object {
+    return null;
+  }
+}
+
+String? _applyUciToFenKey(String parentFenKey, String uci) {
+  final fields = parentFenKey.trim().split(RegExp(r'\s+'));
+  if (fields.length < 2 || uci.length < 4) return null;
+  final placement = fields[0];
+  final turn = fields[1];
+  var castling = fields.length > 2 ? fields[2] : '-';
+  final enPassant = fields.length > 3 ? fields[3] : '-';
+  final from = uci.substring(0, 2);
+  final to = uci.substring(2, 4);
+  final promotion = uci.length > 4 ? uci[4] : null;
+  final fromIndex = _squareToIndex(from);
+  final toIndex = _squareToIndex(to);
+  if (fromIndex == null || toIndex == null) return null;
+
+  final board = _expandPlacement(placement);
+  if (board == null) return null;
+  final piece = board[fromIndex];
+  if (piece.isEmpty) return null;
+  final isWhite = _pieceIsWhite(piece);
+  var moveTo = to;
+  var moveToIndex = toIndex;
+  String? castlingRookFrom;
+  String? castlingRookTo;
+  String? castlingRook;
+  if (piece == 'K' && from == 'e1' && (to == 'g1' || to == 'h1')) {
+    moveTo = 'g1';
+    moveToIndex = _squareToIndex(moveTo)!;
+    castlingRookFrom = 'h1';
+    castlingRookTo = 'f1';
+    castlingRook = 'R';
+  } else if (piece == 'K' && from == 'e1' && (to == 'c1' || to == 'a1')) {
+    moveTo = 'c1';
+    moveToIndex = _squareToIndex(moveTo)!;
+    castlingRookFrom = 'a1';
+    castlingRookTo = 'd1';
+    castlingRook = 'R';
+  } else if (piece == 'k' && from == 'e8' && (to == 'g8' || to == 'h8')) {
+    moveTo = 'g8';
+    moveToIndex = _squareToIndex(moveTo)!;
+    castlingRookFrom = 'h8';
+    castlingRookTo = 'f8';
+    castlingRook = 'r';
+  } else if (piece == 'k' && from == 'e8' && (to == 'c8' || to == 'a8')) {
+    moveTo = 'c8';
+    moveToIndex = _squareToIndex(moveTo)!;
+    castlingRookFrom = 'a8';
+    castlingRookTo = 'd8';
+    castlingRook = 'r';
+  }
+  var capturedPiece = castlingRookFrom == null ? board[moveToIndex] : '';
+  board[fromIndex] = '';
+
+  if (piece.toLowerCase() == 'p' &&
+      moveTo == enPassant &&
+      capturedPiece.isEmpty &&
+      from[0] != moveTo[0]) {
+    final capturedPawnIndex = isWhite ? moveToIndex + 8 : moveToIndex - 8;
+    if (capturedPawnIndex < 0 || capturedPawnIndex >= 64) return null;
+    capturedPiece = board[capturedPawnIndex];
+    board[capturedPawnIndex] = '';
+  }
+
+  if (castlingRookFrom != null) {
+    board[_squareToIndex(castlingRookFrom)!] = '';
+    board[_squareToIndex(castlingRookTo!)!] = castlingRook!;
+  }
+
+  board[moveToIndex] =
+      piece.toLowerCase() == 'p' && promotion != null
+          ? (isWhite ? promotion.toUpperCase() : promotion.toLowerCase())
+          : piece;
+  castling = _updateCastlingRights(
+    castling,
+    piece: piece,
+    from: from,
+    to: moveTo,
+    capturedPiece: capturedPiece,
+  );
+
+  var nextEnPassant = '-';
+  if (piece.toLowerCase() == 'p' && (moveToIndex - fromIndex).abs() == 16) {
+    final targetIndex = (fromIndex + moveToIndex) ~/ 2;
+    if (_hasLegalEnPassantCapture(
+      board,
+      targetIndex: targetIndex,
+      movedPawnIndex: moveToIndex,
+      movingWhite: isWhite,
+    )) {
+      nextEnPassant = _indexToSquare(targetIndex);
+    }
+  }
+
+  final nextTurn = turn == 'w' ? 'b' : 'w';
+  return '${_compressPlacement(board)} $nextTurn $castling $nextEnPassant';
+}
+
+int? _squareToIndex(String square) {
+  if (square.length != 2) return null;
+  final file = square.codeUnitAt(0) - 0x61;
+  final rank = square.codeUnitAt(1) - 0x30;
+  if (file < 0 || file > 7 || rank < 1 || rank > 8) return null;
+  return (8 - rank) * 8 + file;
+}
+
+String _indexToSquare(int index) {
+  final file = String.fromCharCode(0x61 + (index % 8));
+  final rank = 8 - (index ~/ 8);
+  return '$file$rank';
+}
+
+List<String>? _expandPlacement(String placement) {
+  final board = <String>[];
+  for (final codePoint in placement.runes) {
+    final char = String.fromCharCode(codePoint);
+    if (char == '/') continue;
+    final empty = int.tryParse(char);
+    if (empty != null && empty > 0) {
+      board.addAll(List<String>.filled(empty, ''));
+    } else {
+      board.add(char);
+    }
+  }
+  return board.length == 64 ? board : null;
+}
+
+String _compressPlacement(List<String> board) {
+  final ranks = <String>[];
+  for (var rank = 0; rank < 8; rank++) {
+    final text = StringBuffer();
+    var empty = 0;
+    for (var file = 0; file < 8; file++) {
+      final piece = board[(rank * 8) + file];
+      if (piece.isEmpty) {
+        empty++;
+      } else {
+        if (empty > 0) text.write(empty);
+        empty = 0;
+        text.write(piece);
+      }
+    }
+    if (empty > 0) text.write(empty);
+    ranks.add(text.toString());
+  }
+  return ranks.join('/');
+}
+
+bool _pieceIsWhite(String piece) => piece == piece.toUpperCase();
+
+int? _boardIndex(int row, int file) {
+  if (row < 0 || row > 7 || file < 0 || file > 7) return null;
+  return (row * 8) + file;
+}
+
+int _findKingIndex(List<String> board, {required bool white}) =>
+    board.indexOf(white ? 'K' : 'k');
+
+bool _isSquareAttacked(
+  List<String> board,
+  int targetIndex, {
+  required bool byWhite,
+}) {
+  final targetRow = targetIndex ~/ 8;
+  final targetFile = targetIndex % 8;
+  final pawn = byWhite ? 'P' : 'p';
+  final knight = byWhite ? 'N' : 'n';
+  final bishop = byWhite ? 'B' : 'b';
+  final rook = byWhite ? 'R' : 'r';
+  final queen = byWhite ? 'Q' : 'q';
+  final king = byWhite ? 'K' : 'k';
+
+  final pawnRow = byWhite ? targetRow + 1 : targetRow - 1;
+  for (final fileOffset in const <int>[-1, 1]) {
+    final index = _boardIndex(pawnRow, targetFile + fileOffset);
+    if (index != null && board[index] == pawn) return true;
+  }
+
+  for (final offset in const <(int, int)>[
+    (-2, -1),
+    (-2, 1),
+    (-1, -2),
+    (-1, 2),
+    (1, -2),
+    (1, 2),
+    (2, -1),
+    (2, 1),
+  ]) {
+    final index = _boardIndex(targetRow + offset.$1, targetFile + offset.$2);
+    if (index != null && board[index] == knight) return true;
+  }
+
+  for (final offset in const <(int, int)>[
+    (-1, -1),
+    (-1, 0),
+    (-1, 1),
+    (0, -1),
+    (0, 1),
+    (1, -1),
+    (1, 0),
+    (1, 1),
+  ]) {
+    final index = _boardIndex(targetRow + offset.$1, targetFile + offset.$2);
+    if (index != null && board[index] == king) return true;
+  }
+
+  final rayAttacks = <(int, int, Set<String>)>[
+    (-1, 0, <String>{rook, queen}),
+    (1, 0, <String>{rook, queen}),
+    (0, -1, <String>{rook, queen}),
+    (0, 1, <String>{rook, queen}),
+    (-1, -1, <String>{bishop, queen}),
+    (-1, 1, <String>{bishop, queen}),
+    (1, -1, <String>{bishop, queen}),
+    (1, 1, <String>{bishop, queen}),
+  ];
+  for (final ray in rayAttacks) {
+    var row = targetRow + ray.$1;
+    var file = targetFile + ray.$2;
+    while (row >= 0 && row <= 7 && file >= 0 && file <= 7) {
+      final piece = board[(row * 8) + file];
+      if (piece.isNotEmpty) {
+        if (ray.$3.contains(piece)) return true;
+        break;
+      }
+      row += ray.$1;
+      file += ray.$2;
+    }
+  }
+  return false;
+}
+
+String _removeCastlingRight(String castling, String right) {
+  if (castling == '-') return castling;
+  final next = castling.replaceAll(right, '');
+  return next.isEmpty ? '-' : next;
+}
+
+String _updateCastlingRights(
+  String castling, {
+  required String piece,
+  required String from,
+  required String to,
+  required String capturedPiece,
+}) {
+  var next = castling;
+  if (piece == 'K') {
+    next = _removeCastlingRight(_removeCastlingRight(next, 'K'), 'Q');
+  } else if (piece == 'k') {
+    next = _removeCastlingRight(_removeCastlingRight(next, 'k'), 'q');
+  }
+  if (piece == 'R') {
+    if (from == 'h1') next = _removeCastlingRight(next, 'K');
+    if (from == 'a1') next = _removeCastlingRight(next, 'Q');
+  } else if (piece == 'r') {
+    if (from == 'h8') next = _removeCastlingRight(next, 'k');
+    if (from == 'a8') next = _removeCastlingRight(next, 'q');
+  }
+  if (capturedPiece == 'R') {
+    if (to == 'h1') next = _removeCastlingRight(next, 'K');
+    if (to == 'a1') next = _removeCastlingRight(next, 'Q');
+  } else if (capturedPiece == 'r') {
+    if (to == 'h8') next = _removeCastlingRight(next, 'k');
+    if (to == 'a8') next = _removeCastlingRight(next, 'q');
+  }
+  return next.isEmpty ? '-' : next;
+}
+
+bool _hasLegalEnPassantCapture(
+  List<String> board, {
+  required int targetIndex,
+  required int movedPawnIndex,
+  required bool movingWhite,
+}) {
+  final targetFile = targetIndex % 8;
+  final capturingWhite = !movingWhite;
+  final opponentPawn = capturingWhite ? 'P' : 'p';
+  final sourceRankOffset = movingWhite ? -8 : 8;
+  for (final fileOffset in const <int>[-1, 1]) {
+    final sourceFile = targetFile + fileOffset;
+    if (sourceFile < 0 || sourceFile > 7) continue;
+    final sourceIndex = targetIndex + sourceRankOffset + fileOffset;
+    if (sourceIndex < 0 ||
+        sourceIndex >= 64 ||
+        board[sourceIndex] != opponentPawn) {
+      continue;
+    }
+    final nextBoard = List<String>.of(board);
+    nextBoard[sourceIndex] = '';
+    nextBoard[movedPawnIndex] = '';
+    nextBoard[targetIndex] = opponentPawn;
+    final kingIndex = _findKingIndex(nextBoard, white: capturingWhite);
+    if (kingIndex == -1 ||
+        !_isSquareAttacked(nextBoard, kingIndex, byWhite: movingWhite)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 _ParsedHeaders _parseHeaders(String rawPgn) {

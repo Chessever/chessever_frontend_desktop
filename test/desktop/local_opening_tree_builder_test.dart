@@ -98,6 +98,33 @@ void main() {
       },
     );
 
+    test('incremental builder can spill position refs outside its index', () {
+      final refs = <LocalOpeningTreePositionGameRef>[];
+      final builder = LocalOpeningTreeIncrementalBuilder(
+        treeId: 'local:spilled-refs',
+        databaseId: 'local-db',
+        includePositionGameRefs: false,
+        includeGameRows: false,
+        onPositionGameRef: refs.add,
+      );
+      builder.addGames(<LocalOpeningTreeGameInput>[
+        _input('a', _spanishPgn, 0),
+        _input('b', _sicilianPgn, 1),
+      ]);
+
+      final result = builder.finishAndRelease();
+      final rootRefs = refs
+          .where((ref) => ref.ply == 0)
+          .toList(growable: false);
+
+      expect(result.index.isUsable, isTrue);
+      expect(result.index.gamesByFen, isEmpty);
+      expect(result.index.gameRowsById, isEmpty);
+      expect(rootRefs.map((ref) => ref.gameId), <String>['a', 'b']);
+      expect(rootRefs.map((ref) => ref.nextUci), everyElement('e2e4'));
+      expect(refs.where((ref) => ref.gameId == 'a').last.nextUci, isNull);
+    });
+
     test(
       'games index compaction preserves local PGN source metadata',
       () async {
@@ -210,6 +237,110 @@ void main() {
       expect(index.nodesByFenKey.containsKey(transposedKey), isTrue);
       expect(index.gamesCountForFen(knightsFirstFen), 2);
     });
+
+    test('cached UCI lines preserve transpositions without reparsing PGN', () {
+      final index = buildLocalOpeningTreeIndex(
+        treeId: 'local:cached-uci',
+        databaseId: 'local-db',
+        games: <LocalOpeningTreeGameInput>[
+          _cachedInput(
+            'a',
+            const <String>['g1f3', 'g8f6', 'c2c4', 'e7e6'],
+            0,
+            result: '1-0',
+          ),
+          _cachedInput(
+            'b',
+            const <String>['c2c4', 'e7e6', 'g1f3', 'g8f6'],
+            1,
+            result: '0-1',
+          ),
+        ],
+      );
+      final transposedFen =
+          ChessGame.fromPgn('a', _knightsFirstTranspositionPgn).mainline[3].fen;
+      final initialFen =
+          ChessGame.fromPgn('a', _knightsFirstTranspositionPgn).startingFen;
+
+      expect(index.gamesCountForFen(transposedFen), 2);
+      expect(
+        index.nodesByFenKey,
+        contains(playerOpeningTreeFenKey(transposedFen)),
+      );
+      expect(_move(index.movesForFen(initialFen), 'g1f3').white, 1);
+      expect(_move(index.movesForFen(initialFen), 'c2c4').black, 1);
+    });
+
+    test(
+      'cached UCI transitions preserve castling en-passant and promotion',
+      () {
+        const castlePgn = '''
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Be2 Nf6 4. O-O Be7 5. d3 O-O *
+''';
+        const enPassantPgn = '''
+[Result "*"]
+
+1. e4 a6 2. e5 d5 3. exd6 *
+''';
+        const promotionPgn = '''
+[Result "*"]
+[SetUp "1"]
+[FEN "4k3/P7/8/8/8/8/8/4K3 w - - 0 1"]
+
+1. a8=Q+ *
+''';
+        final promotionStart =
+            ChessGame.fromPgn('promotion', promotionPgn).startingFen;
+        final index = buildLocalOpeningTreeIndex(
+          treeId: 'local:cached-special-moves',
+          databaseId: 'local-db',
+          games: <LocalOpeningTreeGameInput>[
+            _cachedInput('castle', const <String>[
+              'e2e4',
+              'e7e5',
+              'g1f3',
+              'b8c6',
+              'f1e2',
+              'g8f6',
+              'e1h1',
+              'f8e7',
+              'd2d3',
+              'e8h8',
+            ], 0),
+            _cachedInput('ep', const <String>[
+              'e2e4',
+              'a7a6',
+              'e4e5',
+              'd7d5',
+              'e5d6',
+            ], 1),
+            _cachedInput(
+              'promotion',
+              const <String>['a7a8q'],
+              2,
+              startingFen: promotionStart,
+            ),
+          ],
+        );
+
+        for (final game in <(String, String)>[
+          ('castle', castlePgn),
+          ('ep', enPassantPgn),
+          ('promotion', promotionPgn),
+        ]) {
+          final finalFen =
+              ChessGame.fromPgn(game.$1, game.$2).mainline.last.fen;
+          expect(
+            index.nodesByFenKey,
+            contains(playerOpeningTreeFenKey(finalFen)),
+            reason: '${game.$1} should match dartchess position identity',
+          );
+          expect(index.gamesCountForFen(finalFen), 1);
+        }
+      },
+    );
 
     test('separates castling-right positions and their supporting games', () {
       final index = buildLocalOpeningTreeIndex(
@@ -387,6 +518,26 @@ LocalOpeningTreeGameInput _input(String id, String pgn, int index) {
   return LocalOpeningTreeGameInput(
     id: id,
     rawPgn: pgn,
+    sourcePath: '/tmp/lines.pgn',
+    sourceRelativePath: 'lines.pgn',
+    fileName: 'lines.pgn',
+    indexInFile: index,
+    fileGameCount: 3,
+  );
+}
+
+LocalOpeningTreeGameInput _cachedInput(
+  String id,
+  List<String> uciLine,
+  int index, {
+  String result = '*',
+  String? startingFen,
+}) {
+  return LocalOpeningTreeGameInput(
+    id: id,
+    uciLine: uciLine,
+    metadata: <String, String>{'Result': result},
+    startingFen: startingFen,
     sourcePath: '/tmp/lines.pgn',
     sourceRelativePath: 'lines.pgn',
     fileName: 'lines.pgn',

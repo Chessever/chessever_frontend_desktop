@@ -8,7 +8,8 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
-import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/player_opening_tree_builder.dart'
+    show PlayerOpeningTreeIndex;
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_explorer_scope.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
@@ -97,6 +98,7 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.localOpeningTreeIndex,
     this.localOpeningTreeTitle = '',
     this.enableLocalOpeningTreePicker = false,
+    this.hideLocalOpeningTreePicker = false,
     this.onNotationVertical,
     this.onNotationStep,
     this.onNotationJumpToHead,
@@ -138,6 +140,7 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   final PlayerOpeningTreeIndex? localOpeningTreeIndex;
   final String localOpeningTreeTitle;
   final bool enableLocalOpeningTreePicker;
+  final bool hideLocalOpeningTreePicker;
 
   /// The notation widget rendered on page 0. Built by the caller so this
   /// panel doesn't have to know about the desktop board's _Ply / history.
@@ -613,6 +616,8 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                 localOpeningTreeTitle: widget.localOpeningTreeTitle,
                 enableLocalOpeningTreePicker:
                     widget.enableLocalOpeningTreePicker,
+                hideLocalOpeningTreePicker:
+                    widget.hideLocalOpeningTreePicker,
                 sourceController: _explorerSourceController,
                 exactFenSearch: !_isInitialPositionFen(widget.startingFen),
               )
@@ -1031,10 +1036,6 @@ class _SegmentBar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final scopedPlayer = explorerScope?.player;
-    final treeState =
-        scopedPlayer == null
-            ? null
-            : ref.watch(playerOpeningTreeProvider(scopedPlayer.id));
     final hasNavigationControls =
         onFirstMove != null ||
         onPreviousMove != null ||
@@ -1078,22 +1079,6 @@ class _SegmentBar extends ConsumerWidget {
             ExplorerFiltersPopoverButton(
               compact: true,
               scopedPlayer: scopedPlayer,
-            ),
-          ],
-          if (treeState != null) ...[
-            const SizedBox(width: 8),
-            PlayerOpeningTreeProgressChip(
-              state: treeState,
-              maxWidth: 230,
-              onRetry:
-                  () =>
-                      ref
-                          .read(
-                            playerOpeningTreeProvider(
-                              scopedPlayer!.id,
-                            ).notifier,
-                          )
-                          .retry(),
             ),
           ],
           if (hasNavigationControls)
@@ -1343,6 +1328,7 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
     required this.localOpeningTreeIndex,
     required this.localOpeningTreeTitle,
     required this.enableLocalOpeningTreePicker,
+    required this.hideLocalOpeningTreePicker,
     required this.sourceController,
     this.exactFenSearch = false,
   });
@@ -1369,6 +1355,7 @@ class _OpeningExplorerPage extends ConsumerStatefulWidget {
   final PlayerOpeningTreeIndex? localOpeningTreeIndex;
   final String localOpeningTreeTitle;
   final bool enableLocalOpeningTreePicker;
+  final bool hideLocalOpeningTreePicker;
   final _ExplorerSourceController sourceController;
   final bool exactFenSearch;
 
@@ -2165,8 +2152,9 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
       current: widget.localOpeningTreeIndex,
       currentTitle: widget.localOpeningTreeTitle,
     );
-    if (widget.localOpeningTreeIndex != null ||
-        widget.enableLocalOpeningTreePicker) {
+    if (!widget.hideLocalOpeningTreePicker &&
+        (widget.localOpeningTreeIndex != null ||
+            widget.enableLocalOpeningTreePicker)) {
       _publishSourceControl(localTrees);
     } else {
       WidgetsBinding.instance.addPostFrameCallback((_) {

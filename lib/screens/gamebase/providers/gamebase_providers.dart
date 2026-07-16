@@ -1434,10 +1434,7 @@ PlayerOpeningTreeFilterCriteria _localTreeCriteria(
 ) {
   return PlayerOpeningTreeFilterCriteria(
     playerId: playerId,
-    playerIds: <String>[
-      playerId,
-      ...filters.playerIds,
-    ],
+    playerIds: <String>[playerId, ...filters.playerIds],
     playerFideIds: <String>[
       for (final player in filters.selectedPlayers)
         if (player.fideId.trim().isNotEmpty) player.fideId.trim(),
