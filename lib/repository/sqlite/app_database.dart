@@ -28,6 +28,10 @@ class AppDatabase {
   static const Duration _initTimeout = Duration(seconds: 4);
   static const String _dbFileName = 'chessever_app.db';
   static String get dbFileName => _dbFileName;
+  static const String _desktopDataDirOverride = String.fromEnvironment(
+    'CHESSEVER_DATA_DIR',
+    defaultValue: '',
+  );
   String? _cachedDbPath;
 
   /// Table for simple key-value storage (replaces SharedPreferences)
@@ -103,8 +107,9 @@ class AppDatabase {
     // Pin to Application Support, which is always writable for unsandboxed
     // desktop apps.
     if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
-      final supportDir = await getApplicationSupportDirectory();
-      final dbDir = Directory(supportDir.path);
+      final dbDir = _desktopDataDirOverride.isNotEmpty
+          ? Directory(_desktopDataDirOverride)
+          : Directory((await getApplicationSupportDirectory()).path);
       if (!await dbDir.exists()) {
         await dbDir.create(recursive: true);
       }

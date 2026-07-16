@@ -71,7 +71,12 @@ IDI_APP_ICON            ICON                    "resources\\app_icon.ico"
 #define VERSION_AS_STRING "1.0.0"
 #endif
 
-#ifdef CHESSEVER_DEVELOPMENT
+#if defined(CHESSEVER_DEV_ISOLATED)
+#define CHESSEVER_FILE_DESCRIPTION "ChessEver Development"
+#define CHESSEVER_INTERNAL_NAME "ChessEverDev"
+#define CHESSEVER_ORIGINAL_FILENAME "ChessEverDev.exe"
+#define CHESSEVER_PRODUCT_NAME "ChessEver Development"
+#elif defined(CHESSEVER_DEVELOPMENT)
 #define CHESSEVER_FILE_DESCRIPTION "ChessEver Development"
 #define CHESSEVER_INTERNAL_NAME "ChesseverDevelopment"
 #define CHESSEVER_ORIGINAL_FILENAME "Chessever.exe"

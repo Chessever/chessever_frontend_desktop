@@ -28,6 +28,9 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_PATCH=${FLUTT
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_BUILD=${FLUTTER_VERSION_BUILD}")
 target_compile_definitions(${BINARY_NAME} PRIVATE
   "$<$<NOT:$<CONFIG:Release>>:CHESSEVER_DEVELOPMENT>")
+if(CHESSEVER_DEV_ISOLATED)
+  target_compile_definitions(${BINARY_NAME} PRIVATE "CHESSEVER_DEV_ISOLATED")
+endif()
 
 # Disable Windows macros that collide with C++ standard library functions.
 target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
