@@ -49,6 +49,109 @@ void main() {
     }
   });
 
+  test(
+    'upgrades shared sqflite schema before creating derived indexes',
+    () async {
+      final legacyDb = await databaseFactoryFfiNoIsolate.openDatabase(
+        '${temp.path}/legacy_shared_app.db',
+      );
+      addTearDown(legacyDb.close);
+      await legacyDb.execute('''
+      CREATE TABLE local_chess_databases (
+        id TEXT PRIMARY KEY,
+        path TEXT UNIQUE NOT NULL,
+        label TEXT NOT NULL,
+        extension TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        modified_at_ms INTEGER,
+        file_count INTEGER NOT NULL DEFAULT 1,
+        game_count INTEGER NOT NULL DEFAULT 0,
+        position_count INTEGER NOT NULL DEFAULT 0,
+        tree_snapshot TEXT,
+        imported_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL
+      )
+    ''');
+      await legacyDb.execute('''
+      CREATE TABLE local_chess_games (
+        id TEXT PRIMARY KEY,
+        database_id TEXT NOT NULL,
+        event_id INTEGER NOT NULL DEFAULT 0,
+        site_id INTEGER NOT NULL DEFAULT 0,
+        date TEXT,
+        utc_time TEXT,
+        round TEXT,
+        white_id INTEGER NOT NULL DEFAULT 0,
+        white_elo INTEGER,
+        black_id INTEGER NOT NULL DEFAULT 0,
+        black_elo INTEGER,
+        white_material INTEGER NOT NULL DEFAULT 39,
+        black_material INTEGER NOT NULL DEFAULT 39,
+        result TEXT,
+        time_control TEXT,
+        eco TEXT,
+        ply_count INTEGER NOT NULL DEFAULT 0,
+        fen TEXT,
+        moves TEXT NOT NULL DEFAULT '[]',
+        pawn_home INTEGER NOT NULL DEFAULT 65535,
+        raw_pgn TEXT NOT NULL,
+        headers_json TEXT NOT NULL DEFAULT '{}',
+        source_path TEXT NOT NULL,
+        source_relative_path TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        index_in_file INTEGER NOT NULL,
+        file_game_count INTEGER NOT NULL,
+        has_moves INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+      await legacyDb.insert('local_chess_games', <String, Object?>{
+        'id': 'existing-game',
+        'database_id': 'existing-db',
+        'raw_pgn': '',
+        'source_path': '/tmp/existing.pgn',
+        'source_relative_path': 'existing.pgn',
+        'file_name': 'existing.pgn',
+        'index_in_file': 0,
+        'file_game_count': 1,
+      });
+
+      await createLocalChessDatabaseSchema(legacyDb);
+
+      final gameColumns = await legacyDb.rawQuery(
+        'PRAGMA table_info(local_chess_games)',
+      );
+      expect(
+        gameColumns.map((row) => row['name']?.toString()),
+        containsAll(<String>['time_control_category', 'is_online']),
+      );
+      final databaseColumns = await legacyDb.rawQuery(
+        'PRAGMA table_info(local_chess_databases)',
+      );
+      expect(
+        databaseColumns.map((row) => row['name']?.toString()),
+        contains('content_fingerprint'),
+      );
+      final indexes = await legacyDb.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type = 'index'",
+      );
+      expect(
+        indexes.map((row) => row['name']?.toString()),
+        containsAll(<String>[
+          'idx_local_chess_games_db_time_category',
+          'idx_local_chess_games_db_online',
+        ]),
+      );
+      expect(
+        sqflite.Sqflite.firstIntValue(
+          await legacyDb.rawQuery(
+            "SELECT COUNT(*) FROM local_chess_games WHERE id = 'existing-game'",
+          ),
+        ),
+        1,
+      );
+    },
+  );
+
   test('repairs source-specific time-control categories', () async {
     await db.execute('PRAGMA foreign_keys=OFF');
     const chessComHeaders =
