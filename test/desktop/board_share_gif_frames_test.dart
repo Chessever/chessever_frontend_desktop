@@ -9,6 +9,7 @@ import 'package:image/image.dart' as img;
 import 'package:chessever/desktop/services/board_share_service.dart';
 import 'package:chessever/desktop/widgets/board_share_dialog.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
+import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
 // Last-move highlight color: lib/utils/board_customization_utils.dart ->
@@ -64,11 +65,11 @@ void main() {
   });
 
   group('buildBoardShareGifFrames', () {
-    test('carries annotated evals forward and never smears frame 0', () {
+    test('keeps annotated evals aligned and never smears frame 0', () {
       final game = ChessGame.fromPgn(
         'g1',
         '1. e4 { [%eval 0.2] } e5 { [%eval 0.3] } '
-        '2. Nf3 { [%eval 0.1] } Nc6 { [%eval 0.4] } *',
+            '2. Nf3 { [%eval 0.1] } Nc6 { [%eval 0.4] } *',
       );
       final data = buildBoardShareGifFrames(
         startingFen: game.startingFen,
@@ -97,6 +98,22 @@ void main() {
       expect(data.durationsCs.last, greaterThan(data.durationsCs[1]));
     });
 
+    test('leaves gaps null instead of freezing at an earlier eval', () {
+      final game = ChessGame.fromPgn(
+        'g-sparse-evals',
+        '1. e4 { [%eval 0.2] } e5 2. Nf3 { [%eval 0.6] } Nc6 *',
+      );
+      final data = buildBoardShareGifFrames(
+        startingFen: game.startingFen,
+        mainline: game.mainline,
+      );
+
+      expect(data.evaluations[1].evaluation, 0.2);
+      expect(data.evaluations[2].evaluation, isNull);
+      expect(data.evaluations[3].evaluation, 0.6);
+      expect(data.evaluations[4].evaluation, isNull);
+    });
+
     test('leaves evals neutral for an unannotated game (no smear)', () {
       final game = ChessGame.fromPgn('g2', '1. e4 e5 2. Nf3 Nc6 *');
       final data = buildBoardShareGifFrames(
@@ -115,7 +132,11 @@ void main() {
       for (var i = 1; i < data.frames.length; i++) {
         expect(data.frames[i].lastMove, isNotNull);
       }
-      expect(shouldShowBoardShareGifEvalBar(data.evaluations), isFalse);
+      expect(
+        shouldShowBoardShareGifEvalBar(data.evaluations),
+        isTrue,
+        reason: 'unannotated GIFs keep a neutral 50/50 eval bar',
+      );
     });
 
     test('keeps the GIF eval bar when replay frames contain evaluations', () {
@@ -157,6 +178,118 @@ void main() {
     });
   });
 
+  group('hydrateBoardShareGifEvaluations', () {
+    test(
+      'fills each neutral miniature frame from its own cloud eval',
+      () async {
+        final frames = <({String fen, Move? lastMove})>[
+          (fen: '${Chess.initial.fen} frame-0', lastMove: null),
+          (fen: '${Chess.initial.fen} frame-1', lastMove: null),
+          (fen: '${Chess.initial.fen} frame-2', lastMove: null),
+        ];
+        final requested = <String>[];
+
+        final hydrated = await hydrateBoardShareGifEvaluations(
+          frames: frames,
+          evaluations: const [
+            (evaluation: null, mate: null, isEvaluating: false),
+            (evaluation: null, mate: null, isEvaluating: false),
+            (evaluation: null, mate: null, isEvaluating: false),
+          ],
+          concurrency: 2,
+          fetchEvaluation: (fen) async {
+            requested.add(fen);
+            final index = int.parse(fen.substring(fen.length - 1));
+            return (
+              evaluation: index.toDouble(),
+              mate: null,
+              isEvaluating: false,
+            );
+          },
+        );
+
+        expect(requested, hasLength(3));
+        expect(hydrated.map((value) => value.evaluation), [0.0, 1.0, 2.0]);
+      },
+    );
+
+    test('hydrates only gaps and preserves move annotations', () async {
+      final frames = <({String fen, Move? lastMove})>[
+        (fen: '${Chess.initial.fen} frame-0', lastMove: null),
+        (fen: '${Chess.initial.fen} frame-1', lastMove: null),
+        (fen: '${Chess.initial.fen} frame-2', lastMove: null),
+      ];
+      final requested = <String>[];
+
+      final hydrated = await hydrateBoardShareGifEvaluations(
+        frames: frames,
+        evaluations: const [
+          (evaluation: 0.1, mate: null, isEvaluating: false),
+          (evaluation: null, mate: null, isEvaluating: false),
+          (evaluation: 0.9, mate: null, isEvaluating: false),
+        ],
+        fetchEvaluation: (fen) async {
+          requested.add(fen);
+          return (evaluation: 0.5, mate: null, isEvaluating: false);
+        },
+      );
+
+      expect(requested, [frames[1].fen]);
+      expect(hydrated.map((value) => value.evaluation), [0.1, 0.5, 0.9]);
+    });
+
+    test(
+      'uses sequential fallback for positions missing in Gamebase',
+      () async {
+        final frames = <({String fen, Move? lastMove})>[
+          (fen: '${Chess.initial.fen} frame-0', lastMove: null),
+          (fen: '${Chess.initial.fen} frame-1', lastMove: null),
+          (fen: '${Chess.initial.fen} frame-2', lastMove: null),
+        ];
+        var activeFallbacks = 0;
+        var maxActiveFallbacks = 0;
+
+        final hydrated = await hydrateBoardShareGifEvaluations(
+          frames: frames,
+          evaluations: const [
+            (evaluation: null, mate: null, isEvaluating: false),
+            (evaluation: null, mate: null, isEvaluating: false),
+            (evaluation: null, mate: null, isEvaluating: false),
+          ],
+          fetchEvaluation: (_) async => null,
+          fallbackEvaluation: (fen) async {
+            activeFallbacks++;
+            if (activeFallbacks > maxActiveFallbacks) {
+              maxActiveFallbacks = activeFallbacks;
+            }
+            await Future<void>.delayed(Duration.zero);
+            activeFallbacks--;
+            final index = int.parse(fen.substring(fen.length - 1));
+            return (evaluation: index + 0.25, mate: null, isEvaluating: false);
+          },
+        );
+
+        expect(maxActiveFallbacks, 1);
+        expect(hydrated.map((value) => value.evaluation), [0.25, 1.25, 2.25]);
+      },
+    );
+
+    test('normalizes side-to-move cloud scores to White perspective', () {
+      final cloud = CloudEval(
+        fen: Chess.initial.fen,
+        knodes: 1,
+        depth: 20,
+        pvs: [Pv(moves: 'e7e5', cp: 125, whitePerspective: false)],
+      );
+      final blackToMove = Chess.initial.fen.replaceFirst(' w ', ' b ');
+
+      final evaluation = boardShareEvaluationFromCloud(cloud, blackToMove);
+
+      expect(evaluation?.evaluation, -1.25);
+      expect(evaluation?.mate, isNull);
+    });
+  });
+
   group('generateGif (decoded frames)', () {
     testWidgets('highlights every move frame and updates the eval bar', (
       tester,
@@ -179,7 +312,10 @@ void main() {
       for (final san in sans) {
         final m = pos.parseSan(san)! as NormalMove;
         pos = pos.play(m);
-        frames.add((fen: pos.fen, lastMove: NormalMove(from: m.from, to: m.to)));
+        frames.add((
+          fen: pos.fen,
+          lastMove: NormalMove(from: m.from, to: m.to),
+        ));
       }
 
       // Frame 0 neutral (null) — must NOT inherit a later eval. Later frames

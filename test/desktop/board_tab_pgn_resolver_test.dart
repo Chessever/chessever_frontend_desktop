@@ -52,6 +52,28 @@ void main() {
       expect(resolved, contains('2. Nf3'));
     });
 
+    test('prefers annotated raw Gamebase PGN over structured moves', () async {
+      final resolved = await resolveBoardTabPgn(
+        gameId: 'gamebase-with-evals',
+        initialPgn: '[White "Alpha"]\n[Black "Beta"]\n\n*',
+        fetchSupabasePgn: (_) async => null,
+        fetchGamebaseGameWithPgn:
+            (_) async => _gamebaseGame(
+              data: const {
+                'm': [
+                  {'u': 'd2d4'},
+                  {'u': 'd7d5'},
+                ],
+              },
+              pgn: '1. e4 { [%eval 0.3] } e5 { [%eval 0.1] } *',
+            ),
+      );
+
+      expect(resolved, contains('1. e4'));
+      expect(resolved, contains('[%eval 0.3]'));
+      expect(resolved, isNot(contains('1. d4')));
+    });
+
     test('uses Supabase PGN before Gamebase when Supabase has moves', () async {
       final resolved = await resolveBoardTabPgn(
         gameId: 'live-1',

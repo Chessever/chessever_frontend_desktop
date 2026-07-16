@@ -11,9 +11,11 @@ import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
+import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
+import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -228,14 +230,51 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       );
       final photos = await _resolvePlayerPhotos();
 
-      // Replay the mainline into per-frame board/clock/eval data. Each frame
-      // carries its own last move (for from/to highlighting) and its own eval
-      // (from PGN annotations, carried forward) so the shared GIF's board
-      // highlight and eval bar update in step with the animation.
+      // Replay the mainline into per-frame board/clock/eval data. Preserve PGN
+      // annotations when present; otherwise hydrate each position from the
+      // Gamebase eval cache so miniature exports get a moving, honest bar.
       final gifData = buildBoardShareGifFrames(
         startingFen: widget.chessGame.startingFen,
         mainline: widget.chessGame.mainline,
       );
+      final repository = ref.read(gamebaseRepositoryProvider);
+      final stockfish = StockfishSingleton();
+      final gifOwnerId = StockfishSingleton.generateOwnerId(
+        'boardShareGif',
+        identityHashCode(this),
+      );
+      late final List<BoardShareFrameEvaluation> gifEvaluations;
+      try {
+        gifEvaluations = await hydrateBoardShareGifEvaluations(
+          frames: gifData.frames,
+          evaluations: gifData.evaluations,
+          concurrency: 6,
+          fetchEvaluation: (fen) async {
+            final cloud = await repository
+                .getEvalByFen(fen)
+                .timeout(
+                  const Duration(milliseconds: 1500),
+                  onTimeout: () => null,
+                );
+            return boardShareEvaluationFromCloud(cloud, fen);
+          },
+          fallbackEvaluation: (fen) async {
+            final result = await stockfish.evaluatePosition(
+              fen,
+              searchDuration: const Duration(milliseconds: 120),
+              maxDepth: 12,
+              multiPV: 1,
+              isCurrentPosition: false,
+              allowCache: true,
+              ownerId: gifOwnerId,
+            );
+            if (result.isCancelled || result.pvs.isEmpty) return null;
+            return boardShareEvaluationFromPv(result.pvs.first, fen);
+          },
+        );
+      } finally {
+        await stockfish.cancelEvaluationsForOwner(gifOwnerId);
+      }
 
       final gifBytes = await BoardShareService.generateGif(
         frames: gifData.frames,
@@ -255,15 +294,13 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
         blackScore: _blackScore,
         whitePhotoUrl: photos.whitePhotoUrl,
         blackPhotoUrl: photos.blackPhotoUrl,
-        // GIF exports own their presentation. Keep the animated evaluation
-        // bar whenever replay data contains evals, even if the live board's
-        // engine gauge is currently hidden. Tying this to [showEvalBar]
-        // accidentally removed the bar from GIFs when live-board capture was
-        // introduced.
-        showEvalBar: shouldShowBoardShareGifEvalBar(gifData.evaluations),
+        // GIF exports own their presentation. Keep the evaluation rail even
+        // if the live board's engine gauge is currently hidden; positions
+        // without a resolved score remain neutral.
+        showEvalBar: shouldShowBoardShareGifEvalBar(gifEvaluations),
         flipped: widget.flipped,
         clocks: gifData.clocks,
-        frameEvaluations: gifData.evaluations,
+        frameEvaluations: gifEvaluations,
       );
 
       if (gifBytes == null) throw Exception('GIF generation returned null');
@@ -667,9 +704,10 @@ class BoardShareRaster {
 bool shouldShowBoardShareGifEvalBar(
   List<({double? evaluation, int? mate, bool isEvaluating})> evaluations,
 ) {
-  return evaluations.any(
-    (evaluation) => evaluation.evaluation != null || evaluation.mate != null,
-  );
+  // Keep GIF geometry stable and show the honest neutral 50/50 bar when a
+  // source PGN has no historical evaluations. Annotated games still animate
+  // their per-frame values; we never smear one live-board eval across replay.
+  return true;
 }
 
 @visibleForTesting

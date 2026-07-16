@@ -12,6 +12,7 @@ import 'package:screenshot/screenshot.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
+import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/widgets/gif_export_worker.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -353,6 +354,118 @@ class BoardShareGifFrames {
   final List<({double? evaluation, int? mate, bool isEvaluating})> evaluations;
 }
 
+typedef BoardShareFrameEvaluation =
+    ({double? evaluation, int? mate, bool isEvaluating});
+
+/// Fills missing replay evaluations without applying one position's score to
+/// another. Requests are bounded so a miniature does not fire every lookup at
+/// the backend simultaneously; failed/missing positions remain neutral.
+Future<List<BoardShareFrameEvaluation>> hydrateBoardShareGifEvaluations({
+  required List<({String fen, Move? lastMove})> frames,
+  required List<BoardShareFrameEvaluation> evaluations,
+  required Future<BoardShareFrameEvaluation?> Function(String fen)
+  fetchEvaluation,
+  Future<BoardShareFrameEvaluation?> Function(String fen)? fallbackEvaluation,
+  int concurrency = 8,
+}) async {
+  final hydrated = <BoardShareFrameEvaluation>[
+    for (var i = 0; i < frames.length; i++)
+      i < evaluations.length
+          ? evaluations[i]
+          : (evaluation: null, mate: null, isEvaluating: false),
+  ];
+  final missing = <int>[
+    for (var i = 0; i < hydrated.length; i++)
+      if (hydrated[i].evaluation == null && hydrated[i].mate == null) i,
+  ];
+  final batchSize = concurrency.clamp(1, 16);
+
+  for (var offset = 0; offset < missing.length; offset += batchSize) {
+    final end = (offset + batchSize).clamp(0, missing.length);
+    final batch = missing.sublist(offset, end);
+    final fetched = await Future.wait(
+      batch.map((index) async {
+        try {
+          return (
+            index: index,
+            evaluation: await fetchEvaluation(frames[index].fen),
+          );
+        } catch (_) {
+          return (index: index, evaluation: null);
+        }
+      }),
+    );
+    for (final item in fetched) {
+      final evaluation = item.evaluation;
+      if (evaluation != null) hydrated[item.index] = evaluation;
+    }
+  }
+
+  if (fallbackEvaluation != null) {
+    for (var i = 0; i < hydrated.length; i++) {
+      if (hydrated[i].evaluation != null || hydrated[i].mate != null) continue;
+      final terminal = boardShareTerminalEvaluation(frames[i].fen);
+      if (terminal != null) {
+        hydrated[i] = terminal;
+        continue;
+      }
+      try {
+        final fallback = await fallbackEvaluation(frames[i].fen);
+        if (fallback != null) hydrated[i] = fallback;
+      } catch (_) {
+        // Keep this individual frame neutral when both sources are unavailable.
+      }
+    }
+  }
+
+  return hydrated;
+}
+
+/// Converts a cloud PV to the white-perspective score expected by the share
+/// eval bar. Some engines return side-to-move scores, so FEN turn matters.
+BoardShareFrameEvaluation? boardShareEvaluationFromCloud(
+  CloudEval? cloud,
+  String fen,
+) {
+  if (cloud == null || cloud.pvs.isEmpty) return null;
+  return boardShareEvaluationFromPv(cloud.pvs.first, fen);
+}
+
+BoardShareFrameEvaluation boardShareEvaluationFromPv(Pv pv, String fen) {
+  var sign = 1;
+  if (!pv.whitePerspective) {
+    final parts = fen.trim().split(RegExp(r'\s+'));
+    sign = parts.length > 1 && parts[1] == 'b' ? -1 : 1;
+  }
+  if (pv.isMate || pv.mate != null) {
+    final signedMate = pv.mate == null ? null : pv.mate! * sign;
+    return (
+      evaluation: (signedMate ?? pv.cp.sign * sign) >= 0 ? 10.0 : -10.0,
+      mate: signedMate,
+      isEvaluating: false,
+    );
+  }
+  return (evaluation: (pv.cp * sign) / 100.0, mate: null, isEvaluating: false);
+}
+
+BoardShareFrameEvaluation? boardShareTerminalEvaluation(String fen) {
+  try {
+    final position = Chess.fromSetup(Setup.parseFen(fen));
+    if (!position.isGameOver) return null;
+    if (position.isCheckmate) {
+      final whiteWon = position.turn == Side.black;
+      return (
+        evaluation: whiteWon ? 10.0 : -10.0,
+        mate: whiteWon ? 1 : -1,
+        isEvaluating: false,
+      );
+    }
+    return (evaluation: 0.0, mate: null, isEvaluating: false);
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Parses a PGN `[%eval …]` payload into a share-frame evaluation record.
 ///
 /// Accepts centipawn floats (`0.34`, `-1.2`) and mate strings (`#3`, `M-2`).
@@ -381,10 +494,9 @@ class BoardShareGifFrames {
 /// its last move (for board highlighting), running clocks, and evaluation.
 ///
 /// The last move is captured for every ply so each frame highlights its own
-/// from/to squares. Evaluations come solely from PGN `[%eval]` annotations and
-/// are carried forward between annotated plies; frames with no known eval stay
-/// neutral (null) instead of borrowing an unrelated position's number, so the
-/// shared eval bar stays honest as the animation steps through the game.
+/// from/to squares. Evaluations come solely from that move's PGN `[%eval]`
+/// annotation. Unannotated frames remain null so export can hydrate their exact
+/// positions instead of freezing at an earlier move's stale score.
 ///
 /// Replay stops cleanly at the first SAN that cannot be parsed from the current
 /// position rather than skipping it, which would desync every later frame.
@@ -416,8 +528,6 @@ BoardShareGifFrames buildBoardShareGifFrames({
   evaluations.add((evaluation: null, mate: null, isEvaluating: false));
   durations.add(initialHoldCs);
 
-  ({double? evaluation, int? mate, bool isEvaluating})? lastEval;
-
   for (var i = 0; i < mainline.length; i++) {
     final moveData = mainline[i];
     final move = pos.parseSan(moveData.san);
@@ -433,14 +543,14 @@ BoardShareGifFrames buildBoardShareGifFrames({
       }
     }
 
-    lastEval = parseBoardShareMoveEval(moveData.eval) ?? lastEval;
+    final moveEvaluation = parseBoardShareMoveEval(moveData.eval);
 
     final last =
         move is NormalMove ? NormalMove(from: move.from, to: move.to) : null;
     frames.add((fen: pos.fen, lastMove: last));
     clocks.add((whiteClock: whiteClock, blackClock: blackClock));
     evaluations.add(
-      lastEval ?? (evaluation: null, mate: null, isEvaluating: false),
+      moveEvaluation ?? (evaluation: null, mate: null, isEvaluating: false),
     );
     durations.add(moveHoldCs);
   }
