@@ -1410,6 +1410,7 @@ class GamebaseRepository {
     required String username,
     bool refresh = false,
     int? sinceMs,
+    Duration? receiveTimeout,
   }) async {
     final cleanUsername = username.trim();
     if (cleanUsername.isEmpty) return null;
@@ -1428,7 +1429,7 @@ class GamebaseRepository {
             ..._headers,
             'Accept': 'application/x-chess-pgn, text/plain, */*',
           },
-          receiveTimeout: _pgnExportReceiveTimeout,
+          receiveTimeout: receiveTimeout ?? _pgnExportReceiveTimeout,
           responseType: ResponseType.plain,
         ),
       );

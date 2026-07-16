@@ -19,11 +19,13 @@ class LocalTreeActionButton extends StatelessWidget {
     this.progress,
     this.onOpen,
     this.onBuild,
+    this.onCancel,
   });
 
   final LocalChessTreeBuildProgress? progress;
   final VoidCallback? onOpen;
   final VoidCallback? onBuild;
+  final VoidCallback? onCancel;
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +35,7 @@ class LocalTreeActionButton extends StatelessWidget {
     // "Tree is built and ready to open" is the primary call to action — it
     // wears the accent, the way a selected sidebar item does.
     final isPrimary = onOpen != null;
-    final onPress = onOpen ?? (isBuilding ? null : onBuild);
+    final onPress = onOpen ?? (isBuilding ? onCancel : onBuild);
 
     final label =
         onOpen != null
@@ -76,6 +78,7 @@ class LocalTreeActionButton extends StatelessWidget {
         progress: progress,
         onOpen: onOpen,
         onBuild: onBuild,
+        onCancel: onCancel,
         isBuilding: isBuilding,
         isFailed: isFailed,
       ),
@@ -87,11 +90,16 @@ String _tooltipText({
   required LocalChessTreeBuildProgress? progress,
   required VoidCallback? onOpen,
   required VoidCallback? onBuild,
+  required VoidCallback? onCancel,
   required bool isBuilding,
   required bool isFailed,
 }) {
   if (onOpen != null) return 'Open this database tree in the board explorer';
-  if (isBuilding) return progress?.message ?? 'Building local opening tree';
+  if (isBuilding) {
+    final message = progress?.message ?? 'Building local opening tree';
+    final stop = onCancel == null ? '' : ' Click to stop the build.';
+    return '$message$stop';
+  }
   if (isFailed) {
     final error = progress?.error?.trim();
     if (error != null && error.isNotEmpty) return 'Tree rebuild failed: $error';

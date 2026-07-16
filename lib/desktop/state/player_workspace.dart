@@ -99,6 +99,23 @@ final playerWorkspacePlayerByTabIdProvider = StateProvider<Map<String, String>>(
   (_) => const <String, String>{},
 );
 
+const String _playerWorkspaceRoutePrefix = 'player-workspace:';
+
+String playerWorkspaceRouteSubtitle(String playerId) {
+  return '$_playerWorkspaceRoutePrefix${playerId.trim()}';
+}
+
+String? playerWorkspacePlayerIdFromTab(DesktopTab? tab) {
+  if (tab == null || tab.kind != TabKind.players) return null;
+  final subtitle = tab.subtitle;
+  if (subtitle == null || !subtitle.startsWith(_playerWorkspaceRoutePrefix)) {
+    return null;
+  }
+  final playerId =
+      subtitle.substring(_playerWorkspaceRoutePrefix.length).trim();
+  return playerId.isEmpty ? null : playerId;
+}
+
 /// Opens a Players tab for [player], optionally focusing it. When
 /// [reuseExisting] is true, a tab already hosting this workspace is reused.
 String openPlayerWorkspaceTab(
@@ -129,15 +146,17 @@ String openPlayerWorkspaceTab(
       player.displayName.trim().isEmpty
           ? TabKind.players.defaultTitle
           : player.displayName.trim();
+  final routeSubtitle = playerWorkspaceRouteSubtitle(player.id);
   final String tabId;
   if (existingTabId != null) {
     tabId = existingTabId;
-    tabsNotifier.rename(tabId, title: title);
+    tabsNotifier.rename(tabId, title: title, subtitle: routeSubtitle);
     if (focus) tabsNotifier.activate(tabId);
   } else {
     tabId = tabsNotifier.open(
       TabKind.players,
       title: title,
+      subtitle: routeSubtitle,
       reuseExisting: false,
       focus: focus,
     );
@@ -230,6 +249,9 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   var _combinedRebuildGeneration = 0;
   final Set<String> _activeAccountSyncOperationKeys = <String>{};
   final Set<String> _pendingCombinedRebuildPlayerIds = <String>{};
+  final Set<String> _canceledCombinedPreparationPlayerIds = <String>{};
+  final Map<String, Future<void>> _combinedRebuildFutures =
+      <String, Future<void>>{};
   // The map owns the operation currently allowed to update each UI slot. Keep
   // every superseded scope separately until its own finally block completes:
   // a canceled network/import operation may ignore cancellation for a while,
@@ -277,6 +299,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     }
     _activeAccountSyncOperationKeys.clear();
     _pendingCombinedRebuildPlayerIds.clear();
+    _canceledCombinedPreparationPlayerIds.clear();
     _combinedRebuildGeneration++;
     if (state.operations.isNotEmpty) {
       state = state.copyWith(
@@ -1161,6 +1184,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
                     progress,
                     start: 0,
                     span: _standardDownloadPhaseSpan,
+                    indeterminateWhenNull: true,
                   ),
               cancellationToken: scope.token,
             ),
@@ -1509,6 +1533,81 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     await _rebuildCombinedDatabaseForPlayer(player);
   }
 
+  /// Finishes any source import and Combined rebuild already in flight, or
+  /// starts the missing Combined rebuild, then returns its persisted player.
+  ///
+  /// The Build Tree UI uses this to accept a click while the Combined database
+  /// is still being prepared without canceling or duplicating that work.
+  Future<PlayerWorkspacePlayer?> prepareCombinedDatabaseForTree(
+    String playerId,
+  ) async {
+    _canceledCombinedPreparationPlayerIds.remove(playerId);
+    final inFlightAtClick = _combinedRebuildFutures[playerId];
+    if (inFlightAtClick != null) {
+      await inFlightAtClick;
+      if (_canceledCombinedPreparationPlayerIds.contains(playerId)) return null;
+      final readyPlayer = _playerById(playerId);
+      return readyPlayer != null && _hasReadyCombinedDatabase(readyPlayer)
+          ? readyPlayer
+          : null;
+    }
+    await _initialLoadFuture;
+    if (_canceledCombinedPreparationPlayerIds.contains(playerId)) return null;
+    while (true) {
+      final player = _playerById(playerId);
+      if (player == null || _isPlayerDeleted(playerId)) return null;
+      if (_hasReadyCombinedDatabase(player)) return player;
+
+      final activeRebuild = _combinedRebuildFutures[playerId];
+      if (activeRebuild != null) {
+        await activeRebuild;
+        if (_canceledCombinedPreparationPlayerIds.contains(playerId)) {
+          return null;
+        }
+        final readyPlayer = _playerById(playerId);
+        return readyPlayer != null && _hasReadyCombinedDatabase(readyPlayer)
+            ? readyPlayer
+            : null;
+      }
+
+      final sourceScopes = <_PlayerWorkspaceOperationScope>[
+        for (final scope in _inFlightOperationScopes)
+          if (scope.playerId == playerId &&
+              scope.key != _sourceOperationKey(PlayerWorkspaceSource.combined))
+            scope,
+      ];
+      if (sourceScopes.isNotEmpty) {
+        _pendingCombinedRebuildPlayerIds.add(playerId);
+        _setOperation(
+          _sourceOperationKey(PlayerWorkspaceSource.combined),
+          PlayerWorkspaceSource.combined,
+          'Waiting for source imports to finish...',
+          null,
+        );
+        await Future.wait(sourceScopes.map((scope) => scope.done.future));
+        if (_canceledCombinedPreparationPlayerIds.contains(playerId)) {
+          return null;
+        }
+        continue;
+      }
+
+      if (_canceledCombinedPreparationPlayerIds.contains(playerId)) return null;
+      _pendingCombinedRebuildPlayerIds.remove(playerId);
+      await _rebuildCombinedDatabaseForPlayer(player);
+      final readyPlayer = _playerById(playerId);
+      return readyPlayer != null && _hasReadyCombinedDatabase(readyPlayer)
+          ? readyPlayer
+          : null;
+    }
+  }
+
+  void cancelCombinedDatabasePreparation(String playerId) {
+    _canceledCombinedPreparationPlayerIds.add(playerId);
+    _pendingCombinedRebuildPlayerIds.remove(playerId);
+    _cancelCombinedRebuildForPlayer(playerId);
+    _clearOperation(_sourceOperationKey(PlayerWorkspaceSource.combined));
+  }
+
   Future<void> _drainPendingCombinedRebuilds() async {
     if (_isDrainingCombinedRebuilds) return;
     _isDrainingCombinedRebuilds = true;
@@ -1534,7 +1633,19 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     }
   }
 
-  Future<void> _rebuildCombinedDatabaseForPlayer(
+  Future<void> _rebuildCombinedDatabaseForPlayer(PlayerWorkspacePlayer player) {
+    final active = _combinedRebuildFutures[player.id];
+    if (active != null) return active;
+    final rebuild = _performCombinedDatabaseRebuild(player);
+    _combinedRebuildFutures[player.id] = rebuild;
+    return rebuild.whenComplete(() {
+      if (identical(_combinedRebuildFutures[player.id], rebuild)) {
+        _combinedRebuildFutures.remove(player.id);
+      }
+    });
+  }
+
+  Future<void> _performCombinedDatabaseRebuild(
     PlayerWorkspacePlayer player,
   ) async {
     if (_isPlayerDeleted(player.id)) return;
@@ -1613,6 +1724,14 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     } finally {
       _finishOperationScope(scope);
     }
+  }
+
+  bool _hasReadyCombinedDatabase(PlayerWorkspacePlayer player) {
+    final path = player.combinedPgnPath?.trim();
+    return path != null &&
+        path.isNotEmpty &&
+        player.combinedGameCount > 0 &&
+        File(path).existsSync();
   }
 
   Future<PlayerWorkspaceAccount> _refreshChessEverAccount(
@@ -1773,6 +1892,9 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   }
 
   void _cancelCombinedRebuildForPlayer(String playerId) {
+    // A source change must be allowed to schedule a fresh Combined rebuild
+    // even while the canceled rebuild is still unwinding.
+    _combinedRebuildFutures.remove(playerId);
     final key = _sourceOperationKey(PlayerWorkspaceSource.combined);
     final scopes = <_PlayerWorkspaceOperationScope>[
       for (final scope in _inFlightOperationScopes)
@@ -2216,8 +2338,13 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     double? progress, {
     required double start,
     required double span,
+    bool indeterminateWhenNull = false,
   }) {
     if (!_scopeCanUpdateOperation(scope)) return;
+    if (progress == null && indeterminateWhenNull) {
+      _setOperation(key, source, message, null);
+      return;
+    }
     _setOperationPhaseProgress(
       key,
       source,
@@ -2580,6 +2707,9 @@ String _operationMessageForDisplay(
   // progress ("Chess.com: 1/2 archives done; 42 games received...") must
   // pass through so determinate download UI can show archive progress.
   if (lower.contains('source cache') || lower.contains('source snapshot')) {
+    if (source == PlayerWorkspaceSource.chesscom) {
+      return 'Checking Chess.com source cache...';
+    }
     return 'Downloading ${source.label} games...';
   }
   if (lower.startsWith('importing') ||

@@ -92,6 +92,30 @@ void main() {
     expect(cleared?.selectedPlayers, isEmpty);
   });
 
+  test('local player scope retains configured account-name aliases', () {
+    const chessComAlias = GamebasePlayer(
+      id: 'workspace-chesscom-user-hikaru',
+      fideId: '',
+      name: 'Hikaru',
+      gender: PlayerGender.male,
+      fed: 'USA',
+    );
+    const scope = BoardExplorerScope(
+      player: _player,
+      playerAliases: [chessComAlias],
+    );
+
+    final filters = scope.initialScopedFilters;
+
+    // The remote identity stays canonical, while the local tree receives
+    // both the canonical name and the Chess.com PGN handle to match rows.
+    expect(filters.playerIds, ['gulliyev-id']);
+    expect(filters.selectedPlayers.map((player) => player.name), [
+      'Gulliyev, Namig',
+      'Hikaru',
+    ]);
+  });
+
   test('normal board explorer clears scope applied by another tab', () {
     final container = ProviderContainer();
     addTearDown(container.dispose);

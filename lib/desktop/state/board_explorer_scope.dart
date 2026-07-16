@@ -8,24 +8,38 @@ import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dar
 class BoardExplorerScope {
   const BoardExplorerScope({
     required this.player,
+    this.playerAliases = const <GamebasePlayer>[],
     this.initialFilters = const GamebaseFilters(),
   });
 
   final GamebasePlayer player;
+
+  /// Source-specific names for the same person in a local combined database.
+  ///
+  /// Online PGNs commonly use a handle (for example `Hikaru`) while the
+  /// ChessEver source uses the full player name. These remain name-only
+  /// identities: remote Explorer requests continue to use [player.id].
+  final List<GamebasePlayer> playerAliases;
   final GamebaseFilters initialFilters;
+
+  List<GamebasePlayer> get _scopedPlayers => <GamebasePlayer>[
+    player,
+    ...playerAliases,
+  ];
 
   GamebaseFilters get initialScopedFilters => enforce(initialFilters);
 
   GamebaseFilters enforce(GamebaseFilters filters) {
     return filters.copyWith(
       playerIds: <String>[player.id],
-      selectedPlayers: <GamebasePlayer>[player],
+      selectedPlayers: _scopedPlayers,
     );
   }
 
   String get identityKey {
     return <Object?>[
       player.id,
+      playerAliases.map((player) => '${player.id}:${player.name}').join(','),
       initialFilters.timeControls.map((t) => t.name).join(','),
       initialFilters.minRating,
       initialFilters.maxRating,

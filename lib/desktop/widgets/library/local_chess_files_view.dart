@@ -39,6 +39,14 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/local_pgn_metadata.dart';
 
+/// Commands an embedded [LocalChessFilesView] without moving its filter and
+/// pagination state into the parent toolbar.
+class LocalChessFilesViewController extends ValueNotifier<int> {
+  LocalChessFilesViewController() : super(0);
+
+  void saveVisibleGamesToCloud() => value += 1;
+}
+
 class LocalChessFilesView extends HookConsumerWidget {
   const LocalChessFilesView({
     super.key,
@@ -52,6 +60,9 @@ class LocalChessFilesView extends HookConsumerWidget {
     this.playerAliases = const <String>[],
     this.showCountMeta = true,
     this.showLatestGamesFirst = false,
+    this.showDatabaseHeader = true,
+    this.compactTablePadding = false,
+    this.controller,
     this.openingTreeIndexOverride,
     this.onOpenTreeOverride,
     this.onBuildTreeOverride,
@@ -70,6 +81,16 @@ class LocalChessFilesView extends HookConsumerWidget {
   /// Starts the table on Date descending instead of original file order.
   /// Used by player profiles, where the newest games are the primary view.
   final bool showLatestGamesFirst;
+
+  /// Whether to render the local database name/actions strip. Embedded player
+  /// views already identify the selected source in their own toolbar.
+  final bool showDatabaseHeader;
+
+  /// Pulls the games table closer to the pane edge in embedded layouts.
+  final bool compactTablePadding;
+
+  /// Optional command bridge for toolbar actions owned by an embedding view.
+  final LocalChessFilesViewController? controller;
 
   /// Seeded filters (e.g. from players Overview tap). Applied on first build
   /// and whenever the instance identity / value changes via [useEffect].
@@ -103,6 +124,10 @@ class LocalChessFilesView extends HookConsumerWidget {
     final gameFilter = useState<LocalChessGameFilter>(
       initialFilter ?? LocalChessGameFilter(),
     );
+    final fallbackController = useMemoized(LocalChessFilesViewController.new);
+    useEffect(() => fallbackController.dispose, [fallbackController]);
+    final saveRequest = useValueListenable(controller ?? fallbackController);
+    final handledSaveRequest = useRef(0);
     final sort = useState(
       showLatestGamesFirst
           ? const _LocalGamesSortConfig(
@@ -339,6 +364,13 @@ class LocalChessFilesView extends HookConsumerWidget {
       showDesktopToast(context, outcome.toToastMessage());
     }
 
+    useEffect(() {
+      if (saveRequest <= handledSaveRequest.value) return null;
+      handledSaveRequest.value = saveRequest;
+      unawaited(saveVisible());
+      return null;
+    }, [saveRequest]);
+
     Future<void> pasteIntoLocalDatabase() async {
       final target = selectedDatabase;
       if (target == null) {
@@ -451,34 +483,35 @@ class LocalChessFilesView extends HookConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _LocalHeader(
-                  source: source,
-                  node: node,
-                  showCountMeta: showCountMeta,
-                  onOpenFolder: pickFolder,
-                  onOpenFiles: pickFiles,
-                  onRefresh: () {
-                    if (onRefreshOverride != null) {
-                      unawaited(onRefreshOverride!());
-                      return;
-                    }
-                    unawaited(
-                      ref.read(localChessLibraryProvider.notifier).refresh(),
-                    );
-                  },
-                  onSave: filtered.isEmpty ? null : saveVisible,
-                  treeBuildProgress: treeBuildProgress,
-                  backgroundImportProgress: backgroundImportProgress,
-                  onOpenTree:
-                      openableTreeIndex == null ? null : openDatabaseTree,
-                  onBuildTree:
-                      selectedDatabase == null ||
-                              openableTreeIndex != null ||
-                              isBackgroundImporting
-                          ? null
-                          : rebuildDatabaseTree,
-                  onSelectPath: selectLocalPath,
-                ),
+                if (showDatabaseHeader)
+                  _LocalHeader(
+                    source: source,
+                    node: node,
+                    showCountMeta: showCountMeta,
+                    onOpenFolder: pickFolder,
+                    onOpenFiles: pickFiles,
+                    onRefresh: () {
+                      if (onRefreshOverride != null) {
+                        unawaited(onRefreshOverride!());
+                        return;
+                      }
+                      unawaited(
+                        ref.read(localChessLibraryProvider.notifier).refresh(),
+                      );
+                    },
+                    onSave: filtered.isEmpty ? null : saveVisible,
+                    treeBuildProgress: treeBuildProgress,
+                    backgroundImportProgress: backgroundImportProgress,
+                    onOpenTree:
+                        openableTreeIndex == null ? null : openDatabaseTree,
+                    onBuildTree:
+                        selectedDatabase == null ||
+                                openableTreeIndex != null ||
+                                isBackgroundImporting
+                            ? null
+                            : rebuildDatabaseTree,
+                    onSelectPath: selectLocalPath,
+                  ),
                 if (!isBrowsingFolder)
                   DecoratedBox(
                     decoration: BoxDecoration(
@@ -538,19 +571,20 @@ class LocalChessFilesView extends HookConsumerWidget {
                               },
                             ),
                           ],
-                          const SizedBox(width: 8),
-                          DesktopToolbarCountPill(
-                            key: const ValueKey<String>(
-                              'local-chess-files-loaded-count',
+                          if (query.value.trim().isNotEmpty ||
+                              gameFilter.value.hasActiveFilters) ...[
+                            const SizedBox(width: 8),
+                            DesktopToolbarCountPill(
+                              key: const ValueKey<String>(
+                                'local-chess-files-loaded-count',
+                              ),
+                              label: _localDatabaseCountLabel(
+                                totalFilteredCount: totalFilteredCount,
+                                databaseEntryCount: databaseEntryCount,
+                                isFiltered: true,
+                              ),
                             ),
-                            label: _localDatabaseCountLabel(
-                              totalFilteredCount: totalFilteredCount,
-                              databaseEntryCount: databaseEntryCount,
-                              isFiltered:
-                                  query.value.trim().isNotEmpty ||
-                                  gameFilter.value.hasActiveFilters,
-                            ),
-                          ),
+                          ],
                         ],
                       ),
                     ),
@@ -592,6 +626,7 @@ class LocalChessFilesView extends HookConsumerWidget {
                             virtualRows: databaseRows,
                             pageSize: _kLocalDatabaseGameQueryPageSize,
                             onRequestPage: requestDatabasePage,
+                            compactPadding: compactTablePadding,
                           ),
                 ),
               ],
@@ -1048,6 +1083,7 @@ class _LocalGamesTable extends HookConsumerWidget {
     required this.virtualRows,
     required this.pageSize,
     required this.onRequestPage,
+    required this.compactPadding,
   });
 
   final String databaseTitle;
@@ -1063,6 +1099,7 @@ class _LocalGamesTable extends HookConsumerWidget {
   final _LoadedLocalDatabasePages? virtualRows;
   final int pageSize;
   final ValueChanged<int> onRequestPage;
+  final bool compactPadding;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1070,6 +1107,48 @@ class _LocalGamesTable extends HookConsumerWidget {
     final focusNode = useFocusNode(debugLabel: 'local-pgn-games-table');
     final scheduledPages = useRef<Set<int>>(<int>{});
     final pendingSelectionIndex = useRef<int?>(null);
+    final resizedColumnWidths = useState(<_LocalGamesSortKey, double>{});
+    final headerCellKeys = useMemoized(
+      () => <_LocalGamesSortKey, GlobalKey>{
+        for (final key in _kLocalGameColumnOrder) key: GlobalKey(),
+      },
+    );
+    final columnWidths = _localGamesTableColumnWidths(
+      resizedColumnWidths.value,
+    );
+
+    void startColumnResize(_LocalGamesSortKey key) {
+      if (resizedColumnWidths.value.containsKey(key)) return;
+      final renderObject =
+          headerCellKeys[key]?.currentContext?.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.hasSize) return;
+      resizedColumnWidths.value = <_LocalGamesSortKey, double>{
+        ...resizedColumnWidths.value,
+        key: renderObject.size.width,
+      };
+    }
+
+    void updateColumnResize(_LocalGamesSortKey key, double delta) {
+      final current = resizedColumnWidths.value[key];
+      if (current == null) return;
+      final next = (current + delta).clamp(
+        _localGamesColumnMinWidth(key),
+        2400.0,
+      );
+      if (next == current) return;
+      resizedColumnWidths.value = <_LocalGamesSortKey, double>{
+        ...resizedColumnWidths.value,
+        key: next,
+      };
+    }
+
+    void resetColumnResize(_LocalGamesSortKey key) {
+      if (!resizedColumnWidths.value.containsKey(key)) return;
+      final next = Map<_LocalGamesSortKey, double>.of(
+        resizedColumnWidths.value,
+      )..remove(key);
+      resizedColumnWidths.value = next;
+    }
     final openableTreeIndex =
         database?.openingTreeIndex?.isUsable == true
             ? database!.openingTreeIndex
@@ -1467,7 +1546,10 @@ class _LocalGamesTable extends HookConsumerWidget {
         canRequestFocus: true,
         onKeyEvent: handleTableKey,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+          padding:
+              compactPadding
+                  ? const EdgeInsets.fromLTRB(8, 4, 12, 12)
+                  : const EdgeInsets.fromLTRB(20, 4, 20, 20),
           child: Column(
             children: [
               Expanded(
@@ -1483,6 +1565,12 @@ class _LocalGamesTable extends HookConsumerWidget {
                       _LocalGamesHeaderRow(
                         sort: sort,
                         onSortChange: onSortChange,
+                        columnWidths: columnWidths,
+                        headerCellKeys: headerCellKeys,
+                        resizedColumnWidths: resizedColumnWidths.value,
+                        onResizeStart: startColumnResize,
+                        onResizeUpdate: updateColumnResize,
+                        onResizeReset: resetColumnResize,
                       ),
                       const Divider(height: 1, color: kDividerColor),
                       Expanded(
@@ -1499,7 +1587,10 @@ class _LocalGamesTable extends HookConsumerWidget {
                               final game = gameAt(index);
                               if (game == null) {
                                 requestPageForIndex(index);
-                                return _LocalGamesPlaceholderRow(index: index);
+                                return _LocalGamesPlaceholderRow(
+                                  index: index,
+                                  columnWidths: columnWidths,
+                                );
                               }
                               return _LocalGamesDataRow(
                                 key: ValueKey('local-game-table-${game.id}'),
@@ -1508,6 +1599,7 @@ class _LocalGamesTable extends HookConsumerWidget {
                                 selected: effectiveSelectedIds.contains(
                                   game.id,
                                 ),
+                                columnWidths: columnWidths,
                                 onTapDown: (details) {
                                   final keys =
                                       HardwareKeyboard
@@ -1674,7 +1766,7 @@ String _localDatabaseCountLabel({
   required bool isFiltered,
 }) {
   if (isFiltered) {
-    return '$totalFilteredCount ${totalFilteredCount == 1 ? 'match' : 'matches'}';
+    return '$totalFilteredCount / $databaseEntryCount entries';
   }
   return localChessEntryCountLabel(databaseEntryCount);
 }
@@ -1874,48 +1966,139 @@ List<LocalChessGame> _localGamesForSelection({
   return <LocalChessGame>[games[index]];
 }
 
-// Shared column geometry for the local database table — the header row and
-// every data row must use identical widths/flexes/gaps so columns line up, and
-// it matches the cloud/TWIC library tables' row shape.
+// Shared column geometry for the local database table. Header, loading and
+// data rows all receive the same TableColumnWidth map so resizing never breaks
+// alignment while virtualized pages are loaded.
 const double _kLocalColNumber = 44;
 const double _kLocalColElo = 56;
 const double _kLocalColResult = 56;
 const double _kLocalColEco = 62;
 const double _kLocalColDate = 88;
-const double _kLocalColGap = 12;
+const double _kLocalCellGap = 6;
+
+const List<_LocalGamesSortKey> _kLocalGameColumnOrder = <_LocalGamesSortKey>[
+  _LocalGamesSortKey.originalOrder,
+  _LocalGamesSortKey.white,
+  _LocalGamesSortKey.whiteElo,
+  _LocalGamesSortKey.result,
+  _LocalGamesSortKey.black,
+  _LocalGamesSortKey.blackElo,
+  _LocalGamesSortKey.event,
+  _LocalGamesSortKey.eco,
+  _LocalGamesSortKey.opening,
+  _LocalGamesSortKey.date,
+];
+
+Map<int, TableColumnWidth> _localGamesTableColumnWidths(
+  Map<_LocalGamesSortKey, double> resized,
+) {
+  TableColumnWidth width(
+    _LocalGamesSortKey key,
+    TableColumnWidth defaultWidth,
+  ) {
+    final resizedWidth = resized[key];
+    return resizedWidth == null
+        ? defaultWidth
+        : FixedColumnWidth(resizedWidth);
+  }
+
+  return <int, TableColumnWidth>{
+    0: width(
+      _LocalGamesSortKey.originalOrder,
+      const FixedColumnWidth(_kLocalColNumber),
+    ),
+    1: width(_LocalGamesSortKey.white, const FlexColumnWidth(5)),
+    2: width(
+      _LocalGamesSortKey.whiteElo,
+      const FixedColumnWidth(_kLocalColElo),
+    ),
+    3: width(
+      _LocalGamesSortKey.result,
+      const FixedColumnWidth(_kLocalColResult),
+    ),
+    4: width(_LocalGamesSortKey.black, const FlexColumnWidth(5)),
+    5: width(
+      _LocalGamesSortKey.blackElo,
+      const FixedColumnWidth(_kLocalColElo),
+    ),
+    6: width(_LocalGamesSortKey.event, const FlexColumnWidth(4)),
+    7: width(
+      _LocalGamesSortKey.eco,
+      const FixedColumnWidth(_kLocalColEco),
+    ),
+    8: width(_LocalGamesSortKey.opening, const FlexColumnWidth(4)),
+    9: width(
+      _LocalGamesSortKey.date,
+      const FixedColumnWidth(_kLocalColDate),
+    ),
+  };
+}
+
+double _localGamesColumnMinWidth(_LocalGamesSortKey key) => switch (key) {
+  _LocalGamesSortKey.originalOrder => 36,
+  _LocalGamesSortKey.white || _LocalGamesSortKey.black => 96,
+  _LocalGamesSortKey.whiteElo || _LocalGamesSortKey.blackElo => 48,
+  _LocalGamesSortKey.result => 52,
+  _LocalGamesSortKey.event || _LocalGamesSortKey.opening => 88,
+  _LocalGamesSortKey.eco => 54,
+  _LocalGamesSortKey.date => 82,
+};
+
+EdgeInsets _localGamesCellPadding(int index) => EdgeInsets.only(
+  left: index == 0 ? 0 : _kLocalCellGap,
+  right: index == _kLocalGameColumnOrder.length - 1 ? 0 : _kLocalCellGap,
+);
 
 class _LocalGamesPlaceholderRow extends StatelessWidget {
-  const _LocalGamesPlaceholderRow({required this.index});
+  const _LocalGamesPlaceholderRow({
+    required this.index,
+    required this.columnWidths,
+  });
 
   final int index;
+  final Map<int, TableColumnWidth> columnWidths;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
       decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: kDividerColor, width: 0.5)),
+        border: Border(bottom: BorderSide(color: kDividerColor, width: 1)),
       ),
-      child: Row(
+      child: Table(
+        columnWidths: columnWidths,
+        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
         children: [
-          SizedBox(
-            width: 56,
-            child: Text(
-              '${index + 1}',
-              style: TextStyle(
-                color: kWhiteColor.withValues(alpha: 0.30),
-                fontSize: 11,
-                fontFeatures: [FontFeature.tabularFigures()],
+          TableRow(
+            children: [
+              Padding(
+                padding: _localGamesCellPadding(0),
+                child: Text(
+                  '${index + 1}',
+                  style: TextStyle(
+                    color: kWhiteColor.withValues(alpha: 0.30),
+                    fontSize: 11,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
               ),
-            ),
-          ),
-          Container(
-            width: 180,
-            height: 7,
-            decoration: BoxDecoration(
-              color: kWhiteColor.withValues(alpha: 0.06),
-              borderRadius: BorderRadius.circular(999),
-            ),
+              Padding(
+                padding: _localGamesCellPadding(1),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Container(
+                    width: 120,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: kWhiteColor.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+              ),
+              for (var i = 2; i < _kLocalGameColumnOrder.length; i++)
+                const SizedBox.shrink(),
+            ],
           ),
         ],
       ),
@@ -1924,93 +2107,217 @@ class _LocalGamesPlaceholderRow extends StatelessWidget {
 }
 
 class _LocalGamesHeaderRow extends StatelessWidget {
-  const _LocalGamesHeaderRow({required this.sort, required this.onSortChange});
+  const _LocalGamesHeaderRow({
+    required this.sort,
+    required this.onSortChange,
+    required this.columnWidths,
+    required this.headerCellKeys,
+    required this.resizedColumnWidths,
+    required this.onResizeStart,
+    required this.onResizeUpdate,
+    required this.onResizeReset,
+  });
 
   final _LocalGamesSortConfig sort;
   final ValueChanged<_LocalGamesSortConfig> onSortChange;
+  final Map<int, TableColumnWidth> columnWidths;
+  final Map<_LocalGamesSortKey, GlobalKey> headerCellKeys;
+  final Map<_LocalGamesSortKey, double> resizedColumnWidths;
+  final ValueChanged<_LocalGamesSortKey> onResizeStart;
+  final void Function(_LocalGamesSortKey key, double delta) onResizeUpdate;
+  final ValueChanged<_LocalGamesSortKey> onResizeReset;
 
   @override
   Widget build(BuildContext context) {
-    Widget header(
-      String label,
-      _LocalGamesSortKey key, {
-      Alignment alignment = Alignment.centerLeft,
-    }) {
-      return _LocalHeaderCell(
-        label,
-        sortKey: key,
-        sort: sort,
-        alignment: alignment,
-        onSortChange: onSortChange,
-      );
-    }
+    const cells = <
+      ({String label, _LocalGamesSortKey key, Alignment alignment})
+    >[
+      (
+        label: '#',
+        key: _LocalGamesSortKey.originalOrder,
+        alignment: Alignment.centerRight,
+      ),
+      (
+        label: 'WHITE',
+        key: _LocalGamesSortKey.white,
+        alignment: Alignment.centerLeft,
+      ),
+      (
+        label: 'ELO W',
+        key: _LocalGamesSortKey.whiteElo,
+        alignment: Alignment.centerRight,
+      ),
+      (
+        label: 'RESULT',
+        key: _LocalGamesSortKey.result,
+        alignment: Alignment.center,
+      ),
+      (
+        label: 'BLACK',
+        key: _LocalGamesSortKey.black,
+        alignment: Alignment.centerLeft,
+      ),
+      (
+        label: 'ELO B',
+        key: _LocalGamesSortKey.blackElo,
+        alignment: Alignment.centerRight,
+      ),
+      (
+        label: 'EVENT',
+        key: _LocalGamesSortKey.event,
+        alignment: Alignment.centerLeft,
+      ),
+      (
+        label: 'ECO',
+        key: _LocalGamesSortKey.eco,
+        alignment: Alignment.centerLeft,
+      ),
+      (
+        label: 'OPENING',
+        key: _LocalGamesSortKey.opening,
+        alignment: Alignment.centerLeft,
+      ),
+      (
+        label: 'DATE',
+        key: _LocalGamesSortKey.date,
+        alignment: Alignment.centerRight,
+      ),
+    ];
 
     return Container(
       color: kBlack3Color.withValues(alpha: 0.4),
       padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
-      child: Row(
+      child: Table(
+        columnWidths: columnWidths,
+        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
         children: [
-          SizedBox(
-            width: _kLocalColNumber,
-            child: header(
-              '#',
-              _LocalGamesSortKey.originalOrder,
-              alignment: Alignment.centerRight,
-            ),
+          TableRow(
+            children: [
+              for (var i = 0; i < cells.length; i++)
+                _LocalResizableHeaderCell(
+                  key: headerCellKeys[cells[i].key],
+                  columnKey: cells[i].key,
+                  padding: _localGamesCellPadding(i),
+                  active: resizedColumnWidths.containsKey(cells[i].key),
+                  onDragStart: () => onResizeStart(cells[i].key),
+                  onDragUpdate:
+                      (delta) => onResizeUpdate(cells[i].key, delta),
+                  onReset: () => onResizeReset(cells[i].key),
+                  child: _LocalHeaderCell(
+                    cells[i].label,
+                    sortKey: cells[i].key,
+                    sort: sort,
+                    alignment: cells[i].alignment,
+                    onSortChange: onSortChange,
+                  ),
+                ),
+            ],
           ),
-          const SizedBox(width: _kLocalColGap),
-          Expanded(flex: 5, child: header('WHITE', _LocalGamesSortKey.white)),
-          const SizedBox(width: _kLocalColGap),
-          SizedBox(
-            width: _kLocalColElo,
-            child: header(
-              'ELO W',
-              _LocalGamesSortKey.whiteElo,
-              alignment: Alignment.centerRight,
-            ),
-          ),
-          const SizedBox(width: _kLocalColGap),
-          SizedBox(
-            width: _kLocalColResult,
-            child: header(
-              'RESULT',
-              _LocalGamesSortKey.result,
-              alignment: Alignment.center,
-            ),
-          ),
-          const SizedBox(width: _kLocalColGap),
-          Expanded(flex: 5, child: header('BLACK', _LocalGamesSortKey.black)),
-          const SizedBox(width: _kLocalColGap),
-          SizedBox(
-            width: _kLocalColElo,
-            child: header(
-              'ELO B',
-              _LocalGamesSortKey.blackElo,
-              alignment: Alignment.centerRight,
-            ),
-          ),
-          const SizedBox(width: _kLocalColGap),
-          Expanded(flex: 4, child: header('EVENT', _LocalGamesSortKey.event)),
-          const SizedBox(width: _kLocalColGap),
-          SizedBox(
-            width: _kLocalColEco,
-            child: header('ECO', _LocalGamesSortKey.eco),
-          ),
-          const SizedBox(width: _kLocalColGap),
-          Expanded(
-            flex: 4,
-            child: header('OPENING', _LocalGamesSortKey.opening),
-          ),
-          const SizedBox(width: _kLocalColGap),
-          SizedBox(
-            width: _kLocalColDate,
-            child: header(
-              'DATE',
-              _LocalGamesSortKey.date,
-              alignment: Alignment.centerRight,
+        ],
+      ),
+    );
+  }
+}
+
+class _LocalResizableHeaderCell extends StatelessWidget {
+  const _LocalResizableHeaderCell({
+    super.key,
+    required this.columnKey,
+    required this.padding,
+    required this.active,
+    required this.onDragStart,
+    required this.onDragUpdate,
+    required this.onReset,
+    required this.child,
+  });
+
+  final _LocalGamesSortKey columnKey;
+  final EdgeInsets padding;
+  final bool active;
+  final VoidCallback onDragStart;
+  final ValueChanged<double> onDragUpdate;
+  final VoidCallback onReset;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 22,
+      child: Stack(
+        fit: StackFit.expand,
+        clipBehavior: Clip.none,
+        children: [
+          Padding(padding: padding, child: child),
+          Positioned(
+            top: -10,
+            right: 0,
+            bottom: -10,
+            width: 9,
+            child: _LocalColumnResizeHandle(
+              key: ValueKey<String>(
+                'local-column-resizer-${columnKey.name}',
+              ),
+              active: active,
+              onDragStart: onDragStart,
+              onDragUpdate: onDragUpdate,
+              onReset: onReset,
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _LocalColumnResizeHandle extends StatefulWidget {
+  const _LocalColumnResizeHandle({
+    super.key,
+    required this.active,
+    required this.onDragStart,
+    required this.onDragUpdate,
+    required this.onReset,
+  });
+
+  final bool active;
+  final VoidCallback onDragStart;
+  final ValueChanged<double> onDragUpdate;
+  final VoidCallback onReset;
+
+  @override
+  State<_LocalColumnResizeHandle> createState() =>
+      _LocalColumnResizeHandleState();
+}
+
+class _LocalColumnResizeHandleState extends State<_LocalColumnResizeHandle> {
+  bool _hovered = false;
+  bool _dragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final highlighted = _hovered || _dragging || widget.active;
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onDoubleTap: widget.onReset,
+        onHorizontalDragStart: (_) {
+          widget.onDragStart();
+          setState(() => _dragging = true);
+        },
+        onHorizontalDragUpdate:
+            (details) => widget.onDragUpdate(details.delta.dx),
+        onHorizontalDragEnd: (_) => setState(() => _dragging = false),
+        onHorizontalDragCancel: () => setState(() => _dragging = false),
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 80),
+            width: highlighted ? 2 : 1,
+            color: highlighted ? kPrimaryColor : kDividerColor,
+          ),
+        ),
       ),
     );
   }
@@ -2034,16 +2341,14 @@ class _LocalHeaderCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final active = sort.key == sortKey;
-    final alignEnd = alignment == Alignment.centerRight;
-    final center = alignment == Alignment.center;
     final nextDir =
-        active && sort.dir == _LocalGamesSortDir.asc
+        active
+            ? sort.dir == _LocalGamesSortDir.asc
+                ? _LocalGamesSortDir.desc
+                : _LocalGamesSortDir.asc
+            : sortKey == _LocalGamesSortKey.date
             ? _LocalGamesSortDir.desc
             : _LocalGamesSortDir.asc;
-    final arrow = switch (sort.dir) {
-      _LocalGamesSortDir.asc => Icons.arrow_upward_rounded,
-      _LocalGamesSortDir.desc => Icons.arrow_downward_rounded,
-    };
 
     return DesktopTooltip(
       message: 'Sort by $label',
@@ -2053,37 +2358,15 @@ class _LocalHeaderCell extends StatelessWidget {
         onPress: () => onSortChange(_LocalGamesSortConfig(sortKey, nextDir)),
         child: Align(
           alignment: alignment,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment:
-                alignEnd
-                    ? MainAxisAlignment.end
-                    : center
-                    ? MainAxisAlignment.center
-                    : MainAxisAlignment.start,
-            children: [
-              Flexible(
-                child: Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: active ? kPrimaryColor : kLightGreyColor,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.4,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 3),
-              Icon(
-                active ? arrow : Icons.unfold_more_rounded,
-                size: active ? 10 : 11,
-                color:
-                    active
-                        ? kPrimaryColor
-                        : kWhiteColor.withValues(alpha: 0.35),
-              ),
-            ],
+          child: Text(
+            label,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: active ? kPrimaryColor : kLightGreyColor,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.4,
+            ),
           ),
         ),
       ),
@@ -2097,6 +2380,7 @@ class _LocalGamesDataRow extends StatefulWidget {
     required this.index,
     required this.game,
     required this.selected,
+    required this.columnWidths,
     required this.onTapDown,
     required this.onDoubleTap,
     required this.onSecondaryTapUp,
@@ -2105,6 +2389,7 @@ class _LocalGamesDataRow extends StatefulWidget {
   final int index;
   final LocalChessGame game;
   final bool selected;
+  final Map<int, TableColumnWidth> columnWidths;
   final GestureTapDownCallback onTapDown;
   final VoidCallback onDoubleTap;
   final GestureTapUpCallback onSecondaryTapUp;
@@ -2139,68 +2424,70 @@ class _LocalGamesDataRowState extends State<_LocalGamesDataRow>
             hovered: _hovered,
           ),
           padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
-          child: Row(
+          child: Table(
+            columnWidths: widget.columnWidths,
+            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
             children: [
-              SizedBox(
-                width: _kLocalColNumber,
-                child: _LocalMonoRight('${widget.game.indexInFile + 1}'),
-              ),
-              const SizedBox(width: _kLocalColGap),
-              Expanded(
-                flex: 5,
-                child: LocalGamePlayerCell(
-                  metadata: md,
-                  side: 'White',
-                  padding: EdgeInsets.zero,
-                ),
-              ),
-              const SizedBox(width: _kLocalColGap),
-              SizedBox(
-                width: _kLocalColElo,
-                child: LibraryTableRatingCell(
-                  rating: _ratingText(_rating(md, 'WhiteElo')),
-                ),
-              ),
-              const SizedBox(width: _kLocalColGap),
-              SizedBox(
-                width: _kLocalColResult,
-                child: LibraryTableResultPill(result: _result(md)),
-              ),
-              const SizedBox(width: _kLocalColGap),
-              Expanded(
-                flex: 5,
-                child: LocalGamePlayerCell(
-                  metadata: md,
-                  side: 'Black',
-                  padding: EdgeInsets.zero,
-                ),
-              ),
-              const SizedBox(width: _kLocalColGap),
-              SizedBox(
-                width: _kLocalColElo,
-                child: LibraryTableRatingCell(
-                  rating: _ratingText(_rating(md, 'BlackElo')),
-                ),
-              ),
-              const SizedBox(width: _kLocalColGap),
-              Expanded(
-                flex: 4,
-                child: _LocalCellText(_event(md), color: kWhiteColor),
-              ),
-              const SizedBox(width: _kLocalColGap),
-              SizedBox(
-                width: _kLocalColEco,
-                child: LibraryTableEcoCell(eco: _meta(md, 'ECO')),
-              ),
-              const SizedBox(width: _kLocalColGap),
-              Expanded(
-                flex: 4,
-                child: _LocalCellText(_opening(md), color: kWhiteColor70),
-              ),
-              const SizedBox(width: _kLocalColGap),
-              SizedBox(
-                width: _kLocalColDate,
-                child: _LocalMonoRight(_date(md)),
+              TableRow(
+                children: [
+                  Padding(
+                    padding: _localGamesCellPadding(0),
+                    child: _LocalMonoRight(
+                      '${widget.game.indexInFile + 1}',
+                    ),
+                  ),
+                  Padding(
+                    padding: _localGamesCellPadding(1),
+                    child: LocalGamePlayerCell(
+                      metadata: md,
+                      side: 'White',
+                      padding: EdgeInsets.zero,
+                    ),
+                  ),
+                  Padding(
+                    padding: _localGamesCellPadding(2),
+                    child: LibraryTableRatingCell(
+                      rating: _ratingText(_rating(md, 'WhiteElo')),
+                    ),
+                  ),
+                  Padding(
+                    padding: _localGamesCellPadding(3),
+                    child: LibraryTableResultPill(result: _result(md)),
+                  ),
+                  Padding(
+                    padding: _localGamesCellPadding(4),
+                    child: LocalGamePlayerCell(
+                      metadata: md,
+                      side: 'Black',
+                      padding: EdgeInsets.zero,
+                    ),
+                  ),
+                  Padding(
+                    padding: _localGamesCellPadding(5),
+                    child: LibraryTableRatingCell(
+                      rating: _ratingText(_rating(md, 'BlackElo')),
+                    ),
+                  ),
+                  Padding(
+                    padding: _localGamesCellPadding(6),
+                    child: _LocalCellText(_event(md), color: kWhiteColor),
+                  ),
+                  Padding(
+                    padding: _localGamesCellPadding(7),
+                    child: LibraryTableEcoCell(eco: _meta(md, 'ECO')),
+                  ),
+                  Padding(
+                    padding: _localGamesCellPadding(8),
+                    child: _LocalCellText(
+                      _opening(md),
+                      color: kWhiteColor70,
+                    ),
+                  ),
+                  Padding(
+                    padding: _localGamesCellPadding(9),
+                    child: _LocalMonoRight(_date(md)),
+                  ),
+                ],
               ),
             ],
           ),
@@ -2285,7 +2572,14 @@ String _event(Map<String, dynamic> md) {
 
 String _date(Map<String, dynamic> md) {
   final date = _meta(md, 'Date');
-  if (date.isEmpty || date == '?') return '';
+  if (date.isEmpty ||
+      date == '?' ||
+      date == '-' ||
+      date.contains('?') ||
+      !RegExp(r'^\d{4}').hasMatch(date) ||
+      int.tryParse(date.substring(0, 4)) == 0) {
+    return '';
+  }
   return date;
 }
 

@@ -1,6 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 
-const int localChessDatabaseSchemaVersion = 2;
+const int localChessDatabaseSchemaVersion = 3;
 
 const String localChessDatabasesTable = 'local_chess_databases';
 const String localChessPlayersTable = 'local_chess_players';
@@ -152,6 +152,29 @@ Future<void> createLocalChessDatabaseSchema(DatabaseExecutor db) async {
     )
   ''');
 
+  // CREATE TABLE IF NOT EXISTS does not add columns to an existing table.
+  // Keep these repairs ahead of every index or query that references the
+  // upgrade-added columns so databases created by older app versions migrate
+  // without losing their cached games.
+  await _ensureLocalChessColumn(
+    db,
+    table: localChessDatabasesTable,
+    column: 'content_fingerprint',
+    ddl: 'TEXT',
+  );
+  await _ensureLocalChessColumn(
+    db,
+    table: localChessGamesTable,
+    column: 'time_control_category',
+    ddl: 'TEXT',
+  );
+  await _ensureLocalChessColumn(
+    db,
+    table: localChessGamesTable,
+    column: 'is_online',
+    ddl: 'INTEGER',
+  );
+
   await db.execute(
     'CREATE INDEX IF NOT EXISTS idx_local_chess_games_database ON $localChessGamesTable(database_id)',
   );
@@ -214,4 +237,18 @@ Future<void> createLocalChessDatabaseSchema(DatabaseExecutor db) async {
     'id': 0,
     'name': 'Unknown',
   }, conflictAlgorithm: ConflictAlgorithm.ignore);
+}
+
+Future<void> _ensureLocalChessColumn(
+  DatabaseExecutor db, {
+  required String table,
+  required String column,
+  required String ddl,
+}) async {
+  final columns = await db.rawQuery('PRAGMA table_info($table)');
+  final exists = columns.any(
+    (row) => row['name']?.toString().toLowerCase() == column.toLowerCase(),
+  );
+  if (exists) return;
+  await db.execute('ALTER TABLE $table ADD COLUMN $column $ddl');
 }
