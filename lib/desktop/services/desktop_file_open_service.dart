@@ -15,7 +15,10 @@ class DesktopFileOpenService {
   static const MethodChannel _channel = MethodChannel(
     'chessever.desktop/file_open',
   );
-  static const int _singleInstancePort = 47683;
+  static const int _singleInstancePort = int.fromEnvironment(
+    'CHESSEVER_SINGLE_INSTANCE_PORT',
+    defaultValue: 47683,
+  );
   static const String _newInstanceFlag = '--new-instance';
 
   final _controller = StreamController<List<String>>.broadcast();
