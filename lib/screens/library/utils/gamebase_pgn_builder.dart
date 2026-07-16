@@ -101,6 +101,7 @@ String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
       String? uci;
       String? san;
       final clock = _clockStringFromGamebaseMove(item);
+      final evaluation = _evalStringFromGamebaseMove(item);
 
       if (item is Map) {
         uci = (item['u'] ?? item['uci'])?.toString();
@@ -120,7 +121,7 @@ String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
         final move = position.parseSan(san);
         if (move != null) {
           position = position.play(move);
-          moves.add(_RenderedGamebaseMove(san, clock));
+          moves.add(_RenderedGamebaseMove(san, clock, evaluation));
           continue;
         }
       }
@@ -140,7 +141,7 @@ String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
       final move = NormalMove(from: from, to: to, promotion: promotion);
       final result = position.makeSan(move);
       position = result.$1;
-      moves.add(_RenderedGamebaseMove(result.$2, clock));
+      moves.add(_RenderedGamebaseMove(result.$2, clock, evaluation));
     }
   } catch (_) {
     return null;
@@ -164,8 +165,15 @@ String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
     }
     final move = moves[i];
     sb.write(move.san);
-    if (move.clock != null) {
-      sb.write(' { [%clk ${move.clock}] }');
+    if (move.clock != null || move.evaluation != null) {
+      sb.write(' {');
+      if (move.clock != null) {
+        sb.write(' [%clk ${move.clock}]');
+      }
+      if (move.evaluation != null) {
+        sb.write(' [%eval ${move.evaluation}]');
+      }
+      sb.write(' }');
     }
     sb.write(' ');
   }
@@ -176,10 +184,11 @@ String? buildPgnFromGamebaseData(Map<String, dynamic>? data) {
 }
 
 class _RenderedGamebaseMove {
-  const _RenderedGamebaseMove(this.san, this.clock);
+  const _RenderedGamebaseMove(this.san, this.clock, this.evaluation);
 
   final String san;
   final String? clock;
+  final String? evaluation;
 }
 
 String? _clockStringFromGamebaseMove(Object? item) {
@@ -187,6 +196,13 @@ String? _clockStringFromGamebaseMove(Object? item) {
   final raw = item['ct'] ?? item['clock'] ?? item['clockTime'] ?? item['clk'];
   final clock = raw?.toString().trim();
   return clock == null || clock.isEmpty ? null : clock;
+}
+
+String? _evalStringFromGamebaseMove(Object? item) {
+  if (item is! Map) return null;
+  final raw = item['eval'] ?? item['evaluation'] ?? item['e'];
+  final evaluation = raw?.toString().trim();
+  return evaluation == null || evaluation.isEmpty ? null : evaluation;
 }
 
 /// Checks if a string looks like a UCI move (e.g., "e2e4", "e7e8q")

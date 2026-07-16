@@ -44,8 +44,10 @@ Future<String?> resolveBoardTabPgn({
     final game = await fetchGamebaseGameWithPgn(normalizedGameId);
     if (game != null) {
       final candidates = <String?>[
-        _nonEmpty(buildPgnFromGamebaseData(game.data)),
+        // Prefer the canonical PGN because it can carry comments such as
+        // [%eval] that are not guaranteed to exist in the structured payload.
         _nonEmpty(game.pgn),
+        _nonEmpty(buildPgnFromGamebaseData(game.data)),
       ];
 
       for (final candidate in candidates) {

@@ -31,6 +31,24 @@ void main() {
       ]);
     });
 
+    test('preserves Gamebase move evaluations as PGN eval comments', () {
+      final pgn = buildPgnFromGamebaseData({
+        'md': {'Result': '*'},
+        'm': [
+          {'u': 'e2e4', 'eval': '0.24'},
+          {'u': 'e7e5', 'evaluation': -0.12},
+          {'u': 'g1f3', 'e': '#3'},
+        ],
+      });
+
+      expect(pgn, contains('e4 { [%eval 0.24] }'));
+      expect(pgn, contains('e5 { [%eval -0.12] }'));
+      expect(pgn, contains('Nf3 { [%eval #3] }'));
+
+      final game = ChessGame.fromPgn('gamebase-eval-regression', pgn!);
+      expect(game.mainline.map((move) => move.eval), ['0.24', '-0.12', '#3']);
+    });
+
     test('orders PGN headers before player metadata for ChessBase paste', () {
       final pgn = buildPgnFromGamebaseData({
         'md': {
