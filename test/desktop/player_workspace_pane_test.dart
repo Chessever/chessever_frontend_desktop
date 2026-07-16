@@ -13,6 +13,7 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/local_library_registry.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
+import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
@@ -56,6 +57,74 @@ void main() {
       PlayerWorkspaceSource.combined,
       PlayerWorkspaceSource.manual,
     ]);
+  });
+
+  test('completed ChessEver source uses its imported game count as total', () {
+    const chessEver = PlayerWorkspaceAccount(
+      source: PlayerWorkspaceSource.chessever,
+      username: 'Hikaru Nakamura',
+      pgnPath: 'hikaru.pgn',
+      availableGameCount: 10638,
+      gameCount: 9451,
+    );
+    const lichess = PlayerWorkspaceAccount(
+      source: PlayerWorkspaceSource.lichess,
+      username: 'Hikaru Nakamura',
+      pgnPath: 'hikaru.pgn',
+      availableGameCount: 10638,
+      gameCount: 9451,
+    );
+
+    expect(playerWorkspaceAccountGamesLabel(chessEver), '9,451/9,451 games');
+    expect(playerWorkspaceShowsIdleDownloadProgress(chessEver), isFalse);
+    expect(playerWorkspaceAccountGamesLabel(lichess), '9,451 / 10,638 games');
+    expect(playerWorkspaceShowsIdleDownloadProgress(lichess), isTrue);
+  });
+
+  testWidgets('shell back returns an opened player to the Players list', (
+    tester,
+  ) async {
+    final repository = _PaneFakePlayerWorkspaceRepository();
+    final container = ProviderContainer(
+      overrides: [
+        playerWorkspaceRepositoryProvider.overrideWithValue(repository),
+        _playerWorkspaceOverride(repository),
+      ],
+    );
+    addTearDown(container.dispose);
+    final tabs = container.read(desktopTabsProvider.notifier);
+    final tabId = tabs.open(TabKind.players, reuseExisting: false);
+
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() async => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          home: SizedBox(
+            width: 1200,
+            height: 800,
+            child: PlayerWorkspacePane(tabId: tabId),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Prep Target').first);
+    await tester.pumpAndSettle();
+
+    expect(container.read(desktopTabsProvider).canGoBack, isTrue);
+    expect(find.text('Accounts'), findsOneWidget);
+
+    tabs.goBack();
+    await tester.pumpAndSettle();
+
+    expect(
+      find.widgetWithText(DesktopHeaderActionButton, 'Add player'),
+      findsOneWidget,
+    );
+    expect(find.text('Accounts'), findsNothing);
   });
 
   group('player library row labels', () {
@@ -301,7 +370,151 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('builds and opens the selected Games source tree', (
+  testWidgets(
+    'queues a combined tree build while its database is still preparing',
+    (tester) async {
+      final temp = Directory.systemTemp.createTempSync(
+        'chessever-player-combined-queue-',
+      );
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      final sourcePath = '${temp.path}/lichess.pgn';
+      final combinedPath = '${temp.path}/combined.pgn';
+      File(sourcePath).writeAsStringSync(_paneTestPgn('lichess_user'));
+      File(combinedPath).writeAsStringSync(_paneTestPgn('lichess_user'));
+
+      final repository = _PaneFakePlayerWorkspaceRepository(
+        combinedRebuildPath: combinedPath,
+        snapshot: PlayerWorkspaceSnapshot(
+          players: [
+            PlayerWorkspacePlayer(
+              id: 'player-queued-tree',
+              displayName: 'Queued Tree Player',
+              createdAtMs: 1,
+              accounts: {
+                PlayerWorkspaceSource.lichess: PlayerWorkspaceAccount(
+                  source: PlayerWorkspaceSource.lichess,
+                  username: 'lichess_user',
+                  pgnPath: sourcePath,
+                  gameCount: 1,
+                ),
+              },
+            ),
+          ],
+        ),
+      )..holdCombinedRebuild();
+      final localRepository = _PaneMutableTreeLocalChessDatabaseRepository({
+        sourcePath: 1,
+        combinedPath: 1,
+      });
+      final registry = LocalLibraryRegistryNotifier(_PaneMemoryAppDatabase());
+
+      await tester.binding.setSurfaceSize(const Size(1200, 800));
+      addTearDown(() async => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            playerWorkspaceRepositoryProvider.overrideWithValue(repository),
+            _playerWorkspaceOverride(repository),
+            localChessDatabaseRepositoryProvider.overrideWithValue(
+              localRepository,
+            ),
+            localLibraryRegistryProvider.overrideWith((ref) => registry),
+            localChessLibraryProvider.overrideWith(
+              (ref) => LocalChessLibraryNotifier(
+                localDatabaseRepository: localRepository,
+              ),
+            ),
+          ],
+          child: const MaterialApp(
+            home: _ResponsiveTestHost(
+              child: SizedBox(
+                width: 1200,
+                height: 800,
+                child: PlayerWorkspacePane(),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.text('Queued Tree Player').first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(PlayerWorkspacePane)),
+      );
+      unawaited(
+        container
+            .read(playerWorkspaceProvider.notifier)
+            .rebuildCombinedDatabase(),
+      );
+      await tester.pump();
+      expect(repository.combinedRebuildCalls, 1);
+      await tester.tap(find.text('Build Tree').first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      final queuedBuildButton = find.byKey(
+        const ValueKey('queue-combined-tree-build'),
+      );
+      expect(
+        container.read(playerWorkspaceProvider).isLoading,
+        isFalse,
+        reason: container.read(playerWorkspaceProvider).error,
+      );
+      expect(queuedBuildButton, findsOneWidget);
+      expect(
+        find.descendant(
+          of:
+              find
+                  .ancestor(
+                    of: queuedBuildButton,
+                    matching: find.byType(DecoratedBox),
+                  )
+                  .first,
+          matching: find.byType(CircularProgressIndicator),
+        ),
+        findsWidgets,
+      );
+
+      await tester.tap(queuedBuildButton);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.text('Tree 0%'), findsOneWidget);
+      expect(repository.combinedRebuildCalls, 1);
+      expect(localRepository.indexes, isEmpty);
+
+      final activeCombinedButton = tester.widget<DesktopToolbarPillButton>(
+        queuedBuildButton,
+      );
+      expect(activeCombinedButton.onPress, isNotNull);
+      expect(activeCombinedButton.tooltip, contains('Click to stop'));
+
+      repository.finishCombinedRebuild();
+      await tester.pump();
+      for (
+        var i = 0;
+        i < 20 && !localRepository.indexes.containsKey(combinedPath);
+        i++
+      ) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      expect(repository.combinedRebuildCalls, 1);
+      expect(localRepository.indexes, contains(combinedPath));
+      expect(
+        find.widgetWithText(LocalTreeActionButton, 'Tree'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('Games keeps Build Tree as a tab and owns compact actions', (
     tester,
   ) async {
     final temp = Directory.systemTemp.createTempSync(
@@ -375,29 +588,15 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
 
-    await tester.tap(find.widgetWithText(LocalTreeActionButton, 'Build Tree'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 250));
-
-    expect(localRepository.indexes.keys, contains(lichessPath));
-    final container = ProviderScope.containerOf(
-      tester.element(find.byType(PlayerWorkspacePane)),
-    );
-    final boardTabs = container
-        .read(desktopTabsProvider)
-        .tabs
-        .where((tab) => tab.kind == TabKind.board)
-        .toList(growable: false);
-    expect(boardTabs, hasLength(1));
-    expect(container.read(desktopTabsProvider).activeId, boardTabs.single.id);
+    // The top navigation tab remains; the duplicate database action does not.
+    expect(find.text('Build Tree'), findsOneWidget);
     expect(
-      container
-          .read(boardTabGameArgsByTabIdProvider)[boardTabs.single.id]
-          ?.localOpeningTreeIndex
-          ?.playerId,
-      lichessPath,
+      find.widgetWithText(LocalTreeActionButton, 'Build Tree'),
+      findsNothing,
     );
-    expect(container.read(rightRailActivePageProvider(boardTabs.single.id)), 1);
+    expect(find.text('Open'), findsOneWidget);
+    expect(find.text('Save to cloud'), findsOneWidget);
+    expect(find.text('lichess.pgn'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -780,7 +979,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'sharedhandle');
     await tester.pump();
-    await tester.tap(find.text('Add').last);
+    await tester.tap(find.text('Search').last);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Add 1 username'));
     await tester.pumpAndSettle();
@@ -895,7 +1094,7 @@ Future<void> _pumpAndConnectOnlineAccount(
   await tester.pump();
   expect(tester.takeException(), isNull);
 
-  await tester.tap(find.text('Add').last);
+  await tester.tap(find.text('Search').last);
   await tester.pumpAndSettle();
   expect(tester.takeException(), isNull);
 
@@ -931,6 +1130,7 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   _PaneFakePlayerWorkspaceRepository({
     PlayerWorkspaceSnapshot? snapshot,
     this.chessEverSearchResults = const <GamebasePlayer>[],
+    this.combinedRebuildPath = '/tmp/combined.pgn',
   }) : snapshot =
            snapshot ??
            const PlayerWorkspaceSnapshot(
@@ -945,10 +1145,14 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
 
   PlayerWorkspaceSnapshot snapshot;
   final List<GamebasePlayer> chessEverSearchResults;
+  final String combinedRebuildPath;
   final fideLookupRequests = <String>[];
   Completer<void> onlineDownloadStarted = Completer<void>();
   Completer<void> onlineImportFinished = Completer<void>();
+  Completer<void> combinedRebuildStarted = Completer<void>();
   Completer<void>? _finishOnlineDownload;
+  Completer<void>? _finishCombinedRebuild;
+  int combinedRebuildCalls = 0;
 
   void holdNextOnlineDownload() {
     onlineDownloadStarted = Completer<void>();
@@ -959,6 +1163,16 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   void finishOnlineDownload() {
     _finishOnlineDownload?.complete();
     _finishOnlineDownload = null;
+  }
+
+  void holdCombinedRebuild() {
+    combinedRebuildStarted = Completer<void>();
+    _finishCombinedRebuild = Completer<void>();
+  }
+
+  void finishCombinedRebuild() {
+    _finishCombinedRebuild?.complete();
+    _finishCombinedRebuild = null;
   }
 
   @override
@@ -1123,13 +1337,20 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
+    combinedRebuildCalls++;
     onProgress?.call('Combining and deduplicating games...', 1);
     if (!onlineImportFinished.isCompleted) {
       onlineImportFinished.complete();
     }
-    return const PlayerWorkspaceImportResult(
-      path: '/tmp/combined.pgn',
-      stats: PlayerWorkspaceImportStats(gameCount: 1),
+    if (!combinedRebuildStarted.isCompleted) {
+      combinedRebuildStarted.complete();
+    }
+    final completer = _finishCombinedRebuild;
+    if (completer != null) await completer.future;
+    cancellationToken?.throwIfCanceled();
+    return PlayerWorkspaceImportResult(
+      path: combinedRebuildPath,
+      stats: const PlayerWorkspaceImportStats(gameCount: 1),
     );
   }
 }
@@ -1188,6 +1409,20 @@ class _PaneMutableTreeLocalChessDatabaseRepository
   final Map<String, PlayerOpeningTreeIndex> indexes = {};
 
   @override
+  Future<LocalChessDatabaseResultStats> localDatabaseResultStats({
+    required String databasePath,
+    required Iterable<String> playerAliases,
+    String? playerFideId,
+  }) async {
+    return LocalChessDatabaseResultStats(
+      gameCount: gameCountsByPath[databasePath] ?? 0,
+      winCount: 0,
+      drawCount: 0,
+      lossCount: 0,
+    );
+  }
+
+  @override
   Future<LocalChessSource?> loadFreshSource(
     List<String> paths, {
     String? sourceLabel,
@@ -1236,6 +1471,7 @@ class _PaneMutableTreeLocalChessDatabaseRepository
   rebuildOpeningTreeFromCachedGames({
     required String databasePath,
     LocalChessScanProgressSink? onProgress,
+    OperationCancellationToken? cancellationToken,
   }) async {
     final clean = databasePath.trim();
     final gameCount = gameCountsByPath[clean];

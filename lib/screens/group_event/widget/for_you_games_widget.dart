@@ -22,21 +22,16 @@ import 'package:chessever/widgets/event_card/event_card.dart';
 import 'package:chessever/widgets/generic_error_widget.dart';
 import 'package:chessever/widgets/skeleton_widget.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 
-const ScrollCacheExtent _kForYouCompactCacheExtent = ScrollCacheExtent.viewport(
-  1.5,
-);
-const ScrollCacheExtent _kForYouBoardCacheExtent = ScrollCacheExtent.viewport(
-  1,
-);
+const double _kForYouCompactCacheExtent = 1200;
+const double _kForYouBoardCacheExtent = 500;
 const Duration _kForYouScrollIdleDelay = Duration(milliseconds: 180);
 
-ScrollCacheExtent _forYouCacheExtentForMode(GamesListViewMode mode) {
+double _forYouCacheExtentForMode(GamesListViewMode mode) {
   return mode == GamesListViewMode.gamesCard
       ? _kForYouCompactCacheExtent
       : _kForYouBoardCacheExtent;
@@ -288,7 +283,7 @@ class _ForYouGamesWidgetState extends ConsumerState<ForYouGamesWidget>
         vertical: 16.sp,
       ),
       itemCount: itemCount,
-      scrollCacheExtent: _forYouCacheExtentForMode(viewMode),
+      cacheExtent: _forYouCacheExtentForMode(viewMode),
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       physics: const AlwaysScrollableScrollPhysics(
@@ -359,7 +354,7 @@ class _ForYouGamesWidgetState extends ConsumerState<ForYouGamesWidget>
         vertical: 16.sp,
       ),
       itemCount: itemCount,
-      scrollCacheExtent: _forYouCacheExtentForMode(viewMode),
+      cacheExtent: _forYouCacheExtentForMode(viewMode),
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       physics: const AlwaysScrollableScrollPhysics(

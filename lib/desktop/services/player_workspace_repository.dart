@@ -40,6 +40,7 @@ const int _chessEverEmbeddedPgnBatchSize = 200;
 const int _chessEverHydrateConcurrency = 16;
 const Duration _chessEverHydrationTimeout = Duration(seconds: 20);
 const Duration _importStatsTimeout = Duration(seconds: 8);
+const Duration _chessComGamebaseSourceTimeout = Duration(seconds: 12);
 const double _externalSourceInitialProgress = 0.05;
 const List<double> _sourceSnapshotWaitProgressSteps = <double>[
   0.18,
@@ -749,16 +750,28 @@ class PlayerWorkspaceRepository {
     OperationCancellationToken? cancellationToken,
   }) async {
     cancellationToken?.throwIfCanceled();
-    final exported = await _downloadExternalPlayerPgnExport(
-      externalSource: GamebaseExternalPlayerSource.chesscom,
-      workspaceSource: PlayerWorkspaceSource.chesscom,
-      username: username,
-      sinceMs: sinceMs,
-      onProgress: onProgress,
-      cancellationToken: cancellationToken,
-    );
+    PlayerWorkspaceDownloadedPgn? exported;
+    var useDirectFallback = false;
+    try {
+      exported = await _downloadExternalPlayerPgnExport(
+        externalSource: GamebaseExternalPlayerSource.chesscom,
+        workspaceSource: PlayerWorkspaceSource.chesscom,
+        username: username,
+        sinceMs: sinceMs,
+        onProgress: onProgress,
+        cancellationToken: cancellationToken,
+      );
+    } on DioException catch (error) {
+      if (!_isTransientGamebaseSourceFailure(error)) rethrow;
+      useDirectFallback = true;
+      onProgress?.call(
+        'ChessEver source service is temporarily unavailable. '
+        'Downloading directly from Chess.com...',
+        null,
+      );
+    }
     if (exported != null) return exported;
-    if (_gamebaseRepository != null) {
+    if (_gamebaseRepository != null && !useDirectFallback) {
       throw StateError(
         'Chess.com source export is not available from gamebase.',
       );
@@ -769,7 +782,7 @@ class PlayerWorkspaceRepository {
       'api.chess.com',
       '/pub/player/$clean/games/archives',
     );
-    onProgress?.call('Chess.com: loading monthly archive list...', 0.05);
+    onProgress?.call('Chess.com: loading monthly archive list...', null);
     cancellationToken?.throwIfCanceled();
     final response = await _client.get(
       archivesUri,
@@ -1056,20 +1069,25 @@ class PlayerWorkspaceRepository {
     if (repository == null) return null;
 
     cancellationToken?.throwIfCanceled();
+    final isChessCom = externalSource == GamebaseExternalPlayerSource.chesscom;
     onProgress?.call(
       '${externalSource.label}: checking source cache...',
-      _externalSourceInitialProgress,
+      isChessCom ? null : _externalSourceInitialProgress,
     );
-    final slowSnapshotTimer = _startSourceSnapshotWaitProgress(
-      onProgress: onProgress,
-      label: externalSource.label,
-    );
+    final slowSnapshotTimer =
+        isChessCom
+            ? null
+            : _startSourceSnapshotWaitProgress(
+              onProgress: onProgress,
+              label: externalSource.label,
+            );
     final GamebasePlayerPgnExport? export;
     try {
       export = await repository.getExternalPlayerGamesPgn(
         source: externalSource,
         username: username,
         sinceMs: sinceMs,
+        receiveTimeout: isChessCom ? _chessComGamebaseSourceTimeout : null,
       );
     } finally {
       slowSnapshotTimer?.cancel();
@@ -1373,16 +1391,33 @@ class PlayerWorkspaceRepository {
       cancellationToken: cancellationToken,
     );
     cancellationToken?.throwIfCanceled();
-    final source = await localRepository.importSingleFileSource(
-      path: prepared.path,
-      sourceLabel: '$playerName Combined',
-      cancellationToken: cancellationToken,
-      onProgress:
-          (progress) => onProgress?.call(
-            progress.message,
-            mapPlayerWorkspaceImportWorkerProgress(progress.fraction),
-          ),
-    );
+    onProgress?.call('Indexing combined database...', 0.88);
+    final usedIndexedSources = await localRepository
+        .rebuildCombinedCacheFromCachedSources(
+          combinedPath: prepared.path,
+          sourceLabel: '$playerName Combined',
+          sourcePaths: <String>[for (final input in preparedInputs) input.path],
+          sourceTagsByPath: <String, String>{
+            for (final input in preparedInputs)
+              input.path: input.source.storageKey,
+          },
+          combinedFormatVersion: playerWorkspaceCombinedFormatVersion,
+          expectedGameCount: prepared.stats.gameCount,
+          cancellationToken: cancellationToken,
+        );
+    final source =
+        usedIndexedSources
+            ? null
+            : await localRepository.importSingleFileSource(
+              path: prepared.path,
+              sourceLabel: '$playerName Combined',
+              cancellationToken: cancellationToken,
+              onProgress:
+                  (progress) => onProgress?.call(
+                    progress.message,
+                    mapPlayerWorkspaceImportWorkerProgress(progress.fraction),
+                  ),
+            );
     cancellationToken?.throwIfCanceled();
     onProgress?.call('Finalizing combined database...', 0.99);
     // The freshly imported Combined database is the authoritative union. Its

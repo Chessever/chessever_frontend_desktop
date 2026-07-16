@@ -14,7 +14,7 @@ import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
 import 'package:chessever/desktop/services/local_library_game_updater.dart'
-    show pgnGameRanges;
+    show PgnGameRange, pgnGameRanges;
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
@@ -803,7 +803,9 @@ class _DesktopPositionGamesTableState
       orElse: () => const <String, dynamic>{},
     );
     if (row.isEmpty) return;
-    _openGame(row, focus: focus, continuationStep: continuationStep);
+    unawaited(
+      _openGame(row, focus: focus, continuationStep: continuationStep),
+    );
   }
 
   void _clearPreview() {
@@ -857,7 +859,7 @@ class _DesktopPositionGamesTableState
   void _handleRowTap(Map<String, dynamic> row, {required bool inNewTab}) {
     final id = (row['id']?.toString().trim() ?? '');
     if (inNewTab) {
-      _openGame(row, focus: false);
+      unawaited(_openGame(row, focus: false));
       return;
     }
     final now = DateTime.now();
@@ -869,7 +871,7 @@ class _DesktopPositionGamesTableState
     _lastTappedRowId = id;
     _lastTapAt = now;
     if (doubleClick) {
-      _openGame(row, focus: true);
+      unawaited(_openGame(row, focus: true));
       return;
     }
     _selectRow(row, _rows.indexOf(row));
@@ -905,9 +907,9 @@ class _DesktopPositionGamesTableState
     if (!mounted || action == null) return;
     switch (action) {
       case _PositionGameRowAction.openInNewTab:
-        _openGame(row, focus: false);
+        unawaited(_openGame(row, focus: false));
       case _PositionGameRowAction.openInNewWindow:
-        _openGame(row, inNewWindow: true);
+        unawaited(_openGame(row, inNewWindow: true));
       case _PositionGameRowAction.insertGame:
         await _insertGame(row);
     }
@@ -916,8 +918,16 @@ class _DesktopPositionGamesTableState
   Future<void> _insertGame(Map<String, dynamic> row) async {
     final id = (row['id']?.toString().trim() ?? '');
     if (id.isEmpty) return;
-    var pgn = _pgnForOpenedRow(row);
     try {
+      final openedRow =
+          widget.localOpeningTreeIndex == null
+              ? row
+              : (await compute(
+                _hydrateLocalPgnRowsInBackground,
+                <Map<String, dynamic>>[Map<String, dynamic>.from(row)],
+              )).single;
+      if (!mounted) return;
+      var pgn = (openedRow['pgn']?.toString() ?? '').trim();
       if (!pgnHasMoves(pgn) && widget.localOpeningTreeIndex == null) {
         final gameWithPgn = await ref
             .read(gamebaseRepositoryProvider)
@@ -1092,28 +1102,40 @@ class _DesktopPositionGamesTableState
     });
   }
 
-  void _openGame(
+  Future<void> _openGame(
     Map<String, dynamic> row, {
     bool focus = true,
     bool inNewWindow = false,
     int? continuationStep,
-  }) {
+  }) async {
     final id = (row['id']?.toString().trim() ?? '');
     if (id.isEmpty) return;
-    final whiteName = (row['white']?.toString() ?? '').trim();
-    final blackName = (row['black']?.toString() ?? '').trim();
+    final sourceRows = <Map<String, dynamic>>[
+      for (final current in _rows) Map<String, dynamic>.from(current),
+    ];
+    final openedRows =
+        widget.localOpeningTreeIndex == null
+            ? sourceRows
+            : await compute(_hydrateLocalPgnRowsInBackground, sourceRows);
+    if (!mounted) return;
+    final openedRow = openedRows.firstWhere(
+      (candidate) => (candidate['id']?.toString().trim() ?? '') == id,
+      orElse: () => Map<String, dynamic>.from(row),
+    );
+    final whiteName = (openedRow['white']?.toString() ?? '').trim();
+    final blackName = (openedRow['black']?.toString() ?? '').trim();
     final initialFen = _initialFenForOpenedGame(
-      row,
+      openedRow,
       continuationStep: continuationStep,
     );
-    final databaseGames = _rows
+    final databaseGames = openedRows
         .map((r) => _summaryForOpenedRow(r, fallbackFen: initialFen))
         .where((g) => g.id.trim().isNotEmpty)
         .toList(growable: false);
     final query = _lastSuccessfulQuery ?? _buildQuery(pageNumber: 0);
     final databaseTitle = _databaseTitleForOpenedGame();
     final isLocalRow = widget.localOpeningTreeIndex != null;
-    final pgn = _pgnForOpenedRow(row);
+    final pgn = (openedRow['pgn']?.toString() ?? '').trim();
     if (isLocalRow && !pgnHasMoves(pgn)) {
       _showErrorToast('Could not load local PGN for this game.');
       return;
@@ -1124,20 +1146,20 @@ class _DesktopPositionGamesTableState
       label: '$whiteName vs $blackName',
       whiteName: whiteName,
       blackName: blackName,
-      whiteFederation: (row['whiteFed']?.toString() ?? '').trim(),
-      blackFederation: (row['blackFed']?.toString() ?? '').trim(),
-      whiteTitle: (row['whiteTitle']?.toString() ?? '').trim(),
-      blackTitle: (row['blackTitle']?.toString() ?? '').trim(),
-      whiteRating: _readInt(row['whiteElo']),
-      blackRating: _readInt(row['blackElo']),
-      whiteFideId: _readNullableInt(row['whiteFideId']),
-      blackFideId: _readNullableInt(row['blackFideId']),
+      whiteFederation: (openedRow['whiteFed']?.toString() ?? '').trim(),
+      blackFederation: (openedRow['blackFed']?.toString() ?? '').trim(),
+      whiteTitle: (openedRow['whiteTitle']?.toString() ?? '').trim(),
+      blackTitle: (openedRow['blackTitle']?.toString() ?? '').trim(),
+      whiteRating: _readInt(openedRow['whiteElo']),
+      blackRating: _readInt(openedRow['blackElo']),
+      whiteFideId: _readNullableInt(openedRow['whiteFideId']),
+      blackFideId: _readNullableInt(openedRow['blackFideId']),
       fenSeed: initialFen,
       initialFen: initialFen,
       databaseTitle: databaseTitle,
       databaseGames:
           databaseGames.isEmpty
-              ? [_summaryForOpenedRow(row, fallbackFen: initialFen)]
+              ? [_summaryForOpenedRow(openedRow, fallbackFen: initialFen)]
               : databaseGames,
       databaseGamesPagination: BoardTabDatabaseGamesPagination(
         query: gamebasePositionGamesQueryWithPage(query, 0),
@@ -1150,7 +1172,7 @@ class _DesktopPositionGamesTableState
       localOpeningTreeIndex: widget.localOpeningTreeIndex,
       localOpeningTreeTitle: widget.localOpeningTreeTitle,
       gameListSelectedId: id,
-      librarySaveOrigin: _localLibrarySaveOriginForRow(row),
+      librarySaveOrigin: _localLibrarySaveOriginForRow(openedRow),
     );
     if (inNewWindow) {
       unawaited(openBoardGameWindow(ref, args));
@@ -1166,14 +1188,6 @@ class _DesktopPositionGamesTableState
     );
   }
 
-  String _pgnForOpenedRow(Map<String, dynamic> row) {
-    final inline = (row['pgn']?.toString() ?? '').trim();
-    if (pgnHasMoves(inline) || widget.localOpeningTreeIndex == null) {
-      return inline;
-    }
-    return _readLocalPgnForRow(row);
-  }
-
   TournamentGameSummary _summaryForOpenedRow(
     Map<String, dynamic> row, {
     required String fallbackFen,
@@ -1186,53 +1200,11 @@ class _DesktopPositionGamesTableState
     // row's PGN and source coordinates in its lightweight summary so selecting
     // a different row can replace the Board tab without trying to hydrate the
     // local id from Supabase/Gamebase.
-    final pgn = _pgnForOpenedRow(row);
+    final pgn = (row['pgn']?.toString() ?? '').trim();
     return gamebasePositionGameSummaryFromRow(<String, dynamic>{
       ...row,
       if (pgn.isNotEmpty) 'pgn': pgn,
     }, fallbackFen: fallbackFen);
-  }
-
-  String _readLocalPgnForRow(Map<String, dynamic> row) {
-    final sourcePath = (row['sourcePath']?.toString() ?? '').trim();
-    if (sourcePath.isEmpty) return '';
-
-    final start = _readOptionalInt(row['sourceByteStart']);
-    final end = _readOptionalInt(row['sourceByteEnd']);
-    if (start != null && end != null && start >= 0 && end > start) {
-      try {
-        final file = io.File(sourcePath);
-        final raf = file.openSync();
-        try {
-          raf.setPositionSync(start);
-          return utf8
-              .decode(raf.readSync(end - start), allowMalformed: true)
-              .trim();
-        } finally {
-          raf.closeSync();
-        }
-      } on Object {
-        return '';
-      }
-    }
-
-    final indexInFile = _readOptionalInt(row['indexInFile']);
-    if (indexInFile == null || indexInFile < 0) return '';
-    try {
-      final text = io.File(sourcePath).readAsStringSync();
-      final ranges = pgnGameRanges(text);
-      final fileGameCount = _readOptionalInt(row['fileGameCount']);
-      if (fileGameCount != null &&
-          fileGameCount > 0 &&
-          ranges.length != fileGameCount) {
-        return '';
-      }
-      if (indexInFile >= ranges.length) return '';
-      final range = ranges[indexInFile];
-      return text.substring(range.start, range.end).trim();
-    } on Object {
-      return '';
-    }
   }
 
   String _initialFenForOpenedGame(
@@ -2477,6 +2449,79 @@ class _Empty extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Hydrates local PGN rows away from Flutter's UI isolate.
+///
+/// Current cache rows normally have a byte range, while older rows may only
+/// have a game ordinal. The legacy path intentionally caches each parsed source
+/// file so opening one table page never rereads and reparses the same large PGN
+/// once per visible row.
+List<Map<String, dynamic>> _hydrateLocalPgnRowsInBackground(
+  List<Map<String, dynamic>> rows,
+) {
+  final legacySources = <String, ({String text, List<PgnGameRange> ranges})>{};
+  final hydratedRows = <Map<String, dynamic>>[];
+  for (final row in rows) {
+    final hydrated = Map<String, dynamic>.from(row);
+    final inline = (hydrated['pgn']?.toString() ?? '').trim();
+    if (pgnHasMoves(inline)) {
+      hydratedRows.add(hydrated);
+      continue;
+    }
+
+    final sourcePath = (hydrated['sourcePath']?.toString() ?? '').trim();
+    if (sourcePath.isEmpty) {
+      hydratedRows.add(hydrated);
+      continue;
+    }
+
+    final start = _readOptionalInt(hydrated['sourceByteStart']);
+    final end = _readOptionalInt(hydrated['sourceByteEnd']);
+    if (start != null && end != null && start >= 0 && end > start) {
+      try {
+        final file = io.File(sourcePath);
+        final raf = file.openSync();
+        try {
+          raf.setPositionSync(start);
+          final pgn = utf8
+              .decode(raf.readSync(end - start), allowMalformed: true)
+              .trim();
+          if (pgn.isNotEmpty) hydrated['pgn'] = pgn;
+        } finally {
+          raf.closeSync();
+        }
+      } on Object {
+        // The caller reports an unavailable local PGN without crashing.
+      }
+      hydratedRows.add(hydrated);
+      continue;
+    }
+
+    final indexInFile = _readOptionalInt(hydrated['indexInFile']);
+    if (indexInFile != null && indexInFile >= 0) {
+      try {
+        final source = legacySources.putIfAbsent(sourcePath, () {
+          final text = io.File(sourcePath).readAsStringSync();
+          return (text: text, ranges: pgnGameRanges(text));
+        });
+        final fileGameCount = _readOptionalInt(hydrated['fileGameCount']);
+        final countMatches =
+            fileGameCount == null ||
+            fileGameCount <= 0 ||
+            source.ranges.length == fileGameCount;
+        if (countMatches && indexInFile < source.ranges.length) {
+          final range = source.ranges[indexInFile];
+          final pgn = source.text.substring(range.start, range.end).trim();
+          if (pgn.isNotEmpty) hydrated['pgn'] = pgn;
+        }
+      } on Object {
+        // The caller reports an unavailable local PGN without crashing.
+      }
+    }
+    hydratedRows.add(hydrated);
+  }
+  return hydratedRows;
 }
 
 int _readInt(dynamic value) {
