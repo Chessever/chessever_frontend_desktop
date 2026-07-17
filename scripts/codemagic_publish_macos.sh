@@ -37,6 +37,10 @@ cd "$REPO_ROOT"
 require_command codesign
 require_command dart
 require_command ditto
+require_command file
+require_command lipo
+require_command nm
+require_command otool
 require_command python3
 require_command rsync
 require_command ssh
@@ -145,6 +149,34 @@ print(f"Validated desktop_updater archive contract: {len(listed)} hashed files")
 PY
 }
 
+validate_versioned_frameworks() {
+  local frameworks_dir="$1"
+  [ -d "$frameworks_dir" ] || die "missing macOS Frameworks directory at $frameworks_dir"
+
+  local framework
+  local current
+  local plist
+  local executable
+  for framework in "$frameworks_dir"/*.framework; do
+    [ -d "$framework/Versions" ] || continue
+    current="$framework/Versions/Current"
+    [ -L "$current" ] || die "missing Versions/Current symlink in $framework"
+    [ -d "$current" ] || die "broken Versions/Current symlink in $framework"
+
+    plist="$current/Resources/Info.plist"
+    [ -f "$plist" ] || die "missing framework Info.plist at $plist"
+    executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist" 2>/dev/null || true)"
+    [ -n "$executable" ] || die "missing CFBundleExecutable in $plist"
+    [ -L "$framework/$executable" ] || die "missing framework executable symlink at $framework/$executable"
+    [ -x "$framework/$executable" ] || die "framework executable is not runnable at $framework/$executable"
+
+    if [ -d "$current/Resources" ]; then
+      [ -L "$framework/Resources" ] || die "missing Resources symlink in $framework"
+      [ -d "$framework/Resources" ] || die "broken Resources symlink in $framework"
+    fi
+  done
+}
+
 VERSION_RAW="$(awk '/^version:/{print $2; exit}' pubspec.yaml)"
 [ -n "$VERSION_RAW" ] || die "unable to read version from pubspec.yaml"
 VERSION="${VERSION_RAW%%+*}"
@@ -165,6 +197,17 @@ EXPECTED_DART_DEFINE_KEYS="$(expected_dart_define_keys)"
 
 APP="dist/${BUILD}/${PACKAGE_NAME}-${RELEASE_VERSION}-macos/${PACKAGE_NAME}.app"
 [ -d "$APP" ] || die "missing desktop_updater release app at $APP"
+validate_versioned_frameworks "$APP/Contents/Frameworks"
+
+RESQLITE_FRAMEWORK="$APP/Contents/Frameworks/resqlite.framework"
+RESQLITE_BIN="$RESQLITE_FRAMEWORK/resqlite"
+[ -d "$RESQLITE_FRAMEWORK" ] || die "missing resqlite.framework from macOS app"
+[ -L "$RESQLITE_BIN" ] || die "missing resqlite framework launcher at $RESQLITE_BIN"
+[ -x "$RESQLITE_BIN" ] || die "resqlite framework launcher is not executable at $RESQLITE_BIN"
+file "$RESQLITE_BIN"
+lipo -info "$RESQLITE_BIN"
+nm -gU "$RESQLITE_BIN" | grep -q '_resqlite_open' || die "resqlite_open is not exported"
+otool -L "$RESQLITE_BIN"
 
 require_env APP_STORE_CONNECT_KEY_IDENTIFIER
 require_env APP_STORE_CONNECT_ISSUER_ID

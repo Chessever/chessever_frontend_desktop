@@ -3,12 +3,156 @@ import FlutterMacOS
 
 public class DesktopUpdaterPlugin: NSObject, FlutterPlugin {
     public static func register(with registrar: FlutterPluginRegistrar) {
+        repairInstalledVersionedFrameworks()
         let channel = FlutterMethodChannel(
             name: "desktop_updater",
             binaryMessenger: registrar.messenger
         )
         let instance = DesktopUpdaterPlugin()
         registrar.addMethodCallDelegate(instance, channel: channel)
+    }
+
+    /// The release archive intentionally contains regular files only, so an
+    /// older updater can install a new version without the launcher symlinks
+    /// used by macOS versioned frameworks. Repairing at plugin registration
+    /// makes the first launch of the next release self-heal before Dart first
+    /// resolves a native asset such as resqlite.framework/resqlite.
+    private static func repairInstalledVersionedFrameworks() {
+        let frameworksURL = Bundle.main.bundleURL
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("Frameworks", isDirectory: true)
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: frameworksURL.path) else {
+            return
+        }
+
+        do {
+            let frameworks = try fileManager.contentsOfDirectory(
+                at: frameworksURL,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+            for frameworkURL in frameworks where frameworkURL.pathExtension == "framework" {
+                do {
+                    try repairVersionedFramework(
+                        at: frameworkURL,
+                        fileManager: fileManager
+                    )
+                } catch {
+                    NSLog(
+                        "desktop_updater: unable to repair %@: %@",
+                        frameworkURL.lastPathComponent,
+                        error.localizedDescription
+                    )
+                }
+            }
+        } catch {
+            NSLog(
+                "desktop_updater: unable to inspect versioned frameworks: %@",
+                error.localizedDescription
+            )
+        }
+    }
+
+    private static func repairVersionedFramework(
+        at frameworkURL: URL,
+        fileManager: FileManager
+    ) throws {
+        let versionsURL = frameworkURL.appendingPathComponent(
+            "Versions",
+            isDirectory: true
+        )
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(
+            atPath: versionsURL.path,
+            isDirectory: &isDirectory
+        ), isDirectory.boolValue else {
+            return
+        }
+
+        let candidates = try fileManager.contentsOfDirectory(
+            at: versionsURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ).filter { candidate in
+            guard candidate.lastPathComponent != "Current" else {
+                return false
+            }
+            let values = try? candidate.resourceValues(forKeys: [.isDirectoryKey])
+            return values?.isDirectory == true
+        }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        guard let versionURL = candidates.first else {
+            return
+        }
+
+        let currentURL = versionsURL.appendingPathComponent("Current")
+        try ensureSymbolicLink(
+            at: currentURL,
+            destination: versionURL.lastPathComponent,
+            fileManager: fileManager
+        )
+
+        let resourcesURL = versionURL.appendingPathComponent(
+            "Resources",
+            isDirectory: true
+        )
+        if fileManager.fileExists(atPath: resourcesURL.path) {
+            try ensureSymbolicLink(
+                at: frameworkURL.appendingPathComponent("Resources"),
+                destination: "Versions/Current/Resources",
+                fileManager: fileManager
+            )
+        }
+
+        let executable = frameworkExecutableName(
+            frameworkURL: frameworkURL,
+            resourcesURL: resourcesURL
+        )
+        let executableURL = versionURL.appendingPathComponent(executable)
+        if fileManager.fileExists(atPath: executableURL.path) {
+            try ensureSymbolicLink(
+                at: frameworkURL.appendingPathComponent(executable),
+                destination: "Versions/Current/\(executable)",
+                fileManager: fileManager
+            )
+        }
+    }
+
+    private static func frameworkExecutableName(
+        frameworkURL: URL,
+        resourcesURL: URL
+    ) -> String {
+        let plistURL = resourcesURL.appendingPathComponent("Info.plist")
+        if
+            let data = try? Data(contentsOf: plistURL),
+            let plist = try? PropertyListSerialization.propertyList(
+                from: data,
+                options: [],
+                format: nil
+            ) as? [String: Any],
+            let executable = plist["CFBundleExecutable"] as? String,
+            !executable.isEmpty
+        {
+            return executable
+        }
+        return frameworkURL.deletingPathExtension().lastPathComponent
+    }
+
+    private static func ensureSymbolicLink(
+        at linkURL: URL,
+        destination: String,
+        fileManager: FileManager
+    ) throws {
+        if fileManager.fileExists(atPath: linkURL.path) {
+            return
+        }
+        if (try? fileManager.destinationOfSymbolicLink(atPath: linkURL.path)) != nil {
+            try fileManager.removeItem(at: linkURL)
+        }
+        try fileManager.createSymbolicLink(
+            atPath: linkURL.path,
+            withDestinationPath: destination
+        )
     }
 
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -139,6 +283,63 @@ public class DesktopUpdaterPlugin: NSObject, FlutterPlugin {
           fi
           rm -rf "$STAGING"
         fi
+
+        # BEGIN DESKTOP_UPDATER_FRAMEWORK_REPAIR
+        ensure_symlink() {
+          target="$1"
+          link="$2"
+          if [ -L "$link" ] && [ ! -e "$link" ]; then
+            rm -f "$link"
+          fi
+          if [ -e "$link" ] || [ -L "$link" ]; then
+            return 0
+          fi
+          ln -s "$target" "$link"
+        }
+
+        repair_versioned_frameworks() {
+          frameworks="$TARGET/Frameworks"
+          [ -d "$frameworks" ] || return 0
+
+          for framework in "$frameworks"/*.framework; do
+            [ -d "$framework/Versions" ] || continue
+
+            version=""
+            for candidate in "$framework"/Versions/*; do
+              [ -d "$candidate" ] || continue
+              [ "$(basename "$candidate")" = "Current" ] && continue
+              version="$candidate"
+              break
+            done
+            [ -n "$version" ] || continue
+
+            version_name="$(basename "$version")"
+            ensure_symlink "$version_name" "$framework/Versions/Current"
+
+            current="$framework/Versions/Current"
+            [ -d "$current" ] || continue
+            if [ -d "$current/Resources" ]; then
+              ensure_symlink "Versions/Current/Resources" "$framework/Resources"
+            fi
+
+            executable=""
+            plist="$current/Resources/Info.plist"
+            if [ -f "$plist" ] && [ -x /usr/libexec/PlistBuddy ]; then
+              executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist" 2>/dev/null || true)"
+            fi
+            if [ -z "$executable" ]; then
+              executable="$(basename "$framework" .framework)"
+            fi
+            if [ -e "$current/$executable" ]; then
+              ensure_symlink "Versions/Current/$executable" "$framework/$executable"
+            fi
+          done
+        }
+        # END DESKTOP_UPDATER_FRAMEWORK_REPAIR
+
+        # desktop_updater archives contain regular files only. Recreate the
+        # standard versioned-framework launchers before dyld starts the app.
+        repair_versioned_frameworks
 
         restore_execute_bits() {
           chmod +x "$TARGET/MacOS"/* 2>/dev/null || true

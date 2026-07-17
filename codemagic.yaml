@@ -39,6 +39,9 @@ workflows:
       - name: Get Flutter packages
         script: |
           flutter pub get
+      - name: Test macOS updater framework repair
+        script: |
+          bash ./scripts/test_macos_updater_framework_repair.sh
       - name: Install CocoaPods dependencies
         script: |
           find . -name "Podfile" -execdir pod install \;
@@ -145,6 +148,9 @@ workflows:
       - name: Get Flutter packages
         script: |
           flutter pub get
+      - name: Test macOS updater framework repair
+        script: |
+          bash ./scripts/test_macos_updater_framework_repair.sh
       - name: Install CocoaPods dependencies
         script: |
           find . -name "Podfile" -execdir pod install \;
