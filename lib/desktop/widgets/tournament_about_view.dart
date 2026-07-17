@@ -402,7 +402,10 @@ class _DetailsPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final rows = <Widget>[
       if (about.hasPlayers)
-        _DetailRow(title: 'Players', description: about.players.join(', ')),
+        _DetailRow(
+          title: 'Top rated players',
+          description: about.players.join(', '),
+        ),
       if (about.hasTimeControl)
         _DetailRow(title: 'Time Control', description: about.timeControl),
       if (about.hasDate) _DetailRow(title: 'Date', description: about.date),
