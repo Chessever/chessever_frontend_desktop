@@ -12,7 +12,6 @@ import 'package:chessever/desktop/widgets/tournament_category_switcher.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart';
 import 'package:chessever/desktop/widgets/tournament_standings_view.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
-import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -41,32 +40,35 @@ class TournamentDetailPane extends HookConsumerWidget {
     // tournament changes — re-point the mobile broadcast provider at the
     // newly focused tournament so the rounds/games/standings chain
     // recomputes for it.
-    ref.listen<GroupEventCardModel?>(tournamentForTabProvider(tabId), (
-      prev,
-      next,
-    ) {
-      if (next == null || next.id == prev?.id) return;
-      ref.read(selectedBroadcastModelProvider.notifier).state = GroupBroadcast(
-        id: next.id,
-        createdAt: DateTime.now(),
-        name: next.title,
-        search: const <String>[],
-      );
-    });
+    useEffect(() {
+      final next = tournament;
+      if (next == null) return null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        final selected = ref.read(selectedBroadcastModelProvider);
+        if (selected?.id == next.id) return;
+        ref.read(selectedBroadcastModelProvider.notifier).state = GroupBroadcast(
+          id: next.id,
+          createdAt: DateTime.now(),
+          name: next.title,
+          search: const <String>[],
+        );
+      });
+      return null;
+    }, [tournament?.id]);
 
     // Refocus the body when the segment switches so keyboard scroll keeps
     // working after the user clicks Games / About / Standings (each segment
     // tear-down would otherwise leave focus on a now-disposed descendant).
-    ref.listen<TournamentDetailSegment>(
-      tournamentDetailSegmentByTabIdProvider(tabId),
-      (_, __) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (bodyFocusNode.canRequestFocus) {
-            bodyFocusNode.requestFocus();
-          }
-        });
-      },
-    );
+    useEffect(() {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        if (bodyFocusNode.canRequestFocus) {
+          bodyFocusNode.requestFocus();
+        }
+      });
+      return null;
+    }, [segment]);
 
     if (tournament == null) {
       return const _EmptyState();

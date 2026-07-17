@@ -42,6 +42,7 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/round_orderin
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
+import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
     show pgnHasMoves;
 import 'package:chessever/theme/app_theme.dart';
@@ -200,33 +201,25 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
   }
 
+  Future<void> _retryTournamentGames() async {
+    if (!mounted) return;
+    final canonicalTourId =
+        ref.read(tourDetailScreenProvider).valueOrNull?.aboutTourModel.id.trim();
+    if (canonicalTourId == null || canonicalTourId.isEmpty) return;
+
+    setState(() => _lastStableGrouped = null);
+    try {
+      await Future.wait<void>([
+        ref.read(gamesTourProvider(canonicalTourId).notifier).retry(),
+        ref.read(gamesAppBarRetryProvider)(),
+      ]);
+    } catch (error) {
+      debugPrint('Tournament games retry failed: $error');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    ref.listen<AsyncValue<GamesScreenModel>>(gamesTourScreenProvider, (
-      previous,
-      next,
-    ) {
-      final query =
-          ref
-              .read(tournamentDetailGamesSearchByTabIdProvider(widget.tabId))
-              .trim();
-      if (query.isEmpty) return;
-
-      final model = next.valueOrNull;
-      if (model == null) return;
-      if (model.isSearchMode && model.searchQuery == query) {
-        _searchReplayInFlight = null;
-        return;
-      }
-      if (_searchReplayInFlight == query) return;
-
-      _searchReplayInFlight = query;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        ref.read(gamesTourScreenProvider.notifier).searchGamesEnhanced(query);
-      });
-    });
-
     final watchedGrouped = ref.watch(gamesTourGroupedProvider);
     final persistedQuery =
         ref
@@ -234,6 +227,22 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
             .trim();
     final screenModel = ref.watch(gamesTourScreenProvider).valueOrNull;
     final gamesTourMode = ref.watch(gamesTourScreenModeProvider).valueOrNull;
+    if (persistedQuery.isEmpty) {
+      _searchReplayInFlight = null;
+    } else if (screenModel != null) {
+      if (screenModel.isSearchMode &&
+          screenModel.searchQuery == persistedQuery) {
+        _searchReplayInFlight = null;
+      } else if (_searchReplayInFlight != persistedQuery) {
+        _searchReplayInFlight = persistedQuery;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          ref
+              .read(gamesTourScreenProvider.notifier)
+              .searchGamesEnhanced(persistedQuery);
+        });
+      }
+    }
     final isRestoringSearch =
         persistedQuery.isNotEmpty &&
         !(screenModel?.isSearchMode == true &&
@@ -350,17 +359,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
         if (grouped.loadError != null)
           Expanded(
             child: TournamentGamesLoadError(
-              onRetry: () {
-                setState(() => _lastStableGrouped = null);
-                unawaited(
-                  Future.wait<void>([
-                    ref
-                        .read(gamesTourProvider(widget.tournamentId).notifier)
-                        .retry(),
-                    ref.read(gamesAppBarRetryProvider)(),
-                  ]),
-                );
-              },
+              onRetry: () => unawaited(_retryTournamentGames()),
             ),
           )
         else if ((watchedGrouped.isLoading || isRestoringSearch) &&

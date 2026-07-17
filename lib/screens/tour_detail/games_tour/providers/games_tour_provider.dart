@@ -128,6 +128,7 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
       }
     } catch (error, stackTrace) {
       if (mounted) {
+        debugPrint('GamesTourNotifier: initial load failed for $tourId: $error');
         state = AsyncValue.error(error, stackTrace);
       }
     }

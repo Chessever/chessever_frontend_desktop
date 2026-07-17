@@ -35,7 +35,7 @@ void main() {
     expect(find.text('Retry'), findsOneWidget);
 
     await tester.tap(find.text('Retry'));
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
 
     expect(retryCount, 1);
   });

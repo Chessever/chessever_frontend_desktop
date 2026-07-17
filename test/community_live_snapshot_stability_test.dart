@@ -294,6 +294,26 @@ void main() {
     expect(round6.roundStatus, RoundStatus.live);
   });
 
+  test('initial round reconciliation remains mutable for app-bar sorting', () {
+    const round = GamesAppBarModel(
+      id: 'round-1',
+      name: 'Round 1',
+      startsAt: null,
+      roundStatus: RoundStatus.ongoing,
+      sourceRoundIds: <String>['round-1'],
+    );
+    final merged = mergePublishedRoundModels(
+      previous: const <GamesAppBarModel>[],
+      incoming: const <GamesAppBarModel>[round],
+    );
+
+    expect(() {
+      merged.clear();
+      merged.add(round);
+    }, returnsNormally);
+    expect(merged.single.id, 'round-1');
+  });
+
   test(
     'round cache retains live rows and prunes only after bounded misses',
     () {
