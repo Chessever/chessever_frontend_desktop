@@ -14,6 +14,23 @@ final liveGameCardsPausedProvider = Provider<bool>(
   (ref) => ref.watch(liveGameCardsPauseReasonsProvider).isNotEmpty,
 );
 
+const Duration kTournamentGamesRequestTimeout = Duration(seconds: 10);
+
+@visibleForTesting
+Future<List<Games>> loadInitialTournamentGames({
+  required Future<List<Games>> Function() readCachedGames,
+  required Future<List<Games>> Function() fetchFreshGames,
+  bool useCache = true,
+  Duration timeout = kTournamentGamesRequestTimeout,
+}) async {
+  if (useCache) {
+    final cachedGames = await readCachedGames();
+    if (cachedGames.isNotEmpty) return cachedGames;
+  }
+
+  return fetchFreshGames().timeout(timeout);
+}
+
 void setLiveGameCardsPaused(
   WidgetRef ref, {
   required String reason,
@@ -85,11 +102,20 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
   ProviderSubscription? _shouldStreamListener;
   Timer? _refreshTimer;
   bool _refreshLoopActive = false;
+  bool _refreshInFlight = false;
 
-  Future<void> _loadInitialGames() async {
+  Future<void> _loadInitialGames({bool forceRefresh = false}) async {
     try {
       final gamesLocalStorageProvider = ref.read(gamesLocalStorage);
-      final games = await gamesLocalStorageProvider.fetchAndSaveGames(tourId);
+      final games = await loadInitialTournamentGames(
+        readCachedGames: () => gamesLocalStorageProvider.getCachedGames(tourId),
+        fetchFreshGames:
+            () => gamesLocalStorageProvider.fetchAndSaveGames(
+              tourId,
+              forceRefresh: forceRefresh,
+            ),
+        useCache: !forceRefresh,
+      );
 
       if (mounted) {
         state = AsyncValue.data(games);
@@ -178,7 +204,8 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
   }
 
   Future<void> _checkForNewGames() async {
-    if (!mounted) return;
+    if (!mounted || _refreshInFlight) return;
+    _refreshInFlight = true;
     try {
       final currentGames = state.valueOrNull;
       if (currentGames == null) return;
@@ -233,6 +260,8 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
     } catch (error, _) {
       if (!mounted) return;
       debugPrint('🔥 GamesTourNotifier: Error checking for new games: $error');
+    } finally {
+      _refreshInFlight = false;
     }
   }
 
@@ -263,7 +292,13 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
       await _checkForNewGames();
       return;
     }
-    await _loadInitialGames();
+    await _loadInitialGames(forceRefresh: forceRefresh);
+  }
+
+  Future<void> retry() async {
+    if (!mounted) return;
+    state = const AsyncValue.loading();
+    await _loadInitialGames(forceRefresh: true);
   }
 
   @override

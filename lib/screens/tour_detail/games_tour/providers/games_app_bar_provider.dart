@@ -27,6 +27,8 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 import 'package:chessever/repository/supabase/tour/tour.dart';
 
 const int kPublishedRoundMissingSnapshotTolerance = 5;
+const Duration kTournamentRoundsRequestTimeout = Duration(seconds: 10);
+const Duration kTournamentRoundSelectionRequestTimeout = Duration(seconds: 2);
 
 /// Sticky user selection
 final userSelectedRoundProvider =
@@ -44,6 +46,10 @@ final gamesAppBarProvider = StateNotifierProvider<
   );
 
   return _GamesAppBarNotifier(ref: ref, tourId: tourId);
+});
+
+final gamesAppBarRetryProvider = Provider<Future<void> Function()>((ref) {
+  return ref.read(gamesAppBarProvider.notifier).refresh;
 });
 
 class _GamesAppBarNotifier
@@ -700,7 +706,9 @@ class _GamesAppBarNotifier
     }
     try {
       final repo = ref.read(roundRepositoryProvider);
-      final rounds = await repo.getRoundsByTourId(tourId!);
+      final rounds = await repo
+          .getRoundsByTourId(tourId!)
+          .timeout(kTournamentRoundsRequestTimeout);
 
       _roundSortMeta.addEntries(
         rounds.map(
@@ -743,6 +751,10 @@ class _GamesAppBarNotifier
         scrollSelection: scrollSelection,
       );
     } catch (e, st) {
+      if (!showLoading && state.valueOrNull != null) {
+        debugPrint('GamesAppBarNotifier: background refresh failed: $e');
+        return;
+      }
       state = AsyncValue.error(e, st);
     }
   }
@@ -815,7 +827,9 @@ class _GamesAppBarNotifier
 
           // Get rounds for this specific tour first
           final repo = ref.read(roundRepositoryProvider);
-          final stageRounds = await repo.getRoundsByTourId(tour.id);
+          final stageRounds = await repo
+              .getRoundsByTourId(tour.id)
+              .timeout(kTournamentRoundsRequestTimeout);
           final stageRoundModels =
               stageRounds
                   .map((r) => GamesAppBarModel.fromRound(r, _liveRounds))
@@ -1509,7 +1523,9 @@ class _GamesAppBarNotifier
     GamesAppBarModel? latestByActivityModel;
     try {
       final repo = ref.read(roundRepositoryProvider);
-      final latest = await repo.getLatestRoundByLastMove(tourId);
+      final latest = await repo
+          .getLatestRoundByLastMove(tourId)
+          .timeout(kTournamentRoundSelectionRequestTimeout);
       if (latest != null &&
           models.any((m) => m.id == latest.id) &&
           _hasGames(latest.id, counts)) {

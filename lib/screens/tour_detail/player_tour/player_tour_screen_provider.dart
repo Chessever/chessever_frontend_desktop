@@ -14,6 +14,16 @@ import 'package:chessever/utils/broadcast_custom_scoring.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+const Duration kStandingsFideEnrichmentTimeout = Duration(seconds: 2);
+
+@visibleForTesting
+bool shouldFetchStandingsFideEnrichment({
+  required int loadedGameCount,
+  required int fideIdCount,
+}) {
+  return loadedGameCount > 0 && fideIdCount > 0;
+}
+
 /// Provides player standings for the tournament detail "Players" tab.
 /// Uses [AutoDisposeAsyncNotifier] so the heavy computation only runs when needed
 /// and automatically refreshes when any dependency changes.
@@ -424,7 +434,8 @@ class PlayerTourScreenNotifier
           .select(
             'fideid, rating, rapid_rating, blitz_rating, k, rapid_k, blitz_k',
           )
-          .inFilter('fideid', fideIds);
+          .inFilter('fideid', fideIds)
+          .timeout(kStandingsFideEnrichmentTimeout);
 
       final map = <int, _FideEloRow>{};
       for (final row in rows) {
@@ -517,7 +528,13 @@ class PlayerTourScreenNotifier
         if (id != null && id > 0) fideIds.add(id);
       }
     }
-    final fideEloByFideId = await _fetchFideEloBatch(fideIds.toList());
+    final fideEloByFideId =
+        shouldFetchStandingsFideEnrichment(
+              loadedGameCount: gamesTourModels.length,
+              fideIdCount: fideIds.length,
+            )
+            ? await _fetchFideEloBatch(fideIds.toList())
+            : const <int, _FideEloRow>{};
 
     // Enrich player data and compute match results
     final enrichedPlayers = <TournamentPlayer>[];

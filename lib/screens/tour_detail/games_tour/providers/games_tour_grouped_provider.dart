@@ -22,6 +22,7 @@ class GroupedGamesData {
   final List<GamesAppBarModel> rounds;
   final List<GamesTourModel> allGames;
   final int providerGameCount;
+  final Object? loadError;
 
   /// Upcoming rounds whose only content is future pairings (resolved player
   /// names, no moves yet). They render as collapsible cards pinned to the
@@ -38,6 +39,7 @@ class GroupedGamesData {
     required this.rounds,
     required this.allGames,
     required this.providerGameCount,
+    this.loadError,
     this.upcomingPairingRoundIds = const {},
   });
 }
@@ -83,6 +85,19 @@ bool isGameStatusVisible({
 // The UI can just watch this provider and paint.
 final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
   final gamesAppBar = ref.watch(gamesAppBarProvider);
+  if (gamesAppBar.hasError) {
+    return GroupedGamesData(
+      filteredRounds: const [],
+      gamesByRound: const {},
+      isKnockoutTournament: false,
+      isMultiStageKnockout: false,
+      isLoading: false,
+      rounds: const [],
+      allGames: const [],
+      providerGameCount: 0,
+      loadError: gamesAppBar.error,
+    );
+  }
   if (gamesAppBar.isLoading || !gamesAppBar.hasValue) {
     return GroupedGamesData(
       filteredRounds: [],
@@ -111,6 +126,20 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
   final gamesAsync = ref.watch(gamesTourProvider(tourId ?? ''));
   final providerGameCount = gamesAsync.valueOrNull?.length ?? 0;
   final modelGameCount = allGamesScreenModel.length;
+
+  if (gamesAsync.hasError) {
+    return GroupedGamesData(
+      filteredRounds: const [],
+      gamesByRound: const {},
+      isKnockoutTournament: isKnockoutTournament,
+      isMultiStageKnockout: false,
+      isLoading: false,
+      rounds: rounds,
+      allGames: const [],
+      providerGameCount: 0,
+      loadError: gamesAsync.error,
+    );
+  }
 
   if (gamesAsync.isLoading && allGamesScreenModel.isEmpty) {
     return GroupedGamesData(

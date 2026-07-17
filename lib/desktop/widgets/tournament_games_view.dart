@@ -18,6 +18,7 @@ import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
+import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_team_match_grouping.dart';
@@ -31,6 +32,7 @@ import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.d
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_app_bar_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_grouped_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
@@ -345,7 +347,23 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if ((watchedGrouped.isLoading || isRestoringSearch) &&
+        if (grouped.loadError != null)
+          Expanded(
+            child: TournamentGamesLoadError(
+              onRetry: () {
+                setState(() => _lastStableGrouped = null);
+                unawaited(
+                  Future.wait<void>([
+                    ref
+                        .read(gamesTourProvider(widget.tournamentId).notifier)
+                        .retry(),
+                    ref.read(gamesAppBarRetryProvider)(),
+                  ]),
+                );
+              },
+            ),
+          )
+        else if ((watchedGrouped.isLoading || isRestoringSearch) &&
             _lastStableGrouped == null)
           const Expanded(child: _LoadingState())
         else if (grouped.filteredRounds.isEmpty &&
@@ -506,6 +524,18 @@ class TournamentGamesCountLabel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final grouped = ref.watch(gamesTourGroupedProvider);
     final totalGames = grouped.allGames.length;
+    if (grouped.loadError != null) {
+      return const Text(
+        'Games unavailable',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: kWhiteColor70,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      );
+    }
     if (grouped.isLoading) {
       return const Text(
         'Loading games…',
@@ -1798,7 +1828,9 @@ bool _needsDesktopCardPgnHydration(GamesTourModel game) {
   if (game.source != GameSource.supabase || game.gameId.trim().isEmpty) {
     return false;
   }
-  return game.effectiveGameStatus.isFinished && !pgnHasMoves(game.pgn);
+  return game.effectiveGameStatus.isFinished &&
+      !pgnHasMoves(game.pgn) &&
+      !isValidGameFen(game.fen);
 }
 
 DateTime? _roundStartsAtForGame(
@@ -2265,6 +2297,53 @@ class _LoadingState extends StatelessWidget {
         child: CircularProgressIndicator(
           strokeWidth: 2,
           valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+        ),
+      ),
+    );
+  }
+}
+
+class TournamentGamesLoadError extends StatelessWidget {
+  const TournamentGamesLoadError({required this.onRetry, super.key});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.cloud_off_outlined,
+              size: 32,
+              color: kLightGreyColor,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Could not load games',
+              style: TextStyle(
+                color: kWhiteColor,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'The tournament feed did not respond. Check your connection and try again.',
+              style: TextStyle(color: kLightGreyColor, fontSize: 12),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            DesktopHeaderActionButton(
+              label: 'Retry',
+              icon: Icons.refresh_rounded,
+              onPress: onRetry,
+              accented: true,
+            ),
+          ],
         ),
       ),
     );
