@@ -1894,10 +1894,10 @@ void main() {
     });
 
     test(
-      'load repairs stale downloaded ChessEver stats from local cache',
+      'load repairs stale downloaded ChessEver stats from the source PGN',
       () async {
         final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
-        final localRepository = LocalChessDatabaseRepository(
+        final localRepository = _StaleSourceStatsRepository(
           database: () async => db,
         );
         final path = p.join(temp.path, 'repair-chessever.pgn');
@@ -1950,6 +1950,7 @@ void main() {
         expect(chessever.availableGameCount, 2);
         expect(chessever.remainingGameCount, 0);
         expect(chessever.downloadProgress, 1.0);
+        expect(localRepository.statsRequested, isFalse);
 
         final repairedSnapshot = await workspaceRepository.loadSnapshot();
         expect(
@@ -2659,49 +2660,44 @@ void main() {
       },
     );
 
-    test(
-      'Chess.com source-cache wait stays indeterminate',
-      () async {
-        final workspaceRepository = _HoldingChessComSnapshotWorkspaceRepository(
-          root: temp,
-          chessComPgnByUsername: const <String, String>{
-            'durarbayli': _mergeGameOne,
-          },
-        );
-        final notifier = PlayerWorkspaceNotifier(
-          workspaceRepository: workspaceRepository,
-          gamebaseRepository: GamebaseRepository(Dio()),
-          localRepository: LocalChessDatabaseRepository(
-            database: () async => db,
-          ),
-        );
-        await notifier.load();
-        await notifier.addManualPlayer('GM Vasif Durarbayli');
-        await notifier.selectPlayer(notifier.state.players.single.id);
-        await notifier.connectExternalAccount(
-          source: PlayerWorkspaceSource.chesscom,
-          username: 'durarbayli',
-        );
-        final account =
-            notifier.state.selectedPlayer!.account(
-              PlayerWorkspaceSource.chesscom,
-            )!;
+    test('Chess.com source-cache wait stays indeterminate', () async {
+      final workspaceRepository = _HoldingChessComSnapshotWorkspaceRepository(
+        root: temp,
+        chessComPgnByUsername: const <String, String>{
+          'durarbayli': _mergeGameOne,
+        },
+      );
+      final notifier = PlayerWorkspaceNotifier(
+        workspaceRepository: workspaceRepository,
+        gamebaseRepository: GamebaseRepository(Dio()),
+        localRepository: LocalChessDatabaseRepository(database: () async => db),
+      );
+      await notifier.load();
+      await notifier.addManualPlayer('GM Vasif Durarbayli');
+      await notifier.selectPlayer(notifier.state.players.single.id);
+      await notifier.connectExternalAccount(
+        source: PlayerWorkspaceSource.chesscom,
+        username: 'durarbayli',
+      );
+      final account =
+          notifier.state.selectedPlayer!.account(
+            PlayerWorkspaceSource.chesscom,
+          )!;
 
-        final syncFuture = notifier.syncAccount(account);
-        await workspaceRepository.downloadStarted.future.timeout(
-          const Duration(seconds: 5),
-        );
+      final syncFuture = notifier.syncAccount(account);
+      await workspaceRepository.downloadStarted.future.timeout(
+        const Duration(seconds: 5),
+      );
 
-        final operation = notifier.state.operations.values.singleWhere(
-          (item) => item.source == PlayerWorkspaceSource.chesscom,
-        );
-        expect(operation.message, 'Checking Chess.com source cache...');
-        expect(operation.percent, isNull);
+      final operation = notifier.state.operations.values.singleWhere(
+        (item) => item.source == PlayerWorkspaceSource.chesscom,
+      );
+      expect(operation.message, 'Checking Chess.com source cache...');
+      expect(operation.percent, isNull);
 
-        workspaceRepository.finishDownload();
-        await syncFuture.timeout(const Duration(seconds: 5));
-      },
-    );
+      workspaceRepository.finishDownload();
+      await syncFuture.timeout(const Duration(seconds: 5));
+    });
 
     test(
       'ChessEver page transitions keep stable text and full download progress',
@@ -3605,7 +3601,7 @@ void main() {
 
   group('Player workspace local import', () {
     test(
-      'reports save progress before importing a full source snapshot',
+      'reports save progress without materializing the Player source cache',
       () async {
         final pgnFile = File(p.join(temp.path, 'progress-source.pgn'));
         final workspaceRepository = PlayerWorkspaceRepository(
@@ -3638,22 +3634,19 @@ void main() {
         );
         expect(
           progress.map((item) => item.message),
-          anyElement(startsWith('Reinstalling Progress Source')),
+          contains('Finalizing Progress Source...'),
         );
         final fractions =
             progress.map((item) => item.progress).whereType<double>().toList();
         expect(fractions, isNotEmpty);
         expect(fractions.first, 0.0);
         expect(fractions, contains(0.08));
-        expect(fractions, contains(0.10));
-        // Worker progress is remapped above the save range so the import phase
-        // does not sit on the download→import handoff value forever.
-        expect(fractions.any((value) => value > 0.10), isTrue);
-        expect(fractions.last, greaterThanOrEqualTo(0.98));
+        expect(fractions.last, greaterThanOrEqualTo(0.99));
+        expect(await _count(db, 'local_chess_games'), 0);
       },
     );
 
-    test('merges downloaded PGNs without duplicating cached games', () async {
+    test('merges downloaded PGNs without duplicating source games', () async {
       final workspaceRepository = PlayerWorkspaceRepository();
       final localRepository = LocalChessDatabaseRepository(
         database: () async => db,
@@ -3672,8 +3665,8 @@ void main() {
       expect(first.stats.newGameCount, 2);
       expect(first.stats.winCount, 1);
       expect(first.stats.lossCount, 1);
-      expect(await _count(db, 'local_chess_databases'), 1);
-      expect(await _count(db, 'local_chess_games'), 2);
+      expect(await _count(db, 'local_chess_databases'), 0);
+      expect(await _count(db, 'local_chess_games'), 0);
       expect(splitPgnGames(await File(path).readAsString()), hasLength(2));
 
       final second = await workspaceRepository.mergeIntoLocalDatabase(
@@ -3689,8 +3682,8 @@ void main() {
       expect(second.stats.winCount, 1);
       expect(second.stats.drawCount, 1);
       expect(second.stats.lossCount, 1);
-      expect(await _count(db, 'local_chess_databases'), 1);
-      expect(await _count(db, 'local_chess_games'), 3);
+      expect(await _count(db, 'local_chess_databases'), 0);
+      expect(await _count(db, 'local_chess_games'), 0);
       final afterAppend = splitPgnGames(await File(path).readAsString());
       expect(afterAppend, hasLength(3));
       expect(
@@ -3708,8 +3701,75 @@ void main() {
 
       expect(third.stats.gameCount, 3);
       expect(third.stats.newGameCount, 0);
-      expect(await _count(db, 'local_chess_games'), 3);
+      expect(await _count(db, 'local_chess_games'), 0);
       expect(splitPgnGames(await File(path).readAsString()), hasLength(3));
+    });
+
+    test(
+      'preserves repeated PGN games while keeping sync idempotent',
+      () async {
+        final workspaceRepository = PlayerWorkspaceRepository();
+        final localRepository = LocalChessDatabaseRepository(
+          database: () async => db,
+        );
+        final path = '${temp.path}/workspace/repeated-games.pgn';
+
+        final first = await workspaceRepository.mergeIntoLocalDatabase(
+          localRepository: localRepository,
+          path: path,
+          sourceLabel: 'Repeated source',
+          pgn: '$_mergeGameOne\n\n$_mergeGameOne',
+          playerAliases: const <String>['DrNykterstein'],
+        );
+        expect(first.stats.gameCount, 2);
+        expect(splitPgnGames(await File(path).readAsString()), hasLength(2));
+
+        final unchanged = await workspaceRepository.mergeIntoLocalDatabase(
+          localRepository: localRepository,
+          path: path,
+          sourceLabel: 'Repeated source',
+          pgn: '$_mergeGameOne\n\n$_mergeGameOne',
+          playerAliases: const <String>['DrNykterstein'],
+        );
+        expect(unchanged.stats.gameCount, 2);
+        expect(unchanged.stats.newGameCount, 0);
+
+        final oneMore = await workspaceRepository.mergeIntoLocalDatabase(
+          localRepository: localRepository,
+          path: path,
+          sourceLabel: 'Repeated source',
+          pgn: '$_mergeGameOne\n\n$_mergeGameOne\n\n$_mergeGameOne',
+          playerAliases: const <String>['DrNykterstein'],
+        );
+        expect(oneMore.stats.gameCount, 3);
+        expect(oneMore.stats.newGameCount, 1);
+        expect(splitPgnGames(await File(path).readAsString()), hasLength(3));
+      },
+    );
+
+    test('reads the latest sync date directly from the Player PGN', () async {
+      final workspaceRepository = PlayerWorkspaceRepository();
+      final file = File('${temp.path}/latest-player-date.pgn');
+      await file.writeAsString('''
+[Event "Older"]
+[Date "2024.03.05"]
+
+1. e4 e5 1/2-1/2
+
+[Event "Newest"]
+[Date "2026.07.14"]
+
+1. d4 d5 1/2-1/2
+''');
+
+      expect(
+        await workspaceRepository.latestPgnGameDate(file.path),
+        DateTime.utc(2026, 7, 14),
+      );
+      expect(
+        await workspaceRepository.latestPgnGameDate('${temp.path}/missing.pgn'),
+        isNull,
+      );
     });
 
     test(
@@ -3748,9 +3808,9 @@ $_mergeGameOne
           playerAliases: const <String>['DrNykterstein'],
         );
 
-        expect(result.stats.gameCount, 2);
-        expect(result.stats.newGameCount, 2);
-        expect(await _count(db, 'local_chess_games'), 2);
+        expect(result.stats.gameCount, 3);
+        expect(result.stats.newGameCount, 3);
+        expect(await _count(db, 'local_chess_games'), 0);
         final combined = await File(result.path).readAsString();
         expect(combined, contains('This is a comment, not a game'));
         expect(combined, contains('Lichess import 1'));
@@ -3758,7 +3818,7 @@ $_mergeGameOne
     );
 
     test(
-      'Combined rebuild reuses indexed source rows instead of reparsing output',
+      'Combined rebuild does not materialize a second legacy cache',
       () async {
         final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
         final localRepository = LocalChessDatabaseRepository(
@@ -3789,44 +3849,18 @@ $_mergeGameOne
           playerAliases: const <String>['DrNykterstein'],
         );
 
-        final combinedDatabaseId =
-            Platform.isWindows
-                ? p.normalize(result.path).toLowerCase()
-                : p.normalize(result.path);
-        final rows = await db.select(
-          '''
-          SELECT id, source_path, headers_json
-          FROM local_chess_games
-          WHERE database_id = ?
-          ORDER BY index_in_file ASC
-          ''',
-          <Object?>[combinedDatabaseId],
-        );
-
         expect(result.source, isNull);
         expect(result.stats.gameCount, 2);
-        expect(rows, hasLength(2));
-        expect(rows.map((row) => row['source_path']), <Object?>[
-          chessEver.path,
-          lichess.path,
-        ]);
+        expect(await _count(db, 'local_chess_games'), 2);
         expect(
-          rows.map((row) => row['id']?.toString()),
-          everyElement(startsWith('local_combined_')),
-        );
-        expect(
-          rows[0]['headers_json'],
-          contains('"ChessEverSource":"chessever"'),
-        );
-        expect(
-          rows[1]['headers_json'],
-          contains('"ChessEverSource":"lichess"'),
+          splitPgnGames(await File(result.path).readAsString()),
+          hasLength(2),
         );
       },
     );
 
     test(
-      'Combined rebuild canonically deduplicates equivalent games across sources',
+      'Combined rebuild preserves equivalent games across sources',
       () async {
         final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
         final localRepository = LocalChessDatabaseRepository(
@@ -3838,16 +3872,18 @@ $_mergeGameOne
         await lichess.writeAsString(
           '$_crossSourceEquivalentGame\n\n$_mergeGameThree',
         );
+        await localRepository.importSingleFileSource(path: chessEver.path);
+        await localRepository.importSingleFileSource(path: lichess.path);
         final progress = <({String message, double? fraction})>[];
 
         final result = await workspaceRepository.rebuildCombinedDatabase(
           localRepository: localRepository,
-          playerId: 'cross-source-dedupe',
+          playerId: 'cross-source-overlap',
           playerName: 'DrNykterstein',
           sourcePaths: <String>[chessEver.path, lichess.path],
           sources: <PlayerWorkspaceCombinedSource>[
-            // Deliberately reversed: provenance priority follows the visible
-            // source rail, not incidental map/insertion order.
+            // Deliberately reversed: output follows the visible source rail,
+            // not incidental map/insertion order.
             PlayerWorkspaceCombinedSource(
               path: lichess.path,
               source: PlayerWorkspaceSource.lichess,
@@ -3864,12 +3900,22 @@ $_mergeGameOne
         );
 
         final games = splitPgnGames(await File(result.path).readAsString());
-        expect(games, hasLength(2));
-        expect(result.stats.gameCount, 2);
-        expect(await _count(db, 'local_chess_games'), 2);
+        expect(result.source, isNull);
+        expect(games, hasLength(3));
+        expect(result.stats.gameCount, 3);
+        // Combined remains a PGN; only the explicitly imported source rows are
+        // present in the legacy cache.
+        expect(await _count(db, 'local_chess_games'), 3);
         expect(
           games.first,
           contains('[$playerWorkspaceCombinedSourceTag "chessever"]'),
+        );
+        expect(
+          games.where(
+            (game) =>
+                game.contains('[$playerWorkspaceCombinedSourceTag "lichess"]'),
+          ),
+          hasLength(2),
         );
         for (final game in games) {
           expect(
@@ -3988,7 +4034,7 @@ $_mergeGameOne
     );
 
     test(
-      'source import completes with fallback count when post-import stats hang',
+      'source save computes stats without waiting for the legacy cache',
       () async {
         final workspaceRepository = PlayerWorkspaceRepository(
           importStatsTimeout: const Duration(milliseconds: 10),
@@ -4004,54 +4050,55 @@ $_mergeGameOne
               path: path,
               sourceLabel: 'Prep Target ChessEver',
               pgn: '$_mergeGameOne\n\n$_mergeGameTwo',
-              playerAliases: const <String>['Prep Target'],
+              playerAliases: const <String>['DrNykterstein'],
               replaceExisting: true,
             )
             .timeout(const Duration(seconds: 5));
 
         expect(result.stats.gameCount, 2);
         expect(result.stats.newGameCount, 2);
-        expect(result.stats.winCount, 0);
+        expect(result.stats.winCount, 1);
         expect(result.stats.drawCount, 0);
-        expect(result.stats.lossCount, 0);
-        expect(localRepository.statsRequested, isTrue);
+        expect(result.stats.lossCount, 1);
+        expect(localRepository.statsRequested, isFalse);
       },
     );
 
-    test(
-      'source import uses the open app cache when a path resolver is present',
-      () async {
-        final workspaceRepository = PlayerWorkspaceRepository();
-        final pathResolverUsed = Completer<void>();
-        final neverResolvesPath = Completer<String>();
-        final localRepository = LocalChessDatabaseRepository(
-          database: () async => db,
-          databaseFilePath: () {
-            if (!pathResolverUsed.isCompleted) pathResolverUsed.complete();
-            return neverResolvesPath.future;
-          },
-        );
-        final path = '${temp.path}/workspace/chessever-vasif.pgn';
+    test('source save never opens the shared app cache', () async {
+      final workspaceRepository = PlayerWorkspaceRepository();
+      var pathResolverUsed = false;
+      var sharedAppCacheRequested = false;
+      final localRepository = LocalChessDatabaseRepository(
+        database: () async {
+          sharedAppCacheRequested = true;
+          throw StateError('shared app cache should not be opened');
+        },
+        databaseFilePath: () async {
+          pathResolverUsed = true;
+          return '${temp.path}/local_chess.db';
+        },
+      );
+      final path = '${temp.path}/workspace/chessever-vasif.pgn';
 
-        final result = await workspaceRepository
-            .mergeIntoLocalDatabase(
-              localRepository: localRepository,
-              path: path,
-              sourceLabel: 'GM Vasif Durarbayli ChessEver',
-              pgn: '$_mergeGameOne\n\n$_mergeGameTwo',
-              playerAliases: const <String>['DrNykterstein'],
-              playerFideId: '1503014',
-              replaceExisting: true,
-            )
-            .timeout(const Duration(seconds: 2));
+      final result = await workspaceRepository
+          .mergeIntoLocalDatabase(
+            localRepository: localRepository,
+            path: path,
+            sourceLabel: 'GM Vasif Durarbayli ChessEver',
+            pgn: '$_mergeGameOne\n\n$_mergeGameTwo',
+            playerAliases: const <String>['DrNykterstein'],
+            playerFideId: '1503014',
+            replaceExisting: true,
+          )
+          .timeout(const Duration(seconds: 2));
 
-        expect(result.stats.gameCount, 2);
-        expect(result.stats.newGameCount, 2);
-        expect(pathResolverUsed.isCompleted, isFalse);
-        expect(await _count(db, 'local_chess_databases'), 1);
-        expect(await _count(db, 'local_chess_games'), 2);
-      },
-    );
+      expect(result.stats.gameCount, 2);
+      expect(result.stats.newGameCount, 2);
+      expect(pathResolverUsed, isFalse);
+      expect(sharedAppCacheRequested, isFalse);
+      expect(await _count(db, 'local_chess_databases'), 0);
+      expect(await _count(db, 'local_chess_games'), 0);
+    });
   });
 
   group('Player workspace public API profiles', () {
@@ -4189,17 +4236,47 @@ $_mergeGameOne
       },
     );
 
-    test('downloads ChessEver games by hydrating Gamebase PGNs', () async {
-      final gamebaseRepository = _FakeGamebaseRepository(const <String, String>{
-        'ce-1': _mergeGameOne,
-        'ce-2': _mergeGameTwo,
-      });
+    test(
+      'fails clearly when the ChessEver PGN export is unavailable',
+      () async {
+        final gamebaseRepository = _FakeGamebaseRepository(
+          const <String, String>{'ce-1': _mergeGameOne, 'ce-2': _mergeGameTwo},
+        );
+        final workspaceRepository = PlayerWorkspaceRepository();
+
+        await expectLater(
+          workspaceRepository.downloadChessEverGames(
+            repository: gamebaseRepository,
+            playerId: 'ce-player',
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('PGN export is unavailable'),
+            ),
+          ),
+        );
+
+        expect(gamebaseRepository.exportPlayerIds, <String>['ce-player']);
+        expect(gamebaseRepository.requestedPlayerIds, isEmpty);
+        expect(gamebaseRepository.hydratedIds, isEmpty);
+      },
+    );
+
+    test('uses the player PGN export without loading live pages', () async {
+      final gamebaseRepository = _FakeGamebaseRepository(
+        const <String, String>{},
+        pgnExport: '$_mergeGameOne\n\n$_mergeGameTwo\n',
+        playerGamesError: StateError('live endpoint must not be called'),
+      );
       final progressMessages = <String>[];
       final workspaceRepository = PlayerWorkspaceRepository();
 
       final downloaded = await workspaceRepository.downloadChessEverGames(
         repository: gamebaseRepository,
         playerId: 'ce-player',
+        fideId: '1503014',
         sinceDate: DateTime.utc(2026, 6, 2),
         onProgress: (message, _) => progressMessages.add(message),
       );
@@ -4208,70 +4285,23 @@ $_mergeGameOne
       expect(downloaded.gameCount, 2);
       expect(downloaded.pgn, contains('Lichess import 1'));
       expect(downloaded.pgn, contains('Lichess import 2'));
-      expect(gamebaseRepository.requestedPlayerIds, <String>['ce-player']);
-      expect(gamebaseRepository.requestedIncludeData, <bool>[true]);
-      expect(gamebaseRepository.requestedPageSizes, <int>[1000]);
-      expect(gamebaseRepository.requestedDateFrom, <String?>[null]);
-      expect(gamebaseRepository.hydratedIds, <String>['ce-1', 'ce-2']);
+      expect(downloaded.replaceExistingSource, isTrue);
+      expect(gamebaseRepository.exportPlayerIds, <String>['ce-player']);
+      expect(gamebaseRepository.exportFideIds, <String?>['1503014']);
+      expect(gamebaseRepository.exportDateFrom, <String?>[null]);
+      expect(gamebaseRepository.requestedPlayerIds, isEmpty);
+      expect(gamebaseRepository.requestedIncludeData, isEmpty);
+      expect(gamebaseRepository.requestedPageSizes, isEmpty);
+      expect(gamebaseRepository.requestedDateFrom, isEmpty);
+      expect(gamebaseRepository.hydratedIds, isEmpty);
       expect(
         progressMessages,
-        anyElement(startsWith('ChessEver: loading page 1')),
-      );
-      expect(
-        progressMessages,
-        anyElement(
-          equals('ChessEver: page 1 prepared 0/2 games; 0/2 ready...'),
-        ),
+        contains('ChessEver: downloaded 2 games as PGN.'),
       );
     });
 
     test(
-      'falls back to the player PGN export when live pages are unavailable',
-      () async {
-        final gamebaseRepository = _FakeGamebaseRepository(
-          const <String, String>{},
-          pgnExport: '$_mergeGameOne\n\n$_mergeGameTwo\n',
-          playerGamesError: StateError('live endpoint unavailable'),
-        );
-        final progressMessages = <String>[];
-        final workspaceRepository = PlayerWorkspaceRepository();
-
-        final downloaded = await workspaceRepository.downloadChessEverGames(
-          repository: gamebaseRepository,
-          playerId: 'ce-player',
-          fideId: '1503014',
-          sinceDate: DateTime.utc(2026, 6, 2),
-          onProgress: (message, _) => progressMessages.add(message),
-        );
-
-        expect(downloaded.source, PlayerWorkspaceSource.chessever);
-        expect(downloaded.gameCount, 2);
-        expect(downloaded.pgn, contains('Lichess import 1'));
-        expect(downloaded.pgn, contains('Lichess import 2'));
-        expect(downloaded.replaceExistingSource, isFalse);
-        expect(gamebaseRepository.exportPlayerIds, <String>['ce-player']);
-        expect(gamebaseRepository.exportFideIds, <String?>['1503014']);
-        expect(gamebaseRepository.exportDateFrom, <String?>['2026-06-02']);
-        expect(gamebaseRepository.requestedPlayerIds, <String>['ce-player']);
-        expect(gamebaseRepository.requestedIncludeData, <bool>[true]);
-        expect(gamebaseRepository.requestedPageSizes, <int>[1000]);
-        expect(gamebaseRepository.requestedDateFrom, <String?>[null]);
-        expect(gamebaseRepository.hydratedIds, isEmpty);
-        expect(
-          progressMessages,
-          contains(
-            'ChessEver: live player index unavailable; trying PGN fallback...',
-          ),
-        );
-        expect(
-          progressMessages,
-          contains('ChessEver: downloaded 2 games as PGN.'),
-        );
-      },
-    );
-
-    test(
-      'rebuilds from all live ChessEver pages when the PGN snapshot is stale',
+      'accepts the compact PGN snapshot without a hidden count fallback',
       () async {
         final gamebaseRepository = _FakeGamebaseRepository(
           const <String, String>{'ce-1': _mergeGameOne, 'ce-2': _mergeGameTwo},
@@ -4283,120 +4313,19 @@ $_mergeGameOne
           repository: gamebaseRepository,
           playerId: 'ce-player',
           sinceDate: DateTime.utc(2026, 3, 31),
-          expectedGameCount: 1,
+          expectedGameCount: 2,
         );
 
-        expect(downloaded.gameCount, 2);
+        expect(downloaded.gameCount, 1);
         expect(downloaded.pgn, contains('Lichess import 1'));
-        expect(downloaded.pgn, contains('Lichess import 2'));
+        expect(downloaded.pgn, isNot(contains('Lichess import 2')));
         expect(downloaded.replaceExistingSource, isTrue);
-        expect(gamebaseRepository.exportPlayerIds, isEmpty);
-        expect(gamebaseRepository.requestedPlayerIds, <String>['ce-player']);
-        expect(gamebaseRepository.requestedIncludeData, <bool>[true]);
-        expect(gamebaseRepository.requestedPageSizes, <int>[1000]);
-        expect(gamebaseRepository.requestedDateFrom, <String?>[null]);
-        expect(gamebaseRepository.hydratedIds, <String>['ce-1', 'ce-2']);
+        expect(gamebaseRepository.exportPlayerIds, <String>['ce-player']);
+        expect(gamebaseRepository.exportDateFrom, <String?>[null]);
+        expect(gamebaseRepository.requestedPlayerIds, isEmpty);
+        expect(gamebaseRepository.hydratedIds, isEmpty);
       },
     );
-
-    test('downloads every live ChessEver page before finishing', () async {
-      final gamebaseRepository = _FakeGamebaseRepository(
-        const <String, String>{'ce-1': _mergeGameOne, 'ce-2': _mergeGameTwo},
-        pgnExport: _mergeGameOne,
-        playerGamePages: const <List<String>>[
-          <String>['ce-1'],
-          <String>['ce-2'],
-        ],
-      );
-      final workspaceRepository = PlayerWorkspaceRepository();
-
-      final downloaded = await workspaceRepository.downloadChessEverGames(
-        repository: gamebaseRepository,
-        playerId: 'ce-player',
-        fideId: '1503014',
-        expectedGameCount: 2,
-      );
-
-      expect(downloaded.source, PlayerWorkspaceSource.chessever);
-      expect(downloaded.gameCount, 2);
-      expect(downloaded.pgn, contains('Lichess import 1'));
-      expect(downloaded.pgn, contains('Lichess import 2'));
-      expect(downloaded.replaceExistingSource, isTrue);
-      expect(gamebaseRepository.exportPlayerIds, isEmpty);
-      expect(gamebaseRepository.requestedPlayerIds, <String>[
-        'ce-player',
-        'ce-player',
-      ]);
-      expect(gamebaseRepository.requestedIncludeData, <bool>[true, true]);
-      expect(gamebaseRepository.requestedPageSizes, <int>[1000, 1000]);
-      expect(gamebaseRepository.hydratedIds, <String>['ce-1', 'ce-2']);
-    });
-
-    test('hydrates missing ChessEver PGNs concurrently', () async {
-      final gamebaseRepository = _ConcurrentHydrationGamebaseRepository(
-        const <String, String>{
-          'ce-1': _mergeGameOne,
-          'ce-2': _mergeGameTwo,
-          'ce-3': _mergeGameThree,
-        },
-      );
-      final workspaceRepository = PlayerWorkspaceRepository();
-
-      final future = workspaceRepository.downloadChessEverGames(
-        repository: gamebaseRepository,
-        playerId: 'ce-player',
-      );
-      await gamebaseRepository.allHydrationsStarted.future.timeout(
-        const Duration(seconds: 5),
-      );
-
-      expect(gamebaseRepository.maxInFlight, greaterThan(1));
-
-      gamebaseRepository
-        ..completeHydration('ce-3')
-        ..completeHydration('ce-1')
-        ..completeHydration('ce-2');
-      final downloaded = await future.timeout(const Duration(seconds: 5));
-
-      expect(downloaded.gameCount, 3);
-      expect(
-        downloaded.pgn.indexOf('Lichess import 1'),
-        lessThan(downloaded.pgn.indexOf('Lichess import 2')),
-      );
-      expect(
-        downloaded.pgn.indexOf('Lichess import 2'),
-        lessThan(downloaded.pgn.indexOf('Lichess import 3')),
-      );
-    });
-
-    test('skips ChessEver PGN hydrations that do not return', () async {
-      final gamebaseRepository = _HangingHydrationGamebaseRepository(
-        const <String, String>{'ce-1': _mergeGameOne, 'ce-2': _mergeGameTwo},
-        hangingIds: const <String>{'ce-2'},
-      );
-      final progressMessages = <String>[];
-      final workspaceRepository = PlayerWorkspaceRepository(
-        chessEverHydrationTimeout: const Duration(milliseconds: 20),
-      );
-
-      final downloaded = await workspaceRepository
-          .downloadChessEverGames(
-            repository: gamebaseRepository,
-            playerId: 'ce-player',
-            onProgress: (message, _) => progressMessages.add(message),
-          )
-          .timeout(const Duration(seconds: 5));
-
-      expect(downloaded.source, PlayerWorkspaceSource.chessever);
-      expect(downloaded.gameCount, 1);
-      expect(downloaded.pgn, contains('Lichess import 1'));
-      expect(downloaded.pgn, isNot(contains('Lichess import 2')));
-      expect(
-        gamebaseRepository.hydratedIds,
-        containsAll(<String>['ce-1', 'ce-2']),
-      );
-      expect(progressMessages, anyElement(contains('1/2 ready')));
-    });
 
     test(
       'downloads Lichess games with since filtering and PGN headers',
@@ -4409,6 +4338,7 @@ $_mergeGameOne
             expect(request.url.path, '/api/games/user/DrNykterstein');
             expect(request.url.queryParameters['since'], '1782864000000');
             expect(request.url.queryParameters, isNot(contains('rated')));
+            expect(request.url.queryParameters, isNot(contains('clocks')));
             expect(
               request.url.queryParameters['perfType'],
               contains('classical'),
@@ -4492,6 +4422,10 @@ $_mergeGameOne
       expect(chessComProgress.first.message, contains('source cache'));
       expect(chessComProgress.first.progress, isNull);
       expect(gamebaseRepository.externalSinceMs, <int?>[1782864000000, null]);
+      expect(gamebaseRepository.externalReceiveTimeouts, <Duration?>[
+        const Duration(seconds: 3),
+        const Duration(seconds: 12),
+      ]);
       expect(directClientRequests, 0);
     });
 
@@ -4504,10 +4438,7 @@ $_mergeGameOne
           );
           return DioException(
             requestOptions: options,
-            response: Response<void>(
-              requestOptions: options,
-              statusCode: 503,
-            ),
+            response: Response<void>(requestOptions: options, statusCode: 503),
             type: DioExceptionType.badResponse,
           );
         }
@@ -4518,7 +4449,7 @@ $_mergeGameOne
         );
         var directRequests = 0;
         final waits = <Duration>[];
-        final progressMessages = <String>[];
+        final progressUpdates = <({String message, double? progress})>[];
         final workspaceRepository = PlayerWorkspaceRepository(
           gamebaseRepository: gamebaseRepository,
           client: MockClient((request) async {
@@ -4536,7 +4467,11 @@ $_mergeGameOne
         final downloaded = await workspaceRepository.downloadLichessGames(
           username: 'DrNykterstein',
           expectedGameCount: 2,
-          onProgress: (message, _) => progressMessages.add(message),
+          onProgress:
+              (message, progress) => progressUpdates.add((
+                message: message,
+                progress: progress,
+              )),
         );
 
         expect(gamebaseRepository.externalRequestCount, 1);
@@ -4545,8 +4480,13 @@ $_mergeGameOne
         expect(downloaded.gameCount, 1);
         expect(downloaded.pgn, contains('Lichess import 1'));
         expect(
-          progressMessages,
+          progressUpdates.map((update) => update.message),
           anyElement(contains('Downloading directly from Lichess')),
+        );
+        expect(progressUpdates.first.progress, isNull);
+        expect(
+          gamebaseRepository.externalReceiveTimeouts,
+          <Duration?>[const Duration(seconds: 3)],
         );
       },
     );
@@ -5120,9 +5060,32 @@ class _HangingStatsLocalChessDatabaseRepository
     required String databasePath,
     required Iterable<String> playerAliases,
     String? playerFideId,
+    bool preferDirectDatabase = false,
   }) {
     statsRequested = true;
     return Completer<LocalChessDatabaseResultStats>().future;
+  }
+}
+
+class _StaleSourceStatsRepository extends LocalChessDatabaseRepository {
+  _StaleSourceStatsRepository({required super.database});
+
+  bool statsRequested = false;
+
+  @override
+  Future<LocalChessDatabaseResultStats> localDatabaseResultStats({
+    required String databasePath,
+    required Iterable<String> playerAliases,
+    String? playerFideId,
+    bool preferDirectDatabase = false,
+  }) async {
+    statsRequested = true;
+    return const LocalChessDatabaseResultStats(
+      gameCount: 1,
+      winCount: 1,
+      drawCount: 0,
+      lossCount: 0,
+    );
   }
 }
 
@@ -5137,6 +5100,7 @@ class _PartialSourceUnionStatsRepository extends LocalChessDatabaseRepository {
     required String databasePath,
     required Iterable<String> playerAliases,
     String? playerFideId,
+    bool preferDirectDatabase = false,
   }) async {
     final lower = p.basename(databasePath).toLowerCase();
     if (lower.contains('combined')) {
@@ -5167,6 +5131,7 @@ class _PartialSourceUnionStatsRepository extends LocalChessDatabaseRepository {
     required Iterable<String> databasePaths,
     required Iterable<String> playerAliases,
     String? playerFideId,
+    bool preferDirectDatabase = false,
   }) async {
     sourceUnionRequests++;
     return const LocalChessDatabaseResultStats(
@@ -5910,7 +5875,6 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     this.pgnById, {
     this.pgnExport,
     this.playerGamesError,
-    this.playerGamePages,
     this.externalErrors = const <Object>[],
     this.externalExports =
         const <GamebaseExternalPlayerSource, GamebasePlayerPgnExport>{},
@@ -5920,7 +5884,6 @@ class _FakeGamebaseRepository extends GamebaseRepository {
   final Map<String, String> pgnById;
   final String? pgnExport;
   final Object? playerGamesError;
-  final List<List<String>>? playerGamePages;
   final List<Object> externalErrors;
   final Map<GamebaseExternalPlayerSource, GamebasePlayerPgnExport>
   externalExports;
@@ -6007,94 +5970,21 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     requestedDateFrom.add(dateFrom);
     final error = playerGamesError;
     if (error != null) throw error;
-    final configuredPages = playerGamePages;
     final pageIds =
-        configuredPages != null
-            ? (pageNumber < configuredPages.length
-                ? configuredPages[pageNumber]
-                : const <String>[])
-            : (pageNumber == 0
-                ? pgnById.keys.toList(growable: false)
-                : const <String>[]);
-    final hasMore =
-        configuredPages != null && pageNumber + 1 < configuredPages.length;
+        pageNumber == 0
+            ? pgnById.keys.toList(growable: false)
+            : const <String>[];
     return <String, dynamic>{
       'data': <Map<String, dynamic>>[
         for (final id in pageIds) <String, dynamic>{'id': id},
       ],
-      'metadata': <String, dynamic>{'hasMore': hasMore},
+      'metadata': <String, dynamic>{'hasMore': false},
     };
   }
 
   @override
   Future<GamebaseGameWithPgn?> getGameWithPgn(String id) async {
     hydratedIds.add(id);
-    final pgn = pgnById[id];
-    if (pgn == null) return null;
-    return GamebaseGameWithPgn(
-      id: id,
-      date: DateTime.utc(2026, 6),
-      result: GameResult.whiteWins,
-      timeControl: TimeControl.blitz,
-      pgn: pgn,
-    );
-  }
-}
-
-class _ConcurrentHydrationGamebaseRepository extends _FakeGamebaseRepository {
-  _ConcurrentHydrationGamebaseRepository(super.pgnById);
-
-  final allHydrationsStarted = Completer<void>();
-  final _pending = <String, Completer<GamebaseGameWithPgn?>>{};
-  var _inFlight = 0;
-  var maxInFlight = 0;
-
-  @override
-  Future<GamebaseGameWithPgn?> getGameWithPgn(String id) async {
-    hydratedIds.add(id);
-    final completer = Completer<GamebaseGameWithPgn?>();
-    _pending[id] = completer;
-    _inFlight += 1;
-    if (_inFlight > maxInFlight) maxInFlight = _inFlight;
-    if (_pending.length == pgnById.length &&
-        !allHydrationsStarted.isCompleted) {
-      allHydrationsStarted.complete();
-    }
-    final result = await completer.future;
-    _inFlight -= 1;
-    return result;
-  }
-
-  void completeHydration(String id) {
-    final pgn = pgnById[id];
-    _pending[id]?.complete(
-      pgn == null
-          ? null
-          : GamebaseGameWithPgn(
-            id: id,
-            date: DateTime.utc(2026, 6),
-            result: GameResult.whiteWins,
-            timeControl: TimeControl.blitz,
-            pgn: pgn,
-          ),
-    );
-  }
-}
-
-class _HangingHydrationGamebaseRepository extends _FakeGamebaseRepository {
-  _HangingHydrationGamebaseRepository(
-    super.pgnById, {
-    required this.hangingIds,
-  });
-
-  final Set<String> hangingIds;
-
-  @override
-  Future<GamebaseGameWithPgn?> getGameWithPgn(String id) async {
-    hydratedIds.add(id);
-    if (hangingIds.contains(id)) {
-      return Completer<GamebaseGameWithPgn?>().future;
-    }
     final pgn = pgnById[id];
     if (pgn == null) return null;
     return GamebaseGameWithPgn(

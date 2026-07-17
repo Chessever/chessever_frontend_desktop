@@ -678,6 +678,10 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
               ? const <String, PlayerWorkspaceOperation>{}
               : _operationsWithoutPlayer(player.id),
     );
+    // Give the player list/dialog a chance to repaint before a queued
+    // workspace write. The removal still remains durable before this method
+    // returns or any physical data is deleted.
+    await Future<void>.delayed(Duration.zero);
     await _persist();
     _schedulePlayerCleanup(player, canceledScopes);
   }
@@ -1670,7 +1674,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     _setOperation(
       operationKey,
       source,
-      'Combining and deduplicating games...',
+      'Combining games...',
       null,
     );
     try {
@@ -2119,7 +2123,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
   ) async {
     final path = account.pgnPath?.trim();
     if (path == null || path.isEmpty) return null;
-    return _localRepository.latestLocalGameDate(databasePath: path);
+    return _workspaceRepository.latestPgnGameDate(path);
   }
 
   Set<String> _playerDeletionStoredPaths(PlayerWorkspacePlayer player) =>
@@ -2184,7 +2188,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
       stage = 'purge_cache';
       await _localRepository.deleteCachedSourcesAwaitingPurge(
         sourcePaths: cacheScopes,
-        batchSize: 512,
+        batchSize: 64,
         cleanupOrphanMetadata: false,
         checkpoint: false,
       );
@@ -2445,9 +2449,9 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     final gen = _repairGeneration;
     try {
       final stats = await _awaitWithRepairTimeout(
-        _localRepository.localDatabaseResultStats(
-          databasePath: path,
-          playerAliases: _aliasesFor(player, account),
+        analyzePgnFileHeaderStats(
+          path: path,
+          aliases: _aliasesFor(player, account),
           playerFideId: player.fideId,
         ),
       );
@@ -2488,6 +2492,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
           databasePath: combinedPath,
           playerAliases: _aliasesFor(player, null),
           playerFideId: player.fideId,
+          preferDirectDatabase: true,
         ),
       );
       if (gen != _repairGeneration || stats == null) return player;

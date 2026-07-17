@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
+import 'package:chessever/desktop/services/time_control_classifier.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 
 /// Player-centric outcome relative to the workspace / profile player.
@@ -171,6 +173,248 @@ LocalChessGameFilter localChessGameFilterFromOverview(
       if (name == null || name.isEmpty) return LocalChessGameFilter();
       return LocalChessGameFilter(opponentName: name);
   }
+}
+
+/// Applies the same filters as [appendLocalChessGameFilter] to a header-only
+/// PGN catalog row. Player Games uses this path so browsing and filtering do
+/// not require a full SQLite import.
+bool localChessGameMatchesFilter(
+  LocalChessGame game,
+  LocalChessGameFilter filter, {
+  String? playerFideId,
+  List<String> playerAliases = const <String>[],
+}) {
+  if (!filter.hasActiveFilters) return true;
+  final metadata = game.game.metadata;
+  String header(String key) => metadata[key]?.toString().trim() ?? '';
+  int number(String key) => int.tryParse(header(key)) ?? 0;
+  final base = filter.base;
+  final result = header('Result').toLowerCase();
+
+  switch (base.result) {
+    case GameResultFilter.all:
+      break;
+    case GameResultFilter.whiteWins:
+      if (result != '1-0') return false;
+    case GameResultFilter.blackWins:
+      if (result != '0-1') return false;
+    case GameResultFilter.draw:
+      if (!_isLocalDrawResult(result)) return false;
+  }
+
+  final side = _localCatalogPlayerSide(
+    metadata,
+    playerFideId: playerFideId,
+    playerAliases: playerAliases,
+  );
+  switch (filter.playerOutcome) {
+    case LocalPlayerOutcomeFilter.all:
+      break;
+    case LocalPlayerOutcomeFilter.win:
+      if (!((side == 'w' && result == '1-0') ||
+          (side == 'b' && result == '0-1'))) {
+        return false;
+      }
+    case LocalPlayerOutcomeFilter.loss:
+      if (!((side == 'w' && result == '0-1') ||
+          (side == 'b' && result == '1-0'))) {
+        return false;
+      }
+    case LocalPlayerOutcomeFilter.draw:
+      if (side == null || !_isLocalDrawResult(result)) return false;
+  }
+
+  switch (base.color) {
+    case GameColorFilter.all:
+      break;
+    case GameColorFilter.white:
+      if (side != 'w') return false;
+    case GameColorFilter.black:
+      if (side != 'b') return false;
+  }
+
+  final exactTimeControl = filter.timeControlCategory?.trim().toLowerCase();
+  final classified = _localCatalogTimeControl(metadata);
+  if (exactTimeControl != null && exactTimeControl.isNotEmpty) {
+    final expected = _canonicalLocalTimeControl(exactTimeControl);
+    if (classified != expected) return false;
+  } else {
+    switch (base.timeControl) {
+      case GameTimeControlFilter.all:
+        break;
+      case GameTimeControlFilter.classical:
+        if (classified != 'classical') return false;
+      case GameTimeControlFilter.rapid:
+        if (classified != 'rapid') return false;
+      case GameTimeControlFilter.blitz:
+        if (classified != null &&
+            !const <String>{
+              'blitz',
+              'bullet',
+              'ultrabullet',
+            }.contains(classified)) {
+          return false;
+        }
+    }
+  }
+
+  final isOnline = _localCatalogIsOnline(metadata);
+  switch (base.online) {
+    case GameOnlineFilter.all:
+      break;
+    case GameOnlineFilter.online:
+      if (!isOnline) return false;
+    case GameOnlineFilter.otb:
+      if (isOnline) return false;
+  }
+
+  if (!base.eco.matches(header('ECO'))) return false;
+  final hasYearFilter =
+      base.minYear != GameFilter.defaultMinYear ||
+      base.maxYear != DateTime.now().year;
+  if (hasYearFilter) {
+    final date = header('Date');
+    final year = date.length >= 4 ? int.tryParse(date.substring(0, 4)) : null;
+    if (year == null || year < base.minYear || year > base.maxYear) {
+      return false;
+    }
+  }
+
+  if (base.minRating != GameFilter.defaultMinRating ||
+      base.maxRating != GameFilter.absoluteMaxRating) {
+    final whiteElo = number('WhiteElo');
+    final blackElo = number('BlackElo');
+    if (whiteElo <= 0 && blackElo <= 0) return false;
+    final average =
+        whiteElo <= 0
+            ? blackElo
+            : blackElo <= 0
+            ? whiteElo
+            : (whiteElo + blackElo) ~/ 2;
+    if (average < base.minRating || average > base.maxRating) return false;
+  }
+
+  final maxMove = base.finish.maxMoveNumber;
+  if (maxMove != null) {
+    final plyCount = number('PlyCount');
+    final finalMove =
+        plyCount > 0
+            ? (plyCount + 1) ~/ 2
+            : _estimateLocalCatalogFinalMove(game.rawPgn);
+    if (finalMove == null || finalMove > maxMove) return false;
+  }
+
+  final opponent = filter.opponentName?.trim().toLowerCase();
+  if (opponent != null && opponent.isNotEmpty) {
+    if (!header('White').toLowerCase().contains(opponent) &&
+        !header('Black').toLowerCase().contains(opponent)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+String? _localCatalogPlayerSide(
+  Map<String, dynamic> metadata, {
+  required String? playerFideId,
+  required List<String> playerAliases,
+}) {
+  String header(String key) => metadata[key]?.toString().trim() ?? '';
+  final fide = playerFideId?.trim().toLowerCase();
+  final whiteFide =
+      (header('WhiteFideId').isNotEmpty
+              ? header('WhiteFideId')
+              : header('WhiteFideID'))
+          .toLowerCase();
+  final blackFide =
+      (header('BlackFideId').isNotEmpty
+              ? header('BlackFideId')
+              : header('BlackFideID'))
+          .toLowerCase();
+  if (fide != null && fide.isNotEmpty) {
+    if (whiteFide == fide) return 'w';
+    if (blackFide == fide) return 'b';
+  }
+  final aliases = playerAliases
+      .map(_normalizePlayerName)
+      .where((name) => name.isNotEmpty)
+      .toSet();
+  if ((fide == null || fide.isEmpty || whiteFide.isEmpty) &&
+      aliases.contains(_normalizePlayerName(header('White')))) {
+    return 'w';
+  }
+  if ((fide == null || fide.isEmpty || blackFide.isEmpty) &&
+      aliases.contains(_normalizePlayerName(header('Black')))) {
+    return 'b';
+  }
+  return null;
+}
+
+String? _localCatalogTimeControl(Map<String, dynamic> metadata) {
+  Object? value(String key) => metadata[key];
+  return _canonicalLocalTimeControl(
+        value('ChessEverTimeControlCategory')?.toString(),
+      ) ??
+      _canonicalLocalTimeControl(
+        classifyTimeControlCategory(
+          value('TimeControl'),
+          event: value('Event'),
+          site: value('Site'),
+          source: value('ChessEverSource'),
+        ),
+      );
+}
+
+String? _canonicalLocalTimeControl(String? raw) {
+  switch ((raw ?? '').trim().toLowerCase()) {
+    case 'classical':
+    case 'standard':
+      return 'classical';
+    case 'rapid':
+      return 'rapid';
+    case 'blitz':
+      return 'blitz';
+    case 'bullet':
+      return 'bullet';
+    case 'ultrabullet':
+    case 'ultra_bullet':
+    case 'ultra-bullet':
+    case 'ultra bullet':
+      return 'ultrabullet';
+    case 'correspondence':
+      return 'correspondence';
+    default:
+      return null;
+  }
+}
+
+bool _localCatalogIsOnline(Map<String, dynamic> metadata) {
+  final value =
+      '${metadata['Site'] ?? ''} ${metadata['ChessEverSource'] ?? ''}'
+          .toLowerCase();
+  return value.contains('lichess') ||
+      value.contains('chess.com') ||
+      value.contains('chesscom') ||
+      value.contains('chess24');
+}
+
+bool _isLocalDrawResult(String result) =>
+    result == '1/2-1/2' ||
+    result == '1/2' ||
+    result == '0.5-0.5' ||
+    result == '½-½';
+
+int? _estimateLocalCatalogFinalMove(String pgn) {
+  final cleaned = pgn
+      .replaceAll(RegExp(r'\[[^\]]*\]'), ' ')
+      .replaceAll(RegExp(r'\{[^}]*\}'), ' ')
+      .replaceAll(RegExp(r'\([^)]*\)'), ' ');
+  int? maximum;
+  for (final match in RegExp(r'\b(\d{1,3})\s*\.{1,3}').allMatches(cleaned)) {
+    final move = int.tryParse(match.group(1) ?? '');
+    if (move != null && (maximum == null || move > maximum)) maximum = move;
+  }
+  return maximum;
 }
 
 GameTimeControlFilter _timeControlFromCategory(String? raw) {

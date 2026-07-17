@@ -21,6 +21,25 @@ PlayerStandingModel _player({
 }
 
 void main() {
+  group('standings FIDE enrichment', () {
+    test('waits for FIDE data only when loaded games can use it', () {
+      expect(
+        shouldFetchStandingsFideEnrichment(
+          loadedGameCount: 0,
+          fideIdCount: 120,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldFetchStandingsFideEnrichment(
+          loadedGameCount: 40,
+          fideIdCount: 120,
+        ),
+        isTrue,
+      );
+    });
+  });
+
   group('standings search filtering', () {
     test('preserves the unfiltered overall rank for a one-player result', () {
       final standings = assignOverallRanks([

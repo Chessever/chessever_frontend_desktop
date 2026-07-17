@@ -20,26 +20,40 @@ class LocalTreeActionButton extends StatelessWidget {
     this.onOpen,
     this.onBuild,
     this.onCancel,
+    this.checkingCache = false,
+    this.preparingBuild = false,
   });
 
   final LocalChessTreeBuildProgress? progress;
   final VoidCallback? onOpen;
   final VoidCallback? onBuild;
   final VoidCallback? onCancel;
+  final bool checkingCache;
+  final bool preparingBuild;
 
   @override
   Widget build(BuildContext context) {
     final progress = this.progress;
+    final isCheckingCache = checkingCache && onOpen == null;
     final isBuilding = progress?.isActive == true && onOpen == null;
+    final isPreparingBuild =
+        preparingBuild && onOpen == null && !isBuilding && !isCheckingCache;
     final isFailed = progress?.phase == LocalChessTreeBuildPhase.failed;
     // "Tree is built and ready to open" is the primary call to action — it
     // wears the accent, the way a selected sidebar item does.
     final isPrimary = onOpen != null;
-    final onPress = onOpen ?? (isBuilding ? onCancel : onBuild);
+    final onPress =
+        isCheckingCache
+            ? null
+            : onOpen ?? (isBuilding || isPreparingBuild ? onCancel : onBuild);
 
     final label =
-        onOpen != null
+        isCheckingCache
             ? 'Tree'
+            : onOpen != null
+            ? 'Tree'
+            : isPreparingBuild
+            ? 'Tree 0%'
             : isBuilding
             ? 'Tree ${progress!.percent}%'
             : isFailed
@@ -52,21 +66,23 @@ class LocalTreeActionButton extends StatelessWidget {
       label: label,
       icon: icon,
       onPress: onPress,
-      busy: isBuilding,
+      busy: isCheckingCache || isPreparingBuild || isBuilding,
       tabularFigures: true,
       tone:
           isPrimary
               ? DesktopToolbarPillTone.primary
               : DesktopToolbarPillTone.neutral,
       leading:
-          isBuilding
+          isCheckingCache || isPreparingBuild || isBuilding
               ? SizedBox(
                 width: 14,
                 height: 14,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
                   value:
-                      progress!.fraction > 0 && progress.fraction < 1
+                      isBuilding &&
+                              progress!.fraction > 0 &&
+                              progress.fraction < 1
                           ? progress.fraction
                           : null,
                   valueColor: const AlwaysStoppedAnimation(kPrimaryColor),
@@ -79,6 +95,8 @@ class LocalTreeActionButton extends StatelessWidget {
         onOpen: onOpen,
         onBuild: onBuild,
         onCancel: onCancel,
+        isCheckingCache: isCheckingCache,
+        isPreparingBuild: isPreparingBuild,
         isBuilding: isBuilding,
         isFailed: isFailed,
       ),
@@ -91,10 +109,16 @@ String _tooltipText({
   required VoidCallback? onOpen,
   required VoidCallback? onBuild,
   required VoidCallback? onCancel,
+  required bool isCheckingCache,
+  required bool isPreparingBuild,
   required bool isBuilding,
   required bool isFailed,
 }) {
+  if (isCheckingCache) return 'Checking for an existing tree';
   if (onOpen != null) return 'Open this database tree in the board explorer';
+  if (isPreparingBuild) {
+    return 'Preparing cached games for tree. Click to stop.';
+  }
   if (isBuilding) {
     final message = progress?.message ?? 'Building local opening tree';
     final stop = onCancel == null ? '' : ' Click to stop the build.';

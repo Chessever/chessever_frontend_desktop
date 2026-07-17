@@ -27,6 +27,8 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 import 'package:chessever/repository/supabase/tour/tour.dart';
 
 const int kPublishedRoundMissingSnapshotTolerance = 5;
+const Duration kTournamentRoundsRequestTimeout = Duration(seconds: 10);
+const Duration kTournamentRoundSelectionRequestTimeout = Duration(seconds: 2);
 
 /// Sticky user selection
 final userSelectedRoundProvider =
@@ -44,6 +46,12 @@ final gamesAppBarProvider = StateNotifierProvider<
   );
 
   return _GamesAppBarNotifier(ref: ref, tourId: tourId);
+});
+
+final gamesAppBarRetryProvider = Provider<Future<void> Function()>((ref) {
+  // Resolve the notifier when Retry is clicked. Capturing the tear-off here
+  // permanently binds this provider to the first tournament's notifier.
+  return () => ref.read(gamesAppBarProvider.notifier).refresh();
 });
 
 class _GamesAppBarNotifier
@@ -65,6 +73,7 @@ class _GamesAppBarNotifier
     ref.listen<List<String>?>(
       liveRoundsIdProvider.select((a) => a.valueOrNull),
       (_, next) {
+        if (!mounted) return;
         if (next != null) _onLiveRoundsChanged(next);
       },
     );
@@ -89,6 +98,7 @@ class _GamesAppBarNotifier
         previous,
         next,
       ) {
+        if (!mounted) return;
         final games = next.valueOrNull;
         if (games == null) return;
 
@@ -102,6 +112,7 @@ class _GamesAppBarNotifier
       ref.listen<KnockoutTournamentState>(
         knockoutTournamentStateProvider(tourId!),
         (previous, next) {
+          if (!mounted) return;
           if (previous == null) return;
           // Reload when knockout state changes OR when games transition from
           // empty to non-empty. This fixes a race condition where stage
@@ -134,12 +145,14 @@ class _GamesAppBarNotifier
   Timer? _roundRefreshTimer;
 
   Future<void> refresh() async {
+    if (!mounted) return;
     await _load();
   }
 
   void _startRoundRefresh() {
     _stopRoundRefresh();
     _roundRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!mounted) return;
       _load(showLoading: false, scrollSelection: false);
     });
   }
@@ -688,6 +701,7 @@ class _GamesAppBarNotifier
     bool showLoading = true,
     bool scrollSelection = true,
   }) async {
+    if (!mounted) return;
     if (tourId == null) {
       if (showLoading) {
         state = const AsyncValue.loading();
@@ -700,7 +714,10 @@ class _GamesAppBarNotifier
     }
     try {
       final repo = ref.read(roundRepositoryProvider);
-      final rounds = await repo.getRoundsByTourId(tourId!);
+      final rounds = await repo
+          .getRoundsByTourId(tourId!)
+          .timeout(kTournamentRoundsRequestTimeout);
+      if (!mounted) return;
 
       _roundSortMeta.addEntries(
         rounds.map(
@@ -715,6 +732,7 @@ class _GamesAppBarNotifier
 
       // Check if this is a knockout tournament and group sub-rounds
       final incomingModels = await _processKnockoutRoundsIfNeeded(models);
+      if (!mounted) return;
       final processedModels = mergePublishedRoundModels(
         previous: _knownRoundModels,
         incoming: incomingModels,
@@ -743,6 +761,12 @@ class _GamesAppBarNotifier
         scrollSelection: scrollSelection,
       );
     } catch (e, st) {
+      if (!mounted) return;
+      if (!showLoading && state.valueOrNull != null) {
+        debugPrint('GamesAppBarNotifier: background refresh failed: $e');
+        return;
+      }
+      debugPrint('GamesAppBarNotifier: initial load failed for $tourId: $e');
       state = AsyncValue.error(e, st);
     }
   }
@@ -815,7 +839,9 @@ class _GamesAppBarNotifier
 
           // Get rounds for this specific tour first
           final repo = ref.read(roundRepositoryProvider);
-          final stageRounds = await repo.getRoundsByTourId(tour.id);
+          final stageRounds = await repo
+              .getRoundsByTourId(tour.id)
+              .timeout(kTournamentRoundsRequestTimeout);
           final stageRoundModels =
               stageRounds
                   .map((r) => GamesAppBarModel.fromRound(r, _liveRounds))
@@ -1375,6 +1401,7 @@ class _GamesAppBarNotifier
   /// See docs/superpowers/specs/2026-05-29-realtime-live-games-implementation-plan.md
   /// change #3.
   void _onLiveRoundsChanged(List<String> newLive) {
+    if (!mounted) return;
     if (newLive.isEmpty && _liveRounds.isNotEmpty) {
       return;
     }
@@ -1441,6 +1468,7 @@ class _GamesAppBarNotifier
     String tourId, {
     bool scrollSelection = true,
   }) async {
+    if (!mounted) return;
     // 1) Respect sticky user selection if still present
     final sticky = ref.read(userSelectedRoundProvider);
     final stickyId = sticky?.id;
@@ -1509,13 +1537,18 @@ class _GamesAppBarNotifier
     GamesAppBarModel? latestByActivityModel;
     try {
       final repo = ref.read(roundRepositoryProvider);
-      final latest = await repo.getLatestRoundByLastMove(tourId);
+      final latest = await repo
+          .getLatestRoundByLastMove(tourId)
+          .timeout(kTournamentRoundSelectionRequestTimeout);
+      if (!mounted) return;
       if (latest != null &&
           models.any((m) => m.id == latest.id) &&
           _hasGames(latest.id, counts)) {
         latestByActivityModel = models.firstWhere((m) => m.id == latest.id);
       }
     } catch (e) {}
+
+    if (!mounted) return;
 
     // 4) If we have a recent round by activity, prefer it.
     // But don't jump to upcoming rounds while there are started rounds with games.
@@ -1598,7 +1631,8 @@ List<GamesAppBarModel> mergePublishedRoundModels({
 
   if (previousModels.isEmpty) {
     missingSnapshotCounts?.clear();
-    return incomingModels.map(withCurrentStatus).toList(growable: false);
+    // The app-bar sorter reorders this snapshot in place before publishing it.
+    return incomingModels.map(withCurrentStatus).toList();
   }
 
   bool usesSyntheticStages(Iterable<GamesAppBarModel> models) =>
@@ -1610,7 +1644,7 @@ List<GamesAppBarModel> mergePublishedRoundModels({
       usesSyntheticStages(previousModels) !=
           usesSyntheticStages(incomingModels)) {
     missingSnapshotCounts?.clear();
-    return incomingModels.map(withCurrentStatus).toList(growable: false);
+    return incomingModels.map(withCurrentStatus).toList();
   }
 
   final previousById = <String, GamesAppBarModel>{

@@ -11,6 +11,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:chessever/desktop/models/player_stats.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
+import 'package:chessever/desktop/services/player_pgn_catalog.dart';
 import 'package:chessever/desktop/services/player_stats_repository.dart';
 import 'package:chessever/repository/sqlite/local_chess_schema.dart';
 
@@ -33,7 +34,11 @@ void main() {
     // rows — this test exercises the aggregation SQL, not referential integrity.
     await db.execute('PRAGMA foreign_keys=OFF');
     databasePath = p.join(temp.path, 'combined.pgn');
-    databaseId = p.normalize(databasePath);
+    final normalizedDatabasePath = p.normalize(databasePath);
+    databaseId =
+        Platform.isWindows
+            ? normalizedDatabasePath.toLowerCase()
+            : normalizedDatabasePath;
   });
 
   tearDown(() async {
@@ -663,20 +668,32 @@ void main() {
   );
 
   test(
-    'hydrates missing local cache from the player PGN before computing stats',
+    'computes a player PGN directly without opening the SQLite cache',
     () async {
       await File(databasePath).writeAsString('$_pgnWin\n\n$_pgnLoss');
+      PlayerPgnCatalog.instance.clear();
+      final firstCatalog = await PlayerPgnCatalog.instance.load(databasePath);
+      final secondCatalog = await PlayerPgnCatalog.instance.load(databasePath);
+      expect(identical(firstCatalog, secondCatalog), isTrue);
 
-      final repository = PlayerStatsRepository(database: () async => db);
+      var databaseOpened = false;
+      final repository = PlayerStatsRepository(
+        database: () async {
+          databaseOpened = true;
+          return db;
+        },
+      );
       final stats = await repository.computePlayerStats(
         databasePath: databasePath,
         aliases: const ['DrNykterstein'],
       );
 
+      expect(databaseOpened, isFalse);
       expect(stats.games, 2);
       expect(stats.overall.wins, 1);
       expect(stats.overall.losses, 1);
       expect(stats.isEmpty, isFalse);
+      expect(stats.lengthBuckets.first.count, 2);
     },
   );
 

@@ -19,4 +19,24 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('Failed tournament feed offers a retry action', (tester) async {
+    var retryCount = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TournamentGamesLoadError(onRetry: () => retryCount++),
+        ),
+      ),
+    );
+
+    expect(find.text('Could not load games'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+
+    await tester.tap(find.text('Retry'));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(retryCount, 1);
+  });
 }

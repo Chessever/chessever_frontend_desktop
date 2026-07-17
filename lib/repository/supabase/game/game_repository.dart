@@ -43,7 +43,7 @@ int? _parseRpcInt(Object? value) {
   return null;
 }
 
-const String _gameListSelectColumns = '''
+const String _gameSummarySelectColumns = '''
           id,
           round_id,
           round_slug,
@@ -51,7 +51,6 @@ const String _gameListSelectColumns = '''
           tour_slug,
           name,
           fen,
-          pgn,
           players,
           last_move,
           think_time,
@@ -79,6 +78,11 @@ const String _gameListSelectColumns = '''
               time_control
             )
           )
+        ''';
+
+const String _gameListSelectColumns = '''
+          $_gameSummarySelectColumns,
+          pgn
         ''';
 
 const List<String> _classicalTimeControlValues = [
@@ -162,7 +166,11 @@ class GameRepository extends BaseRepository {
     return handleApiCall(() async {
       var query = supabase
           .from('games')
-          .select(_gameListSelectColumns)
+          // Tournament cards render from FEN/player/status metadata. Loading
+          // every full PGN here makes large and live events wait on a much
+          // larger payload; the selected game is hydrated on demand before
+          // the board tab opens.
+          .select(_gameSummarySelectColumns)
           .eq('tour_id', tourId)
           .order('id', ascending: true);
 

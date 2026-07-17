@@ -13,6 +13,7 @@ import 'package:resqlite/resqlite.dart' as resqlite;
 import 'package:sqflite/sqflite.dart' as sqflite;
 
 import 'package:chessever/desktop/services/local_chess_diagnostics.dart';
+import 'package:chessever/desktop/services/compact_local_tree_index.dart';
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_game_filter.dart';
@@ -305,8 +306,8 @@ const int _kSqlWriteBatchSize = 4096;
 // Keep a margin below that limit while still turning large tree saves into a
 // few hundred SQL statements instead of one statement per row.
 const int _kTreeMultiRowBindLimit = 24000;
-const int _kCooperativePurgeBatchSize = 512;
-const int _kMaximumAdaptivePurgeBatchSize = 4096;
+const int _kCooperativePurgeBatchSize = 64;
+const int _kMaximumAdaptivePurgeBatchSize = 64;
 const Duration _kSlowPurgeBatchThreshold = Duration(milliseconds: 100);
 // Move parsing happens on the import worker, so the caller isolate only packs
 // compact metadata and UCI strings. A moderate batch sharply reduces SQLite
@@ -318,6 +319,7 @@ const int _kCachedFileNodeGamePreviewLimit = 1000;
 const int _kTreeWorkerProgressGameInterval = 512;
 const int _kCachedTreeRebuildPageSize = 2048;
 const int _kCachedTreeBuildInputBatchSize = 96;
+// ignore: unused_element
 const int _kPersistedPositionGameRefLimit = 10000;
 const int _kSingleWorkerTreeBuildBytes = 128 * 1024 * 1024;
 const String _localTreePositionRefStageTable =
@@ -430,10 +432,137 @@ Future<T> _cancelableLocalChessFuture<T>(
 Future<sqflite.Database> _defaultLegacyLocalChessSqfliteDatabase() =>
     AppDatabase.instance.database;
 
-Future<void> createLocalChessResqliteDatabaseSchema(resqlite.Database db) {
-  return LocalChessDatabaseRepository._runLocalCacheWriteQueued(
+Future<void> createLocalChessResqliteDatabaseSchema(
+  resqlite.Database db,
+) async {
+  // Opening an already-current cache is a hot path for Player downloads and
+  // stats. Re-entering the schema transaction used to run the PGN-hash and
+  // position backfill queries every time. On a large cache that meant reading
+  // gigabytes of raw PGN text before a download could begin, even when there
+  // was nothing to migrate. Keep the upgrade path below, but avoid taking the
+  // writer queue at all when the required schema and migrations are present.
+  if (await _localChessResqliteSchemaIsCurrent(db)) return;
+  await LocalChessDatabaseRepository._runLocalCacheWriteQueued(
     () => _createLocalChessResqliteDatabaseSchemaUnlocked(db),
   );
+}
+
+Future<bool> _localChessResqliteSchemaIsCurrent(
+  resqlite.Database db,
+) async {
+  try {
+    const requiredTables = <String>{
+      _localChessMigrationsTable,
+      localChessDatabasesTable,
+      localChessPlayersTable,
+      localChessEventsTable,
+      localChessSitesTable,
+      localChessGamesTable,
+      localChessTreeNodesTable,
+      localChessTreeMovesTable,
+      localChessPositionGamesTable,
+      localChessGameAnalysisTable,
+    };
+    const requiredIndexes = <String>{
+      'idx_local_chess_games_database',
+      'idx_local_chess_games_database_index',
+      'idx_local_chess_games_pgn_hash',
+      'idx_local_chess_games_db_result',
+      'idx_local_chess_games_db_time_category',
+      'idx_local_chess_games_db_online',
+      'idx_local_chess_games_db_date',
+      'idx_local_chess_games_db_white_elo',
+      'idx_local_chess_games_db_black_elo',
+      'idx_local_chess_tree_moves_sample_game',
+      'idx_local_chess_tree_moves_child_node',
+      'idx_local_chess_position_games_game',
+      'idx_local_chess_position_games_next',
+      'idx_local_chess_databases_deleted',
+    };
+    final objects = await db.select(
+      "SELECT type, name FROM sqlite_master WHERE type IN ('table', 'index')",
+    );
+    final tableNames = <String>{
+      for (final row in objects)
+        if (row['type'] == 'table') row['name']?.toString() ?? '',
+    };
+    final indexNames = <String>{
+      for (final row in objects)
+        if (row['type'] == 'index') row['name']?.toString() ?? '',
+    };
+    if (!tableNames.containsAll(requiredTables) ||
+        !indexNames.containsAll(requiredIndexes) ||
+        indexNames.contains('idx_local_chess_tree_nodes_fen') ||
+        indexNames.contains('idx_local_chess_tree_moves_total')) {
+      return false;
+    }
+
+    final gameColumns = <String>{
+      for (final row in await db.select(
+        'PRAGMA table_info($localChessGamesTable)',
+      ))
+        row['name']?.toString() ?? '',
+    };
+    if (!gameColumns.containsAll(const <String>{
+      'pgn_hash',
+      'source_byte_start',
+      'source_byte_end',
+      'time_control_category',
+      'is_online',
+    })) {
+      return false;
+    }
+    final databaseColumns = <String>{
+      for (final row in await db.select(
+        'PRAGMA table_info($localChessDatabasesTable)',
+      ))
+        row['name']?.toString() ?? '',
+    };
+    if (!databaseColumns.containsAll(const <String>{
+      'deleted_at_ms',
+      'tree_max_ply',
+      'player_enrichment_at_ms',
+      'content_fingerprint',
+    })) {
+      return false;
+    }
+    final positionColumns = <String>{
+      for (final row in await db.select(
+        'PRAGMA table_info($localChessPositionGamesTable)',
+      ))
+        row['name']?.toString() ?? '',
+    };
+    if (!positionColumns.contains('next_uci')) return false;
+
+    const requiredMigrations = <String>{
+      _localChessCacheGenerationName,
+      _localChessTreeDepthGenerationName,
+      _localChessTreePositionIdentityGenerationName,
+      _localChessOpeningNameBackfillName,
+      _localChessTimeControlBackfillName,
+    };
+    final migrationRows = await db.select(
+      'SELECT name FROM $_localChessMigrationsTable',
+    );
+    final migrations = <String>{
+      for (final row in migrationRows) row['name']?.toString() ?? '',
+    };
+    if (!migrations.containsAll(requiredMigrations)) return false;
+
+    // The composite hash index is much smaller than the raw PGN table. This
+    // guard preserves recovery from an interrupted legacy backfill without
+    // forcing every normal open to read each game's full movetext.
+    final missingHash = await db.select('''
+      SELECT 1
+      FROM $localChessGamesTable INDEXED BY idx_local_chess_games_pgn_hash
+      WHERE pgn_hash IS NULL OR pgn_hash = ''
+      LIMIT 1
+      ''');
+    return missingHash.isEmpty;
+  } on Object {
+    // A partially-created or legacy database belongs on the full upgrade path.
+    return false;
+  }
 }
 
 Future<void> _createLocalChessResqliteDatabaseSchemaUnlocked(
@@ -1848,6 +1977,7 @@ class _LocalTreeRebuildWorkerSuccess {
     required this.databaseId,
     required this.maxPly,
     required this.positionCount,
+    required this.occurrenceCount,
     required this.gameCount,
     required this.generatedAtMs,
     required this.skippedGames,
@@ -1857,6 +1987,7 @@ class _LocalTreeRebuildWorkerSuccess {
   final String databaseId;
   final int maxPly;
   final int positionCount;
+  final int occurrenceCount;
   final int gameCount;
   final int generatedAtMs;
   final int skippedGames;
@@ -2012,17 +2143,20 @@ class LocalChessDatabaseRepository {
 
   Future<_LocalChessInlineImportSession?> _openInlineImportSession({
     LocalChessScanProgressSink? onProgress,
+    bool preferDirectDatabase = false,
   }) async {
     final resolver = _databaseFilePathResolver;
-    try {
-      await _openDatabase(onProgress: onProgress);
-      return _LocalChessInlineImportSession(repository: this);
-    } catch (error) {
-      if (resolver == null) rethrow;
-      localChessLog.warning(
-        'Falling back to path-only local import cache',
-        context: <String, Object?>{'error': error.toString()},
-      );
+    if (!preferDirectDatabase || resolver == null) {
+      try {
+        await _openDatabase(onProgress: onProgress);
+        return _LocalChessInlineImportSession(repository: this);
+      } catch (error) {
+        if (resolver == null) rethrow;
+        localChessLog.warning(
+          'Falling back to path-only local import cache',
+          context: <String, Object?>{'error': error.toString()},
+        );
+      }
     }
 
     onProgress?.call(
@@ -2079,6 +2213,38 @@ class LocalChessDatabaseRepository {
     if (resolver != null) return resolver();
     final db = await _openDatabase(onProgress: onProgress);
     return _databaseFilePath(db);
+  }
+
+  Future<resqlite.Database?> _openDirectReadDatabase() async {
+    final resolver = _databaseFilePathResolver;
+    if (resolver == null) return null;
+    final path = await resolver();
+    if (path == null || path.trim().isEmpty) return null;
+    final db = await resqlite.Database.open(path);
+    try {
+      await db.execute('PRAGMA busy_timeout=5000');
+      await db.execute('PRAGMA query_only=ON');
+      return db;
+    } catch (_) {
+      await db.close();
+      rethrow;
+    }
+  }
+
+  Future<resqlite.Database?> _openCompactGameReadDatabase(
+    String databasePath,
+  ) async {
+    final path = compactLocalTreeGameIndexPath(databasePath);
+    if (!await File(path).exists()) return null;
+    final db = await resqlite.Database.open(path);
+    try {
+      await db.execute('PRAGMA busy_timeout=5000');
+      await db.execute('PRAGMA query_only=ON');
+      return db;
+    } catch (_) {
+      await db.close();
+      rethrow;
+    }
   }
 
   Future<void> persistSource(LocalChessSource source) async {
@@ -2152,11 +2318,14 @@ class LocalChessDatabaseRepository {
       WHERE d.deleted_at_ms IS NULL
         AND d.position_count > 0
         AND d.tree_max_ply IS NOT NULL
-        AND EXISTS (
-          SELECT 1
-          FROM $localChessTreeNodesTable tn
-          WHERE tn.database_id = d.id AND tn.node_id = 0
-          LIMIT 1
+        AND (
+          d.tree_snapshot LIKE '%"format":"$compactLocalTreeIndexFormat"%'
+          OR EXISTS (
+            SELECT 1
+            FROM $localChessTreeNodesTable tn
+            WHERE tn.database_id = d.id AND tn.node_id = 0
+            LIMIT 1
+          )
         )
       ORDER BY d.updated_at_ms DESC, d.label COLLATE NOCASE ASC
       ''');
@@ -2187,6 +2356,10 @@ class LocalChessDatabaseRepository {
   }) async {
     final databaseId = _databaseId(databasePath);
     if (databaseId.isEmpty) return null;
+    final compactIndex = loadCompactOpeningTreeIndexForDatabase(
+      databasePath: databasePath,
+    );
+    if (compactIndex != null) return compactIndex;
     final db = await _database();
     final databaseRows = await db.select(
       '''
@@ -2203,6 +2376,8 @@ class LocalChessDatabaseRepository {
       return await _loadOpeningTreeIndex(
         db,
         databaseId,
+        databasePath: databasePath,
+        treeSnapshot: row['tree_snapshot'],
         generatedAtMs: row['updated_at_ms'],
         expectedPositionCount: _readInt(row['position_count']),
         expectedGameCount: _readInt(row['game_count']),
@@ -2213,9 +2388,67 @@ class LocalChessDatabaseRepository {
     }
   }
 
+  /// Restores only the bounded sidecar tree and never opens the multi-gigabyte
+  /// searchable cache. Player Build Tree cards use this fast probe so a cache
+  /// miss cannot queue schema or cleanup work before the user clicks.
+  PlayerOpeningTreeIndex? loadCompactOpeningTreeIndexForDatabase({
+    required String databasePath,
+  }) {
+    final databaseId = _databaseId(databasePath);
+    if (databaseId.isEmpty) return null;
+    return _loadFreshCompactOpeningTreeIndex(
+      databaseId: databaseId,
+      databasePath: databasePath,
+    );
+  }
+
+  PlayerOpeningTreeIndex? _loadFreshCompactOpeningTreeIndex({
+    required String databaseId,
+    required String databasePath,
+  }) {
+    final source = File(databasePath);
+    CompactLocalTreeIndexMetadata? metadata;
+    try {
+      metadata = CompactLocalTreeIndexMetadata.readSync(
+        compactLocalTreeIndexPath(databasePath),
+      );
+    } on FileSystemException {
+      return null;
+    }
+    if (metadata == null ||
+        metadata.positionCount <= 0 ||
+        metadata.maxPly <= 0) {
+      return null;
+    }
+    try {
+      if (!source.existsSync() ||
+          source.lastModifiedSync().millisecondsSinceEpoch >
+              metadata.generatedAtMs) {
+        return null;
+      }
+    } on FileSystemException {
+      return null;
+    }
+    return PlayerOpeningTreeIndex(
+      treeId: 'local:${_stableId(databaseId)}',
+      playerId: databaseId,
+      maxPly: metadata.maxPly,
+      rootNodeId: 0,
+      generatedAt: DateTime.fromMillisecondsSinceEpoch(metadata.generatedAtMs),
+      nodesById: const <int, PlayerOpeningTreeNode>{},
+      nodesByFenKey: const <String, PlayerOpeningTreeNode>{},
+      gamesByFen: const <String, List<PlayerOpeningTreeGameRef>>{},
+      gameRowsById: const <String, Map<String, dynamic>>{},
+      persistedPositionCount: metadata.positionCount,
+      persistedGameCount: metadata.gameCount,
+    );
+  }
+
   Future<LocalChessSource?> importSingleFileSource({
     required String path,
     String? sourceLabel,
+    bool deduplicateGames = true,
+    bool preferDirectDatabase = false,
     OperationCancellationToken? cancellationToken,
     void Function(LocalChessScanProgress progress)? onProgress,
   }) async {
@@ -2239,6 +2472,8 @@ class LocalChessDatabaseRepository {
     importFuture = _importSingleFileSourceUnlocked(
       path: trimmed,
       sourceLabel: sourceLabel,
+      deduplicateGames: deduplicateGames,
+      preferDirectDatabase: preferDirectDatabase,
       cancellationToken: cancellationToken,
       onProgress: onProgress,
     );
@@ -2258,8 +2493,8 @@ class LocalChessDatabaseRepository {
 
   /// Materializes a Combined database from source rows that were already
   /// imported into the local cache. Returns false when any source cache is
-  /// missing or its deduplicated count does not match the generated PGN, so
-  /// callers can safely fall back to the normal file importer.
+  /// missing or its row count does not match the generated PGN, so callers can
+  /// safely fall back to the normal file importer.
   Future<bool> rebuildCombinedCacheFromCachedSources({
     required String combinedPath,
     required String sourceLabel,
@@ -2318,23 +2553,15 @@ class LocalChessDatabaseRepository {
         );
         if (cachedSourceRows.length != normalizedSources.length) return false;
 
-        final distinctRows = await txn.select(
+        final sourceGameRows = await txn.select(
           '''
           SELECT COUNT(*) AS count
-          FROM (
-            SELECT 1
-            FROM $localChessGamesTable
-            WHERE database_id IN ($sourcePlaceholders)
-            GROUP BY CASE
-              WHEN TRIM(COALESCE(pgn_hash, '')) = ''
-                THEN 'id:' || id
-              ELSE 'hash:' || TRIM(pgn_hash)
-            END
-          )
+          FROM $localChessGamesTable
+          WHERE database_id IN ($sourcePlaceholders)
           ''',
           <Object?>[...normalizedSources],
         );
-        if (_readInt(distinctRows.single['count']) != expectedGameCount) {
+        if (_readInt(sourceGameRows.single['count']) != expectedGameCount) {
           return false;
         }
 
@@ -2438,23 +2665,9 @@ class LocalChessDatabaseRepository {
             SELECT
               g.*,
               s.source_priority,
-              s.source_tag,
-              CASE
-                WHEN TRIM(COALESCE(g.pgn_hash, '')) = ''
-                  THEN 'id:' || g.id
-                ELSE 'hash:' || TRIM(g.pgn_hash)
-              END AS dedup_key
+              s.source_tag
             FROM $localChessGamesTable g
             INNER JOIN source_order s ON s.database_id = g.database_id
-          ),
-          ranked AS (
-            SELECT
-              *,
-              ROW_NUMBER() OVER (
-                PARTITION BY dedup_key
-                ORDER BY source_priority ASC, index_in_file ASC, id ASC
-              ) AS duplicate_rank
-            FROM source_games
           ),
           selected AS (
             SELECT
@@ -2463,8 +2676,7 @@ class LocalChessDatabaseRepository {
                 ORDER BY source_priority ASC, index_in_file ASC, id ASC
               ) - 1 AS combined_index,
               COUNT(*) OVER () AS combined_count
-            FROM ranked
-            WHERE duplicate_rank = 1
+            FROM source_games
           )
           INSERT INTO $localChessGamesTable(
             id,
@@ -2580,6 +2792,8 @@ class LocalChessDatabaseRepository {
   Future<LocalChessSource?> _importSingleFileSourceUnlocked({
     required String path,
     String? sourceLabel,
+    required bool deduplicateGames,
+    required bool preferDirectDatabase,
     OperationCancellationToken? cancellationToken,
     void Function(LocalChessScanProgress progress)? onProgress,
   }) async {
@@ -2592,7 +2806,10 @@ class LocalChessDatabaseRepository {
     );
 
     final session = await _cancelableLocalChessFuture(
-      _openInlineImportSession(onProgress: onProgress),
+      _openInlineImportSession(
+        onProgress: onProgress,
+        preferDirectDatabase: preferDirectDatabase,
+      ),
       cancellationToken,
     );
     if (session == null) {
@@ -2609,6 +2826,7 @@ class LocalChessDatabaseRepository {
         () => _importSingleLocalChessFileInline(
           path: trimmed,
           sourceLabel: sourceLabel,
+          deduplicateGames: deduplicateGames,
           writerRepository: session.repository,
           cancellationToken: cancellationToken,
           onProgress: onProgress,
@@ -2673,6 +2891,7 @@ class LocalChessDatabaseRepository {
   Future<LocalChessSource> _importSingleLocalChessFileInline({
     required String path,
     String? sourceLabel,
+    required bool deduplicateGames,
     required LocalChessDatabaseRepository writerRepository,
     OperationCancellationToken? cancellationToken,
     void Function(LocalChessScanProgress progress)? onProgress,
@@ -2690,6 +2909,7 @@ class LocalChessDatabaseRepository {
       final node = await scanLocalChessFileNodeForImportWithProgress(
         path: path,
         rootPath: rootPath,
+        deduplicateGames: deduplicateGames,
         previewGameLimit: cachedFileNodeGamePreviewLimit,
         batchSize: _kInteractiveImportBatchSize,
         onProgress: emit,
@@ -2920,34 +3140,97 @@ class LocalChessDatabaseRepository {
   }
 
   Future<LocalChessOpeningTreeRebuildResult?>
+  rebuildOpeningTreeFromPgnFile({
+    required String databasePath,
+    void Function(LocalChessScanProgress progress)? onProgress,
+    OperationCancellationToken? cancellationToken,
+  }) async {
+    cancellationToken?.throwIfCanceled();
+    final clean = databasePath.trim();
+    if (clean.isEmpty) return null;
+    final stopwatch = Stopwatch()..start();
+    localChessLog.info(
+      'Direct PGN tree rebuild started',
+      context: <String, Object?>{'path': clean},
+    );
+    try {
+      final result = await buildCompactLocalTreeFromPgn(
+        path: clean,
+        cancellationToken: cancellationToken,
+        onProgress: onProgress,
+      );
+      cancellationToken?.throwIfCanceled();
+      final metadata = result.metadata;
+      final databaseId = _databaseId(clean);
+      final index = PlayerOpeningTreeIndex(
+        treeId: 'local:${_stableId(databaseId)}',
+        playerId: databaseId,
+        maxPly: metadata.maxPly,
+        rootNodeId: 0,
+        generatedAt: DateTime.fromMillisecondsSinceEpoch(
+          metadata.generatedAtMs,
+        ),
+        nodesById: const <int, PlayerOpeningTreeNode>{},
+        nodesByFenKey: const <String, PlayerOpeningTreeNode>{},
+        gamesByFen: const <String, List<PlayerOpeningTreeGameRef>>{},
+        gameRowsById: const <String, Map<String, dynamic>>{},
+        persistedPositionCount: metadata.positionCount,
+        persistedGameCount: metadata.gameCount,
+      );
+      stopwatch.stop();
+      localChessLog.info(
+        'Direct PGN tree rebuild finished',
+        context: <String, Object?>{
+          'path': clean,
+          'games': metadata.gameCount,
+          'positions': metadata.positionCount,
+          'occurrences': metadata.occurrenceCount,
+          'skippedGames': result.skippedGames,
+          'elapsedMs': stopwatch.elapsedMilliseconds,
+        },
+      );
+      return LocalChessOpeningTreeRebuildResult(
+        index: index,
+        skippedGames: result.skippedGames,
+      );
+    } catch (error, stackTrace) {
+      stopwatch.stop();
+      if (isOperationCanceled(error)) {
+        localChessLog.info(
+          'Direct PGN tree rebuild canceled',
+          context: <String, Object?>{
+            'path': clean,
+            'elapsedMs': stopwatch.elapsedMilliseconds,
+          },
+        );
+        rethrow;
+      }
+      localChessLog.error(
+        'Direct PGN tree rebuild failed',
+        error,
+        stackTrace,
+        tag: 'local_chess.direct_pgn_tree_rebuild',
+        context: <String, Object?>{
+          'path': clean,
+          'elapsedMs': stopwatch.elapsedMilliseconds,
+        },
+      );
+      rethrow;
+    }
+  }
+
+  Future<LocalChessOpeningTreeRebuildResult?>
   rebuildOpeningTreeFromCachedGames({
     required String databasePath,
     void Function(LocalChessScanProgress progress)? onProgress,
     OperationCancellationToken? cancellationToken,
   }) {
-    // The rebuild worker runs in its own isolate on a separate connection and
-    // writes the tree back into the shared cache file; serialize its whole run
-    // through the global write lock so its BEGIN IMMEDIATE never races another
-    // writer. Opening the DB happens inside (unqueued), so this does not nest.
-    return _runLocalCacheWriteQueued(
-      () {
-        cancellationToken?.throwIfCanceled();
-        _throwIfCacheSourceDeletionInProgress(databasePath);
-        return _rebuildOpeningTreeFromCachedGamesUnlocked(
-          databasePath: databasePath,
-          onProgress: onProgress,
-          cancellationToken: cancellationToken,
-        );
-      },
-      onWaiting:
-          onProgress == null
-              ? null
-              : () => onProgress(
-                LocalChessScanProgress(
-                  fraction: 0,
-                  message: 'Waiting for local database...',
-                ),
-              ),
+    cancellationToken?.throwIfCanceled();
+    _throwIfCacheSourceDeletionInProgress(databasePath);
+    return _rebuildOpeningTreeFromCachedGamesUnlocked(
+      databasePath: databasePath,
+      onProgress: onProgress,
+      cancellationToken: cancellationToken,
     );
   }
 
@@ -3015,6 +3298,27 @@ class LocalChessDatabaseRepository {
             onProgress?.call(message);
           case _LocalTreeRebuildWorkerSuccess():
             await exitDone.future;
+            final metadata = CompactLocalTreeIndexMetadata(
+              version: compactLocalTreeIndexVersion,
+              gameCount: message.gameCount,
+              positionCount: message.positionCount,
+              occurrenceCount: message.occurrenceCount,
+              maxPly: message.maxPly,
+              generatedAtMs: message.generatedAtMs,
+            );
+            final published = await _publishCompactOpeningTreeMetadata(
+              databasePath: databasePath,
+              metadata: metadata,
+            );
+            if (!published) {
+              deleteCompactLocalTreeIndexBestEffort(databasePath);
+              throw StateError(
+                'Local database cache disappeared before publishing tree.',
+              );
+            }
+            onProgress?.call(
+              LocalChessScanProgress(fraction: 1, message: 'Tree ready.'),
+            );
             stopwatch.stop();
             localChessLog.info(
               'Local tree rebuild finished',
@@ -3086,6 +3390,70 @@ class LocalChessDatabaseRepository {
       errorPort.close();
       isolate?.kill(priority: Isolate.immediate);
     }
+  }
+
+  Future<bool> _publishCompactOpeningTreeMetadata({
+    required String databasePath,
+    required CompactLocalTreeIndexMetadata metadata,
+  }) async {
+    final databaseId = _databaseId(databasePath);
+    final resolver = _databaseFilePathResolver;
+    if (resolver != null) {
+      final path = await resolver();
+      if (path == null || path.trim().isEmpty) return false;
+      final db = await resqlite.Database.open(path);
+      try {
+        await db.execute('PRAGMA busy_timeout=20000');
+        final result = await db.execute(
+          '''
+          UPDATE $localChessDatabasesTable
+          SET position_count = ?,
+              tree_snapshot = ?,
+              tree_max_ply = ?,
+              updated_at_ms = ?
+          WHERE id = ?
+            AND deleted_at_ms IS NULL
+            AND game_count = ?
+          ''',
+          <Object?>[
+            metadata.positionCount,
+            compactLocalTreeSnapshot(metadata),
+            metadata.maxPly,
+            metadata.generatedAtMs,
+            databaseId,
+            metadata.gameCount,
+          ],
+        );
+        return result.affectedRows > 0;
+      } finally {
+        await db.close();
+      }
+    }
+
+    final db = await _database();
+    final result = await _runLocalCacheWriteQueued(
+      () => db.execute(
+        '''
+        UPDATE $localChessDatabasesTable
+        SET position_count = ?,
+            tree_snapshot = ?,
+            tree_max_ply = ?,
+            updated_at_ms = ?
+        WHERE id = ?
+          AND deleted_at_ms IS NULL
+          AND game_count = ?
+        ''',
+        <Object?>[
+          metadata.positionCount,
+          compactLocalTreeSnapshot(metadata),
+          metadata.maxPly,
+          metadata.generatedAtMs,
+          databaseId,
+          metadata.gameCount,
+        ],
+      ),
+    );
+    return result.affectedRows > 0;
   }
 
   Future<int> deleteCachedSource(
@@ -3481,7 +3849,12 @@ class LocalChessDatabaseRepository {
                       }
                     },
           );
-          if (removed) purged += 1;
+          if (removed) {
+            purged += 1;
+            deleteCompactLocalTreeIndexBestEffort(
+              row['path']?.toString() ?? '',
+            );
+          }
           completedDatabases += 1;
           emitProgress('Cleaning generated local cache...');
           if (checkpoint) {
@@ -4005,6 +4378,7 @@ class LocalChessDatabaseRepository {
   Future<Set<String>?> localDatabaseMatchingPgnFingerprints({
     required String databasePath,
     required Iterable<String> fingerprints,
+    bool preferDirectDatabase = false,
   }) async {
     final databaseId = _databaseId(databasePath);
     final candidates = fingerprints
@@ -4012,65 +4386,69 @@ class LocalChessDatabaseRepository {
         .where((hash) => hash.isNotEmpty)
         .toSet()
         .toList(growable: false);
-    final db = await _database();
-    final databaseRows = await db.select(
-      '''
-      SELECT 1
-      FROM $localChessDatabasesTable
-      WHERE id = ? AND deleted_at_ms IS NULL
-      LIMIT 1
-      ''',
-      <Object?>[databaseId],
-    );
-    if (databaseRows.isEmpty) return null;
-    if (candidates.isEmpty) return const <String>{};
-
-    final existing = <String>{};
-    for (final chunk in _chunks(candidates, 800)) {
-      final placeholders = List<String>.filled(chunk.length, '?').join(', ');
-      final rows = await db.select(
+    final directDatabase =
+        preferDirectDatabase ? await _openDirectReadDatabase() : null;
+    final db = directDatabase ?? await _database();
+    try {
+      final databaseRows = await db.select(
         '''
-        SELECT pgn_hash
-        FROM $localChessGamesTable
-        WHERE database_id = ?
-          AND pgn_hash IN ($placeholders)
+        SELECT 1
+        FROM $localChessDatabasesTable
+        WHERE id = ? AND deleted_at_ms IS NULL
+        LIMIT 1
         ''',
-        <Object?>[databaseId, ...chunk],
+        <Object?>[databaseId],
       );
-      for (final row in rows) {
-        final hash = row['pgn_hash']?.toString().trim();
-        if (hash != null && hash.isNotEmpty) existing.add(hash);
+      if (databaseRows.isEmpty) return null;
+      if (candidates.isEmpty) return const <String>{};
+
+      final existing = <String>{};
+      for (final chunk in _chunks(candidates, 800)) {
+        final placeholders = List<String>.filled(chunk.length, '?').join(', ');
+        final rows = await db.select(
+          '''
+          SELECT pgn_hash
+          FROM $localChessGamesTable
+          WHERE database_id = ?
+            AND pgn_hash IN ($placeholders)
+          ''',
+          <Object?>[databaseId, ...chunk],
+        );
+        for (final row in rows) {
+          final hash = row['pgn_hash']?.toString().trim();
+          if (hash != null && hash.isNotEmpty) existing.add(hash);
+        }
       }
+      return existing;
+    } finally {
+      await directDatabase?.close();
     }
-    return existing;
   }
 
   Future<LocalChessDatabaseResultStats> localDatabaseResultStats({
     required String databasePath,
     required Iterable<String> playerAliases,
     String? playerFideId,
+    bool preferDirectDatabase = false,
   }) {
     return resultStatsForDatabases(
       databasePaths: <String>[databasePath],
       playerAliases: playerAliases,
       playerFideId: playerFideId,
+      preferDirectDatabase: preferDirectDatabase,
     );
   }
 
-  /// Result stats over the union of several local databases, deduplicated by
-  /// PGN fingerprint (`pgn_hash`).
+  /// Result stats over every row in one or more local databases.
   ///
-  /// This is the single counting method behind both the per-source numbers
-  /// (one path) and the "Combined" number (every source path) in the player
-  /// workspace. Because each unique game is counted exactly once across the
-  /// union, the Combined count always equals the number of distinct games —
-  /// and for disjoint sources (Lichess vs Chess.com vs OTB, the common case)
-  /// the per-source counts partition that set and sum to it. Games missing a
-  /// hash fall back to their row id so hash-less rows are never collapsed.
+  /// Cross-source overlaps intentionally remain separate games. Optional
+  /// deduplication belongs at the product level and must not silently alter the
+  /// player database or tree counts.
   Future<LocalChessDatabaseResultStats> resultStatsForDatabases({
     required Iterable<String> databasePaths,
     required Iterable<String> playerAliases,
     String? playerFideId,
+    bool preferDirectDatabase = false,
   }) async {
     final databaseIds = databasePaths
         .map(_databaseId)
@@ -4091,7 +4469,10 @@ class LocalChessDatabaseRepository {
             .where((name) => name.isNotEmpty)
             .toSet();
     final fideId = _normalizeFideIdForStats(playerFideId);
-    final db = await _database();
+    final directDatabase =
+        preferDirectDatabase ? await _openDirectReadDatabase() : null;
+    final db = directDatabase ?? await _database();
+    try {
     final placeholders = List.filled(databaseIds.length, '?').join(', ');
     final aliasList = aliases.toList(growable: false);
     final hasAliases = aliasList.isNotEmpty;
@@ -4151,15 +4532,12 @@ class LocalChessDatabaseRepository {
     );
     params.addAll(databaseIds);
 
-    // Innermost: one row per game with the player-side flags and dedup key.
-    // Middle: keep only the player's games, collapse duplicates (same
-    // fingerprint across sources) via GROUP BY. Then classify each distinct
-    // game once (draw wins ties over win/loss, matching the old precedence) and
+    // Keep every matching source row, classify it from the player's side, and
     // sum. COALESCE keeps the flags 0 instead of NULL when a FIDE compare is
     // against a NULL id.
     final rows = await db.select('''
       SELECT
-        COUNT(*) AS games,
+        COALESCE(SUM(matched), 0) AS games,
         COALESCE(SUM(CASE WHEN outcome = 'w' THEN 1 ELSE 0 END), 0) AS wins,
         COALESCE(SUM(CASE WHEN outcome = 'd' THEN 1 ELSE 0 END), 0) AS draws,
         COALESCE(SUM(CASE WHEN outcome = 'l' THEN 1 ELSE 0 END), 0) AS losses
@@ -4170,28 +4548,19 @@ class LocalChessDatabaseRepository {
             WHEN (res = '1-0' AND iw = 1) OR (res = '0-1' AND ib = 1) THEN 'w'
             WHEN (res = '0-1' AND iw = 1) OR (res = '1-0' AND ib = 1) THEN 'l'
             ELSE 'o'
-          END AS outcome
+          END AS outcome,
+          CASE WHEN iw = 1 OR ib = 1 THEN 1 ELSE 0 END AS matched
         FROM (
-          SELECT MAX(iw) AS iw, MAX(ib) AS ib, MIN(res) AS res
-          FROM (
-            SELECT
-              CASE
-                WHEN TRIM(COALESCE(g.pgn_hash, '')) = ''
-                  THEN 'id:' || CAST(g.id AS TEXT)
-                ELSE 'hash:' || TRIM(g.pgn_hash)
-              END AS dedup_key,
-              $isWhite AS iw,
-              $isBlack AS ib,
-              TRIM(COALESCE(g.result, '')) AS res
-            FROM $localChessGamesTable g
-            INNER JOIN $localChessDatabasesTable d ON d.id = g.database_id
-            LEFT JOIN $localChessPlayersTable wp ON wp.id = g.white_id
-            LEFT JOIN $localChessPlayersTable bp ON bp.id = g.black_id
-            WHERE g.database_id IN ($placeholders)
-              AND d.deleted_at_ms IS NULL
-          )
-          WHERE iw = 1 OR ib = 1
-          GROUP BY dedup_key
+          SELECT
+            $isWhite AS iw,
+            $isBlack AS ib,
+            TRIM(COALESCE(g.result, '')) AS res
+          FROM $localChessGamesTable g
+          INNER JOIN $localChessDatabasesTable d ON d.id = g.database_id
+          LEFT JOIN $localChessPlayersTable wp ON wp.id = g.white_id
+          LEFT JOIN $localChessPlayersTable bp ON bp.id = g.black_id
+          WHERE g.database_id IN ($placeholders)
+            AND d.deleted_at_ms IS NULL
         )
       )
       ''', params);
@@ -4203,6 +4572,9 @@ class LocalChessDatabaseRepository {
       drawCount: _readInt(row['draws']),
       lossCount: _readInt(row['losses']),
     );
+    } finally {
+      await directDatabase?.close();
+    }
   }
 
   Future<DateTime?> latestLocalGameDate({required String databasePath}) async {
@@ -4903,7 +5275,49 @@ class LocalChessDatabaseRepository {
         const PlayerOpeningTreeFilterCriteria(),
   }) async {
     final databaseId = _databaseId(databasePath);
+    final freshCompactIndex = _loadFreshCompactOpeningTreeIndex(
+      databaseId: databaseId,
+      databasePath: databasePath,
+    );
+    if (freshCompactIndex != null) {
+      if (!filters.hasFilters) {
+        return _localUnfilteredCompactTreeMoveAggregatesForFen(
+          databasePath: databasePath,
+          fen: fen,
+        );
+      }
+      final directDb =
+          await _openCompactGameReadDatabase(databasePath) ??
+          await _openDirectReadDatabase();
+      if (directDb != null) {
+        try {
+          return await _localCompactTreeMoveAggregatesForFen(
+            directDb,
+            databaseId: databaseId,
+            databasePath: databasePath,
+            fen: fen,
+            filters: filters,
+          );
+        } finally {
+          await directDb.close();
+        }
+      }
+    }
     final db = await _database();
+    final compactMetadata = await _compactTreeMetadataForDatabase(
+      db,
+      databaseId: databaseId,
+      databasePath: databasePath,
+    );
+    if (compactMetadata != null) {
+      return _localCompactTreeMoveAggregatesForFen(
+        db,
+        databaseId: databaseId,
+        databasePath: databasePath,
+        fen: fen,
+        filters: filters,
+      );
+    }
     final hasUsableTree = await _databaseHasUsableOpeningTreeMetadata(
       db,
       databaseId,
@@ -4985,6 +5399,112 @@ class LocalChessDatabaseRepository {
           })
           .where((move) => move.uci.isNotEmpty && move.total > 0),
     );
+  }
+
+  Future<List<MoveAggregate>> _localCompactTreeMoveAggregatesForFen(
+    resqlite.Database db, {
+    required String databaseId,
+    required String databasePath,
+    required String fen,
+    required PlayerOpeningTreeFilterCriteria filters,
+  }) async {
+    if (!filters.hasFilters) {
+      return _localUnfilteredCompactTreeMoveAggregatesForFen(
+        databasePath: databasePath,
+        fen: fen,
+      );
+    }
+    final indexPath = compactLocalTreeIndexPath(databasePath);
+    final matches = await Isolate.run(
+      () => readCompactLocalTreePositionMatchesSync(
+        indexPath: indexPath,
+        fen: fen,
+      ),
+    );
+    if (matches.isEmpty) return const <MoveAggregate>[];
+
+    final encodedMatches = jsonEncode(<List<Object?>>[
+      for (final match in matches)
+        if (match.nextUci != null) <Object?>[match.indexInFile, match.nextUci],
+    ]);
+    final where = StringBuffer('g.database_id = ?');
+    final parameters = <Object?>[databaseId];
+    _appendLocalPositionFilters(where, parameters, filters);
+    final rows = await db.select(
+      '''
+      WITH position_matches AS (
+        SELECT
+          CAST(json_extract(value, '\$[0]') AS INTEGER) AS game_index,
+          LOWER(CAST(json_extract(value, '\$[1]') AS TEXT)) AS next_uci
+        FROM json_each(?)
+      )
+      SELECT
+        pm.next_uci AS uci,
+        SUM(CASE WHEN g.result = '1-0' THEN 1 ELSE 0 END) AS white,
+        SUM(CASE WHEN g.result = '0-1' THEN 1 ELSE 0 END) AS black,
+        SUM(CASE WHEN COALESCE(g.result, '') NOT IN ('1-0', '0-1') THEN 1 ELSE 0 END) AS draws,
+        COUNT(*) AS total,
+        CASE WHEN COUNT(*) = 1 THEN MAX(g.id) ELSE NULL END AS game_id,
+        MAX(NULLIF(REPLACE(COALESCE(g.date, ''), '.', '-'), '')) AS last_played
+      FROM position_matches pm
+      CROSS JOIN $localChessGamesTable g
+        INDEXED BY idx_local_chess_games_database_index
+        ON g.index_in_file = pm.game_index
+      WHERE $where
+        AND pm.next_uci IS NOT NULL
+        AND pm.next_uci <> ''
+      GROUP BY pm.next_uci
+      ORDER BY total DESC, pm.next_uci ASC
+      ''',
+      <Object?>[encodedMatches, ...parameters],
+    );
+    return List<MoveAggregate>.unmodifiable(
+      rows.map(
+        (row) => MoveAggregate(
+          uci: row['uci']?.toString().trim().toLowerCase() ?? '',
+          white: _readInt(row['white']),
+          black: _readInt(row['black']),
+          draws: _readInt(row['draws']),
+          total: _readInt(row['total']),
+          gameId: row['game_id']?.toString(),
+          lastPlayed: _dateFromLocalDate(row['last_played']),
+        ),
+      ),
+    );
+  }
+
+  Future<List<MoveAggregate>>
+  _localUnfilteredCompactTreeMoveAggregatesForFen({
+    required String databasePath,
+    required String fen,
+  }) async {
+    final matches = await Isolate.run(
+      () => readCompactLocalTreePositionMatchesSync(
+        indexPath: compactLocalTreeIndexPath(databasePath),
+        fen: fen,
+      ),
+    );
+    final aggregates = <String, _CompactMoveAccumulator>{};
+    for (final match in matches) {
+      final uci = match.nextUci;
+      if (uci == null || uci.isEmpty) continue;
+      aggregates.putIfAbsent(uci, _CompactMoveAccumulator.new).add(match);
+    }
+    final out = <MoveAggregate>[
+      for (final entry in aggregates.entries)
+        MoveAggregate(
+          uci: entry.key,
+          white: entry.value.white,
+          black: entry.value.black,
+          draws: entry.value.draws,
+          total: entry.value.total,
+          lastPlayed: entry.value.lastPlayed,
+        ),
+    ]..sort((left, right) {
+      final byTotal = right.total.compareTo(left.total);
+      return byTotal != 0 ? byTotal : left.uci.compareTo(right.uci);
+    });
+    return List<MoveAggregate>.unmodifiable(out);
   }
 
   Future<List<MoveAggregate>> _localMoveAggregatesForMovePrefix(
@@ -5108,10 +5628,36 @@ class LocalChessDatabaseRepository {
     required int pageSize,
   }) async {
     final databaseId = _databaseId(databasePath);
+    final freshCompactIndex = loadCompactOpeningTreeIndexForDatabase(
+      databasePath: databasePath,
+    );
+    if (freshCompactIndex != null) {
+      final directDb =
+          await _openCompactGameReadDatabase(databasePath) ??
+          await _openDirectReadDatabase();
+      if (directDb != null) {
+        try {
+          return await _localCompactPositionGamesResponse(
+            directDb,
+            databaseId: databaseId,
+            databasePath: databasePath,
+            fen: fen,
+            uci: uci,
+            filters: filters,
+            sortBy: sortBy,
+            sortDirection: sortDirection,
+            pageNumber: pageNumber,
+            pageSize: pageSize,
+          );
+        } finally {
+          await directDb.close();
+        }
+      }
+    }
     final db = await _database();
     final databaseRows = await db.select(
       '''
-      SELECT position_count, tree_max_ply
+      SELECT game_count, position_count, tree_snapshot, tree_max_ply
       FROM $localChessDatabasesTable
       WHERE id = ? AND deleted_at_ms IS NULL
       LIMIT 1
@@ -5129,6 +5675,26 @@ class LocalChessDatabaseRepository {
         databaseId: databaseId,
         fen: fen,
         moves: moves,
+        uci: uci,
+        filters: filters,
+        sortBy: sortBy,
+        sortDirection: sortDirection,
+        pageNumber: pageNumber,
+        pageSize: pageSize,
+      );
+    }
+
+    final compactMetadata = await _compactTreeMetadataForDatabase(
+      db,
+      databaseId: databaseId,
+      databasePath: databasePath,
+    );
+    if (compactMetadata != null) {
+      return _localCompactPositionGamesResponse(
+        db,
+        databaseId: databaseId,
+        databasePath: databasePath,
+        fen: fen,
         uci: uci,
         filters: filters,
         sortBy: sortBy,
@@ -5221,6 +5787,168 @@ class LocalChessDatabaseRepository {
       <Object?>[...parameters, size, page * size],
     );
 
+    return GamebaseSearchQueryResponse(
+      status: 'success',
+      data: rows.map(_positionGameRowFromDb).toList(growable: false),
+      metadata: GamebasePaginationMetadata(
+        pageNumber: page,
+        pageSize: size,
+        totalCount: total,
+        hasMoreValue: (page + 1) * size < total,
+      ),
+    );
+  }
+
+  Future<GamebaseSearchQueryResponse> _localCompactPositionGamesResponse(
+    resqlite.Database db, {
+    required String databaseId,
+    required String databasePath,
+    required String fen,
+    required String? uci,
+    required PlayerOpeningTreeFilterCriteria filters,
+    required GamebaseSortField sortBy,
+    required GamebaseSortDirection sortDirection,
+    required int pageNumber,
+    required int pageSize,
+  }) async {
+    final indexPath = compactLocalTreeIndexPath(databasePath);
+    var matches = await Isolate.run(
+      () => readCompactLocalTreePositionMatchesSync(
+        indexPath: indexPath,
+        fen: fen,
+      ),
+    );
+    final pinnedUci = uci?.trim().toLowerCase();
+    if (pinnedUci != null && pinnedUci.isNotEmpty) {
+      matches = <CompactLocalTreePositionMatch>[
+        for (final match in matches)
+          if (match.nextUci == pinnedUci) match,
+      ];
+    }
+    final size = pageSize <= 0 ? 20 : pageSize;
+    final page = pageNumber < 0 ? 0 : pageNumber;
+    if (matches.isEmpty) {
+      return GamebaseSearchQueryResponse(
+        status: 'success',
+        data: const <Map<String, dynamic>>[],
+        metadata: GamebasePaginationMetadata(
+          pageNumber: page,
+          pageSize: size,
+          totalCount: 0,
+          hasMoreValue: false,
+        ),
+      );
+    }
+
+    if (!filters.hasFilters && sortBy == GamebaseSortField.date) {
+      final ordered = List<CompactLocalTreePositionMatch>.of(matches)
+        ..sort((left, right) {
+          final byDate = left.dateDays.compareTo(right.dateDays);
+          if (byDate != 0) {
+            return sortDirection == GamebaseSortDirection.asc
+                ? byDate
+                : -byDate;
+          }
+          return left.indexInFile.compareTo(right.indexInFile);
+        });
+      final total = ordered.length;
+      final offset = page * size;
+      if (offset >= total) {
+        return GamebaseSearchQueryResponse(
+          status: 'success',
+          data: const <Map<String, dynamic>>[],
+          metadata: GamebasePaginationMetadata(
+            pageNumber: page,
+            pageSize: size,
+            totalCount: total,
+            hasMoreValue: false,
+          ),
+        );
+      }
+      final pageMatches = ordered.sublist(
+        offset,
+        offset + size < total ? offset + size : total,
+      );
+      final encodedPage = jsonEncode(<List<int>>[
+        for (final (ordinal, match) in pageMatches.indexed)
+          <int>[match.indexInFile, match.ply, ordinal],
+      ]);
+      final fenKey = playerOpeningTreeFenKey(fen);
+      final rows = await db.select(
+        '''
+        WITH position_matches AS (
+          SELECT
+            CAST(json_extract(value, '\$[0]') AS INTEGER) AS game_index,
+            CAST(json_extract(value, '\$[1]') AS INTEGER) AS ref_ply,
+            CAST(json_extract(value, '\$[2]') AS INTEGER) AS ordinal
+          FROM json_each(?)
+        )
+        SELECT
+          ? AS position_fen,
+          pm.ref_ply AS ref_ply,
+          g.*
+        FROM position_matches pm
+        CROSS JOIN $localChessGamesTable g
+          INDEXED BY idx_local_chess_games_database_index
+          ON g.index_in_file = pm.game_index
+        WHERE g.database_id = ?
+        ORDER BY pm.ordinal ASC
+        ''',
+        <Object?>[encodedPage, fenKey, databaseId],
+      );
+      return GamebaseSearchQueryResponse(
+        status: 'success',
+        data: rows.map(_positionGameRowFromDb).toList(growable: false),
+        metadata: GamebasePaginationMetadata(
+          pageNumber: page,
+          pageSize: size,
+          totalCount: total,
+          hasMoreValue: (page + 1) * size < total,
+        ),
+      );
+    }
+
+    final encodedMatches = jsonEncode(<List<int>>[
+      for (final match in matches) <int>[match.indexInFile, match.ply],
+    ]);
+    final where = StringBuffer('g.database_id = ?');
+    final filterParameters = <Object?>[databaseId];
+    _appendLocalPositionFilters(where, filterParameters, filters);
+    final fromClause = '''
+      FROM position_matches pm
+      CROSS JOIN $localChessGamesTable g
+        INDEXED BY idx_local_chess_games_database_index
+        ON g.index_in_file = pm.game_index
+      LEFT JOIN $localChessPlayersTable wp ON wp.id = g.white_id
+      LEFT JOIN $localChessPlayersTable bp ON bp.id = g.black_id
+      LEFT JOIN $localChessEventsTable ev ON ev.id = g.event_id
+      LEFT JOIN $localChessSitesTable st ON st.id = g.site_id
+    ''';
+    final direction =
+        sortDirection == GamebaseSortDirection.asc ? 'ASC' : 'DESC';
+    final sortExpression = _localPositionGamesSortExpression(sortBy);
+    final fenKey = playerOpeningTreeFenKey(fen);
+    final rows = await db.select(
+      '''
+      WITH position_matches AS (
+        SELECT
+          CAST(json_extract(value, '\$[0]') AS INTEGER) AS game_index,
+          CAST(json_extract(value, '\$[1]') AS INTEGER) AS ref_ply
+        FROM json_each(?)
+      )
+      SELECT
+        ? AS position_fen,
+        pm.ref_ply AS ref_ply,
+        COUNT(*) OVER () AS position_total,
+        g.*
+      $fromClause
+      WHERE $where
+      ORDER BY $sortExpression $direction, g.index_in_file ASC
+      LIMIT ? OFFSET ?
+      ''',
+      <Object?>[encodedMatches, fenKey, ...filterParameters, size, page * size],
+    );
+    final total = rows.isEmpty ? 0 : _readInt(rows.first['position_total']);
     return GamebaseSearchQueryResponse(
       status: 'success',
       data: rows.map(_positionGameRowFromDb).toList(growable: false),
@@ -5531,7 +6259,10 @@ class LocalChessDatabaseRepository {
     }
     final modifiedMs = probe.modifiedAt!.millisecondsSinceEpoch;
     if (storedModified != modifiedMs) {
-      await _refreshLocalChessDatabaseFileStatIfUnchanged(
+      // The content fingerprint and size above are the cache identity. Updating
+      // a harmless timestamp drift is only bookkeeping, so never hold a cache
+      // read (or an already-built tree restore) behind background purge writes.
+      _refreshLocalChessDatabaseFileStatIfUnchanged(
         db,
         databaseId: databaseId,
         sizeBytes: probe.sizeBytes!,
@@ -5540,7 +6271,7 @@ class LocalChessDatabaseRepository {
         expectedSizeBytes: storedSize,
         expectedModifiedAtMs: storedModified,
         expectedContentFingerprint: storedContentFingerprint,
-      );
+      ).ignore();
     }
 
     final gameCount = _readInt(databaseRow['game_count']);
@@ -5578,6 +6309,8 @@ class LocalChessDatabaseRepository {
       index = await _loadOpeningTreeIndex(
         db,
         databaseId,
+        databasePath: path,
+        treeSnapshot: databaseRow['tree_snapshot'],
         generatedAtMs: databaseRow['updated_at_ms'],
         expectedPositionCount: _readInt(databaseRow['position_count']),
         expectedGameCount: gameCount,
@@ -5689,6 +6422,7 @@ class LocalChessDatabaseRepository {
       'DELETE FROM $localChessDatabasesTable WHERE id = ?',
       <Object?>[databaseId],
     );
+    deleteCompactLocalTreeIndexBestEffort(path);
   }
 
   Future<void> _deleteDatabaseRows(
@@ -6555,6 +7289,8 @@ class LocalChessDatabaseRepository {
   Future<PlayerOpeningTreeIndex> _loadOpeningTreeIndex(
     resqlite.Database db,
     String databaseId, {
+    required String databasePath,
+    required Object? treeSnapshot,
     required Object? generatedAtMs,
     required int expectedPositionCount,
     required int expectedGameCount,
@@ -6568,6 +7304,32 @@ class LocalChessDatabaseRepository {
       maxPly: expectedMaxPly,
     )) {
       throw const _LocalChessCacheMiss();
+    }
+    if (isCompactLocalTreeSnapshot(treeSnapshot)) {
+      final metadata = CompactLocalTreeIndexMetadata.readSync(
+        compactLocalTreeIndexPath(databasePath),
+      );
+      if (metadata == null ||
+          metadata.positionCount != expectedPositionCount ||
+          metadata.gameCount > expectedGameCount ||
+          metadata.maxPly != expectedMaxPly) {
+        throw const _LocalChessCacheMiss();
+      }
+      return PlayerOpeningTreeIndex(
+        treeId: 'local:${_stableId(databaseId)}',
+        playerId: databaseId,
+        maxPly: metadata.maxPly,
+        rootNodeId: 0,
+        generatedAt: DateTime.fromMillisecondsSinceEpoch(
+          metadata.generatedAtMs,
+        ),
+        nodesById: const <int, PlayerOpeningTreeNode>{},
+        nodesByFenKey: const <String, PlayerOpeningTreeNode>{},
+        gamesByFen: const <String, List<PlayerOpeningTreeGameRef>>{},
+        gameRowsById: const <String, Map<String, dynamic>>{},
+        persistedPositionCount: metadata.positionCount,
+        persistedGameCount: expectedGameCount,
+      );
     }
     final nodeStatsRows = await db.select(
       '''
@@ -6835,6 +7597,35 @@ class LocalChessDatabaseRepository {
       positionCount: _readInt(row['position_count']),
       maxPly: _readNullableInt(row['tree_max_ply']),
     );
+  }
+
+  Future<CompactLocalTreeIndexMetadata?> _compactTreeMetadataForDatabase(
+    resqlite.Database db, {
+    required String databaseId,
+    required String databasePath,
+  }) async {
+    final rows = await db.select(
+      '''
+      SELECT game_count, position_count, tree_snapshot, tree_max_ply
+      FROM $localChessDatabasesTable
+      WHERE id = ? AND deleted_at_ms IS NULL
+      LIMIT 1
+      ''',
+      <Object?>[databaseId],
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.single;
+    if (!isCompactLocalTreeSnapshot(row['tree_snapshot'])) return null;
+    final metadata = CompactLocalTreeIndexMetadata.readSync(
+      compactLocalTreeIndexPath(databasePath),
+    );
+    if (metadata == null ||
+        metadata.positionCount != _readInt(row['position_count']) ||
+        metadata.gameCount > _readInt(row['game_count']) ||
+        metadata.maxPly != _readNullableInt(row['tree_max_ply'])) {
+      return null;
+    }
+    return metadata;
   }
 
   Future<bool> _transactionHasUsableOpeningTreeMetadata(
@@ -7301,12 +8092,10 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
   }
 
   resqlite.Database? db;
-  _LocalTreePositionRefStage? positionRefStage;
+  CompactLocalTreeIndexBuilder? builder;
   try {
     emit(LocalChessScanProgress(fraction: 0.01, message: 'Opening cache...'));
     db = await resqlite.Database.open(request.databaseFilePath);
-    emit(LocalChessScanProgress(fraction: 0.02, message: 'Preparing cache...'));
-    await _configureStandaloneLocalChessDatabase(db);
 
     final repository = LocalChessDatabaseRepository(database: () async => db!);
     final databaseId = _databaseId(request.databasePath);
@@ -7342,7 +8131,7 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
       return;
     }
 
-    emit(LocalChessScanProgress(fraction: 0.08, message: 'Counting games...'));
+    emit(LocalChessScanProgress(fraction: 0.04, message: 'Counting games...'));
     final countRows = await db.select(
       '''
       SELECT COUNT(*) AS count
@@ -7367,24 +8156,14 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
       fileSizeBytes: sizeBytes,
       gameCount: cachedGameCount,
     );
-    emit(LocalChessScanProgress(fraction: 0.16, message: 'Building tree...'));
+    emit(LocalChessScanProgress(fraction: 0.08, message: 'Building tree...'));
 
-    final persistPositionGameRefs =
-        cachedGameCount <= _kPersistedPositionGameRefLimit;
-    if (persistPositionGameRefs) {
-      positionRefStage = await _openLocalTreePositionRefStage(databaseId);
-    }
-    final pendingPositionRefs = <LocalOpeningTreePositionGameRef>[];
     final buildStopwatch = Stopwatch()..start();
-    final builder = LocalOpeningTreeIncrementalBuilder(
-      treeId: 'local:${_stableId(databaseId)}',
-      databaseId: databaseId,
+    final compactBuilder = CompactLocalTreeIndexBuilder(
+      targetPath: compactLocalTreeIndexPath(request.databasePath),
       maxPly: maxPly,
-      includePositionGameRefs: false,
-      includeGameRows: false,
-      onPositionGameRef:
-          persistPositionGameRefs ? pendingPositionRefs.add : null,
     );
+    builder = compactBuilder;
     var processed = 0;
     var lastIndexInFile = -1;
     while (true) {
@@ -7416,23 +8195,15 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
         gameRows,
         _kCachedTreeBuildInputBatchSize,
       )) {
-        builder.addGames(
-          _treeInputsForCachedGameRows(
-            rows: gameRowBatch,
-            totalRows: cachedGameCount,
-            processedOffset: processed,
-            onProgress: emit,
-          ),
-        );
-        processed += gameRowBatch.length;
-        final refStage = positionRefStage;
-        if (refStage != null) {
-          await _stageLocalTreePositionRefs(
-            refStage.database,
-            pendingPositionRefs,
-          );
-          pendingPositionRefs.clear();
+        for (final input in _treeInputsForCachedGameRows(
+          rows: gameRowBatch,
+          totalRows: cachedGameCount,
+          processedOffset: processed,
+          onProgress: emit,
+        )) {
+          compactBuilder.addGame(input);
         }
+        processed += gameRowBatch.length;
         await Future<void>.delayed(Duration.zero);
       }
       lastIndexInFile = _readInt(
@@ -7443,11 +8214,11 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
       // (small first page, or a long gap before the next 512-game tick).
       final pageFraction =
           cachedGameCount <= 0
-              ? 0.32
-              : 0.18 + ((processed / cachedGameCount) * 0.64);
+              ? 0.5
+              : 0.08 + ((processed / cachedGameCount) * 0.82);
       emit(
         LocalChessScanProgress(
-          fraction: pageFraction.clamp(0.18, 0.82).toDouble(),
+          fraction: pageFraction.clamp(0.08, 0.9).toDouble(),
           message:
               cachedGameCount > 0
                   ? 'Building tree... $processed of $cachedGameCount games'
@@ -7475,23 +8246,24 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
       return;
     }
 
-    emit(LocalChessScanProgress(fraction: 0.83, message: 'Finalizing tree...'));
-    final buildResult = builder.finishAndRelease();
+    emit(LocalChessScanProgress(fraction: 0.91, message: 'Finalizing tree...'));
+    final buildResult = compactBuilder.finish();
     buildStopwatch.stop();
 
-    final index = buildResult.index;
+    final metadata = buildResult.metadata;
     localChessLog.info(
       'Local tree build phase finished',
       context: <String, Object?>{
         'path': request.databasePath,
         'cachedGames': cachedGameCount,
-        'indexedGames': index.downloadedGameCount,
-        'positions': index.positionCount,
-        'skippedGames': buildResult.skippedGames.length,
+        'indexedGames': metadata.gameCount,
+        'positions': metadata.positionCount,
+        'occurrences': metadata.occurrenceCount,
+        'skippedGames': buildResult.skippedGames,
         'elapsedMs': buildStopwatch.elapsedMilliseconds,
       },
     );
-    if (index.positionCount <= 0) {
+    if (metadata.positionCount <= 0) {
       request.sendPort.send(
         const _LocalTreeRebuildWorkerFailure(
           'Opening tree build did not produce an index.',
@@ -7501,51 +8273,17 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
       return;
     }
 
-    emit(
-      LocalChessScanProgress(
-        fraction: 0.84,
-        message: 'Preparing tree storage...',
-      ),
-    );
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final persistenceStopwatch = Stopwatch()..start();
-    final persisted = await _persistCachedOpeningTreeInBatches(
-      db: db,
-      databaseId: databaseId,
-      index: index,
-      generatedAtMs: now,
-      positionRefStageDatabase: positionRefStage?.database,
-      emit: emit,
-    );
-    persistenceStopwatch.stop();
-    localChessLog.info(
-      'Local tree persistence phase finished',
-      context: <String, Object?>{
-        'path': request.databasePath,
-        'positions': index.positionCount,
-        'elapsedMs': persistenceStopwatch.elapsedMilliseconds,
-      },
-    );
-    if (!persisted) {
-      request.sendPort.send(
-        const _LocalTreeRebuildWorkerFailure(
-          'Local database cache disappeared before saving tree.',
-          '',
-        ),
-      );
-      return;
-    }
-
-    emit(LocalChessScanProgress(fraction: 1, message: 'Tree ready.'));
+    emit(LocalChessScanProgress(fraction: 0.99, message: 'Publishing tree...'));
     request.sendPort.send(
       _LocalTreeRebuildWorkerSuccess(
         treeId: 'local:${_stableId(databaseId)}',
         databaseId: databaseId,
-        maxPly: index.maxPly,
-        positionCount: index.positionCount,
+        maxPly: metadata.maxPly,
+        positionCount: metadata.positionCount,
+        occurrenceCount: metadata.occurrenceCount,
         gameCount: cachedGameCount,
-        generatedAtMs: now,
-        skippedGames: buildResult.skippedGames.length,
+        generatedAtMs: metadata.generatedAtMs,
+        skippedGames: buildResult.skippedGames,
       ),
     );
   } catch (error, stackTrace) {
@@ -7553,8 +8291,32 @@ Future<void> _rebuildOpeningTreeFromCachedGamesWorker(
       _LocalTreeRebuildWorkerFailure(error.toString(), stackTrace.toString()),
     );
   } finally {
-    await positionRefStage?.close();
+    builder?.abort();
     await db?.close();
+  }
+}
+
+class _CompactMoveAccumulator {
+  int white = 0;
+  int black = 0;
+  int draws = 0;
+  DateTime? lastPlayed;
+
+  int get total => white + black + draws;
+
+  void add(CompactLocalTreePositionMatch match) {
+    switch (match.result) {
+      case 1:
+        white++;
+      case 2:
+        black++;
+      default:
+        draws++;
+    }
+    final date = match.date;
+    if (date != null && (lastPlayed == null || date.isAfter(lastPlayed!))) {
+      lastPlayed = date;
+    }
   }
 }
 
@@ -7573,6 +8335,7 @@ class _LocalTreePositionRefStage {
   }
 }
 
+// ignore: unused_element
 Future<_LocalTreePositionRefStage> _openLocalTreePositionRefStage(
   String databaseId,
 ) async {
@@ -7600,6 +8363,7 @@ Future<_LocalTreePositionRefStage> _openLocalTreePositionRefStage(
   return _LocalTreePositionRefStage(database: db, path: path);
 }
 
+// ignore: unused_element
 Future<void> _stageLocalTreePositionRefs(
   resqlite.Database db,
   List<LocalOpeningTreePositionGameRef> refs,
@@ -7624,6 +8388,7 @@ Future<void> _stageLocalTreePositionRefs(
   );
 }
 
+// ignore: unused_element
 Future<bool> _persistCachedOpeningTreeInBatches({
   required resqlite.Database db,
   required String databaseId,

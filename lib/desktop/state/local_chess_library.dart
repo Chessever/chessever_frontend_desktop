@@ -17,8 +17,7 @@ import 'package:chessever/desktop/state/local_library_registry.dart';
 const Object _localChessUnset = Object();
 const Duration _treeProgressMinInterval = Duration(milliseconds: 120);
 const double _treeProgressMinFractionDelta = 0.01;
-const int _immediatePgnPreviewGameLimit = 200;
-const int _immediatePgnPreviewMinimumBytes = 512 * 1024;
+const int _immediatePgnCatalogGameLimit = 200000;
 
 typedef LocalChessPathsScanner =
     Future<LocalChessSource> Function(
@@ -40,7 +39,7 @@ typedef LocalChessFileNodeScanner =
       void Function(LocalChessScanProgress progress)? onProgress,
     });
 
-typedef LocalChessPgnPreviewScanner =
+typedef LocalChessPgnCatalogScanner =
     Future<LocalChessSource> Function(
       String path, {
       String? sourceLabel,
@@ -191,12 +190,12 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     this.localDatabaseRepository,
     LocalChessPathsScanner? scanPathsWithProgress,
     LocalChessFileNodeScanner? scanFileNodeWithProgress,
-    LocalChessPgnPreviewScanner? scanPgnPreview,
+    LocalChessPgnCatalogScanner? scanPgnCatalog,
   }) : _scanPathsWithProgress =
            scanPathsWithProgress ?? scanLocalChessPathsWithProgress,
        _scanFileNodeWithProgress =
            scanFileNodeWithProgress ?? scanLocalChessFileNodeWithProgress,
-       _scanPgnPreview = scanPgnPreview ?? scanLocalChessPgnPreview,
+       _scanPgnCatalog = scanPgnCatalog ?? scanLocalChessPgnCatalog,
        super(const LocalChessLibraryState());
 
   /// Optional registry that records picked/opened local PGNs as persistent
@@ -206,7 +205,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   final LocalChessDatabaseRepository? localDatabaseRepository;
   final LocalChessPathsScanner _scanPathsWithProgress;
   final LocalChessFileNodeScanner _scanFileNodeWithProgress;
-  final LocalChessPgnPreviewScanner _scanPgnPreview;
+  final LocalChessPgnCatalogScanner _scanPgnCatalog;
 
   Object? _scanToken;
   final Map<String, Object> _backgroundImportTokens = <String, Object>{};
@@ -298,52 +297,55 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       LocalChessSource? imported;
       if (source == null) {
         final repository = localDatabaseRepository;
-        final immediatePgnPath = await _immediatePgnPreviewPath(paths);
+        final immediatePgnPath = await _immediatePgnCatalogPath(paths);
         if (repository != null && immediatePgnPath != null) {
-          final preview = await _scanPgnPreview(
+          final preview = await _scanPgnCatalog(
             immediatePgnPath,
             sourceLabel: sourceLabel,
-            maxGames: _immediatePgnPreviewGameLimit,
+            maxGames: _immediatePgnCatalogGameLimit,
           );
           if (_scanToken != token) return false;
           final previewOutcome = _localChessSourceOpenOutcome(paths, preview);
           if (previewOutcome.failure != null) throw previewOutcome.failure!;
 
-          final backgroundProgress = LocalChessScanProgress(
-            fraction: 0,
-            message: 'Indexing full PGN in the background...',
-          );
-          final importKey = localChessInputPathKey(immediatePgnPath);
-          final importToken = Object();
-          _backgroundImportTokens[importKey] = importToken;
-          final nextBackgroundImports = Map<String, LocalChessScanProgress>.of(
-            state.backgroundImports,
-          )..[importKey] = backgroundProgress;
+          var openedSource = preview;
+          final previewFile = preview.nodeForPath(immediatePgnPath);
+          if (previewFile is LocalChessFileNode) {
+            final compactTree = repository
+                .loadCompactOpeningTreeIndexForDatabase(
+                  databasePath: immediatePgnPath,
+                );
+            if (compactTree != null && compactTree.isUsable) {
+              final replacement = _replaceFileNode(
+                preview.root,
+                _fileWithOpeningTreeIndex(previewFile, compactTree),
+              );
+              if (replacement.replaced) {
+                openedSource = LocalChessSource(
+                  id: preview.id,
+                  label: preview.label,
+                  paths: preview.paths,
+                  rootPath: preview.rootPath,
+                  scannedAt: preview.scannedAt,
+                  root: replacement.folder,
+                );
+              }
+            }
+          }
+
           state = state.copyWith(
-            source: preview,
-            selectedPath: preview.root.path,
+            source: openedSource,
+            selectedPath: openedSource.root.path,
             isScanning: false,
             scanProgress: null,
             error: null,
             warning: previewOutcome.warning,
-            backgroundImports: Map<String, LocalChessScanProgress>.unmodifiable(
-              nextBackgroundImports,
-            ),
-            sessionSources: _sessionSourcesWith(preview),
+            sessionSources: _sessionSourcesWith(openedSource),
           );
           await _registerAllBestEffort(
             paths,
-            source: preview,
+            source: openedSource,
             registryMetadata: registryMetadata,
-          );
-          unawaited(
-            _finishPgnImportInBackground(
-              repository,
-              path: immediatePgnPath,
-              sourceLabel: sourceLabel,
-              importToken: importToken,
-              registryMetadata: registryMetadata,
-            ),
           );
           return true;
         }
@@ -583,15 +585,57 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     return true;
   }
 
-  Future<String?> _immediatePgnPreviewPath(List<String> paths) async {
+  /// Starts the optional searchable cache only when Library search, filtering,
+  /// or non-file-order sorting asks for it. Basic browsing and tree building
+  /// operate directly from the PGN catalog and never wait for this work.
+  bool ensureSearchIndex(String path) {
+    final repository = localDatabaseRepository;
+    final source = state.source;
+    final node = source?.nodeForPath(path);
+    if (repository == null ||
+        source == null ||
+        node is! LocalChessFileNode ||
+        !node.isPlayable ||
+        node.contentFingerprint.isNotEmpty ||
+        node.pgnOffsetIndex == null) {
+      return false;
+    }
+    final key = localChessInputPathKey(path);
+    if (_backgroundImportTokens.containsKey(key)) return false;
+
+    final importToken = Object();
+    _backgroundImportTokens[key] = importToken;
+    final nextBackgroundImports = Map<String, LocalChessScanProgress>.of(
+      state.backgroundImports,
+    )..[key] = LocalChessScanProgress(
+      fraction: 0,
+      message: 'Preparing search...',
+    );
+    state = state.copyWith(
+      backgroundImports: Map<String, LocalChessScanProgress>.unmodifiable(
+        nextBackgroundImports,
+      ),
+    );
+    unawaited(
+      _finishPgnImportInBackground(
+        repository,
+        path: path,
+        sourceLabel: source.label,
+        importToken: importToken,
+        registryMetadata: null,
+      ),
+    );
+    return true;
+  }
+
+  Future<String?> _immediatePgnCatalogPath(List<String> paths) async {
     if (paths.length != 1) return null;
     final path = paths.single.trim();
     if (path.isEmpty || p.extension(path).toLowerCase() != '.pgn') return null;
     try {
       final type = await FileSystemEntity.type(path, followLinks: true);
       if (type != FileSystemEntityType.file) return null;
-      final stat = await File(path).stat();
-      return stat.size >= _immediatePgnPreviewMinimumBytes ? path : null;
+      return path;
     } on FileSystemException {
       return null;
     }
@@ -1089,10 +1133,10 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       publishProgress(
         LocalChessTreeBuildPhase.building,
         0,
-        'Preparing cached games for tree...',
+        'Preparing PGN tree...',
         force: true,
       );
-      final result = await repository.rebuildOpeningTreeFromCachedGames(
+      final result = await repository.rebuildOpeningTreeFromPgnFile(
         databasePath: path,
         cancellationToken: cancellationToken,
         onProgress: (progress) {
@@ -1100,8 +1144,11 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
               cancellationToken.isCanceled) {
             return;
           }
+          final progressMessage = progress.message.toLowerCase();
           final phase =
-              progress.message.toLowerCase().contains('saving')
+              progressMessage.contains('saving') ||
+                      progressMessage.contains('publishing') ||
+                      progressMessage.contains('finalizing')
                   ? LocalChessTreeBuildPhase.persisting
                   : LocalChessTreeBuildPhase.building;
           publishProgress(phase, progress.fraction, progress.message);
