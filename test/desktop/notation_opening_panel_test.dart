@@ -95,14 +95,15 @@ void main() {
       final splitFinder = find.byWidgetPredicate(
         (widget) =>
             widget is ResizableSplitView &&
-            widget.storageKey == desktopEngineRightRailSplitStorageKey,
+            widget.key ==
+                const ValueKey<String>('desktop-engine-right-rail-split'),
       );
       expect(splitFinder, findsOneWidget);
 
       final split = tester.widget<ResizableSplitView>(splitFinder);
       expect(split.axis, Axis.vertical);
       expect(split.gutterThickness, desktopEngineRightRailGutterThickness);
-      expect(split.gutterColor, kPrimaryColor);
+      expect(split.gutterColor, kDividerColor);
       expect(
         split.children.first.initialWeight,
         desktopEngineRightRailInitialWeight,
@@ -111,10 +112,59 @@ void main() {
         split.children.last.initialWeight,
         1 - desktopEngineRightRailInitialWeight,
       );
-      expect(split.children.first.minSize, 120);
+      expect(split.children.first.minSize, desktopEngineRightRailCompactHeight);
+      expect(split.children.first.dismissible, isFalse);
       expect(split.children.last.minSize, 120);
     },
   );
+
+  testWidgets('engine toggle keeps the header and opens for configured lines', (
+    tester,
+  ) async {
+    final repository = _FakeExplorerRepository();
+    const engineKey = ValueKey<String>('engine-panel');
+
+    await tester.pumpWidget(
+      _harness(
+        repository: repository,
+        enginePanel: const SizedBox(key: engineKey),
+        height: 720,
+      ),
+    );
+    await tester.pump();
+    final initialHeight = tester.getSize(find.byKey(engineKey)).height;
+    expect(initialHeight, closeTo(desktopEngineRightRailHeightForLines(5), 1));
+
+    await tester.pumpWidget(
+      _harness(
+        repository: repository,
+        enginePanel: const SizedBox(key: engineKey),
+        showEngine: false,
+        height: 720,
+      ),
+    );
+    await tester.pump();
+    expect(find.byKey(engineKey), findsOneWidget);
+    expect(
+      tester.getSize(find.byKey(engineKey)).height,
+      closeTo(desktopEngineRightRailCompactHeight, 1),
+    );
+
+    await tester.pumpWidget(
+      _harness(
+        repository: repository,
+        enginePanel: const SizedBox(key: engineKey),
+        height: 720,
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      tester.getSize(find.byKey(engineKey)).height,
+      closeTo(initialHeight, 1),
+    );
+  });
 
   testWidgets('PageDown from Explorer focuses the games table after load', (
     tester,
@@ -2029,6 +2079,20 @@ void main() {
     expect(find.text('Opening Explorer'), findsNothing);
     expect(find.text('Alpha0'), findsOneWidget);
     expect(find.text('Explorer notation'), findsNothing);
+    final explorerSplit = tester.widget<ResizableSplitView>(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is ResizableSplitView &&
+            widget.storageKey == 'desktop.board.right-rail.explorer.stack.v1',
+      ),
+    );
+    expect(explorerSplit.axis, Axis.vertical);
+    expect(explorerSplit.gutterThickness, desktopExplorerStackGutterThickness);
+    expect(explorerSplit.gutterColor, kDividerColor);
+    expect(explorerSplit.children.map((child) => child.label), [
+      'Moves',
+      'Games',
+    ]);
     expect(find.text('SCORE'), findsOneWidget);
     expect(find.text('NOTATION'), findsOneWidget);
     expect(find.text('ECO'), findsOneWidget);
@@ -2074,6 +2138,8 @@ Widget _harness({
   String localOpeningTreeTitle = '',
   bool hideLocalOpeningTreePicker = false,
   Widget? enginePanel,
+  bool showEngine = true,
+  int engineLineCount = 5,
 }) {
   return ProviderScope(
     overrides: [
@@ -2122,6 +2188,8 @@ Widget _harness({
             localOpeningTreeTitle: localOpeningTreeTitle,
             hideLocalOpeningTreePicker: hideLocalOpeningTreePicker,
             enginePanel: enginePanel,
+            showEngine: showEngine,
+            engineLineCount: engineLineCount,
           ),
         ),
       ),

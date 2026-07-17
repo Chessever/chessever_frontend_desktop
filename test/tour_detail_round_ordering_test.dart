@@ -106,7 +106,7 @@ void main() {
     });
 
     test(
-      'promotes next round inside one hour when all started rounds finished',
+      'promotes next round inside two hours when all started rounds finished',
       () {
         final now = DateTime(2026, 3, 30, 16);
         final rounds = [
@@ -119,7 +119,7 @@ void main() {
           _round(
             id: 'r2',
             name: 'Round 2',
-            startsAt: now.add(const Duration(minutes: 59)),
+            startsAt: now.add(const Duration(minutes: 119)),
             status: RoundStatus.upcoming,
           ),
           _round(
@@ -198,7 +198,7 @@ void main() {
         _round(
           id: 'r3',
           name: 'Round 3',
-          startsAt: now.add(const Duration(minutes: 90)),
+          startsAt: now.add(const Duration(minutes: 121)),
           status: RoundStatus.upcoming,
         ),
         _round(
@@ -280,7 +280,7 @@ void main() {
 
   group('pickPreferredRoundForSelection', () {
     test(
-      'selects next round inside one hour when latest round is fully played',
+      'selects next round inside two hours when latest round is fully played',
       () {
         final now = DateTime(2026, 3, 30, 16);
         final rounds = [
@@ -293,7 +293,7 @@ void main() {
           _round(
             id: 'r2',
             name: 'Round 2',
-            startsAt: now.add(const Duration(minutes: 59)),
+            startsAt: now.add(const Duration(minutes: 119)),
             status: RoundStatus.upcoming,
           ),
           _round(

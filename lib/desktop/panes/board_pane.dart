@@ -143,10 +143,7 @@ bool shouldShowDesktopBoardEvalBar(EngineSettings settings) {
 /// analysis and keep normal PV play available.
 @visibleForTesting
 class ActiveBoardEvalTarget {
-  const ActiveBoardEvalTarget({
-    required this.fen,
-    required this.isThreatProbe,
-  });
+  const ActiveBoardEvalTarget({required this.fen, required this.isThreatProbe});
 
   final String fen;
   final bool isThreatProbe;
@@ -1597,8 +1594,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           game: chessGame.value,
           pointer: List<int>.unmodifiable(pointer.value),
           dirtySinceLoad: dirtySinceLoad.value,
-          userNags:
-              userNags == null ? null : _cloneNagMap(userNags),
+          userNags: userNags == null ? null : _cloneNagMap(userNags),
         ),
       );
       if (stack.length > 50) stack.removeAt(0);
@@ -2056,9 +2052,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       final clearsStoredQuality = !identical(nextGame, currentGame);
       if (!clearsStoredQuality && !clearsUserQuality) return;
 
-      pushUndoSnapshot(
-        userNags: clearsUserQuality ? currentUserNags : null,
-      );
+      pushUndoSnapshot(userNags: clearsUserQuality ? currentUserNags : null);
       final undoDepthAfterSnapshot = undoStack.value.length;
       if (clearsStoredQuality) chessGame.value = nextGame;
 
@@ -3931,6 +3925,13 @@ class _BoardPaneContent extends HookConsumerWidget {
                             const EngineSettings().showEngineAnalysis,
                       ),
                     ),
+                    engineLineCount: ref.watch(
+                      engineSettingsProviderNew.select(
+                        (s) =>
+                            (s.valueOrNull ?? const EngineSettings())
+                                .multiPvForStockfish(),
+                      ),
+                    ),
                     onRestoreEngine:
                         () => ref
                             .read(engineSettingsProviderNew.notifier)
@@ -3941,8 +3942,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           activeEvalTarget.isThreatProbe
                               ? (boardPosition.turn == Side.white ? 'b' : 'w')
                               : (boardPosition.turn == Side.white ? 'w' : 'b'),
-                      onPlayUci:
-                          activeEvalTarget.canPlayPv ? playUci : null,
+                      onPlayUci: activeEvalTarget.canPlayPv ? playUci : null,
                       game: chessGame.value,
                       headers: pgnHeaders.value,
                       activePly:
@@ -4530,9 +4530,7 @@ ChessGame _clearImportedMoveQualityAnnotationAtPointer(
 @visibleForTesting
 ChessMove clearImportedMoveQualityAnnotation(ChessMove move) {
   final existingNags = move.nags ?? const <int>[];
-  final clearedQualityNags = existingNags
-      .where(_isQualityNag)
-      .toSet();
+  final clearedQualityNags = existingNags.where(_isQualityNag).toSet();
   if (clearedQualityNags.isEmpty) return move;
 
   final nextNags = existingNags
@@ -4555,8 +4553,7 @@ ChessMove clearImportedMoveQualityAnnotation(ChessMove move) {
 
   return move.copyWith(
     nags: List<int>.unmodifiable(nextNags),
-    comments:
-        commentsChanged ? List<String>.unmodifiable(nextComments) : null,
+    comments: commentsChanged ? List<String>.unmodifiable(nextComments) : null,
   );
 }
 
@@ -4592,8 +4589,7 @@ bool _isMatchingPersistentAnalysisEffect(
     final field = fields[i].toLowerCase();
     if (field == 'type') {
       type = fields[i + 1];
-    } else if (field == 'persistent' &&
-        fields[i + 1].toLowerCase() == 'true') {
+    } else if (field == 'persistent' && fields[i + 1].toLowerCase() == 'true') {
       persistent = true;
     }
   }
@@ -4606,11 +4602,7 @@ bool _isMatchingPersistentAnalysisEffect(
 int? _qualityNagForChessComEffectType(String rawType) {
   final type = rawType.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
   return switch (type) {
-    'good' ||
-    'goodmove' ||
-    'greatfind' ||
-    'bestmove' ||
-    'excellent' => 1,
+    'good' || 'goodmove' || 'greatfind' || 'bestmove' || 'excellent' => 1,
     'mistake' => 2,
     'brilliant' => 3,
     'blunder' || 'missedwin' => 4,

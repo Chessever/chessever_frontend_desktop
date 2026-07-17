@@ -2182,10 +2182,17 @@ List<_EventRoundGroup> _buildRoundGroups(
     pairingGroups.add(group);
   }
 
-  // First retain the mobile Games-tab ordering within played rounds. The
-  // desktop-specific upcoming-first placement is applied below.
+  // Use the same ordering as the mobile Games tab for every visible round,
+  // including rounds whose pairings were published before play begins. This
+  // keeps the active/latest round first and prevents advance pairings from
+  // displacing it. The shared sorter promotes only the next round when it is
+  // inside the configured promotion window and all started rounds are done.
+  final groups = [...playedGroups, ...pairingGroups];
+  final groupsById = <String, _EventRoundGroup>{
+    for (final group in groups) group.id: group,
+  };
   final models = [
-    for (final group in playedGroups)
+    for (final group in groups)
       GamesAppBarModel(
         id: group.id,
         name: group.title,
@@ -2196,47 +2203,17 @@ List<_EventRoundGroup> _buildRoundGroups(
   final sortedModels = sortRoundsForDisplay(
     models,
     resolveDate: (model) => model.startsAt,
+    isRoundFullyPlayed: (model) {
+      final group = groupsById[model.id];
+      return group != null &&
+          group.games.isNotEmpty &&
+          group.games.every((game) => game.status.isFinished);
+    },
   );
-  final orderById = <String, int>{
-    for (var i = 0; i < sortedModels.length; i++) sortedModels[i].id: i,
-  };
-  playedGroups.sort(
-    (a, b) => (orderById[a.id] ?? 0).compareTo(orderById[b.id] ?? 0),
-  );
-
-  // Pairing-only rounds are ordered soonest first before all upcoming groups
-  // are lifted above the active and completed rounds for the desktop rail.
-  pairingGroups.sort((a, b) {
-    final aStart = a.startsAt;
-    final bStart = b.startsAt;
-    if (aStart == null && bStart == null) return a.title.compareTo(b.title);
-    if (aStart == null) return 1;
-    if (bStart == null) return -1;
-    final cmp = aStart.compareTo(bStart);
-    return cmp != 0 ? cmp : a.title.compareTo(b.title);
-  });
-
-  final orderedGroups = [...playedGroups, ...pairingGroups];
-  final upcomingGroups =
-      orderedGroups
-          .where((group) => group.status == RoundStatus.upcoming)
-          .toList()
-        ..sort(_compareUpcomingEventRoundGroups);
-  final startedGroups = orderedGroups
-      .where((group) => group.status != RoundStatus.upcoming)
-      .toList(growable: false);
-
-  return [...upcomingGroups, ...startedGroups];
-}
-
-int _compareUpcomingEventRoundGroups(_EventRoundGroup a, _EventRoundGroup b) {
-  final aStart = a.startsAt;
-  final bStart = b.startsAt;
-  if (aStart == null && bStart == null) return a.title.compareTo(b.title);
-  if (aStart == null) return 1;
-  if (bStart == null) return -1;
-  final startCompare = aStart.compareTo(bStart);
-  return startCompare != 0 ? startCompare : a.title.compareTo(b.title);
+  return [
+    for (final model in sortedModels)
+      if (groupsById[model.id] case final group?) group,
+  ];
 }
 
 _EventRoundExpansionKey _eventRoundExpansionKey(
@@ -2537,7 +2514,10 @@ bool _isResolvedPlayerName(String name) {
 }
 
 bool _hasPlayedPosition(TournamentGameSummary game) {
-  if (game.lastMoveTime != null) return true;
+  final lastMoveTime = game.lastMoveTime;
+  if (lastMoveTime != null && !lastMoveTime.isAfter(DateTime.now())) {
+    return true;
+  }
   if (pgnHasMoves(game.pgn)) return true;
   final fen = game.fen?.trim();
   if (fen == null || fen.isEmpty) return false;
@@ -2874,7 +2854,9 @@ bool _isActualLiveGame({
   if (!status.isOngoing || !hasStarted || lastMoveTime == null) {
     return false;
   }
-  return DateTime.now().difference(lastMoveTime) <= _kSidebarLiveActivityWindow;
+  final timeSinceLastMove = DateTime.now().difference(lastMoveTime);
+  return !timeSinceLastMove.isNegative &&
+      timeSinceLastMove <= _kSidebarLiveActivityWindow;
 }
 
 Future<void> _insertEventGame({

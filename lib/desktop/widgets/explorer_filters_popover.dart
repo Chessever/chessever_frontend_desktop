@@ -189,11 +189,6 @@ int _activeFilterCount(dynamic filters, GamebasePlayer? scopedPlayer) {
     if (filters.isOnline != null) count += 1;
   } catch (_) {}
   try {
-    final sortByName = filters.sortBy.name as String;
-    final directionName = filters.sortDirection.name as String;
-    if (sortByName != 'date' || directionName != 'desc') count += 1;
-  } catch (_) {}
-  try {
     final players = filters.selectedPlayers as List;
     final playerIsScope =
         scopedPlayer != null &&

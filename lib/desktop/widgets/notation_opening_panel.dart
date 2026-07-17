@@ -37,9 +37,8 @@ final rightRailActivePageProvider = StateProvider.family<int, String>(
   (ref, _) => 0,
 );
 
-/// Versioned independently from other right-rail layouts so existing users
-/// receive the compact engine default once, while later manual resizing stays
-/// persisted under this key.
+/// Persistence key used only while the report expands the engine rail. The
+/// normal Stockfish header deliberately does not restore an old pane height.
 @visibleForTesting
 const String desktopEngineRightRailSplitStorageKey =
     'board_pane.right_rail.engine_top.v2';
@@ -49,6 +48,24 @@ const double desktopEngineRightRailInitialWeight = 0.22;
 
 @visibleForTesting
 const double desktopEngineRightRailGutterThickness = 12;
+
+@visibleForTesting
+const double desktopEngineRightRailCompactHeight = 54;
+
+@visibleForTesting
+double desktopEngineRightRailHeightForLines(int lineCount) {
+  final lines = lineCount.clamp(1, 5);
+  const rowHeight = 31.0;
+  const rowGap = 6.0;
+  const bottomPadding = 12.0;
+  return desktopEngineRightRailCompactHeight +
+      bottomPadding +
+      (lines * rowHeight) +
+      ((lines - 1) * rowGap);
+}
+
+@visibleForTesting
+const double desktopExplorerStackGutterThickness = 8;
 
 final localOpeningTreeCatalogProvider =
     FutureProvider.autoDispose<List<LocalOpeningTreeCatalogEntry>>((ref) async {
@@ -125,6 +142,7 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.onToggleReport,
     this.enginePanel,
     this.showEngine = true,
+    this.engineLineCount = 5,
     this.onRestoreEngine,
   });
 
@@ -205,6 +223,10 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   /// Whether engine analysis is on. Drives collapse/restore of the engine
   /// pane so it reclaims space when both it and the report are off.
   final bool showEngine;
+
+  /// Configured Stockfish MultiPV count. When analysis is switched on, the
+  /// rail opens far enough to show these rows before the user resizes it.
+  final int engineLineCount;
 
   /// Invoked when the collapsed engine rail is restored (turns the engine on).
   final VoidCallback? onRestoreEngine;
@@ -299,17 +321,22 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
     _syncEngineRailAfterLayout();
   }
 
-  /// Keep the engine ↕ notation split expanded while either the engine lines
-  /// or the report is on; collapse the engine pane only when both are off.
-  void _syncEngineRailAfterLayout({bool restoreWhenEnabled = false}) {
+  /// Keep the full Stockfish header mounted when analysis is off. Turning it
+  /// on opens enough room for the configured PV rows; after that the user's
+  /// drag remains authoritative until the toggle or line count changes.
+  void _syncEngineRailAfterLayout() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (widget.showEngine || widget.reportSelected) {
-        if (!restoreWhenEnabled) return;
-        _railController.restore(0);
+      if (widget.reportSelected) {
         return;
       }
-      _railController.collapse(0, persist: false);
+      _railController.setSize(
+        0,
+        widget.showEngine
+            ? desktopEngineRightRailHeightForLines(widget.engineLineCount)
+            : desktopEngineRightRailCompactHeight,
+        persist: false,
+      );
     });
   }
 
@@ -331,8 +358,6 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
     });
   }
 
-  void _resumeEngineFromRail() => widget.onRestoreEngine?.call();
-
   void _rememberBuiltPage(int page) {
     if (page > 0) _buildExplorerPage = true;
   }
@@ -345,13 +370,9 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
   @override
   void didUpdateWidget(covariant NotationOpeningPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Engine ↕ notation split: expand while either engine or report is on;
-    // collapse the engine pane only when both are off. The segment bar below
-    // the split is never affected.
-    final wasExpanded = oldWidget.showEngine || oldWidget.reportSelected;
-    final nowExpanded = widget.showEngine || widget.reportSelected;
-    if (wasExpanded != nowExpanded) {
-      _syncEngineRailAfterLayout(restoreWhenEnabled: !wasExpanded);
+    if (oldWidget.showEngine != widget.showEngine ||
+        oldWidget.engineLineCount != widget.engineLineCount) {
+      _syncEngineRailAfterLayout();
     }
     if (oldWidget.reportSelected != widget.reportSelected) {
       _syncReportSizeAfterLayout();
@@ -616,8 +637,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                 localOpeningTreeTitle: widget.localOpeningTreeTitle,
                 enableLocalOpeningTreePicker:
                     widget.enableLocalOpeningTreePicker,
-                hideLocalOpeningTreePicker:
-                    widget.hideLocalOpeningTreePicker,
+                hideLocalOpeningTreePicker: widget.hideLocalOpeningTreePicker,
                 sourceController: _explorerSourceController,
                 exactFenSearch: !_isInitialPositionFen(widget.startingFen),
               )
@@ -667,21 +687,25 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                   widget.enginePanel == null
                       ? notationContent
                       : ResizableSplitView(
+                        key: const ValueKey<String>(
+                          'desktop-engine-right-rail-split',
+                        ),
                         axis: Axis.vertical,
                         controller: _railController,
-                        storageKey: desktopEngineRightRailSplitStorageKey,
-                        // The accent divider makes the vertical-resize affordance
-                        // discoverable without reserving any space inside the
-                        // engine output or its hover-preview overlays.
+                        storageKey:
+                            widget.reportSelected
+                                ? desktopEngineRightRailSplitStorageKey
+                                : null,
+                        // Match the other right-rail separators instead of
+                        // drawing a bright accent line through the workspace.
                         gutterThickness: desktopEngineRightRailGutterThickness,
-                        gutterColor: kPrimaryColor,
+                        gutterColor: kDividerColor,
                         children: [
                           SplitChild(
-                            minSize: 120,
+                            minSize: desktopEngineRightRailCompactHeight,
                             initialWeight: desktopEngineRightRailInitialWeight,
                             label: 'Engine',
-                            collapsedIcon: Icons.memory_rounded,
-                            onRestore: _resumeEngineFromRail,
+                            dismissible: false,
                             child: widget.enginePanel!,
                           ),
                           SplitChild(
@@ -2246,7 +2270,8 @@ class _OpeningExplorerPageState extends ConsumerState<_OpeningExplorerPage>
                     // games table so notation can stay visible above it,
                     // matching the reference-board mental model.
                     storageKey: 'desktop.board.right-rail.explorer.stack.v1',
-                    gutterThickness: 6,
+                    gutterThickness: desktopExplorerStackGutterThickness,
+                    gutterColor: kDividerColor,
                     children: [
                       SplitChild(
                         label: 'Moves',

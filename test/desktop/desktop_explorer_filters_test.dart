@@ -39,6 +39,14 @@ void main() {
       ),
     );
 
+    expect(find.text('PLAYER'), findsOneWidget);
+    expect(find.text('Sort games'), findsNothing);
+    expect(find.text('TIME CONTROL'), findsOneWidget);
+    expect(find.text('RATING RANGE'), findsOneWidget);
+    expect(find.byIcon(Icons.tune_outlined), findsNothing);
+    expect(find.byIcon(Icons.hourglass_top_rounded), findsNothing);
+    expect(tester.getBottomRight(find.text('PLAYER')).dy, lessThan(560));
+
     await tester.enterText(find.byType(TextField), 'ma');
     await tester.pump();
 
