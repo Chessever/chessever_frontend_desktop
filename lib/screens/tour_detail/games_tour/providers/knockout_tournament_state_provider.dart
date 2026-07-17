@@ -11,17 +11,20 @@ const String kKnockoutStagePrefix = 'knockout-stage';
 
 class KnockoutTournamentState {
   final bool isKnockout;
+  final bool isTeamEvent;
   final String? stageName;
   final List<GamesTourModel> allGames;
 
   const KnockoutTournamentState({
     required this.isKnockout,
+    required this.isTeamEvent,
     required this.stageName,
     required this.allGames,
   });
 
   const KnockoutTournamentState.empty()
     : isKnockout = false,
+      isTeamEvent = false,
       stageName = null,
       allGames = const <GamesTourModel>[];
 }
@@ -50,21 +53,42 @@ final knockoutTournamentStateProvider = Provider.autoDispose
         }
       }
 
+      final teamPlayers = (tourMetadata?.players.isNotEmpty ?? false)
+          ? tourMetadata!.players
+          : tourDetail?.aboutTourModel.players ?? const <TournamentPlayer>[];
+      final lowerFormat = (formatString ?? '').toLowerCase();
+      final isTeamEvent = resolveTeamEventClassification(
+        teamTable: tourMetadata?.info.teamTable,
+        formatSaysTeam: lowerFormat.contains('team'),
+        formatSaysPlayer: lowerFormat.contains('player'),
+        allPlayersHaveTeam:
+            teamPlayers.isNotEmpty &&
+            teamPlayers.every((player) => player.team != null),
+      );
+
       // Check format string first (fast), only analyze games if inconclusive
-      final explicitKnockout = _formatSuggestsKnockout(formatString);
+      final explicitKnockout =
+          !isTeamEvent && _formatSuggestsKnockout(formatString);
       final inferredKnockout =
+          !isTeamEvent &&
           !explicitKnockout &&
           models.isNotEmpty &&
           KnockoutMatchDetector.isKnockoutMatchFormat(models);
       final isKnockout = explicitKnockout || inferredKnockout;
 
       if (models.isEmpty && !explicitKnockout) {
-        return const KnockoutTournamentState.empty();
+        return KnockoutTournamentState(
+          isKnockout: false,
+          isTeamEvent: isTeamEvent,
+          stageName: null,
+          allGames: models,
+        );
       }
 
       if (!isKnockout) {
         return KnockoutTournamentState(
           isKnockout: false,
+          isTeamEvent: isTeamEvent,
           stageName: null,
           allGames: models,
         );
@@ -77,10 +101,22 @@ final knockoutTournamentStateProvider = Provider.autoDispose
 
       return KnockoutTournamentState(
         isKnockout: true,
+        isTeamEvent: false,
         stageName: stageName,
         allGames: models,
       );
     });
+
+/// Prefer Lichess's explicit `tour.teamTable` signal. The older heuristics are
+/// retained only for rows ingested before the data hub preserved that field.
+bool resolveTeamEventClassification({
+  required bool? teamTable,
+  required bool formatSaysTeam,
+  required bool formatSaysPlayer,
+  required bool allPlayersHaveTeam,
+}) =>
+    teamTable ??
+    (formatSaysTeam || (!formatSaysPlayer && allPlayersHaveTeam));
 
 Tour? _findTourById(TourDetailViewModel? viewModel, String tourId) {
   if (viewModel == null) return null;

@@ -78,18 +78,7 @@ class _GamesTourScreenModeNotifier
       return;
     }
 
-    // PRIORITY 2: Check for team-based group events
-    // Must have at least one player AND all players must have teams
-    final players = tourDetail.aboutTourModel.players;
-    final hasAllTeams =
-        players.isNotEmpty &&
-        players.where((e) => e.team != null).length == players.length;
-
-    debugPrint(
-      '👥 Players count: ${players.length}, All have teams: $hasAllTeams',
-    );
-
-    if (hasAllTeams) {
+    if (knockoutState.isTeamEvent) {
       debugPrint('📋 Setting mode to: groupEvent');
       state = AsyncValue.data(GamesTourScreenMode.groupEvent);
     } else {
