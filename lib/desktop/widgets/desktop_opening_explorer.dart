@@ -275,6 +275,10 @@ class DesktopOpeningExplorer extends ConsumerWidget {
         color: kBlack2Color,
         child: _ExplorerBody(
           state: effectiveState,
+          reachedTreeBoundary:
+              localIndex != null &&
+              localIndex.maxPly > 0 &&
+              effectiveState.exploredMoves.length >= localIndex.maxPly,
           onMove: onMove,
           onShowGames: onShowGames,
           shrinkWrap: shrinkWrap,
@@ -328,6 +332,7 @@ PlayerOpeningTreeFilterCriteria _localTreeCriteriaForFilters(
 class _ExplorerBody extends StatefulWidget {
   const _ExplorerBody({
     required this.state,
+    required this.reachedTreeBoundary,
     required this.onMove,
     required this.onShowGames,
     required this.shrinkWrap,
@@ -342,6 +347,7 @@ class _ExplorerBody extends StatefulWidget {
   });
 
   final GamebaseExplorerState state;
+  final bool reachedTreeBoundary;
   final void Function(String uci) onMove;
   final void Function(String uci)? onShowGames;
   final bool shrinkWrap;
@@ -513,11 +519,16 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
     widget.moveCountCallback?.call(aggs.length);
     widget.sortedAggregatesCallback?.call(aggs);
     if (aggs.isEmpty && bottomSlot == null) {
-      return const _ExplorerEmpty(
+      return _ExplorerEmpty(
         icon: Icons.menu_book_outlined,
-        title: 'No games match this position',
+        title:
+            widget.reachedTreeBoundary
+                ? 'No more moves available'
+                : 'No games match this position',
         message:
-            'No master/online games are indexed for the position on the board.',
+            widget.reachedTreeBoundary
+                ? 'This tree is indexed through move 25. Matching games are still available below.'
+                : 'No master/online games are indexed for the position on the board.',
       );
     }
     return LayoutBuilder(
@@ -546,12 +557,17 @@ class _ExplorerBodyState extends State<_ExplorerBody> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (aggs.isEmpty)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.symmetric(vertical: 18),
                   child: Center(
                     child: Text(
-                      'No replies indexed for this position',
-                      style: TextStyle(color: kLightGreyColor, fontSize: 11),
+                      widget.reachedTreeBoundary
+                          ? 'No more moves available'
+                          : 'No replies indexed for this position',
+                      style: const TextStyle(
+                        color: kLightGreyColor,
+                        fontSize: 11,
+                      ),
                     ),
                   ),
                 ),

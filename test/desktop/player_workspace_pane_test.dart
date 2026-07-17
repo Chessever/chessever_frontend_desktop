@@ -59,6 +59,38 @@ void main() {
     ]);
   });
 
+  test('overview shows downloaded sources without Combined', () {
+    const player = PlayerWorkspacePlayer(
+      id: 'overview-sources',
+      displayName: 'Prep Target',
+      createdAtMs: 1,
+      accounts: {
+        PlayerWorkspaceSource.chessever: PlayerWorkspaceAccount(
+          source: PlayerWorkspaceSource.chessever,
+          username: 'Prep Target',
+          pgnPath: 'chessever.pgn',
+          gameCount: 12,
+        ),
+        PlayerWorkspaceSource.lichess: PlayerWorkspaceAccount(
+          source: PlayerWorkspaceSource.lichess,
+          username: 'prep_target',
+          pgnPath: 'lichess.pgn',
+          gameCount: 8,
+        ),
+      },
+      combinedPgnPath: 'combined.pgn',
+      combinedGameCount: 20,
+    );
+
+    expect(
+      playerOverviewStatsSources(player).map((source) => source.kind),
+      <PlayerWorkspaceSource>[
+        PlayerWorkspaceSource.chessever,
+        PlayerWorkspaceSource.lichess,
+      ],
+    );
+  });
+
   test('completed ChessEver source uses its imported game count as total', () {
     const chessEver = PlayerWorkspaceAccount(
       source: PlayerWorkspaceSource.chessever,
@@ -370,6 +402,101 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('clicking an active player tree build stops its worker', (
+    tester,
+  ) async {
+    final temp = Directory.systemTemp.createTempSync('chessever-tree-stop-');
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    final lichessPath = '${temp.path}/lichess.pgn';
+    File(lichessPath).writeAsStringSync(_paneTestPgn('lichess_user'));
+    final repository = _PaneFakePlayerWorkspaceRepository(
+      snapshot: PlayerWorkspaceSnapshot(
+        players: [
+          PlayerWorkspacePlayer(
+            id: 'player-stop-tree',
+            displayName: 'Stop Tree Player',
+            createdAtMs: 1,
+            accounts: {
+              PlayerWorkspaceSource.lichess: PlayerWorkspaceAccount(
+                source: PlayerWorkspaceSource.lichess,
+                username: 'lichess_user',
+                pgnPath: lichessPath,
+                gameCount: 2,
+              ),
+            },
+          ),
+        ],
+      ),
+    );
+    final localRepository = _PaneMutableTreeLocalChessDatabaseRepository({
+      lichessPath: 2,
+    })..holdTreeBuild();
+
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() async => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          playerWorkspaceRepositoryProvider.overrideWithValue(repository),
+          _playerWorkspaceOverride(repository),
+          localChessDatabaseRepositoryProvider.overrideWithValue(
+            localRepository,
+          ),
+          localChessLibraryProvider.overrideWith(
+            (ref) => LocalChessLibraryNotifier(
+              localDatabaseRepository: localRepository,
+            ),
+          ),
+        ],
+        child: const MaterialApp(
+          home: _ResponsiveTestHost(
+            child: SizedBox(
+              width: 1200,
+              height: 800,
+              child: PlayerWorkspacePane(),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.text('Stop Tree Player').first);
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.text('Build Tree').first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pumpAndSettle();
+    expect(find.text('Opening trees'), findsOneWidget);
+
+    await tester.tap(
+      find.widgetWithText(LocalTreeActionButton, 'Build Tree'),
+    );
+    await tester.pump();
+    expect(
+      find.descendant(
+        of: find.byType(LocalTreeActionButton),
+        matching: find.textContaining('%'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byType(LocalTreeActionButton));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(localRepository.treeBuildCanceled, isTrue);
+    expect(
+      find.widgetWithText(LocalTreeActionButton, 'Build Tree'),
+      findsOneWidget,
+    );
+    expect(localRepository.indexes, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'queues a combined tree build while its database is still preparing',
     (tester) async {
@@ -646,6 +773,7 @@ void main() {
       chessComPath: _paneTreeIndex(path: chessComPath, gameCount: 3),
       combinedPath: _paneTreeIndex(path: combinedPath, gameCount: 5),
     });
+    final registry = LocalLibraryRegistryNotifier(_PaneMemoryAppDatabase());
 
     await tester.binding.setSurfaceSize(const Size(1200, 800));
     addTearDown(() async {
@@ -660,6 +788,7 @@ void main() {
           localChessDatabaseRepositoryProvider.overrideWithValue(
             localRepository,
           ),
+          localLibraryRegistryProvider.overrideWith((ref) => registry),
           localChessLibraryProvider.overrideWith(
             (ref) => LocalChessLibraryNotifier(
               localDatabaseRepository: localRepository,
@@ -691,6 +820,18 @@ void main() {
 
     expect(find.text('Opening trees'), findsOneWidget);
     expect(find.text('Tree'), findsNWidgets(3));
+    final persistedContainer = ProviderScope.containerOf(
+      tester.element(find.byType(PlayerWorkspacePane)),
+    );
+    await tester.tap(find.widgetWithText(LocalTreeActionButton, 'Tree').first);
+    await tester.pump(const Duration(seconds: 1));
+    expect(
+      persistedContainer
+          .read(desktopTabsProvider)
+          .tabs
+          .where((tab) => tab.kind == TabKind.board),
+      hasLength(1),
+    );
     expect(find.text('Prep Target Combined'), findsOneWidget);
     expect(find.text('5 games · Both colours'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -1363,6 +1504,16 @@ class _PaneFakeLocalChessDatabaseRepository
   final Map<String, PlayerOpeningTreeIndex> indexes;
 
   @override
+  PlayerOpeningTreeIndex? loadCompactOpeningTreeIndexForDatabase({
+    required String databasePath,
+  }) => indexes[databasePath];
+
+  @override
+  Future<PlayerOpeningTreeIndex?> loadOpeningTreeIndexForDatabase({
+    required String databasePath,
+  }) async => indexes[databasePath];
+
+  @override
   Future<LocalChessFileNode?> loadFreshFileNode(
     String path, {
     required String rootPath,
@@ -1407,12 +1558,24 @@ class _PaneMutableTreeLocalChessDatabaseRepository
 
   final Map<String, int> gameCountsByPath;
   final Map<String, PlayerOpeningTreeIndex> indexes = {};
+  Completer<void>? _finishTreeBuild;
+  bool treeBuildCanceled = false;
+
+  void holdTreeBuild() {
+    _finishTreeBuild = Completer<void>();
+  }
+
+  @override
+  PlayerOpeningTreeIndex? loadCompactOpeningTreeIndexForDatabase({
+    required String databasePath,
+  }) => indexes[databasePath];
 
   @override
   Future<LocalChessDatabaseResultStats> localDatabaseResultStats({
     required String databasePath,
     required Iterable<String> playerAliases,
     String? playerFideId,
+    bool preferDirectDatabase = false,
   }) async {
     return LocalChessDatabaseResultStats(
       gameCount: gameCountsByPath[databasePath] ?? 0,
@@ -1468,7 +1631,7 @@ class _PaneMutableTreeLocalChessDatabaseRepository
 
   @override
   Future<LocalChessOpeningTreeRebuildResult?>
-  rebuildOpeningTreeFromCachedGames({
+  rebuildOpeningTreeFromPgnFile({
     required String databasePath,
     LocalChessScanProgressSink? onProgress,
     OperationCancellationToken? cancellationToken,
@@ -1479,6 +1642,19 @@ class _PaneMutableTreeLocalChessDatabaseRepository
     onProgress?.call(
       LocalChessScanProgress(fraction: 0.5, message: 'Building tree...'),
     );
+    final finish = _finishTreeBuild;
+    if (finish != null) {
+      final canceled = Completer<void>();
+      final removeListener =
+          cancellationToken?.addListener(() {
+            treeBuildCanceled = true;
+            if (!canceled.isCompleted) canceled.complete();
+          }) ??
+          () {};
+      await Future.any(<Future<void>>[finish.future, canceled.future]);
+      removeListener();
+      cancellationToken?.throwIfCanceled();
+    }
     final index = _paneTreeIndex(path: clean, gameCount: gameCount);
     indexes[clean] = index;
     onProgress?.call(

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:resqlite/resqlite.dart' as resqlite;
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
@@ -98,7 +99,7 @@ void main() {
 
         expect(opened, isTrue);
         expect(repo.loadFreshSourceCalls, 1);
-        expect(repo.persistSourceCalls, 1);
+        expect(repo.persistSourceCalls, 0);
         expect(notifier.state.error, isNull);
         expect(notifier.state.isScanning, isFalse);
         final loadedFile =
@@ -181,6 +182,9 @@ void main() {
           localDatabaseRepository: _FailingLocalChessDatabaseRepository(
             importedSource: failedSource,
           ),
+          scanPgnCatalog: (_, {sourceLabel, maxGames = 200000}) async {
+            return failedSource;
+          },
         );
 
         final opened = await notifier.openPaths(<String>[file.path]);
@@ -236,7 +240,7 @@ void main() {
     });
 
     test(
-      'openPaths uses worker import preview without persisting full source again',
+      'openPaths uses the direct PGN catalog without importing a cache',
       () async {
         final file = File('${temp.path}/mini.pgn');
         await file.writeAsString(_samplePgn);
@@ -278,7 +282,7 @@ void main() {
         final opened = await notifier.openPaths(<String>[file.path]);
 
         expect(opened, isTrue);
-        expect(repo.importSingleFileSourceCalls, 1);
+        expect(repo.importSingleFileSourceCalls, 0);
         expect(repo.persistSourceCalls, 0);
         expect(notifier.state.isScanning, isFalse);
         final loadedFile =
@@ -289,7 +293,7 @@ void main() {
       },
     );
 
-    test('large raw PGN opens before its cache import completes', () async {
+    test('large raw PGN opens fully before search indexing is requested', () async {
       final file = File('${temp.path}/instant.pgn');
       await file.writeAsString(_samplePgn);
       final scanned = await scanLocalChessPaths(<String>[file.path]);
@@ -297,6 +301,7 @@ void main() {
         List<int>.filled(600 * 1024, 0x20),
         mode: FileMode.append,
       );
+      final catalog = await scanLocalChessPgnCatalog(file.path);
       final importStarted = Completer<void>();
       final releaseImport = Completer<void>();
       final repo = _FailingLocalChessDatabaseRepository(
@@ -304,34 +309,38 @@ void main() {
         importStarted: importStarted,
         releaseImport: releaseImport,
       );
-      var previewLimit = 0;
-      var previewCalls = 0;
+      var catalogLimit = 0;
+      var catalogCalls = 0;
       final notifier = LocalChessLibraryNotifier(
         localDatabaseRepository: repo,
-        scanPgnPreview: (_, {sourceLabel, maxGames = 200}) async {
-          previewCalls++;
-          previewLimit = maxGames;
-          return scanned;
+        scanPgnCatalog: (_, {sourceLabel, maxGames = 200000}) async {
+          catalogCalls++;
+          catalogLimit = maxGames;
+          return catalog;
         },
       );
 
       final opened = await notifier.openPaths(<String>[file.path]);
 
       expect(opened, isTrue);
-      expect(importStarted.isCompleted, isTrue);
+      expect(importStarted.isCompleted, isFalse);
       expect(releaseImport.isCompleted, isFalse);
-      expect(previewLimit, 200);
+      expect(catalogLimit, 200000);
       expect(notifier.state.isScanning, isFalse);
       expect(notifier.state.source, isNotNull);
+      expect(notifier.state.backgroundImportForPath(file.path), isNull);
+      expect(catalogCalls, 1);
+
+      expect(notifier.ensureSearchIndex(file.path), isTrue);
+      expect(importStarted.isCompleted, isTrue);
       expect(notifier.state.backgroundImportForPath(file.path), isNotNull);
-      expect(previewCalls, 1);
 
       final reopened = await notifier.openPaths(<String>[file.path]);
 
       expect(reopened, isTrue);
-      expect(previewCalls, 1);
+      expect(catalogCalls, 1);
       expect(notifier.state.isScanning, isFalse);
-      expect(notifier.state.source, same(scanned));
+      expect(notifier.state.source, same(catalog));
       expect(notifier.state.backgroundImportForPath(file.path), isNotNull);
 
       final indexingFinished = notifier.stream.firstWhere(
@@ -555,7 +564,7 @@ void main() {
         final initialFile =
             notifier.state.source!.nodeForPath(file.path) as LocalChessFileNode;
         expect(initialFile.games, hasLength(1));
-        expect(initialFile.relativePath, 'lines/mini.pgn');
+        expect(initialFile.relativePath, p.join('lines', 'mini.pgn'));
         expect(await _count(db, 'local_chess_games'), 1);
         expect(notifier.rebuildOpeningTree(file.path), isTrue);
         await _waitForLocalTree(notifier, file.path);
@@ -575,7 +584,7 @@ void main() {
         final refreshedFile =
             notifier.state.source!.nodeForPath(file.path) as LocalChessFileNode;
         expect(refreshedFile.games, hasLength(2));
-        expect(refreshedFile.relativePath, 'lines/mini.pgn');
+        expect(refreshedFile.relativePath, p.join('lines', 'mini.pgn'));
         expect(await _count(db, 'local_chess_games'), 2);
         expect(refreshedFile.openingTreeIndex, isNull);
         await Future<void>.delayed(const Duration(milliseconds: 900));
@@ -589,8 +598,14 @@ void main() {
         );
         expect(restored, isNotNull);
         expect(restored!.games, hasLength(2));
-        expect(restored.relativePath, 'lines/mini.pgn');
-        expect(restored.openingTreeIndex!.downloadedGameCount, 2);
+        expect(restored.relativePath, p.join('lines', 'mini.pgn'));
+        expect(restored.openingTreeIndex, isNull);
+        expect(
+          repo
+              .loadCompactOpeningTreeIndexForDatabase(databasePath: file.path)!
+              .downloadedGameCount,
+          2,
+        );
       },
     );
 
@@ -641,11 +656,9 @@ void main() {
       await file.writeAsString(_samplePgn);
       final treeStarted = Completer<void>();
       final releaseTree = Completer<void>();
-      final treeRebuildReturned = Completer<void>();
       final repo = _FailingLocalChessDatabaseRepository(
         rebuildStarted: treeStarted,
         releaseRebuild: releaseTree,
-        rebuildReturned: treeRebuildReturned,
       );
       final notifier = LocalChessLibraryNotifier(localDatabaseRepository: repo);
 
@@ -656,7 +669,6 @@ void main() {
       notifier.clear();
       expect(await awaitedBuild, isNull);
       releaseTree.complete();
-      await treeRebuildReturned.future.timeout(const Duration(seconds: 2));
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
       expect(notifier.state.source, isNull);
@@ -725,16 +737,15 @@ void main() {
         expect(rebuiltFile.openingTreeIndex, isNotNull);
         expect(rebuiltFile.openingTreeIndex!.downloadedGameCount, 1);
         expect(treeBuildScans, 0);
-        final cachedAfter = await repo.loadFreshFileNode(
-          file.path,
-          rootPath: temp.path,
+        final compactAfter = repo.loadCompactOpeningTreeIndexForDatabase(
+          databasePath: file.path,
         );
-        expect(cachedAfter!.openingTreeIndex, isNotNull);
+        expect(compactAfter, isNotNull);
       },
     );
 
     test(
-      'openPaths restores persisted SQL-backed tree without rebuilding',
+      'openPaths restores the persisted compact tree without rebuilding',
       () async {
         final db = await resqlite.Database.open('${temp.path}/restore_tree.db');
         await db.execute('PRAGMA foreign_keys=ON');
@@ -761,12 +772,9 @@ void main() {
           eagerTreeMoveLoadLimit: 0,
           eagerPositionRefLoadLimit: 0,
         );
-        final restored = await readRepo.loadFreshFileNode(
-          file.path,
-          rootPath: temp.path,
-        );
-        expect(restored, isNotNull);
-        final restoredIndex = restored!.openingTreeIndex!;
+        final restoredIndex = readRepo.loadCompactOpeningTreeIndexForDatabase(
+          databasePath: file.path,
+        )!;
         expect(restoredIndex.positionCount, greaterThan(1));
         expect(restoredIndex.downloadedGameCount, 1);
         expect(restoredIndex.nodesById, isEmpty);
@@ -1019,6 +1027,7 @@ void main() {
 
         final opened = await notifier.openPaths(<String>[file.path]);
         expect(opened, isTrue);
+        await repo.importSingleFileSource(path: file.path);
         final initialFile =
             notifier.state.source!.nodeForPath(file.path) as LocalChessFileNode;
         expect(initialFile.games.single.game.metadata['Event'], 'Candidates');
@@ -1028,7 +1037,7 @@ void main() {
         )..['Event'] = 'Cached refresh';
         await db.execute(
           'UPDATE local_chess_games SET headers_json = ? WHERE database_id = ?',
-          <Object?>[jsonEncode(cachedHeaders), file.path],
+          <Object?>[jsonEncode(cachedHeaders), _testDatabaseId(file.path)],
         );
 
         final refreshed = await notifier.refreshFile(file.path);
@@ -1059,6 +1068,7 @@ void main() {
 
         final opened = await notifier.openPaths(<String>[file.path]);
         expect(opened, isTrue);
+        await repo.importSingleFileSource(path: file.path);
         notifier.selectPath(file.path);
         final initialFile =
             notifier.state.source!.nodeForPath(file.path) as LocalChessFileNode;
@@ -1150,7 +1160,6 @@ class _FailingLocalChessDatabaseRepository
     this.multiFileLoadSource,
     this.rebuildStarted,
     this.releaseRebuild,
-    this.rebuildReturned,
     this.importStarted,
     this.releaseImport,
   }) : super(database: _unusedDatabase);
@@ -1164,7 +1173,6 @@ class _FailingLocalChessDatabaseRepository
   final LocalChessSource? multiFileLoadSource;
   final Completer<void>? rebuildStarted;
   final Completer<void>? releaseRebuild;
-  final Completer<void>? rebuildReturned;
   final Completer<void>? importStarted;
   final Completer<void>? releaseImport;
 
@@ -1203,6 +1211,8 @@ class _FailingLocalChessDatabaseRepository
   Future<LocalChessSource?> importSingleFileSource({
     required String path,
     String? sourceLabel,
+    bool deduplicateGames = true,
+    bool preferDirectDatabase = false,
     OperationCancellationToken? cancellationToken,
     void Function(LocalChessScanProgress progress)? onProgress,
   }) async {
@@ -1263,7 +1273,7 @@ class _FailingLocalChessDatabaseRepository
 
   @override
   Future<LocalChessOpeningTreeRebuildResult?>
-  rebuildOpeningTreeFromCachedGames({
+  rebuildOpeningTreeFromPgnFile({
     required String databasePath,
     void Function(LocalChessScanProgress progress)? onProgress,
     OperationCancellationToken? cancellationToken,
@@ -1283,7 +1293,6 @@ class _FailingLocalChessDatabaseRepository
     onProgress?.call(
       LocalChessScanProgress(fraction: 0.95, message: 'Saving tree...'),
     );
-    if (rebuildReturned?.isCompleted == false) rebuildReturned!.complete();
     return LocalChessOpeningTreeRebuildResult(
       index: _fakeOpeningTreeIndex(databasePath),
       skippedGames: 0,
@@ -1363,6 +1372,11 @@ PlayerOpeningTreeIndex _fakeOpeningTreeIndex(String databasePath) {
 
 Future<resqlite.Database> _unusedDatabase() async {
   throw UnsupportedError('unused test database');
+}
+
+String _testDatabaseId(String path) {
+  final normalized = p.normalize(path.trim());
+  return Platform.isWindows ? normalized.toLowerCase() : normalized;
 }
 
 Future<int> _count(resqlite.Database db, String table) async {

@@ -202,7 +202,13 @@ class LocalChessFilesView extends HookConsumerWidget {
             : selectedDatabase?.openingTreeIndex?.isUsable == true
             ? selectedDatabase!.openingTreeIndex
             : null;
-    final treeBuildProgress = state.treeBuildForPath(selectedDatabase?.path);
+    // Database workspace tabs render from a stable source snapshot, while
+    // tree-build progress is published by the live Library notifier. Prefer
+    // that live progress so a Build Tree click is visible immediately even
+    // when [stateOverride] supplies the database contents.
+    final treeBuildProgress =
+        watchedState.treeBuildForPath(selectedDatabase?.path) ??
+        state.treeBuildForPath(selectedDatabase?.path);
     final isBrowsingFolder =
         node is LocalChessFolderNode && selectedDatabase == null;
     final allGames = selectedDatabase?.games ?? const <LocalChessGame>[];
@@ -212,6 +218,36 @@ class LocalChessFilesView extends HookConsumerWidget {
       selectedDatabase?.path,
     );
     final isBackgroundImporting = backgroundImportProgress != null;
+    final isDirectPgnCatalog =
+        selectedDatabase?.contentFingerprint.isEmpty == true &&
+        selectedDatabase?.pgnOffsetIndex != null;
+    final hasSearchIndex = !isDirectPgnCatalog;
+    final needsSearchIndex =
+        query.value.trim().isNotEmpty ||
+        gameFilter.value.hasActiveFilters ||
+        sort.value.key != _LocalGamesSortKey.originalOrder ||
+        sort.value.dir != _LocalGamesSortDir.asc;
+    useEffect(() {
+      final path = selectedDatabase?.path;
+      if (stateOverride != null ||
+          path == null ||
+          !needsSearchIndex ||
+          hasSearchIndex ||
+          isBackgroundImporting) {
+        return null;
+      }
+      Future<void>.microtask(
+        () =>
+            ref.read(localChessLibraryProvider.notifier).ensureSearchIndex(path),
+      );
+      return null;
+    }, [
+      selectedDatabase?.path,
+      needsSearchIndex,
+      hasSearchIndex,
+      isBackgroundImporting,
+      stateOverride,
+    ]);
     final enrichmentEpoch = ref.watch(localPlayerEnrichmentEpochProvider);
     final databaseQueryKey =
         Object.hash(
@@ -219,6 +255,7 @@ class LocalChessFilesView extends HookConsumerWidget {
           selectedDatabase?.gameCount,
           selectedDatabase?.sizeBytes,
           selectedDatabase?.modifiedAt?.millisecondsSinceEpoch,
+          hasSearchIndex,
           isBackgroundImporting,
           enrichmentEpoch,
           query.value,
@@ -246,7 +283,10 @@ class LocalChessFilesView extends HookConsumerWidget {
     }, [databaseQueryKey]);
     useEffect(() {
       final path = selectedDatabase?.path;
-      if (path == null || databaseEntryCount <= 0 || isBackgroundImporting) {
+      if (path == null ||
+          databaseEntryCount <= 0 ||
+          !hasSearchIndex ||
+          isBackgroundImporting) {
         return null;
       }
       Future<void>.microtask(
@@ -255,22 +295,40 @@ class LocalChessFilesView extends HookConsumerWidget {
             .ensureDatabaseEnriched(path),
       );
       return null;
-    }, [selectedDatabase?.path, databaseEntryCount, isBackgroundImporting]);
+    }, [
+      selectedDatabase?.path,
+      databaseEntryCount,
+      hasSearchIndex,
+      isBackgroundImporting,
+    ]);
     final fallbackFiltered = useMemoized(() {
       final q = query.value.trim().toLowerCase();
-      final base =
-          q.isEmpty
-              ? List<LocalChessGame>.of(allGames)
-              : allGames.where((game) => _matches(game, q)).toList();
+      final base = allGames.where((game) {
+        if (q.isNotEmpty && !_matches(game, q)) return false;
+        return localChessGameMatchesFilter(
+          game,
+          gameFilter.value,
+          playerFideId: playerFideId,
+          playerAliases: playerAliases,
+        );
+      }).toList();
       _sortLocalGames(base, sort.value);
       return base;
-    }, [allGames, query.value, sort.value]);
+    }, [
+      allGames,
+      query.value,
+      sort.value,
+      gameFilter.value,
+      playerFideId,
+      Object.hashAll(playerAliases),
+    ]);
     final databaseGamesPageFuture =
         useMemoized<Future<LocalChessGameQueryPage?>?>(
           () {
             final database = selectedDatabase;
             if (database == null ||
                 databaseEntryCount <= 0 ||
+                !hasSearchIndex ||
                 isBackgroundImporting) {
               return null;
             }
@@ -289,6 +347,7 @@ class LocalChessFilesView extends HookConsumerWidget {
           [
             selectedDatabase?.path,
             databaseEntryCount,
+            hasSearchIndex,
             isBackgroundImporting,
             query.value,
             sort.value.key,
@@ -467,6 +526,14 @@ class LocalChessFilesView extends HookConsumerWidget {
           .rebuildOpeningTree(database.path);
     }
 
+    void cancelDatabaseTreeBuild() {
+      final database = selectedDatabase;
+      if (database == null) return;
+      ref
+          .read(localChessLibraryProvider.notifier)
+          .cancelOpeningTreeBuild(database.path);
+    }
+
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         const SingleActivator(LogicalKeyboardKey.keyV, control: true):
@@ -506,10 +573,13 @@ class LocalChessFilesView extends HookConsumerWidget {
                         openableTreeIndex == null ? null : openDatabaseTree,
                     onBuildTree:
                         selectedDatabase == null ||
-                                openableTreeIndex != null ||
-                                isBackgroundImporting
+                                openableTreeIndex != null
                             ? null
                             : rebuildDatabaseTree,
+                    onCancelTreeBuild:
+                        treeBuildProgress?.isActive == true
+                            ? cancelDatabaseTreeBuild
+                            : null,
                     onSelectPath: selectLocalPath,
                   ),
                 if (!isBrowsingFolder)
@@ -651,6 +721,7 @@ class _LocalHeader extends StatelessWidget {
     required this.backgroundImportProgress,
     required this.onOpenTree,
     required this.onBuildTree,
+    required this.onCancelTreeBuild,
     required this.onSelectPath,
   });
 
@@ -665,6 +736,7 @@ class _LocalHeader extends StatelessWidget {
   final LocalChessScanProgress? backgroundImportProgress;
   final VoidCallback? onOpenTree;
   final VoidCallback? onBuildTree;
+  final VoidCallback? onCancelTreeBuild;
   final ValueChanged<String> onSelectPath;
 
   @override
@@ -702,7 +774,7 @@ class _LocalHeader extends StatelessWidget {
         metaParts.add(localChessEntryCountLabel(selectedDatabase.gameCount));
       }
       if (backgroundImportProgress != null) {
-        metaParts.add('indexing ${backgroundImportProgress!.percent}%');
+        metaParts.add('search setup ${backgroundImportProgress!.percent}%');
       }
       if (treeProgress?.isActive == true) {
         metaParts.add('tree ${treeProgress!.percent}%');
@@ -777,6 +849,7 @@ class _LocalHeader extends StatelessWidget {
               progress: treeBuildProgress,
               onOpen: onOpenTree,
               onBuild: onBuildTree,
+              onCancel: onCancelTreeBuild,
             ),
             const SizedBox(width: 6),
           ],

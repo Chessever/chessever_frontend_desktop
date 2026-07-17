@@ -7,20 +7,19 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:path/path.dart' as p;
 
 import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/panes/library_pane.dart'
     show
         DatabaseWorkspaceArgs,
         LocalDatabaseWorkspaceKey,
-        localDatabaseWorkspaceSourceProvider,
         openDatabaseWorkspaceTab;
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
+import 'package:chessever/desktop/services/player_pgn_catalog.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_explorer_scope.dart';
@@ -95,12 +94,185 @@ final _cachedPlayerWorkspaceTreeIndexProvider = FutureProvider.autoDispose
         }),
       );
       if (liveIndex != null) return liveIndex;
-      final node = await ref
+      final index = ref
           .read(localChessDatabaseRepositoryProvider)
-          .loadFreshFileNode(clean, rootPath: p.dirname(clean));
-      final index = node?.openingTreeIndex;
+          .loadCompactOpeningTreeIndexForDatabase(databasePath: clean);
       return index?.isUsable == true ? index : null;
     });
+
+final _playerWorkspaceGamesSourceProvider = FutureProvider.autoDispose
+    .family<LocalChessSource, LocalDatabaseWorkspaceKey>((ref, key) async {
+      return PlayerPgnCatalog.instance.load(key.path);
+    });
+
+@immutable
+class _PlayerTreeBuildState {
+  const _PlayerTreeBuildState({
+    this.progressByPath = const <String, LocalChessTreeBuildProgress>{},
+    this.indexByPath = const <String, PlayerOpeningTreeIndex>{},
+  });
+
+  final Map<String, LocalChessTreeBuildProgress> progressByPath;
+  final Map<String, PlayerOpeningTreeIndex> indexByPath;
+
+  LocalChessTreeBuildProgress? progressFor(String path) =>
+      progressByPath[localChessInputPathKey(path)];
+
+  PlayerOpeningTreeIndex? indexFor(String path) =>
+      indexByPath[localChessInputPathKey(path)];
+}
+
+class _PlayerTreeBuildController extends StateNotifier<_PlayerTreeBuildState> {
+  _PlayerTreeBuildController(this._repository)
+    : super(const _PlayerTreeBuildState());
+
+  final LocalChessDatabaseRepository _repository;
+  final Map<String, OperationCancellationToken> _tokens =
+      <String, OperationCancellationToken>{};
+  final Map<String, Future<PlayerOpeningTreeIndex?>> _builds =
+      <String, Future<PlayerOpeningTreeIndex?>>{};
+
+  Future<PlayerOpeningTreeIndex?> build(String path) {
+    final key = localChessInputPathKey(path);
+    final active = _builds[key];
+    if (active != null) return active;
+    final token = OperationCancellationToken();
+    _tokens[key] = token;
+    _setProgress(
+      key,
+      LocalChessTreeBuildProgress(
+        path: path,
+        phase: LocalChessTreeBuildPhase.queued,
+        fraction: 0,
+        message: 'Preparing PGN tree...',
+      ),
+    );
+    late final Future<PlayerOpeningTreeIndex?> task;
+    task = _runBuild(path, key, token).whenComplete(() {
+      if (identical(_tokens[key], token)) _tokens.remove(key);
+      if (identical(_builds[key], task)) _builds.remove(key);
+    });
+    _builds[key] = task;
+    return task;
+  }
+
+  Future<PlayerOpeningTreeIndex?> _runBuild(
+    String path,
+    String key,
+    OperationCancellationToken token,
+  ) async {
+    final startedAtMs = DateTime.now().millisecondsSinceEpoch;
+    try {
+      final result = await _repository.rebuildOpeningTreeFromPgnFile(
+        databasePath: path,
+        cancellationToken: token,
+        onProgress: (progress) {
+          if (token.isCanceled || !identical(_tokens[key], token)) return;
+          final message = progress.message.toLowerCase();
+          final phase =
+              message.contains('publish') ||
+                      message.contains('saving') ||
+                      message.contains('finaliz')
+                  ? LocalChessTreeBuildPhase.persisting
+                  : LocalChessTreeBuildPhase.building;
+          _setProgress(
+            key,
+            LocalChessTreeBuildProgress(
+              path: path,
+              phase: phase,
+              fraction: progress.fraction,
+              message: progress.message,
+              startedAtMs: startedAtMs,
+              updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+            ),
+          );
+        },
+      );
+      token.throwIfCanceled();
+      final index = result?.index;
+      if (index?.isUsable != true) {
+        throw StateError('Opening tree build did not produce an index.');
+      }
+      final nextIndexes = Map<String, PlayerOpeningTreeIndex>.of(
+        state.indexByPath,
+      )..[key] = index!;
+      final nextProgress = Map<String, LocalChessTreeBuildProgress>.of(
+        state.progressByPath,
+      )..remove(key);
+      state = _PlayerTreeBuildState(
+        progressByPath: Map.unmodifiable(nextProgress),
+        indexByPath: Map.unmodifiable(nextIndexes),
+      );
+      return index;
+    } catch (error) {
+      if (token.isCanceled || isOperationCanceled(error)) {
+        _removeProgress(key);
+        return null;
+      }
+      _setProgress(
+        key,
+        LocalChessTreeBuildProgress(
+          path: path,
+          phase: LocalChessTreeBuildPhase.failed,
+          fraction: 0,
+          message: 'Opening tree rebuild failed. Click Retry Tree.',
+          error: localChessOpenErrorMessage(error),
+          startedAtMs: startedAtMs,
+          updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+      rethrow;
+    }
+  }
+
+  bool cancel(String path) {
+    final key = localChessInputPathKey(path);
+    final token = _tokens[key];
+    if (token == null) return false;
+    token.cancel();
+    _removeProgress(key);
+    return true;
+  }
+
+  void _setProgress(String key, LocalChessTreeBuildProgress progress) {
+    final next = Map<String, LocalChessTreeBuildProgress>.of(
+      state.progressByPath,
+    )..[key] = progress;
+    state = _PlayerTreeBuildState(
+      progressByPath: Map.unmodifiable(next),
+      indexByPath: state.indexByPath,
+    );
+  }
+
+  void _removeProgress(String key) {
+    if (!state.progressByPath.containsKey(key)) return;
+    final next = Map<String, LocalChessTreeBuildProgress>.of(
+      state.progressByPath,
+    )..remove(key);
+    state = _PlayerTreeBuildState(
+      progressByPath: Map.unmodifiable(next),
+      indexByPath: state.indexByPath,
+    );
+  }
+
+  @override
+  void dispose() {
+    for (final token in _tokens.values) {
+      token.cancel();
+    }
+    _tokens.clear();
+    super.dispose();
+  }
+}
+
+final _playerTreeBuildProvider = StateNotifierProvider<
+  _PlayerTreeBuildController,
+  _PlayerTreeBuildState
+>((ref) {
+  return _PlayerTreeBuildController(
+    ref.read(localChessDatabaseRepositoryProvider),
+  );
+});
 
 class PlayerWorkspacePane extends HookConsumerWidget {
   const PlayerWorkspacePane({super.key, this.tabId});
@@ -2153,9 +2325,9 @@ class _PlayerWorkspaceMain extends StatelessWidget {
   }
 }
 
-/// Landing tab: the rich, locally-computed statistics dashboard. Pulls every
-/// metric from the player's combined resqlite database via fast GROUP BY
-/// aggregates and renders them in the Play-profile visual language.
+/// Landing tab: the rich, locally-computed statistics dashboard. Pulls metrics
+/// from the selected source database via fast GROUP BY aggregates and renders
+/// them in the Play-profile visual language.
 class _OverviewTab extends StatelessWidget {
   const _OverviewTab({
     required this.player,
@@ -2169,7 +2341,7 @@ class _OverviewTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final sources = _statsSources(player);
+    final sources = playerOverviewStatsSources(player);
     if (sources.isEmpty) {
       return _InlineEmpty(
         icon: Icons.query_stats_outlined,
@@ -2185,17 +2357,25 @@ class _OverviewTab extends StatelessWidget {
       sources: sources,
       aliases: _statsAliases(player),
       playerFideId: player.fideId,
-      revision:
-          player.combinedBuiltAtMs ?? player.lastSyncAtMs ?? player.totalGames,
+      revision: player.lastSyncAtMs ?? player.totalGames,
       onDownloadGames: onGoToAccounts,
       onOverviewFilter: onOverviewFilter,
     );
   }
 }
 
-/// Selectable dashboard sources: the deduped combined set first (the default
-/// prep view), then every connected source database. Labels disambiguate
-/// same-source accounts (e.g. two Lichess usernames) by title.
+@visibleForTesting
+List<PlayerStatsSource> playerOverviewStatsSources(
+  PlayerWorkspacePlayer player,
+) {
+  return _statsSources(player)
+      .where((source) => source.kind != PlayerWorkspaceSource.combined)
+      .toList(growable: false);
+}
+
+/// Selectable local databases. Labels disambiguate same-source accounts (e.g.
+/// two Lichess usernames) by title. Combined remains available to Games and
+/// Build Tree, but the Overview intentionally uses only real source databases.
 List<PlayerStatsSource> _statsSources(PlayerWorkspacePlayer player) {
   final targets = _databaseTargets(player);
   final sourceCounts = <PlayerWorkspaceSource, int>{};
@@ -2443,8 +2623,8 @@ class _GamesTab extends HookConsumerWidget {
   }
 }
 
-/// Loads (importing/indexing into resqlite on first open) and renders one local
-/// database's games via the shared [LocalChessFilesView].
+/// Loads a header-only PGN catalog and renders one local database's games via
+/// the shared [LocalChessFilesView]. No SQLite import is needed just to browse.
 class _EmbeddedLocalGames extends ConsumerWidget {
   const _EmbeddedLocalGames({
     super.key,
@@ -2470,7 +2650,7 @@ class _EmbeddedLocalGames extends ConsumerWidget {
     final key = LocalDatabaseWorkspaceKey(path, revision: revision);
     final treeIndex =
         ref.watch(_cachedPlayerWorkspaceTreeIndexProvider(path)).valueOrNull;
-    final async = ref.watch(localDatabaseWorkspaceSourceProvider(key));
+    final async = ref.watch(_playerWorkspaceGamesSourceProvider(key));
     return async.when(
       loading:
           () => const Center(
@@ -2499,8 +2679,9 @@ class _EmbeddedLocalGames extends ConsumerWidget {
               selectedPath: path,
             ),
             onRefreshOverride: () async {
-              ref.invalidate(localDatabaseWorkspaceSourceProvider(key));
-              await ref.read(localDatabaseWorkspaceSourceProvider(key).future);
+              PlayerPgnCatalog.instance.invalidate(path);
+              ref.invalidate(_playerWorkspaceGamesSourceProvider(key));
+              await ref.read(_playerWorkspaceGamesSourceProvider(key).future);
             },
             initialFilter: initialFilter,
             onFilterChanged: onFilterChanged,
@@ -2543,13 +2724,12 @@ class _BuildTreeTab extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final localState = ref.watch(localChessLibraryProvider);
+    ref.watch(_playerTreeBuildProvider);
     final workspaceState = ref.watch(playerWorkspaceProvider);
     final choices = _treeChoices(player);
     final side = useState(PlayerBuildTreePreparationSide.both);
     final combinedBuildQueued = useState(false);
     final combinedBuildCancellation = useRef<OperationCancellationToken?>(null);
-    final backgroundPreparationPlayerId = useRef<String?>(null);
     final combinedChoice = choices.first;
     final combinedOperation = _operationForSource(
       workspaceState.operations,
@@ -2566,22 +2746,6 @@ class _BuildTreeTab extends HookConsumerWidget {
         (hasSourceGames || preparationOperation != null);
     final hasAnyGames =
         choices.any((choice) => choice.target != null) || canPrepareCombined;
-
-    useEffect(() {
-      if (!hasSourceGames ||
-          combinedChoice.target != null ||
-          backgroundPreparationPlayerId.value == player.id) {
-        return null;
-      }
-      backgroundPreparationPlayerId.value = player.id;
-      unawaited(
-        ref
-            .read(playerWorkspaceProvider.notifier)
-            .prepareCombinedDatabaseForTree(player.id)
-            .catchError((_) => null),
-      );
-      return null;
-    }, [player.id, hasSourceGames, combinedChoice.target]);
 
     void queueCombinedTreeBuild() {
       if (combinedBuildQueued.value) return;
@@ -2662,7 +2826,6 @@ class _BuildTreeTab extends HookConsumerWidget {
           else if (choice.target case final target?)
             _TreeTargetCard(
               target: target,
-              progress: localState.treeBuildForPath(target.path),
               preparationSide: side.value,
               player: player,
             )
@@ -3049,32 +3212,80 @@ class _RatingPill extends StatelessWidget {
   }
 }
 
-class _TreeTargetCard extends ConsumerWidget {
+class _TreeTargetCard extends HookConsumerWidget {
   const _TreeTargetCard({
     required this.target,
-    required this.progress,
     required this.preparationSide,
     required this.player,
   });
 
   final _DatabaseTarget target;
-  final LocalChessTreeBuildProgress? progress;
   final PlayerBuildTreePreparationSide preparationSide;
   final PlayerWorkspacePlayer player;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final startingBuild = useState(false);
+    final startCancellation = useRef<OperationCancellationToken?>(null);
+    final buildState = ref.watch(_playerTreeBuildProvider);
+    final progress = buildState.progressFor(target.path);
+    final builtIndex = buildState.indexFor(target.path);
     final localState = ref.watch(localChessLibraryProvider);
     final node = localState.source?.nodeForPath(target.path);
     final liveIndex =
         node is LocalChessFileNode && node.openingTreeIndex?.isUsable == true
             ? node.openingTreeIndex
             : null;
-    final cachedIndex =
-        ref
-            .watch(_cachedPlayerWorkspaceTreeIndexProvider(target.path))
-            .valueOrNull;
-    final openingTreeIndex = liveIndex ?? cachedIndex;
+    final cachedIndexState = ref.watch(
+      _cachedPlayerWorkspaceTreeIndexProvider(target.path),
+    );
+    final cachedIndex = cachedIndexState.valueOrNull;
+    final openingTreeIndex = liveIndex ?? builtIndex ?? cachedIndex;
+
+    void startBuild() {
+      if (startingBuild.value || progress?.isActive == true) return;
+      final cancellationToken = OperationCancellationToken();
+      startCancellation.value = cancellationToken;
+      startingBuild.value = true;
+      unawaited(() async {
+        try {
+          await _openOrBuildLocalTreeTarget(
+            context,
+            ref,
+            target,
+            player,
+            preparationSide: preparationSide,
+            cancellationToken: cancellationToken,
+          );
+        } catch (error) {
+          if (!context.mounted ||
+              cancellationToken.isCanceled ||
+              isOperationCanceled(error)) {
+            return;
+          }
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(error.toString())));
+        } finally {
+          if (context.mounted &&
+              identical(startCancellation.value, cancellationToken)) {
+            startCancellation.value = null;
+            startingBuild.value = false;
+          }
+        }
+      }());
+    }
+
+    void stopBuild() {
+      startCancellation.value?.cancel();
+      startCancellation.value = null;
+      startingBuild.value = false;
+      ref.read(_playerTreeBuildProvider.notifier).cancel(target.path);
+      ref
+          .read(localChessLibraryProvider.notifier)
+          .cancelOpeningTreeBuild(target.path);
+    }
+
     return DecoratedBox(
       decoration: BoxDecoration(
         color: kBackgroundColor.withValues(alpha: 0.45),
@@ -3115,6 +3326,8 @@ class _TreeTargetCard extends ConsumerWidget {
             ),
             LocalTreeActionButton(
               progress: progress,
+              preparingBuild: startingBuild.value && progress?.isActive != true,
+              checkingCache: liveIndex == null && cachedIndexState.isLoading,
               onOpen:
                   openingTreeIndex != null
                       ? () => _openLocalTree(
@@ -3125,21 +3338,10 @@ class _TreeTargetCard extends ConsumerWidget {
                         player: player,
                       )
                       : null,
-              onBuild:
-                  () => unawaited(
-                    _buildLocalTree(
-                      context,
-                      ref,
-                      target,
-                      player,
-                      preparationSide: preparationSide,
-                    ),
-                  ),
+              onBuild: startBuild,
               onCancel:
-                  progress?.isActive == true
-                      ? () => ref
-                          .read(localChessLibraryProvider.notifier)
-                          .cancelOpeningTreeBuild(target.path)
+                  startingBuild.value || progress?.isActive == true
+                      ? stopBuild
                       : null,
             ),
           ],
@@ -3859,6 +4061,7 @@ Future<void> _prepareAndBuildCombinedTree(
       target,
       readyPlayer,
       preparationSide: preparationSide,
+      cancellationToken: cancellationToken,
     );
   } catch (error) {
     if (!context.mounted) return;
@@ -3876,27 +4079,61 @@ Future<void> _buildLocalTree(
   _DatabaseTarget target,
   PlayerWorkspacePlayer player, {
   required PlayerBuildTreePreparationSide preparationSide,
+  OperationCancellationToken? cancellationToken,
 }) async {
-  final notifier = ref.read(localChessLibraryProvider.notifier);
-  final opened = await notifier.openPaths(
-    <String>[target.path],
-    sourceLabel: target.title,
-    registryMetadata: LocalLibraryEntryMetadata.playerWorkspace(
-      playerId: player.id,
-      playerName: player.displayName,
-      gameCount: target.gameCount,
-      playerWorkspaceSource: target.source.storageKey,
-    ),
-  );
-  if (!opened || !context.mounted) return;
-  final index = await notifier.rebuildOpeningTreeAndWait(target.path);
+  cancellationToken?.throwIfCanceled();
+  final index = await ref
+      .read(_playerTreeBuildProvider.notifier)
+      .build(target.path);
+  cancellationToken?.throwIfCanceled();
   if (!context.mounted || index?.isUsable != true) return;
+  ref.invalidate(_cachedPlayerWorkspaceTreeIndexProvider(target.path));
   _openLocalTree(
     ref,
     target,
     index!,
     preparationSide: preparationSide,
     player: player,
+  );
+}
+
+Future<void> _openOrBuildLocalTreeTarget(
+  BuildContext context,
+  WidgetRef ref,
+  _DatabaseTarget target,
+  PlayerWorkspacePlayer player, {
+  required PlayerBuildTreePreparationSide preparationSide,
+  OperationCancellationToken? cancellationToken,
+}) async {
+  cancellationToken?.throwIfCanceled();
+  PlayerOpeningTreeIndex? cachedIndex;
+  try {
+    cachedIndex = await ref.read(
+      _cachedPlayerWorkspaceTreeIndexProvider(target.path).future,
+    );
+  } catch (_) {
+    // Cache lookup is best-effort. A real miss still needs to build normally.
+  }
+  cancellationToken?.throwIfCanceled();
+  if (!context.mounted) return;
+  if (cachedIndex?.isUsable == true) {
+    _openLocalTree(
+      ref,
+      target,
+      cachedIndex!,
+      preparationSide: preparationSide,
+      player: player,
+    );
+    return;
+  }
+  cancellationToken?.throwIfCanceled();
+  await _buildLocalTree(
+    context,
+    ref,
+    target,
+    player,
+    preparationSide: preparationSide,
+    cancellationToken: cancellationToken,
   );
 }
 
@@ -3907,22 +4144,6 @@ void _openLocalTree(
   required PlayerBuildTreePreparationSide preparationSide,
   required PlayerWorkspacePlayer player,
 }) {
-  unawaited(
-    ref
-        .read(localLibraryRegistryProvider.notifier)
-        .registerAll(
-          <String>[target.path],
-          metadataByPath: <String, LocalLibraryEntryMetadata>{
-            target.path: LocalLibraryEntryMetadata.playerWorkspace(
-              playerId: player.id,
-              playerName: player.displayName,
-              gameCount: target.gameCount,
-              indexedAt: index.generatedAt,
-              playerWorkspaceSource: target.source.storageKey,
-            ),
-          },
-        ),
-  );
   final tabId = openBoardGameTab(
     ref,
     BoardTabGameArgs(
@@ -3962,6 +4183,30 @@ void _openLocalTree(
         );
   }
   ref.read(rightRailActivePageProvider(tabId).notifier).state = 1;
+  try {
+    unawaited(
+      ref
+          .read(localLibraryRegistryProvider.notifier)
+          .registerAll(
+            <String>[target.path],
+            metadataByPath: <String, LocalLibraryEntryMetadata>{
+              target.path: LocalLibraryEntryMetadata.playerWorkspace(
+                playerId: player.id,
+                playerName: player.displayName,
+                gameCount: target.gameCount,
+                indexedAt: index.generatedAt,
+                playerWorkspaceSource: target.source.storageKey,
+              ),
+            },
+          )
+          .then<void>(
+            (_) {},
+            onError: (Object _, StackTrace __) {},
+          ),
+    );
+  } catch (_) {
+    // Registry metadata is best-effort and must never block opening the tree.
+  }
 }
 
 /// Minimal [GamebasePlayer] from a workspace player, used only to carry the

@@ -10,6 +10,7 @@ import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/compact_local_tree_index.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
@@ -868,6 +869,25 @@ void main() {
     );
   });
 
+  test('current schema opens without entering the shared write queue', () async {
+    final queueEntered = Completer<void>();
+    final releaseQueue = Completer<void>();
+    final held = LocalChessDatabaseRepository.debugRunWriteSerialized(() async {
+      queueEntered.complete();
+      await releaseQueue.future;
+    });
+    await queueEntered.future.timeout(const Duration(seconds: 5));
+
+    try {
+      await createLocalChessResqliteDatabaseSchema(
+        db,
+      ).timeout(const Duration(seconds: 2));
+    } finally {
+      releaseQueue.complete();
+      await held.timeout(const Duration(seconds: 5));
+    }
+  });
+
   test(
     'invalid tree metadata prevents append replace and delete from mixing generations',
     () async {
@@ -969,6 +989,94 @@ void main() {
   );
 
   test(
+    'direct Player PGN tree builds without cache and keeps duplicates and filters',
+    () async {
+      final pgnFile = File('${temp.path}/direct-player-tree.pgn');
+      await pgnFile.writeAsString('$_legacyPgn\n\n$_legacyPgn');
+      var databaseRequested = false;
+      final repo = LocalChessDatabaseRepository(
+        database: () async {
+          databaseRequested = true;
+          throw StateError('Legacy cache must not be opened.');
+        },
+      );
+      final progress = <LocalChessScanProgress>[];
+
+      final rebuilt = await repo.rebuildOpeningTreeFromPgnFile(
+        databasePath: pgnFile.path,
+        onProgress: progress.add,
+      );
+
+      expect(rebuilt, isNotNull);
+      expect(rebuilt!.index.downloadedGameCount, 2);
+      expect(rebuilt.index.positionCount, greaterThan(0));
+      expect(databaseRequested, isFalse);
+      expect(
+        File(compactLocalTreeIndexPath(pgnFile.path)).existsSync(),
+        isTrue,
+      );
+      expect(
+        File(compactLocalTreeGameIndexPath(pgnFile.path)).existsSync(),
+        isTrue,
+      );
+      expect(progress.last.message, 'Tree ready.');
+
+      final whiteMoves = await repo.localMoveAggregatesForFen(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+        filters: const PlayerOpeningTreeFilterCriteria(
+          playerNames: <String>['Legacy White'],
+          color: 'white',
+        ),
+      );
+      expect(whiteMoves.single.uci, 'e2e4');
+      expect(whiteMoves.single.total, 2);
+      expect(databaseRequested, isFalse);
+
+      final games = await repo.localPositionGamesResponse(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+        filters: const PlayerOpeningTreeFilterCriteria(
+          playerNames: <String>['Legacy White'],
+          color: 'white',
+        ),
+        sortBy: GamebaseSortField.date,
+        sortDirection: GamebaseSortDirection.desc,
+        pageNumber: 0,
+        pageSize: 20,
+      );
+      expect(games, isNotNull);
+      expect(games!.metadata.totalCount, 2);
+      expect(games.data, hasLength(2));
+      expect(databaseRequested, isFalse);
+    },
+  );
+
+  test('direct Player PGN tree worker can be canceled', () async {
+    final pgnFile = File('${temp.path}/cancel-direct-player-tree.pgn');
+    await pgnFile.writeAsString(_bulkPgn(300));
+    final token = OperationCancellationToken();
+    final repo = LocalChessDatabaseRepository(database: () async => db);
+
+    await expectLater(
+      repo.rebuildOpeningTreeFromPgnFile(
+        databasePath: pgnFile.path,
+        cancellationToken: token,
+        onProgress: (progress) {
+          if (progress.message.startsWith('Building tree')) token.cancel();
+        },
+      ),
+      throwsA(isA<OperationCanceledException>()),
+    );
+
+    expect(File(compactLocalTreeIndexPath(pgnFile.path)).existsSync(), isFalse);
+    expect(
+      File(compactLocalTreeGameIndexPath(pgnFile.path)).existsSync(),
+      isFalse,
+    );
+  });
+
+  test(
     'cached tree rebuild uses stored UCI moves without reopening PGN files',
     () async {
       final pgnFile = File('${temp.path}/cached-uci-tree.pgn');
@@ -1016,7 +1124,7 @@ void main() {
   );
 
   test(
-    'cached tree rebuild stages refs and publishes after bounded saving',
+    'cached tree rebuild publishes a compact sidecar without rewriting tree rows',
     () async {
       final pgnFile = File('${temp.path}/bounded-tree-save.pgn');
       await pgnFile.writeAsString(_samplePgn);
@@ -1025,6 +1133,9 @@ void main() {
       final repo = LocalChessDatabaseRepository(database: () async => db);
       await repo.persistFileNode(fileNode, sourceLabel: source.label);
       final progress = <LocalChessScanProgress>[];
+      final previousNodeCount = await _count(db, 'local_chess_tree_nodes');
+      final previousMoveCount = await _count(db, 'local_chess_tree_moves');
+      final previousRefCount = await _count(db, 'local_chess_position_games');
 
       final rebuilt = await repo.rebuildOpeningTreeFromCachedGames(
         databasePath: pgnFile.path,
@@ -1039,31 +1150,22 @@ void main() {
         progress.map((event) => event.message),
         containsAllInOrder(<String>[
           'Finalizing tree...',
-          'Preparing tree storage...',
-          'Clearing previous tree...',
+          'Publishing tree...',
+          'Tree ready.',
         ]),
       );
-      expect(
-        progress.map((event) => event.message),
-        contains(
-          predicate<String>((message) {
-            return message.startsWith('Saving tree positions...');
-          }),
-        ),
-      );
-      expect(
-        progress.map((event) => event.message),
-        contains(
-          predicate<String>((message) {
-            return message.startsWith('Saving position references...');
-          }),
-        ),
-      );
       expect(progress.last.message, 'Tree ready.');
+      expect(await _count(db, 'local_chess_tree_nodes'), previousNodeCount);
+      expect(await _count(db, 'local_chess_tree_moves'), previousMoveCount);
+      expect(await _count(db, 'local_chess_position_games'), previousRefCount);
+      expect(
+        File(compactLocalTreeIndexPath(pgnFile.path)).existsSync(),
+        isTrue,
+      );
 
       final databaseRows = await db.select(
         '''
-        SELECT position_count, tree_max_ply
+        SELECT position_count, tree_snapshot, tree_max_ply
         FROM local_chess_databases
         WHERE id = ?
         ''',
@@ -1074,20 +1176,107 @@ void main() {
         rebuilt.index.positionCount,
       );
       expect(databaseRows.single['tree_max_ply'], rebuilt.index.maxPly);
-
-      final rootRefs = await db.select(
-        '''
-        SELECT next_uci
-        FROM local_chess_position_games
-        WHERE database_id = ? AND fen_key = ?
-        ORDER BY next_uci ASC
-        ''',
-        <Object?>[
-          rebuilt.index.playerId,
-          playerOpeningTreeFenKey(Chess.initial.fen),
-        ],
+      expect(
+        isCompactLocalTreeSnapshot(databaseRows.single['tree_snapshot']),
+        isTrue,
       );
-      expect(rootRefs.map((row) => row['next_uci']), <Object?>['d2d4', 'e2e4']);
+
+      final restored = await repo.loadOpeningTreeIndexForDatabase(
+        databasePath: pgnFile.path,
+      );
+      expect(restored?.isUsable, isTrue);
+      expect(restored?.positionCount, rebuilt.index.positionCount);
+
+      final rootMoves = await repo.localMoveAggregatesForFen(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+      );
+      expect(rootMoves.map((move) => move.uci), <String>['d2d4', 'e2e4']);
+
+      var databaseRequested = false;
+      final sidecarOnlyRepo = LocalChessDatabaseRepository(
+        database: () async {
+          databaseRequested = true;
+          throw StateError('database lookup should not be needed');
+        },
+      );
+      final sidecarRestored = await sidecarOnlyRepo
+          .loadOpeningTreeIndexForDatabase(databasePath: pgnFile.path);
+      expect(sidecarRestored?.isUsable, isTrue);
+      expect(sidecarRestored?.positionCount, rebuilt.index.positionCount);
+      expect(databaseRequested, isFalse);
+      final sidecarMoves = await sidecarOnlyRepo.localMoveAggregatesForFen(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+      );
+      expect(sidecarMoves.map((move) => move.uci), <String>['d2d4', 'e2e4']);
+      expect(databaseRequested, isFalse);
+
+      final metadata =
+          CompactLocalTreeIndexMetadata.readSync(
+            compactLocalTreeIndexPath(pgnFile.path),
+          )!;
+      await pgnFile.setLastModified(
+        DateTime.fromMillisecondsSinceEpoch(metadata.generatedAtMs + 1000),
+      );
+      await expectLater(
+        sidecarOnlyRepo.loadOpeningTreeIndexForDatabase(
+          databasePath: pgnFile.path,
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(databaseRequested, isTrue);
+    },
+  );
+
+  test(
+    'player tree rebuild bypasses the shared database connection',
+    () async {
+      final pgnFile = File('${temp.path}/direct-player-tree.pgn');
+      await pgnFile.writeAsString(_samplePgn);
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final fileNode = source.root.singlePlayableDatabaseInSubtree!;
+      final seedRepository = LocalChessDatabaseRepository(
+        database: () async => db,
+      );
+      await seedRepository.persistFileNode(fileNode, sourceLabel: source.label);
+
+      var sharedDatabaseRequested = false;
+      final directRepository = LocalChessDatabaseRepository(
+        database: () async {
+          sharedDatabaseRequested = true;
+          throw StateError('shared database should not be opened');
+        },
+        databaseFilePath: () async => '${temp.path}/local_chess.db',
+      );
+
+      final rebuilt = await directRepository.rebuildOpeningTreeFromCachedGames(
+        databasePath: pgnFile.path,
+      );
+
+      expect(rebuilt?.index.isUsable, isTrue);
+      expect(sharedDatabaseRequested, isFalse);
+      expect(
+        directRepository.loadCompactOpeningTreeIndexForDatabase(
+          databasePath: pgnFile.path,
+        ),
+        isNotNull,
+      );
+      final positionGames = await directRepository.localPositionGamesResponse(
+        databasePath: pgnFile.path,
+        fen: Chess.initial.fen,
+        filters: const PlayerOpeningTreeFilterCriteria(
+          playerNames: <String>['Hou, Yifan'],
+          color: 'white',
+        ),
+        sortBy: GamebaseSortField.date,
+        sortDirection: GamebaseSortDirection.desc,
+        pageNumber: 0,
+        pageSize: 20,
+      );
+      expect(positionGames?.data, hasLength(1));
+      expect(positionGames?.metadata.totalCount, 1);
+      expect(sharedDatabaseRequested, isFalse);
     },
   );
 
@@ -1603,6 +1792,14 @@ void main() {
       expect(source, isNotNull);
       expect(await _count(db, 'local_chess_databases'), 1);
       expect(await _count(db, 'local_chess_games'), 5);
+      expect(
+        await repo.rebuildOpeningTreeFromCachedGames(
+          databasePath: pgnFile.path,
+        ),
+        isNotNull,
+      );
+      final compactIndex = File(compactLocalTreeIndexPath(pgnFile.path));
+      expect(compactIndex.existsSync(), isTrue);
 
       expect(await repo.markCachedSourceDeleted(pgnFile.path), 1);
 
@@ -1623,6 +1820,7 @@ void main() {
       expect(await _count(db, 'local_chess_tree_moves'), 0);
       expect(await _count(db, 'local_chess_tree_nodes'), 0);
       expect(await _count(db, 'local_chess_databases'), 0);
+      expect(compactIndex.existsSync(), isFalse);
       expect(progress.last.message, 'Delete complete.');
     },
   );
@@ -1808,6 +2006,46 @@ void main() {
       final workerDb = await resqlite.Database.open(workerDbPath);
       addTearDown(workerDb.close);
       expect(await _count(workerDb, 'local_chess_databases'), 1);
+      expect(await _count(workerDb, 'local_chess_games'), 2);
+    },
+  );
+
+  test(
+    'direct player import bypasses the shared app cache',
+    () async {
+      final pgnFile = File('${temp.path}/direct-player-import.pgn');
+      await pgnFile.writeAsString(_samplePgn);
+      final workerDbPath = p.join(
+        temp.path,
+        'direct-player-import-local-chess.db',
+      );
+      var openedAppCache = false;
+      final repo = LocalChessDatabaseRepository(
+        database: () async {
+          openedAppCache = true;
+          throw StateError('shared app cache should not be opened');
+        },
+        databaseFilePath: () async => workerDbPath,
+        cachedFileNodeGamePreviewLimit: 1,
+      );
+
+      final source = await repo.importSingleFileSource(
+        path: pgnFile.path,
+        preferDirectDatabase: true,
+      );
+
+      expect(source, isNotNull);
+      expect(openedAppCache, isFalse);
+      expect(source!.root.singlePlayableDatabaseInSubtree!.gameCount, 2);
+      final stats = await repo.localDatabaseResultStats(
+        databasePath: pgnFile.path,
+        playerAliases: const <String>[],
+        preferDirectDatabase: true,
+      );
+      expect(stats.gameCount, 2);
+      expect(openedAppCache, isFalse);
+      final workerDb = await resqlite.Database.open(workerDbPath);
+      addTearDown(workerDb.close);
       expect(await _count(workerDb, 'local_chess_games'), 2);
     },
   );
@@ -2763,19 +3001,21 @@ void main() {
       final fileNode = source.root.singlePlayableDatabaseInSubtree!;
       final repo = LocalChessDatabaseRepository(database: () async => db);
       await repo.persistFileNode(fileNode, sourceLabel: source.label);
+      expect(
+        await repo.rebuildOpeningTreeFromCachedGames(
+          databasePath: pgnFile.path,
+        ),
+        isNotNull,
+      );
 
-      final derivedRows = await db.select(
-        '''
+      final derivedRows = await db.select('''
         SELECT
           json_extract(headers_json, '\$.Event') AS event,
           time_control_category,
           is_online
         FROM local_chess_games
-        WHERE database_id = ?
         ORDER BY index_in_file ASC
-        ''',
-        <Object?>[pgnFile.path],
-      );
+        ''');
       expect(derivedRows.map((row) => row['time_control_category']), [
         'rapid',
         'blitz',
@@ -2836,15 +3076,11 @@ void main() {
       expect(rapidGames.data.single['white'], 'Carlsen, Magnus');
 
       // Imported online speed categories stay independently filterable.
-      await db.execute(
-        '''
+      await db.execute('''
         UPDATE local_chess_games
         SET time_control_category = 'bullet'
-        WHERE database_id = ?
-          AND json_extract(headers_json, '\$.Event') = 'Online Blitz'
-        ''',
-        <Object?>[pgnFile.path],
-      );
+        WHERE json_extract(headers_json, '\$.Event') = 'Online Blitz'
+        ''');
 
       const carlsenBlackOnlineBullet = PlayerOpeningTreeFilterCriteria(
         playerFideIds: <String>['1503014'],
@@ -2933,15 +3169,11 @@ void main() {
       expect(exactBlitz, isNotNull);
       expect(exactBlitz!.metadata.totalCount, 0);
 
-      await db.execute(
-        '''
+      await db.execute('''
         UPDATE local_chess_games
         SET time_control_category = 'ultra-bullet'
-        WHERE database_id = ?
-          AND json_extract(headers_json, '\$.Event') = 'Online Blitz'
-        ''',
-        <Object?>[pgnFile.path],
-      );
+        WHERE json_extract(headers_json, '\$.Event') = 'Online Blitz'
+        ''');
       final ultrabulletGames = await repo.localPositionGamesResponse(
         databasePath: pgnFile.path,
         fen: Chess.initial.fen,
@@ -3194,9 +3426,10 @@ void main() {
       );
       final beforeNodeCount = await _count(db, 'local_chess_tree_nodes');
       final beforeMoveCount = await _count(db, 'local_chess_tree_moves');
+      final compactIndex = File(compactLocalTreeIndexPath(pgnFile.path));
+      final compactIndexLength = compactIndex.lengthSync();
       expect(beforeRows.single['position_count'], greaterThan(0));
-      expect(beforeNodeCount, greaterThan(0));
-      expect(beforeMoveCount, greaterThan(0));
+      expect(compactIndexLength, greaterThan(0));
 
       await pgnFile.setLastModified(
         pgnFile.lastModifiedSync().add(const Duration(seconds: 9)),
@@ -3231,6 +3464,7 @@ void main() {
       );
       expect(await _count(db, 'local_chess_tree_nodes'), beforeNodeCount);
       expect(await _count(db, 'local_chess_tree_moves'), beforeMoveCount);
+      expect(compactIndex.lengthSync(), compactIndexLength);
       final restored = await repo.loadFreshFileNode(
         pgnFile.path,
         rootPath: temp.path,
@@ -3238,6 +3472,43 @@ void main() {
       expect(restored, isNotNull);
       expect(restored!.openingTreeIndex, isNotNull);
       expect(restored.openingTreeIndex!.downloadedGameCount, 4);
+    },
+  );
+
+  test(
+    'fresh cache restore does not wait for metadata-only mtime refresh writes',
+    () async {
+      final pgnFile = File('${temp.path}/nonblocking-mtime-refresh.pgn');
+      await pgnFile.writeAsString(_samplePgn);
+      final source = await scanLocalChessPaths(<String>[pgnFile.path]);
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(
+        source.root.singlePlayableDatabaseInSubtree!,
+        sourceLabel: source.label,
+      );
+      await pgnFile.setLastModified(
+        pgnFile.lastModifiedSync().add(const Duration(seconds: 9)),
+      );
+
+      final queueEntered = Completer<void>();
+      final releaseQueue = Completer<void>();
+      final held = LocalChessDatabaseRepository.debugRunWriteSerialized(
+        () async {
+          queueEntered.complete();
+          await releaseQueue.future;
+        },
+      );
+      await queueEntered.future;
+      try {
+        final restored = await repo
+            .loadFreshFileNode(pgnFile.path, rootPath: temp.path)
+            .timeout(const Duration(seconds: 5));
+        expect(restored, isNotNull);
+      } finally {
+        releaseQueue.complete();
+        await held;
+        await LocalChessDatabaseRepository.debugRunWriteSerialized(() async {});
+      }
     },
   );
 
@@ -4151,8 +4422,7 @@ void main() {
   });
 
   test(
-    'resultStatsForDatabases counts distinct games across sources so Combined '
-    'partitions the union and sums the per-source counts',
+    'resultStatsForDatabases preserves overlapping games across sources',
     () async {
       final repo = LocalChessDatabaseRepository(database: () async => db);
       const aliases = <String>['Alice, A'];
@@ -4161,7 +4431,7 @@ void main() {
       // black), each with its own PGN fingerprint.
       await _seedStatsDatabase(
         db,
-        databaseId: 'srcLichess',
+        databaseId: 'src-lichess',
         player: 'Alice, A',
         games: const <_StatsGame>[
           _StatsGame(hash: 'h-1', opponent: 'Bob', result: '1-0'),
@@ -4177,7 +4447,7 @@ void main() {
       // fingerprint h-2) plus one genuinely new draw.
       await _seedStatsDatabase(
         db,
-        databaseId: 'srcChessCom',
+        databaseId: 'src-chesscom',
         player: 'Alice, A',
         games: const <_StatsGame>[
           _StatsGame(
@@ -4192,7 +4462,7 @@ void main() {
       // A disjoint OTB source with a single new game.
       await _seedStatsDatabase(
         db,
-        databaseId: 'srcOtb',
+        databaseId: 'src-otb',
         player: 'Alice, A',
         games: const <_StatsGame>[
           _StatsGame(hash: 'h-4', opponent: 'Eve', result: '1-0'),
@@ -4200,15 +4470,15 @@ void main() {
       );
 
       final lichess = await repo.localDatabaseResultStats(
-        databasePath: 'srcLichess',
+        databasePath: 'src-lichess',
         playerAliases: aliases,
       );
       final chesscom = await repo.localDatabaseResultStats(
-        databasePath: 'srcChessCom',
+        databasePath: 'src-chesscom',
         playerAliases: aliases,
       );
       final otb = await repo.localDatabaseResultStats(
-        databasePath: 'srcOtb',
+        databasePath: 'src-otb',
         playerAliases: aliases,
       );
 
@@ -4216,19 +4486,19 @@ void main() {
       expect(chesscom.gameCount, 2);
       expect(otb.gameCount, 1);
 
-      // Combined over lichess+chesscom deduplicates the shared game h-2, so it
-      // is exactly the union: h-1, h-2, h-3 = 3, not 2 + 2 = 4.
+      // Combined keeps the shared h-2 row from each provider. Optional
+      // deduplication is a separate product feature, not an implicit import.
       final combined = await repo.resultStatsForDatabases(
-        databasePaths: const <String>['srcLichess', 'srcChessCom'],
+        databasePaths: const <String>['src-lichess', 'src-chesscom'],
         playerAliases: aliases,
       );
-      expect(combined.gameCount, 3);
-      expect(combined.winCount, 2); // h-1 (white win) + h-2 (black win)
+      expect(combined.gameCount, 4);
+      expect(combined.winCount, 3); // h-1 + the h-2 row from both sources
       expect(combined.drawCount, 1); // h-3
 
       // Disjoint sources add exactly: lichess + otb share nothing.
       final disjoint = await repo.resultStatsForDatabases(
-        databasePaths: const <String>['srcLichess', 'srcOtb'],
+        databasePaths: const <String>['src-lichess', 'src-otb'],
         playerAliases: aliases,
       );
       expect(disjoint.gameCount, lichess.gameCount + otb.gameCount);

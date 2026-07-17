@@ -88,6 +88,52 @@ class LocalOpeningTreeGameInput {
 }
 
 @immutable
+class LocalOpeningTreePositionEvent {
+  const LocalOpeningTreePositionEvent({
+    required this.fenKey,
+    required this.ply,
+    this.nextUci,
+  });
+
+  final String fenKey;
+  final int ply;
+  final String? nextUci;
+}
+
+List<LocalOpeningTreePositionEvent> localOpeningTreePositionEventsForGame(
+  LocalOpeningTreeGameInput input, {
+  required int maxPly,
+  Map<String, String?>? transitionCache,
+}) {
+  final parsed = _parseGame(
+    input,
+    maxPly: maxPly,
+    transitionByFenKeyAndUci: transitionCache ?? <String, String?>{},
+  );
+  if (parsed.moves.isEmpty) {
+    throw LocalOpeningTreeGameException(input, 'No legal mainline moves');
+  }
+
+  final events = <LocalOpeningTreePositionEvent>[];
+  var currentKey = parsed.startingKey.fenKey;
+  for (var ply = 0; ply < parsed.moves.length; ply++) {
+    final move = parsed.moves[ply];
+    events.add(
+      LocalOpeningTreePositionEvent(
+        fenKey: currentKey,
+        ply: ply,
+        nextUci: move.uci,
+      ),
+    );
+    currentKey = move.key.fenKey;
+  }
+  events.add(
+    LocalOpeningTreePositionEvent(fenKey: currentKey, ply: parsed.moves.length),
+  );
+  return List<LocalOpeningTreePositionEvent>.unmodifiable(events);
+}
+
+@immutable
 class LocalOpeningTreeBuildResult {
   LocalOpeningTreeBuildResult({
     required this.index,

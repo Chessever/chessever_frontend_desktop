@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:archive/archive.dart';
 import 'package:libcompress/libcompress.dart';
+import 'package:path/path.dart' as p;
 
 import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
@@ -123,7 +124,7 @@ void main() {
         expect(source.games.single.game.metadata['White'], 'Carlsen, Magnus');
         expect(
           source.games.single.sourceRelativePath,
-          'Candidates/round-1.pgn',
+          p.join('Candidates', 'round-1.pgn'),
         );
         expect(source.root.folders.single.name, 'Candidates');
       },
@@ -179,6 +180,52 @@ void main() {
       expect(preview.pgnOffsetIndex, isNull);
       expect(preview.contentFingerprint, isEmpty);
     });
+
+    test(
+      'PGN catalog returns the complete range-backed game list without indexing',
+      () async {
+        final file = File('${temp.path}/catalog.pgn');
+        await file.writeAsString(
+          List<String>.generate(
+            3,
+            (index) => _samplePgn.replaceFirst(
+              '[Event "Candidates"]',
+              '[Event "Catalog $index"]',
+            ),
+          ).join('\n\n'),
+        );
+
+        final source = await scanLocalChessPgnCatalog(file.path);
+        final catalog = source.root.files.single;
+
+        expect(catalog.games, hasLength(3));
+        expect(catalog.gameCount, 3);
+        expect(catalog.pgnOffsetIndex?.totalGames, 3);
+        expect(catalog.contentFingerprint, isEmpty);
+        expect(
+          catalog.games.map((game) => game.game.metadata['Event']),
+          <String>['Catalog 0', 'Catalog 1', 'Catalog 2'],
+        );
+        expect(
+          catalog.games.map((game) => game.game.metadata['PlyCount']),
+          <String>['10', '10', '10'],
+        );
+        expect(
+          catalog.games,
+          everyElement(
+            isA<LocalChessGame>()
+                .having((game) => game.hasInlineRawPgn, 'inline PGN', isFalse)
+                .having((game) => game.moveLine, 'parsed moves', isEmpty)
+                .having(
+                  (game) => game.sourceByteEnd! > game.sourceByteStart!,
+                  'byte range',
+                  isTrue,
+                ),
+          ),
+        );
+        expect(catalog.games.last.rawPgn, contains('[Event "Catalog 2"]'));
+      },
+    );
 
     test('user-selected file and folder links are scanned', () async {
       if (Platform.isWindows) return;
@@ -510,7 +557,10 @@ void main() {
         expect(selected, isNotNull);
         expect(selected!.name, 'single.pgn');
         expect(selected.games, hasLength(1));
-        expect(selected.games.single.sourceRelativePath, 'Only/single.pgn');
+        expect(
+          selected.games.single.sourceRelativePath,
+          p.join('Only', 'single.pgn'),
+        );
       },
     );
 

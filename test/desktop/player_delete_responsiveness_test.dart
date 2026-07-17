@@ -104,9 +104,26 @@ void main() {
 
         measureHeartbeat = true;
         lastTickUs = stopwatch.elapsedMicroseconds;
+        final snapshotWriteStarted = Completer<void>();
+        final allowSnapshotWrite = Completer<void>();
+        workspaceRepository.beforeSave = () async {
+          if (!snapshotWriteStarted.isCompleted) {
+            snapshotWriteStarted.complete();
+            await allowSnapshotWrite.future;
+          }
+        };
         final visibleAction = Stopwatch()..start();
-        await notifier.removePlayer(playerId);
+        var removalCompleted = false;
+        final removal = notifier.removePlayer(playerId);
+        unawaited(removal.then((_) => removalCompleted = true));
+        await snapshotWriteStarted.future.timeout(
+          const Duration(seconds: 2),
+        );
         visibleAction.stop();
+        expect(notifier.state.players, isEmpty);
+        expect(removalCompleted, isFalse);
+        allowSnapshotWrite.complete();
+        await removal;
         final cleanup = Stopwatch()..start();
         await notifier.debugDrainPlayerCleanup();
         cleanup.stop();
@@ -130,7 +147,9 @@ void main() {
         expect(
           visibleAction.elapsed,
           lessThan(const Duration(milliseconds: 200)),
-          reason: 'The trash action itself must return within one <5 FPS gap.',
+          reason:
+              'The player must disappear within one <5 FPS gap, even while '
+              'the durable tombstone write is still pending.',
         );
         expect(
           cleanup.elapsed,
@@ -158,7 +177,7 @@ void main() {
         if (await temp.exists()) await temp.delete(recursive: true);
       }
     },
-    timeout: const Timeout(Duration(seconds: 30)),
+    timeout: const Timeout(Duration(seconds: 60)),
   );
 }
 
@@ -167,12 +186,14 @@ class _StoredSnapshotWorkspaceRepository extends PlayerWorkspaceRepository {
     : super(supportDirectory: () async => root);
 
   PlayerWorkspaceSnapshot snapshot;
+  Future<void> Function()? beforeSave;
 
   @override
   Future<PlayerWorkspaceSnapshot> loadSnapshot() async => snapshot;
 
   @override
   Future<void> saveSnapshot(PlayerWorkspaceSnapshot snapshot) async {
+    await beforeSave?.call();
     this.snapshot = snapshot;
   }
 }

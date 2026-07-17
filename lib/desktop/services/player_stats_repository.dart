@@ -8,9 +8,13 @@ import 'package:resqlite/resqlite.dart' as resqlite;
 import 'package:chessever/desktop/models/player_stats.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart'
     show LocalChessDatabaseRepository, LocalChessResqliteDatabase;
+import 'package:chessever/desktop/services/local_chess_file_scanner.dart'
+    show LocalChessGame;
 import 'package:chessever/desktop/services/operation_cancellation.dart';
+import 'package:chessever/desktop/services/player_pgn_catalog.dart';
 import 'package:chessever/desktop/state/player_stats_provider.dart'
     show PlayerStatsOutcomeFilter;
+import 'package:chessever/desktop/services/time_control_classifier.dart';
 import 'package:chessever/repository/sqlite/local_chess_schema.dart'
     show localChessDatabasesTable, localChessGamesTable, localChessPlayersTable;
 import 'package:chessever/utils/eco_openings.dart';
@@ -98,6 +102,25 @@ class PlayerStatsRepository {
     final normalizedFideId = _normalizeFideId(playerFideId);
     final normalizedAliases =
         aliases.map(_normalizeName).where((name) => name.isNotEmpty).toSet();
+
+    final sourceFile = File(databasePath);
+    if (p.extension(databasePath).toLowerCase() == '.pgn' &&
+        await sourceFile.exists()) {
+      final source = await PlayerPgnCatalog.instance.load(databasePath);
+      cancellationToken?.throwIfCanceled();
+      return _computePlayerStatsFromCatalog(
+        source.games,
+        normalizedAliases: normalizedAliases,
+        normalizedFideId: normalizedFideId,
+        windowDays: windowDays,
+        timeControlCategory: timeControlCategory,
+        preferredRatingTimeControl: preferredRatingTimeControl,
+        unclassifiedTimeControlCategory: unclassifiedTimeControlCategory,
+        playerOutcome: playerOutcome,
+        playerColor: playerColor,
+        cancellationToken: cancellationToken,
+      );
+    }
 
     final databaseId = _databaseId(databasePath);
     final db = await _database();
@@ -261,6 +284,257 @@ class PlayerStatsRepository {
       latestRating: latest,
       averageOpponentRating: avgOpponent,
       performanceRating: _performanceRating(tallies.overall, avgOpponent),
+    );
+  }
+
+  Future<PlayerStatsSnapshot> _computePlayerStatsFromCatalog(
+    List<LocalChessGame> games, {
+    required Set<String> normalizedAliases,
+    required String? normalizedFideId,
+    int? windowDays,
+    String? timeControlCategory,
+    String? preferredRatingTimeControl,
+    String? unclassifiedTimeControlCategory,
+    PlayerStatsOutcomeFilter playerOutcome = PlayerStatsOutcomeFilter.all,
+    String? playerColor,
+    OperationCancellationToken? cancellationToken,
+  }) async {
+    final fallbackTimeControl = _normalizeUnclassifiedTimeControlFallback(
+      unclassifiedTimeControlCategory,
+    );
+    final direct = <_DirectPlayerGame>[];
+    DateTime? newestDate;
+    for (var i = 0; i < games.length; i++) {
+      final game = _directPlayerGame(
+        games[i],
+        order: i,
+        normalizedAliases: normalizedAliases,
+        normalizedFideId: normalizedFideId,
+        unclassifiedTimeControlCategory: fallbackTimeControl,
+      );
+      if (game != null) {
+        direct.add(game);
+        final date = game.date;
+        if (date != null && (newestDate == null || date.isAfter(newestDate))) {
+          newestDate = date;
+        }
+      }
+      if (i > 0 && i % 2048 == 0) {
+        cancellationToken?.throwIfCanceled();
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+    cancellationToken?.throwIfCanceled();
+    if (direct.isEmpty) return PlayerStatsSnapshot.empty;
+
+    final cutoff =
+        windowDays != null && windowDays > 0 && newestDate != null
+            ? newestDate.subtract(Duration(days: windowDays))
+            : null;
+    bool inWindow(_DirectPlayerGame game) {
+      final date = game.date;
+      return cutoff == null || (date != null && !date.isBefore(cutoff));
+    }
+
+    final normalizedTimeControl = _normalizeTimeControlFilter(
+      timeControlCategory,
+    );
+    final normalizedColor = _normalizePlayerColorFilter(playerColor);
+    final windowed = direct.where(inWindow).toList(growable: false);
+    final scoped = <_DirectPlayerGame>[];
+    for (var i = 0; i < windowed.length; i++) {
+      final game = windowed[i];
+      if (normalizedTimeControl != null &&
+          game.timeControl != normalizedTimeControl) {
+        continue;
+      }
+      if (normalizedColor != null && game.side != normalizedColor) continue;
+      if (!_directOutcomeMatches(game.outcome, playerOutcome)) continue;
+      scoped.add(game);
+      if (i > 0 && i % 4096 == 0) {
+        cancellationToken?.throwIfCanceled();
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+    cancellationToken?.throwIfCanceled();
+
+    final white = _DirectTally();
+    final black = _DirectTally();
+    final openingGroups = <String, _DirectOpeningGroup>{};
+    final opponentGroups = <String, _DirectOpponentGroup>{};
+    final yearGroups = <int, _DirectYearGroup>{};
+    final lengthCounts = List<int>.filled(5, 0);
+    var opponentRatingTotal = 0;
+    var opponentRatingCount = 0;
+    for (var i = 0; i < scoped.length; i++) {
+      final game = scoped[i];
+      final tally = game.side == 'w' ? white : black;
+      tally.add(game.outcome);
+
+      if (game.eco.isNotEmpty && game.outcome != null) {
+        openingGroups
+            .putIfAbsent(
+              game.eco,
+              () => _DirectOpeningGroup(game.eco, game.opening),
+            )
+            .tally
+            .add(game.outcome);
+      }
+      if (game.opponentName.isNotEmpty && game.opponentName != '?') {
+        final group = opponentGroups.putIfAbsent(
+          game.opponentName,
+          () => _DirectOpponentGroup(game.opponentName),
+        );
+        group.tally.add(game.outcome);
+        if (game.opponentElo > 0) {
+          group.ratingTotal += game.opponentElo;
+          group.ratingCount++;
+          opponentRatingTotal += game.opponentElo;
+          opponentRatingCount++;
+        }
+      } else if (game.opponentElo > 0) {
+        opponentRatingTotal += game.opponentElo;
+        opponentRatingCount++;
+      }
+      final year = game.date?.year;
+      if (year != null) {
+        final group = yearGroups.putIfAbsent(year, _DirectYearGroup.new);
+        group.total++;
+        group.tally.add(game.outcome);
+        group.timeControls.update(
+          game.timeControl ?? 'Unknown',
+          (count) => count + 1,
+          ifAbsent: () => 1,
+        );
+        group.sources.update(
+          game.source,
+          (count) => count + 1,
+          ifAbsent: () => 1,
+        );
+      }
+      final ply = game.plyCount;
+      if (ply != null && ply > 0) {
+        final bucket =
+            ply <= 40
+                ? 0
+                : ply <= 60
+                ? 1
+                : ply <= 80
+                ? 2
+                : ply <= 100
+                ? 3
+                : 4;
+        lengthCounts[bucket]++;
+      }
+      if (i > 0 && i % 4096 == 0) {
+        cancellationToken?.throwIfCanceled();
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    final overall = white.value + black.value;
+    final rating = _directRatingSeries(
+      scoped,
+      scopedTimeControl: normalizedTimeControl,
+      preferredTimeControl: _normalizeTimeControlFilter(
+        preferredRatingTimeControl,
+      ),
+    );
+    final openings = openingGroups.values
+        .where((group) => group.tally.value.games > 0)
+        .toList()
+      ..sort((a, b) {
+        final byGames = b.tally.value.games.compareTo(a.tally.value.games);
+        return byGames != 0 ? byGames : a.eco.compareTo(b.eco);
+      });
+    final opponents = opponentGroups.values
+        .where((group) => group.tally.value.games > 0)
+        .toList()
+      ..sort((a, b) {
+        final byGames = b.tally.value.games.compareTo(a.tally.value.games);
+        if (byGames != 0) return byGames;
+        return b.tally.wins.compareTo(a.tally.wins);
+      });
+    final years = yearGroups.entries.toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+    final timeControlCounts = <String, int>{};
+    for (final game in windowed) {
+      timeControlCounts.update(
+        game.timeControl ?? 'Unknown',
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    }
+    final timeControls = timeControlCounts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final averageOpponent =
+        opponentRatingCount == 0
+            ? null
+            : (opponentRatingTotal / opponentRatingCount).round();
+    const lengthLabels = <String>['0–20', '21–30', '31–40', '41–50', '50+'];
+    final peak =
+        rating.spots.isEmpty
+            ? null
+            : rating.spots.map((spot) => spot.rating).reduce(math.max);
+
+    return PlayerStatsSnapshot(
+      overall: overall,
+      asWhite: white.value,
+      asBlack: black.value,
+      ratingSeries: rating.spots,
+      openings: <PlayerOpeningStat>[
+        for (final group in openings.take(10))
+          PlayerOpeningStat(
+            eco: group.eco,
+            name:
+                _isMeaningfulOpeningName(group.name)
+                    ? group.name
+                    : EcoOpenings.getOpeningName(group.eco),
+            tally: group.tally.value,
+          ),
+      ],
+      opponents: <PlayerOpponentStat>[
+        for (final group in opponents.take(10))
+          PlayerOpponentStat(
+            name: group.name,
+            tally: group.tally.value,
+            averageRating:
+                group.ratingCount == 0
+                    ? null
+                    : (group.ratingTotal / group.ratingCount).round(),
+          ),
+      ],
+      years: <PlayerYearStat>[
+        for (final entry in years)
+          PlayerYearStat(
+            year: entry.key,
+            tally: entry.value.tally.value,
+            total: entry.value.total,
+            timeControls: <PlayerTimeControlStat>[
+              for (final tc in (entry.value.timeControls.entries.toList()
+                ..sort((a, b) => b.value.compareTo(a.value))))
+                PlayerTimeControlStat(category: tc.key, count: tc.value),
+            ],
+            sources: <PlayerSourceStat>[
+              for (final source in (entry.value.sources.entries.toList()
+                ..sort((a, b) => b.value.compareTo(a.value))))
+                PlayerSourceStat(label: source.key, count: source.value),
+            ],
+          ),
+      ],
+      lengthBuckets: <PlayerLengthBucket>[
+        for (var i = 0; i < lengthLabels.length; i++)
+          PlayerLengthBucket(label: lengthLabels[i], count: lengthCounts[i]),
+      ],
+      timeControls: <PlayerTimeControlStat>[
+        for (final entry in timeControls)
+          PlayerTimeControlStat(category: entry.key, count: entry.value),
+      ],
+      ratingTimeControlCategory: rating.timeControlCategory,
+      peakRating: peak,
+      latestRating: rating.spots.isEmpty ? null : rating.spots.last.rating,
+      averageOpponentRating: averageOpponent,
+      performanceRating: _performanceRating(overall, averageOpponent),
     );
   }
 
@@ -881,6 +1155,278 @@ ORDER BY yr ASC, c DESC''';
   static const _auxSql = '''
 SELECT AVG(CASE WHEN opp_elo > 0 THEN opp_elo END) AS avg_opp
 FROM scoped''';
+}
+
+class _DirectPlayerGame {
+  const _DirectPlayerGame({
+    required this.side,
+    required this.outcome,
+    required this.date,
+    required this.myElo,
+    required this.opponentName,
+    required this.opponentElo,
+    required this.eco,
+    required this.opening,
+    required this.timeControl,
+    required this.source,
+    required this.plyCount,
+    required this.order,
+  });
+
+  final String side;
+  final String? outcome;
+  final DateTime? date;
+  final int myElo;
+  final String opponentName;
+  final int opponentElo;
+  final String eco;
+  final String? opening;
+  final String? timeControl;
+  final String source;
+  final int? plyCount;
+  final int order;
+}
+
+class _DirectTally {
+  int wins = 0;
+  int draws = 0;
+  int losses = 0;
+
+  void add(String? outcome) {
+    switch (outcome) {
+      case 'win':
+        wins++;
+      case 'draw':
+        draws++;
+      case 'loss':
+        losses++;
+    }
+  }
+
+  PlayerResultTally get value =>
+      PlayerResultTally(wins: wins, draws: draws, losses: losses);
+}
+
+class _DirectOpeningGroup {
+  _DirectOpeningGroup(this.eco, this.name);
+
+  final String eco;
+  final String? name;
+  final _DirectTally tally = _DirectTally();
+}
+
+class _DirectOpponentGroup {
+  _DirectOpponentGroup(this.name);
+
+  final String name;
+  final _DirectTally tally = _DirectTally();
+  int ratingTotal = 0;
+  int ratingCount = 0;
+}
+
+class _DirectYearGroup {
+  final _DirectTally tally = _DirectTally();
+  final Map<String, int> timeControls = <String, int>{};
+  final Map<String, int> sources = <String, int>{};
+  int total = 0;
+}
+
+_DirectPlayerGame? _directPlayerGame(
+  LocalChessGame localGame, {
+  required int order,
+  required Set<String> normalizedAliases,
+  required String? normalizedFideId,
+  required String? unclassifiedTimeControlCategory,
+}) {
+  final metadata = localGame.game.metadata;
+  String header(String key) => metadata[key]?.toString().trim() ?? '';
+  int number(String key) => int.tryParse(header(key)) ?? 0;
+
+  final white = header('White');
+  final black = header('Black');
+  final whiteFideId = _normalizeFideId(
+    header('WhiteFideId').isNotEmpty
+        ? header('WhiteFideId')
+        : header('WhiteFideID'),
+  );
+  final blackFideId = _normalizeFideId(
+    header('BlackFideId').isNotEmpty
+        ? header('BlackFideId')
+        : header('BlackFideID'),
+  );
+  String? side;
+  if (normalizedFideId != null) {
+    if (whiteFideId == normalizedFideId) {
+      side = 'w';
+    } else if (blackFideId == normalizedFideId) {
+      side = 'b';
+    } else if (whiteFideId == null &&
+        normalizedAliases.contains(_normalizeName(white))) {
+      side = 'w';
+    } else if (blackFideId == null &&
+        normalizedAliases.contains(_normalizeName(black))) {
+      side = 'b';
+    }
+  } else if (normalizedAliases.contains(_normalizeName(white))) {
+    side = 'w';
+  } else if (normalizedAliases.contains(_normalizeName(black))) {
+    side = 'b';
+  }
+  if (side == null) return null;
+
+  final result = header('Result');
+  final event = header('Event');
+  final site = header('Site');
+  final source = header('ChessEverSource');
+  final storedTimeControl = _normalizeTimeControlFilter(
+    header('ChessEverTimeControlCategory'),
+  );
+  final classifiedTimeControl = classifyTimeControlCategory(
+    header('TimeControl'),
+    event: event,
+    site: site,
+    source: source,
+  );
+  final timeControl =
+      storedTimeControl ??
+      _normalizeTimeControlFilter(classifiedTimeControl) ??
+      unclassifiedTimeControlCategory;
+  final plyCount = number('PlyCount');
+
+  return _DirectPlayerGame(
+    side: side,
+    outcome: _directPlayerOutcome(result, side),
+    date: _dateFromDot(header('Date')),
+    myElo: side == 'w' ? number('WhiteElo') : number('BlackElo'),
+    opponentName: side == 'w' ? black : white,
+    opponentElo: side == 'w' ? number('BlackElo') : number('WhiteElo'),
+    eco: header('ECO').toUpperCase(),
+    opening: header('Opening'),
+    timeControl: timeControl,
+    source: _directSourceLabel(source: source, site: site),
+    plyCount: plyCount > 0 ? plyCount : null,
+    order: order,
+  );
+}
+
+String? _directPlayerOutcome(String result, String side) {
+  final normalized = result.trim().toLowerCase();
+  if (normalized == '1/2-1/2' ||
+      normalized == '1/2' ||
+      normalized == '0.5-0.5' ||
+      normalized == '½-½') {
+    return 'draw';
+  }
+  if (normalized == '1-0') return side == 'w' ? 'win' : 'loss';
+  if (normalized == '0-1') return side == 'b' ? 'win' : 'loss';
+  return null;
+}
+
+bool _directOutcomeMatches(
+  String? outcome,
+  PlayerStatsOutcomeFilter filter,
+) {
+  return switch (filter) {
+    PlayerStatsOutcomeFilter.all => true,
+    PlayerStatsOutcomeFilter.win => outcome == 'win',
+    PlayerStatsOutcomeFilter.draw => outcome == 'draw',
+    PlayerStatsOutcomeFilter.loss => outcome == 'loss',
+  };
+}
+
+String _directSourceLabel({required String source, required String site}) {
+  switch (source.trim().toLowerCase()) {
+    case 'chessever':
+      return 'ChessEver';
+    case 'lichess':
+      return 'Lichess';
+    case 'chesscom':
+      return 'Chess.com';
+    case 'manual':
+      return 'Manual PGN';
+  }
+  final normalizedSite = site.trim().toLowerCase();
+  if (normalizedSite.contains('lichess')) return 'Lichess';
+  if (normalizedSite.contains('chess.com')) return 'Chess.com';
+  if (normalizedSite.contains('chess24')) return 'Chess24';
+  if (normalizedSite.contains('chessbase')) return 'ChessBase';
+  if (normalizedSite.isEmpty || normalizedSite == '?') return 'Unknown';
+  return 'Other';
+}
+
+({List<PlayerRatingSpot> spots, String? timeControlCategory})
+_directRatingSeries(
+  List<_DirectPlayerGame> scoped, {
+  required String? scopedTimeControl,
+  required String? preferredTimeControl,
+}) {
+  final rated = scoped
+      .where((game) => game.date != null && game.myElo > 0)
+      .toList(growable: false);
+  if (rated.isEmpty) {
+    return (spots: const <PlayerRatingSpot>[], timeControlCategory: null);
+  }
+
+  var candidates = rated;
+  String? selectedCategory;
+  if (scopedTimeControl != null) {
+    selectedCategory = scopedTimeControl;
+  } else {
+    final preferred = preferredTimeControl ?? 'classical';
+    const categoryOrder = <String>['classical', 'rapid', 'blitz'];
+    final counts = <String, int>{};
+    for (final game in rated) {
+      final tc = game.timeControl;
+      if (tc != null && categoryOrder.contains(tc)) {
+        counts.update(tc, (count) => count + 1, ifAbsent: () => 1);
+      }
+    }
+    if (counts.containsKey(preferred)) {
+      selectedCategory = preferred;
+    } else if (counts.isNotEmpty) {
+      selectedCategory = categoryOrder
+          .where(counts.containsKey)
+          .reduce((a, b) => counts[a]! >= counts[b]! ? a : b);
+    }
+    if (selectedCategory != null) {
+      final selected = rated
+          .where((game) => game.timeControl == selectedCategory)
+          .toList(growable: false);
+      final useFullHistory =
+          preferred == 'classical' &&
+          selected.isNotEmpty &&
+          rated
+              .map((game) => game.date!)
+              .reduce((a, b) => a.isBefore(b) ? a : b)
+              .isBefore(
+                selected
+                    .map((game) => game.date!)
+                    .reduce((a, b) => a.isBefore(b) ? a : b),
+              );
+      if (useFullHistory) {
+        selectedCategory = null;
+      } else {
+        candidates = selected;
+      }
+    }
+  }
+
+  final byDay = <String, _DirectPlayerGame>{};
+  for (final game in candidates) {
+    final date = game.date!;
+    final key =
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    final existing = byDay[key];
+    if (existing == null || game.order >= existing.order) byDay[key] = game;
+  }
+  final spots = byDay.values
+      .map((game) => PlayerRatingSpot(date: game.date!, rating: game.myElo))
+      .toList()
+    ..sort((a, b) => a.date.compareTo(b.date));
+  return (
+    spots: _downsample(spots, 400),
+    timeControlCategory: selectedCategory,
+  );
 }
 
 bool _isMeaningfulOpeningName(String? value) {

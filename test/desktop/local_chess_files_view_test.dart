@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +9,7 @@ import 'package:chessever/desktop/services/local_chess_database_repository.dart'
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -17,6 +20,65 @@ import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
 void main() {
+  test('header-only player games preserve Overview filters without SQLite', () {
+    final game = _localGame(
+      id: 'direct-filter',
+      white: 'Hikaru',
+      black: 'Opponent',
+      sourcePath: '/tmp/direct.pgn',
+      metadataOverrides: const <String, String>{
+        'WhiteFideId': '2016192',
+        'Result': '1-0',
+        'Site': 'https://chess.com/game/1',
+        'TimeControl': '180+2',
+        'ECO': 'B90',
+      },
+    );
+    const fideId = '2016192';
+    const aliases = <String>['Hikaru Nakamura', 'Hikaru'];
+
+    expect(
+      localChessGameMatchesFilter(
+        game,
+        localChessGameFilterFromOverview(
+          const PlayerOverviewFilterRequest(
+            facet: PlayerOverviewFilterFacet.wins,
+          ),
+        ),
+        playerFideId: fideId,
+        playerAliases: aliases,
+      ),
+      isTrue,
+    );
+    expect(
+      localChessGameMatchesFilter(
+        game,
+        localChessGameFilterFromOverview(
+          const PlayerOverviewFilterRequest(
+            facet: PlayerOverviewFilterFacet.asBlack,
+          ),
+        ),
+        playerFideId: fideId,
+        playerAliases: aliases,
+      ),
+      isFalse,
+    );
+    expect(
+      localChessGameMatchesFilter(
+        game,
+        localChessGameFilterFromOverview(
+          const PlayerOverviewFilterRequest(
+            facet: PlayerOverviewFilterFacet.timeControl,
+            timeControlCategory: 'blitz',
+          ),
+        ),
+        playerFideId: fideId,
+        playerAliases: aliases,
+      ),
+      isTrue,
+    );
+  });
+
   testWidgets('selected local database renders repository-backed game rows', (
     tester,
   ) async {
@@ -657,6 +719,77 @@ void main() {
     expect(find.text('Build Tree'), findsNothing);
   });
 
+  testWidgets(
+    'database workspace shows live tree progress and can stop the build',
+    (tester) async {
+      final source = _sourceWithGame(
+        _localGame(
+          id: 'database',
+          white: 'Database Only',
+          black: 'Gukesh, D',
+          sourcePath: '/tmp/view.pgn',
+        ),
+        gameCount: 1,
+      );
+      final releaseBuild = Completer<void>();
+      final repository = _HoldingTreeBuildRepository(
+        page: LocalChessGameQueryPage(
+          games: source.root.files.single.games,
+          totalCount: 1,
+          pageNumber: 0,
+          pageSize: 200,
+        ),
+        releaseBuild: releaseBuild,
+      );
+      final notifier = _SeededLocalChessLibraryNotifier(
+        source: source,
+        repository: repository,
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            localChessDatabaseRepositoryProvider.overrideWithValue(repository),
+            localChessLibraryProvider.overrideWith((ref) => notifier),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 1100,
+                height: 700,
+                child: LocalChessFilesView(
+                  selectedPath: source.root.path,
+                  onSelectPath: (_) {},
+                  stateOverride: LocalChessLibraryState(
+                    source: source,
+                    selectedPath: source.root.path,
+                  ),
+                  onRefreshOverride: () async {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.text('Build Tree'));
+      await tester.pump();
+
+      expect(find.text('Tree 0%'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+      await tester.tap(find.text('Tree 0%'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('Build Tree'), findsOneWidget);
+      expect(repository.buildWasCanceled, isTrue);
+      if (!releaseBuild.isCompleted) releaseBuild.complete();
+    },
+  );
+
   testWidgets('active Tree percentage button stops the build when clicked', (
     tester,
   ) async {
@@ -681,6 +814,50 @@ void main() {
 
     expect(find.text('Tree 93%'), findsOneWidget);
     expect(find.textContaining('~7s'), findsNothing);
+    await tester.tap(find.byType(LocalTreeActionButton));
+    await tester.pump(const Duration(seconds: 1));
+    expect(stopped, isTrue);
+  });
+
+  testWidgets('tree cache check cannot accidentally start a rebuild', (
+    tester,
+  ) async {
+    var built = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: LocalTreeActionButton(
+            checkingCache: true,
+            onBuild: () => built = true,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Tree'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    await tester.tap(find.byType(LocalTreeActionButton));
+    await tester.pump(const Duration(seconds: 1));
+    expect(built, isFalse);
+  });
+
+  testWidgets('tree preparation shows zero percent and can be stopped', (
+    tester,
+  ) async {
+    var stopped = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: LocalTreeActionButton(
+            preparingBuild: true,
+            onCancel: () => stopped = true,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Tree 0%'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
     await tester.tap(find.byType(LocalTreeActionButton));
     await tester.pump(const Duration(seconds: 1));
     expect(stopped, isTrue);
@@ -721,6 +898,51 @@ class _FakeLocalChessDatabaseRepository extends LocalChessDatabaseRepository {
       throw StateError('No fake local database page configured.');
     }
     return response;
+  }
+}
+
+class _HoldingTreeBuildRepository extends _FakeLocalChessDatabaseRepository {
+  _HoldingTreeBuildRepository({
+    required super.page,
+    required this.releaseBuild,
+  });
+
+  final Completer<void> releaseBuild;
+  bool buildWasCanceled = false;
+
+  @override
+  Future<LocalChessOpeningTreeRebuildResult?>
+  rebuildOpeningTreeFromPgnFile({
+    required String databasePath,
+    void Function(LocalChessScanProgress progress)? onProgress,
+    OperationCancellationToken? cancellationToken,
+  }) async {
+    try {
+      await Future.any<void>([
+        releaseBuild.future,
+        if (cancellationToken != null) cancellationToken.whenCanceled,
+      ]);
+      cancellationToken?.throwIfCanceled();
+      return LocalChessOpeningTreeRebuildResult(
+        index: _usableTreeIndex(),
+        skippedGames: 0,
+      );
+    } catch (error) {
+      if (isOperationCanceled(error)) buildWasCanceled = true;
+      rethrow;
+    }
+  }
+}
+
+class _SeededLocalChessLibraryNotifier extends LocalChessLibraryNotifier {
+  _SeededLocalChessLibraryNotifier({
+    required LocalChessSource source,
+    required LocalChessDatabaseRepository repository,
+  }) : super(localDatabaseRepository: repository) {
+    state = LocalChessLibraryState(
+      source: source,
+      selectedPath: source.root.path,
+    );
   }
 }
 
