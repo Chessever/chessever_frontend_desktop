@@ -78,6 +78,18 @@ void main() {
       expect(extras.single.key, 'EventType');
       expect(extras.single.value, 'match');
     });
+
+    test('keeps canonical ChessEver links out of the generic rows', () {
+      final extras = eventInfoExtraHeaderEntries({
+        'ChessEverEventUrl': 'https://chessever.com/broadcast/example/event',
+        'ChessEverGameUrl': 'https://chessever.com/games/example',
+        'BroadcastURL': 'https://lichess.org/broadcast/example',
+        'GameURL': 'https://lichess.org/example',
+        'PlyCount': '6',
+      });
+
+      expect(extras.map((entry) => entry.key), ['PlyCount']);
+    });
   });
 
   group('eventInfoTagLabel', () {

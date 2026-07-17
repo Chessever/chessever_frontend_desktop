@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/services/desktop_share_actions.dart'
+    show chessEverEventUrlPgnTag, chessEverGameUrlPgnTag;
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
@@ -110,6 +112,18 @@ class EventInfoBody extends ConsumerWidget {
       rows.add(_HeaderRow(label: label, value: value));
     }
 
+    void addLinkIfPresent(String label, String key) {
+      final value = headers[key]?.trim() ?? '';
+      if (value.isEmpty) return;
+      rows.add(
+        _HeaderRow(
+          label: label,
+          value: value,
+          trailing: _CopyIconButton(value: value),
+        ),
+      );
+    }
+
     final whiteName = headers['White']?.trim() ?? '';
     final blackName = headers['Black']?.trim() ?? '';
     final whiteElo = headers['WhiteElo']?.trim() ?? '';
@@ -136,6 +150,8 @@ class EventInfoBody extends ConsumerWidget {
     if (event != null) {
       rows.add(_HeaderRow(label: 'Event', value: event));
     }
+    addLinkIfPresent('Event link', chessEverEventUrlPgnTag);
+    addLinkIfPresent('Game link', chessEverGameUrlPgnTag);
     // Online events carry a platform host (lichess.org, chess.com, ...) in
     // `Site` rather than a physical place. Mirrors the mobile board's
     // event-info sheet: never surface that raw third-party URL — show a
@@ -275,6 +291,18 @@ const _curatedHeaderKeys = <String>{
   'Broadcast Name',
   'GroupBroadcastName',
   'Group Broadcast Name',
+  'Source',
+  'ChessEverSourceUrl',
+  chessEverEventUrlPgnTag,
+  chessEverGameUrlPgnTag,
+  'BroadcastURL',
+  'BroadcastUrl',
+  'broadcastUrl',
+  'GameURL',
+  'GameUrl',
+  'gameUrl',
+  'LichessURL',
+  'LichessUrl',
 };
 
 /// Board-state keys the app stores alongside real PGN tags; never PGN
