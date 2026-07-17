@@ -175,6 +175,10 @@ class DesktopShell extends HookConsumerWidget {
             final next = <String, dynamic>{...m}..remove(t.id);
             return Map<String, PlayerProfileArgs>.from(next);
           });
+          ref.read(playerProfileSectionByTabIdProvider.notifier).update((m) {
+            if (!m.containsKey(t.id)) return m;
+            return <String, PlayerProfileSection>{...m}..remove(t.id);
+          });
           ref.read(playerWorkspacePlayerByTabIdProvider.notifier).update((m) {
             if (!m.containsKey(t.id)) return m;
             return <String, String>{...m}..remove(t.id);

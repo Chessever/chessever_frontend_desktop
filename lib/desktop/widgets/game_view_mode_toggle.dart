@@ -15,7 +15,17 @@ import 'package:chessever/theme/app_theme.dart';
 /// reads — so changing layout here propagates to every other game-card
 /// surface and survives across launches.
 class GameViewModeToggle extends ConsumerWidget {
-  const GameViewModeToggle({super.key});
+  const GameViewModeToggle({
+    super.key,
+    this.showSelectedState = true,
+    this.onSelected,
+  });
+
+  /// Allows a parent with an additional mutually-exclusive view to suppress
+  /// these three selected states while that other view is active.
+  final bool showSelectedState;
+
+  final ValueChanged<GamesListViewMode>? onSelected;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -24,6 +34,7 @@ class GameViewModeToggle extends ConsumerWidget {
       ref
           .read(boardSettingsProviderNew.notifier)
           .setGamesListViewModeIndex(next.index);
+      onSelected?.call(next);
     }
 
     return Row(
@@ -32,21 +43,22 @@ class GameViewModeToggle extends ConsumerWidget {
         _ToggleButton(
           icon: Icons.view_agenda_outlined,
           tooltip: 'Card view',
-          selected: mode == GamesListViewMode.gamesCard,
+          selected: showSelectedState && mode == GamesListViewMode.gamesCard,
           onTap: () => select(GamesListViewMode.gamesCard),
         ),
         const SizedBox(width: 4),
         _ToggleButton(
           icon: Icons.view_list_rounded,
-          tooltip: 'Table view',
-          selected: mode == GamesListViewMode.chessBoard,
+          tooltip: 'List view',
+          selected: showSelectedState && mode == GamesListViewMode.chessBoard,
           onTap: () => select(GamesListViewMode.chessBoard),
         ),
         const SizedBox(width: 4),
         _ToggleButton(
           icon: Icons.grid_view_rounded,
           tooltip: 'Grid view',
-          selected: mode == GamesListViewMode.chessBoardGrid,
+          selected:
+              showSelectedState && mode == GamesListViewMode.chessBoardGrid,
           onTap: () => select(GamesListViewMode.chessBoardGrid),
         ),
       ],

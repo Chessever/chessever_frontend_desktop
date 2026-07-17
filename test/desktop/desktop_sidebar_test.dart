@@ -16,7 +16,7 @@ void main() {
     expect(sidebarPaneForActiveTabKind(TabKind.board), DesktopPane.board);
   });
 
-  test('database game Board tab keeps Library highlighted', () {
+  test('opened game Board tab leaves the sidebar unselected', () {
     const tab = DesktopTab(
       id: 'database-game-tab',
       kind: TabKind.board,
@@ -36,7 +36,7 @@ void main() {
         tab,
         boardArgsByTabId: {'database-game-tab': args},
       ),
-      DesktopPane.library,
+      isNull,
     );
   });
 
@@ -54,27 +54,18 @@ void main() {
     expect(debugDesktopSidebarPaneForLabel('Board'), DesktopPane.board);
   });
 
-  test('Player sidebar entry opens the new Player workspace', () {
-    expect(debugDesktopSidebarPaneForLabel('Player'), DesktopPane.players);
+  test('Prepare sidebar entry opens the player preparation workspace', () {
+    expect(debugDesktopSidebarPaneForLabel('Prepare'), DesktopPane.players);
   });
 
   test('Rankings sidebar entry keeps the old player index route', () {
     expect(debugDesktopSidebarPaneForLabel('Rankings'), DesktopPane.rankings);
   });
 
-  test('Player profile tabs highlight the Player workspace', () {
-    expect(
-      sidebarPaneForActiveTabKind(TabKind.playerProfile),
-      DesktopPane.players,
-    );
-    expect(
-      sidebarPaneForActiveTabKind(TabKind.playerScoreCard),
-      DesktopPane.players,
-    );
-    expect(
-      sidebarPaneForActiveTabKind(TabKind.userProfile),
-      DesktopPane.players,
-    );
+  test('player detail tabs leave Prepare available in the sidebar', () {
+    expect(sidebarPaneForActiveTabKind(TabKind.playerProfile), isNull);
+    expect(sidebarPaneForActiveTabKind(TabKind.playerScoreCard), isNull);
+    expect(sidebarPaneForActiveTabKind(TabKind.userProfile), isNull);
   });
 
   test('Rankings tab highlights Rankings', () {
@@ -95,7 +86,7 @@ void main() {
       'Ctrl+3',
     );
     expect(
-      debugDesktopSidebarShortcutForLabel('Player', isMacOS: false),
+      debugDesktopSidebarShortcutForLabel('Prepare', isMacOS: false),
       'Ctrl+4',
     );
     expect(
