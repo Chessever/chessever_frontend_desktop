@@ -1173,6 +1173,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
                     progress,
                     start: 0,
                     span: _standardDownloadPhaseSpan,
+                    indeterminateWhenNull: true,
                   ),
               cancellationToken: scope.token,
             ),
@@ -1673,12 +1674,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
     final generation = ++_combinedRebuildGeneration;
     final operationKey = _sourceOperationKey(source);
     final scope = _startOperationScope(player.id, operationKey);
-    _setOperation(
-      operationKey,
-      source,
-      'Combining games...',
-      null,
-    );
+    _setOperation(operationKey, source, 'Combining games...', null);
     try {
       scope.token.throwIfCanceled();
       final result = await _workspaceRepository.rebuildCombinedDatabase(

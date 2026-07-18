@@ -746,13 +746,69 @@ class PlayerWorkspaceRepository {
 
     cancellationToken?.throwIfCanceled();
     onProgress?.call('${externalSource.label}: checking source cache...', null);
-    final export = await repository.getExternalPlayerGamesPgn(
-      source: externalSource,
-      username: username,
-      refresh: forceRefresh,
-      sinceMs: sinceMs,
-      receiveTimeout: _externalGamebaseSourceTimeout,
+    var requestRefresh = forceRefresh;
+    final preparationDeadline = DateTime.now().add(
+      _externalGamebaseSourceTimeout,
     );
+    GamebasePlayerPgnExport? export;
+    while (true) {
+      cancellationToken?.throwIfCanceled();
+      final remaining = preparationDeadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) {
+        throw _PlayerWorkspaceDownloadException(
+          '${externalSource.label} took too long to prepare the complete '
+          'game history. Please try again.',
+        );
+      }
+      final requestCancelToken = CancelToken();
+      final removeCancellationListener = cancellationToken?.addListener(() {
+        if (!requestCancelToken.isCancelled) {
+          requestCancelToken.cancel('Player source sync was canceled.');
+        }
+      });
+      try {
+        export = await repository.getExternalPlayerGamesPgn(
+          source: externalSource,
+          username: username,
+          refresh: requestRefresh,
+          prepare: true,
+          sinceMs: sinceMs,
+          receiveTimeout: remaining,
+          cancelToken: requestCancelToken,
+        );
+        break;
+      } on GamebaseExternalPlayerPgnPreparingException catch (preparing) {
+        // The first request enqueues the requested refresh. Polls must not keep
+        // force-refreshing the snapshot after that job has published it.
+        requestRefresh = false;
+        final pollRemaining = preparationDeadline.difference(DateTime.now());
+        if (pollRemaining <= Duration.zero) {
+          throw _PlayerWorkspaceDownloadException(
+            '${externalSource.label} took too long to prepare the complete '
+            'game history. Please try again.',
+          );
+        }
+        onProgress?.call(
+          '${externalSource.label}: preparing the complete game history on '
+          'ChessEver. This one-time step can take a while for large accounts...',
+          null,
+        );
+        await _waitForExternalCachePoll(
+          preparing.retryAfter < pollRemaining
+              ? preparing.retryAfter
+              : pollRemaining,
+          cancellationToken,
+        );
+      } on DioException catch (error) {
+        if (CancelToken.isCancel(error) &&
+            cancellationToken?.isCanceled == true) {
+          throw const OperationCanceledException();
+        }
+        rethrow;
+      } finally {
+        removeCancellationListener?.call();
+      }
+    }
     cancellationToken?.throwIfCanceled();
     if (export == null) return null;
 
@@ -782,6 +838,36 @@ class PlayerWorkspaceRepository {
       replaceExistingSource: replaceExistingSource,
       remoteUnchanged: remoteUnchanged,
     );
+  }
+
+  Future<void> _waitForExternalCachePoll(
+    Duration delay,
+    OperationCancellationToken? cancellationToken,
+  ) async {
+    if (delay <= Duration.zero) {
+      cancellationToken?.throwIfCanceled();
+      return;
+    }
+    if (cancellationToken == null) {
+      await Future<void>.delayed(delay);
+      return;
+    }
+    final completed = Completer<void>();
+    final timer = Timer(delay, () {
+      if (!completed.isCompleted) completed.complete();
+    });
+    final removeCancellationListener = cancellationToken.addListener(() {
+      if (!completed.isCompleted) {
+        completed.completeError(const OperationCanceledException());
+      }
+    });
+    try {
+      await completed.future;
+      cancellationToken.throwIfCanceled();
+    } finally {
+      timer.cancel();
+      removeCancellationListener();
+    }
   }
 
   bool _pgnCacheStatusIsUnchanged(String? cacheStatus) {

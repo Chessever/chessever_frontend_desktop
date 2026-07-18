@@ -2701,6 +2701,46 @@ void main() {
       await syncFuture.timeout(const Duration(seconds: 5));
     });
 
+    test('Lichess source-cache preparation stays indeterminate', () async {
+      final workspaceRepository = _HoldingLichessSnapshotWorkspaceRepository(
+        root: temp,
+        lichessPgnByUsername: const <String, String>{'msb2': _mergeGameOne},
+      );
+      final notifier = PlayerWorkspaceNotifier(
+        workspaceRepository: workspaceRepository,
+        gamebaseRepository: GamebaseRepository(Dio()),
+        localRepository: LocalChessDatabaseRepository(database: () async => db),
+      );
+      await notifier.load();
+      await notifier.addManualPlayer('msb2');
+      await notifier.selectPlayer(notifier.state.players.single.id);
+      await notifier.connectExternalAccount(
+        source: PlayerWorkspaceSource.lichess,
+        username: 'msb2',
+      );
+      final account =
+          notifier.state.selectedPlayer!.account(
+            PlayerWorkspaceSource.lichess,
+          )!;
+
+      final syncFuture = notifier.syncAccount(account);
+      await workspaceRepository.downloadStarted.future.timeout(
+        const Duration(seconds: 5),
+      );
+
+      final operation = notifier.state.operations.values.singleWhere(
+        (item) => item.source == PlayerWorkspaceSource.lichess,
+      );
+      expect(
+        operation.message,
+        contains('preparing the complete game history'),
+      );
+      expect(operation.percent, isNull);
+
+      workspaceRepository.finishDownload();
+      await syncFuture.timeout(const Duration(seconds: 5));
+    });
+
     test(
       'ChessEver page transitions keep stable text and full download progress',
       () async {
@@ -4238,12 +4278,52 @@ $_mergeGameOne
         );
         expect(request?.queryParameters['since'], 1782864000000);
         expect(request?.queryParameters['refresh'], 'true');
+        expect(request?.queryParameters['prepare'], 'true');
         expect(request?.receiveTimeout, const Duration(seconds: 12));
         expect(export?.gameCount, 1);
         expect(export?.cacheStatus, 'refresh');
         expect(export?.snapshotStatus, 'delta');
       },
     );
+
+    test('external Gamebase PGN request exposes cache preparation', () async {
+      final dio = Dio();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            handler.resolve(
+              Response<String>(
+                requestOptions: options,
+                data: '{"status":"preparing"}',
+                statusCode: 202,
+                headers: Headers.fromMap(<String, List<String>>{
+                  'x-pgn-cache': <String>['warming'],
+                  'retry-after': <String>['7'],
+                }),
+              ),
+            );
+          },
+        ),
+      );
+      final repository = GamebaseRepository(
+        dio,
+        baseUrl: 'https://gamebase.test',
+      );
+
+      await expectLater(
+        repository.getExternalPlayerGamesPgn(
+          source: GamebaseExternalPlayerSource.lichess,
+          username: 'msb2',
+        ),
+        throwsA(
+          isA<GamebaseExternalPlayerPgnPreparingException>().having(
+            (error) => error.retryAfter,
+            'retryAfter',
+            const Duration(seconds: 7),
+          ),
+        ),
+      );
+    });
 
     test(
       'fails clearly when the ChessEver PGN export is unavailable',
@@ -4393,6 +4473,105 @@ $_mergeGameOne
         const Duration(hours: 3),
       ]);
       expect(directClientRequests, 0);
+    });
+
+    test(
+      'polls a preparing external cache and does not repeat force refresh',
+      () async {
+        final gamebaseRepository = _FakeGamebaseRepository(
+          const <String, String>{},
+          externalErrors: const <Object>[
+            GamebaseExternalPlayerPgnPreparingException(
+              retryAfter: Duration.zero,
+            ),
+            GamebaseExternalPlayerPgnPreparingException(
+              retryAfter: Duration.zero,
+            ),
+          ],
+          externalExports:
+              const <GamebaseExternalPlayerSource, GamebasePlayerPgnExport>{
+                GamebaseExternalPlayerSource.lichess: GamebasePlayerPgnExport(
+                  pgn: _mergeGameOne,
+                  gameCount: 1,
+                  cacheStatus: 'hit',
+                  snapshotStatus: 'full',
+                ),
+              },
+        );
+        final progressMessages = <String>[];
+        final workspaceRepository = PlayerWorkspaceRepository(
+          gamebaseRepository: gamebaseRepository,
+        );
+
+        final downloaded = await workspaceRepository.downloadLichessGames(
+          username: 'msb2',
+          forceRefresh: true,
+          onProgress: (message, _) => progressMessages.add(message),
+        );
+
+        expect(downloaded.gameCount, 1);
+        expect(gamebaseRepository.externalRequestCount, 3);
+        expect(gamebaseRepository.externalRefresh, <bool>[true, false, false]);
+        expect(gamebaseRepository.externalPrepare, <bool>[true, true, true]);
+        expect(
+          progressMessages.where(
+            (message) =>
+                message.contains('preparing the complete game history'),
+          ),
+          hasLength(2),
+        );
+      },
+    );
+
+    test(
+      'canceling stops external cache polling without a second request',
+      () async {
+        final gamebaseRepository = _FakeGamebaseRepository(
+          const <String, String>{},
+          externalErrors: const <Object>[
+            GamebaseExternalPlayerPgnPreparingException(
+              retryAfter: Duration(hours: 1),
+            ),
+          ],
+        );
+        final cancellationToken = OperationCancellationToken();
+        final workspaceRepository = PlayerWorkspaceRepository(
+          gamebaseRepository: gamebaseRepository,
+        );
+
+        final download = workspaceRepository.downloadLichessGames(
+          username: 'msb2',
+          cancellationToken: cancellationToken,
+        );
+        await Future<void>.delayed(Duration.zero);
+        cancellationToken.cancel();
+
+        await expectLater(download, throwsA(isA<OperationCanceledException>()));
+        expect(gamebaseRepository.externalRequestCount, 1);
+      },
+    );
+
+    test('canceling aborts an active external cache request', () async {
+      final gamebaseRepository = _FakeGamebaseRepository(
+        const <String, String>{},
+        waitForExternalCancellation: true,
+      );
+      final cancellationToken = OperationCancellationToken();
+      final workspaceRepository = PlayerWorkspaceRepository(
+        gamebaseRepository: gamebaseRepository,
+      );
+
+      final download = workspaceRepository.downloadLichessGames(
+        username: 'msb2',
+        cancellationToken: cancellationToken,
+      );
+      await gamebaseRepository.externalRequestStarted.future.timeout(
+        const Duration(seconds: 5),
+      );
+      cancellationToken.cancel();
+
+      await expectLater(download, throwsA(isA<OperationCanceledException>()));
+      expect(gamebaseRepository.externalRequestCount, 1);
     });
 
     test(
@@ -5477,6 +5656,56 @@ class _HoldingChessComSnapshotWorkspaceRepository
   }
 }
 
+class _HoldingLichessSnapshotWorkspaceRepository
+    extends _FakePlayerWorkspaceRepository {
+  _HoldingLichessSnapshotWorkspaceRepository({
+    required super.root,
+    required super.lichessPgnByUsername,
+  });
+
+  final downloadStarted = Completer<void>();
+  final _finishDownload = Completer<void>();
+
+  void finishDownload() {
+    if (!_finishDownload.isCompleted) _finishDownload.complete();
+  }
+
+  @override
+  Future<PlayerWorkspaceDownloadedPgn> downloadLichessGames({
+    required String username,
+    int? sinceMs,
+    bool forceRefresh = false,
+    int? expectedGameCount,
+    PlayerWorkspaceProgress? onProgress,
+    OperationCancellationToken? cancellationToken,
+  }) async {
+    lichessSinceMsRequests.add(sinceMs);
+    onProgress?.call(
+      'Lichess: preparing the complete game history on ChessEver. '
+      'This one-time step can take a while for large accounts...',
+      null,
+    );
+    if (!downloadStarted.isCompleted) downloadStarted.complete();
+    if (cancellationToken == null) {
+      await _finishDownload.future;
+    } else {
+      await Future.any<void>(<Future<void>>[
+        _finishDownload.future,
+        cancellationToken.whenCanceled.then((_) {
+          throw const OperationCanceledException();
+        }),
+      ]);
+    }
+    final pgn = lichessPgnByUsername[username.trim()] ?? '';
+    return PlayerWorkspaceDownloadedPgn(
+      source: PlayerWorkspaceSource.lichess,
+      pgn: pgn,
+      gameCount: splitPgnGames(pgn).length,
+      replaceExistingSource: true,
+    );
+  }
+}
+
 class _HoldingImportChessEverWorkspaceRepository
     extends _FakePlayerWorkspaceRepository {
   _HoldingImportChessEverWorkspaceRepository({
@@ -5670,6 +5899,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     this.externalExports =
         const <GamebaseExternalPlayerSource, GamebasePlayerPgnExport>{},
     this.playersById = const <String, GamebasePlayer>{},
+    this.waitForExternalCancellation = false,
   }) : super(Dio());
 
   final Map<String, String> pgnById;
@@ -5680,11 +5910,14 @@ class _FakeGamebaseRepository extends GamebaseRepository {
   final Map<GamebaseExternalPlayerSource, GamebasePlayerPgnExport>
   externalExports;
   final Map<String, GamebasePlayer> playersById;
+  final bool waitForExternalCancellation;
+  final externalRequestStarted = Completer<void>();
   final exportPlayerIds = <String>[];
   final exportFideIds = <String?>[];
   final exportDateFrom = <String?>[];
   final externalSinceMs = <int?>[];
   final externalRefresh = <bool>[];
+  final externalPrepare = <bool>[];
   final externalReceiveTimeouts = <Duration?>[];
   final requestedProfileIds = <String>[];
   final requestedPlayerIds = <String>[];
@@ -5724,14 +5957,27 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     required GamebaseExternalPlayerSource source,
     required String username,
     bool refresh = false,
+    bool prepare = true,
     int? sinceMs,
     Duration? receiveTimeout,
+    CancelToken? cancelToken,
   }) async {
     externalSinceMs.add(sinceMs);
     externalRefresh.add(refresh);
+    externalPrepare.add(prepare);
     externalReceiveTimeouts.add(receiveTimeout);
     final requestIndex = externalRequestCount;
     externalRequestCount += 1;
+    if (!externalRequestStarted.isCompleted) {
+      externalRequestStarted.complete();
+    }
+    if (waitForExternalCancellation) {
+      final token = cancelToken;
+      if (token == null) {
+        throw StateError('Expected an external request cancellation token.');
+      }
+      throw await token.whenCancel;
+    }
     if (requestIndex < externalErrors.length) {
       throw externalErrors[requestIndex];
     }

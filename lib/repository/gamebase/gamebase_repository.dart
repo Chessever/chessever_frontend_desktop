@@ -45,6 +45,15 @@ class GamebasePlayerPgnExport {
   final String? snapshotStatus;
 }
 
+class GamebaseExternalPlayerPgnPreparingException implements Exception {
+  const GamebaseExternalPlayerPgnPreparingException({required this.retryAfter});
+
+  final Duration retryAfter;
+
+  @override
+  String toString() => 'External player PGN cache is being prepared.';
+}
+
 enum GamebaseExternalPlayerSource {
   lichess,
   chesscom;
@@ -1409,8 +1418,10 @@ class GamebaseRepository {
     required GamebaseExternalPlayerSource source,
     required String username,
     bool refresh = false,
+    bool prepare = true,
     int? sinceMs,
     Duration? receiveTimeout,
+    CancelToken? cancelToken,
   }) async {
     final cleanUsername = username.trim();
     if (cleanUsername.isEmpty) return null;
@@ -1420,8 +1431,10 @@ class GamebaseRepository {
           '$_baseUrl/api/player/${source.apiPathSegment}/${Uri.encodeComponent(cleanUsername)}/games.pgn';
       final response = await _dio.get<String>(
         path,
+        cancelToken: cancelToken,
         queryParameters: <String, dynamic>{
           if (refresh) 'refresh': 'true',
+          if (prepare) 'prepare': 'true',
           if (sinceMs != null && sinceMs >= 0) 'since': sinceMs,
         },
         options: Options(
@@ -1433,6 +1446,15 @@ class GamebaseRepository {
           responseType: ResponseType.plain,
         ),
       );
+
+      if (response.statusCode == 202 ||
+          response.headers.value('x-pgn-cache')?.toLowerCase() == 'warming') {
+        final retryAfterSeconds =
+            int.tryParse(response.headers.value('retry-after') ?? '') ?? 15;
+        throw GamebaseExternalPlayerPgnPreparingException(
+          retryAfter: Duration(seconds: retryAfterSeconds.clamp(1, 60)),
+        );
+      }
 
       final pgn = response.data ?? '';
       final gameCount = int.tryParse(
