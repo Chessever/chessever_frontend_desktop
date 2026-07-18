@@ -10,6 +10,15 @@ void main() {
       final script =
           File('scripts/codemagic_publish_macos.sh').readAsStringSync();
       final codemagic = File('codemagic.yaml').readAsStringSync();
+      final updaterPlugin =
+          File(
+            'third_party/desktop_updater/macos/desktop_updater/Sources/'
+            'desktop_updater/DesktopUpdaterPlugin.swift',
+          ).readAsStringSync();
+      final frameworkRepairFixture =
+          File(
+            'scripts/test_macos_updater_framework_repair.sh',
+          ).readAsStringSync();
 
       expect(script, contains(r'RELEASE_VERSION="${VERSION}+${BUILD}"'));
       expect(script, contains(r'ARCHIVE_NAME="${RELEASE_VERSION}-macos"'));
@@ -22,8 +31,21 @@ void main() {
       );
       expect(script, contains(r'run_release_env_check "$APP"'));
       expect(script, contains(r'dart run desktop_updater:archive macos'));
-      expect(script, contains(r'find "$ARCHIVE_DIR" -type l -print0'));
-      expect(script, contains('Removing unhashed macOS archive symlink'));
+      expect(
+        script,
+        contains(r'remove_transport_only_framework_links "$ARCHIVE_DIR"'),
+      );
+      expect(
+        script,
+        contains('updater archive contains unsupported symbolic links'),
+      );
+      expect(
+        script,
+        isNot(contains('Removing unhashed macOS archive symlink')),
+      );
+      expect(script, contains('validate_versioned_frameworks'));
+      expect(script, contains('lipo -verify_arch arm64 x86_64'));
+      expect(script, contains('"_resqlite_open"'));
       expect(
         script,
         contains(r'validate_desktop_updater_archive "$ARCHIVE_DIR"'),
@@ -52,6 +74,10 @@ void main() {
       expect(codemagic, contains('keychain initialize'));
       expect(codemagic, contains('keychain add-certificates'));
       expect(codemagic, contains('./scripts/codemagic_publish_macos.sh'));
+      expect(
+        codemagic,
+        contains('bash ./scripts/test_macos_updater_framework_repair.sh'),
+      );
       expect(codemagic, isNot(contains('--dart-define-from-file')));
       expect(
         codemagic,
@@ -59,6 +85,28 @@ void main() {
       );
       expect(codemagic, isNot(contains('sign_update')));
       expect(codemagic, isNot(contains('.zip.sig')));
+
+      final repairCall = updaterPlugin.indexOf(
+        'repairInstalledVersionedFrameworks()',
+      );
+      final channelRegistration = updaterPlugin.indexOf(
+        'FlutterMethodChannel(',
+      );
+      expect(repairCall, greaterThanOrEqualTo(0));
+      expect(channelRegistration, greaterThan(repairCall));
+      expect(
+        updaterPlugin,
+        contains('# BEGIN DESKTOP_UPDATER_FRAMEWORK_REPAIR'),
+      );
+      expect(updaterPlugin, contains('repair_versioned_frameworks'));
+      expect(updaterPlugin, contains('candidates.count == 1'));
+      expect(updaterPlugin, contains('existingCurrent'));
+      expect(updaterPlugin, contains('isSymbolicLink != true'));
+      expect(frameworkRepairFixture, contains('do-not-delete'));
+      expect(
+        frameworkRepairFixture,
+        contains('unambiguous or existing framework version'),
+      );
 
       final packageName = _pubspecValue('name');
       final appInfo =
@@ -115,6 +163,8 @@ void main() {
           ).readAsStringSync();
       final codemagic = File('codemagic.yaml').readAsStringSync();
       final windowsCmake = File('windows/CMakeLists.txt').readAsStringSync();
+      final bundleVerifier =
+          File('tool/verify_windows_release_bundle.dart').readAsStringSync();
 
       expect(script, contains(r'ReleaseVersion = "$version+$build"'));
       expect(script, contains(r'ArchiveName = "$version+$build-windows"'));
@@ -131,6 +181,15 @@ void main() {
         contains(r'Invoke-ReleaseEnvCheck -DirectoryPath $stagedDir'),
       );
       expect(script, contains(r'dart run desktop_updater:archive windows'));
+      expect(bundleVerifier, contains("'resqlite.dll'"));
+      expect(bundleVerifier, contains("'sqlite3.dll'"));
+      expect(bundleVerifier, contains("'onnxruntime.dll'"));
+      expect(bundleVerifier, contains("'flutter_onnxruntime_plugin.dll'"));
+      expect(bundleVerifier, contains("'desktop_updater_plugin.dll'"));
+      expect(bundleVerifier, contains('expected AMD64 machine 0x8664'));
+      expect(bundleVerifier, contains('expected PE32+ optional header 0x20b'));
+      expect(bundleVerifier, contains("'resqlite_open_with_extensions'"));
+      expect(bundleVerifier, contains("'strlen'"));
       expect(
         script,
         contains(
@@ -163,6 +222,13 @@ void main() {
         stableUpload: 'desktop/downloads/Chessever-Setup.exe',
       );
       expect(codemagic, contains('windows-desktop-release:'));
+      expect(
+        codemagic,
+        contains(
+          'flutter test --no-pub '
+          'test/desktop/windows_release_bundle_verifier_test.dart',
+        ),
+      );
       expect(codemagic, contains('max_build_duration: 120'));
       expect(codemagic, contains('choco install innosetup'));
       expect(codemagic, contains(r'windows\installer\output\*.exe'));
@@ -301,11 +367,57 @@ void main() {
 
     test('Linux bundle includes ONNX Runtime SONAME libraries', () {
       final cmake = File('linux/CMakeLists.txt').readAsStringSync();
+      final archive =
+          File(
+            'third_party/desktop_updater/bin/archive.dart',
+          ).readAsStringSync();
+      final publish =
+          File('scripts/codemagic_publish_linux.sh').readAsStringSync();
+      final materialize =
+          File(
+            'scripts/materialize_linux_update_archive_links.sh',
+          ).readAsStringSync();
 
       expect(cmake, contains('flutter_onnxruntime'));
       expect(cmake, contains('libonnxruntime*.so*'));
       expect(cmake, contains('FOLLOW_SYMLINK_CHAIN'));
       expect(cmake, contains(r'${INSTALL_BUNDLE_LIB_DIR}'));
+      expect(archive, contains('includeFileLinks: platform == "linux"'));
+      expect(publish, contains('materialize_linux_update_archive_links.sh'));
+      expect(publish, contains('validate_linux_native_archive'));
+      expect(publish, contains('lib/libflutter_onnxruntime_plugin.so'));
+      expect(publish, contains('lib/libonnxruntime.so.1'));
+      expect(publish, contains('lib/libresqlite.so'));
+      expect(publish, contains('ELF 64-bit LSB shared object'));
+      expect(publish, contains('resqlite_open_with_extensions'));
+      expect(
+        publish,
+        contains("grep -Fq 'Shared library: [libonnxruntime.so.1]'"),
+      );
+      expect(materialize, contains('cp -pL'));
+      expect(materialize, contains('mktemp'));
+      expect(materialize, contains(r'unlink "$link"'));
+      expect(
+        File('codemagic.yaml').readAsStringSync(),
+        contains(
+          'flutter test --no-pub '
+          'test/desktop/desktop_updater_archive_symlink_test.dart',
+        ),
+      );
+      expect(
+        publish,
+        isNot(contains('Removing unhashed Linux archive symlink')),
+      );
+    });
+
+    test('live archive verifier requires native runtime payloads', () {
+      final verifier =
+          File('tool/verify_desktop_app_archive.dart').readAsStringSync();
+
+      expect(verifier, contains("'Frameworks/resqlite.framework/Versions/'"));
+      expect(verifier, contains("'resqlite.dll'"));
+      expect(verifier, contains("'lib/libresqlite.so'"));
+      expect(verifier, contains("'lib/libonnxruntime.so.1'"));
     });
 
     test('server publish wrapper forwards archive commands', () {

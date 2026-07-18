@@ -39,6 +39,9 @@ workflows:
       - name: Get Flutter packages
         script: |
           flutter pub get
+      - name: Test macOS updater framework repair
+        script: |
+          bash ./scripts/test_macos_updater_framework_repair.sh
       - name: Install CocoaPods dependencies
         script: |
           find . -name "Podfile" -execdir pod install \;
@@ -145,6 +148,9 @@ workflows:
       - name: Get Flutter packages
         script: |
           flutter pub get
+      - name: Test macOS updater framework repair
+        script: |
+          bash ./scripts/test_macos_updater_framework_repair.sh
       - name: Install CocoaPods dependencies
         script: |
           find . -name "Podfile" -execdir pod install \;
@@ -264,6 +270,9 @@ workflows:
       - name: Get Flutter packages
         script: |
           flutter pub get
+      - name: Test Windows native bundle verifier
+        script: |
+          flutter test --no-pub test/desktop/windows_release_bundle_verifier_test.dart
       - name: Build Windows release
         script: |
           powershell -ExecutionPolicy Bypass -File .\scripts\codemagic_build_windows_release.ps1
@@ -334,6 +343,9 @@ workflows:
       - name: Get Flutter packages
         script: |
           flutter pub get
+      - name: Test Linux updater archive aliases
+        script: |
+          flutter test --no-pub test/desktop/desktop_updater_archive_symlink_test.dart
       - name: Build Linux release
         script: |
           bash ./scripts/codemagic_build_linux_release.sh

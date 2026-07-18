@@ -51,7 +51,10 @@ cd "$REPO_ROOT"
 require_command curl
 require_command dart
 require_command dpkg-deb
+require_command file
+require_command nm
 require_command python3
+require_command readelf
 require_command rsync
 require_command ssh
 
@@ -98,15 +101,17 @@ run_release_env_check() {
     die "release dart-define verification failed for $bundle_dir"
 }
 
-# Byte-for-byte the same archive-contract validator used by the macOS and
-# Windows publish scripts: every regular file on disk must be listed in
-# hashes.json, and every listed path must be safe and present.
+# Enforce the common archive contract and re-check every digest after Linux
+# symlink aliases are materialized: every regular file must be listed, safe,
+# present, length-matched, and byte-for-byte hash-matched.
 validate_desktop_updater_archive() {
   local archive_dir="$1"
   local hashes_path="$archive_dir/hashes.json"
   [ -f "$hashes_path" ] || die "desktop_updater archive missing hashes.json at $archive_dir"
 
   python3 - "$archive_dir" <<'PY'
+import base64
+import hashlib
 import json
 import os
 import sys
@@ -120,6 +125,8 @@ with open(hashes_path, "r", encoding="utf-8") as f:
 listed = set()
 missing = []
 unsafe = []
+wrong_hash = []
+wrong_length = []
 
 for entry in entries:
     rel = entry.get("path") or entry.get("filePath")
@@ -131,8 +138,22 @@ for entry in entries:
         unsafe.append(rel)
         continue
     listed.add(rel)
-    if not os.path.isfile(os.path.join(root, *parts)):
+    absolute = os.path.join(root, *parts)
+    if not os.path.isfile(absolute):
         missing.append(rel)
+        continue
+    expected_length = entry.get("length")
+    actual_length = os.path.getsize(absolute)
+    if expected_length != actual_length:
+        wrong_length.append((rel, expected_length, actual_length))
+    expected_hash = entry.get("calculatedHash")
+    digest = hashlib.blake2b()
+    with open(absolute, "rb") as payload:
+        for chunk in iter(lambda: payload.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual_hash = base64.b64encode(digest.digest()).decode("ascii")
+    if expected_hash != actual_hash:
+        wrong_hash.append(rel)
 
 extra = []
 for dirpath, _, filenames in os.walk(root):
@@ -148,17 +169,52 @@ for dirpath, _, filenames in os.walk(root):
         if rel not in listed:
             extra.append(rel)
 
-if unsafe or missing or extra:
+if unsafe or missing or extra or wrong_hash or wrong_length:
     if unsafe:
         print("unsafe hashes.json paths:", unsafe, file=sys.stderr)
     if missing:
         print("hashes.json lists missing files:", missing, file=sys.stderr)
     if extra:
         print("archive contains unhashed regular files:", extra, file=sys.stderr)
+    if wrong_hash:
+        print("archive files do not match their hashes:", wrong_hash, file=sys.stderr)
+    if wrong_length:
+        print("archive files do not match their lengths:", wrong_length, file=sys.stderr)
     sys.exit(1)
 
 print(f"Validated desktop_updater archive contract: {len(listed)} hashed files")
 PY
+}
+
+validate_linux_native_archive() {
+  local archive_dir="$1"
+  local relative
+  for relative in \
+    "Chessever" \
+    "lib/libflutter_onnxruntime_plugin.so" \
+    "lib/libonnxruntime.so.1" \
+    "lib/libresqlite.so"; do
+    [ -s "$archive_dir/$relative" ] ||
+      die "Linux updater archive is missing required native file $relative"
+  done
+
+  local resqlite="$archive_dir/lib/libresqlite.so"
+  local resqlite_info
+  resqlite_info="$(LC_ALL=C file "$resqlite")" ||
+    die "unable to inspect $resqlite"
+  case "$resqlite_info" in
+    *"ELF 64-bit LSB shared object"*"x86-64"*) ;;
+    *) die "libresqlite.so must be an x86-64 ELF shared object: $resqlite_info" ;;
+  esac
+  nm -D --defined-only "$resqlite" | awk '
+    $NF == "resqlite_open" { open = 1 }
+    $NF == "resqlite_open_with_extensions" { extensions = 1 }
+    END { exit !(open && extensions) }
+  ' || die "libresqlite.so is missing required resqlite exports"
+
+  readelf -d "$archive_dir/lib/libflutter_onnxruntime_plugin.so" |
+    grep -Fq 'Shared library: [libonnxruntime.so.1]' ||
+    die "ONNX Runtime plugin no longer declares the validated libonnxruntime.so.1 dependency"
 }
 
 # Packages the staged Linux bundle into a Debian package. The Flutter Linux
@@ -289,13 +345,13 @@ dart run desktop_updater:archive linux
 
 ARCHIVE_DIR="dist/${BUILD}/${ARCHIVE_NAME}"
 
-# Drop any symlinks desktop_updater leaves behind: the archive contract counts
-# regular files only (mirrors the macOS publish step).
-find "$ARCHIVE_DIR" -type l -print0 | while IFS= read -r -d '' link; do
-  echo "Removing unhashed Linux archive symlink ${link#$ARCHIVE_DIR/}"
-  rm -f "$link"
-done
+# Linux loaders resolve SONAME aliases such as libonnxruntime.so.1. The archive
+# hashes those aliases through their link targets; turn them into ordinary
+# files so the hosted payload is self-contained and legacy clients can fetch
+# the exact DT_NEEDED path without understanding symlink metadata.
+"$REPO_ROOT/scripts/materialize_linux_update_archive_links.sh" "$ARCHIVE_DIR"
 validate_desktop_updater_archive "$ARCHIVE_DIR"
+validate_linux_native_archive "$ARCHIVE_DIR"
 
 echo "Prepared desktop_updater Linux archive $ARCHIVE_DIR"
 

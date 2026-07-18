@@ -37,7 +37,12 @@ cd "$REPO_ROOT"
 require_command codesign
 require_command dart
 require_command ditto
+require_command file
+require_command lipo
+require_command nm
+require_command otool
 require_command python3
+require_command readlink
 require_command rsync
 require_command ssh
 require_command xcrun
@@ -145,6 +150,116 @@ print(f"Validated desktop_updater archive contract: {len(listed)} hashed files")
 PY
 }
 
+validate_versioned_frameworks() {
+  local frameworks_dir="$1"
+  [ -d "$frameworks_dir" ] || die "missing macOS Frameworks directory at $frameworks_dir"
+
+  local framework
+  local current
+  local current_target
+  local plist
+  local executable
+  local version
+  local version_plist
+  local version_executable
+  local valid_versions
+  for framework in "$frameworks_dir"/*.framework; do
+    [ -L "$framework" ] && die "framework root must not be a symlink: $framework"
+    [ -d "$framework/Versions" ] || continue
+    [ -L "$framework/Versions" ] && die "framework Versions directory must not be a symlink: $framework"
+    current="$framework/Versions/Current"
+    [ -L "$current" ] || die "missing Versions/Current symlink in $framework"
+    current_target="$(readlink "$current")"
+    case "$current_target" in
+      ""|.|..|*/*)
+        die "unsafe Versions/Current target '$current_target' in $framework"
+        ;;
+    esac
+    [ -d "$framework/Versions/$current_target" ] ||
+      die "broken Versions/Current symlink in $framework"
+    [ ! -L "$framework/Versions/$current_target" ] ||
+      die "Versions/Current must select a concrete directory in $framework"
+
+    valid_versions=0
+    for version in "$framework/Versions"/*; do
+      [ -d "$version" ] || continue
+      [ -L "$version" ] && continue
+      version_plist="$version/Resources/Info.plist"
+      [ -f "$version_plist" ] || continue
+      version_executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$version_plist" 2>/dev/null || true)"
+      case "$version_executable" in
+        ""|.|..|*/*) continue ;;
+      esac
+      [ -f "$version/$version_executable" ] || continue
+      valid_versions=$((valid_versions + 1))
+    done
+    [ "$valid_versions" -eq 1 ] ||
+      die "framework archive transport requires exactly one valid concrete version in $framework; found $valid_versions"
+
+    plist="$framework/Versions/$current_target/Resources/Info.plist"
+    [ -f "$plist" ] || die "missing framework Info.plist at $plist"
+    executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist" 2>/dev/null || true)"
+    case "$executable" in
+      ""|.|..|*/*)
+        die "invalid CFBundleExecutable '$executable' in $plist"
+        ;;
+    esac
+    [ -f "$framework/Versions/$current_target/$executable" ] ||
+      die "Versions/Current does not select a version containing $executable in $framework"
+    [ -L "$framework/$executable" ] ||
+      die "missing framework executable symlink at $framework/$executable"
+    [ "$(readlink "$framework/$executable")" = "Versions/Current/$executable" ] ||
+      die "noncanonical framework executable symlink at $framework/$executable"
+    [ -x "$framework/$executable" ] ||
+      die "framework executable is not runnable at $framework/$executable"
+
+    if [ -d "$framework/Versions/$current_target/Resources" ]; then
+      [ -L "$framework/Resources" ] || die "missing Resources symlink in $framework"
+      [ "$(readlink "$framework/Resources")" = "Versions/Current/Resources" ] ||
+        die "noncanonical Resources symlink in $framework"
+      [ -d "$framework/Resources" ] || die "broken Resources symlink in $framework"
+    fi
+  done
+}
+
+remove_transport_only_framework_links() {
+  local archive_dir="$1"
+  local frameworks_dir="$archive_dir/Frameworks"
+  validate_versioned_frameworks "$frameworks_dir"
+
+  local framework
+  local current_target
+  local executable
+  local plist
+  for framework in "$frameworks_dir"/*.framework; do
+    [ -d "$framework/Versions" ] || continue
+    current_target="$(readlink "$framework/Versions/Current")"
+    plist="$framework/Versions/$current_target/Resources/Info.plist"
+    executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")" ||
+      die "unable to read CFBundleExecutable from $plist"
+
+    echo "Removing reconstructible framework links from ${framework#$archive_dir/}"
+    rm -f -- "$framework/$executable"
+    if [ -L "$framework/Resources" ]; then
+      rm -f -- "$framework/Resources"
+    fi
+    rm -f -- "$framework/Versions/Current"
+  done
+
+  local unexpected_links=()
+  local link
+  while IFS= read -r -d '' link; do
+    unexpected_links+=("$link")
+  done < <(find "$archive_dir" -type l -print0)
+  if [ "${#unexpected_links[@]}" -ne 0 ]; then
+    echo "error: updater archive contains unsupported symbolic links:" >&2
+    for link in "${unexpected_links[@]}"; do
+      echo "- ${link#$archive_dir/}" >&2
+    done
+    die "add an explicit transport or repair contract before publishing these links"
+  fi
+}
+
 VERSION_RAW="$(awk '/^version:/{print $2; exit}' pubspec.yaml)"
 [ -n "$VERSION_RAW" ] || die "unable to read version from pubspec.yaml"
 VERSION="${VERSION_RAW%%+*}"
@@ -165,6 +280,25 @@ EXPECTED_DART_DEFINE_KEYS="$(expected_dart_define_keys)"
 
 APP="dist/${BUILD}/${PACKAGE_NAME}-${RELEASE_VERSION}-macos/${PACKAGE_NAME}.app"
 [ -d "$APP" ] || die "missing desktop_updater release app at $APP"
+validate_versioned_frameworks "$APP/Contents/Frameworks"
+
+RESQLITE_FRAMEWORK="$APP/Contents/Frameworks/resqlite.framework"
+RESQLITE_BIN="$RESQLITE_FRAMEWORK/resqlite"
+[ -d "$RESQLITE_FRAMEWORK" ] || die "missing resqlite.framework from macOS app"
+[ -L "$RESQLITE_BIN" ] || die "missing resqlite framework launcher at $RESQLITE_BIN"
+[ -x "$RESQLITE_BIN" ] || die "resqlite framework launcher is not executable at $RESQLITE_BIN"
+RESQLITE_FILE_INFO="$(file "$RESQLITE_BIN")" || die "unable to inspect $RESQLITE_BIN"
+echo "$RESQLITE_FILE_INFO"
+case "$RESQLITE_FILE_INFO" in
+  *Mach-O*) ;;
+  *) die "resqlite framework launcher is not a Mach-O binary" ;;
+esac
+lipo -info "$RESQLITE_BIN"
+lipo -verify_arch arm64 x86_64 "$RESQLITE_BIN" ||
+  die "resqlite framework must contain arm64 and x86_64 slices"
+nm -gU "$RESQLITE_BIN" | awk '$NF == "_resqlite_open" { found = 1 } END { exit !found }' ||
+  die "resqlite_open is not exported"
+otool -L "$RESQLITE_BIN"
 
 require_env APP_STORE_CONNECT_KEY_IDENTIFIER
 require_env APP_STORE_CONNECT_ISSUER_ID
@@ -195,6 +329,7 @@ fi
   --entitlements "$REPO_ROOT/macos/Runner/Release.entitlements" \
   --sign "$IDENTITY" "$APP"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP"
+validate_versioned_frameworks "$APP/Contents/Frameworks"
 
 ASC_KEY="$WORKDIR/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8"
 printf '%s\n' "$APP_STORE_CONNECT_PRIVATE_KEY" > "$ASC_KEY"
@@ -213,12 +348,10 @@ dart run desktop_updater:archive macos
 
 ARCHIVE_DIR="dist/${BUILD}/${ARCHIVE_NAME}"
 
-# desktop_updater hashes regular files only. macOS framework launcher symlinks
-# are stable across builds, so do not upload them as unhashed archive entries.
-find "$ARCHIVE_DIR" -type l -print0 | while IFS= read -r -d '' link; do
-  echo "Removing unhashed macOS archive symlink ${link#$ARCHIVE_DIR/}"
-  rm -f "$link"
-done
+# The updater manifest transports regular files only. Strip only the canonical
+# versioned-framework links that both native repair paths know how to recreate;
+# an unknown link is a release blocker, never something to delete silently.
+remove_transport_only_framework_links "$ARCHIVE_DIR"
 validate_desktop_updater_archive "$ARCHIVE_DIR"
 
 echo "Prepared desktop_updater macOS archive $ARCHIVE_DIR"

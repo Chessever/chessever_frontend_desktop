@@ -5,6 +5,26 @@ import 'package:http/http.dart' as http;
 
 const _archiveUrl = 'https://chessever.com/updates/desktop/app-archive.json';
 
+const _requiredArchivePaths = <String, List<String>>{
+  'macos': ['Info.plist'],
+  'windows': [
+    'Chessever.exe',
+    'desktop_updater_plugin.dll',
+    'flutter_onnxruntime_plugin.dll',
+    'onnxruntime.dll',
+    'resqlite.dll',
+    'sqlite3.dll',
+  ],
+  'linux': [
+    'Chessever',
+    'lib/libflutter_onnxruntime_plugin.so',
+    'lib/libonnxruntime.so.1',
+    'lib/libresqlite.so',
+  ],
+};
+
+const _macResqliteVersionPrefix = 'Frameworks/resqlite.framework/Versions/';
+
 Future<void> main() async {
   final current = _readPubspecVersion();
   final client = http.Client();
@@ -13,7 +33,7 @@ Future<void> main() async {
   try {
     final archive = await _fetchJson(client, Uri.parse(_archiveUrl));
     final items = (archive['items'] as List<dynamic>? ?? const []);
-    for (final platform in const ['macos', 'windows']) {
+    for (final platform in _requiredArchivePaths.keys) {
       final latest = _latestForPlatform(items, platform);
       if (latest == null) {
         errors.add('$platform: app-archive.json has no item');
@@ -68,11 +88,15 @@ Future<void> main() async {
         }
         paths.add(path);
       }
-      if (platform == 'macos' && !paths.contains('Info.plist')) {
-        errors.add('macos: archive should contain Contents/Info.plist payload');
+      for (final requiredPath in _requiredArchivePaths[platform]!) {
+        if (!paths.contains(requiredPath)) {
+          errors.add('$platform: archive is missing $requiredPath');
+        }
       }
-      if (platform == 'windows' && !paths.contains('Chessever.exe')) {
-        errors.add('windows: archive should contain Chessever.exe');
+      if (platform == 'macos' && !_hasVersionedMacResqliteBinary(paths)) {
+        errors.add(
+          'macos: archive is missing a concrete versioned resqlite binary',
+        );
       }
       stdout.writeln(
         '$platform: latest=$releaseVersion files=${paths.length} url=$url',
@@ -92,6 +116,18 @@ Future<void> main() async {
   }
 
   stdout.writeln('Desktop app archive matches pubspec and latest archives.');
+}
+
+bool _hasVersionedMacResqliteBinary(Set<String> paths) {
+  return paths.any((path) {
+    if (!path.startsWith(_macResqliteVersionPrefix) ||
+        !path.endsWith('/resqlite')) {
+      return false;
+    }
+    final versionAndBinary = path.substring(_macResqliteVersionPrefix.length);
+    final parts = versionAndBinary.split('/');
+    return parts.length == 2 && parts.first.isNotEmpty;
+  });
 }
 
 Future<Map<String, dynamic>> _fetchJson(http.Client client, Uri uri) async {
