@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/panes/library_pane.dart';
+import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 
 void main() {
@@ -140,6 +141,31 @@ void main() {
       tabs.navigateActive(TabKind.favorites);
       expect(tabs.state.active?.kind, TabKind.favorites);
       expect(tabs.state.canGoForward, isFalse);
+    });
+
+    test('player profile section survives opening a game and going back', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+
+      final tabs = container.read(desktopTabsProvider.notifier);
+      tabs.navigateActive(TabKind.playerProfile);
+      final profileTabId = container.read(desktopTabsProvider).activeId!;
+      container.read(playerProfileSectionByTabIdProvider.notifier).state = {
+        profileTabId: PlayerProfileSection.games,
+      };
+
+      tabs.navigateActive(TabKind.board);
+      tabs.goBack();
+
+      expect(container.read(desktopTabsProvider).activeId, profileTabId);
+      expect(
+        container.read(desktopTabsProvider).active?.kind,
+        TabKind.playerProfile,
+      );
+      expect(
+        container.read(playerProfileSectionByTabIdProvider)[profileTabId],
+        PlayerProfileSection.games,
+      );
     });
 
     test('route history is bounded for long-running tabs', () {

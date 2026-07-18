@@ -966,6 +966,11 @@ class _BoardPaneContent extends HookConsumerWidget {
           putIfMissing('BlackElo', tabArgs.blackRating);
         }
       }
+      applyDesktopChessEverPgnLinks(
+        updatedMetadata,
+        game: tabArgs?.sourceGame,
+        gameId: gameId ?? tabArgs?.gameId,
+      );
       final finalizedMetadata = finalizeBroadcastPgnMetadata(
         parsedMetadata: updatedMetadata,
         acceptedLiveStatus: acceptedLiveStatus,

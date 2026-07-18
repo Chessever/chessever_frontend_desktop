@@ -45,8 +45,8 @@ const List<DesktopMainRoute> desktopMainRoutes = [
   ),
   DesktopMainRoute(
     pane: DesktopPane.players,
-    label: 'Player',
-    paletteTitle: 'Open Player',
+    label: 'Prepare',
+    paletteTitle: 'Open Prepare',
     paletteSubtitle: 'Prep a player from ChessEver, Lichess, and Chess.com',
     icon: Icons.person_search_outlined,
   ),
