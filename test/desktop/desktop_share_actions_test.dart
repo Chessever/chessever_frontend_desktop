@@ -105,6 +105,30 @@ void main() {
       );
     });
 
+    test('writes only canonical ChessEver links into broadcast PGN headers', () {
+      final headers = <String, dynamic>{
+        'Site': 'https://lichess.org/broadcast/smart-event/round-1',
+        'Source': 'https://lichess.org/abcdefgh',
+        'BroadcastURL': 'https://lichess.org/broadcast/smart-event/round-1',
+        'GameURL': 'https://lichess.org/abcdefgh',
+      };
+
+      applyDesktopChessEverPgnLinks(headers, game: _game());
+
+      expect(
+        headers['ChessEverGameUrl'],
+        'https://chessever.com/games/$_canonicalGameId?tour=smart-event&round=A00',
+      );
+      expect(
+        headers['ChessEverEventUrl'],
+        'https://chessever.com/broadcast/smart-event/tour',
+      );
+      expect(headers['Site'], headers['ChessEverGameUrl']);
+      expect(headers['Source'], headers['ChessEverGameUrl']);
+      expect(headers.containsKey('BroadcastURL'), isFalse);
+      expect(headers.containsKey('GameURL'), isFalse);
+    });
+
     test(
       'hydrates a canonical Gamebase row from Supabase before export',
       () async {

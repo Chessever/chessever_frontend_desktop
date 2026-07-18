@@ -96,16 +96,14 @@ class PlayerProfileView extends ConsumerStatefulWidget {
   ConsumerState<PlayerProfileView> createState() => _PlayerProfileViewState();
 }
 
-enum _ProfileTab { about, games, events }
-
-extension on _ProfileTab {
+extension on PlayerProfileSection {
   String get label {
     switch (this) {
-      case _ProfileTab.about:
+      case PlayerProfileSection.about:
         return 'About';
-      case _ProfileTab.games:
+      case PlayerProfileSection.games:
         return 'Games';
-      case _ProfileTab.events:
+      case PlayerProfileSection.events:
         return 'Events';
     }
   }
@@ -114,7 +112,6 @@ extension on _ProfileTab {
 class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
   late PlayerProfileDataSource _dataSource;
   String? _gamebasePlayerId;
-  _ProfileTab _tab = _ProfileTab.about;
   bool _isBuildingProfile = false;
   bool _isBuildingTree = false;
 
@@ -133,7 +130,6 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
       setState(() {
         _dataSource = _profileInitialDataSource();
         _gamebasePlayerId = _normalize(widget.args.gamebasePlayerId);
-        _tab = _ProfileTab.about;
       });
     }
   }
@@ -157,9 +153,17 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
     gamebasePlayerId: _gamebasePlayerId,
   );
 
-  void _setTab(_ProfileTab next) {
-    if (_tab == next) return;
-    setState(() => _tab = next);
+  void _setTab(PlayerProfileSection next) {
+    final sections = ref.read(playerProfileSectionByTabIdProvider);
+    if ((sections[widget.tabId] ?? PlayerProfileSection.about) == next) return;
+    ref
+        .read(playerProfileSectionByTabIdProvider.notifier)
+        .update(
+          (current) => <String, PlayerProfileSection>{
+            ...current,
+            widget.tabId: next,
+          },
+        );
   }
 
   Future<PlayerWorkspacePlayer> _ensurePlayerWorkspace(int fideId) async {
@@ -305,7 +309,7 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
 
     switch (action) {
       case _PlayerProfileSaveAction.chooseManually:
-        _setTab(_ProfileTab.games);
+        _setTab(PlayerProfileSection.games);
         ref.read(playerGamesSelectionModeProvider(playerKey).notifier).state =
             true;
         break;
@@ -438,11 +442,16 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
     );
 
     final gamesState = ref.watch(playerProfileGamesKeyProvider(activeKey));
+    final currentTab = ref.watch(
+      playerProfileSectionByTabIdProvider.select(
+        (sections) => sections[widget.tabId] ?? PlayerProfileSection.about,
+      ),
+    );
     final hasActiveFilter = gamesState.hasActiveFilters;
     final isTwicLoading =
         _dataSource == PlayerProfileDataSource.twic && gamesState.isLoading;
 
-    final showEventCounts = _tab == _ProfileTab.events;
+    final showEventCounts = currentTab == PlayerProfileSection.events;
 
     final ratings = _ProfileRatings(
       classical: activeProfile?.classicalRating ?? widget.args.rating,
@@ -527,7 +536,7 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
                 Expanded(
                   child: _RightPane(
                     tabId: widget.tabId,
-                    currentTab: _tab,
+                    currentTab: currentTab,
                     onSelectTab: _setTab,
                     hasActiveFilter: hasActiveFilter,
                     isTwicLoading: isTwicLoading,
@@ -1345,8 +1354,8 @@ class _RightPane extends StatelessWidget {
   });
 
   final String tabId;
-  final _ProfileTab currentTab;
-  final ValueChanged<_ProfileTab> onSelectTab;
+  final PlayerProfileSection currentTab;
+  final ValueChanged<PlayerProfileSection> onSelectTab;
   final bool hasActiveFilter;
   final bool isTwicLoading;
   final PlayerProfileKey activeKey;
@@ -1367,27 +1376,27 @@ class _RightPane extends StatelessWidget {
         ),
         Expanded(
           child: PersistentIndexedStack(
-            index: _ProfileTab.values.indexOf(currentTab),
+            index: PlayerProfileSection.values.indexOf(currentTab),
             sizing: StackFit.expand,
             children: [
               _AboutBody(
                 activeKey: activeKey,
                 fideId: fideId,
                 playerName: playerName,
-                onShowGames: () => onSelectTab(_ProfileTab.games),
+                onShowGames: () => onSelectTab(PlayerProfileSection.games),
               ),
               _GamesBody(
                 tabId: tabId,
                 activeKey: activeKey,
                 playerName: playerName,
                 dataSource: dataSource,
-                isActive: currentTab == _ProfileTab.games,
+                isActive: currentTab == PlayerProfileSection.games,
               ),
               _EventsBody(
                 activeKey: activeKey,
                 fideId: fideId,
                 dataSource: dataSource,
-                isActive: currentTab == _ProfileTab.events,
+                isActive: currentTab == PlayerProfileSection.events,
               ),
             ],
           ),
@@ -1399,8 +1408,8 @@ class _RightPane extends StatelessWidget {
 
 class _TabStrip extends StatelessWidget {
   const _TabStrip({required this.current, required this.onSelect});
-  final _ProfileTab current;
-  final ValueChanged<_ProfileTab> onSelect;
+  final PlayerProfileSection current;
+  final ValueChanged<PlayerProfileSection> onSelect;
 
   @override
   Widget build(BuildContext context) {
@@ -1411,7 +1420,7 @@ class _TabStrip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         children: [
-          for (final t in _ProfileTab.values)
+          for (final t in PlayerProfileSection.values)
             _TabUnderlineItem(
               label: t.label,
               selected: t == current,
@@ -2655,11 +2664,18 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
               _PlayerGamesTableToggle(
                 selected: _showDatabaseTable,
                 onTap: () {
-                  setState(() => _showDatabaseTable = !_showDatabaseTable);
+                  if (_showDatabaseTable) return;
+                  setState(() => _showDatabaseTable = true);
                 },
               ),
               const SizedBox(width: 8),
-              const GameViewModeToggle(),
+              GameViewModeToggle(
+                showSelectedState: !_showDatabaseTable,
+                onSelected: (_) {
+                  if (!_showDatabaseTable) return;
+                  setState(() => _showDatabaseTable = false);
+                },
+              ),
             ],
           ),
         ),
@@ -3915,7 +3931,7 @@ class _PlayerGamesTableToggle extends StatelessWidget {
     return DesktopTooltip(
       message:
           selected
-              ? 'Database table view is active · click for grouped events view'
+              ? 'Database table view is active'
               : 'Show sortable database table view',
       child: ClickCursor(
         child: GestureDetector(

@@ -62,7 +62,7 @@ void main() {
       'Ctrl+1',
     );
     expect(
-      debugCommandPaletteShortcutForTitle('Open Player', isMacOS: false),
+      debugCommandPaletteShortcutForTitle('Open Prepare', isMacOS: false),
       'Ctrl+4',
     );
     expect(

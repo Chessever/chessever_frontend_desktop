@@ -94,9 +94,10 @@ DesktopPane? paneForTabKind(TabKind kind) {
     case TabKind.playerScoreCard:
     case TabKind.playerProfile:
     case TabKind.userProfile:
-      // Player tabs land under the Player workspace since it is the prep hub
-      // for account imports, source databases, and profile study.
-      return DesktopPane.players;
+      // Player detail/profile tabs are destinations, not the Prepare
+      // workspace itself. Leaving the sidebar unselected also keeps Prepare
+      // clickable as an explicit way back to opponent preparation.
+      return null;
     case TabKind.boardSettings:
     case TabKind.notificationSettings:
       // Both subscreens of the desktop preferences pane — keep the
@@ -111,7 +112,7 @@ DesktopPane? paneForTabKind(TabKind kind) {
 /// incorrectly keep Board highlighted after the last tab is closed.
 DesktopPane? sidebarPaneForActiveTabKind(TabKind? kind) {
   if (kind == null) return null;
-  return paneForTabKind(kind) ?? DesktopPane.board;
+  return paneForTabKind(kind);
 }
 
 /// Sidebar highlight derived from the foreground tab plus its source context.
@@ -129,13 +130,10 @@ DesktopPane? sidebarPaneForActiveTab(
     final args = boardArgsByTabId[tab.id];
     if (args == null) return DesktopPane.board;
 
-    final openedFromDatabase =
-        args.databaseTitle.trim().isNotEmpty || args.databaseGames.isNotEmpty;
-    if (openedFromDatabase) {
-      return DesktopPane.library;
-    }
-
-    return DesktopPane.board;
+    // An opened game is a detail workspace, not the clean analysis Board.
+    // Do not highlight Board (or its source category), so Board remains an
+    // obvious clickable route back to a fresh analysis workspace.
+    return null;
   }
 
   return sidebarPaneForActiveTabKind(tab.kind);

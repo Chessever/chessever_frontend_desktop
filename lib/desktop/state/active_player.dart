@@ -67,6 +67,18 @@ final playerProfileByTabIdProvider =
       (_) => const <String, PlayerProfileArgs>{},
     );
 
+/// Selected section for each Player Profile tab.
+///
+/// This lives outside the profile widget because opening a game temporarily
+/// replaces the tab's route. Browser-style Back then remounts the profile,
+/// which should return to the same About / Games / Events section.
+enum PlayerProfileSection { about, games, events }
+
+final playerProfileSectionByTabIdProvider =
+    StateProvider<Map<String, PlayerProfileSection>>(
+      (_) => const <String, PlayerProfileSection>{},
+    );
+
 /// Open (or reactivate) a Score Card tab focused on [player]. Mirrors
 /// what mobile does when the user taps a player chip on the chessboard:
 ///  1. Stash a per-tab copy of the player so swapping tabs doesn't lose

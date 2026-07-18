@@ -22,6 +22,12 @@ final _uuidPattern = RegExp(
 );
 final _lichessShortIdPattern = RegExp(r'^[A-Za-z0-9]{8}$');
 
+/// Portable PGN tags for ChessEver's canonical public routes. Keeping them in
+/// the PGN lets a copied or saved broadcast game retain links back to the app
+/// without leaking the upstream broadcast provider's URLs.
+const chessEverEventUrlPgnTag = 'ChessEverEventUrl';
+const chessEverGameUrlPgnTag = 'ChessEverGameUrl';
+
 /// Smart Event rows can originate from Gamebase while retaining the canonical
 /// ChessEver game UUID. Those rows resolve through the same public game route
 /// and Supabase PGN endpoint as a normal broadcast game. Other Gamebase rows
@@ -59,6 +65,70 @@ String? buildDesktopGameShareUrl({
   return queryParams.isEmpty
       ? uri.toString()
       : uri.replace(queryParameters: queryParams).toString();
+}
+
+/// Adds canonical ChessEver links to an in-memory board PGN before it is
+/// copied, saved, or shared. Only games whose public game route can resolve
+/// receive the event route too; local and catalogue-only games remain
+/// unmodified rather than gaining a dead event link.
+void applyDesktopChessEverPgnLinks(
+  Map<String, dynamic> headers, {
+  GamesTourModel? game,
+  String? gameId,
+}) {
+  final gameUrl = buildDesktopGameShareUrl(game: game, gameId: gameId);
+  if (gameUrl == null) return;
+
+  headers[chessEverGameUrlPgnTag] = gameUrl;
+  headers['ChessEverSourceUrl'] = gameUrl;
+
+  final site = headers['Site']?.toString().trim() ?? '';
+  if (_isWebUrl(site)) headers['Site'] = gameUrl;
+  final source = headers['Source']?.toString().trim() ?? '';
+  if (_isWebUrl(source)) headers['Source'] = gameUrl;
+
+  final eventUrl = _desktopEventShareUrlForGame(game);
+  if (eventUrl != null) headers[chessEverEventUrlPgnTag] = eventUrl;
+
+  // These upstream-specific tags are redundant once the canonical links are
+  // present and otherwise keep third-party URLs in copied/saved PGN files.
+  for (final key in _upstreamPgnLinkTags) {
+    headers.remove(key);
+  }
+}
+
+const _upstreamPgnLinkTags = <String>{
+  'BroadcastURL',
+  'BroadcastUrl',
+  'broadcastUrl',
+  'GameURL',
+  'GameUrl',
+  'gameUrl',
+  'LichessURL',
+  'LichessUrl',
+};
+
+String? _desktopEventShareUrlForGame(GamesTourModel? game) {
+  if (game == null || game.tourId.trim().isEmpty) return null;
+  final title =
+      game.tourName?.trim().isNotEmpty == true
+          ? game.tourName!.trim()
+          : game.eventName?.trim().isNotEmpty == true
+          ? game.eventName!.trim()
+          : game.tourSlug?.trim().isNotEmpty == true
+          ? game.tourSlug!.trim()
+          : game.tourId;
+  return buildDesktopEventShareUrl(
+    id: game.tourId,
+    title: title,
+    tourId: game.tourId,
+    tourSlug: game.tourSlug,
+  );
+}
+
+bool _isWebUrl(String value) {
+  final uri = Uri.tryParse(value);
+  return uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
 }
 
 /// Resolves export/share PGN for the desktop game dialog.
@@ -284,6 +354,7 @@ Map<String, String> _headersForGame(
   putIfEmpty('Round', game.roundSlug);
   putIfEmpty('Result', game.gameStatus.displayText);
   _applyChesseverPgnSource(headers, shareUrl);
+  applyDesktopChessEverPgnLinks(headers, game: game, gameId: game.gameId);
 
   return headers;
 }
@@ -298,6 +369,10 @@ void _applyChesseverPgnSource(Map<String, String> headers, String? shareUrl) {
   headers['Site'] = url;
   headers['Source'] = url;
   headers['ChessEverSourceUrl'] = url;
+  headers[chessEverGameUrlPgnTag] = url;
+  for (final key in _upstreamPgnLinkTags) {
+    headers.remove(key);
+  }
 }
 
 Position _positionFromFen(String fen) {
