@@ -71,7 +71,7 @@ Future<ProcessResult> _runVerifier({
   required Directory repository,
   required Directory cwd,
 }) {
-  return Process.run('dart', [
+  return Process.run(Platform.resolvedExecutable, [
     '${repository.path}/tool/verify_windows_release_bundle.dart',
   ], workingDirectory: cwd.path);
 }
