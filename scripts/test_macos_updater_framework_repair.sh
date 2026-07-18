@@ -172,7 +172,9 @@ make_archive_framework() {
   mkdir -p "$framework/Versions/A/Resources"
   write_framework_plist "$framework/Versions/A/Resources/Info.plist" Archive
   printf '#!/bin/sh\nexit 0\n' > "$framework/Versions/A/Archive"
-  chmod +x "$framework/Versions/A/Archive"
+  # Framework bundle binaries may be dyld-loaded Mach-O libraries rather than
+  # process launchers. Flutter's App.framework/App is valid at mode 0644.
+  chmod 0644 "$framework/Versions/A/Archive"
   ln -s A "$framework/Versions/Current"
   ln -s Versions/Current/Archive "$framework/Archive"
   ln -s Versions/Current/Resources "$framework/Resources"
@@ -180,8 +182,10 @@ make_archive_framework() {
 
 CLEAN_ARCHIVE="$WORKDIR/clean-archive"
 make_archive_framework "$CLEAN_ARCHIVE"
+test ! -x "$CLEAN_ARCHIVE/Frameworks/Archive.framework/Archive"
 "$STRIPPER" "$CLEAN_ARCHIVE"
 test -f "$CLEAN_ARCHIVE/Frameworks/Archive.framework/Versions/A/Archive"
+test ! -x "$CLEAN_ARCHIVE/Frameworks/Archive.framework/Versions/A/Archive"
 test -z "$(find "$CLEAN_ARCHIVE" -type l -print -quit)"
 
 UNSUPPORTED_ARCHIVE="$WORKDIR/unsupported-archive"
@@ -220,3 +224,4 @@ test "$(cat "$OUTSIDE_FRAMEWORK/marker")" = "outside-must-not-change"
 
 echo "Verified updater repair uses only an unambiguous or existing framework version"
 echo "Verified publisher strips only reconstructible framework links and rejects unknown links"
+echo "Verified publisher accepts valid mode-0644 framework bundle binaries"

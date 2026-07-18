@@ -210,8 +210,13 @@ validate_versioned_frameworks() {
       die "missing framework executable symlink at $framework/$executable"
     [ "$(readlink "$framework/$executable")" = "Versions/Current/$executable" ] ||
       die "noncanonical framework executable symlink at $framework/$executable"
-    [ -x "$framework/$executable" ] ||
-      die "framework executable is not runnable at $framework/$executable"
+
+    # A framework's CFBundleExecutable can be a Mach-O dynamic library that
+    # dyld loads rather than a process the OS launches. Recent Flutter builds
+    # correctly emit App.framework/App as mode 0644, so requiring an execute
+    # bit here rejects a valid signed framework. The concrete regular-file and
+    # canonical-link checks above establish the archive layout; codesign
+    # verification below establishes the executable payload's integrity.
 
     if [ -d "$framework/Versions/$current_target/Resources" ]; then
       [ -L "$framework/Resources" ] || die "missing Resources symlink in $framework"
