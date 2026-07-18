@@ -32,13 +32,15 @@ void main() {
       final flutter = _createFakeFlutterExecutable(pathRoot);
 
       expect(
-        _findBundledDartExecutable(
-          environment: {
-            'FLUTTER_ROOT': configuredRoot.path,
-            'PATH': flutter.parent.path,
-          },
-        ),
-        configuredDart.path,
+        File(
+          _findBundledDartExecutable(
+            environment: {
+              'FLUTTER_ROOT': configuredRoot.path,
+              'PATH': flutter.parent.path,
+            },
+          ),
+        ).resolveSymbolicLinksSync(),
+        configuredDart.resolveSymbolicLinksSync(),
       );
     } finally {
       await temp.delete(recursive: true);
@@ -55,8 +57,12 @@ void main() {
       final flutter = _createFakeFlutterExecutable(flutterRoot);
 
       expect(
-        _findBundledDartExecutable(environment: {'PATH': flutter.parent.path}),
-        dart.path,
+        File(
+          _findBundledDartExecutable(
+            environment: {'PATH': flutter.parent.path},
+          ),
+        ).resolveSymbolicLinksSync(),
+        dart.resolveSymbolicLinksSync(),
       );
     } finally {
       await temp.delete(recursive: true);
