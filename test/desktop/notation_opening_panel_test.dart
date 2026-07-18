@@ -102,7 +102,7 @@ void main() {
       final split = tester.widget<ResizableSplitView>(splitFinder);
       expect(split.axis, Axis.vertical);
       expect(split.gutterThickness, desktopEngineRightRailGutterThickness);
-      expect(split.gutterColor, kPrimaryColor);
+      expect(split.gutterColor, kDividerColor);
       expect(
         split.children.first.initialWeight,
         desktopEngineRightRailInitialWeight,

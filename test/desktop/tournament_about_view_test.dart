@@ -37,7 +37,7 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Players'), findsOneWidget);
+    expect(find.text('Top rated players'), findsOneWidget);
     expect(
       find.text('GM Carlsen, Magnus, GM Nakamura, Hikaru, GM Ju, Wenjun'),
       findsOneWidget,

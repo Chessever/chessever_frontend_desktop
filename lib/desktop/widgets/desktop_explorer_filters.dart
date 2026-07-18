@@ -10,7 +10,6 @@ import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/explorer_filter_scope.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
-import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
@@ -49,9 +48,7 @@ class DesktopExplorerFilters extends ConsumerWidget {
       });
     }
     final notifier = ref.read(gamebaseExplorerProvider.notifier);
-    final hasActiveSettings =
-        _hasActiveFilterSettings(filters, scopedPlayer) ||
-        filters.hasCustomSort;
+    final hasActiveSettings = _hasActiveFilterSettings(filters, scopedPlayer);
     return FTheme(
       data: FThemes.zinc.dark,
       child: ColoredBox(
@@ -71,77 +68,69 @@ class DesktopExplorerFilters extends ConsumerWidget {
             Expanded(
               child: SingleChildScrollView(
                 physics: const DesktopScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const _SectionLabel('Time control'),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 5),
                     _TimeControlChips(
                       selected: filters.timeControls,
                       onToggle: notifier.toggleTimeControl,
                     ),
                     if (!isBuildTreeScope) ...[
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 10),
                       const _SectionLabel('Level'),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 5),
                       _TitleChips(
                         selectedMinRating: filters.minRating,
                         onToggle: notifier.toggleTitle,
                       ),
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 10),
                       const _SectionLabel('Result'),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 5),
                       _ResultChips(
                         selected: filters.gameResult,
                         onToggle: notifier.toggleGameResult,
                       ),
                     ],
-                    const SizedBox(height: 18),
+                    const SizedBox(height: 10),
                     const _SectionLabel('Format'),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 5),
                     _FormatChips(
                       selectedIsOnline: filters.isOnline,
                       onToggle: notifier.toggleFormat,
                     ),
                     if (filters.playerIds.isNotEmpty) ...[
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 10),
                       const _SectionLabel('Played as'),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 5),
                       _ColorChips(
                         selected: filters.playerColor,
                         onToggle: notifier.togglePlayerColor,
                       ),
                     ],
                     if (!isBuildTreeScope) ...[
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 10),
                       const _SectionLabel('Rating range'),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 5),
                       _RatingRange(
                         minRating: filters.minRating,
                         maxRating: filters.maxRating,
                         onChanged: notifier.setRatingRange,
                       ),
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 10),
                       const _SectionLabel('Year range'),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 5),
                       _YearRange(
                         yearFrom: filters.yearFrom,
                         yearTo: filters.yearTo,
                         onChanged: notifier.setYearRange,
                       ),
                     ],
-                    const SizedBox(height: 18),
-                    const _SectionLabel('Sort games'),
-                    const SizedBox(height: 8),
-                    _SortControls(
-                      sortBy: filters.sortBy,
-                      sortDirection: filters.sortDirection,
-                      onChanged: notifier.setPositionGamesSort,
-                    ),
-                    const SizedBox(height: 18),
+                    const SizedBox(height: 10),
                     const _SectionLabel('Player'),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 5),
                     if (scopedPlayer != null)
                       _SelectedPlayerPill(player: scopedPlayer!, onRemove: null)
                     else
@@ -214,11 +203,9 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+      padding: const EdgeInsets.fromLTRB(12, 7, 10, 7),
       child: Row(
         children: [
-          const Icon(Icons.tune_outlined, size: 14, color: kPrimaryColor),
-          const SizedBox(width: 8),
           const Text(
             'Filters',
             style: TextStyle(
@@ -287,17 +274,13 @@ class _SectionLabel extends StatelessWidget {
 class _Chip extends StatefulWidget {
   const _Chip({
     required this.label,
-    required this.icon,
     required this.selected,
     required this.onTap,
-    this.iconColor,
   });
 
   final String label;
-  final IconData icon;
   final bool selected;
   final VoidCallback onTap;
-  final Color? iconColor;
 
   @override
   State<_Chip> createState() => _ChipState();
@@ -309,7 +292,6 @@ class _ChipState extends State<_Chip> {
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
-    final accent = selected ? kPrimaryColor : kWhiteColor70;
     final border =
         selected
             ? kPrimaryColor.withValues(alpha: 0.55)
@@ -329,26 +311,19 @@ class _ChipState extends State<_Chip> {
           onTap: widget.onTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 90),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
               color: bg,
               borderRadius: BorderRadius.circular(6),
               border: Border.all(color: border),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(widget.icon, size: 12, color: widget.iconColor ?? accent),
-                const SizedBox(width: 6),
-                Text(
-                  widget.label,
-                  style: TextStyle(
-                    color: selected ? kWhiteColor : kWhiteColor70,
-                    fontSize: 11,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  ),
-                ),
-              ],
+            child: Text(
+              widget.label,
+              style: TextStyle(
+                color: selected ? kWhiteColor : kWhiteColor70,
+                fontSize: 10.5,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              ),
             ),
           ),
         ),
@@ -372,7 +347,6 @@ class _TimeControlChips extends StatelessWidget {
         for (final tc in TimeControl.values)
           _Chip(
             label: _label(tc),
-            icon: _icon(tc),
             selected: selected.contains(tc),
             onTap: () => onToggle(tc),
           ),
@@ -394,21 +368,6 @@ class _TimeControlChips extends StatelessWidget {
         return 'Ultrabullet';
     }
   }
-
-  IconData _icon(TimeControl tc) {
-    switch (tc) {
-      case TimeControl.classical:
-        return Icons.hourglass_top_rounded;
-      case TimeControl.rapid:
-        return Icons.timer_outlined;
-      case TimeControl.blitz:
-        return Icons.bolt_rounded;
-      case TimeControl.bullet:
-        return Icons.flash_on_rounded;
-      case TimeControl.ultrabullet:
-        return Icons.electric_bolt_rounded;
-    }
-  }
 }
 
 class _TitleChips extends StatelessWidget {
@@ -427,25 +386,11 @@ class _TitleChips extends StatelessWidget {
         for (final t in GamebasePlayerTitle.values)
           _Chip(
             label: '${t.label} ${t.subtitle}',
-            icon: _icon(t),
             selected: selected == t,
             onTap: () => onToggle(t),
           ),
       ],
     );
-  }
-
-  IconData _icon(GamebasePlayerTitle t) {
-    switch (t) {
-      case GamebasePlayerTitle.gm:
-        return Icons.workspace_premium_rounded;
-      case GamebasePlayerTitle.im:
-        return Icons.military_tech_rounded;
-      case GamebasePlayerTitle.fm:
-        return Icons.shield_outlined;
-      case GamebasePlayerTitle.cm:
-        return Icons.school_outlined;
-    }
   }
 }
 
@@ -464,23 +409,11 @@ class _ResultChips extends StatelessWidget {
         for (final r in GamebaseGameResult.values)
           _Chip(
             label: r.displayText,
-            icon: _icon(r),
             selected: selected == r,
             onTap: () => onToggle(r),
           ),
       ],
     );
-  }
-
-  IconData _icon(GamebaseGameResult r) {
-    switch (r) {
-      case GamebaseGameResult.whiteWins:
-        return Icons.flag_outlined;
-      case GamebaseGameResult.blackWins:
-        return Icons.flag_rounded;
-      case GamebaseGameResult.draw:
-        return Icons.handshake_outlined;
-    }
   }
 }
 
@@ -498,13 +431,11 @@ class _FormatChips extends StatelessWidget {
       children: [
         _Chip(
           label: 'OTB',
-          icon: Icons.public_off_rounded,
           selected: selectedIsOnline == false,
           onTap: () => onToggle(false),
         ),
         _Chip(
           label: 'Online',
-          icon: Icons.public_rounded,
           selected: selectedIsOnline == true,
           onTap: () => onToggle(true),
         ),
@@ -527,140 +458,16 @@ class _ColorChips extends StatelessWidget {
       children: [
         _Chip(
           label: 'White',
-          icon: Icons.circle,
-          iconColor: kWhiteColor,
           selected: selected == GamebasePlayerColor.white,
           onTap: () => onToggle(GamebasePlayerColor.white),
         ),
         _Chip(
           label: 'Black',
-          icon: Icons.circle_outlined,
-          iconColor: kWhiteColor70,
           selected: selected == GamebasePlayerColor.black,
           onTap: () => onToggle(GamebasePlayerColor.black),
         ),
       ],
     );
-  }
-}
-
-class _SortControls extends StatelessWidget {
-  const _SortControls({
-    required this.sortBy,
-    required this.sortDirection,
-    required this.onChanged,
-  });
-
-  static const List<GamebaseSortField> _fields = [
-    GamebaseSortField.date,
-    GamebaseSortField.avgElo,
-    GamebaseSortField.whiteElo,
-    GamebaseSortField.blackElo,
-    GamebaseSortField.whiteName,
-    GamebaseSortField.blackName,
-    GamebaseSortField.result,
-    GamebaseSortField.timeControl,
-    GamebaseSortField.eco,
-    GamebaseSortField.opening,
-    GamebaseSortField.variation,
-    GamebaseSortField.event,
-    GamebaseSortField.site,
-    GamebaseSortField.whiteTitle,
-    GamebaseSortField.blackTitle,
-    GamebaseSortField.whiteFed,
-    GamebaseSortField.blackFed,
-    GamebaseSortField.whiteFideId,
-    GamebaseSortField.blackFideId,
-    GamebaseSortField.whitePlayerId,
-    GamebaseSortField.blackPlayerId,
-    GamebaseSortField.id,
-  ];
-
-  final GamebaseSortField sortBy;
-  final GamebaseSortDirection sortDirection;
-  final void Function(
-    GamebaseSortField sortBy,
-    GamebaseSortDirection sortDirection,
-  )
-  onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            for (final field in _fields)
-              _Chip(
-                label: field.label,
-                icon: _sortIcon(field),
-                selected: sortBy == field,
-                onTap: () => onChanged(field, sortDirection),
-              ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            _Chip(
-              label: 'Descending',
-              icon: Icons.south_rounded,
-              selected: sortDirection == GamebaseSortDirection.desc,
-              onTap: () => onChanged(sortBy, GamebaseSortDirection.desc),
-            ),
-            _Chip(
-              label: 'Ascending',
-              icon: Icons.north_rounded,
-              selected: sortDirection == GamebaseSortDirection.asc,
-              onTap: () => onChanged(sortBy, GamebaseSortDirection.asc),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  IconData _sortIcon(GamebaseSortField field) {
-    switch (field) {
-      case GamebaseSortField.date:
-        return Icons.calendar_today_outlined;
-      case GamebaseSortField.avgElo:
-      case GamebaseSortField.whiteElo:
-      case GamebaseSortField.blackElo:
-        return Icons.equalizer_rounded;
-      case GamebaseSortField.whiteName:
-      case GamebaseSortField.blackName:
-      case GamebaseSortField.whitePlayerId:
-      case GamebaseSortField.blackPlayerId:
-        return Icons.person_outline_rounded;
-      case GamebaseSortField.whiteTitle:
-      case GamebaseSortField.blackTitle:
-        return Icons.workspace_premium_rounded;
-      case GamebaseSortField.whiteFideId:
-      case GamebaseSortField.blackFideId:
-      case GamebaseSortField.id:
-        return Icons.tag_rounded;
-      case GamebaseSortField.whiteFed:
-      case GamebaseSortField.blackFed:
-        return Icons.flag_outlined;
-      case GamebaseSortField.result:
-        return Icons.scoreboard_outlined;
-      case GamebaseSortField.timeControl:
-        return Icons.timer_outlined;
-      case GamebaseSortField.eco:
-      case GamebaseSortField.opening:
-      case GamebaseSortField.variation:
-        return Icons.account_tree_outlined;
-      case GamebaseSortField.event:
-        return Icons.emoji_events_outlined;
-      case GamebaseSortField.site:
-        return Icons.place_outlined;
-    }
   }
 }
 

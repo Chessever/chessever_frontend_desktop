@@ -670,11 +670,10 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                         axis: Axis.vertical,
                         controller: _railController,
                         storageKey: desktopEngineRightRailSplitStorageKey,
-                        // The accent divider makes the vertical-resize affordance
-                        // discoverable without reserving any space inside the
-                        // engine output or its hover-preview overlays.
+                        // Use the standard divider treatment so resizing stays
+                        // discoverable without an accent line through content.
                         gutterThickness: desktopEngineRightRailGutterThickness,
-                        gutterColor: kPrimaryColor,
+                        gutterColor: kDividerColor,
                         children: [
                           SplitChild(
                             minSize: 120,

@@ -386,8 +386,9 @@ void main() {
         roundLabel: 'Round 5',
         roundStartsAt: now.add(const Duration(days: 1)),
         pgn: '',
-        status: GameStatus.unknown,
-        hasStarted: false,
+        status: GameStatus.ongoing,
+        hasStarted: true,
+        lastMoveTime: now.add(const Duration(days: 1)),
         boardNumber: 2,
       ),
       _summary(
@@ -395,8 +396,9 @@ void main() {
         roundLabel: 'Round 5',
         roundStartsAt: now.add(const Duration(days: 1)),
         pgn: '',
-        status: GameStatus.unknown,
-        hasStarted: false,
+        status: GameStatus.ongoing,
+        hasStarted: true,
+        lastMoveTime: now.add(const Duration(days: 1)),
         boardNumber: 1,
       ),
       // Round 6 — later this week but all "?" placeholder pairings → hidden,
@@ -444,18 +446,18 @@ void main() {
     final groups = eventRailRoundGroupsForTesting(games);
 
     expect(groups.map((group) => group.title).toList(), [
-      'Round 5',
       'Round 4',
       'Round 3',
       'Round 2',
       'Round 1',
+      'Round 5',
     ]);
-    expect(groups.first.status, 'upcoming');
-    expect(groups.first.pairingOnly, isTrue);
-    expect(groups.first.gameIds, ['r5-g2', 'r5-g1']);
-    expect(groups[1].status, 'live');
+    expect(groups.first.status, 'live');
+    expect(groups.last.status, 'upcoming');
+    expect(groups.last.pairingOnly, isTrue);
+    expect(groups.last.gameIds, ['r5-g2', 'r5-g1']);
     expect(
-      groups.skip(2).map((group) => group.status),
+      groups.skip(1).take(3).map((group) => group.status),
       everyElement('completed'),
     );
   });
@@ -1434,7 +1436,7 @@ void main() {
     expect(board2Top, lessThan(board10Top));
   });
 
-  testWidgets('upcoming event headers lead but collapse during a live round', (
+  testWidgets('active event headers lead and future rounds stay collapsed', (
     tester,
   ) async {
     final now = DateTime.now();
@@ -1477,8 +1479,8 @@ void main() {
     expect(find.text('Round 2'), findsOneWidget);
     expect(find.text('Round 4'), findsOneWidget);
     expect(
-      tester.getTopLeft(find.text('Round 4')).dy,
-      lessThan(tester.getTopLeft(find.text('Round 2')).dy),
+      tester.getTopLeft(find.text('Round 2')).dy,
+      lessThan(tester.getTopLeft(find.text('Round 4')).dy),
     );
     expect(find.text('Live White'), findsOneWidget);
     expect(find.text('Future White'), findsNothing);

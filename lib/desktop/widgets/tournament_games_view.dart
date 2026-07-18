@@ -388,7 +388,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     }
     // The list order is the source of truth: started rounds first in descending
     // order, then future rounds in descending order. A future round is promoted
-    // only when every started board is finished and it begins within one hour.
+    // only when every started board is finished and it begins within two hours.
     final displayRounds = sortRoundsForDisplay(
       grouped.filteredRounds,
       resolveDate: (model) => model.startsAt,
