@@ -1,7 +1,11 @@
+import 'package:collection/collection.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class LiveGameUpdate {
+  static const DeepCollectionEquality _playersEquality =
+      DeepCollectionEquality();
+
   const LiveGameUpdate({
     required this.gameId,
     this.pgn,
@@ -12,6 +16,7 @@ class LiveGameUpdate {
     this.lastClockBlack,
     this.status,
     this.players,
+    this.isFullRow = false,
   });
 
   factory LiveGameUpdate.fromRow(Map<String, dynamic> row) {
@@ -25,13 +30,15 @@ class LiveGameUpdate {
       lastClockBlack: row['last_clock_black'] as num?,
       status: row['status'] as String?,
       players: row['players'],
+      isFullRow: true,
     );
   }
 
   factory LiveGameUpdate.fromLegacyMap(
     String gameId,
-    Map<String, dynamic> row,
-  ) {
+    Map<String, dynamic> row, {
+    bool isFullRow = false,
+  }) {
     return LiveGameUpdate(
       gameId: gameId,
       pgn: row['pgn'] as String?,
@@ -42,6 +49,7 @@ class LiveGameUpdate {
       lastClockBlack: row['last_clock_black'] as num?,
       status: row['status'] as String?,
       players: row['players'],
+      isFullRow: isFullRow,
     );
   }
 
@@ -54,6 +62,10 @@ class LiveGameUpdate {
   final num? lastClockBlack;
   final String? status;
   final Object? players;
+
+  /// True when this value came from the repository's full selected games row.
+  /// In that form a null/zero is canonical data, not an omitted partial field.
+  final bool isFullRow;
 
   Map<String, dynamic> toLegacyMap() {
     return {
@@ -68,9 +80,12 @@ class LiveGameUpdate {
     };
   }
 
-  bool get hasPositionChange {
-    return pgn != null || fen != null || lastMove != null || status != null;
-  }
+  bool get hasPositionChange =>
+      isFullRow ||
+      pgn != null ||
+      fen != null ||
+      lastMove != null ||
+      status != null;
 
   @override
   bool operator ==(Object other) {
@@ -83,7 +98,9 @@ class LiveGameUpdate {
             other.lastMoveTime == lastMoveTime &&
             other.lastClockWhite == lastClockWhite &&
             other.lastClockBlack == lastClockBlack &&
-            other.status == status;
+            other.status == status &&
+            _playersEquality.equals(other.players, players) &&
+            other.isFullRow == isFullRow;
   }
 
   @override
@@ -97,6 +114,8 @@ class LiveGameUpdate {
       lastClockWhite,
       lastClockBlack,
       status,
+      _playersEquality.hash(players),
+      isFullRow,
     );
   }
 }
@@ -110,6 +129,29 @@ final gameStreamRepositoryProvider = AutoDisposeProvider<GameStreamRepository>((
 
 /// Repository for streaming game updates from Supabase Realtime.
 class GameStreamRepository {
+  static const String _liveUpdateColumns =
+      'id,pgn,fen,last_move,last_move_time,last_clock_white,'
+      'last_clock_black,status,players';
+
+  /// Reads the current canonical row after a stream snapshot appears to move
+  /// backwards.
+  ///
+  /// Supabase's table `stream()` combines an initial PostgREST snapshot with
+  /// Realtime snapshots, but does not label an emission as a reconnect/select
+  /// versus a row mutation. A rare backward PGN therefore needs one exact,
+  /// lightweight confirmation before it can replace retained live state.
+  Future<LiveGameUpdate?> fetchCurrentLiveGameUpdate(String gameId) async {
+    final id = gameId.trim();
+    if (id.isEmpty) return null;
+    final row =
+        await Supabase.instance.client
+            .from('games')
+            .select(_liveUpdateColumns)
+            .eq('id', id)
+            .maybeSingle();
+    return row == null ? null : LiveGameUpdate.fromRow(row);
+  }
+
   /// Subscribe to PGN updates for a specific game
   Stream<String?> subscribeToPgn(String gameId) {
     return Supabase.instance.client
@@ -248,7 +290,11 @@ bool _sameLegacyUpdate(
       previous['last_move_time'] == next['last_move_time'] &&
       previous['last_clock_white'] == next['last_clock_white'] &&
       previous['last_clock_black'] == next['last_clock_black'] &&
-      previous['status'] == next['status'];
+      previous['status'] == next['status'] &&
+      const DeepCollectionEquality().equals(
+        previous['players'],
+        next['players'],
+      );
 }
 
 bool _sameLiveGameUpdateBatch(

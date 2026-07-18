@@ -23,6 +23,12 @@ void main() {
       viewSource: ChessboardView.favScorecard,
       gameListSelectedId: 'selected-1',
       eventGames: [_summary('game-1')],
+      eventGamesKey: const BoardTabEventGamesKey(
+        tourId: 'tour-1',
+        selectedGameId: 'game-1',
+        selectedRoundId: 'round-1',
+        selectedBoardNumber: 1,
+      ),
       routeGames: [_summary('route-1', roundLabel: 'R2')],
       databaseGames: [
         _summary(
@@ -69,6 +75,10 @@ void main() {
     expect(decoded.args?.eventGames.single.id, 'game-1');
     expect(decoded.args?.eventGames.single.whitePlayer, 'Carlsen');
     expect(decoded.args?.eventGames.single.status, GameStatus.ongoing);
+    expect(decoded.args?.eventGamesKey?.tourId, 'tour-1');
+    expect(decoded.args?.eventGamesKey?.selectedGameId, 'game-1');
+    expect(decoded.args?.eventGamesKey?.selectedRoundId, 'round-1');
+    expect(decoded.args?.eventGamesKey?.selectedBoardNumber, 1);
     expect(decoded.args?.routeGames.single.id, 'route-1');
     expect(decoded.args?.routeGames.single.roundLabel, 'R2');
     expect(decoded.args?.databaseGames.single.id, 'database-1');
@@ -274,6 +284,7 @@ BoardTabGameArgs _args({
   ChessboardView viewSource = ChessboardView.tour,
   String? gameListSelectedId,
   List<TournamentGameSummary> eventGames = const <TournamentGameSummary>[],
+  BoardTabEventGamesKey? eventGamesKey,
   List<TournamentGameSummary> routeGames = const <TournamentGameSummary>[],
   List<TournamentGameSummary> databaseGames = const <TournamentGameSummary>[],
   BoardTabGamesContinuation? eventGamesContinuation,
@@ -301,6 +312,7 @@ BoardTabGameArgs _args({
     viewSource: viewSource,
     gameListSelectedId: gameListSelectedId,
     eventGames: eventGames,
+    eventGamesKey: eventGamesKey,
     routeGames: routeGames,
     databaseGames: databaseGames,
     eventGamesContinuation: eventGamesContinuation,

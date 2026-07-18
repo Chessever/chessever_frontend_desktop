@@ -58,6 +58,7 @@ import 'package:chessever/desktop/services/play/play_from_here.dart';
 import 'package:chessever/desktop/widgets/board_context_menu.dart';
 import 'package:chessever/desktop/widgets/board_share_dialog.dart';
 import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
+import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/desktop/widgets/board_annotation_layer.dart';
 import 'package:chessever/desktop/widgets/board_wheel_navigation.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -114,6 +115,170 @@ import 'package:chessever/utils/chess_title_utils.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 
+/// Applies a recognized broadcast status to PGN metadata.
+///
+/// Missing or future server status values are intentionally ignored. A
+/// transient unknown value must never turn a completed game back into `*`
+/// while the position stream keeps advancing.
+@visibleForTesting
+Map<String, dynamic>? mergeRecognizedLiveStatusMetadata({
+  required Map<String, dynamic> currentMetadata,
+  required String? rawStatus,
+}) {
+  final status = GameStatus.fromString(rawStatus);
+  if (status == GameStatus.unknown) return null;
+
+  final isLive = status.isOngoing;
+  final result = switch (status) {
+    GameStatus.ongoing => '*',
+    GameStatus.whiteWins => '1-0',
+    GameStatus.blackWins => '0-1',
+    GameStatus.draw => '1/2-1/2',
+    GameStatus.unknown => throw StateError('Unknown status was filtered'),
+  };
+  final currentResult = currentMetadata['Result']?.toString().trim() ?? '';
+  final currentIsLive = currentMetadata[ChessGame.metadataIsLiveKey] == true;
+  if (currentResult == result && currentIsLive == isLive) return null;
+
+  return Map<String, dynamic>.of(currentMetadata)
+    ..['Result'] = result
+    ..[ChessGame.metadataAllowMainlineExtensionKey] = !isLive
+    ..[ChessGame.metadataIsLiveKey] = isLive;
+}
+
+/// Finalizes freshly parsed broadcast PGN metadata with the already accepted
+/// live-row status.
+///
+/// Broadcast PGN headers can trail the row status by one delivery (for
+/// example, a terminal row with `[Result "*"]`). The row has already passed
+/// freshness arbitration before this helper is used, so its recognized status
+/// wins while unknown/future values leave the PGN result untouched.
+@visibleForTesting
+Map<String, dynamic> finalizeBroadcastPgnMetadata({
+  required Map<String, dynamic> parsedMetadata,
+  required String? acceptedLiveStatus,
+}) {
+  final metadata =
+      mergeRecognizedLiveStatusMetadata(
+        currentMetadata: parsedMetadata,
+        rawStatus: acceptedLiveStatus,
+      ) ??
+      Map<String, dynamic>.of(parsedMetadata);
+  final result = (metadata['Result']?.toString() ?? '').trim();
+  final isLive = result.isEmpty || result == '*';
+  metadata[ChessGame.metadataAllowMainlineExtensionKey] = !isLive;
+  metadata[ChessGame.metadataIsLiveKey] = isLive;
+  return metadata;
+}
+
+/// Chooses the monotonic base snapshot for a focused Board live packet.
+///
+/// A still-mounted card can retain an older base while navigation has already
+/// hydrated fresher Board args. Always arbitrate those seeds before merging a
+/// packet, otherwise an intermediate first row can pass against the older card
+/// and move the Board, tab args, and clocks backwards.
+@visibleForTesting
+GamesTourModel? selectFreshestBoardLiveBase({
+  required GamesTourModel? currentBase,
+  required GamesTourModel? argsSeed,
+}) {
+  if (currentBase == null) return argsSeed;
+  if (argsSeed == null) return currentBase;
+  return selectFreshestNavigationGame(current: currentBase, incoming: argsSeed);
+}
+
+@visibleForTesting
+bool shouldAcceptFocusedLiveCandidate({
+  required GamesTourModel current,
+  required GamesTourModel incoming,
+  required bool serverConfirmedRegression,
+}) {
+  return serverConfirmedRegression ||
+      current == incoming ||
+      shouldReplaceBaseGame(current, incoming);
+}
+
+@immutable
+class BoardPlayerHeaderMetadata {
+  const BoardPlayerHeaderMetadata({
+    required this.name,
+    required this.federation,
+    required this.title,
+    required this.rating,
+    required this.fideId,
+  });
+
+  final String name;
+  final String federation;
+  final String title;
+  final int rating;
+  final int? fideId;
+}
+
+/// Resolves one Board player header without letting lagging PGN tags mask a
+/// correction already accepted from the canonical live `games.players` row.
+@visibleForTesting
+BoardPlayerHeaderMetadata resolveBoardPlayerHeaderMetadata({
+  required PlayerCard? sourcePlayer,
+  required bool sourceIsAuthoritative,
+  required String pgnName,
+  required String pgnFederation,
+  required String pgnTitle,
+  required int pgnRating,
+  required int pgnFideId,
+  required String fallbackName,
+  required String fallbackFederation,
+  required String fallbackTitle,
+  required int fallbackRating,
+  required int? fallbackFideId,
+}) {
+  final sourceName = sourcePlayer?.name.trim() ?? '';
+  final sourceCountryCode = sourcePlayer?.countryCode.trim() ?? '';
+  final sourceFederation = sourcePlayer?.federation.trim() ?? '';
+  final sourceTitle = sourcePlayer?.title.trim() ?? '';
+  final sourceRating = sourcePlayer?.rating ?? 0;
+  final sourceFideId = sourcePlayer?.fideId;
+  if (sourcePlayer != null && sourceIsAuthoritative) {
+    return BoardPlayerHeaderMetadata(
+      name:
+          sourceName.isNotEmpty
+              ? sourceName
+              : (pgnName.isNotEmpty ? pgnName : fallbackName),
+      federation:
+          sourceCountryCode.isNotEmpty ? sourceCountryCode : sourceFederation,
+      title: sourceTitle,
+      rating: sourceRating,
+      fideId: (sourceFideId ?? 0) > 0 ? sourceFideId : null,
+    );
+  }
+  return BoardPlayerHeaderMetadata(
+    name:
+        sourceName.isNotEmpty
+            ? sourceName
+            : (pgnName.isNotEmpty ? pgnName : fallbackName),
+    federation:
+        sourceCountryCode.isNotEmpty
+            ? sourceCountryCode
+            : (sourceFederation.isNotEmpty
+                ? sourceFederation
+                : (pgnFederation.isNotEmpty
+                    ? pgnFederation
+                    : fallbackFederation)),
+    title:
+        sourceTitle.isNotEmpty
+            ? sourceTitle
+            : (pgnTitle.isNotEmpty ? pgnTitle : fallbackTitle),
+    rating:
+        sourceRating > 0
+            ? sourceRating
+            : (pgnRating > 0 ? pgnRating : fallbackRating),
+    fideId:
+        (sourceFideId ?? 0) > 0
+            ? sourceFideId
+            : (pgnFideId > 0 ? pgnFideId : fallbackFideId),
+  );
+}
+
 const _boardSizePreferenceKey = 'desktop_board_size_px_v1';
 const _defaultDesktopBoardSize = 760.0;
 const _minDesktopBoardSize = 300.0;
@@ -143,10 +308,7 @@ bool shouldShowDesktopBoardEvalBar(EngineSettings settings) {
 /// analysis and keep normal PV play available.
 @visibleForTesting
 class ActiveBoardEvalTarget {
-  const ActiveBoardEvalTarget({
-    required this.fen,
-    required this.isThreatProbe,
-  });
+  const ActiveBoardEvalTarget({required this.fen, required this.isThreatProbe});
 
   final String fen;
   final bool isThreatProbe;
@@ -390,6 +552,8 @@ class _BoardPaneContent extends HookConsumerWidget {
         ref.watch(
           desktopTabsProvider.select((state) => state.activeId == activeTabId),
         );
+    final isForegroundSurface =
+        isForegroundTab && ref.watch(liveGameStreamingLifecycleProvider);
     final restoredSession =
         activeTabId == null
             ? null
@@ -484,6 +648,23 @@ class _BoardPaneContent extends HookConsumerWidget {
     // click, the floating "Jump to live" pill below the board).
     final hasUnseenMoves = useState<bool>(
       restoredSession?.hasUnseenMoves ?? false,
+    );
+    final pendingLiveRegressionConfirmations = useRef<
+      Map<
+        String,
+        ({
+          LiveGameRegressionConfirmationKey key,
+          ProviderSubscription<AsyncValue<LiveGameUpdate?>> subscription,
+        })
+      >
+    >(
+      <
+        String,
+        ({
+          LiveGameRegressionConfirmationKey key,
+          ProviderSubscription<AsyncValue<LiveGameUpdate?>> subscription,
+        })
+      >{},
     );
     final notationScrollController = useScrollController();
     final visibleNotationMoveOrderController =
@@ -629,12 +810,18 @@ class _BoardPaneContent extends HookConsumerWidget {
     );
 
     final latestPgnImport = ref.watch(pgnIntakeProvider);
-    final legacyActiveGameId = ref.watch(
-      tournamentGamesProvider.select((s) => s?.activeGameId),
-    );
-    final legacyHasGameRail = ref.watch(
-      tournamentGamesProvider.select((s) => s?.games.isNotEmpty ?? false),
-    );
+    final legacyActiveGameId =
+        boardArgs == null
+            ? ref.watch(tournamentGamesProvider.select((s) => s?.activeGameId))
+            : null;
+    final legacyHasGameRail =
+        boardArgs == null
+            ? ref.watch(
+              tournamentGamesProvider.select(
+                (s) => s?.games.isNotEmpty ?? false,
+              ),
+            )
+            : false;
     final hasLocalGameRail =
         (boardArgs?.eventGames.isNotEmpty ?? false) ||
         (boardArgs?.routeGames.isNotEmpty ?? false) ||
@@ -652,6 +839,15 @@ class _BoardPaneContent extends HookConsumerWidget {
             : (latestPgnImport == null
                 ? legacyActiveGameId
                 : latestPgnImport.gameId);
+    useEffect(() {
+      return () {
+        final pending = pendingLiveRegressionConfirmations.value;
+        for (final entry in pending.values) {
+          entry.subscription.close();
+        }
+        pending.clear();
+      };
+    }, [activeGameId, isForegroundSurface]);
     final boardRenderKey =
         '${_boardRenderKey(activeTabId: activeTabId, activeGameId: activeGameId, boardArgs: boardArgs, latestPgnImport: latestPgnImport, lastAppliedGameId: lastAppliedGameId.value, lastAppliedPgn: lastAppliedPgn.value)}:cut${boardCutEpoch.value}';
 
@@ -701,7 +897,12 @@ class _BoardPaneContent extends HookConsumerWidget {
     // freshly-replayed tree back to the initial position right after the
     // PGN was applied — surfaced as "no moves played" when tapping a
     // finished or live game card.
-    void applyPgn(String pgn, {required String origin, String? gameId}) {
+    void applyPgn(
+      String pgn, {
+      required String origin,
+      String? gameId,
+      String? acceptedLiveStatus,
+    }) {
       final trimmed = pgn.trim();
       if (trimmed.isEmpty) return;
       final initialFenKey = _nullableFenPositionKey(boardArgs?.initialFen);
@@ -727,8 +928,6 @@ class _BoardPaneContent extends HookConsumerWidget {
         return;
       }
 
-      final result = (parsed.metadata['Result']?.toString() ?? '').trim();
-      final isLive = result.isEmpty || result == '*';
       // Finished games: extending the mainline is what users expect when
       // they play moves at the tip. Live games: never extend mainline —
       // the live feed owns it; user-played moves at the tip create new
@@ -767,10 +966,14 @@ class _BoardPaneContent extends HookConsumerWidget {
           putIfMissing('BlackElo', tabArgs.blackRating);
         }
       }
-      updatedMetadata[ChessGame.metadataAllowMainlineExtensionKey] = !isLive;
-      updatedMetadata[ChessGame.metadataIsLiveKey] = isLive;
+      final finalizedMetadata = finalizeBroadcastPgnMetadata(
+        parsedMetadata: updatedMetadata,
+        acceptedLiveStatus: acceptedLiveStatus,
+      );
+      final result = (finalizedMetadata['Result']?.toString() ?? '').trim();
+      final isLive = result.isEmpty || result == '*';
       final freshGame = parsed
-          .copyWith(metadata: updatedMetadata)
+          .copyWith(metadata: finalizedMetadata)
           .rememberGameEndingPlyIndex(parsed.mainline.length - 1);
 
       final oldGame = chessGame.value;
@@ -785,13 +988,16 @@ class _BoardPaneContent extends HookConsumerWidget {
       // game's PGN tick can't wipe out sub-lines the user just added.
       // Detached drops (drag-drop a `.pgn` file, no `gameId`) are
       // genuinely new games — those replace the tree wholesale.
+      final hasRetainedTree =
+          oldMainlineLen > 0 ||
+          (oldGame.detachedRootAnalysis?.isNotEmpty ?? false);
       final game =
-          (gameId != null && oldMainlineLen > 0)
+          shouldMergeBroadcastTree(gameId: gameId, currentGame: oldGame)
               ? _mergeBroadcastUpdate(oldGame, freshGame)
               : freshGame;
 
       final keepLocalEdits =
-          gameId != null && oldMainlineLen > 0 && dirtySinceLoad.value;
+          gameId != null && hasRetainedTree && dirtySinceLoad.value;
       dirtySinceLoad.value = keepLocalEdits;
       lastAppliedPgn.value = trimmed;
       lastAppliedInitialFenKey.value = initialFenKey;
@@ -879,6 +1085,21 @@ class _BoardPaneContent extends HookConsumerWidget {
       }
     }
 
+    void applyLiveResultStatus(Map<String, dynamic> data) {
+      final rawStatus = (data['status'] as String?)?.trim();
+      final currentGame = chessGame.value;
+      final metadata = mergeRecognizedLiveStatusMetadata(
+        currentMetadata: currentGame.metadata,
+        rawStatus: rawStatus,
+      );
+      if (metadata == null) return;
+      final updatedGame = currentGame.copyWith(metadata: metadata);
+      chessGame.value = updatedGame;
+      pgnHeaders.value = updatedGame.metadata.map(
+        (key, value) => MapEntry(key, value?.toString() ?? ''),
+      );
+    }
+
     bool tryApplyIncrementalLiveUpdate(
       Map<String, dynamic> data, {
       required String gameId,
@@ -894,6 +1115,14 @@ class _BoardPaneContent extends HookConsumerWidget {
           liveUci == null ||
           liveUci.isEmpty ||
           pgn == lastAppliedPgn.value) {
+        return false;
+      }
+      final previousPgn = lastAppliedPgn.value;
+      if (previousPgn == null ||
+          !isStrictAppendOnlyBroadcastPgn(
+            previousPgn: previousPgn,
+            incomingPgn: pgn,
+          )) {
         return false;
       }
 
@@ -938,13 +1167,17 @@ class _BoardPaneContent extends HookConsumerWidget {
       );
 
       final status = (data['status'] as String?)?.trim();
-      final isLive = status == null || status.isEmpty || status == '*';
-      final metadata = Map<String, dynamic>.of(oldGame.metadata);
-      if (status != null && status.isNotEmpty) {
-        metadata['Result'] = status;
-      }
-      metadata[ChessGame.metadataAllowMainlineExtensionKey] = !isLive;
-      metadata[ChessGame.metadataIsLiveKey] = isLive;
+      final apiStatus = GameStatus.fromString(status);
+      final metadata =
+          mergeRecognizedLiveStatusMetadata(
+            currentMetadata: oldGame.metadata,
+            rawStatus: status,
+          ) ??
+          Map<String, dynamic>.of(oldGame.metadata);
+      final isLive =
+          apiStatus == GameStatus.unknown
+              ? oldGame.metadata[ChessGame.metadataIsLiveKey] == true
+              : apiStatus.isOngoing;
 
       final updatedGame = oldGame
           .copyWith(
@@ -990,33 +1223,98 @@ class _BoardPaneContent extends HookConsumerWidget {
       return true;
     }
 
-    void syncLiveGameRowWithDesktopSurfaces(
+    bool syncLiveGameRowWithDesktopSurfaces(
       String gameId,
-      Map<String, dynamic> data,
-    ) {
-      if (gameId.trim().isEmpty) return;
-      final update = LiveGameUpdate.fromLegacyMap(gameId, data);
-      final sourceGame =
-          boardArgs?.sourceGame ?? ref.read(baseGameProvider(gameId));
-      final mergedGame =
+      LiveGameUpdate update, {
+      bool serverConfirmedRegression = false,
+    }) {
+      if (gameId.trim().isEmpty) return false;
+      final currentBase = ref.read(baseGameProvider(gameId));
+      final legacySummary =
+          boardArgs == null
+              ? _findSummaryById(
+                ref.read(tournamentGamesProvider)?.games ??
+                    const <TournamentGameSummary>[],
+                gameId,
+              )
+              : null;
+      final argsSummary =
+          boardArgs == null
+              ? legacySummary
+              : _findSummaryById(
+                boardArgs.eventGames.isNotEmpty
+                    ? boardArgs.eventGames
+                    : boardArgs.routeGames,
+                gameId,
+              );
+      final argsSeed =
+          boardArgs?.sourceGame ??
+          (argsSummary == null
+              ? null
+              : _gamesTourModelFromSummary(argsSummary).copyWith(
+                pgn:
+                    (boardArgs?.pgn.trim().isNotEmpty ?? false)
+                        ? boardArgs!.pgn
+                        : argsSummary.pgn,
+                fen:
+                    (boardArgs?.fenSeed ?? boardArgs?.initialFen)
+                                ?.trim()
+                                .isNotEmpty ==
+                            true
+                        ? (boardArgs?.fenSeed ?? boardArgs?.initialFen)!.trim()
+                        : argsSummary.fen,
+              ));
+      final sourceGame = selectFreshestBoardLiveBase(
+        currentBase: currentBase,
+        argsSeed: argsSeed,
+      );
+      final mergedCandidate =
           sourceGame == null
               ? null
               : mergeLiveGameUpdateWithBase(
                 baseGame: sourceGame,
                 update: update,
               );
+      GamesTourModel? mergedGame;
+      var acceptedWholeRow = true;
 
-      if (mergedGame != null) {
+      if (mergedCandidate != null) {
         // Share one coherent snapshot with live cards, but never regress it:
         // a card stream (a separate Supabase channel) can deliver a fresher row
-        // than this board sync, so gate the write on the same freshness rule.
-        final currentBase = ref.read(baseGameProvider(gameId));
-        if (shouldReplaceBaseGame(currentBase, mergedGame)) {
+        // than this board sync. A rejected candidate must not leak through the
+        // tab args or rail summaries either, otherwise the Board can still move
+        // backwards despite protecting only the shared provider write.
+        if (!shouldAcceptFocusedLiveCandidate(
+          current: sourceGame!,
+          incoming: mergedCandidate,
+          serverConfirmedRegression: serverConfirmedRegression,
+        )) {
+          acceptedWholeRow = false;
+          // Position freshness and metadata freshness are independent. The
+          // first snapshot on a recreated channel can trail the retained PGN
+          // while still carrying a corrected player pair or the first terminal
+          // result. Keep the current position/clocks but accept those safe
+          // fields exactly as live cards do.
+          mergedGame = mergeIndependentLiveGameMetadata(
+            sourceGame,
+            mergedCandidate,
+          );
+        } else {
+          mergedGame = mergedCandidate;
+        }
+        // The Board args can themselves be fresher than a still-retained card
+        // base. Publish the selected winner so compact clock/player leaves do
+        // not keep rendering the older non-null base.
+        if (currentBase != mergedGame) {
           ref.read(baseGameProvider(gameId).notifier).state = mergedGame;
         }
       }
 
-      final updatePgn = update.pgn?.trim();
+      final rawUpdatePgn = update.pgn?.trim();
+      final updatePgn =
+          update.isFullRow && (rawUpdatePgn == null || rawUpdatePgn.isEmpty)
+              ? '*'
+              : rawUpdatePgn;
       final mergedPgn = mergedGame?.pgn?.trim();
       final livePgn =
           mergedPgn != null && mergedPgn.isNotEmpty ? mergedPgn : updatePgn;
@@ -1025,9 +1323,11 @@ class _BoardPaneContent extends HookConsumerWidget {
           (mergedGame?.fen?.trim().isNotEmpty ?? false)
               ? mergedGame!.fen!.trim()
               : updateFen;
+      // Realtime status is canonical here. `effectiveGameStatus` is a UI
+      // fallback that may infer a result from clocks/position and must never
+      // turn an ongoing authoritative row into a terminal rail/tab snapshot.
       final liveStatus =
-          mergedGame?.effectiveGameStatus ??
-          GameStatus.fromString(update.status);
+          mergedGame?.gameStatus ?? GameStatus.fromString(update.status);
       final liveLastMoveTime =
           mergedGame?.lastMoveTime ??
           (update.lastMoveTime == null
@@ -1043,6 +1343,59 @@ class _BoardPaneContent extends HookConsumerWidget {
         final nextTabs = <String, BoardTabGameArgs>{};
         for (final entry in tabs.entries) {
           final args = entry.value;
+          final ownsGame = args.gameId == gameId;
+          if (!ownsGame) {
+            nextTabs[entry.key] = args;
+            continue;
+          }
+
+          final normalizedCurrentPgn = args.pgn.trim();
+          final normalizedCurrentFen = args.fenSeed?.trim() ?? '';
+          final shouldClearFen =
+              update.isFullRow &&
+              liveFen == null &&
+              normalizedCurrentFen.isNotEmpty;
+          final shouldUpdatePgn =
+              livePgn != null &&
+              livePgn.isNotEmpty &&
+              livePgn != normalizedCurrentPgn;
+          final shouldUpdateFen =
+              shouldClearFen ||
+              (liveFen != null &&
+                  liveFen.isNotEmpty &&
+                  liveFen != normalizedCurrentFen);
+          final selectedSummary = _findSummaryById(
+            args.eventGames.isNotEmpty ? args.eventGames : args.routeGames,
+            gameId,
+          );
+          final currentStatus =
+              args.sourceGame?.gameStatus ??
+              selectedSummary?.status ??
+              GameStatus.unknown;
+          final shouldUpdateStatus =
+              liveStatus != GameStatus.unknown && liveStatus != currentStatus;
+          final liveWhitePlayer = mergedGame?.whitePlayer;
+          final liveBlackPlayer = mergedGame?.blackPlayer;
+          final shouldUpdatePlayers =
+              liveWhitePlayer != null &&
+              liveBlackPlayer != null &&
+              (liveWhitePlayer != args.sourceGame?.whitePlayer ||
+                  liveBlackPlayer != args.sourceGame?.blackPlayer ||
+                  liveWhitePlayer.name != args.whiteName ||
+                  liveBlackPlayer.name != args.blackName);
+
+          // Clock and last-move timestamps are consumed by small live leaves.
+          // Mirroring those high-frequency fields into immutable tab args would
+          // invalidate the board, notation, engine, and entire rail even though
+          // the chess position did not change.
+          if (!shouldUpdatePgn &&
+              !shouldUpdateFen &&
+              !shouldUpdateStatus &&
+              !shouldUpdatePlayers) {
+            nextTabs[entry.key] = args;
+            continue;
+          }
+
           final updatedEventGames = _syncLiveGameSummaryList(
             args.eventGames,
             gameId: gameId,
@@ -1051,6 +1404,8 @@ class _BoardPaneContent extends HookConsumerWidget {
             status: liveStatus,
             lastMoveTime: liveLastMoveTime,
             hasStarted: hasStarted,
+            whitePlayer: liveWhitePlayer,
+            blackPlayer: liveBlackPlayer,
           );
           final updatedRouteGames = _syncLiveGameSummaryList(
             args.routeGames,
@@ -1060,13 +1415,10 @@ class _BoardPaneContent extends HookConsumerWidget {
             status: liveStatus,
             lastMoveTime: liveLastMoveTime,
             hasStarted: hasStarted,
+            whitePlayer: liveWhitePlayer,
+            blackPlayer: liveBlackPlayer,
           );
-          final ownsGame = args.gameId == gameId;
-          final shouldUpdatePgn =
-              ownsGame && livePgn != null && livePgn.isNotEmpty;
-          final shouldUpdateFen =
-              ownsGame && liveFen != null && liveFen.isNotEmpty;
-          final shouldUpdateSourceGame = ownsGame && mergedGame != null;
+          final shouldUpdateSourceGame = mergedGame != null;
           if (!shouldUpdatePgn &&
               !shouldUpdateFen &&
               !shouldUpdateSourceGame &&
@@ -1078,7 +1430,20 @@ class _BoardPaneContent extends HookConsumerWidget {
           final nextArgs = args.copyWith(
             pgn: shouldUpdatePgn ? livePgn : null,
             fenSeed: shouldUpdateFen ? liveFen : null,
+            clearFenSeed: shouldClearFen,
             sourceGame: shouldUpdateSourceGame ? mergedGame : null,
+            whiteName: shouldUpdatePlayers ? liveWhitePlayer.name : null,
+            blackName: shouldUpdatePlayers ? liveBlackPlayer.name : null,
+            whiteFederation:
+                shouldUpdatePlayers ? liveWhitePlayer.federation : null,
+            blackFederation:
+                shouldUpdatePlayers ? liveBlackPlayer.federation : null,
+            whiteTitle: shouldUpdatePlayers ? liveWhitePlayer.title : null,
+            blackTitle: shouldUpdatePlayers ? liveBlackPlayer.title : null,
+            whiteRating: shouldUpdatePlayers ? liveWhitePlayer.rating : null,
+            blackRating: shouldUpdatePlayers ? liveBlackPlayer.rating : null,
+            whiteFideId: shouldUpdatePlayers ? liveWhitePlayer.fideId : null,
+            blackFideId: shouldUpdatePlayers ? liveBlackPlayer.fideId : null,
             eventGames:
                 identical(updatedEventGames, args.eventGames)
                     ? null
@@ -1093,6 +1458,12 @@ class _BoardPaneContent extends HookConsumerWidget {
         }
         return changed ? nextTabs : tabs;
       });
+      if (!acceptedWholeRow && mergedGame != null) {
+        applyLiveResultStatus(<String, dynamic>{
+          'status': mergedGame.gameStatus.displayText,
+        });
+      }
+      return acceptedWholeRow;
     }
 
     // Pull in any newly dropped/tapped PGN. The drop zone and the
@@ -1253,6 +1624,155 @@ class _BoardPaneContent extends HookConsumerWidget {
       return null;
     }, [activeTabId, boardArgs?.gameId, boardArgs?.pgn, boardArgs?.initialFen]);
 
+    void applySyncedLiveRow(
+      String gameId,
+      LiveGameUpdate update, {
+      required String origin,
+    }) {
+      final data = update.toLegacyMap();
+      final rawPgn = update.pgn?.trim();
+      final pgn =
+          update.isFullRow && (rawPgn == null || rawPgn.isEmpty) ? '*' : rawPgn;
+      if (pgn == null || pgn.isEmpty) {
+        applyLiveResultStatus(data);
+        return;
+      }
+      final appliedIncrementally = tryApplyIncrementalLiveUpdate(
+        data,
+        gameId: gameId,
+        origin: origin,
+      );
+      if (!appliedIncrementally) {
+        applyPgn(
+          pgn,
+          origin: origin,
+          gameId: gameId,
+          acceptedLiveStatus: data['status'] as String?,
+        );
+      }
+      // Keep the accepted row status last. `applyPgn` can no-op for an
+      // identical PGN or retain the previous tree after a parse error; neither
+      // path may discard a terminal row result.
+      applyLiveResultStatus(data);
+    }
+
+    bool focusedGameIsStillActive(String gameId) {
+      final tabId = activeTabId;
+      if (tabId != null) {
+        return ref.read(desktopTabsProvider).activeId == tabId &&
+            ref.read(boardTabGameArgsByTabIdProvider)[tabId]?.gameId == gameId;
+      }
+      return ref.read(tournamentGamesProvider)?.activeGameId == gameId;
+    }
+
+    void confirmRejectedLiveRegression(
+      String gameId,
+      LiveGameUpdate rejectedUpdate,
+    ) {
+      final current = ref.read(baseGameProvider(gameId));
+      if (current == null) return;
+      final confirmationKey = LiveGameRegressionConfirmationKey.from(
+        current: current,
+        rejectedUpdate: rejectedUpdate,
+      );
+      final pending = pendingLiveRegressionConfirmations.value;
+      final existing = pending[gameId];
+      if (existing?.key == confirmationKey) return;
+      existing?.subscription.close();
+      pending.remove(gameId);
+
+      var completedBeforeRegistration = false;
+      void finishConfirmation() {
+        final currentPending = pending[gameId];
+        if (currentPending == null) {
+          completedBeforeRegistration = true;
+          return;
+        }
+        if (currentPending.key != confirmationKey) return;
+        pending.remove(gameId);
+        currentPending.subscription.close();
+      }
+
+      final confirmationProvider = liveGameRegressionConfirmationProvider(
+        confirmationKey,
+      );
+      final subscription = ref.listenManual<AsyncValue<LiveGameUpdate?>>(
+        confirmationProvider,
+        (_, next) {
+          if (next.isLoading) return;
+          final confirmed = next.valueOrNull;
+          if (confirmed == null) {
+            finishConfirmation();
+            return;
+          }
+          LiveGameUpdate? retryAgainstLatestBaseline;
+          try {
+            if (!context.mounted) return;
+            if (!focusedGameIsStillActive(gameId)) return;
+            if (!confirmationKey.matchesCurrentPosition(
+              ref.read(baseGameProvider(gameId)),
+            )) {
+              // The exact read is still canonical, but a clock/player/status
+              // tick changed the baseline while it was in flight. Reconfirm
+              // against that latest baseline instead of silently losing a
+              // one-off takeback/correction that may never be re-emitted.
+              retryAgainstLatestBaseline = confirmed;
+              return;
+            }
+            if (!syncLiveGameRowWithDesktopSurfaces(
+              gameId,
+              confirmed,
+              serverConfirmedRegression: true,
+            )) {
+              return;
+            }
+            applySyncedLiveRow(
+              gameId,
+              confirmed,
+              origin: 'confirmed-live:$gameId',
+            );
+          } finally {
+            finishConfirmation();
+            final retry = retryAgainstLatestBaseline;
+            if (retry != null) {
+              scheduleMicrotask(() {
+                if (!context.mounted || !focusedGameIsStillActive(gameId)) {
+                  return;
+                }
+                if (syncLiveGameRowWithDesktopSurfaces(gameId, retry)) {
+                  applySyncedLiveRow(
+                    gameId,
+                    retry,
+                    origin: 'reconfirmed-live:$gameId',
+                  );
+                } else {
+                  confirmRejectedLiveRegression(gameId, retry);
+                }
+              });
+            }
+          }
+        },
+        fireImmediately: true,
+      );
+      if (completedBeforeRegistration) {
+        subscription.close();
+      } else {
+        pending[gameId] = (key: confirmationKey, subscription: subscription);
+      }
+    }
+
+    void handleLiveUpdate(
+      String gameId,
+      LiveGameUpdate update, {
+      required String origin,
+    }) {
+      if (!syncLiveGameRowWithDesktopSurfaces(gameId, update)) {
+        confirmRejectedLiveRegression(gameId, update);
+        return;
+      }
+      applySyncedLiveRow(gameId, update, origin: origin);
+    }
+
     // Subscribe to live updates for the currently active tournament
     // game. When the user taps a card, `activeGameId` is set; open a
     // Supabase Realtime channel for it and reparse the PGN on every
@@ -1290,39 +1810,47 @@ class _BoardPaneContent extends HookConsumerWidget {
 
     // Live broadcast snapshot for PGN sync. Do not watch this provider in the
     // root pane: every broadcast push would rebuild the board, notation, and
-    // engine rail. The player headers below watch just the clock fields they
-    // need.
+    // engine rail. Player headers watch the freshness-arbitrated base snapshot
+    // below, so a rejected out-of-order packet cannot flash a stale clock.
     if (isForegroundTab && activeGameId != null) {
-      ref.listen<AsyncValue<Map<String, dynamic>?>>(
-        gameUpdatesStreamProvider(activeGameId),
+      // Keep the focused game's shared arbitration snapshot alive for the
+      // entire foreground Board lifetime, including while the user reviews an
+      // earlier ply and the live-clock leaf is intentionally detached. Exact
+      // takeback confirmation revalidates against this snapshot; letting the
+      // autoDispose family vanish mid-read would incorrectly drop a legitimate
+      // correction. A listener retains it without rebuilding the Board on
+      // high-frequency clock changes.
+      ref.listen<GamesTourModel?>(baseGameProvider(activeGameId), (_, __) {});
+      ref.listen<AsyncValue<LiveStreamArrival<LiveGameUpdate?>>>(
+        liveGameUpdateArrivalStreamProvider(activeGameId),
         (previous, next) {
-          next.whenData((data) {
-            if (data == null) return;
-            syncLiveGameRowWithDesktopSurfaces(activeGameId, data);
-            final pgn = data['pgn'] as String?;
-            if (pgn == null || pgn.trim().isEmpty) return;
-            final appliedIncrementally = tryApplyIncrementalLiveUpdate(
-              data,
-              gameId: activeGameId,
+          next.whenData((arrival) {
+            final update = arrival.value;
+            if (update == null) return;
+            handleLiveUpdate(
+              activeGameId,
+              update,
               origin: 'live:$activeGameId',
             );
-            if (!appliedIncrementally) {
-              applyPgn(pgn, origin: 'live:$activeGameId', gameId: activeGameId);
-            }
           });
         },
       );
-      final liveBroadcast =
-          ref.read(gameUpdatesStreamProvider(activeGameId)).valueOrNull;
-      final seedPgn = liveBroadcast?['pgn'] as String?;
-      if (seedPgn != null && seedPgn.trim().isNotEmpty) {
-        Future.microtask(
-          () => applyPgn(
-            seedPgn,
+      final liveArrival =
+          ref
+              .read(liveGameUpdateArrivalStreamProvider(activeGameId))
+              .valueOrNull;
+      final liveUpdate = liveArrival?.value;
+      if (liveUpdate != null) {
+        Future.microtask(() {
+          if (!context.mounted || !focusedGameIsStillActive(activeGameId)) {
+            return;
+          }
+          handleLiveUpdate(
+            activeGameId,
+            liveUpdate,
             origin: 'seed:$activeGameId',
-            gameId: activeGameId,
-          ),
-        );
+          );
+        });
       }
     }
 
@@ -1597,8 +2125,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           game: chessGame.value,
           pointer: List<int>.unmodifiable(pointer.value),
           dirtySinceLoad: dirtySinceLoad.value,
-          userNags:
-              userNags == null ? null : _cloneNagMap(userNags),
+          userNags: userNags == null ? null : _cloneNagMap(userNags),
         ),
       );
       if (stack.length > 50) stack.removeAt(0);
@@ -2056,9 +2583,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       final clearsStoredQuality = !identical(nextGame, currentGame);
       if (!clearsStoredQuality && !clearsUserQuality) return;
 
-      pushUndoSnapshot(
-        userNags: clearsUserQuality ? currentUserNags : null,
-      );
+      pushUndoSnapshot(userNags: clearsUserQuality ? currentUserNags : null);
       final undoDepthAfterSnapshot = undoStack.value.length;
       if (clearsStoredQuality) chessGame.value = nextGame;
 
@@ -3941,8 +4466,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           activeEvalTarget.isThreatProbe
                               ? (boardPosition.turn == Side.white ? 'b' : 'w')
                               : (boardPosition.turn == Side.white ? 'w' : 'b'),
-                      onPlayUci:
-                          activeEvalTarget.canPlayPv ? playUci : null,
+                      onPlayUci: activeEvalTarget.canPlayPv ? playUci : null,
                       game: chessGame.value,
                       headers: pgnHeaders.value,
                       activePly:
@@ -3964,8 +4488,9 @@ class _BoardPaneContent extends HookConsumerWidget {
                         }
                       },
                       reportVisible: gameReportVisible,
-                      isForegroundTab: isForegroundTab,
-                      autoAnalysisAllowed: allowGameAnalysis && isForegroundTab,
+                      isForegroundTab: isForegroundSurface,
+                      autoAnalysisAllowed:
+                          allowGameAnalysis && isForegroundSurface,
                     ),
                   ),
                 ),
@@ -4281,17 +4806,76 @@ ChessMovePointer? _variationHeadForPointer(ChessMovePointer p) {
 /// dropping user-added variations.
 ///
 /// Walks both mainlines move-by-move:
-/// - matching moves keep the OLD entry (preserves any sub-variations the
-///   user attached to it),
+/// - matching moves take fresh broadcast fields while merging all old and
+///   fresh annotations/variations,
 /// - the first divergence converts old's continuation into a sub-variation
 ///   under the live move so user-added work doesn't vanish, and
-/// - new moves at the tip are appended unchanged.
+/// - new moves at the tip are appended unchanged, and
+/// - an accepted shorter live line truncates the mainline while preserving the
+///   removed continuation as an analysis variation on the last retained move.
 ///
 /// The metadata map (Result/IsLive/etc) and starting FEN come from
 /// [freshGame] so live status flags stay accurate.
 ChessGame _mergeBroadcastUpdate(ChessGame oldGame, ChessGame freshGame) {
-  if (oldGame.mainline.isEmpty) return freshGame;
-  if (freshGame.mainline.isEmpty) return freshGame;
+  // The tree model hangs variations from moves. An authoritative reset to the
+  // root therefore has no node on which to keep the displaced analysis. Store
+  // it as detached, serializable lines until a later live move provides an
+  // anchor. Repeated empty-row echoes carry the same lines forward.
+  if (freshGame.mainline.isEmpty) {
+    final detached = _mergeBroadcastVariations(
+      oldVariations: oldGame.detachedRootAnalysis,
+      freshVariations:
+          oldGame.mainline.isEmpty ? null : <ChessLine>[oldGame.mainline],
+    );
+    return freshGame.copyWith(
+      detachedRootAnalysis: detached,
+      overrideDetachedRootAnalysis: true,
+    );
+  }
+
+  final detachedRootAnalysis = oldGame.detachedRootAnalysis;
+  var mergedGame = freshGame.copyWith(
+    detachedRootAnalysis: null,
+    overrideDetachedRootAnalysis: true,
+  );
+  if (oldGame.mainline.isNotEmpty) {
+    mergedGame = _mergeNonEmptyBroadcastUpdate(oldGame, mergedGame);
+  }
+
+  // Reattach root-displaced lines only after the canonical live mainline has
+  // a move. The normal broadcast merge keeps the fresh line authoritative and
+  // places every displaced continuation/divergence under it as analysis.
+  for (final line in <ChessLine>[...?detachedRootAnalysis]) {
+    if (line.isEmpty) continue;
+    mergedGame = _mergeNonEmptyBroadcastUpdate(
+      ChessGame(
+        gameId: oldGame.gameId,
+        startingFen: oldGame.startingFen,
+        metadata: oldGame.metadata,
+        mainline: line,
+      ),
+      mergedGame,
+    );
+  }
+  return mergedGame;
+}
+
+@visibleForTesting
+bool shouldMergeBroadcastTree({
+  required String? gameId,
+  required ChessGame currentGame,
+}) {
+  return gameId != null &&
+      (currentGame.mainline.isNotEmpty ||
+          (currentGame.detachedRootAnalysis?.isNotEmpty ?? false));
+}
+
+ChessGame _mergeNonEmptyBroadcastUpdate(
+  ChessGame oldGame,
+  ChessGame freshGame,
+) {
+  assert(oldGame.mainline.isNotEmpty);
+  assert(freshGame.mainline.isNotEmpty);
 
   final merged = <ChessMove>[];
   final oldLine = oldGame.mainline;
@@ -4305,9 +4889,10 @@ ChessGame _mergeBroadcastUpdate(ChessGame oldGame, ChessGame freshGame) {
       continue;
     }
     if (oldLine[i].uci == newLine[i].uci) {
-      // Same move — keep the OLD ChessMove so any user-added variations
-      // (move.variations) ride along into the merged tree.
-      merged.add(oldLine[i]);
+      // The move identity is stable, but its broadcast payload is not: clocks,
+      // SAN, FEN, comments, NAGs, and broadcaster evals can all be corrected.
+      // Keep those fresh while carrying local analysis branches forward.
+      merged.add(_mergeMatchingBroadcastMove(oldLine[i], newLine[i]));
       continue;
     }
     // Divergence: live played something different than what we had
@@ -4315,7 +4900,10 @@ ChessGame _mergeBroadcastUpdate(ChessGame oldGame, ChessGame freshGame) {
     // on this move) as alternatives under the live move.
     final liveMove = newLine[i];
     final oldMove = oldLine[i];
-    final variations = <ChessLine>[oldLine.sublist(i), ...?oldMove.variations];
+    final variations = _mergeBroadcastVariations(
+      oldVariations: <ChessLine>[oldLine.sublist(i), ...?oldMove.variations],
+      freshVariations: liveMove.variations,
+    );
     merged.add(
       liveMove.copyWith(variations: variations, overrideVariations: true),
     );
@@ -4326,14 +4914,145 @@ ChessGame _mergeBroadcastUpdate(ChessGame oldGame, ChessGame freshGame) {
     break;
   }
 
-  // No divergence and old was longer than new (live shrunk?) — keep
-  // old's tail. Rare, but it preserves rather than truncates.
-  if (!diverged && oldLine.length > newLine.length) {
-    merged.addAll(oldLine.sublist(newLine.length));
+  // A confirmed takeback must shorten the canonical mainline. Preserve the
+  // displaced continuation as an analysis branch so user work remains
+  // available without showing rolled-back moves as still live.
+  if (!diverged && oldLine.length > newLine.length && merged.isNotEmpty) {
+    final lastRetainedMove = merged.last;
+    final retainedVariations = <ChessLine>[
+      ...?lastRetainedMove.variations,
+      oldLine.sublist(newLine.length),
+    ];
+    merged[merged.length - 1] = lastRetainedMove.copyWith(
+      variations: retainedVariations,
+      overrideVariations: true,
+    );
   }
 
   return freshGame.copyWith(mainline: merged);
 }
+
+ChessMove _mergeMatchingBroadcastMove(ChessMove oldMove, ChessMove freshMove) {
+  assert(oldMove.uci == freshMove.uci);
+  return ChessMove(
+    num: freshMove.num,
+    fen: freshMove.fen,
+    san: freshMove.san,
+    uci: freshMove.uci,
+    turn: freshMove.turn,
+    // A missing clock in the corrected PGN is itself authoritative; retaining
+    // an older parsed clock would display data the feed explicitly removed.
+    clockTime: freshMove.clockTime,
+    // Engine analysis is local user work when the broadcast supplies no eval.
+    eval: freshMove.eval ?? oldMove.eval,
+    comments: _unionBroadcastValues(freshMove.comments, oldMove.comments),
+    nags: _unionBroadcastValues(freshMove.nags, oldMove.nags),
+    variations: _mergeBroadcastVariations(
+      oldVariations: oldMove.variations,
+      freshVariations: freshMove.variations,
+    ),
+  );
+}
+
+List<T>? _unionBroadcastValues<T>(List<T>? fresh, List<T>? old) {
+  if (fresh == null && old == null) return null;
+  final merged = <T>[];
+  for (final value in <T>[...?fresh, ...?old]) {
+    if (!merged.contains(value)) merged.add(value);
+  }
+  return merged.isEmpty ? null : merged;
+}
+
+List<ChessLine>? _mergeBroadcastVariations({
+  required List<ChessLine>? oldVariations,
+  required List<ChessLine>? freshVariations,
+}) {
+  if (oldVariations == null && freshVariations == null) return null;
+  final remainingOld = <ChessLine>[...?oldVariations];
+  final merged = <ChessLine>[];
+
+  for (final freshLine in <ChessLine>[...?freshVariations]) {
+    final matchingOldIndex = remainingOld.indexWhere(
+      (oldLine) =>
+          oldLine.isNotEmpty &&
+          freshLine.isNotEmpty &&
+          oldLine.first.uci == freshLine.first.uci,
+    );
+    if (matchingOldIndex < 0) {
+      merged.add(freshLine);
+      continue;
+    }
+    final oldLine = remainingOld.removeAt(matchingOldIndex);
+    merged.add(_mergeBroadcastLine(oldLine, freshLine));
+  }
+  merged.addAll(remainingOld);
+  return merged.isEmpty ? null : merged;
+}
+
+ChessLine _mergeBroadcastLine(ChessLine oldLine, ChessLine freshLine) {
+  if (oldLine.isEmpty) return freshLine;
+  if (freshLine.isEmpty) return freshLine;
+
+  final merged = <ChessMove>[];
+  for (var i = 0; i < freshLine.length; i++) {
+    if (i >= oldLine.length) {
+      merged.addAll(freshLine.sublist(i));
+      break;
+    }
+    final oldMove = oldLine[i];
+    final freshMove = freshLine[i];
+    if (oldMove.uci == freshMove.uci) {
+      merged.add(_mergeMatchingBroadcastMove(oldMove, freshMove));
+      continue;
+    }
+    final alternatives = _mergeBroadcastVariations(
+      oldVariations: <ChessLine>[oldLine.sublist(i), ...?oldMove.variations],
+      freshVariations: freshMove.variations,
+    );
+    merged.add(
+      freshMove.copyWith(variations: alternatives, overrideVariations: true),
+    );
+    if (i + 1 < freshLine.length) merged.addAll(freshLine.sublist(i + 1));
+    return merged;
+  }
+
+  if (oldLine.length > freshLine.length && merged.isNotEmpty) {
+    final last = merged.last;
+    merged[merged.length - 1] = last.copyWith(
+      variations: _mergeBroadcastVariations(
+        oldVariations: <ChessLine>[oldLine.sublist(freshLine.length)],
+        freshVariations: last.variations,
+      ),
+      overrideVariations: true,
+    );
+  }
+  return merged;
+}
+
+@visibleForTesting
+bool isStrictAppendOnlyBroadcastPgn({
+  required String previousPgn,
+  required String incomingPgn,
+}) {
+  String withoutTrailingResult(String pgn) {
+    return pgn
+        .trimRight()
+        .replaceFirst(RegExp(r'(?:1-0|0-1|1/2-1/2|\*)\s*$'), '')
+        .trimRight();
+  }
+
+  final previous = withoutTrailingResult(previousPgn);
+  final incoming = withoutTrailingResult(incomingPgn);
+  if (previous.isEmpty || incoming.length <= previous.length) return false;
+  if (!incoming.startsWith(previous)) return false;
+  return RegExp(r'\s').hasMatch(incoming[previous.length]);
+}
+
+@visibleForTesting
+ChessGame mergeBroadcastUpdateForTesting(
+  ChessGame oldGame,
+  ChessGame freshGame,
+) => _mergeBroadcastUpdate(oldGame, freshGame);
 
 /// Walk [pointer] against [game]'s tree and return the longest prefix
 /// that resolves. Used as a recovery path when a broadcast update has
@@ -4530,9 +5249,7 @@ ChessGame _clearImportedMoveQualityAnnotationAtPointer(
 @visibleForTesting
 ChessMove clearImportedMoveQualityAnnotation(ChessMove move) {
   final existingNags = move.nags ?? const <int>[];
-  final clearedQualityNags = existingNags
-      .where(_isQualityNag)
-      .toSet();
+  final clearedQualityNags = existingNags.where(_isQualityNag).toSet();
   if (clearedQualityNags.isEmpty) return move;
 
   final nextNags = existingNags
@@ -4555,8 +5272,7 @@ ChessMove clearImportedMoveQualityAnnotation(ChessMove move) {
 
   return move.copyWith(
     nags: List<int>.unmodifiable(nextNags),
-    comments:
-        commentsChanged ? List<String>.unmodifiable(nextComments) : null,
+    comments: commentsChanged ? List<String>.unmodifiable(nextComments) : null,
   );
 }
 
@@ -4592,8 +5308,7 @@ bool _isMatchingPersistentAnalysisEffect(
     final field = fields[i].toLowerCase();
     if (field == 'type') {
       type = fields[i + 1];
-    } else if (field == 'persistent' &&
-        fields[i + 1].toLowerCase() == 'true') {
+    } else if (field == 'persistent' && fields[i + 1].toLowerCase() == 'true') {
       persistent = true;
     }
   }
@@ -4606,11 +5321,7 @@ bool _isMatchingPersistentAnalysisEffect(
 int? _qualityNagForChessComEffectType(String rawType) {
   final type = rawType.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
   return switch (type) {
-    'good' ||
-    'goodmove' ||
-    'greatfind' ||
-    'bestmove' ||
-    'excellent' => 1,
+    'good' || 'goodmove' || 'greatfind' || 'bestmove' || 'excellent' => 1,
     'mistake' => 2,
     'brilliant' => 3,
     'blunder' || 'missedwin' => 4,
@@ -5497,17 +6208,24 @@ class _BoardArea extends ConsumerWidget {
     // right rail, so the gauge and PV list always query the same position.
     // A threat probe can only be active when a legal null move was formed.
     final threatActive = threatMode;
-    final evalState =
+    final evalPvMoveLines =
         showEngineAnalysis
-            ? ref.watch(boardEvalProvider(analysisFen))
-            : const BoardEvalState(
-              pvs: <BoardPv>[],
-              isEvaluating: false,
-              depth: 0,
-            );
-    final evalPvs = showEngineAnalysis ? evalState.pvs : const <BoardPv>[];
+            ? ref.watch(
+              boardEvalProvider(analysisFen).select(
+                (state) => state.pvs.map((pv) => pv.moves).join('\u0000'),
+              ),
+            )
+            : '';
+    final evalPvs =
+        evalPvMoveLines.isEmpty
+            ? const <BoardPv>[]
+            : <BoardPv>[
+              for (final moves in evalPvMoveLines.split('\u0000'))
+                BoardPv(evaluation: 0, mate: null, moves: moves),
+            ];
     final showEvalBar = shouldShowDesktopBoardEvalBar(engineSettings);
-    final tournament = ref.watch(tournamentGamesProvider);
+    final tournament =
+        boardArgs == null ? ref.watch(tournamentGamesProvider) : null;
     final activeTournamentGameId = tournament?.activeGameId;
     final tournamentGame = tournament?.games.firstWhere(
       (g) => g.id == activeTournamentGameId,
@@ -5541,84 +6259,59 @@ class _BoardArea extends ConsumerWidget {
       return int.tryParse(v.trim()) ?? 0;
     }
 
-    final whiteName =
-        pgn('White').isNotEmpty
-            ? pgn('White')
-            : (tournamentGame?.whitePlayer ?? '');
-    final blackName =
-        pgn('Black').isNotEmpty
-            ? pgn('Black')
-            : (tournamentGame?.blackPlayer ?? '');
     final sourceWhite = sourceGame?.whitePlayer;
     final sourceBlack = sourceGame?.blackPlayer;
-    final whiteFed =
-        firstPgn([
-              'WhiteFed',
-              'WhiteFederation',
-              'WhiteCountry',
-              'WhiteTeam',
-            ]).isNotEmpty
-            ? firstPgn([
-              'WhiteFed',
-              'WhiteFederation',
-              'WhiteCountry',
-              'WhiteTeam',
-            ])
-            : ((sourceWhite?.countryCode.trim().isNotEmpty ?? false)
-                ? sourceWhite!.countryCode
-                : ((sourceWhite?.federation.trim().isNotEmpty ?? false)
-                    ? sourceWhite!.federation
-                    : (tournamentGame?.whiteFederation ?? '')));
-    final blackFed =
-        firstPgn([
-              'BlackFed',
-              'BlackFederation',
-              'BlackCountry',
-              'BlackTeam',
-            ]).isNotEmpty
-            ? firstPgn([
-              'BlackFed',
-              'BlackFederation',
-              'BlackCountry',
-              'BlackTeam',
-            ])
-            : ((sourceBlack?.countryCode.trim().isNotEmpty ?? false)
-                ? sourceBlack!.countryCode
-                : ((sourceBlack?.federation.trim().isNotEmpty ?? false)
-                    ? sourceBlack!.federation
-                    : (tournamentGame?.blackFederation ?? '')));
-    final whiteTitle =
-        pgn('WhiteTitle').isNotEmpty
-            ? pgn('WhiteTitle')
-            : ((sourceWhite?.title.trim().isNotEmpty ?? false)
-                ? sourceWhite!.title
-                : (tournamentGame?.whiteTitle ?? ''));
-    final blackTitle =
-        pgn('BlackTitle').isNotEmpty
-            ? pgn('BlackTitle')
-            : ((sourceBlack?.title.trim().isNotEmpty ?? false)
-                ? sourceBlack!.title
-                : (tournamentGame?.blackTitle ?? ''));
-    final whiteRating =
-        pgnInt('WhiteElo') > 0
-            ? pgnInt('WhiteElo')
-            : ((sourceWhite?.rating ?? 0) > 0
-                ? sourceWhite!.rating
-                : (tournamentGame?.whiteRating ?? 0));
-    final blackRating =
-        pgnInt('BlackElo') > 0
-            ? pgnInt('BlackElo')
-            : ((sourceBlack?.rating ?? 0) > 0
-                ? sourceBlack!.rating
-                : (tournamentGame?.blackRating ?? 0));
-    final whiteFideId =
-        pgnInt('WhiteFideId') > 0
-            ? pgnInt('WhiteFideId')
-            : (sourceWhite?.fideId ?? boardArgs?.whiteFideId);
-    final blackFideId =
-        pgnInt('BlackFideId') > 0
-            ? pgnInt('BlackFideId')
-            : (sourceBlack?.fideId ?? boardArgs?.blackFideId);
+    // A live `games.players` correction is authoritative for a tournament
+    // Board. PGN headers can lag behind that row, so prefer the source model
+    // when present while detached/imported boards continue to use PGN data.
+    final whiteHeader = resolveBoardPlayerHeaderMetadata(
+      sourcePlayer: sourceWhite,
+      sourceIsAuthoritative: sourceGame?.source == GameSource.supabase,
+      pgnName: pgn('White'),
+      pgnFederation: firstPgn(const [
+        'WhiteFed',
+        'WhiteFederation',
+        'WhiteCountry',
+        'WhiteTeam',
+      ]),
+      pgnTitle: pgn('WhiteTitle'),
+      pgnRating: pgnInt('WhiteElo'),
+      pgnFideId: pgnInt('WhiteFideId'),
+      fallbackName: tournamentGame?.whitePlayer ?? '',
+      fallbackFederation: tournamentGame?.whiteFederation ?? '',
+      fallbackTitle: tournamentGame?.whiteTitle ?? '',
+      fallbackRating: tournamentGame?.whiteRating ?? 0,
+      fallbackFideId: boardArgs?.whiteFideId,
+    );
+    final blackHeader = resolveBoardPlayerHeaderMetadata(
+      sourcePlayer: sourceBlack,
+      sourceIsAuthoritative: sourceGame?.source == GameSource.supabase,
+      pgnName: pgn('Black'),
+      pgnFederation: firstPgn(const [
+        'BlackFed',
+        'BlackFederation',
+        'BlackCountry',
+        'BlackTeam',
+      ]),
+      pgnTitle: pgn('BlackTitle'),
+      pgnRating: pgnInt('BlackElo'),
+      pgnFideId: pgnInt('BlackFideId'),
+      fallbackName: tournamentGame?.blackPlayer ?? '',
+      fallbackFederation: tournamentGame?.blackFederation ?? '',
+      fallbackTitle: tournamentGame?.blackTitle ?? '',
+      fallbackRating: tournamentGame?.blackRating ?? 0,
+      fallbackFideId: boardArgs?.blackFideId,
+    );
+    final whiteName = whiteHeader.name;
+    final blackName = blackHeader.name;
+    final whiteFed = whiteHeader.federation;
+    final blackFed = blackHeader.federation;
+    final whiteTitle = whiteHeader.title;
+    final blackTitle = blackHeader.title;
+    final whiteRating = whiteHeader.rating;
+    final blackRating = blackHeader.rating;
+    final whiteFideId = whiteHeader.fideId;
+    final blackFideId = blackHeader.fideId;
     final gameStatus = _resolveHeaderGameStatus(
       pgnResult: pgn('Result'),
       sourceGameStatus: sourceGame?.gameStatus,
@@ -5740,14 +6433,12 @@ class _BoardArea extends ConsumerWidget {
                     key: e2eKey(E2eIds.boardEvalBar),
                     width: _evalBarWidth,
                     height: boardSize,
-                    child: DesktopEvalBar(
+                    child: _BoardEvalBarSurface(
+                      enabled: showEngineAnalysis,
+                      fen: analysisFen,
                       width: _evalBarWidth,
                       height: boardSize,
                       isFlipped: flipped,
-                      evaluation: evalState.evaluation,
-                      mate: evalState.mate,
-                      isEvaluating: evalState.isEvaluating,
-                      positionKey: _fenPositionKey(analysisFen),
                     ),
                   ),
                   const SizedBox(width: _evalBarGap),
@@ -5976,6 +6667,51 @@ class _BoardArea extends ConsumerWidget {
           );
         },
       ),
+    );
+  }
+}
+
+/// The score is a high-frequency engine projection. Keeping its subscription
+/// in this leaf prevents depth and evaluation ticks from rebuilding the board
+/// layout or chessground scene. Position/PV moves still flow through their own
+/// narrowly selected path so arrows remain exact.
+class _BoardEvalBarSurface extends ConsumerWidget {
+  const _BoardEvalBarSurface({
+    required this.enabled,
+    required this.fen,
+    required this.width,
+    required this.height,
+    required this.isFlipped,
+  });
+
+  final bool enabled;
+  final String fen;
+  final double width;
+  final double height;
+  final bool isFlipped;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final snapshot =
+        enabled
+            ? ref.watch(
+              boardEvalProvider(fen).select(
+                (state) => (
+                  evaluation: state.evaluation,
+                  mate: state.mate,
+                  isEvaluating: state.isEvaluating,
+                ),
+              ),
+            )
+            : (evaluation: null, mate: null, isEvaluating: false);
+    return DesktopEvalBar(
+      width: width,
+      height: height,
+      isFlipped: isFlipped,
+      evaluation: snapshot.evaluation,
+      mate: snapshot.mate,
+      isEvaluating: snapshot.isEvaluating,
+      positionKey: _fenPositionKey(fen),
     );
   }
 }
@@ -6570,10 +7306,11 @@ class _PlayerHeader extends ConsumerWidget {
     final liveSnapshot =
         useLiveClock && activeGameId != null
             ? ref.watch(
-              gameUpdatesStreamProvider(
-                activeGameId!,
-              ).select((async) => _LiveClockSnapshot.from(async.valueOrNull)),
-            )
+                  baseGameProvider(
+                    activeGameId!,
+                  ).select(_LiveClockSnapshot.fromGame),
+                ) ??
+                _LiveClockSnapshot.fromGame(sourceGame)
             : null;
     final liveClockSeconds =
         isWhite ? liveSnapshot?.whiteSeconds : liveSnapshot?.blackSeconds;
@@ -6906,6 +7643,8 @@ List<TournamentGameSummary> _syncLiveGameSummaryList(
   required GameStatus status,
   required DateTime? lastMoveTime,
   required bool hasStarted,
+  required PlayerCard? whitePlayer,
+  required PlayerCard? blackPlayer,
 }) {
   var changed = false;
   final updated = <TournamentGameSummary>[
@@ -6918,6 +7657,8 @@ List<TournamentGameSummary> _syncLiveGameSummaryList(
           status: status,
           lastMoveTime: lastMoveTime,
           hasStarted: hasStarted,
+          whitePlayer: whitePlayer,
+          blackPlayer: blackPlayer,
           onChanged: () => changed = true,
         )
       else
@@ -6935,6 +7676,8 @@ TournamentGameSummary _summaryWithLiveState(
   required GameStatus status,
   required DateTime? lastMoveTime,
   required bool hasStarted,
+  required PlayerCard? whitePlayer,
+  required PlayerCard? blackPlayer,
   required VoidCallback onChanged,
 }) {
   final nextPgn = pgn?.trim().isNotEmpty == true ? pgn!.trim() : summary.pgn;
@@ -6943,12 +7686,30 @@ TournamentGameSummary _summaryWithLiveState(
   final nextLastMoveTime = lastMoveTime ?? summary.lastMoveTime;
   final nextHasStarted = hasStarted || summary.hasStarted;
   final nextHasPgn = (nextPgn?.trim().isNotEmpty ?? false) || summary.hasPgn;
+  final nextWhiteName = whitePlayer?.name ?? summary.whitePlayer;
+  final nextBlackName = blackPlayer?.name ?? summary.blackPlayer;
+  final playersChanged =
+      whitePlayer != null &&
+      blackPlayer != null &&
+      (nextWhiteName != summary.whitePlayer ||
+          nextBlackName != summary.blackPlayer ||
+          whitePlayer.federation != summary.whiteFederation ||
+          blackPlayer.federation != summary.blackFederation ||
+          whitePlayer.title != summary.whiteTitle ||
+          blackPlayer.title != summary.blackTitle ||
+          whitePlayer.rating != summary.whiteRating ||
+          blackPlayer.rating != summary.blackRating ||
+          whitePlayer.fideId != summary.whiteFideId ||
+          blackPlayer.fideId != summary.blackFideId ||
+          (whitePlayer.team ?? '') != summary.whiteTeam ||
+          (blackPlayer.team ?? '') != summary.blackTeam);
   if (nextPgn == summary.pgn &&
       nextFen == summary.fen &&
       nextStatus == summary.status &&
       nextLastMoveTime == summary.lastMoveTime &&
       nextHasStarted == summary.hasStarted &&
-      nextHasPgn == summary.hasPgn) {
+      nextHasPgn == summary.hasPgn &&
+      !playersChanged) {
     return summary;
   }
   onChanged();
@@ -6958,6 +7719,19 @@ TournamentGameSummary _summaryWithLiveState(
     status: nextStatus,
     lastMoveTime: nextLastMoveTime,
     hasStarted: nextHasStarted,
+    name: playersChanged ? '$nextWhiteName vs $nextBlackName' : null,
+    whitePlayer: playersChanged ? nextWhiteName : null,
+    blackPlayer: playersChanged ? nextBlackName : null,
+    whiteFederation: playersChanged ? whitePlayer.federation : null,
+    blackFederation: playersChanged ? blackPlayer.federation : null,
+    whiteTitle: playersChanged ? whitePlayer.title : null,
+    blackTitle: playersChanged ? blackPlayer.title : null,
+    whiteRating: playersChanged ? whitePlayer.rating : null,
+    blackRating: playersChanged ? blackPlayer.rating : null,
+    whiteFideId: playersChanged ? whitePlayer.fideId : null,
+    blackFideId: playersChanged ? blackPlayer.fideId : null,
+    whiteTeam: playersChanged ? whitePlayer.team ?? '' : null,
+    blackTeam: playersChanged ? blackPlayer.team ?? '' : null,
   );
 }
 
@@ -7008,7 +7782,7 @@ GamesTourModel _gamesTourModelFromSummary(
     roundSlug: summary.roundSlug.trim().isEmpty ? null : summary.roundSlug,
     tourId: summary.tourId,
     tourSlug: summary.tourSlug.trim().isEmpty ? null : summary.tourSlug,
-    lastMoveTime: summary.lastMoveTime ?? summary.startsAt,
+    lastMoveTime: summary.lastMoveTime,
     dateStart: summary.startsAt,
     openingName: summary.openingName,
   );
@@ -7025,15 +7799,12 @@ class _LiveClockSnapshot {
   final int? blackSeconds;
   final DateTime? lastMoveTime;
 
-  static _LiveClockSnapshot? from(Map<String, dynamic>? data) {
-    if (data == null) return null;
+  static _LiveClockSnapshot? fromGame(GamesTourModel? game) {
+    if (game == null) return null;
     return _LiveClockSnapshot(
-      whiteSeconds: (data['last_clock_white'] as num?)?.round(),
-      blackSeconds: (data['last_clock_black'] as num?)?.round(),
-      lastMoveTime:
-          data['last_move_time'] is String
-              ? DateTime.tryParse(data['last_move_time'] as String)
-              : null,
+      whiteSeconds: game.whiteClockSeconds,
+      blackSeconds: game.blackClockSeconds,
+      lastMoveTime: game.lastMoveTime,
     );
   }
 

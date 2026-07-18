@@ -53,7 +53,11 @@ class PlayerScoreCardPane extends ConsumerWidget {
       _syncLegacyScoreCardContext(context, ref, tabContext);
     }
 
-    return PlayerScoreCardView(player: player, tabContext: tabContext);
+    return PlayerScoreCardView(
+      player: player,
+      tabContext: tabContext,
+      tabId: tabId,
+    );
   }
 
   void _syncLegacyScoreCardContext(

@@ -156,12 +156,10 @@ class GameCardData {
       blackFideId: game.blackPlayer.fideId,
       fen: resolvedFen ?? game.fen,
       lastMove: game.lastMove,
-      // `effectiveGameStatus` falls back to a position-based result when the
-      // DB still says ongoing but the clocks are at 0 — so a card stops
-      // showing the "Live" pill (and starts showing 1-0 / 0-1 / ½-½) the
-      // moment the broadcast actually ends, not whenever Supabase happens
-      // to flip its `status` column.
-      status: game.effectiveGameStatus,
+      // Cards share the canonical live status with Board and the event rail.
+      // Guessing a result from a missing clock can falsely terminate an
+      // ongoing broadcast and detach the work that delivers its final row.
+      status: game.gameStatus,
       hasStarted: game.hasStarted,
       openingName: game.openingName ?? game.eco,
       whiteClockSeconds: game.whiteClockSeconds,

@@ -23,6 +23,7 @@ class Games {
   final int? lastClockBlack;
   final DateTime? dateStart;
   final DateTime? roundStartsAt;
+  final String? roundName;
   final String? eco;
   final String? openingName;
   final String?
@@ -52,6 +53,7 @@ class Games {
     this.lastClockBlack,
     this.dateStart,
     this.roundStartsAt,
+    this.roundName,
     this.eco,
     this.openingName,
     this.timeControl,
@@ -81,6 +83,7 @@ class Games {
     int? lastClockBlack,
     DateTime? dateStart,
     DateTime? roundStartsAt,
+    String? roundName,
     String? eco,
     String? openingName,
     String? timeControl,
@@ -109,6 +112,7 @@ class Games {
       lastClockBlack: lastClockBlack ?? this.lastClockBlack,
       dateStart: dateStart ?? this.dateStart,
       roundStartsAt: roundStartsAt ?? this.roundStartsAt,
+      roundName: roundName ?? this.roundName,
       eco: eco ?? this.eco,
       openingName: openingName ?? this.openingName,
       timeControl: timeControl ?? this.timeControl,
@@ -154,6 +158,8 @@ class Games {
           roundSchedule is Map<String, dynamic>
               ? roundSchedule['starts_at']
               : null;
+      final roundNameRaw =
+          roundSchedule is Map<String, dynamic> ? roundSchedule['name'] : null;
 
       return Games(
         id: json['id'] as String,
@@ -211,12 +217,13 @@ class Games {
             roundStartsAtRaw is String && roundStartsAtRaw.isNotEmpty
                 ? DateTime.parse(roundStartsAtRaw)
                 : null,
+        roundName: roundNameRaw is String ? roundNameRaw : null,
         eco: json['eco'] as String?,
         openingName: json['opening_name'] as String?,
         timeControl: timeControl,
         avgElo: avgElo,
       );
-    } catch (e, _) {
+    } catch (e) {
       rethrow;
     }
   }
@@ -247,8 +254,12 @@ class Games {
       if (lastClockBlack != null) 'last_clock_black': lastClockBlack,
       if (dateStart != null)
         'date_start': dateStart!.toIso8601String().split('T').first,
-      if (roundStartsAt != null)
-        'round_schedule': {'starts_at': roundStartsAt!.toIso8601String()},
+      if (roundStartsAt != null || roundName != null)
+        'round_schedule': {
+          if (roundName != null) 'name': roundName,
+          if (roundStartsAt != null)
+            'starts_at': roundStartsAt!.toIso8601String(),
+        },
       if (eco != null) 'eco': eco,
       if (openingName != null) 'opening_name': openingName,
       if (timeControl != null) 'time_control': timeControl,

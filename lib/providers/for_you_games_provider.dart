@@ -43,6 +43,32 @@ int get _topGamesPerEventSnapshotLimit {
   };
 }
 
+/// One bounded realtime key shared by For You membership refresh and every
+/// rendered card leaf for the same event.
+///
+/// Terminal rows remain represented while the snapshot is mounted so a
+/// result event cannot detach the channel before a trailing final PGN/FEN or
+/// player correction arrives.
+LiveGamesBatchKey forYouEventLiveBatchKey({
+  required String eventId,
+  required String tourId,
+  required Iterable<GamesTourModel> games,
+}) {
+  final boundedGames = games
+      .take(_topGamesPerEventSnapshotLimit)
+      .toList(growable: false);
+  final keysByGame = liveBatchKeysForGames(
+    games: boundedGames,
+    scopePrefix: 'for_you:$eventId:$tourId',
+    includeFinishedGames: true,
+  );
+  if (keysByGame.isNotEmpty) return keysByGame.values.first;
+  return LiveGamesBatchKey(
+    scopeId: 'for_you:$eventId:$tourId:empty',
+    gameIds: const <String>[],
+  );
+}
+
 final forYouTopGamesSnapshotCacheProvider =
     StateProvider<Map<String, ForYouEventGamesSnapshot>>((ref) {
       return const <String, ForYouEventGamesSnapshot>{};
@@ -897,27 +923,28 @@ final forYouEventGamesWithAutoRefreshProvider = Provider.autoDispose.family<
           .toList(growable: false);
 
       if (displayedGames.isNotEmpty && ref.watch(shouldStreamProvider)) {
-        final displayedLiveGames = displayedGames
-            .where(shouldSubscribeToLiveGame)
+        final liveBatchKey = forYouEventLiveBatchKey(
+          eventId: eventId,
+          tourId: snapshot.tourId,
+          games: displayedGames,
+        );
+        final representedIds = liveBatchKey.gameIds.toSet();
+        final displayedStreamGames = displayedGames
+            .where((game) => representedIds.contains(game.gameId))
             .toList(growable: false);
-        if (displayedLiveGames.isEmpty) {
+        if (displayedStreamGames.isEmpty) {
           return AsyncValue.data(snapshot);
         }
         final refreshOnFinishedGameIds =
-            displayedLiveGames
+            displayedStreamGames
                 .where((game) => game.gameStatus == GameStatus.ongoing)
                 .map((game) => game.gameId)
                 .toSet();
         final updatesAsync = ref.watch(
-          gameUpdatesBatchStreamProvider(
-            LiveGamesBatchKey(
-              scopeId: 'for_you:$eventId:${snapshot.tourId}',
-              gameIds: displayedLiveGames.map((game) => game.gameId),
-            ),
-          ).select(
+          gameUpdatesBatchStreamProvider(liveBatchKey).select(
             (async) => async.whenData(
               (updates) => _ForYouLiveUpdatesProjection.fromUpdates(
-                displayedLiveGames.map((game) => game.gameId),
+                displayedStreamGames.map((game) => game.gameId),
                 updates,
               ),
             ),

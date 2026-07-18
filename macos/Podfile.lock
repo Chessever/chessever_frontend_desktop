@@ -328,7 +328,7 @@ SPEC CHECKSUMS:
   FirebaseInstallations: 317270fec08a5d418fdbc8429282238cab3ac843
   flutter_onnxruntime: 07103445f6b566bf12df4ceae61ef7b901d3e6ec
   flutter_soloud: 7c7fe8f2067868981037aa9928c9abba59de4383
-  FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
+  FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
   google_sign_in_ios: 00dfa94252eb10278b64828c81bcb7158a81a53a
   GoogleAppMeasurement: 700dce7541804bec33db590a5c496b663fbe2539
   GoogleSignIn: fcee2257188d5eda57a5e2b6a715550ffff9206d
@@ -357,6 +357,6 @@ SPEC CHECKSUMS:
   url_launcher_macos: 0fba8ddabfc33ce0a9afe7c5fef5aab3d8d2d673
   window_manager: b729e31d38fb04905235df9ea896128991cad99e
 
-PODFILE CHECKSUM: 429f567d9ab401e946f77b31dd025355fafef34e
+PODFILE CHECKSUM: 82e43341c349d11466f47dec7ce464659a11ee65
 
 COCOAPODS: 1.16.2

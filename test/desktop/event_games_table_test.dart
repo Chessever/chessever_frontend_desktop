@@ -150,6 +150,72 @@ void main() {
     expect(selected.fen, fetched.fen);
   });
 
+  test('richer stale PGN cannot regress a terminal result', () {
+    final moveTime = DateTime.utc(2026, 7, 7, 15, 2);
+    final current = _summary(
+      id: 'game-1',
+      roundLabel: 'Round 1',
+      pgn: '1. e4 e5 1-0',
+      status: GameStatus.whiteWins,
+      lastMoveTime: moveTime,
+    );
+    final fetched = _summary(
+      id: 'game-1',
+      roundLabel: 'Round 1',
+      pgn: '[Event "Test"]\n[White "White"]\n\n1. e4 e5 *',
+      status: GameStatus.ongoing,
+      lastMoveTime: moveTime,
+    );
+
+    final selected = selectFreshestEventSummaryForOpen(
+      current: current,
+      incoming: fetched,
+    );
+
+    expect(selected, same(current));
+    expect(selected.status, GameStatus.whiteWins);
+  });
+
+  test('authoritative event-open row accepts a reopen and takeback', () {
+    final current = _summary(
+      id: 'game-1',
+      roundLabel: 'Round 7',
+      fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+      pgn: '1. e4 e5 1-0',
+      status: GameStatus.whiteWins,
+      lastMoveTime: DateTime.utc(2026, 7, 7, 15, 2),
+    );
+    final exact = GamesTourModel.fromGame(
+      Games.fromJson({
+        'id': 'game-1',
+        'round_id': 'round-7',
+        'round_slug': 'round-7',
+        'tour_id': 'tour-1',
+        'tour_slug': 'tour-1',
+        'players': [
+          {'name': 'Corrected White', 'rating': 2512},
+          {'name': 'Corrected Black', 'rating': 2498},
+        ],
+        'status': 'ONGOING',
+        'pgn': '1. e4 *',
+        'fen': 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+        'last_move_time': '2026-07-07T15:01:00Z',
+      }),
+    );
+
+    final selected = tournamentSummaryWithArbitratedLiveGame(
+      structuralSummary: current,
+      liveGame: exact,
+    );
+
+    expect(selected.status, GameStatus.ongoing);
+    expect(selected.pgn, '1. e4 *');
+    expect(selected.fen, exact.fen);
+    expect(selected.whitePlayer, 'Corrected White');
+    expect(selected.roundLabel, 'Round 7');
+    expect(selected.hasStarted, isTrue);
+  });
+
   test(
     'continuation rail window centers provider games on the selected row',
     () {
@@ -672,7 +738,7 @@ void main() {
     expect(keys, isEmpty);
   });
 
-  test('event rail chunks live ids and skips finished rows', () {
+  test('event rail chunks ids without shifting membership on finish', () {
     final games = [
       for (var i = 0; i < 26; i++)
         _summary(
@@ -692,8 +758,8 @@ void main() {
 
     expect(keys, hasLength(2));
     expect(keys[0].gameIds.length, 25);
-    expect(keys[1].gameIds, ['live-25']);
-    expect(keys.any((key) => key.contains('finished-1')), isFalse);
+    expect(keys[1].gameIds, ['finished-1', 'live-25']);
+    expect(keys.any((key) => key.contains('finished-1')), isTrue);
   });
 
   test('event rail copy selection can span rounds', () {
@@ -866,81 +932,80 @@ void main() {
     },
   );
 
-  testWidgets(
-    'opening a local database row preserves its PGN update target',
-    (tester) async {
-      const firstSource = TournamentGameLocalPgnSource(
-        sourcePath: '/tmp/local-library.pgn',
-        sourceIndex: 2,
-        sourceFileGameCount: 6,
-        title: 'Local One vs Local Two',
-      );
-      const secondSource = TournamentGameLocalPgnSource(
-        sourcePath: '/tmp/local-library.pgn',
-        sourceIndex: 3,
-        sourceFileGameCount: 6,
-        title: 'Local Three vs Local Four',
-      );
-      final first = _summary(
-        id: 'local-game-1',
-        roundLabel: 'Local',
-        whitePlayer: 'Local One',
-        blackPlayer: 'Local Two',
-        localPgnSource: firstSource,
-      );
-      final second = _summary(
-        id: 'local-game-2',
-        roundLabel: 'Local',
-        whitePlayer: 'Local Three',
-        blackPlayer: 'Local Four',
-        localPgnSource: secondSource,
-      );
+  testWidgets('opening a local database row preserves its PGN update target', (
+    tester,
+  ) async {
+    const firstSource = TournamentGameLocalPgnSource(
+      sourcePath: '/tmp/local-library.pgn',
+      sourceIndex: 2,
+      sourceFileGameCount: 6,
+      title: 'Local One vs Local Two',
+    );
+    const secondSource = TournamentGameLocalPgnSource(
+      sourcePath: '/tmp/local-library.pgn',
+      sourceIndex: 3,
+      sourceFileGameCount: 6,
+      title: 'Local Three vs Local Four',
+    );
+    final first = _summary(
+      id: 'local-game-1',
+      roundLabel: 'Local',
+      whitePlayer: 'Local One',
+      blackPlayer: 'Local Two',
+      localPgnSource: firstSource,
+    );
+    final second = _summary(
+      id: 'local-game-2',
+      roundLabel: 'Local',
+      whitePlayer: 'Local Three',
+      blackPlayer: 'Local Four',
+      localPgnSource: secondSource,
+    );
 
-      await tester.pumpWidget(
-        _wrap(
-          BoardTabGameArgs(
-            pgn: first.pgn!,
-            label: first.name,
-            whiteName: first.whitePlayer,
-            blackName: first.blackPlayer,
-            databaseTitle: 'Local Library',
-            databaseGames: [first, second],
-            gameListSelectedId: first.id,
-            librarySaveOrigin: const BoardTabLibrarySaveOrigin.localPgnFile(
-              sourcePath: '/tmp/local-library.pgn',
-              sourceIndex: 2,
-              sourceFileGameCount: 6,
-              title: 'Local One vs Local Two',
-            ),
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          pgn: first.pgn!,
+          label: first.name,
+          whiteName: first.whitePlayer,
+          blackName: first.blackPlayer,
+          databaseTitle: 'Local Library',
+          databaseGames: [first, second],
+          gameListSelectedId: first.id,
+          librarySaveOrigin: const BoardTabLibrarySaveOrigin.localPgnFile(
+            sourcePath: '/tmp/local-library.pgn',
+            sourceIndex: 2,
+            sourceFileGameCount: 6,
+            title: 'Local One vs Local Two',
           ),
         ),
-      );
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
 
-      await tester.tap(find.text('Local Three'));
-      await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pump();
+    await tester.tap(find.text('Local Three'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
 
-      final container = ProviderScope.containerOf(
-        tester.element(find.byType(EventGamesTable)),
-      );
-      final args = container.read(boardTabGameArgsByTabIdProvider).values.single;
-      expect(args.gameId, isNull);
-      expect(args.gameListSelectedId, second.id);
-      expect(
-        args.librarySaveOrigin?.kind,
-        BoardTabLibrarySaveOriginKind.localPgnFile,
-      );
-      expect(args.librarySaveOrigin?.sourcePath, secondSource.sourcePath);
-      expect(args.librarySaveOrigin?.sourceIndex, secondSource.sourceIndex);
-      expect(
-        args.librarySaveOrigin?.sourceFileGameCount,
-        secondSource.sourceFileGameCount,
-      );
-      expect(args.librarySaveOrigin?.title, secondSource.title);
-    },
-  );
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(EventGamesTable)),
+    );
+    final args = container.read(boardTabGameArgsByTabIdProvider).values.single;
+    expect(args.gameId, isNull);
+    expect(args.gameListSelectedId, second.id);
+    expect(
+      args.librarySaveOrigin?.kind,
+      BoardTabLibrarySaveOriginKind.localPgnFile,
+    );
+    expect(args.librarySaveOrigin?.sourcePath, secondSource.sourcePath);
+    expect(args.librarySaveOrigin?.sourceIndex, secondSource.sourceIndex);
+    expect(
+      args.librarySaveOrigin?.sourceFileGameCount,
+      secondSource.sourceFileGameCount,
+    );
+    expect(args.librarySaveOrigin?.title, secondSource.title);
+  });
 
   testWidgets('database games rail loads the next page only after scroll', (
     tester,
@@ -1095,7 +1160,7 @@ void main() {
       // Give the rail its own local highlight, then simulate Cmd/Ctrl+Down
       // changing the canonical board selection outside the rail.
       await tester.tap(find.text('White One'));
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
       final container = ProviderScope.containerOf(
         tester.element(find.byType(EventGamesTable)),
       );
@@ -1111,7 +1176,8 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
 
-      final args = container.read(boardTabGameArgsByTabIdProvider).values.single;
+      final args =
+          container.read(boardTabGameArgsByTabIdProvider).values.single;
       expect(args.gameId, 'source-game-2');
       expect(args.gameListSelectedId, 'source-game-2');
     },
@@ -1658,17 +1724,34 @@ void main() {
     await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
     await tester.ensureVisible(find.text('Round One Black One'));
     await tester.tap(find.text('Round One Black One'));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
-    await tester.pump(const Duration(milliseconds: 120));
 
-    firstRoundTable = tester.widget<Table>(find.byType(Table).at(0));
-    secondRoundTable = tester.widget<Table>(find.byType(Table).at(1));
-    expect(
-      (firstRoundTable.children[0].decoration as BoxDecoration).color,
-      isNot(Colors.transparent),
+    secondRoundTable = tester.widget<Table>(
+      find
+          .ancestor(
+            of: find.text('Round One Black One'),
+            matching: find.byType(Table),
+          )
+          .first,
     );
     expect(
       (secondRoundTable.children[0].decoration as BoxDecoration).color,
+      isNot(Colors.transparent),
+    );
+
+    await tester.ensureVisible(find.text('Round Two White One'));
+    await tester.pump();
+    firstRoundTable = tester.widget<Table>(
+      find
+          .ancestor(
+            of: find.text('Round Two White One'),
+            matching: find.byType(Table),
+          )
+          .first,
+    );
+    expect(
+      (firstRoundTable.children[0].decoration as BoxDecoration).color,
       isNot(Colors.transparent),
     );
   });

@@ -100,7 +100,9 @@ class TournamentGameSummary {
       roundLabel: _roundLabel(roundSlug: game.roundSlug, roundId: game.roundId),
       roundName: roundName?.trim() ?? '',
       boardNumber: game.boardNr,
-      status: game.effectiveGameStatus,
+      // Keep the server's status canonical in shared navigation state. A
+      // position/clock-derived UI fallback must not terminate a live stream.
+      status: game.gameStatus,
       openingName: game.openingName ?? game.eco,
       lastMoveTime: game.lastMoveTime,
       startsAt: game.dateStart,
@@ -150,6 +152,7 @@ class TournamentGameSummary {
       roundId: game.roundId,
       roundSlug: game.roundSlug,
       roundLabel: _roundLabel(roundSlug: game.roundSlug, roundId: game.roundId),
+      roundName: game.roundName?.trim() ?? '',
       boardNumber: game.boardNr,
       status: GameStatus.fromString(game.status),
       openingName: game.openingName ?? game.eco,
@@ -223,6 +226,19 @@ class TournamentGameSummary {
   final TournamentGameLocalPgnSource? localPgnSource;
 
   TournamentGameSummary copyWith({
+    String? name,
+    String? whitePlayer,
+    String? blackPlayer,
+    String? whiteFederation,
+    String? blackFederation,
+    String? whiteTitle,
+    String? blackTitle,
+    int? whiteRating,
+    int? blackRating,
+    int? whiteFideId,
+    int? blackFideId,
+    String? whiteTeam,
+    String? blackTeam,
     String? pgn,
     String? fen,
     DateTime? lastMoveTime,
@@ -232,20 +248,20 @@ class TournamentGameSummary {
   }) {
     return TournamentGameSummary(
       id: id,
-      name: name,
-      whitePlayer: whitePlayer,
-      blackPlayer: blackPlayer,
+      name: name ?? this.name,
+      whitePlayer: whitePlayer ?? this.whitePlayer,
+      blackPlayer: blackPlayer ?? this.blackPlayer,
       hasPgn: ((pgn ?? this.pgn)?.trim().isNotEmpty ?? false) || hasPgn,
       tourId: tourId,
       tourSlug: tourSlug,
-      whiteFederation: whiteFederation,
-      blackFederation: blackFederation,
-      whiteTitle: whiteTitle,
-      blackTitle: blackTitle,
-      whiteRating: whiteRating,
-      blackRating: blackRating,
-      whiteFideId: whiteFideId,
-      blackFideId: blackFideId,
+      whiteFederation: whiteFederation ?? this.whiteFederation,
+      blackFederation: blackFederation ?? this.blackFederation,
+      whiteTitle: whiteTitle ?? this.whiteTitle,
+      blackTitle: blackTitle ?? this.blackTitle,
+      whiteRating: whiteRating ?? this.whiteRating,
+      blackRating: blackRating ?? this.blackRating,
+      whiteFideId: whiteFideId ?? this.whiteFideId,
+      blackFideId: blackFideId ?? this.blackFideId,
       fen: fen ?? this.fen,
       roundId: roundId,
       roundSlug: roundSlug,
@@ -259,11 +275,135 @@ class TournamentGameSummary {
       roundStartsAt: roundStartsAt,
       hasStarted: hasStarted ?? this.hasStarted,
       pgn: pgn ?? this.pgn,
-      whiteTeam: whiteTeam,
-      blackTeam: blackTeam,
+      whiteTeam: whiteTeam ?? this.whiteTeam,
+      blackTeam: blackTeam ?? this.blackTeam,
       localPgnSource: localPgnSource ?? this.localPgnSource,
     );
   }
+}
+
+/// Builds the canonical live-card model for a lightweight event-rail row.
+/// Keeping this conversion shared prevents Board, rail, and card surfaces from
+/// applying different realtime arbitration rules to the same game.
+GamesTourModel gamesTourModelFromTournamentSummary(
+  TournamentGameSummary summary, {
+  GameSource source = GameSource.supabase,
+}) {
+  final whiteFederation = summary.whiteFederation.trim();
+  final blackFederation = summary.blackFederation.trim();
+  return GamesTourModel(
+    gameId: summary.id,
+    source: source,
+    whitePlayer: PlayerCard(
+      name: summary.whitePlayer,
+      federation: whiteFederation,
+      title: summary.whiteTitle,
+      rating: summary.whiteRating,
+      countryCode: whiteFederation,
+      fideId: summary.whiteFideId,
+      team: summary.whiteTeam.trim().isEmpty ? null : summary.whiteTeam.trim(),
+    ),
+    blackPlayer: PlayerCard(
+      name: summary.blackPlayer,
+      federation: blackFederation,
+      title: summary.blackTitle,
+      rating: summary.blackRating,
+      countryCode: blackFederation,
+      fideId: summary.blackFideId,
+      team: summary.blackTeam.trim().isEmpty ? null : summary.blackTeam.trim(),
+    ),
+    whiteTimeDisplay: '--:--',
+    blackTimeDisplay: '--:--',
+    whiteClockCentiseconds: 0,
+    blackClockCentiseconds: 0,
+    gameStatus: summary.status,
+    fen: summary.fen,
+    pgn: summary.pgn,
+    boardNr: summary.boardNumber,
+    roundId: summary.roundId,
+    roundSlug: summary.roundSlug.trim().isEmpty ? null : summary.roundSlug,
+    tourId: summary.tourId,
+    tourSlug: summary.tourSlug.trim().isEmpty ? null : summary.tourSlug,
+    lastMoveTime: summary.lastMoveTime,
+    dateStart: summary.startsAt,
+    roundStartsAt: summary.roundStartsAt,
+    openingName: summary.openingName,
+  );
+}
+
+/// Projects one already-arbitrated live model back into an event-rail row.
+/// Live fields are authoritative, including intentional clears/reopens; round
+/// and local-source coordinates remain anchored to the rail row.
+TournamentGameSummary tournamentSummaryWithArbitratedLiveGame({
+  required TournamentGameSummary structuralSummary,
+  required GamesTourModel liveGame,
+}) {
+  final whiteFederation = _summaryFederation(liveGame.whitePlayer);
+  final blackFederation = _summaryFederation(liveGame.blackPlayer);
+  final pgn = liveGame.pgn?.trim();
+  final fen =
+      resolveFreshestGameFen(
+        fen: liveGame.fen,
+        pgn: liveGame.pgn,
+        lastMove: liveGame.lastMove,
+      )?.trim();
+  final hasStarted =
+      liveGame.hasStarted ||
+      (resolveFinalPositionFromPgn(liveGame.pgn)?.moveCount ?? 0) > 0 ||
+      (plyFromFen(fen) ?? 0) > 0;
+  return TournamentGameSummary(
+    id: structuralSummary.id,
+    name: structuralSummary.name,
+    whitePlayer: liveGame.whitePlayer.name,
+    blackPlayer: liveGame.blackPlayer.name,
+    hasPgn: pgn != null && pgn.isNotEmpty,
+    tourId:
+        liveGame.tourId.isNotEmpty ? liveGame.tourId : structuralSummary.tourId,
+    tourSlug: liveGame.tourSlug ?? structuralSummary.tourSlug,
+    whiteFederation: whiteFederation,
+    blackFederation: blackFederation,
+    whiteTitle: liveGame.whitePlayer.title,
+    blackTitle: liveGame.blackPlayer.title,
+    whiteRating: liveGame.whitePlayer.rating,
+    blackRating: liveGame.blackPlayer.rating,
+    whiteFideId: liveGame.whitePlayer.fideId,
+    blackFideId: liveGame.blackPlayer.fideId,
+    fen: fen == null || fen.isEmpty ? null : fen,
+    roundId: structuralSummary.roundId,
+    roundSlug: structuralSummary.roundSlug,
+    roundLabel: structuralSummary.roundLabel,
+    roundName: structuralSummary.roundName,
+    boardNumber: structuralSummary.boardNumber,
+    status: liveGame.gameStatus,
+    openingName: liveGame.openingName ?? structuralSummary.openingName,
+    lastMoveTime: liveGame.lastMoveTime,
+    startsAt: liveGame.dateStart ?? structuralSummary.startsAt,
+    roundStartsAt: liveGame.roundStartsAt ?? structuralSummary.roundStartsAt,
+    hasStarted: hasStarted,
+    pgn: pgn == null || pgn.isEmpty ? null : liveGame.pgn,
+    whiteTeam: liveGame.whitePlayer.team?.trim() ?? '',
+    blackTeam: liveGame.blackPlayer.team?.trim() ?? '',
+    localPgnSource: structuralSummary.localPgnSource,
+  );
+}
+
+/// Merges status from a refreshed snapshot without letting incomplete or
+/// out-of-order metadata regress a known result.
+GameStatus mergeEventGameStatus({
+  required GameStatus current,
+  required GameStatus incoming,
+  bool currentSnapshotIsNewer = false,
+}) {
+  if (incoming == GameStatus.unknown) return current;
+  // Timestamp freshness wins when both snapshots are terminal. A delayed draw
+  // row must not replace a newer white/black result already rendered. A first
+  // terminal result still beats an ongoing/unknown snapshot even if its move
+  // timestamp is older, because result state is monotonic and may arrive via a
+  // separate metadata path.
+  if (currentSnapshotIsNewer && current.isFinished) return current;
+  if (current.isFinished && !incoming.isFinished) return current;
+  if (incoming.isFinished) return incoming;
+  return currentSnapshotIsNewer ? current : incoming;
 }
 
 String _summaryFederation(PlayerCard player) {

@@ -1159,6 +1159,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
             .downloadLichessGames(
               username: existing.username,
               sinceMs: sinceMs,
+              forceRefresh: reinstall,
               expectedGameCount: _expectedDownloadGameCount(
                 existing,
                 reinstall: reinstall,
@@ -1179,6 +1180,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
             .downloadChessComGames(
               username: existing.username,
               sinceMs: sinceMs,
+              forceRefresh: reinstall,
               onProgress:
                   (message, progress) => _setScopedOperationPhaseProgress(
                     scope,
@@ -2541,7 +2543,7 @@ class PlayerWorkspaceNotifier extends StateNotifier<PlayerWorkspaceState> {
 
   Future<bool> _fileExistsBestEffort(String path) async {
     try {
-      return File(path).exists();
+      return await File(path).exists();
     } catch (_) {
       return false;
     }

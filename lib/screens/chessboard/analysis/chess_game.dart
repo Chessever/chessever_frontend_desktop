@@ -18,11 +18,20 @@ class ChessGame {
   final Map<String, dynamic> metadata;
   final ChessLine mainline;
 
+  /// Analysis displaced by an authoritative takeback to the root position.
+  ///
+  /// A move tree normally hangs variations from a move, so an empty mainline
+  /// has no node that can retain the previous tree. Keep those lines detached
+  /// until a later live move provides an anchor. This field is serialized with
+  /// the rest of the game so a session/save round trip cannot discard them.
+  final List<ChessLine>? detachedRootAnalysis;
+
   ChessGame({
     required this.gameId,
     required this.startingFen,
     required this.metadata,
     required this.mainline,
+    this.detachedRootAnalysis,
   });
 
   factory ChessGame.fromJson(Map<String, dynamic> json) {
@@ -37,6 +46,21 @@ class ChessGame {
                     ChessMove.fromJson((move as Map).cast<String, dynamic>()),
               )
               .toList(),
+      detachedRootAnalysis:
+          json['dra'] == null
+              ? null
+              : (json['dra'] as List)
+                  .map(
+                    (line) =>
+                        (line as List)
+                            .map(
+                              (move) => ChessMove.fromJson(
+                                (move as Map).cast<String, dynamic>(),
+                              ),
+                            )
+                            .toList(),
+                  )
+                  .toList(),
     );
   }
 
@@ -45,6 +69,11 @@ class ChessGame {
     'sf': startingFen,
     'md': metadata,
     'm': mainline.map((move) => move.toJson()).toList(),
+    if (detachedRootAnalysis != null)
+      'dra':
+          detachedRootAnalysis!
+              .map((line) => line.map((move) => move.toJson()).toList())
+              .toList(),
   };
 
   ChessGame copyWith({
@@ -52,12 +81,18 @@ class ChessGame {
     String? startingFen,
     Map<String, dynamic>? metadata,
     ChessLine? mainline,
+    List<ChessLine>? detachedRootAnalysis,
+    bool overrideDetachedRootAnalysis = false,
   }) {
     return ChessGame(
       gameId: gameId ?? this.gameId,
       startingFen: startingFen ?? this.startingFen,
       metadata: metadata ?? this.metadata,
       mainline: mainline ?? this.mainline,
+      detachedRootAnalysis:
+          overrideDetachedRootAnalysis
+              ? detachedRootAnalysis
+              : this.detachedRootAnalysis,
     );
   }
 

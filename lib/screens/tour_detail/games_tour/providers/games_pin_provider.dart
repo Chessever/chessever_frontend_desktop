@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:chessever/providers/auto_pin_preferences_provider.dart';
 import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/repository/local_storage/auto_pin_preferences/auto_pin_preferences_repository.dart';
@@ -12,6 +14,74 @@ import 'package:chessever/screens/tour_detail/player_tour/player_tour_screen_pro
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+
+/// Coalesces a burst of pin reload requests into the active load plus at most
+/// one catch-up load. Reload failures are deliberately contained so a queued
+/// catch-up can reconcile transient storage errors.
+class GamesPinLoadCoordinator {
+  Future<void>? _activeLoad;
+  Future<void> Function()? _latestLoad;
+  bool _catchUpRequested = false;
+
+  Future<void> schedule(Future<void> Function() load) {
+    _latestLoad = load;
+
+    final activeLoad = _activeLoad;
+    if (activeLoad != null) {
+      _catchUpRequested = true;
+      return activeLoad;
+    }
+
+    final completer = Completer<void>();
+    _activeLoad = completer.future;
+    unawaited(_drain(completer));
+    return completer.future;
+  }
+
+  Future<void> _drain(Completer<void> completer) async {
+    do {
+      _catchUpRequested = false;
+      final load = _latestLoad;
+      if (load == null) break;
+
+      try {
+        await load();
+      } catch (error, stackTrace) {
+        debugPrint('Failed to reconcile tournament game pins: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }
+    } while (_catchUpRequested);
+
+    _latestLoad = null;
+    _activeLoad = null;
+    completer.complete();
+  }
+}
+
+@visibleForTesting
+bool tournamentStageLoadsSettled({
+  required Iterable<String> tourIds,
+  required bool Function(String tourId) hasSettled,
+}) => tourIds.every(hasSettled);
+
+@visibleForTesting
+bool tournamentStageUpdateNeedsPinRefresh({
+  required bool previousSettled,
+  required bool nextSettled,
+  required Iterable<String> previousGameIds,
+  required Iterable<String> nextGameIds,
+}) {
+  if (!nextSettled) return false;
+  if (!previousSettled) return true;
+  return !setEquals(previousGameIds.toSet(), nextGameIds.toSet());
+}
+
+@visibleForTesting
+bool tournamentStageLoadsReadyForPinRefresh({
+  required bool primarySettled,
+  required bool allSettled,
+  required bool partialRefreshAlreadyScheduled,
+}) => allSettled || (primarySettled && !partialRefreshAlreadyScheduled);
 
 class GamesPinState {
   final List<String> manualPins;
@@ -109,7 +179,7 @@ final gamesPinprovider =
 class _GamesPinController extends StateNotifier<GamesPinState> {
   _GamesPinController({required this.ref, required this.tourId})
     : super(GamesPinState()) {
-    loadPinnedGames();
+    computeAutoPins();
     _listenToFavoritePlayers();
     _listenToKnockoutStages();
     _listenToCountrySelection();
@@ -119,6 +189,7 @@ class _GamesPinController extends StateNotifier<GamesPinState> {
 
   final Ref ref;
   final String tourId;
+  final GamesPinLoadCoordinator _loadCoordinator = GamesPinLoadCoordinator();
   final Set<String> _stageListeners = <String>{};
 
   void _listenToFavoritePlayers() {
@@ -172,12 +243,10 @@ class _GamesPinController extends StateNotifier<GamesPinState> {
 
         ref.listen<KnockoutTournamentState>(
           knockoutTournamentStateProvider(stageId),
-          (prevState, nextState) {
+          (previous, next) {
             final previousGames =
-                prevState?.allGames ?? const <GamesTourModel>[];
-            final nextGames = nextState.allGames;
-
-            if (_didGameListChange(previousGames, nextGames)) {
+                previous?.allGames ?? const <GamesTourModel>[];
+            if (_didGameListChange(previousGames, next.allGames)) {
               computeAutoPins();
             }
           },
@@ -244,6 +313,16 @@ class _GamesPinController extends StateNotifier<GamesPinState> {
     });
   }
 
+  bool _didRawGamesChange(List<Games> previous, List<Games> next) {
+    if (previous.length != next.length) {
+      return true;
+    }
+
+    final previousIds = previous.map((game) => game.id).toSet();
+    final nextIds = next.map((game) => game.id).toSet();
+    return !setEquals(previousIds, nextIds);
+  }
+
   bool _didGameListChange(
     List<GamesTourModel> previous,
     List<GamesTourModel> next,
@@ -254,16 +333,6 @@ class _GamesPinController extends StateNotifier<GamesPinState> {
 
     final previousIds = previous.map((game) => game.gameId).toSet();
     final nextIds = next.map((game) => game.gameId).toSet();
-    return !setEquals(previousIds, nextIds);
-  }
-
-  bool _didRawGamesChange(List<Games> previous, List<Games> next) {
-    if (previous.length != next.length) {
-      return true;
-    }
-
-    final previousIds = previous.map((game) => game.id).toSet();
-    final nextIds = next.map((game) => game.id).toSet();
     return !setEquals(previousIds, nextIds);
   }
 
@@ -326,8 +395,8 @@ class _GamesPinController extends StateNotifier<GamesPinState> {
           break;
       }
 
-      await loadPinnedGames();
-    } catch (e, _) {
+      await computeAutoPins();
+    } catch (e) {
       debugPrint('Failed to toggle pin for $gameId in $sourceTourId: $e');
     }
   }
@@ -343,7 +412,7 @@ class _GamesPinController extends StateNotifier<GamesPinState> {
   }
 
   Future<void> computeAutoPins() async {
-    await loadPinnedGames();
+    await _loadCoordinator.schedule(loadPinnedGames);
   }
 
   List<String> _getRelatedTourIds() {

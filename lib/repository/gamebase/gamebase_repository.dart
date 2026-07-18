@@ -1400,8 +1400,8 @@ class GamebaseRepository {
 
   /// Fetch an external player source as one server-cached PGN snapshot.
   ///
-  /// The gamebase endpoint probes the origin source first and only refreshes
-  /// its cache when the remote source is bigger/newer than the cached snapshot.
+  /// The gamebase endpoint serves a recently checked shared snapshot directly,
+  /// then revalidates stale snapshots and expands them on the server.
   /// Returns null when the deployed proxy/API does not support the endpoint yet.
   /// Production player source sync treats that as an unavailable backend source,
   /// not as permission to hit Lichess/Chess.com from the client.

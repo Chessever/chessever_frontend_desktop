@@ -138,6 +138,55 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 1));
   });
+
+  testWidgets('backgrounding the engine panel cancels a running report', (
+    tester,
+  ) async {
+    final evaluatorResult = Completer<EnhancedCloudEval>();
+    final controller = GameAnalysisReportController(
+      evaluator:
+          (
+            fen, {
+            required depth,
+            required multiPv,
+            required ownerId,
+            onProgress,
+          }) => evaluatorResult.future,
+    );
+    final game = ChessGame.fromPgn('report-background', '1. e4 *');
+    final harnessKey = GlobalKey<_ForegroundReportHarnessState>();
+    addTearDown(() {
+      if (!evaluatorResult.isCompleted) {
+        evaluatorResult.complete(_evaluation(game.startingFen));
+      }
+      controller.dispose();
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          engineSettingsProviderNew.overrideWith(
+            _EngineAndAutoAnalysisOnNotifier.new,
+          ),
+        ],
+        child: MaterialApp(
+          home: _ForegroundReportHarness(
+            key: harnessKey,
+            game: game,
+            controller: controller,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(controller.state.status, GameReportStatus.running);
+
+    harnessKey.currentState!.setForeground(false);
+    await tester.pump();
+    await tester.pump();
+    expect(controller.state.status, GameReportStatus.cancelled);
+  });
 }
 
 EnhancedCloudEval _evaluation(String fen) => EnhancedCloudEval(
@@ -231,6 +280,44 @@ class _DisposableReportHarnessState extends State<_DisposableReportHarness> {
             setState(() => reportRunning = running);
           }
         },
+      ),
+    );
+  }
+}
+
+class _ForegroundReportHarness extends StatefulWidget {
+  const _ForegroundReportHarness({
+    super.key,
+    required this.game,
+    required this.controller,
+  });
+
+  final ChessGame game;
+  final GameAnalysisReportController controller;
+
+  @override
+  State<_ForegroundReportHarness> createState() =>
+      _ForegroundReportHarnessState();
+}
+
+class _ForegroundReportHarnessState extends State<_ForegroundReportHarness> {
+  bool foreground = true;
+
+  void setForeground(bool value) => setState(() => foreground = value);
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 520,
+      height: 420,
+      child: EnginePanel(
+        fen: widget.game.startingFen,
+        sideToMove: 'w',
+        game: widget.game,
+        reportVisible: true,
+        isForegroundTab: foreground,
+        autoAnalysisAllowed: foreground,
+        reportController: widget.controller,
       ),
     );
   }

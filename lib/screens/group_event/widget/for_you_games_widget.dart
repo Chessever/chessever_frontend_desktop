@@ -13,7 +13,6 @@ import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card.dart'
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/game_card_wrapper_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/game_card_wrapper_widget.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/grid_game_card_wrapper_widget.dart';
-import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/games_tour_content_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/foreground_task_scheduler.dart';
@@ -22,6 +21,7 @@ import 'package:chessever/widgets/event_card/event_card.dart';
 import 'package:chessever/widgets/generic_error_widget.dart';
 import 'package:chessever/widgets/skeleton_widget.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
@@ -42,9 +42,10 @@ LiveGamesBatchKey _forYouLiveBatchKey({
   required String tourId,
   required List<GamesTourModel> games,
 }) {
-  return LiveGamesBatchKey(
-    scopeId: 'for_you:$eventId:$tourId',
-    gameIds: games.where(shouldSubscribeToLiveGame).map((game) => game.gameId),
+  return forYouEventLiveBatchKey(
+    eventId: eventId,
+    tourId: tourId,
+    games: games,
   );
 }
 
@@ -283,7 +284,9 @@ class _ForYouGamesWidgetState extends ConsumerState<ForYouGamesWidget>
         vertical: 16.sp,
       ),
       itemCount: itemCount,
-      cacheExtent: _forYouCacheExtentForMode(viewMode),
+      scrollCacheExtent: ScrollCacheExtent.pixels(
+        _forYouCacheExtentForMode(viewMode),
+      ),
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       physics: const AlwaysScrollableScrollPhysics(
@@ -354,7 +357,9 @@ class _ForYouGamesWidgetState extends ConsumerState<ForYouGamesWidget>
         vertical: 16.sp,
       ),
       itemCount: itemCount,
-      cacheExtent: _forYouCacheExtentForMode(viewMode),
+      scrollCacheExtent: ScrollCacheExtent.pixels(
+        _forYouCacheExtentForMode(viewMode),
+      ),
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       physics: const AlwaysScrollableScrollPhysics(
@@ -740,7 +745,7 @@ class _ForYouTabletColumnGames extends StatelessWidget {
         final liveBatchKey = _forYouLiveBatchKey(
           eventId: eventId,
           tourId: snapshot.tourId,
-          games: gameModels,
+          games: snapshot.visibleGames,
         );
 
         // Build 2-column grid of games (2 per row, max 2 rows = 4 games)
@@ -943,7 +948,7 @@ class _ForYouEventGames extends ConsumerWidget {
         final liveBatchKey = _forYouLiveBatchKey(
           eventId: eventId,
           tourId: snapshot.tourId,
-          games: displayedGames,
+          games: snapshot.visibleGames,
         );
 
         final gamesData = GamesScreenModel(

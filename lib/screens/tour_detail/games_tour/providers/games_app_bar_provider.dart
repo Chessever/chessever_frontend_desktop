@@ -143,16 +143,25 @@ class _GamesAppBarNotifier
   bool _selectionRefreshScheduled = false;
   ProviderSubscription? _shouldStreamListener;
   Timer? _roundRefreshTimer;
+  Future<void>? _activeLoad;
+  bool _loadCatchUpRequested = false;
+  bool _latestShowLoading = true;
+  bool _latestScrollSelection = true;
 
   Future<void> refresh() async {
     if (!mounted) return;
-    await _load();
+    await _load(showLoading: false);
   }
 
   void _startRoundRefresh() {
     _stopRoundRefresh();
     _roundRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (!mounted) return;
+      final id = tourId;
+      if (id != null &&
+          !ref.read(gamesTourProvider(id).notifier).backgroundRefreshAllowed) {
+        return;
+      }
       _load(showLoading: false, scrollSelection: false);
     });
   }
@@ -697,9 +706,40 @@ class _GamesAppBarNotifier
     return -1; // not found
   }
 
-  Future<void> _load({
-    bool showLoading = true,
-    bool scrollSelection = true,
+  Future<void> _load({bool showLoading = true, bool scrollSelection = true}) {
+    _latestShowLoading = showLoading;
+    _latestScrollSelection = scrollSelection;
+
+    final activeLoad = _activeLoad;
+    if (activeLoad != null) {
+      _loadCatchUpRequested = true;
+      return activeLoad;
+    }
+
+    final completer = Completer<void>();
+    _activeLoad = completer.future;
+    unawaited(_drainLoads(completer));
+    return completer.future;
+  }
+
+  Future<void> _drainLoads(Completer<void> completer) async {
+    do {
+      _loadCatchUpRequested = false;
+      final showLoading = _latestShowLoading;
+      final scrollSelection = _latestScrollSelection;
+      await _performLoad(
+        showLoading: showLoading,
+        scrollSelection: scrollSelection,
+      );
+    } while (_loadCatchUpRequested && mounted);
+
+    _activeLoad = null;
+    completer.complete();
+  }
+
+  Future<void> _performLoad({
+    required bool showLoading,
+    required bool scrollSelection,
   }) async {
     if (!mounted) return;
     if (tourId == null) {
@@ -833,15 +873,18 @@ class _GamesAppBarNotifier
           '🏆 Processing ${groupTours.length} tours in group broadcast (sorted by date descending)',
         );
 
+        final repo = ref.read(roundRepositoryProvider);
+        final roundsByTourId = await repo
+            .getRoundsByTourIds(
+              groupTours.map((tourModel) => tourModel.tour.id).toList(),
+            )
+            .timeout(kTournamentRoundsRequestTimeout);
+
         for (final tourModel in groupTours) {
           final tour = tourModel.tour;
           print('  📋 Tour: ${tour.name} (ID: ${tour.id})');
 
-          // Get rounds for this specific tour first
-          final repo = ref.read(roundRepositoryProvider);
-          final stageRounds = await repo
-              .getRoundsByTourId(tour.id)
-              .timeout(kTournamentRoundsRequestTimeout);
+          final stageRounds = roundsByTourId[tour.id] ?? const <Round>[];
           final stageRoundModels =
               stageRounds
                   .map((r) => GamesAppBarModel.fromRound(r, _liveRounds))

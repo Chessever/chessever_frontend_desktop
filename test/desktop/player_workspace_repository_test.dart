@@ -96,65 +96,61 @@ void main() {
       },
     );
 
-    test(
-      'cold Combined rebuild keeps the UI event loop responsive',
-      () async {
-        final sourceFile = File('${temp.path}/cold-chessever-source.pgn');
-        await sourceFile.writeAsString(_largeChessEverPgn(1000));
-        final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
-        final localRepository = LocalChessDatabaseRepository(
-          database: () async => db,
-        );
+    test('cold Combined rebuild keeps the UI event loop responsive', () async {
+      final sourceFile = File('${temp.path}/cold-chessever-source.pgn');
+      await sourceFile.writeAsString(_largeChessEverPgn(1000));
+      final workspaceRepository = _FakePlayerWorkspaceRepository(root: temp);
+      final localRepository = LocalChessDatabaseRepository(
+        database: () async => db,
+      );
 
-        final stopwatch = Stopwatch()..start();
-        var lastTickUs = stopwatch.elapsedMicroseconds;
-        var maxTickGapUs = 0;
-        var tickCount = 0;
-        var phase = 'starting';
-        var phaseAtMaxGap = phase;
-        final timer = Timer.periodic(const Duration(milliseconds: 4), (_) {
-          final nowUs = stopwatch.elapsedMicroseconds;
-          final gapUs = nowUs - lastTickUs;
-          if (gapUs > maxTickGapUs) {
-            maxTickGapUs = gapUs;
-            phaseAtMaxGap = phase;
-          }
-          lastTickUs = nowUs;
-          tickCount++;
-        });
-        await Future<void>.delayed(const Duration(milliseconds: 12));
+      final stopwatch = Stopwatch()..start();
+      var lastTickUs = stopwatch.elapsedMicroseconds;
+      var maxTickGapUs = 0;
+      var tickCount = 0;
+      var phase = 'starting';
+      var phaseAtMaxGap = phase;
+      final timer = Timer.periodic(const Duration(milliseconds: 4), (_) {
+        final nowUs = stopwatch.elapsedMicroseconds;
+        final gapUs = nowUs - lastTickUs;
+        if (gapUs > maxTickGapUs) {
+          maxTickGapUs = gapUs;
+          phaseAtMaxGap = phase;
+        }
+        lastTickUs = nowUs;
+        tickCount++;
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 12));
 
-        final result = await workspaceRepository.rebuildCombinedDatabase(
-          localRepository: localRepository,
-          playerId: 'vasif-cold-install',
-          playerName: 'Vasif Durarbayli',
-          playerFideId: '13402935',
-          sourcePaths: <String>[sourceFile.path],
-          playerAliases: const <String>['Vasif Durarbayli', 'Durarbayli,Vasif'],
-          onProgress: (message, _) => phase = message,
-        );
-        await Future<void>.delayed(const Duration(milliseconds: 12));
-        timer.cancel();
+      final result = await workspaceRepository.rebuildCombinedDatabase(
+        localRepository: localRepository,
+        playerId: 'vasif-cold-install',
+        playerName: 'Vasif Durarbayli',
+        playerFideId: '13402935',
+        sourcePaths: <String>[sourceFile.path],
+        playerAliases: const <String>['Vasif Durarbayli', 'Durarbayli,Vasif'],
+        onProgress: (message, _) => phase = message,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 12));
+      timer.cancel();
 
-        expect(result.stats.gameCount, 1000);
-        expect(
-          stopwatch.elapsed,
-          lessThan(const Duration(seconds: 15)),
-          reason: 'A 1,000-game cold rebuild should complete promptly.',
-        );
-        expect(tickCount, greaterThan(10));
-        expect(
-          maxTickGapUs,
-          lessThan(25000),
-          reason:
-              'A cold Combined rebuild must not block the UI event loop for '
-              'longer than roughly one 60 Hz frame. Actual max gap: '
-              '${(maxTickGapUs / 1000).toStringAsFixed(1)} ms during '
-              '"$phaseAtMaxGap".',
-        );
-      },
-      timeout: const Timeout(Duration(seconds: 30)),
-    );
+      expect(result.stats.gameCount, 1000);
+      expect(
+        stopwatch.elapsed,
+        lessThan(const Duration(seconds: 15)),
+        reason: 'A 1,000-game cold rebuild should complete promptly.',
+      );
+      expect(tickCount, greaterThan(10));
+      expect(
+        maxTickGapUs,
+        lessThan(25000),
+        reason:
+            'A cold Combined rebuild must not block the UI event loop for '
+            'longer than roughly one 60 Hz frame. Actual max gap: '
+            '${(maxTickGapUs / 1000).toStringAsFixed(1)} ms during '
+            '"$phaseAtMaxGap".',
+      );
+    }, timeout: const Timeout(Duration(seconds: 30)));
 
     test('formats generated PGN file names with an upper-case source', () {
       expect(
@@ -976,7 +972,7 @@ void main() {
           expect(localRepository.purgeCalls, 0);
           await Future<void>.delayed(const Duration(milliseconds: 300));
           expect(localRepository.purgeCalls, 1);
-          expect(localRepository.requestedBatchSize, 512);
+          expect(localRepository.requestedBatchSize, 64);
         } finally {
           if (!gate.isCompleted) gate.complete();
           await removal;
@@ -1288,7 +1284,7 @@ void main() {
         );
         expect(await File(sourcePath).exists(), isTrue);
         expect(await File(combinedPath).exists(), isTrue);
-        expect(await _count(db, 'local_chess_databases'), 2);
+        expect(await _count(db, 'local_chess_databases'), 0);
 
         await notifier.removePlayer(player.id);
         await notifier.debugDrainPlayerCleanup();
@@ -1527,7 +1523,7 @@ void main() {
         expect(combinedGames, hasLength(1));
         expect(combinedGames.single, contains('Lichess import 2'));
         await LocalChessDatabaseRepository.debugDrainBackgroundPurgeQueue();
-        expect(await _count(db, 'local_chess_databases'), 2);
+        expect(await _count(db, 'local_chess_databases'), 0);
       },
     );
 
@@ -1730,6 +1726,7 @@ void main() {
         await notifier.reinstallAccount(account);
 
         expect(workspaceRepository.lichessSinceMsRequests.last, isNull);
+        expect(workspaceRepository.lichessForceRefreshRequests.last, isTrue);
         expect(workspaceRepository.replaceExistingRequests.last, isTrue);
 
         final player = notifier.state.selectedPlayer!;
@@ -1770,15 +1767,15 @@ void main() {
 
       expect(manualAccounts, hasLength(2));
       expect(manualAccounts.map((account) => account.gameCount), <int>[2, 2]);
-      expect(player.combinedGameCount, 3);
+      expect(player.combinedGameCount, 4);
       expect(player.combinedPgnPath, isNotNull);
       final combinedGames = splitPgnGames(
         await File(player.combinedPgnPath!).readAsString(),
       );
-      expect(combinedGames, hasLength(3));
+      expect(combinedGames, hasLength(4));
       expect(
         combinedGames.where((game) => game.contains('Lichess import 2')),
-        hasLength(1),
+        hasLength(2),
       );
 
       final stats = await PlayerStatsRepository(
@@ -1788,10 +1785,10 @@ void main() {
         aliases: const <String>['Prep Target', 'DrNykterstein'],
       );
 
-      expect(stats.games, 3);
+      expect(stats.games, 4);
       expect(stats.overall.wins, 1);
       expect(stats.overall.draws, 1);
-      expect(stats.overall.losses, 1);
+      expect(stats.overall.losses, 2);
     });
 
     test(
@@ -2498,6 +2495,11 @@ void main() {
           isNot(contains(anyOf(isNull, startsWith('Unknown')))),
         );
 
+        await localRepository.importSingleFileSource(
+          path: combinedPath,
+          deduplicateGames: false,
+        );
+
         final classicalPage = await localRepository.localDatabaseGamesPage(
           databasePath: combinedPath,
           filter: LocalChessGameFilter(timeControlCategory: 'classical'),
@@ -2987,6 +2989,11 @@ void main() {
       expect(stats.games, 2);
       expect(stats.overall.wins, 1);
       expect(stats.overall.losses, 1);
+
+      await localRepository.importSingleFileSource(
+        path: player.combinedPgnPath!,
+        deduplicateGames: false,
+      );
 
       final filtered = await localRepository.localDatabaseGamesPage(
         databasePath: player.combinedPgnPath!,
@@ -4220,6 +4227,7 @@ $_mergeGameOne
         final export = await repository.getExternalPlayerGamesPgn(
           source: GamebaseExternalPlayerSource.lichess,
           username: 'DrNykterstein',
+          refresh: true,
           sinceMs: 1782864000000,
           receiveTimeout: const Duration(seconds: 12),
         );
@@ -4229,6 +4237,7 @@ $_mergeGameOne
           '/api/player/lichess/DrNykterstein/games.pgn',
         );
         expect(request?.queryParameters['since'], 1782864000000);
+        expect(request?.queryParameters['refresh'], 'true');
         expect(request?.receiveTimeout, const Duration(seconds: 12));
         expect(export?.gameCount, 1);
         expect(export?.cacheStatus, 'refresh');
@@ -4285,10 +4294,10 @@ $_mergeGameOne
       expect(downloaded.gameCount, 2);
       expect(downloaded.pgn, contains('Lichess import 1'));
       expect(downloaded.pgn, contains('Lichess import 2'));
-      expect(downloaded.replaceExistingSource, isTrue);
+      expect(downloaded.replaceExistingSource, isFalse);
       expect(gamebaseRepository.exportPlayerIds, <String>['ce-player']);
       expect(gamebaseRepository.exportFideIds, <String?>['1503014']);
-      expect(gamebaseRepository.exportDateFrom, <String?>[null]);
+      expect(gamebaseRepository.exportDateFrom, <String?>['2026-06-02']);
       expect(gamebaseRepository.requestedPlayerIds, isEmpty);
       expect(gamebaseRepository.requestedIncludeData, isEmpty);
       expect(gamebaseRepository.requestedPageSizes, isEmpty);
@@ -4319,56 +4328,11 @@ $_mergeGameOne
         expect(downloaded.gameCount, 1);
         expect(downloaded.pgn, contains('Lichess import 1'));
         expect(downloaded.pgn, isNot(contains('Lichess import 2')));
-        expect(downloaded.replaceExistingSource, isTrue);
+        expect(downloaded.replaceExistingSource, isFalse);
         expect(gamebaseRepository.exportPlayerIds, <String>['ce-player']);
-        expect(gamebaseRepository.exportDateFrom, <String?>[null]);
+        expect(gamebaseRepository.exportDateFrom, <String?>['2026-03-31']);
         expect(gamebaseRepository.requestedPlayerIds, isEmpty);
         expect(gamebaseRepository.hydratedIds, isEmpty);
-      },
-    );
-
-    test(
-      'downloads Lichess games with since filtering and PGN headers',
-      () async {
-        final progressUpdates = <({String message, double? progress})>[];
-        final workspaceRepository = PlayerWorkspaceRepository(
-          client: MockClient((request) async {
-            expect(request.method, 'GET');
-            expect(request.url.host, 'lichess.org');
-            expect(request.url.path, '/api/games/user/DrNykterstein');
-            expect(request.url.queryParameters['since'], '1782864000000');
-            expect(request.url.queryParameters, isNot(contains('rated')));
-            expect(request.url.queryParameters, isNot(contains('clocks')));
-            expect(
-              request.url.queryParameters['perfType'],
-              contains('classical'),
-            );
-            expect(request.headers['Accept'], 'application/x-chess-pgn');
-            expect(request.headers['User-Agent'], contains('ChessEverDesktop'));
-            return http.Response(_mergeGameOne, 200);
-          }),
-        );
-
-        final downloaded = await workspaceRepository.downloadLichessGames(
-          username: 'DrNykterstein',
-          sinceMs: DateTime.utc(2026, 7).millisecondsSinceEpoch,
-          expectedGameCount: 2,
-          onProgress:
-              (message, progress) =>
-                  progressUpdates.add((message: message, progress: progress)),
-        );
-
-        expect(downloaded.source, PlayerWorkspaceSource.lichess);
-        expect(downloaded.gameCount, 1);
-        expect(downloaded.pgn, contains('Lichess import 1'));
-        expect(
-          progressUpdates.map((update) => update.message),
-          contains('Receiving Lichess games: 1 of about 2...'),
-        );
-        expect(
-          progressUpdates.map((update) => update.progress).whereType<double>(),
-          contains(0.5),
-        );
       },
     );
 
@@ -4402,6 +4366,7 @@ $_mergeGameOne
       final lichess = await workspaceRepository.downloadLichessGames(
         username: 'DrNykterstein',
         sinceMs: 1782864000000,
+        forceRefresh: true,
       );
       final chessComProgress = <({String message, double? progress})>[];
       final chessCom = await workspaceRepository.downloadChessComGames(
@@ -4422,15 +4387,87 @@ $_mergeGameOne
       expect(chessComProgress.first.message, contains('source cache'));
       expect(chessComProgress.first.progress, isNull);
       expect(gamebaseRepository.externalSinceMs, <int?>[1782864000000, null]);
+      expect(gamebaseRepository.externalRefresh, <bool>[true, false]);
       expect(gamebaseRepository.externalReceiveTimeouts, <Duration?>[
-        const Duration(seconds: 3),
-        const Duration(seconds: 12),
+        const Duration(hours: 3),
+        const Duration(hours: 3),
       ]);
       expect(directClientRequests, 0);
     });
 
     test(
-      'falls back from a 503 source service to one direct Lichess stream',
+      'reports the shared player dataset limit without an origin bypass',
+      () async {
+        final options = RequestOptions(
+          path: '/api/player/lichess/DrNykterstein/games.pgn',
+        );
+        var directRequests = 0;
+        final workspaceRepository = PlayerWorkspaceRepository(
+          gamebaseRepository: _FakeGamebaseRepository(
+            const <String, String>{},
+            externalErrors: <Object>[
+              DioException(
+                requestOptions: options,
+                response: Response<void>(
+                  requestOptions: options,
+                  statusCode: 413,
+                ),
+                type: DioExceptionType.badResponse,
+              ),
+            ],
+          ),
+          client: MockClient((_) async {
+            directRequests += 1;
+            throw StateError('direct origin should not be used');
+          }),
+        );
+
+        await expectLater(
+          workspaceRepository.downloadLichessGames(username: 'DrNykterstein'),
+          throwsA(
+            predicate<Object>(
+              (error) =>
+                  error.toString().contains('50,000 games') &&
+                  error.toString().contains('800 MiB'),
+            ),
+          ),
+        );
+        expect(directRequests, 0);
+      },
+    );
+
+    test('reports the same dataset limit for ChessEver exports', () async {
+      final options = RequestOptions(
+        path: '/api/player/fide/1503014/games.pgn',
+      );
+      final gamebaseRepository = _FakeGamebaseRepository(
+        const <String, String>{},
+        pgnExportError: DioException(
+          requestOptions: options,
+          response: Response<void>(requestOptions: options, statusCode: 413),
+          type: DioExceptionType.badResponse,
+        ),
+      );
+      final workspaceRepository = PlayerWorkspaceRepository();
+
+      await expectLater(
+        workspaceRepository.downloadChessEverGames(
+          repository: gamebaseRepository,
+          playerId: 'ce-player',
+          fideId: '1503014',
+        ),
+        throwsA(
+          predicate<Object>(
+            (error) =>
+                error.toString().contains('50,000 games') &&
+                error.toString().contains('800 MiB'),
+          ),
+        ),
+      );
+    });
+
+    test(
+      'does not bypass a 503 source service with a direct Lichess stream',
       () async {
         DioException serviceUnavailable() {
           final options = RequestOptions(
@@ -4448,51 +4485,33 @@ $_mergeGameOne
           externalErrors: <Object>[serviceUnavailable()],
         );
         var directRequests = 0;
-        final waits = <Duration>[];
-        final progressUpdates = <({String message, double? progress})>[];
         final workspaceRepository = PlayerWorkspaceRepository(
           gamebaseRepository: gamebaseRepository,
-          client: MockClient((request) async {
+          client: MockClient((_) async {
             directRequests += 1;
-            expect(request.url.host, 'lichess.org');
-            expect(request.url.path, '/api/games/user/DrNykterstein');
-            return http.Response(_mergeGameOne, 200);
+            throw StateError('direct origin should not be used');
           }),
-          retryWait: (delay, cancellationToken) async {
-            cancellationToken?.throwIfCanceled();
-            waits.add(delay);
-          },
         );
 
-        final downloaded = await workspaceRepository.downloadLichessGames(
-          username: 'DrNykterstein',
-          expectedGameCount: 2,
-          onProgress:
-              (message, progress) => progressUpdates.add((
-                message: message,
-                progress: progress,
-              )),
+        await expectLater(
+          workspaceRepository.downloadLichessGames(username: 'DrNykterstein'),
+          throwsA(
+            predicate<Object>(
+              (error) => error.toString().contains('shared Lichess game cache'),
+            ),
+          ),
         );
 
         expect(gamebaseRepository.externalRequestCount, 1);
-        expect(waits, isEmpty);
-        expect(directRequests, 1);
-        expect(downloaded.gameCount, 1);
-        expect(downloaded.pgn, contains('Lichess import 1'));
-        expect(
-          progressUpdates.map((update) => update.message),
-          anyElement(contains('Downloading directly from Lichess')),
-        );
-        expect(progressUpdates.first.progress, isNull);
-        expect(
-          gamebaseRepository.externalReceiveTimeouts,
-          <Duration?>[const Duration(seconds: 3)],
-        );
+        expect(directRequests, 0);
+        expect(gamebaseRepository.externalReceiveTimeouts, <Duration?>[
+          const Duration(hours: 3),
+        ]);
       },
     );
 
     test(
-      'falls back from a 504 source service to direct Chess.com archives',
+      'does not bypass a 504 source service with direct Chess.com archives',
       () async {
         final options = RequestOptions(
           path: '/api/player/chesscom/Hikaru/games.pgn',
@@ -4510,46 +4529,30 @@ $_mergeGameOne
             ),
           ],
         );
-        final requestedPaths = <String>[];
-        final progressMessages = <String>[];
+        var directRequests = 0;
         final workspaceRepository = PlayerWorkspaceRepository(
           gamebaseRepository: gamebaseRepository,
-          client: MockClient((request) async {
-            requestedPaths.add(request.url.path);
-            if (request.url.path == '/pub/player/hikaru/games/archives') {
-              return http.Response(
-                jsonEncode({
-                  'archives': [
-                    'https://api.chess.com/pub/player/hikaru/games/2026/07',
-                  ],
-                }),
-                200,
-              );
-            }
-            expect(request.url.path, '/pub/player/hikaru/games/2026/07/pgn');
-            return http.Response(_mergeGameOne, 200);
+          client: MockClient((_) async {
+            directRequests += 1;
+            throw StateError('direct origin should not be used');
           }),
         );
 
-        final downloaded = await workspaceRepository.downloadChessComGames(
-          username: 'Hikaru',
-          onProgress: (message, _) => progressMessages.add(message),
+        await expectLater(
+          workspaceRepository.downloadChessComGames(username: 'Hikaru'),
+          throwsA(
+            predicate<Object>(
+              (error) =>
+                  error.toString().contains('shared Chess.com game cache'),
+            ),
+          ),
         );
 
         expect(gamebaseRepository.externalRequestCount, 1);
         expect(gamebaseRepository.externalReceiveTimeouts, <Duration?>[
-          const Duration(seconds: 12),
+          const Duration(hours: 3),
         ]);
-        expect(requestedPaths, <String>[
-          '/pub/player/hikaru/games/archives',
-          '/pub/player/hikaru/games/2026/07/pgn',
-        ]);
-        expect(downloaded.gameCount, 1);
-        expect(downloaded.pgn, contains('Lichess import 1'));
-        expect(
-          progressMessages,
-          anyElement(contains('Downloading directly from Chess.com')),
-        );
+        expect(directRequests, 0);
       },
     );
 
@@ -4608,229 +4611,6 @@ $_mergeGameOne
         expect(directClientRequests, 0);
       },
     );
-
-    test('large Lichess downloads use one streaming request', () async {
-      var inFlight = 0;
-      var maxInFlight = 0;
-      var requests = 0;
-      final progressMessages = <String>[];
-      final workspaceRepository = PlayerWorkspaceRepository(
-        client: MockClient((request) async {
-          expect(request.method, 'GET');
-          expect(request.url.host, 'lichess.org');
-          expect(request.url.path, '/api/games/user/durarbayli');
-          expect(request.url.queryParameters, isNot(contains('since')));
-          expect(request.url.queryParameters, isNot(contains('until')));
-          expect(request.headers['Accept'], 'application/x-chess-pgn');
-          requests += 1;
-          inFlight += 1;
-          if (inFlight > maxInFlight) maxInFlight = inFlight;
-          await Future<void>.delayed(const Duration(milliseconds: 20));
-          inFlight -= 1;
-          return http.Response(_mergeGameOne, 200);
-        }),
-      );
-
-      final downloaded = await workspaceRepository.downloadLichessGames(
-        username: 'durarbayli',
-        expectedGameCount: 6107,
-        onProgress: (message, _) => progressMessages.add(message),
-      );
-
-      expect(downloaded.gameCount, 1);
-      expect(downloaded.pgn, contains('Lichess import 1'));
-      expect(downloaded.replaceExistingSource, isTrue);
-      expect(requests, 1);
-      expect(maxInFlight, 1);
-      expect(progressMessages, isNot(anyElement(contains('date ranges'))));
-    });
-
-    test('retries a direct Lichess 503 before succeeding', () async {
-      var requests = 0;
-      final waits = <Duration>[];
-      final progressMessages = <String>[];
-      final workspaceRepository = PlayerWorkspaceRepository(
-        client: MockClient((_) async {
-          requests += 1;
-          if (requests == 1) return http.Response('unavailable', 503);
-          return http.Response(_mergeGameOne, 200);
-        }),
-        retryWait: (delay, cancellationToken) async {
-          cancellationToken?.throwIfCanceled();
-          waits.add(delay);
-        },
-      );
-
-      final downloaded = await workspaceRepository.downloadLichessGames(
-        username: 'DrNykterstein',
-        expectedGameCount: 2,
-        onProgress: (message, _) => progressMessages.add(message),
-      );
-
-      expect(requests, 2);
-      expect(waits, const <Duration>[Duration(seconds: 2)]);
-      expect(downloaded.gameCount, 1);
-      expect(downloaded.pgn, contains('Lichess import 1'));
-      expect(
-        progressMessages,
-        anyElement(contains('temporarily unavailable. Retrying in 2 seconds')),
-      );
-    });
-
-    test('waits a full minute before retrying a Lichess 429', () async {
-      var requests = 0;
-      final waits = <Duration>[];
-      final workspaceRepository = PlayerWorkspaceRepository(
-        client: MockClient((_) async {
-          requests += 1;
-          if (requests == 1) {
-            return http.Response(
-              'too many requests',
-              429,
-              headers: const <String, String>{'retry-after': '5'},
-            );
-          }
-          return http.Response(_mergeGameOne, 200);
-        }),
-        retryWait: (delay, cancellationToken) async {
-          cancellationToken?.throwIfCanceled();
-          waits.add(delay);
-        },
-      );
-
-      final downloaded = await workspaceRepository.downloadLichessGames(
-        username: 'DrNykterstein',
-      );
-
-      expect(requests, 2);
-      expect(waits, const <Duration>[Duration(minutes: 1)]);
-      expect(downloaded.gameCount, 1);
-    });
-
-    test('downloads Chess.com archives from the since month onward', () async {
-      final requestedPaths = <String>[];
-      final progressUpdates = <({String message, double? progress})>[];
-      final workspaceRepository = PlayerWorkspaceRepository(
-        client: MockClient((request) async {
-          requestedPaths.add(request.url.path);
-          expect(request.headers['User-Agent'], contains('ChessEverDesktop'));
-          if (request.url.path == '/pub/player/hikaru/games/archives') {
-            expect(request.headers['Accept'], 'application/json');
-            return http.Response(
-              jsonEncode({
-                'archives': [
-                  'https://api.chess.com/pub/player/hikaru/games/2026/06',
-                  'https://api.chess.com/pub/player/hikaru/games/2026/07',
-                ],
-              }),
-              200,
-            );
-          }
-          expect(request.url.path, '/pub/player/hikaru/games/2026/07/pgn');
-          expect(request.headers['Accept'], 'application/x-chess-pgn');
-          return http.Response(_mergeGameThree, 200);
-        }),
-      );
-
-      final downloaded = await workspaceRepository.downloadChessComGames(
-        username: 'Hikaru',
-        sinceMs: DateTime.utc(2026, 7, 15).millisecondsSinceEpoch,
-        onProgress:
-            (message, progress) =>
-                progressUpdates.add((message: message, progress: progress)),
-      );
-
-      expect(downloaded.source, PlayerWorkspaceSource.chesscom);
-      expect(downloaded.gameCount, 1);
-      expect(downloaded.pgn, contains('Lichess import 3'));
-      expect(requestedPaths, [
-        '/pub/player/hikaru/games/archives',
-        '/pub/player/hikaru/games/2026/07/pgn',
-      ]);
-      expect(
-        progressUpdates.first.message,
-        'Chess.com: loading monthly archive list...',
-      );
-      expect(progressUpdates.first.progress, isNull);
-      expect(
-        progressUpdates.map((update) => update.message),
-        contains(
-          'Chess.com: started 2026/07 (1/1); 0 done, 0 games received...',
-        ),
-      );
-      expect(
-        progressUpdates.map((update) => update.message),
-        contains('Chess.com: 1/1 archives done; 1 games received...'),
-      );
-      expect(
-        progressUpdates.map((update) => update.progress).whereType<double>(),
-        contains(1.0),
-      );
-    });
-
-    test('downloads Chess.com monthly archives serially', () async {
-      final requestedPaths = <String>[];
-      var inFlight = 0;
-      var maxInFlight = 0;
-      final workspaceRepository = PlayerWorkspaceRepository(
-        client: MockClient((request) async {
-          requestedPaths.add(request.url.path);
-          if (request.url.path == '/pub/player/hikaru/games/archives') {
-            return http.Response(
-              jsonEncode({
-                'archives': [
-                  'https://api.chess.com/pub/player/hikaru/games/2026/05',
-                  'https://api.chess.com/pub/player/hikaru/games/2026/06',
-                  'https://api.chess.com/pub/player/hikaru/games/2026/07',
-                ],
-              }),
-              200,
-            );
-          }
-          final path = request.url.path;
-          inFlight += 1;
-          if (inFlight > maxInFlight) maxInFlight = inFlight;
-          await Future<void>.delayed(const Duration(milliseconds: 1));
-          inFlight -= 1;
-          return http.Response(switch (path) {
-            '/pub/player/hikaru/games/2026/05/pgn' => _mergeGameOne,
-            '/pub/player/hikaru/games/2026/06/pgn' => _mergeGameTwo,
-            '/pub/player/hikaru/games/2026/07/pgn' => _mergeGameThree,
-            _ => throw StateError('Unexpected path $path'),
-          }, 200);
-        }),
-      );
-
-      final progressUpdates = <({String message, double? progress})>[];
-      final downloaded = await workspaceRepository.downloadChessComGames(
-        username: 'Hikaru',
-        onProgress:
-            (message, progress) =>
-                progressUpdates.add((message: message, progress: progress)),
-      );
-
-      expect(maxInFlight, 1);
-      expect(requestedPaths, <String>[
-        '/pub/player/hikaru/games/archives',
-        '/pub/player/hikaru/games/2026/05/pgn',
-        '/pub/player/hikaru/games/2026/06/pgn',
-        '/pub/player/hikaru/games/2026/07/pgn',
-      ]);
-      expect(downloaded.gameCount, 3);
-      expect(
-        downloaded.pgn.indexOf('Lichess import 1'),
-        lessThan(downloaded.pgn.indexOf('Lichess import 2')),
-      );
-      expect(
-        downloaded.pgn.indexOf('Lichess import 2'),
-        lessThan(downloaded.pgn.indexOf('Lichess import 3')),
-      );
-      expect(progressUpdates.first.progress, isNull);
-      expect(
-        progressUpdates.map((update) => update.progress).whereType<double>(),
-        contains(1.0),
-      );
-    });
   });
 }
 
@@ -5195,7 +4975,9 @@ class _FakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   final Completer<void>? loadGate;
   PlayerWorkspaceSnapshot snapshot = const PlayerWorkspaceSnapshot();
   final lichessSinceMsRequests = <int?>[];
+  final lichessForceRefreshRequests = <bool>[];
   final chessComSinceMsRequests = <int?>[];
+  final chessComForceRefreshRequests = <bool>[];
   final chessEverSinceDateRequests = <DateTime?>[];
   final chessEverFideIdRequests = <String>[];
   final replaceExistingRequests = <bool>[];
@@ -5294,11 +5076,13 @@ class _FakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   Future<PlayerWorkspaceDownloadedPgn> downloadLichessGames({
     required String username,
     int? sinceMs,
+    bool forceRefresh = false,
     int? expectedGameCount,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
     lichessSinceMsRequests.add(sinceMs);
+    lichessForceRefreshRequests.add(forceRefresh);
     final pgn = lichessPgnByUsername[username.trim()] ?? '';
     onProgress?.call('Downloading Lichess games...', null);
     return PlayerWorkspaceDownloadedPgn(
@@ -5313,10 +5097,12 @@ class _FakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   Future<PlayerWorkspaceDownloadedPgn> downloadChessComGames({
     required String username,
     int? sinceMs,
+    bool forceRefresh = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
     chessComSinceMsRequests.add(sinceMs);
+    chessComForceRefreshRequests.add(forceRefresh);
     final pgn = chessComPgnByUsername[username.trim().toLowerCase()] ?? '';
     onProgress?.call('Downloading Chess.com games...', null);
     return PlayerWorkspaceDownloadedPgn(
@@ -5413,6 +5199,7 @@ class _CoalescingPlayerWorkspaceRepository
   Future<PlayerWorkspaceDownloadedPgn> downloadLichessGames({
     required String username,
     int? sinceMs,
+    bool forceRefresh = false,
     int? expectedGameCount,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
@@ -5433,6 +5220,7 @@ class _CoalescingPlayerWorkspaceRepository
   Future<PlayerWorkspaceDownloadedPgn> downloadChessComGames({
     required String username,
     int? sinceMs,
+    bool forceRefresh = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
@@ -5506,6 +5294,7 @@ class _RemoteHitPlayerWorkspaceRepository
   Future<PlayerWorkspaceDownloadedPgn> downloadLichessGames({
     required String username,
     int? sinceMs,
+    bool forceRefresh = false,
     int? expectedGameCount,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
@@ -5661,6 +5450,7 @@ class _HoldingChessComSnapshotWorkspaceRepository
   Future<PlayerWorkspaceDownloadedPgn> downloadChessComGames({
     required String username,
     int? sinceMs,
+    bool forceRefresh = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
@@ -5874,6 +5664,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
   _FakeGamebaseRepository(
     this.pgnById, {
     this.pgnExport,
+    this.pgnExportError,
     this.playerGamesError,
     this.externalErrors = const <Object>[],
     this.externalExports =
@@ -5883,6 +5674,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
 
   final Map<String, String> pgnById;
   final String? pgnExport;
+  final Object? pgnExportError;
   final Object? playerGamesError;
   final List<Object> externalErrors;
   final Map<GamebaseExternalPlayerSource, GamebasePlayerPgnExport>
@@ -5892,6 +5684,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
   final exportFideIds = <String?>[];
   final exportDateFrom = <String?>[];
   final externalSinceMs = <int?>[];
+  final externalRefresh = <bool>[];
   final externalReceiveTimeouts = <Duration?>[];
   final requestedProfileIds = <String>[];
   final requestedPlayerIds = <String>[];
@@ -5916,6 +5709,8 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     exportPlayerIds.add(playerId);
     exportFideIds.add(fideId);
     exportDateFrom.add(dateFrom);
+    final error = pgnExportError;
+    if (error != null) throw error;
     final export = pgnExport;
     if (export == null) return null;
     return GamebasePlayerPgnExport(
@@ -5933,6 +5728,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     Duration? receiveTimeout,
   }) async {
     externalSinceMs.add(sinceMs);
+    externalRefresh.add(refresh);
     externalReceiveTimeouts.add(receiveTimeout);
     final requestIndex = externalRequestCount;
     externalRequestCount += 1;

@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:collection/collection.dart';
+import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
@@ -57,6 +59,206 @@ class LiveGameWatchParams {
   int get hashCode => Object.hash(gameId, batchKey, streamEnabled);
 }
 
+/// Identifies one anomalous backward stream snapshot that needs an exact
+/// server confirmation before replacing a retained live position.
+@immutable
+class LiveGameRegressionConfirmationKey {
+  const LiveGameRegressionConfirmationKey({
+    required this.gameId,
+    required this.rejectedUpdate,
+    required this.currentPgn,
+    required this.currentFen,
+    required this.currentLastMove,
+    required this.currentLastMoveTime,
+    required this.currentWhiteClockCentiseconds,
+    required this.currentBlackClockCentiseconds,
+    required this.currentWhiteClockSeconds,
+    required this.currentBlackClockSeconds,
+    required this.expectedWhitePlayer,
+    required this.expectedBlackPlayer,
+    required this.expectedGameStatus,
+  });
+
+  factory LiveGameRegressionConfirmationKey.from({
+    required GamesTourModel current,
+    required LiveGameUpdate rejectedUpdate,
+    GamesTourModel? expectedCurrent,
+  }) {
+    final expected = expectedCurrent ?? current;
+    return LiveGameRegressionConfirmationKey(
+      gameId: current.gameId,
+      rejectedUpdate: rejectedUpdate,
+      currentPgn: current.pgn,
+      currentFen: current.fen,
+      currentLastMove: current.lastMove,
+      currentLastMoveTime: current.lastMoveTime,
+      currentWhiteClockCentiseconds: current.whiteClockCentiseconds,
+      currentBlackClockCentiseconds: current.blackClockCentiseconds,
+      currentWhiteClockSeconds: current.whiteClockSeconds,
+      currentBlackClockSeconds: current.blackClockSeconds,
+      expectedWhitePlayer: expected.whitePlayer,
+      expectedBlackPlayer: expected.blackPlayer,
+      expectedGameStatus: expected.gameStatus,
+    );
+  }
+
+  final String gameId;
+  final LiveGameUpdate rejectedUpdate;
+  final String? currentPgn;
+  final String? currentFen;
+  final String? currentLastMove;
+  final DateTime? currentLastMoveTime;
+  final int currentWhiteClockCentiseconds;
+  final int currentBlackClockCentiseconds;
+  final int? currentWhiteClockSeconds;
+  final int? currentBlackClockSeconds;
+  final PlayerCard expectedWhitePlayer;
+  final PlayerCard expectedBlackPlayer;
+  final GameStatus expectedGameStatus;
+
+  bool matchesCurrentPosition(GamesTourModel? game) {
+    return game != null &&
+        game.gameId == gameId &&
+        game.pgn == currentPgn &&
+        game.fen == currentFen &&
+        game.lastMove == currentLastMove &&
+        game.lastMoveTime == currentLastMoveTime &&
+        game.whiteClockCentiseconds == currentWhiteClockCentiseconds &&
+        game.blackClockCentiseconds == currentBlackClockCentiseconds &&
+        game.whiteClockSeconds == currentWhiteClockSeconds &&
+        game.blackClockSeconds == currentBlackClockSeconds &&
+        game.whitePlayer == expectedWhitePlayer &&
+        game.blackPlayer == expectedBlackPlayer &&
+        game.gameStatus == expectedGameStatus;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        other is LiveGameRegressionConfirmationKey &&
+            other.gameId == gameId &&
+            other.rejectedUpdate == rejectedUpdate &&
+            other.currentPgn == currentPgn &&
+            other.currentFen == currentFen &&
+            other.currentLastMove == currentLastMove &&
+            other.currentLastMoveTime == currentLastMoveTime &&
+            other.currentWhiteClockCentiseconds ==
+                currentWhiteClockCentiseconds &&
+            other.currentBlackClockCentiseconds ==
+                currentBlackClockCentiseconds &&
+            other.currentWhiteClockSeconds == currentWhiteClockSeconds &&
+            other.currentBlackClockSeconds == currentBlackClockSeconds &&
+            other.expectedWhitePlayer == expectedWhitePlayer &&
+            other.expectedBlackPlayer == expectedBlackPlayer &&
+            other.expectedGameStatus == expectedGameStatus;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    gameId,
+    rejectedUpdate,
+    currentPgn,
+    currentFen,
+    currentLastMove,
+    currentLastMoveTime,
+    currentWhiteClockCentiseconds,
+    currentBlackClockCentiseconds,
+    currentWhiteClockSeconds,
+    currentBlackClockSeconds,
+    expectedWhitePlayer,
+    expectedBlackPlayer,
+    expectedGameStatus,
+  );
+}
+
+/// Deduplicated exact-row confirmation shared by cards and the focused Board.
+/// It runs only for a snapshot that would otherwise move a known position
+/// backwards, so ordinary live moves never add REST traffic.
+final liveGameRegressionConfirmationProvider = FutureProvider.autoDispose
+    .family<LiveGameUpdate?, LiveGameRegressionConfirmationKey>((
+      ref,
+      key,
+    ) async {
+      var disposed = false;
+      var lifecycleActive = ref.read(liveGameStreamingLifecycleProvider);
+      Completer<void>? retryWaiter;
+      Timer? retryTimer;
+      void wakeRetryWaiter() {
+        retryTimer?.cancel();
+        retryTimer = null;
+        final waiter = retryWaiter;
+        retryWaiter = null;
+        if (waiter != null && !waiter.isCompleted) waiter.complete();
+      }
+
+      void signalLifecycleChange() {
+        wakeRetryWaiter();
+      }
+
+      Future<void> waitForRetrySignal({Duration? timeout}) {
+        assert(retryWaiter == null && retryTimer == null);
+        final waiter = Completer<void>();
+        retryWaiter = waiter;
+        if (timeout != null) {
+          retryTimer = Timer(timeout, wakeRetryWaiter);
+        }
+        return waiter.future;
+      }
+
+      ref.listen<bool>(liveGameStreamingLifecycleProvider, (_, next) {
+        lifecycleActive = next;
+        signalLifecycleChange();
+      });
+      ref.onDispose(() {
+        disposed = true;
+        signalLifecycleChange();
+      });
+      final repository = ref.read(gameStreamRepositoryProvider);
+      const retryDelays = <Duration>[
+        Duration(milliseconds: 200),
+        Duration(milliseconds: 600),
+        Duration(seconds: 2),
+        Duration(seconds: 5),
+        Duration(seconds: 15),
+      ];
+      var attempt = 0;
+      while (!disposed) {
+        if (!lifecycleActive) {
+          if (!disposed) {
+            final resumedOrDisposed = waitForRetrySignal();
+            // Lifecycle/disposal can change between the state check above and
+            // installing the waiter. Re-check after installation so that an
+            // already-delivered signal cannot strand this provider.
+            if (disposed || lifecycleActive) wakeRetryWaiter();
+            await resumedOrDisposed;
+          }
+          continue;
+        }
+        try {
+          final current = await repository.fetchCurrentLiveGameUpdate(
+            key.gameId,
+          );
+          if (current != null) return current;
+        } catch (_) {
+          // A transient exact-read failure must not permanently discard an
+          // intentional takeback. Retry below with one shared, capped backoff
+          // while the affected visible surface still retains this provider.
+        }
+        if (disposed) return null;
+        final delayIndex =
+            attempt < retryDelays.length ? attempt : retryDelays.length - 1;
+        final delay = retryDelays[delayIndex];
+        attempt++;
+        final retryOrLifecycleChange = waitForRetrySignal(timeout: delay);
+        // As above, close the check-to-listen gap. Pausing cancels the retry
+        // delay immediately; resuming will start a fresh attempt from the top
+        // of the loop without leaving a timer behind.
+        if (disposed || !lifecycleActive) wakeRetryWaiter();
+        await retryOrLifecycleChange;
+      }
+      return null;
+    });
+
 final scopedLiveGameCardProvider =
     AutoDisposeProvider.family<GamesTourModel?, LiveGameWatchParams>((
       ref,
@@ -102,12 +304,17 @@ LiveGamesBatchKey? liveContextBatchKeyForGame({
   required List<GamesTourModel> contextGames,
   required String scopePrefix,
   int batchSize = kLiveContextBatchSize,
+  bool includeFinishedGames = false,
 }) {
-  if (!shouldSubscribeToLiveGame(game)) return null;
+  if (!_canRepresentLiveGame(game) ||
+      (!includeFinishedGames && game.gameStatus.isFinished)) {
+    return null;
+  }
   return liveBatchKeysForGames(
     games: contextGames,
     scopePrefix: scopePrefix,
     batchSize: batchSize,
+    includeFinishedGames: includeFinishedGames,
   )[game.gameId];
 }
 
@@ -115,12 +322,17 @@ Map<String, LiveGamesBatchKey> liveBatchKeysForGames({
   required Iterable<GamesTourModel> games,
   required String scopePrefix,
   int batchSize = kLiveContextBatchSize,
+  bool includeFinishedGames = false,
 }) {
   final result = <String, LiveGamesBatchKey>{};
   if (batchSize <= 0) return result;
 
   final liveGames = games
-      .where(shouldSubscribeToLiveGame)
+      .where(
+        (game) =>
+            _canRepresentLiveGame(game) &&
+            (includeFinishedGames || !game.gameStatus.isFinished),
+      )
       .toList(growable: false);
   for (
     var chunkIndex = 0;
@@ -152,22 +364,65 @@ GamesTourModel? _watchMergedLiveGame({
 }) {
   final baseGame = _watchBaseGame(ref, params.gameId, mode);
   if (baseGame == null) return null;
-  final update = _watchLiveUpdate(
-    ref,
-    _resolveLiveWatchParams(baseGame, params),
-    mode,
-  );
-  if (update == null) return baseGame;
+  final arrival = _watchLiveUpdate(ref, _resolveLiveWatchParams(params), mode);
+  if (arrival == null) return baseGame;
 
   final mergedGame = _mergeLiveUpdate(
     baseGame: baseGame,
-    update: update,
+    update: arrival.update,
     mode: mode,
   );
-  if (_hasLiveFieldChanges(baseGame, mergedGame)) {
-    _storeLatestBaseGame(ref, params.gameId, mergedGame);
+  // A stream snapshot commonly equals the retained seed (initial select,
+  // rebuild after write-back, or reconnect). Equality is not a regression and
+  // must stay on the zero-REST fast path.
+  if (!_hasLiveFieldChanges(baseGame, mergedGame)) return baseGame;
+
+  final canUseWholeRow = shouldReplaceBaseGame(baseGame, mergedGame);
+  LiveGameRegressionConfirmationKey? confirmedRegressionKey;
+  late final GamesTourModel displayedGame;
+  if (canUseWholeRow) {
+    displayedGame = mergedGame;
+  } else {
+    // `SupabaseQueryBuilder.stream()` publishes full query snapshots and does
+    // not expose whether an emission is a row mutation or an initial/reconnect
+    // select. Arrival order therefore cannot safely distinguish a stale
+    // snapshot from a legitimate takeback. Confirm only this anomalous
+    // backward candidate with one exact current-row read.
+    final safeMetadataGame = mergeIndependentLiveGameMetadata(
+      baseGame,
+      mergedGame,
+    );
+    final confirmationKey = LiveGameRegressionConfirmationKey.from(
+      current: baseGame,
+      rejectedUpdate: arrival.update,
+      expectedCurrent: safeMetadataGame,
+    );
+    final confirmedUpdate =
+        ref
+            .watch(liveGameRegressionConfirmationProvider(confirmationKey))
+            .valueOrNull;
+    if (confirmedUpdate != null && confirmedUpdate.gameId == params.gameId) {
+      displayedGame = _mergeLiveUpdate(
+        baseGame: baseGame,
+        update: confirmedUpdate,
+        mode: mode,
+      );
+      confirmedRegressionKey = confirmationKey;
+    } else {
+      displayedGame = safeMetadataGame;
+    }
   }
-  return mergedGame;
+  if (_hasLiveFieldChanges(baseGame, displayedGame)) {
+    _storeLatestBaseGame(
+      ref,
+      params.gameId,
+      displayedGame,
+      confirmedRegressionKey: confirmedRegressionKey,
+      confirmedRegressionBaseline:
+          confirmedRegressionKey == null ? null : baseGame,
+    );
+  }
+  return displayedGame;
 }
 
 GamesTourModel? _watchBaseGame(
@@ -184,7 +439,7 @@ GamesTourModel? _watchBaseGame(
       .game;
 }
 
-LiveGameUpdate? _watchLiveUpdate(
+_LiveUpdateArrival? _watchLiveUpdate(
   Ref ref,
   LiveGameWatchParams params,
   _LiveGameMergeMode mode,
@@ -196,17 +451,27 @@ LiveGameUpdate? _watchLiveUpdate(
   final batchKey = params.batchKey;
   if (batchKey != null) {
     if (!batchKey.contains(params.gameId)) return null;
-    final projectedUpdateAsync = ref.watch(
-      gameUpdatesBatchStreamProvider(batchKey).select((async) {
-        return async.whenData(
-          (updates) =>
-              _ProjectedLiveGameUpdate.forMode(updates[params.gameId], mode),
-        );
-      }),
+    final projectedArrivalAsync = ref.watch(
+      gameUpdatesBatchArrivalStreamProvider(batchKey).select(
+        (async) => async.whenData((arrival) {
+          final update = arrival.value[params.gameId];
+          return _ProjectedLiveGameUpdate.forMode(
+            update == null ? null : _LiveUpdateArrival(update: update),
+            mode,
+          );
+        }),
+      ),
     );
-    return projectedUpdateAsync.valueOrNull?.update;
+    return projectedArrivalAsync.valueOrNull?.arrival;
   }
   return null;
+}
+
+@immutable
+class _LiveUpdateArrival {
+  const _LiveUpdateArrival({required this.update});
+
+  final LiveGameUpdate update;
 }
 
 @immutable
@@ -226,6 +491,8 @@ class _ProjectedBaseGame {
       fields: switch (mode) {
         _LiveGameMergeMode.position => <Object?>[
           game.gameId,
+          game.whitePlayer,
+          game.blackPlayer,
           game.pgn,
           game.fen,
           game.lastMove,
@@ -234,6 +501,8 @@ class _ProjectedBaseGame {
         ],
         _LiveGameMergeMode.clock => <Object?>[
           game.gameId,
+          game.whitePlayer,
+          game.blackPlayer,
           // Clock countdown depends on the live position, side-to-move, and
           // move timestamp. Keep this projection aligned with mobile so player
           // rows do not tick against a stale active side.
@@ -269,26 +538,28 @@ class _ProjectedBaseGame {
 @immutable
 class _ProjectedLiveGameUpdate {
   const _ProjectedLiveGameUpdate._({
-    required this.update,
+    required this.arrival,
     required this.fields,
   });
 
   factory _ProjectedLiveGameUpdate.forMode(
-    LiveGameUpdate? update,
+    _LiveUpdateArrival? arrival,
     _LiveGameMergeMode mode,
   ) {
-    if (update == null) {
+    if (arrival == null) {
       return const _ProjectedLiveGameUpdate._(
-        update: null,
+        arrival: null,
         fields: <Object?>[null],
       );
     }
+    final update = arrival.update;
 
     return _ProjectedLiveGameUpdate._(
-      update: update,
+      arrival: arrival,
       fields: switch (mode) {
         _LiveGameMergeMode.position => <Object?>[
           update.gameId,
+          _DeepFields(update.players),
           update.pgn,
           update.fen,
           update.lastMove,
@@ -297,6 +568,7 @@ class _ProjectedLiveGameUpdate {
         ],
         _LiveGameMergeMode.clock => <Object?>[
           update.gameId,
+          _DeepFields(update.players),
           update.pgn,
           update.fen,
           update.lastMove,
@@ -310,7 +582,7 @@ class _ProjectedLiveGameUpdate {
     );
   }
 
-  final LiveGameUpdate? update;
+  final _LiveUpdateArrival? arrival;
   final List<Object?> fields;
 
   @override
@@ -333,10 +605,30 @@ bool _fieldsEqual(List<Object?> a, List<Object?> b) {
   return true;
 }
 
+@immutable
+class _DeepFields {
+  const _DeepFields(this.value);
+
+  static const DeepCollectionEquality _equality = DeepCollectionEquality();
+
+  final Object? value;
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        other is _DeepFields && _equality.equals(value, other.value);
+  }
+
+  @override
+  int get hashCode => _equality.hash(value);
+}
+
 bool shouldSubscribeToLiveGame(GamesTourModel game) {
-  return game.source == GameSource.supabase &&
-      game.gameId.isNotEmpty &&
-      !game.gameStatus.isFinished;
+  return _canRepresentLiveGame(game) && !game.gameStatus.isFinished;
+}
+
+bool _canRepresentLiveGame(GamesTourModel game) {
+  return game.source == GameSource.supabase && game.gameId.isNotEmpty;
 }
 
 /// Merge a Supabase live-row update into a game model using the same
@@ -403,11 +695,23 @@ GamesTourModel _mergeLiveUpdate({
       mode == _LiveGameMergeMode.clock;
   final includeClock =
       mode == _LiveGameMergeMode.full || mode == _LiveGameMergeMode.clock;
+  final authoritativeFullRow = update.isFullRow;
+  final livePlayers = _parseLivePlayerCards(
+    update.players,
+    baseWhite: baseGame.whitePlayer,
+    baseBlack: baseGame.blackPlayer,
+    authoritativeFullRow: authoritativeFullRow,
+  );
 
-  final mergedPgn = includePosition ? update.pgn ?? baseGame.pgn : baseGame.pgn;
+  final mergedPgn =
+      includePosition
+          ? (authoritativeFullRow ? update.pgn : update.pgn ?? baseGame.pgn)
+          : baseGame.pgn;
   final mergedLastMove =
       includePosition
-          ? update.lastMove ?? baseGame.lastMove
+          ? (authoritativeFullRow
+              ? update.lastMove
+              : update.lastMove ?? baseGame.lastMove)
           : baseGame.lastMove;
   final mergedStatus =
       includePosition || mode == _LiveGameMergeMode.clock
@@ -416,7 +720,7 @@ GamesTourModel _mergeLiveUpdate({
   final mergedFen =
       includePosition
           ? resolveFreshestGameFen(
-            fen: update.fen ?? baseGame.fen,
+            fen: authoritativeFullRow ? update.fen : update.fen ?? baseGame.fen,
             pgn: mergedPgn,
             lastMove: mergedLastMove,
           )
@@ -424,47 +728,181 @@ GamesTourModel _mergeLiveUpdate({
 
   final normalizedWhiteClock =
       includeClock
-          ? GamesTourModel.normalizeClockSeconds(
-            clockSeconds: update.lastClockWhite?.round(),
-            clockCentiseconds: baseGame.whiteClockCentiseconds,
-          )
+          ? (authoritativeFullRow
+              ? update.lastClockWhite?.round()
+              : GamesTourModel.normalizeClockSeconds(
+                clockSeconds: update.lastClockWhite?.round(),
+                clockCentiseconds: baseGame.whiteClockCentiseconds,
+              ))
           : baseGame.whiteClockSeconds;
   final normalizedBlackClock =
       includeClock
-          ? GamesTourModel.normalizeClockSeconds(
-            clockSeconds: update.lastClockBlack?.round(),
-            clockCentiseconds: baseGame.blackClockCentiseconds,
-          )
+          ? (authoritativeFullRow
+              ? update.lastClockBlack?.round()
+              : GamesTourModel.normalizeClockSeconds(
+                clockSeconds: update.lastClockBlack?.round(),
+                clockCentiseconds: baseGame.blackClockCentiseconds,
+              ))
           : baseGame.blackClockSeconds;
+  final mergedLastMoveTime =
+      includePosition
+          ? (update.lastMoveTime == null
+              ? (authoritativeFullRow ? null : baseGame.lastMoveTime)
+              : DateTime.tryParse(update.lastMoveTime!))
+          : baseGame.lastMoveTime;
 
   return baseGame.copyWith(
+    whitePlayer: livePlayers?.white ?? baseGame.whitePlayer,
+    blackPlayer: livePlayers?.black ?? baseGame.blackPlayer,
+    whiteClockCentiseconds:
+        includeClock
+            ? (authoritativeFullRow
+                ? livePlayers?.whiteClockCentiseconds ?? 0
+                : livePlayers?.whiteClockCentiseconds ??
+                    baseGame.whiteClockCentiseconds)
+            : baseGame.whiteClockCentiseconds,
+    blackClockCentiseconds:
+        includeClock
+            ? (authoritativeFullRow
+                ? livePlayers?.blackClockCentiseconds ?? 0
+                : livePlayers?.blackClockCentiseconds ??
+                    baseGame.blackClockCentiseconds)
+            : baseGame.blackClockCentiseconds,
     pgn: mergedPgn,
-    fen: mergedFen ?? baseGame.fen,
+    clearPgn: includePosition && authoritativeFullRow && mergedPgn == null,
+    fen: mergedFen,
+    clearFen: includePosition && authoritativeFullRow && mergedFen == null,
     lastMove: mergedLastMove,
-    lastMoveTime:
-        includePosition && update.lastMoveTime != null
-            ? DateTime.tryParse(update.lastMoveTime!)
-            : baseGame.lastMoveTime,
-    whiteClockSeconds: normalizedWhiteClock ?? baseGame.whiteClockSeconds,
-    blackClockSeconds: normalizedBlackClock ?? baseGame.blackClockSeconds,
+    clearLastMove:
+        includePosition && authoritativeFullRow && mergedLastMove == null,
+    lastMoveTime: mergedLastMoveTime,
+    clearLastMoveTime:
+        includePosition && authoritativeFullRow && mergedLastMoveTime == null,
+    whiteClockSeconds: normalizedWhiteClock,
+    clearWhiteClockSeconds:
+        includeClock && authoritativeFullRow && normalizedWhiteClock == null,
+    blackClockSeconds: normalizedBlackClock,
+    clearBlackClockSeconds:
+        includeClock && authoritativeFullRow && normalizedBlackClock == null,
     gameStatus: mergedStatus,
   );
 }
 
 GameStatus _parseGameStatus(String? status, GameStatus fallback) {
-  switch (status) {
-    case '1-0':
-      return GameStatus.whiteWins;
-    case '0-1':
-      return GameStatus.blackWins;
-    case '1/2-1/2':
-    case '½-½':
-      return GameStatus.draw;
-    case '*':
-      return GameStatus.ongoing;
-    default:
-      return fallback;
+  final parsed = GameStatus.fromString(status);
+  return parsed == GameStatus.unknown ? fallback : parsed;
+}
+
+/// Applies row fields whose correctness does not depend on position freshness.
+///
+/// A newly attached channel can initially return an older PGN/FEN snapshot
+/// while still carrying a legitimate player correction or first terminal
+/// result. Cards and the focused Board use this same merge so rejecting that
+/// stale position never discards independent authoritative metadata.
+GamesTourModel mergeIndependentLiveGameMetadata(
+  GamesTourModel current,
+  GamesTourModel incoming,
+) {
+  // Supabase does not identify reconnect/select rows versus mutations.
+  // Players and results are unordered metadata too: a rejected stale position
+  // can carry an older player pair, reopen a result, or swap terminal results.
+  // Keep the complete retained snapshot until the exact current-row read
+  // confirms the candidate.
+  return current;
+}
+
+({
+  PlayerCard white,
+  PlayerCard black,
+  int? whiteClockCentiseconds,
+  int? blackClockCentiseconds,
+})?
+_parseLivePlayerCards(
+  Object? raw, {
+  required PlayerCard baseWhite,
+  required PlayerCard baseBlack,
+  required bool authoritativeFullRow,
+}) {
+  if (raw is! List || raw.length < 2) return null;
+  try {
+    final whiteRow = raw[0];
+    final blackRow = raw[1];
+    if (whiteRow is! Map || blackRow is! Map) return null;
+    return (
+      white: _mergeLivePlayerCard(
+        baseWhite,
+        Map<String, dynamic>.from(whiteRow),
+        authoritativeFullRow: authoritativeFullRow,
+      ),
+      black: _mergeLivePlayerCard(
+        baseBlack,
+        Map<String, dynamic>.from(blackRow),
+        authoritativeFullRow: authoritativeFullRow,
+      ),
+      whiteClockCentiseconds: _livePlayerClockCentiseconds(whiteRow),
+      blackClockCentiseconds: _livePlayerClockCentiseconds(blackRow),
+    );
+  } catch (_) {
+    // A malformed partial realtime payload must not erase the last complete
+    // player pair already rendered by the card or focused Board.
+    return null;
   }
+}
+
+int? _livePlayerClockCentiseconds(Map<dynamic, dynamic> row) {
+  final value = row['clock'];
+  final parsed = value is num ? value.toInt() : int.tryParse('$value');
+  return parsed == null || parsed < 0 ? null : parsed;
+}
+
+PlayerCard _mergeLivePlayerCard(
+  PlayerCard base,
+  Map<String, dynamic> row, {
+  required bool authoritativeFullRow,
+}) {
+  String? nonEmptyString(String key) {
+    final value = row[key];
+    if (value is! String) return null;
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  int? positiveInt(String key, [String? alternateKey]) {
+    final value = row[key] ?? (alternateKey == null ? null : row[alternateKey]);
+    final parsed = value is num ? value.toInt() : int.tryParse('$value');
+    return parsed != null && parsed > 0 ? parsed : null;
+  }
+
+  final federation = nonEmptyString('fed') ?? base.federation;
+  final customPointsValue = row['customPoints'] ?? row['custom_points'];
+  final customPoints =
+      customPointsValue is num ? customPointsValue.toDouble() : null;
+  if (authoritativeFullRow) {
+    final authoritativeFederation = nonEmptyString('fed') ?? '';
+    return PlayerCard(
+      // A malformed player object must not erase the only usable identity;
+      // nullable/zero metadata fields remain authoritative clears.
+      name: nonEmptyString('name') ?? base.name,
+      federation: authoritativeFederation,
+      title: nonEmptyString('title') ?? '',
+      rating: positiveInt('rating') ?? 0,
+      countryCode: authoritativeFederation,
+      fideId: positiveInt('fideId', 'fide_id'),
+      team: nonEmptyString('team'),
+      gamebasePlayerId: base.gamebasePlayerId,
+      customPoints: customPoints,
+    );
+  }
+  return base.copyWith(
+    name: nonEmptyString('name'),
+    title: nonEmptyString('title'),
+    rating: positiveInt('rating'),
+    fideId: positiveInt('fideId', 'fide_id'),
+    federation: federation,
+    countryCode: federation.isNotEmpty ? federation : base.countryCode,
+    team: nonEmptyString('team'),
+    customPoints: customPoints,
+  );
 }
 
 /// Helper that sets the base game and watches the live provider in one call.
@@ -475,12 +913,19 @@ GamesTourModel watchLiveGame(
   LiveGamesBatchKey? batchKey,
   bool streamEnabled = true,
 }) {
-  final current = ref.read(baseGameProvider(game.gameId));
+  final controller = ref.read(baseGameProvider(game.gameId).notifier);
+  final current = controller.state;
   if (_shouldUseIncomingGame(current, game, allowEqualFreshnessUpdate: false)) {
     Future.microtask(() {
       if (!ref.context.mounted) return;
       try {
-        ref.read(baseGameProvider(game.gameId).notifier).state = game;
+        if (_shouldUseIncomingGame(
+          controller.state,
+          game,
+          allowEqualFreshnessUpdate: false,
+        )) {
+          controller.state = game;
+        }
       } on StateError {
         // The card can be disposed while navigation is in flight.
       }
@@ -529,7 +974,10 @@ LiveGameWatchParams _liveWatchParamsForGame({
   required LiveGamesBatchKey? batchKey,
   required bool streamEnabled,
 }) {
-  final canStream = shouldSubscribeToLiveGame(game);
+  final hasExplicitVisibleBatch = batchKey?.contains(game.gameId) ?? false;
+  final canStream =
+      _canRepresentLiveGame(game) &&
+      (!game.gameStatus.isFinished || hasExplicitVisibleBatch);
   final resolvedBatchKey =
       canStream ? _resolveLiveBatchKey(game, batchKey) : null;
   return LiveGameWatchParams(
@@ -547,24 +995,22 @@ LiveGamesBatchKey? _resolveLiveBatchKey(
   return null;
 }
 
-LiveGameWatchParams _resolveLiveWatchParams(
-  GamesTourModel baseGame,
-  LiveGameWatchParams params,
-) {
-  if (!shouldSubscribeToLiveGame(baseGame)) {
+LiveGameWatchParams _resolveLiveWatchParams(LiveGameWatchParams params) {
+  // The host's canonical row decides batch membership. Do not unsubscribe the
+  // leaf merely because Realtime just delivered a terminal status: broadcasts
+  // commonly publish the result and final PGN/FEN in consecutive changes. The
+  // parent snapshot will remove the key once it observes that terminal row;
+  // until then the visible card must remain attached long enough to receive
+  // final-move and result corrections.
+  if (!params.streamEnabled || params.batchKey == null) {
     return LiveGameWatchParams(gameId: params.gameId, streamEnabled: false);
   }
-  if (params.batchKey != null) return params;
-  final resolvedBatchKey = _resolveLiveBatchKey(baseGame, null);
-  return LiveGameWatchParams(
-    gameId: params.gameId,
-    batchKey: resolvedBatchKey,
-    streamEnabled: params.streamEnabled && resolvedBatchKey != null,
-  );
+  return params;
 }
 
 void _ensureBaseGame(WidgetRef ref, GamesTourModel game) {
-  final current = ref.read(baseGameProvider(game.gameId));
+  final controller = ref.read(baseGameProvider(game.gameId).notifier);
+  final current = controller.state;
   if (!_shouldUseIncomingGame(
     current,
     game,
@@ -575,23 +1021,47 @@ void _ensureBaseGame(WidgetRef ref, GamesTourModel game) {
   Future.microtask(() {
     if (!ref.context.mounted) return;
     try {
-      ref.read(baseGameProvider(game.gameId).notifier).state = game;
+      if (_shouldUseIncomingGame(
+        controller.state,
+        game,
+        allowEqualFreshnessUpdate: false,
+      )) {
+        controller.state = game;
+      }
     } on StateError {
       // The card can be disposed while navigation is in flight.
     }
   });
 }
 
-void _storeLatestBaseGame(Ref ref, String gameId, GamesTourModel game) {
+void _storeLatestBaseGame(
+  Ref ref,
+  String gameId,
+  GamesTourModel game, {
+  required LiveGameRegressionConfirmationKey? confirmedRegressionKey,
+  required GamesTourModel? confirmedRegressionBaseline,
+}) {
+  // Capture the controller while this provider build is current. Riverpod
+  // invalidates `ref` as soon as a watched dependency changes; using that ref
+  // from the write-back microtask would race the rebuild assertion. Reading
+  // controller.state still gives us the commit-time snapshot needed for the
+  // late-confirmation guard.
+  final baseGameController = ref.read(baseGameProvider(gameId).notifier);
   Future.microtask(() {
     try {
-      final current = ref.read(baseGameProvider(gameId));
-      if (_shouldUseIncomingGame(
-        current,
-        game,
-        allowEqualFreshnessUpdate: true,
-      )) {
-        ref.read(baseGameProvider(gameId).notifier).state = game;
+      final current = baseGameController.state;
+      final confirmedRegressionStillCurrent =
+          confirmedRegressionKey != null &&
+          (confirmedRegressionKey.matchesCurrentPosition(current) ||
+              current == confirmedRegressionBaseline);
+      if (confirmedRegressionStillCurrent ||
+          (confirmedRegressionKey == null &&
+              _shouldUseIncomingGame(
+                current,
+                game,
+                allowEqualFreshnessUpdate: true,
+              ))) {
+        baseGameController.state = game;
       }
     } on StateError {
       // Provider/card was disposed while a stream event was being delivered.
@@ -633,12 +1103,20 @@ bool _shouldUseIncomingGame(
   }
 
   if (!_hasPositionFieldChanges(current, incoming)) {
-    // Position is identical. Only let live-field (clock/status) changes through
-    // when the caller is storing back fresh stream data
-    // (allowEqualFreshnessUpdate:true). A parent re-seed (allowEqual:false) must
-    // NOT overwrite newer streamed clocks at the same ply with its staler
-    // snapshot — that regresses the freshness invariant the unit test guards.
-    return allowEqualFreshnessUpdate && _hasLiveFieldChanges(current, incoming);
+    if (!allowEqualFreshnessUpdate ||
+        !_hasLiveFieldChanges(current, incoming)) {
+      return false;
+    }
+    // Same-position player/result changes are unordered and need exact
+    // confirmation. Clock-only updates can use the fast path when every known
+    // value moves monotonically down (including a canonical zero); an upward
+    // correction is valid but similarly ambiguous and is confirmed exactly.
+    if (current.whitePlayer != incoming.whitePlayer ||
+        current.blackPlayer != incoming.blackPlayer ||
+        current.gameStatus != incoming.gameStatus) {
+      return false;
+    }
+    return _clockChangesAreMonotonic(current, incoming);
   }
 
   final currentPly = _knownPly(current);
@@ -652,7 +1130,11 @@ bool _shouldUseIncomingGame(
     return true;
   }
 
-  return allowEqualFreshnessUpdate;
+  // Equal-time/equal-ply positional divergence is ambiguous: Supabase table
+  // streams do not label reconnect snapshots versus mutations, and arbiters
+  // can correct a move without bumping `last_move_time`. Route this case
+  // through exact-row confirmation instead of trusting arrival order.
+  return false;
 }
 
 bool _hasPositionFieldChanges(GamesTourModel current, GamesTourModel incoming) {
@@ -663,13 +1145,39 @@ bool _hasPositionFieldChanges(GamesTourModel current, GamesTourModel incoming) {
 }
 
 bool _hasLiveFieldChanges(GamesTourModel current, GamesTourModel incoming) {
-  return current.pgn != incoming.pgn ||
+  return current.whitePlayer != incoming.whitePlayer ||
+      current.blackPlayer != incoming.blackPlayer ||
+      current.pgn != incoming.pgn ||
       current.fen != incoming.fen ||
       current.lastMove != incoming.lastMove ||
       current.lastMoveTime != incoming.lastMoveTime ||
+      current.whiteClockCentiseconds != incoming.whiteClockCentiseconds ||
+      current.blackClockCentiseconds != incoming.blackClockCentiseconds ||
       current.whiteClockSeconds != incoming.whiteClockSeconds ||
       current.blackClockSeconds != incoming.blackClockSeconds ||
       current.gameStatus != incoming.gameStatus;
+}
+
+bool _clockChangesAreMonotonic(
+  GamesTourModel current,
+  GamesTourModel incoming,
+) {
+  bool doesNotIncrease(int? previous, int? next) {
+    if (previous == next) return true;
+    if (next == null) return false;
+    return previous == null || next <= previous;
+  }
+
+  return doesNotIncrease(
+        current.whiteClockCentiseconds,
+        incoming.whiteClockCentiseconds,
+      ) &&
+      doesNotIncrease(
+        current.blackClockCentiseconds,
+        incoming.blackClockCentiseconds,
+      ) &&
+      doesNotIncrease(current.whiteClockSeconds, incoming.whiteClockSeconds) &&
+      doesNotIncrease(current.blackClockSeconds, incoming.blackClockSeconds);
 }
 
 bool _incomingHasRicherPgn(GamesTourModel current, GamesTourModel incoming) {

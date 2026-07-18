@@ -85,6 +85,7 @@ class DesktopGameKeyboardFocus extends StatefulWidget {
     this.onActivateGame,
     this.ensureInitialSelectionVisible = true,
     this.resolveColumnCount,
+    this.scrollController,
   });
 
   final String scopeId;
@@ -92,6 +93,7 @@ class DesktopGameKeyboardFocus extends StatefulWidget {
   final int pageStride;
   final ValueChanged<GamesTourModel>? onActivateGame;
   final bool ensureInitialSelectionVisible;
+  final ScrollController? scrollController;
 
   /// Live column count of the grid that renders [games], read at key-press
   /// time so ArrowUp/ArrowDown can travel whole rows. Return `1` (or leave
@@ -234,19 +236,32 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
   void _selectGame(
     String gameId, {
     bool ensureVisible = false,
+    LogicalKeyboardKey? navigationKey,
     ScrollPositionAlignmentPolicy alignment =
         ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
   }) {
     if (_selectedGameId == gameId) {
       _focusNode.requestFocus();
-      if (ensureVisible) _ensureSelectedVisible(alignment: alignment);
+      if (ensureVisible) {
+        _ensureSelectedVisible(
+          alignment: alignment,
+          navigationKey: navigationKey,
+          expectedGameId: gameId,
+        );
+      }
       return;
     }
     setState(() => _selectedGameId = gameId);
     _focusNode.requestFocus();
     if (ensureVisible) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _ensureSelectedVisible(alignment: alignment);
+        if (mounted) {
+          _ensureSelectedVisible(
+            alignment: alignment,
+            navigationKey: navigationKey,
+            expectedGameId: gameId,
+          );
+        }
       });
     }
   }
@@ -316,6 +331,7 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
     _selectGame(
       games[nextIndex].gameId,
       ensureVisible: true,
+      navigationKey: key,
       // Backward moves (up/left/pageUp/home) must reveal the target at the
       // viewport's leading edge — keepVisibleAtEnd refuses to scroll backward
       // (it clamps `target` to the current offset), so an upward step would
@@ -347,9 +363,57 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
   void _ensureSelectedVisible({
     ScrollPositionAlignmentPolicy alignment =
         ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+    LogicalKeyboardKey? navigationKey,
+    String? expectedGameId,
   }) {
+    // A second key press can supersede a lazy-scroll callback that was queued
+    // for the previous selection. Never let that stale callback move the
+    // viewport away from the currently selected game.
+    if (expectedGameId != null && _selectedGameId != expectedGameId) return;
     final context = _selectedItemKey.currentContext;
-    if (context == null) return;
+    if (context == null) {
+      // Lazy slivers intentionally do not mount cards outside their viewport.
+      // Move their owning scroll position toward the keyboard destination so
+      // the selected card is created, then perform the precise ensureVisible
+      // pass on the following frame. Eagerly retaining every GlobalKey target
+      // would defeat the realtime lifecycle bounds this host is designed for.
+      final controller = widget.scrollController;
+      if (navigationKey == null ||
+          controller == null ||
+          !controller.hasClients ||
+          controller.positions.length != 1) {
+        return;
+      }
+      final position = controller.position;
+      final target =
+          navigationKey == LogicalKeyboardKey.home
+              ? position.minScrollExtent
+              : navigationKey == LogicalKeyboardKey.end
+              ? position.maxScrollExtent
+              : (position.pixels +
+                      (_isBackwardNavigation(navigationKey) ? -1 : 1) *
+                          position.viewportDimension *
+                          0.8)
+                  .clamp(position.minScrollExtent, position.maxScrollExtent)
+                  .toDouble();
+      if (target != position.pixels) {
+        controller.jumpTo(target);
+      } else {
+        // Reaching an extent without mounting the key means there is nowhere
+        // else to search. This also bounds the retry chain without imposing a
+        // fixed attempt cap that would break very large broadcasts.
+        return;
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _ensureSelectedVisible(
+          alignment: alignment,
+          navigationKey: navigationKey,
+          expectedGameId: expectedGameId,
+        );
+      });
+      return;
+    }
     Scrollable.ensureVisible(
       context,
       duration: const Duration(milliseconds: 180),

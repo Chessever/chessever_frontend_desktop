@@ -1952,6 +1952,7 @@ Future<void> _buildCompactPgnTreeWorker(
         '${request.maxGames}-game tree limit.',
       );
     }
+    final completedScan = scan;
 
     final relativePath = p.basename(request.path);
     final compactBuilder = CompactLocalTreeIndexBuilder(
@@ -1982,7 +1983,7 @@ Future<void> _buildCompactPgnTreeWorker(
 
       await _forEachParsedPgnRange(
         request.path,
-        scan!,
+        completedScan,
         onEntry: (sourceIndex, entry) async {
           throwIfCanceled();
           final metadata = <String, String>{
@@ -2000,7 +2001,7 @@ Future<void> _buildCompactPgnTreeWorker(
             sourceRelativePath: relativePath,
             fileName: p.basename(request.path),
             indexInFile: sourceIndex,
-            fileGameCount: scan!.totalEntries,
+            fileGameCount: completedScan.totalEntries,
             sourceByteStart: entry.sourceByteStart,
             sourceByteEnd: entry.sourceByteEnd,
           );
@@ -2011,7 +2012,7 @@ Future<void> _buildCompactPgnTreeWorker(
                 databaseId: databaseId,
                 gameId: gameId,
                 sourceIndex: sourceIndex,
-                totalGames: scan.totalEntries,
+                totalGames: completedScan.totalEntries,
                 path: request.path,
                 relativePath: relativePath,
                 entry: entry,
@@ -2023,11 +2024,11 @@ Future<void> _buildCompactPgnTreeWorker(
           }
           throwIfCanceled();
           processed++;
-          if (processed == scan.totalEntries || processed % 128 == 0) {
-            final fraction = processed / scan.totalEntries;
+          if (processed == completedScan.totalEntries || processed % 128 == 0) {
+            final fraction = processed / completedScan.totalEntries;
             emit(
               0.15 + (fraction * 0.75),
-              'Building tree... $processed of ${scan.totalEntries} games',
+              'Building tree... $processed of ${completedScan.totalEntries} games',
             );
           }
         },
@@ -2037,7 +2038,7 @@ Future<void> _buildCompactPgnTreeWorker(
     throwIfCanceled();
 
     final after = await file.stat();
-    if (!_samePgnPreviewFileStat(scan.sourceStat, after)) {
+    if (!_samePgnPreviewFileStat(completedScan.sourceStat, after)) {
       throw LocalChessFileAccessException.changed(path: request.path);
     }
     emit(0.92, 'Finalizing tree...');

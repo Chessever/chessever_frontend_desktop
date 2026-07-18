@@ -43,6 +43,14 @@ int? _parseRpcInt(Object? value) {
   return null;
 }
 
+DateTime? _tryParseRepositoryDateTime(Object? value) {
+  if (value is DateTime) return value;
+  if (value is String && value.trim().isNotEmpty) {
+    return DateTime.tryParse(value.trim());
+  }
+  return null;
+}
+
 const String _gameSummarySelectColumns = '''
           id,
           round_id,
@@ -60,7 +68,7 @@ const String _gameSummarySelectColumns = '''
           player_white,
           player_black,
           date_start,
-          round_schedule:rounds!games_round_id_fkey(starts_at),
+          round_schedule:rounds!games_round_id_fkey(name,starts_at),
           time_start,
           board_nr,
           last_move_time,
@@ -85,12 +93,78 @@ const String _gameListSelectColumns = '''
           pgn
         ''';
 
+/// Board-rail rows intentionally omit PGN, search, and clocks. The focused
+/// game owns PGN hydration and its single-game stream; the rail only needs
+/// stable display metadata and the latest FEN/status.
+const String _eventRailGameSelectColumns = '''
+          id,
+          round_id,
+          round_slug,
+          tour_id,
+          tour_slug,
+          name,
+          fen,
+          players,
+          last_move,
+          status,
+          date_start,
+          round_schedule:rounds!games_round_id_fkey(name,starts_at),
+          board_nr,
+          last_move_time,
+          game_day,
+          eco,
+          opening_name
+        ''';
+
+@visibleForTesting
+String get eventRailGameSelectColumnsForTesting => _eventRailGameSelectColumns;
+
+@visibleForTesting
+const List<String> eventRailTourOrderColumnsForTesting = <String>[
+  'round_id',
+  'board_nr',
+  'id',
+];
+
+@visibleForTesting
+const List<String> eventRailRoundOrderColumnsForTesting = <String>[
+  'board_nr',
+  'id',
+];
+
+@visibleForTesting
+({int from, int to}) eventRailPageRangeForTesting({
+  required int limit,
+  required int offset,
+}) {
+  if (limit <= 0) throw ArgumentError.value(limit, 'limit');
+  if (offset < 0) throw ArgumentError.value(offset, 'offset');
+  return (from: offset, to: offset + limit - 1);
+}
+
 const List<String> _classicalTimeControlValues = [
   'standard',
   'classical',
   'Standard',
   'Classical',
 ];
+
+@immutable
+class EventRailRoundMetadata {
+  const EventRailRoundMetadata({
+    required this.id,
+    required this.name,
+    required this.startsAt,
+    required this.createdAt,
+    required this.ongoing,
+  });
+
+  final String id;
+  final String name;
+  final DateTime? startsAt;
+  final DateTime? createdAt;
+  final bool ongoing;
+}
 
 const int _currentSmartGamesPageSize = 1000;
 const Duration _currentSmartLiveMaxAge = Duration(hours: 8);
@@ -187,6 +261,230 @@ class GameRepository extends BaseRepository {
 
       return games;
     });
+  }
+
+  Future<List<Games>> getEventRailGamesByTourId(
+    String tourId, {
+    required int limit,
+    required int offset,
+  }) async {
+    final range = eventRailPageRangeForTesting(limit: limit, offset: offset);
+    return handleApiCall(() async {
+      final response = await supabase
+          .from('games')
+          .select(_eventRailGameSelectColumns)
+          .eq('tour_id', tourId)
+          .order('round_id', ascending: true)
+          .order('board_nr', ascending: true, nullsFirst: false)
+          .order('id', ascending: true)
+          .range(range.from, range.to);
+      final jsonList = (response as List)
+          .map((item) => json.encode(item))
+          .toList(growable: false);
+      return compute(_decodeGamesInIsolate, jsonList);
+    });
+  }
+
+  Future<List<Games>> getEventRailGamesByRoundId(
+    String roundId, {
+    required int limit,
+    required int offset,
+  }) async {
+    final range = eventRailPageRangeForTesting(limit: limit, offset: offset);
+    return handleApiCall(() async {
+      final response = await supabase
+          .from('games')
+          .select(_eventRailGameSelectColumns)
+          .eq('round_id', roundId)
+          .order('board_nr', ascending: true, nullsFirst: false)
+          .order('id', ascending: true)
+          .range(range.from, range.to);
+      final jsonList = (response as List)
+          .map((item) => json.encode(item))
+          .toList(growable: false);
+      return compute(_decodeGamesInIsolate, jsonList);
+    });
+  }
+
+  /// Returns the selected row's zero-based index in the event rail's exact
+  /// round ordering (`board_nr ASC NULLS LAST, id ASC`).
+  ///
+  /// Board numbers are presentation metadata, not ranks: team events can
+  /// repeat them, feeds can leave gaps, and some rows have no number. Two
+  /// small count queries locate the selected id without downloading or
+  /// retaining every preceding game in a large round.
+  Future<int> countEventRailGamesBeforeSelectedInRound({
+    required String roundId,
+    required String selectedGameId,
+    required int? selectedBoardNumber,
+  }) {
+    return handleApiCall(() async {
+      final counts =
+          selectedBoardNumber == null
+              ? await Future.wait<int>(<Future<int>>[
+                supabase
+                    .from('games')
+                    .count()
+                    .eq('round_id', roundId)
+                    .not('board_nr', 'is', null),
+                supabase
+                    .from('games')
+                    .count()
+                    .eq('round_id', roundId)
+                    .isFilter('board_nr', null)
+                    .lt('id', selectedGameId),
+              ])
+              : await Future.wait<int>(<Future<int>>[
+                supabase
+                    .from('games')
+                    .count()
+                    .eq('round_id', roundId)
+                    .lt('board_nr', selectedBoardNumber),
+                supabase
+                    .from('games')
+                    .count()
+                    .eq('round_id', roundId)
+                    .eq('board_nr', selectedBoardNumber)
+                    .lt('id', selectedGameId),
+              ]);
+      return counts[0] + counts[1];
+    });
+  }
+
+  /// Loads only the round catalog needed to resolve cross-round navigation.
+  /// This stays O(round count), not O(game count), for very large broadcasts.
+  Future<List<EventRailRoundMetadata>> getEventRailRoundsByTourId(
+    String tourId,
+  ) {
+    return handleApiCall(() async {
+      final response = await supabase
+          .from('rounds')
+          .select('id,name,starts_at,created_at,ongoing')
+          .eq('tour_id', tourId)
+          .order('created_at', ascending: true);
+      return <EventRailRoundMetadata>[
+        for (final raw in response as List)
+          if (raw is Map)
+            EventRailRoundMetadata(
+              id: raw['id']?.toString() ?? '',
+              name: raw['name']?.toString() ?? '',
+              startsAt: _tryParseRepositoryDateTime(raw['starts_at']),
+              createdAt: _tryParseRepositoryDateTime(raw['created_at']),
+              ongoing: raw['ongoing'] == true,
+            ),
+      ];
+    });
+  }
+
+  Future<int> countEventRailGamesByRoundIds(List<String> roundIds) {
+    final ids = roundIds.where((id) => id.trim().isNotEmpty).toSet().toList();
+    if (ids.isEmpty) return Future<int>.value(0);
+    return handleApiCall(
+      () => supabase.from('games').count().inFilter('round_id', ids),
+    );
+  }
+
+  Future<List<Games>> getEventRailGamesByRoundIds(
+    List<String> roundIds, {
+    required int limit,
+    required int offset,
+  }) async {
+    final ids = roundIds.where((id) => id.trim().isNotEmpty).toSet().toList();
+    if (ids.isEmpty) return const <Games>[];
+    final range = eventRailPageRangeForTesting(limit: limit, offset: offset);
+    return handleApiCall(() async {
+      final response = await supabase
+          .from('games')
+          .select(_eventRailGameSelectColumns)
+          .inFilter('round_id', ids)
+          .order('round_id', ascending: true)
+          .order('board_nr', ascending: true, nullsFirst: false)
+          .order('id', ascending: true)
+          .range(range.from, range.to);
+      final jsonList = (response as List)
+          .map((item) => json.encode(item))
+          .toList(growable: false);
+      return compute(_decodeGamesInIsolate, jsonList);
+    });
+  }
+
+  Future<Games> getEventRailGameById(String gameId) async {
+    return handleApiCall(() async {
+      final response =
+          await supabase
+              .from('games')
+              .select(_eventRailGameSelectColumns)
+              .eq('id', gameId)
+              .single();
+      return Games.fromJson(response);
+    });
+  }
+
+  Future<int> countGamesByTourId(String tourId) {
+    return handleApiCall(
+      () => supabase.from('games').count().eq('tour_id', tourId),
+    );
+  }
+
+  /// Fetches the complete event context for one player without downloading
+  /// every other board in the tournament.
+  ///
+  /// Scorecards need all of this player's rounds for exact scoring, but a
+  /// 1,000-game open may contain only a dozen games for that player. Prefer
+  /// the indexed FIDE-id array and fall back to the canonical player names
+  /// for older rows that do not carry FIDE ids.
+  Future<List<Games>> getEventGamesByPlayer({
+    required String tourId,
+    int? fideId,
+    required String playerName,
+  }) async {
+    final normalizedTourId = tourId.trim();
+    if (normalizedTourId.isEmpty) return const <Games>[];
+
+    var byFide = const <Games>[];
+    if (fideId != null && fideId > 0) {
+      try {
+        byFide = await handleApiCall(() async {
+          final response = await supabase
+              .from('games')
+              .select(_gameListSelectColumns)
+              .eq('tour_id', normalizedTourId)
+              .contains('player_fide_ids', <int>[fideId])
+              .order('round_id', ascending: true)
+              .order('board_nr', ascending: true, nullsFirst: false)
+              .order('id', ascending: true);
+          return (response as List)
+              .map((json) => Games.fromJson(json))
+              .toList(growable: false);
+        });
+      } catch (_) {
+        // Older schemas/rows can lack the generated FIDE-id array. The exact
+        // canonical-name query below remains a complete fallback in that case.
+      }
+    }
+
+    final normalizedName = _stripTitlePrefix(playerName);
+    if (normalizedName.isEmpty) {
+      return mergeEventPlayerGameQueryResults(byFide: byFide);
+    }
+    final escapedName = normalizedName.replaceAll('"', r'\"');
+    final byName = await handleApiCall(() async {
+      final response = await supabase
+          .from('games')
+          .select(_gameListSelectColumns)
+          .eq('tour_id', normalizedTourId)
+          .or(
+            'player_white.eq."$escapedName",'
+            'player_black.eq."$escapedName"',
+          )
+          .order('round_id', ascending: true)
+          .order('board_nr', ascending: true, nullsFirst: false)
+          .order('id', ascending: true);
+      return (response as List)
+          .map((json) => Games.fromJson(json))
+          .toList(growable: false);
+    });
+    return mergeEventPlayerGameQueryResults(byFide: byFide, byName: byName);
   }
 
   Future<Games> getGameWithPGN(String gameId) async {
@@ -1946,6 +2244,36 @@ List<Games> _decodeGamesInIsolate(List<String> gameJsonList) {
 List<Games> _deduplicateGames(List<Games> games) {
   final seen = <String>{};
   return games.where((game) => seen.add(game.id)).toList();
+}
+
+/// Combines indexed FIDE matches with canonical-name matches from legacy rows.
+///
+/// A mixed event can contain both representations. Returning the FIDE result
+/// early silently loses historical rounds whose generated id array is absent.
+@visibleForTesting
+List<Games> mergeEventPlayerGameQueryResults({
+  Iterable<Games> byFide = const <Games>[],
+  Iterable<Games> byName = const <Games>[],
+}) {
+  final byId = <String, Games>{};
+  for (final game in <Games>[...byFide, ...byName]) {
+    final id = game.id.trim();
+    if (id.isNotEmpty) byId.putIfAbsent(id, () => game);
+  }
+  final merged = byId.values.toList(growable: false);
+  merged.sort((a, b) {
+    final byRound = a.roundId.compareTo(b.roundId);
+    if (byRound != 0) return byRound;
+    final aBoard = a.boardNr;
+    final bBoard = b.boardNr;
+    if (aBoard != null && bBoard != null && aBoard != bBoard) {
+      return aBoard.compareTo(bBoard);
+    }
+    if (aBoard != null && bBoard == null) return -1;
+    if (aBoard == null && bBoard != null) return 1;
+    return a.id.compareTo(b.id);
+  });
+  return merged;
 }
 
 int _compareCurrentSmartGames(Games a, Games b) {

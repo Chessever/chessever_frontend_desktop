@@ -17,6 +17,16 @@ final liveGameCardsPausedProvider = Provider<bool>(
 const Duration kTournamentGamesRequestTimeout = Duration(seconds: 10);
 
 @visibleForTesting
+bool shouldRunTournamentSafetyRefresh({
+  required bool globallyEnabled,
+  required bool desktopManaged,
+  required Iterable<bool> desktopConsumerActivity,
+}) {
+  return globallyEnabled &&
+      (!desktopManaged || desktopConsumerActivity.any((active) => active));
+}
+
+@visibleForTesting
 Future<List<Games>> loadInitialTournamentGames({
   required Future<List<Games>> Function() readCachedGames,
   required Future<List<Games>> Function() fetchFreshGames,
@@ -89,11 +99,7 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
       previous,
       next,
     ) {
-      if (next) {
-        _startPeriodicRefresh();
-      } else {
-        _stopPeriodicRefresh();
-      }
+      _reconcilePeriodicRefresh();
     });
   }
 
@@ -103,6 +109,45 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
   Timer? _refreshTimer;
   bool _refreshLoopActive = false;
   bool _refreshInFlight = false;
+  int _refreshGeneration = 0;
+  final Map<String, bool> _desktopPollingConsumers = <String, bool>{};
+  bool _desktopPollingManaged = false;
+
+  bool get _periodicRefreshAllowed => shouldRunTournamentSafetyRefresh(
+    globallyEnabled: ref.read(shouldStreamProvider),
+    desktopManaged: _desktopPollingManaged,
+    desktopConsumerActivity: _desktopPollingConsumers.values,
+  );
+
+  bool get backgroundRefreshAllowed => _periodicRefreshAllowed;
+
+  /// Registers one retained desktop tournament pane without dropping its last
+  /// data when hidden. Mobile callers never register and preserve the existing
+  /// polling behavior. Multiple tabs sharing a tour poll while any is active.
+  void setDesktopPollingConsumer({
+    required String consumerId,
+    required bool active,
+  }) {
+    if (consumerId.isEmpty || _desktopPollingConsumers[consumerId] == active) {
+      return;
+    }
+    _desktopPollingManaged = true;
+    _desktopPollingConsumers[consumerId] = active;
+    _reconcilePeriodicRefresh();
+  }
+
+  void removeDesktopPollingConsumer(String consumerId) {
+    if (_desktopPollingConsumers.remove(consumerId) == null) return;
+    _reconcilePeriodicRefresh();
+  }
+
+  void _reconcilePeriodicRefresh() {
+    if (_periodicRefreshAllowed && state.hasValue) {
+      if (!_refreshLoopActive) _startPeriodicRefresh();
+    } else {
+      _stopPeriodicRefresh();
+    }
+  }
 
   Future<void> _loadInitialGames({bool forceRefresh = false}) async {
     try {
@@ -121,14 +166,15 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
         state = AsyncValue.data(games);
 
         // Only start periodic refresh if streaming is enabled
-        final shouldStream = ref.read(shouldStreamProvider);
-        if (shouldStream) {
+        if (_periodicRefreshAllowed) {
           _startPeriodicRefresh();
         }
       }
     } catch (error, stackTrace) {
       if (mounted) {
-        debugPrint('GamesTourNotifier: initial load failed for $tourId: $error');
+        debugPrint(
+          'GamesTourNotifier: initial load failed for $tourId: $error',
+        );
         state = AsyncValue.error(error, stackTrace);
       }
     }
@@ -172,18 +218,22 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
               Duration(seconds: _stableTourJitterSeconds);
 
   void _startPeriodicRefresh() {
+    if (!_periodicRefreshAllowed || !mounted) return;
     _stopPeriodicRefresh();
 
     final interval = _safetyNetInterval;
     final firstDelay = _firstSafetyNetDelay;
+    final generation = _refreshGeneration;
     _refreshLoopActive = true;
 
     _refreshTimer = Timer(firstDelay, () async {
       await _checkForNewGames();
-      if (!mounted || !_refreshLoopActive) return;
+      if (!mounted || !_refreshLoopActive || generation != _refreshGeneration) {
+        return;
+      }
 
       _refreshTimer = Timer.periodic(interval, (_) async {
-        if (!_refreshLoopActive) return;
+        if (!_refreshLoopActive || generation != _refreshGeneration) return;
         await _checkForNewGames();
       });
     });
@@ -196,6 +246,7 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
   }
 
   void _stopPeriodicRefresh() {
+    _refreshGeneration++;
     _refreshLoopActive = false;
     _refreshTimer?.cancel();
     _refreshTimer = null;
@@ -204,8 +255,12 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
     );
   }
 
-  Future<void> _checkForNewGames() async {
-    if (!mounted || _refreshInFlight) return;
+  Future<void> _checkForNewGames({bool ignoreActivity = false}) async {
+    if (!mounted ||
+        (!ignoreActivity && !_periodicRefreshAllowed) ||
+        _refreshInFlight) {
+      return;
+    }
     _refreshInFlight = true;
     try {
       final currentGames = state.valueOrNull;
@@ -258,7 +313,7 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
       if (hasChanges && mounted) {
         state = AsyncValue.data(mergedGames);
       }
-    } catch (error, _) {
+    } catch (error) {
       if (!mounted) return;
       debugPrint('🔥 GamesTourNotifier: Error checking for new games: $error');
     } finally {
@@ -290,7 +345,7 @@ class GamesTourNotifier extends StateNotifier<AsyncValue<List<Games>>> {
 
   Future<void> refreshGames({bool forceRefresh = false}) async {
     if (forceRefresh && state.valueOrNull != null) {
-      await _checkForNewGames();
+      await _checkForNewGames(ignoreActivity: true);
       return;
     }
     await _loadInitialGames(forceRefresh: forceRefresh);

@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -57,10 +59,16 @@ import 'package:chessever/theme/app_theme.dart';
 /// scroll logic) is left untouched.
 typedef _TournamentRoundExpansionKey = ({String id, bool initiallyExpanded});
 
+typedef _TournamentMatchExpansionKey =
+    ({String scopeId, String roundId, String matchId});
+
 final _tournamentRoundExpandedProvider = StateProvider.autoDispose
     .family<bool, _TournamentRoundExpansionKey>(
       (ref, key) => key.initiallyExpanded,
     );
+
+final _tournamentMatchExpandedProvider = StateProvider.autoDispose
+    .family<bool, _TournamentMatchExpansionKey>((ref, key) => true);
 
 /// Games sub-view of the Tournament Detail.
 ///
@@ -89,12 +97,18 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   static const Duration _scrollIdleDelay = Duration(milliseconds: 180);
 
   late final TextEditingController _searchController;
+  late final ScrollController _scrollController;
   Timer? _debounce;
   Timer? _scrollIdleTimer;
   bool _liveCardsPausedForScroll = false;
   bool _headerCollapsed = false;
   GroupedGamesData? _lastStableGrouped;
   String? _searchReplayInFlight;
+  Set<String> _registeredPollingTourIds = const <String>{};
+  Set<String> _pendingPollingTourIds = const <String>{};
+  bool? _registeredPollingActive;
+  bool _pendingPollingActive = false;
+  bool _pollingSyncScheduled = false;
 
   // Captured once. liveGameCardsPaused is global, so a reason recomputed from a
   // changing widget.tabId could strand a stale reason in the pause set and
@@ -114,6 +128,9 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
       tournamentDetailGamesSearchByTabIdProvider(widget.tabId),
     );
     _searchController = TextEditingController(text: persisted);
+    _scrollController = ScrollController(
+      debugLabel: 'desktop-tournament-games-${widget.tabId}',
+    );
     // On re-mount, the games provider may have lost its search query (e.g.
     // because a sibling tournament tab cleared it). Replay the persisted
     // text once after first frame so the filter matches what the controller
@@ -130,12 +147,57 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
 
   @override
   void dispose() {
+    for (final tourId in _registeredPollingTourIds) {
+      ref
+          .read(gamesTourProvider(tourId).notifier)
+          .removeDesktopPollingConsumer(widget.tabId);
+    }
     _searchController.dispose();
+    _scrollController.dispose();
     _debounce?.cancel();
     _scrollIdleTimer?.cancel();
     _setHeaderCollapsed(false);
     _setLiveCardsPausedForScroll(false);
     super.dispose();
+  }
+
+  void _schedulePollingActivitySync({
+    required Set<String> tourIds,
+    required bool active,
+  }) {
+    _pendingPollingTourIds = Set<String>.unmodifiable(tourIds);
+    _pendingPollingActive = active;
+    if (_pollingSyncScheduled) return;
+    _pollingSyncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pollingSyncScheduled = false;
+      if (!mounted) return;
+      final nextIds = _pendingPollingTourIds;
+      final nextActive = _pendingPollingActive;
+      if (setEquals(_registeredPollingTourIds, nextIds) &&
+          _registeredPollingActive == nextActive) {
+        return;
+      }
+      for (final removedId in _registeredPollingTourIds.difference(nextIds)) {
+        ref
+            .read(gamesTourProvider(removedId).notifier)
+            .removeDesktopPollingConsumer(widget.tabId);
+      }
+      for (final tourId in nextIds) {
+        ref
+            .read(gamesTourProvider(tourId).notifier)
+            .setDesktopPollingConsumer(
+              consumerId: widget.tabId,
+              active: nextActive,
+            );
+      }
+      final becameActive = nextActive && _registeredPollingActive != true;
+      _registeredPollingTourIds = nextIds;
+      _registeredPollingActive = nextActive;
+      if (becameActive) {
+        unawaited(ref.read(gamesAppBarProvider.notifier).refresh());
+      }
+    });
   }
 
   void _runSearch(String q) {
@@ -204,7 +266,12 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   Future<void> _retryTournamentGames() async {
     if (!mounted) return;
     final canonicalTourId =
-        ref.read(tourDetailScreenProvider).valueOrNull?.aboutTourModel.id.trim();
+        ref
+            .read(tourDetailScreenProvider)
+            .valueOrNull
+            ?.aboutTourModel
+            .id
+            .trim();
     if (canonicalTourId == null || canonicalTourId.isEmpty) return;
 
     setState(() => _lastStableGrouped = null);
@@ -264,7 +331,35 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     final streamingEnabled = ref.watch(
       desktopTabsProvider.select((state) => state.activeId == widget.tabId),
     );
+    final canonicalTourId =
+        ref
+            .watch(tourDetailScreenProvider)
+            .valueOrNull
+            ?.aboutTourModel
+            .id
+            .trim();
+    final pollingTourIds = <String>{
+      if (canonicalTourId != null && canonicalTourId.isNotEmpty)
+        canonicalTourId,
+      for (final game in grouped.allGames)
+        if (game.tourId.trim().isNotEmpty) game.tourId.trim(),
+    };
+    _schedulePollingActivitySync(
+      tourIds: pollingTourIds,
+      active: streamingEnabled,
+    );
     final cardStreamingEnabled = streamingEnabled;
+    // Build deterministic chunks once for the whole tournament render. Doing
+    // this inside every card turns one parent refresh into O(gameCount^2)
+    // filtering/key allocation on large broadcasts.
+    final liveBatchKeyByGameId =
+        cardStreamingEnabled
+            ? liveBatchKeysForGames(
+              games: grouped.allGames,
+              scopePrefix: 'desktop_context:${widget.tabId}',
+              includeFinishedGames: true,
+            )
+            : const <String, LiveGamesBatchKey>{};
     // Source of truth: the persisted board-settings store. Toggling here
     // (or anywhere else — Settings, Library, etc.) writes to the same
     // record, so every desktop pane stays in sync. See `desktop_game_card.dart`
@@ -309,6 +404,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
       },
     );
     final topRoundId = displayRounds.isEmpty ? null : displayRounds.first.id;
+    final tournamentScopeId = 'tournament:${widget.tournamentId}';
     // Open the actual top round plus every already-started round. There is no
     // separate focus scroll; opening a tournament naturally starts at the top.
     bool initialExpanded(GamesAppBarModel round) =>
@@ -325,11 +421,30 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     // rows aren't rendered — stepping into those would land the highlight on an
     // invisible item with no `currentContext` for `Scrollable.ensureVisible`.
     // Filter to expanded rounds only, in on-screen (descending) order.
-    final keyboardGames = <GamesTourModel>[
-      for (final round in displayRounds)
-        if (isRoundExpanded(round))
-          ...(grouped.gamesByRound[round.id] ?? const <GamesTourModel>[]),
-    ];
+    final keyboardGames = <GamesTourModel>[];
+    for (final round in displayRounds) {
+      if (!isRoundExpanded(round)) continue;
+      final roundGames =
+          grouped.gamesByRound[round.id] ?? const <GamesTourModel>[];
+      final showMatches =
+          grouped.isKnockoutTournament &&
+          KnockoutMatchDetector.isKnockoutMatchFormat(roundGames);
+      if (!showMatches) {
+        keyboardGames.addAll(roundGames);
+        continue;
+      }
+      for (final entry
+          in KnockoutMatchDetector.groupByMatches(roundGames).entries) {
+        final expansionKey = (
+          scopeId: tournamentScopeId,
+          roundId: round.id,
+          matchId: entry.key,
+        );
+        if (ref.watch(_tournamentMatchExpandedProvider(expansionKey))) {
+          keyboardGames.addAll(entry.value);
+        }
+      }
+    }
 
     Widget searchField({required EdgeInsetsGeometry padding}) {
       return Padding(
@@ -394,16 +509,19 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                 // flat single-step walk there.
                 final isMatchStyle =
                     grouped.isKnockoutTournament || isTeamEvent;
-                final keyboardColumns =
-                    isMatchStyle
-                        ? 1
-                        : DesktopGameCardsFlow.columnCountForWidth(
-                          layout,
-                          (constraints.maxWidth - 48).clamp(0, double.infinity),
-                        );
+                final contentWidth =
+                    (constraints.maxWidth - 48)
+                        .clamp(0, double.infinity)
+                        .toDouble();
+                final cardColumns = DesktopGameCardsFlow.columnCountForWidth(
+                  layout,
+                  contentWidth,
+                );
+                final keyboardColumns = isMatchStyle ? 1 : cardColumns;
                 return DesktopGameKeyboardFocus(
-                  scopeId: 'tournament:${widget.tournamentId}',
+                  scopeId: tournamentScopeId,
                   games: keyboardGames,
+                  scrollController: _scrollController,
                   resolveColumnCount: () => keyboardColumns,
                   onActivateGame:
                       (game) => openTournamentGameTab(
@@ -419,46 +537,83 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                         selectedGameId,
                         selectGame,
                         keyForGame,
-                      ) => NotificationListener<ScrollNotification>(
-                        onNotification: _handleScrollNotification,
-                        child: ListView(
-                          key: PageStorageKey<String>(
-                            'tournament-detail-games:${widget.tabId}',
-                          ),
-                          physics: const DesktopScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                          children: [
-                            searchField(
-                              padding: const EdgeInsets.fromLTRB(0, 12, 0, 4),
+                      ) => _TournamentLiveBatchScope(
+                        keysByGameId: liveBatchKeyByGameId,
+                        child: NotificationListener<ScrollNotification>(
+                          onNotification: _handleScrollNotification,
+                          child: CustomScrollView(
+                            key: PageStorageKey<String>(
+                              'tournament-detail-games:${widget.tabId}',
                             ),
-                            const SizedBox(height: 4),
-                            // Match-format tournaments (e.g. "12-game Match" — Carlsen vs
-                            // Nepo) get a single match summary card on top of the rounds.
-                            if (grouped.matchFormatHeader != null)
-                              _MatchHeaderBanner(
-                                match: grouped.matchFormatHeader!,
+                            controller: _scrollController,
+                            physics: const DesktopScrollPhysics(),
+                            // A small overscan keeps wheel/trackpad scrolling
+                            // smooth without mounting an entire 1,000-board
+                            // broadcast and its realtime subscriptions.
+                            scrollCacheExtent: const ScrollCacheExtent.pixels(
+                              400,
+                            ),
+                            slivers: [
+                              SliverPadding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  24,
+                                  0,
+                                  24,
+                                  24,
+                                ),
+                                sliver: SliverMainAxisGroup(
+                                  slivers: [
+                                    SliverToBoxAdapter(
+                                      child: searchField(
+                                        padding: const EdgeInsets.fromLTRB(
+                                          0,
+                                          12,
+                                          0,
+                                          4,
+                                        ),
+                                      ),
+                                    ),
+                                    const SliverToBoxAdapter(
+                                      child: SizedBox(height: 4),
+                                    ),
+                                    // Match-format tournaments (e.g. "12-game Match" —
+                                    // Carlsen vs Nepo) get one summary above the rounds.
+                                    if (grouped.matchFormatHeader != null)
+                                      SliverToBoxAdapter(
+                                        child: _MatchHeaderBanner(
+                                          match: grouped.matchFormatHeader!,
+                                        ),
+                                      ),
+                                    for (final round in displayRounds)
+                                      _RoundSliverSection(
+                                        key: ValueKey<String>(round.id),
+                                        scopeId: tournamentScopeId,
+                                        selectedGameId: selectedGameId,
+                                        onSelectGame: selectGame,
+                                        keyForGame: keyForGame,
+                                        round: round,
+                                        initiallyExpanded: initialExpanded(
+                                          round,
+                                        ),
+                                        games:
+                                            grouped.gamesByRound[round.id] ??
+                                            const [],
+                                        eventGames: grouped.allGames,
+                                        tournamentTitle: tournamentTitle,
+                                        layout: layout,
+                                        columns: cardColumns,
+                                        isKnockout:
+                                            grouped.isKnockoutTournament,
+                                        isTeamEvent: isTeamEvent,
+                                        roundStartsAtById: roundStartsAtById,
+                                        roundNameById: roundNameById,
+                                        streamingEnabled: cardStreamingEnabled,
+                                      ),
+                                  ],
+                                ),
                               ),
-                            for (final round in displayRounds)
-                              _RoundSection(
-                                key: ValueKey<String>(round.id),
-                                scopeId: 'tournament:${widget.tournamentId}',
-                                selectedGameId: selectedGameId,
-                                onSelectGame: selectGame,
-                                keyForGame: keyForGame,
-                                round: round,
-                                initiallyExpanded: initialExpanded(round),
-                                games:
-                                    grouped.gamesByRound[round.id] ?? const [],
-                                eventGames: grouped.allGames,
-                                tournamentTitle: tournamentTitle,
-                                layout: layout,
-                                isKnockout: grouped.isKnockoutTournament,
-                                isTeamEvent: isTeamEvent,
-                                roundStartsAtById: roundStartsAtById,
-                                roundNameById: roundNameById,
-                                streamingEnabled: cardStreamingEnabled,
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                 );
@@ -619,8 +774,8 @@ class TournamentGamesHeaderControls extends ConsumerWidget {
   }
 }
 
-class _RoundSection extends ConsumerWidget {
-  const _RoundSection({
+class _RoundSliverSection extends ConsumerWidget {
+  const _RoundSliverSection({
     super.key,
     required this.scopeId,
     required this.selectedGameId,
@@ -632,6 +787,7 @@ class _RoundSection extends ConsumerWidget {
     required this.eventGames,
     required this.tournamentTitle,
     required this.layout,
+    required this.columns,
     required this.isKnockout,
     required this.isTeamEvent,
     required this.roundStartsAtById,
@@ -653,6 +809,7 @@ class _RoundSection extends ConsumerWidget {
   final List<GamesTourModel> eventGames;
   final String tournamentTitle;
   final DesktopCardLayout layout;
+  final int columns;
   final bool isKnockout;
   final bool isTeamEvent;
   final Map<String, DateTime?> roundStartsAtById;
@@ -670,12 +827,84 @@ class _RoundSection extends ConsumerWidget {
         isKnockout && KnockoutMatchDetector.isKnockoutMatchFormat(games);
     final showTeamMatches = isTeamEvent && games.isNotEmpty;
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          RoundHeaderCard(
+    final contentSlivers = <Widget>[];
+    if (expanded) {
+      if (showTeamMatches) {
+        for (final group in buildDesktopTeamMatchGroups(games)) {
+          contentSlivers
+            ..add(SliverToBoxAdapter(child: _TeamMatchHeader(group: group)))
+            ..add(const SliverToBoxAdapter(child: SizedBox(height: 8)))
+            ..add(
+              _TournamentGamesSliverGrid(
+                scopeId: scopeId,
+                selectedGameId: selectedGameId,
+                onSelectGame: onSelectGame,
+                keyForGame: keyForGame,
+                games: group.gameModels,
+                eventGames: eventGames,
+                tournamentTitle: tournamentTitle,
+                layout: layout,
+                columns: columns,
+                roundStartsAtById: roundStartsAtById,
+                roundNameById: roundNameById,
+                streamingEnabled: streamingEnabled,
+              ),
+            )
+            ..add(const SliverToBoxAdapter(child: SizedBox(height: 12)));
+        }
+      } else if (showMatches) {
+        for (final entry
+            in KnockoutMatchDetector.groupByMatches(games).entries) {
+          contentSlivers.add(
+            _MatchSliverSection(
+              key: ValueKey<String>('${round.id}:${entry.key}'),
+              expansionKey: (
+                scopeId: scopeId,
+                roundId: round.id,
+                matchId: entry.key,
+              ),
+              scopeId: scopeId,
+              selectedGameId: selectedGameId,
+              onSelectGame: onSelectGame,
+              keyForGame: keyForGame,
+              header: KnockoutMatchDetector.createMatchHeader(
+                entry.key,
+                entry.value,
+              ),
+              eventGames: eventGames,
+              tournamentTitle: tournamentTitle,
+              layout: layout,
+              columns: columns,
+              roundStartsAtById: roundStartsAtById,
+              roundNameById: roundNameById,
+              streamingEnabled: streamingEnabled,
+            ),
+          );
+        }
+      } else {
+        contentSlivers.add(
+          _TournamentGamesSliverGrid(
+            scopeId: scopeId,
+            selectedGameId: selectedGameId,
+            onSelectGame: onSelectGame,
+            keyForGame: keyForGame,
+            games: games,
+            eventGames: eventGames,
+            tournamentTitle: tournamentTitle,
+            layout: layout,
+            columns: columns,
+            roundStartsAtById: roundStartsAtById,
+            roundNameById: roundNameById,
+            streamingEnabled: streamingEnabled,
+          ),
+        );
+      }
+    }
+
+    return SliverMainAxisGroup(
+      slivers: [
+        SliverToBoxAdapter(
+          child: RoundHeaderCard(
             round: round,
             gameCount: games.length,
             expanded: expanded,
@@ -689,72 +918,17 @@ class _RoundSection extends ConsumerWidget {
                         )
                         .state = !expanded,
           ),
-          if (expanded) ...[
-            const SizedBox(height: 8),
-            if (showTeamMatches)
-              _TeamMatchesList(
-                scopeId: scopeId,
-                selectedGameId: selectedGameId,
-                onSelectGame: onSelectGame,
-                keyForGame: keyForGame,
-                games: games,
-                eventGames: eventGames,
-                tournamentTitle: tournamentTitle,
-                layout: layout,
-                roundStartsAtById: roundStartsAtById,
-                roundNameById: roundNameById,
-                streamingEnabled: streamingEnabled,
-              )
-            else if (showMatches)
-              _MatchesList(
-                scopeId: scopeId,
-                selectedGameId: selectedGameId,
-                onSelectGame: onSelectGame,
-                keyForGame: keyForGame,
-                games: games,
-                eventGames: eventGames,
-                tournamentTitle: tournamentTitle,
-                layout: layout,
-                roundStartsAtById: roundStartsAtById,
-                roundNameById: roundNameById,
-                streamingEnabled: streamingEnabled,
-              )
-            else if (layout == DesktopCardLayout.grid)
-              _GamesGrid(
-                scopeId: scopeId,
-                selectedGameId: selectedGameId,
-                onSelectGame: onSelectGame,
-                keyForGame: keyForGame,
-                games: games,
-                eventGames: eventGames,
-                tournamentTitle: tournamentTitle,
-                roundStartsAtById: roundStartsAtById,
-                roundNameById: roundNameById,
-                streamingEnabled: streamingEnabled,
-              )
-            else
-              _GamesList(
-                scopeId: scopeId,
-                selectedGameId: selectedGameId,
-                onSelectGame: onSelectGame,
-                keyForGame: keyForGame,
-                games: games,
-                eventGames: eventGames,
-                tournamentTitle: tournamentTitle,
-                layout: layout,
-                roundStartsAtById: roundStartsAtById,
-                roundNameById: roundNameById,
-                streamingEnabled: streamingEnabled,
-              ),
-          ],
-        ],
-      ),
+        ),
+        if (expanded) const SliverToBoxAdapter(child: SizedBox(height: 8)),
+        ...contentSlivers,
+        const SliverToBoxAdapter(child: SizedBox(height: 12)),
+      ],
     );
   }
 }
 
-class _GamesList extends ConsumerWidget {
-  const _GamesList({
+class _TournamentGamesSliverGrid extends StatelessWidget {
+  const _TournamentGamesSliverGrid({
     required this.scopeId,
     required this.selectedGameId,
     required this.onSelectGame,
@@ -763,129 +937,7 @@ class _GamesList extends ConsumerWidget {
     required this.eventGames,
     required this.tournamentTitle,
     required this.layout,
-    required this.roundStartsAtById,
-    required this.roundNameById,
-    required this.streamingEnabled,
-  });
-  final String scopeId;
-  final String? selectedGameId;
-  final ValueChanged<String> onSelectGame;
-  final Key Function(String gameId) keyForGame;
-  final List<GamesTourModel> games;
-  final List<GamesTourModel> eventGames;
-  final String tournamentTitle;
-
-  /// One of the *vertical* layouts — [DesktopCardLayout.list] or
-  /// [DesktopCardLayout.compact]. Grid renders through [_GamesGrid].
-  final DesktopCardLayout layout;
-  final Map<String, DateTime?> roundStartsAtById;
-  final Map<String, String> roundNameById;
-  final bool streamingEnabled;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return DesktopGameCardsFlow(
-      layout: layout,
-      itemCount: games.length,
-      embedded: true,
-      itemBuilder: (context, i) {
-        final game = games[i];
-        return DesktopGameKeyboardItem(
-          itemKey: keyForGame(game.gameId),
-          gameId: game.gameId,
-          onSelect: onSelectGame,
-          child: LiveDesktopGameCard(
-            game: game,
-            eventGames: eventGames,
-            tournamentTitle: tournamentTitle,
-            layout: layout,
-            selected: selectedGameId == game.gameId,
-            roundStartsAtById: roundStartsAtById,
-            roundNameById: roundNameById,
-            streamingEnabled: streamingEnabled,
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _GamesGrid extends ConsumerWidget {
-  const _GamesGrid({
-    required this.scopeId,
-    required this.selectedGameId,
-    required this.onSelectGame,
-    required this.keyForGame,
-    required this.games,
-    required this.eventGames,
-    required this.tournamentTitle,
-    required this.roundStartsAtById,
-    required this.roundNameById,
-    required this.streamingEnabled,
-  });
-  final String scopeId;
-  final String? selectedGameId;
-  final ValueChanged<String> onSelectGame;
-  final Key Function(String gameId) keyForGame;
-  final List<GamesTourModel> games;
-  final List<GamesTourModel> eventGames;
-  final String tournamentTitle;
-  final Map<String, DateTime?> roundStartsAtById;
-  final Map<String, String> roundNameById;
-  final bool streamingEnabled;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        const targetWidth = 280.0;
-        final columns = (constraints.maxWidth / targetWidth).floor().clamp(
-          2,
-          6,
-        );
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          padding: EdgeInsets.zero,
-          itemCount: games.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
-            childAspectRatio: 0.95,
-          ),
-          itemBuilder:
-              (context, i) => DesktopGameKeyboardItem(
-                itemKey: keyForGame(games[i].gameId),
-                gameId: games[i].gameId,
-                onSelect: onSelectGame,
-                child: LiveDesktopGameCard(
-                  game: games[i],
-                  eventGames: eventGames,
-                  tournamentTitle: tournamentTitle,
-                  layout: DesktopCardLayout.grid,
-                  selected: selectedGameId == games[i].gameId,
-                  roundStartsAtById: roundStartsAtById,
-                  roundNameById: roundNameById,
-                  streamingEnabled: streamingEnabled,
-                ),
-              ),
-        );
-      },
-    );
-  }
-}
-
-class _TeamMatchesList extends StatelessWidget {
-  const _TeamMatchesList({
-    required this.scopeId,
-    required this.selectedGameId,
-    required this.onSelectGame,
-    required this.keyForGame,
-    required this.games,
-    required this.eventGames,
-    required this.tournamentTitle,
-    required this.layout,
+    required this.columns,
     required this.roundStartsAtById,
     required this.roundNameById,
     required this.streamingEnabled,
@@ -899,105 +951,58 @@ class _TeamMatchesList extends StatelessWidget {
   final List<GamesTourModel> eventGames;
   final String tournamentTitle;
   final DesktopCardLayout layout;
+  final int columns;
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
   final bool streamingEnabled;
 
   @override
   Widget build(BuildContext context) {
-    final groups = buildDesktopTeamMatchGroups(games);
-    if (groups.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (final group in groups)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: _TeamMatchSection(
-              scopeId: scopeId,
-              selectedGameId: selectedGameId,
-              onSelectGame: onSelectGame,
-              keyForGame: keyForGame,
-              group: group,
+    final metrics = DesktopGameCardsFlow.metricsFor(layout);
+    final gridDelegate =
+        layout == DesktopCardLayout.grid
+            ? SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              mainAxisSpacing: metrics.spacing,
+              crossAxisSpacing: metrics.spacing,
+              childAspectRatio: 0.95,
+            )
+            : SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              mainAxisSpacing: metrics.spacing,
+              crossAxisSpacing: metrics.spacing,
+              mainAxisExtent: metrics.tileHeight,
+            );
+    return SliverGrid(
+      gridDelegate: gridDelegate,
+      delegate: SliverChildBuilderDelegate(
+        (context, index) {
+          final game = games[index];
+          return DesktopGameKeyboardItem(
+            key: ValueKey<String>(
+              'tournament-lazy-card:$scopeId:${game.gameId}',
+            ),
+            itemKey: keyForGame(game.gameId),
+            gameId: game.gameId,
+            onSelect: onSelectGame,
+            child: LiveDesktopGameCard(
+              game: game,
               eventGames: eventGames,
               tournamentTitle: tournamentTitle,
               layout: layout,
+              selected: selectedGameId == game.gameId,
               roundStartsAtById: roundStartsAtById,
               roundNameById: roundNameById,
               streamingEnabled: streamingEnabled,
             ),
-          ),
-      ],
-    );
-  }
-}
-
-class _TeamMatchSection extends StatelessWidget {
-  const _TeamMatchSection({
-    required this.scopeId,
-    required this.selectedGameId,
-    required this.onSelectGame,
-    required this.keyForGame,
-    required this.group,
-    required this.eventGames,
-    required this.tournamentTitle,
-    required this.layout,
-    required this.roundStartsAtById,
-    required this.roundNameById,
-    required this.streamingEnabled,
-  });
-
-  final String scopeId;
-  final String? selectedGameId;
-  final ValueChanged<String> onSelectGame;
-  final Key Function(String gameId) keyForGame;
-  final DesktopTeamMatchGroup group;
-  final List<GamesTourModel> eventGames;
-  final String tournamentTitle;
-  final DesktopCardLayout layout;
-  final Map<String, DateTime?> roundStartsAtById;
-  final Map<String, String> roundNameById;
-  final bool streamingEnabled;
-
-  @override
-  Widget build(BuildContext context) {
-    final games = group.gameModels;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _TeamMatchHeader(group: group),
-        const SizedBox(height: 8),
-        if (layout == DesktopCardLayout.grid)
-          _GamesGrid(
-            scopeId: scopeId,
-            selectedGameId: selectedGameId,
-            onSelectGame: onSelectGame,
-            keyForGame: keyForGame,
-            games: games,
-            eventGames: eventGames,
-            tournamentTitle: tournamentTitle,
-            roundStartsAtById: roundStartsAtById,
-            roundNameById: roundNameById,
-            streamingEnabled: streamingEnabled,
-          )
-        else
-          _GamesList(
-            scopeId: scopeId,
-            selectedGameId: selectedGameId,
-            onSelectGame: onSelectGame,
-            keyForGame: keyForGame,
-            games: games,
-            eventGames: eventGames,
-            tournamentTitle: tournamentTitle,
-            layout: layout,
-            roundStartsAtById: roundStartsAtById,
-            roundNameById: roundNameById,
-            streamingEnabled: streamingEnabled,
-          ),
-      ],
+          );
+        },
+        childCount: games.length,
+        // Cards outside the viewport must dispose their Riverpod listeners.
+        // Selection lives in DesktopGameKeyboardFocus, not in card State, so
+        // keeping every historical child alive only wastes realtime/CPU work.
+        addAutomaticKeepAlives: false,
+      ),
     );
   }
 }
@@ -1127,66 +1132,72 @@ class _TeamScoreText extends StatelessWidget {
   }
 }
 
-class _MatchesList extends ConsumerWidget {
-  const _MatchesList({
-    required this.scopeId,
-    required this.selectedGameId,
-    required this.onSelectGame,
-    required this.keyForGame,
-    required this.games,
-    required this.eventGames,
-    required this.tournamentTitle,
-    required this.layout,
-    required this.roundStartsAtById,
-    required this.roundNameById,
-    required this.streamingEnabled,
-  });
-
-  final String scopeId;
-  final String? selectedGameId;
-  final ValueChanged<String> onSelectGame;
-  final Key Function(String gameId) keyForGame;
-  final List<GamesTourModel> games;
-  final List<GamesTourModel> eventGames;
-  final String tournamentTitle;
-  final DesktopCardLayout layout;
-  final Map<String, DateTime?> roundStartsAtById;
-  final Map<String, String> roundNameById;
-  final bool streamingEnabled;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final groupedByMatch = KnockoutMatchDetector.groupByMatches(games);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (final entry in groupedByMatch.entries)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: _MatchSection(
-              scopeId: scopeId,
-              selectedGameId: selectedGameId,
-              onSelectGame: onSelectGame,
-              keyForGame: keyForGame,
-              header: KnockoutMatchDetector.createMatchHeader(
-                entry.key,
-                entry.value,
+/// Builds the production lazy tournament-card sliver in isolation.
+///
+/// This intentionally exposes only a test seam, not a second rendering path:
+/// stress regressions exercise the same [_TournamentGamesSliverGrid], live
+/// batch scoping, and [LiveDesktopGameCard] lifecycle used by
+/// [TournamentGamesView].
+@visibleForTesting
+Widget buildLazyTournamentGamesViewportForTesting({
+  required List<GamesTourModel> games,
+  required ScrollController scrollController,
+  DesktopCardLayout layout = DesktopCardLayout.compact,
+  bool streamingEnabled = true,
+  ScrollCacheExtent scrollCacheExtent = const ScrollCacheExtent.pixels(400),
+  String scopeId = 'tournament-lazy-stress',
+}) {
+  final batchKeys =
+      streamingEnabled
+          ? liveBatchKeysForGames(
+            games: games,
+            scopePrefix: 'desktop_context:$scopeId',
+            includeFinishedGames: true,
+          )
+          : const <String, LiveGamesBatchKey>{};
+  return LayoutBuilder(
+    builder: (context, constraints) {
+      final columns = DesktopGameCardsFlow.columnCountForWidth(
+        layout,
+        constraints.maxWidth,
+      );
+      return _TournamentLiveBatchScope(
+        keysByGameId: batchKeys,
+        child: CustomScrollView(
+          controller: scrollController,
+          scrollCacheExtent: scrollCacheExtent,
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.all(24),
+              sliver: _TournamentGamesSliverGrid(
+                scopeId: scopeId,
+                selectedGameId: null,
+                onSelectGame: (_) {},
+                keyForGame:
+                    (gameId) => ValueKey<String>(
+                      'tournament-lazy-stress-item:$scopeId:$gameId',
+                    ),
+                games: games,
+                eventGames: games,
+                tournamentTitle: 'Stress fixture',
+                layout: layout,
+                columns: columns,
+                roundStartsAtById: const <String, DateTime?>{},
+                roundNameById: const <String, String>{},
+                streamingEnabled: streamingEnabled,
               ),
-              eventGames: eventGames,
-              tournamentTitle: tournamentTitle,
-              layout: layout,
-              roundStartsAtById: roundStartsAtById,
-              roundNameById: roundNameById,
-              streamingEnabled: streamingEnabled,
             ),
-          ),
-      ],
-    );
-  }
+          ],
+        ),
+      );
+    },
+  );
 }
 
-class _MatchSection extends StatefulWidget {
-  const _MatchSection({
+class _MatchSliverSection extends ConsumerWidget {
+  const _MatchSliverSection({
+    super.key,
+    required this.expansionKey,
     required this.scopeId,
     required this.selectedGameId,
     required this.onSelectGame,
@@ -1195,11 +1206,13 @@ class _MatchSection extends StatefulWidget {
     required this.eventGames,
     required this.tournamentTitle,
     required this.layout,
+    required this.columns,
     required this.roundStartsAtById,
     required this.roundNameById,
     required this.streamingEnabled,
   });
 
+  final _TournamentMatchExpansionKey expansionKey;
   final String scopeId;
   final String? selectedGameId;
   final ValueChanged<String> onSelectGame;
@@ -1208,58 +1221,49 @@ class _MatchSection extends StatefulWidget {
   final List<GamesTourModel> eventGames;
   final String tournamentTitle;
   final DesktopCardLayout layout;
+  final int columns;
   final Map<String, DateTime?> roundStartsAtById;
   final Map<String, String> roundNameById;
   final bool streamingEnabled;
 
   @override
-  State<_MatchSection> createState() => _MatchSectionState();
-}
-
-class _MatchSectionState extends State<_MatchSection> {
-  bool _expanded = true;
-
-  @override
-  Widget build(BuildContext context) {
-    final h = widget.header;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _MatchSectionHeader(
-          header: h,
-          expanded: _expanded,
-          onToggle: () => setState(() => _expanded = !_expanded),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final expanded = ref.watch(_tournamentMatchExpandedProvider(expansionKey));
+    return SliverMainAxisGroup(
+      slivers: [
+        SliverToBoxAdapter(
+          child: _MatchSectionHeader(
+            header: header,
+            expanded: expanded,
+            onToggle:
+                () =>
+                    ref
+                        .read(
+                          _tournamentMatchExpandedProvider(
+                            expansionKey,
+                          ).notifier,
+                        )
+                        .state = !expanded,
+          ),
         ),
-        if (_expanded) ...[
-          const SizedBox(height: 8),
-          if (widget.layout == DesktopCardLayout.grid)
-            _GamesGrid(
-              scopeId: widget.scopeId,
-              selectedGameId: widget.selectedGameId,
-              onSelectGame: widget.onSelectGame,
-              keyForGame: widget.keyForGame,
-              games: h.games,
-              eventGames: widget.eventGames,
-              tournamentTitle: widget.tournamentTitle,
-              roundStartsAtById: widget.roundStartsAtById,
-              roundNameById: widget.roundNameById,
-              streamingEnabled: widget.streamingEnabled,
-            )
-          else
-            _GamesList(
-              scopeId: widget.scopeId,
-              selectedGameId: widget.selectedGameId,
-              onSelectGame: widget.onSelectGame,
-              keyForGame: widget.keyForGame,
-              games: h.games,
-              eventGames: widget.eventGames,
-              tournamentTitle: widget.tournamentTitle,
-              layout: widget.layout,
-              roundStartsAtById: widget.roundStartsAtById,
-              roundNameById: widget.roundNameById,
-              streamingEnabled: widget.streamingEnabled,
-            ),
+        if (expanded) ...[
+          const SliverToBoxAdapter(child: SizedBox(height: 8)),
+          _TournamentGamesSliverGrid(
+            scopeId: scopeId,
+            selectedGameId: selectedGameId,
+            onSelectGame: onSelectGame,
+            keyForGame: keyForGame,
+            games: header.games,
+            eventGames: eventGames,
+            tournamentTitle: tournamentTitle,
+            layout: layout,
+            columns: columns,
+            roundStartsAtById: roundStartsAtById,
+            roundNameById: roundNameById,
+            streamingEnabled: streamingEnabled,
+          ),
         ],
+        const SliverToBoxAdapter(child: SizedBox(height: 12)),
       ],
     );
   }
@@ -1465,8 +1469,9 @@ class _MatchHeaderBanner extends StatelessWidget {
 /// Opens a tournament game in a Board tab.
 ///
 /// Opens a Board tab keyed to this game after resolving the freshest available
-/// PGN/FEN snapshot. Event rails retain the full tournament so every round is
-/// available; broader route/source lists remain capped around the selection.
+/// PGN/FEN snapshot. Server-backed event rails retain a bounded immediate
+/// window and page the rest; broader route/source lists remain capped around
+/// the selection.
 ///
 /// Plain clicks use [replaceActive] so a game opens in the tab the user is
 /// currently reading, even if another copy of that game is already open.
@@ -1486,14 +1491,31 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
   Map<String, DateTime?> roundStartsAtById = const <String, DateTime?>{},
   Map<String, String> roundNameById = const <String, String>{},
   ChessboardView viewSource = ChessboardView.tour,
+  bool includeServerEventRail = true,
 }) {
   final pgn = pgnHasMoves(game.pgn) ? game.pgn!.trim() : '';
   final normalizedGame = _withFreshestFen(game, pgnOverride: pgn);
+  final eventTourId = normalizedGame.tourId.trim();
+  final eventGamesKey =
+      !includeServerEventRail ||
+              viewSource == ChessboardView.favScorecard ||
+              eventTourId.isEmpty
+          ? null
+          : BoardTabEventGamesKey(
+            tourId: eventTourId,
+            selectedGameId: normalizedGame.gameId,
+            selectedRoundId: normalizedGame.roundId,
+            selectedBoardNumber: normalizedGame.boardNr,
+          );
   final eventContextGames = _boardRailContextGames(
     normalizedGame,
     eventGames,
     fallbackToSelected: true,
-    retainAll: true,
+    // Multi-tournament Favorites rails stay keyless, but their continuation
+    // can still restore every game on demand. Keep only the selected window
+    // in immutable Board args so opening a large Favorites feed does not
+    // mount or retain the full collection at once.
+    retainAll: eventGamesKey == null && eventGamesContinuation == null,
   );
   final routeContextGames = _boardRailContextGames(
     normalizedGame,
@@ -1536,6 +1558,7 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
     tournamentTitle: tournamentTitle,
     eventGames: eventSummaries,
     eventGamesLoading: false,
+    eventGamesKey: eventGamesKey,
     eventGamesContinuation: eventGamesContinuation,
     routeTitle: routeTitle,
     routeGames: routeSummaries,
@@ -1719,7 +1742,7 @@ Future<void> _refreshOpenedBoardTabWithLatestLiveGame({
   required GamesTourModel openedGame,
 }) async {
   final gameId = openedGame.gameId.trim();
-  if (gameId.isEmpty || openedGame.effectiveGameStatus.isFinished) return;
+  if (gameId.isEmpty || openedGame.gameStatus.isFinished) return;
 
   try {
     final latestRow = await gameRepo.getGameWithPGN(gameId);
@@ -1827,7 +1850,7 @@ bool _needsDesktopCardPgnHydration(GamesTourModel game) {
   if (game.source != GameSource.supabase || game.gameId.trim().isEmpty) {
     return false;
   }
-  return game.effectiveGameStatus.isFinished &&
+  return game.gameStatus.isFinished &&
       !pgnHasMoves(game.pgn) &&
       !isValidGameFen(game.fen);
 }
@@ -1973,10 +1996,12 @@ class LiveDesktopGameCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final effectiveLiveBatchKey =
         liveBatchKey ??
+        _TournamentLiveBatchScope.keyFor(context, game.gameId) ??
         liveContextBatchKeyForGame(
           game: game,
           contextGames: eventGames.isNotEmpty ? eventGames : routeGames,
           scopePrefix: 'desktop_context',
+          includeFinishedGames: true,
         );
     final liveGame = watchLiveGame(
       ref,
@@ -2069,6 +2094,26 @@ class LiveDesktopGameCard extends ConsumerWidget {
           shouldStream &&
           !liveCardsPaused,
     );
+  }
+}
+
+class _TournamentLiveBatchScope extends InheritedWidget {
+  const _TournamentLiveBatchScope({
+    required this.keysByGameId,
+    required super.child,
+  });
+
+  final Map<String, LiveGamesBatchKey> keysByGameId;
+
+  static LiveGamesBatchKey? keyFor(BuildContext context, String gameId) {
+    return context
+        .dependOnInheritedWidgetOfExactType<_TournamentLiveBatchScope>()
+        ?.keysByGameId[gameId];
+  }
+
+  @override
+  bool updateShouldNotify(_TournamentLiveBatchScope oldWidget) {
+    return !identical(keysByGameId, oldWidget.keysByGameId);
   }
 }
 

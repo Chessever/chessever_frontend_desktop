@@ -151,10 +151,15 @@ class GamesTourModel {
     int? blackClockCentiseconds,
     int? whiteClockSeconds,
     int? blackClockSeconds,
+    bool clearWhiteClockSeconds = false,
+    bool clearBlackClockSeconds = false,
     GameStatus? gameStatus,
     String? lastMove,
+    bool clearLastMove = false,
     String? fen,
+    bool clearFen = false,
     String? pgn,
+    bool clearPgn = false,
     int? boardNr,
     String? roundId,
     String? roundSlug,
@@ -163,6 +168,7 @@ class GamesTourModel {
     String? tourName,
     String? eventName,
     DateTime? lastMoveTime,
+    bool clearLastMoveTime = false,
     DateTime? dateStart,
     DateTime? gameDay,
     DateTime? roundStartsAt,
@@ -183,12 +189,18 @@ class GamesTourModel {
           whiteClockCentiseconds ?? this.whiteClockCentiseconds,
       blackClockCentiseconds:
           blackClockCentiseconds ?? this.blackClockCentiseconds,
-      whiteClockSeconds: whiteClockSeconds ?? this.whiteClockSeconds,
-      blackClockSeconds: blackClockSeconds ?? this.blackClockSeconds,
+      whiteClockSeconds:
+          clearWhiteClockSeconds
+              ? null
+              : whiteClockSeconds ?? this.whiteClockSeconds,
+      blackClockSeconds:
+          clearBlackClockSeconds
+              ? null
+              : blackClockSeconds ?? this.blackClockSeconds,
       gameStatus: gameStatus ?? this.gameStatus,
-      lastMove: lastMove ?? this.lastMove,
-      fen: fen ?? this.fen,
-      pgn: pgn ?? this.pgn,
+      lastMove: clearLastMove ? null : lastMove ?? this.lastMove,
+      fen: clearFen ? null : fen ?? this.fen,
+      pgn: clearPgn ? null : pgn ?? this.pgn,
       boardNr: boardNr ?? this.boardNr,
       roundId: roundId ?? this.roundId,
       roundSlug: roundSlug ?? this.roundSlug,
@@ -196,7 +208,8 @@ class GamesTourModel {
       tourSlug: tourSlug ?? this.tourSlug,
       tourName: tourName ?? this.tourName,
       eventName: eventName ?? this.eventName,
-      lastMoveTime: lastMoveTime ?? this.lastMoveTime,
+      lastMoveTime:
+          clearLastMoveTime ? null : lastMoveTime ?? this.lastMoveTime,
       dateStart: dateStart ?? this.dateStart,
       gameDay: gameDay ?? this.gameDay,
       roundStartsAt: roundStartsAt ?? this.roundStartsAt,
@@ -492,95 +505,36 @@ class GamesTourModel {
     }
   }
 
-  /// Effective game status with fallback detection for finished games
-  /// When DB hasn't updated but game is actually finished (clock at 00:00 with moves played)
+  /// Effective game status with a board-state-only fallback.
+  ///
+  /// A clock reaching zero is not enough to derive a result: the flagged
+  /// player may win, lose, or draw depending on whose clock expired and the
+  /// opponent's mating material. Only results proven by the current position
+  /// are inferred while the authoritative status is still ongoing.
   GameStatus get effectiveGameStatus {
-    // If game is already marked as finished, return that status
-    if (gameStatus.isFinished) {
-      return gameStatus;
-    }
-
-    // Check if this looks like a finished game but DB hasn't updated
-    final hasMovesPlayed = lastMove != null && lastMove!.isNotEmpty;
-    final whiteClockZero = (whiteClockSeconds ?? 0) <= 0;
-    final blackClockZero = (blackClockSeconds ?? 0) <= 0;
-
-    // If clock is at 00:00 and at least one move was played, evaluate position
-    if (hasMovesPlayed && (whiteClockZero || blackClockZero)) {
-      return _evaluateGameResult();
-    }
-
-    // Otherwise return the current status
-    return gameStatus;
+    if (gameStatus.isFinished) return gameStatus;
+    return _provablePositionResult();
   }
 
-  /// Evaluates the current position to determine the game result
-  GameStatus _evaluateGameResult() {
-    // If no FEN available, can't evaluate
-    if (fen == null || fen!.isEmpty) {
-      return gameStatus;
-    }
+  GameStatus _provablePositionResult() {
+    if (fen == null || fen!.isEmpty) return gameStatus;
 
     try {
       final setup = Setup.parseFen(fen!);
       final position = Chess.fromSetup(setup);
 
-      // Check if position is checkmate
       if (position.isCheckmate) {
-        // The player whose turn it is got checkmated
         return setup.turn == Side.white
             ? GameStatus.blackWins
             : GameStatus.whiteWins;
       }
-
-      // Check if position is stalemate or insufficient material
       if (position.isStalemate || position.isInsufficientMaterial) {
         return GameStatus.draw;
       }
-
-      // Evaluate material to determine likely winner
-      final materialEval = _evaluateMaterial(setup);
-
-      // If material difference is significant (> 3 points), declare winner
-      if (materialEval > 3) {
-        return GameStatus.whiteWins;
-      } else if (materialEval < -3) {
-        return GameStatus.blackWins;
-      }
-
-      // If material is close or equal, it's a draw
-      return GameStatus.draw;
-    } catch (e) {
-      // If evaluation fails, return current status
-      return gameStatus;
+    } catch (_) {
+      // Invalid or partial FEN: retain the authoritative status.
     }
-  }
-
-  /// Evaluates material balance (positive = white ahead, negative = black ahead)
-  int _evaluateMaterial(Setup setup) {
-    int whiteScore = 0;
-    int blackScore = 0;
-
-    final pieceValues = {
-      Role.pawn: 1,
-      Role.knight: 3,
-      Role.bishop: 3,
-      Role.rook: 5,
-      Role.queen: 9,
-      Role.king: 0, // King doesn't count in material
-    };
-
-    for (final (_, piece) in setup.board.pieces) {
-      final value = pieceValues[piece.role] ?? 0;
-
-      if (piece.color == Side.white) {
-        whiteScore += value;
-      } else {
-        blackScore += value;
-      }
-    }
-
-    return whiteScore - blackScore;
+    return gameStatus;
   }
 
   @override

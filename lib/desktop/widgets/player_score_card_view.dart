@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
@@ -13,7 +14,7 @@ import 'package:chessever/desktop/utils/list_keyboard_nav.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
-import 'package:chessever/desktop/state/tournament_games.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart'
     show synthesizePlayerStandingModel;
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -24,9 +25,13 @@ import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
+import 'package:chessever/desktop/widgets/tournament_games_view.dart'
+    show buildTournamentBoardTabArgs;
 import 'package:chessever/providers/favorite_players_provider.dart';
+import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/providers/player_backfill_provider.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
+import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
@@ -41,11 +46,10 @@ import 'package:chessever/screens/standings/score_card_screen.dart'
         scoreCardPlayerProfileDataSourceProvider,
         selectedPlayerProvider;
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
-import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
-import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/screens/tour_detail/player_tour/player_tour_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/favorite_constants.dart';
@@ -101,11 +105,306 @@ ChessboardView playerScoreCardBoardViewSource({
       : ChessboardView.favScorecard;
 }
 
+@immutable
+class EventPlayerGamesKey {
+  EventPlayerGamesKey({
+    required this.tourId,
+    required this.playerName,
+    this.fideId,
+    this.ownerId = '',
+    Iterable<String> additionalTourIds = const <String>[],
+  }) : additionalTourIds = List<String>.unmodifiable(additionalTourIds);
+
+  final String tourId;
+  final String playerName;
+  final int? fideId;
+  final String ownerId;
+  final List<String> additionalTourIds;
+
+  List<String> get tourIds {
+    final seen = <String>{};
+    final ids = <String>[];
+    for (final value in <String>[tourId, ...additionalTourIds]) {
+      final id = value.trim();
+      if (id.isNotEmpty && seen.add(id)) ids.add(id);
+    }
+    return ids;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        other is EventPlayerGamesKey &&
+            other.tourId == tourId &&
+            other.playerName == playerName &&
+            other.fideId == fideId &&
+            other.ownerId == ownerId &&
+            _stringListsEqual(other.additionalTourIds, additionalTourIds);
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    tourId,
+    playerName,
+    fideId,
+    ownerId,
+    Object.hashAll(additionalTourIds),
+  );
+}
+
+bool _stringListsEqual(List<String> left, List<String> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
+}
+
+/// Exact scorecard rows for one player in one event. This deliberately does
+/// not reuse the Board rail's selected-centered window and does not fetch the
+/// tournament's unrelated games. The active scorecard keeps the former
+/// five-second live-result safety cadence; retained hidden tabs and paused apps
+/// keep their last complete rows without polling.
+final eventPlayerGamesProvider = AutoDisposeAsyncNotifierProvider.family<
+  EventPlayerGamesNotifier,
+  List<GamesTourModel>,
+  EventPlayerGamesKey
+>(EventPlayerGamesNotifier.new);
+
+const Duration _eventPlayerGamesRefreshInterval = Duration(seconds: 5);
+
+class EventPlayerGamesNotifier
+    extends
+        AutoDisposeFamilyAsyncNotifier<
+          List<GamesTourModel>,
+          EventPlayerGamesKey
+        > {
+  Timer? _refreshTimer;
+  bool _disposed = false;
+  bool _initialLoadComplete = false;
+  bool _refreshInFlight = false;
+  bool _tabForeground = true;
+  bool _lifecycleAllowsStreaming = true;
+  int _activityEpoch = 0;
+  late EventPlayerGamesKey _key;
+
+  bool get _isActive => _tabForeground && _lifecycleAllowsStreaming;
+
+  @override
+  Future<List<GamesTourModel>> build(EventPlayerGamesKey arg) async {
+    _key = arg;
+    _disposed = false;
+    _initialLoadComplete = false;
+    _refreshInFlight = false;
+    _activityEpoch++;
+    final ownerId = arg.ownerId.trim();
+    _tabForeground =
+        ownerId.isEmpty || ref.read(desktopTabsProvider).activeId == ownerId;
+    _lifecycleAllowsStreaming = ref.read(liveGameStreamingLifecycleProvider);
+    _stopRefreshTimer();
+    ref.listen<bool>(
+      desktopTabsProvider.select(
+        (tabs) => ownerId.isEmpty || tabs.activeId == ownerId,
+      ),
+      (_, next) => _setTabForeground(next),
+    );
+    ref.listen<bool>(liveGameStreamingLifecycleProvider, (_, next) {
+      _setLifecycleAllowsStreaming(next);
+    });
+    ref.onDispose(() {
+      _disposed = true;
+      _activityEpoch++;
+      _stopRefreshTimer();
+    });
+
+    final loaded = await _loadRows();
+    if (!_disposed) {
+      _initialLoadComplete = true;
+      _startRefreshTimer();
+    }
+    return loaded;
+  }
+
+  Future<bool> refresh() async {
+    if (_disposed || !_initialLoadComplete || !_isActive || _refreshInFlight) {
+      return false;
+    }
+    _refreshInFlight = true;
+    final activityEpoch = _activityEpoch;
+    try {
+      final refreshed = await _loadRows();
+      if (_disposed || !_isActive || activityEpoch != _activityEpoch) {
+        return false;
+      }
+      final current = state.valueOrNull;
+      if (current == null || !_eventPlayerGameListsEqual(current, refreshed)) {
+        state = AsyncData(refreshed);
+      }
+      return true;
+    } catch (_) {
+      // Keep the last complete scorecard. A transient safety-refresh failure
+      // must not blank results or fall back to a partial opening seed.
+      return false;
+    } finally {
+      final needsCatchUp =
+          !_disposed && _isActive && activityEpoch != _activityEpoch;
+      _refreshInFlight = false;
+      // A tab can be hidden and reactivated while its old request is still in
+      // flight. The resume callback cannot start a second request at that
+      // instant, so explicitly catch up after the stale request releases the
+      // guard instead of waiting another five seconds.
+      if (needsCatchUp) {
+        scheduleMicrotask(() => unawaited(refresh()));
+      }
+    }
+  }
+
+  Future<List<GamesTourModel>> _loadRows() async {
+    final repository = ref.read(gameRepositoryProvider);
+    final rowsByTour = await Future.wait(
+      _key.tourIds.map(
+        (tourId) => repository.getEventGamesByPlayer(
+          tourId: tourId,
+          fideId: _key.fideId,
+          playerName: _key.playerName,
+        ),
+      ),
+    );
+    final seenGameIds = <String>{};
+    final rows =
+        rowsByTour
+            .expand((tourRows) => tourRows)
+            .where((game) => seenGameIds.add(game.id.trim()))
+            .toList();
+    return convertEventPlayerGameRows(rows);
+  }
+
+  void _setTabForeground(bool foreground) {
+    if (_disposed || _tabForeground == foreground) return;
+    final wasActive = _isActive;
+    _tabForeground = foreground;
+    _handleActivityTransition(wasActive);
+  }
+
+  void _setLifecycleAllowsStreaming(bool allowsStreaming) {
+    if (_disposed || _lifecycleAllowsStreaming == allowsStreaming) return;
+    final wasActive = _isActive;
+    _lifecycleAllowsStreaming = allowsStreaming;
+    _handleActivityTransition(wasActive);
+  }
+
+  void _handleActivityTransition(bool wasActive) {
+    if (wasActive == _isActive) return;
+    _activityEpoch++;
+    if (!_isActive) {
+      _stopRefreshTimer();
+      return;
+    }
+    _startRefreshTimer();
+    unawaited(refresh());
+  }
+
+  void _startRefreshTimer() {
+    _stopRefreshTimer();
+    if (_disposed || !_initialLoadComplete || !_isActive) return;
+    _refreshTimer = Timer.periodic(
+      _eventPlayerGamesRefreshInterval,
+      (_) => unawaited(refresh()),
+    );
+  }
+
+  void _stopRefreshTimer() {
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
+  }
+
+  @visibleForTesting
+  bool get safetyRefreshScheduled => _refreshTimer?.isActive ?? false;
+}
+
+@visibleForTesting
+List<GamesTourModel> convertEventPlayerGameRows(Iterable<Games> rows) {
+  final converted = <GamesTourModel>[];
+  for (final row in rows) {
+    try {
+      converted.add(GamesTourModel.fromGame(row));
+    } catch (_) {
+      // Preserve every valid round if one legacy row has incomplete players.
+    }
+  }
+  return List<GamesTourModel>.unmodifiable(converted);
+}
+
+bool _eventPlayerGameListsEqual(
+  List<GamesTourModel> current,
+  List<GamesTourModel> incoming,
+) {
+  if (current.length != incoming.length) return false;
+  for (var index = 0; index < current.length; index++) {
+    if (current[index] != incoming[index]) return false;
+  }
+  return true;
+}
+
+/// Resolves the exact tour IDs that form the currently selected event scope.
+///
+/// Most event categories map to one tour. Some large broadcasts split one
+/// standings table into pagination-only sibling tours such as "Open Boards
+/// 1-66" and "Open Boards 67-126". A player scorecard must query each of
+/// those siblings, but no unrelated category, to retain every round without
+/// loading every board in the event.
+@visibleForTesting
+List<String> resolveEventPlayerTourIds({
+  required String selectedTourId,
+  required String selectedTourName,
+  required Iterable<({String id, String name})> eventTours,
+}) {
+  final normalizedSelectedId = selectedTourId.trim();
+  if (normalizedSelectedId.isEmpty) return const <String>[];
+
+  bool isPaginationCategory(String name) {
+    return RegExp(
+      r'Boards?\s+\d+[\-\+]?\d*\+?$',
+      caseSensitive: false,
+    ).hasMatch(name);
+  }
+
+  String categoryBaseName(String name) {
+    return name
+        .replaceAll(
+          RegExp(r'\s*Boards?\s+\d+[\-\+]?\d*\+?$', caseSensitive: false),
+          '',
+        )
+        .trim();
+  }
+
+  if (!isPaginationCategory(selectedTourName)) {
+    return <String>[normalizedSelectedId];
+  }
+
+  final selectedBaseName = categoryBaseName(selectedTourName);
+  final seen = <String>{normalizedSelectedId};
+  final related = <String>[normalizedSelectedId];
+  for (final tour in eventTours) {
+    final id = tour.id.trim();
+    if (id.isEmpty || !isPaginationCategory(tour.name)) continue;
+    if (categoryBaseName(tour.name) != selectedBaseName) continue;
+    if (seen.add(id)) related.add(id);
+  }
+  return List<String>.unmodifiable(related);
+}
+
 class PlayerScoreCardView extends ConsumerStatefulWidget {
-  const PlayerScoreCardView({super.key, required this.player, this.tabContext});
+  const PlayerScoreCardView({
+    super.key,
+    required this.player,
+    this.tabContext,
+    this.tabId = '',
+  });
 
   final PlayerStandingModel player;
   final PlayerScoreCardTabContext? tabContext;
+  final String tabId;
 
   @override
   ConsumerState<PlayerScoreCardView> createState() =>
@@ -265,7 +564,6 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
     List<GamesTourModel> eventGames = const <GamesTourModel>[],
   }) async {
     final openedGame = await _hydrateGameForBoardOpen(game);
-    final pgn = openedGame.pgn?.trim();
     final contextGames = _replaceGameInContext(
       eventGames.isEmpty ? <GamesTourModel>[game] : eventGames,
       openedGame,
@@ -278,26 +576,13 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
       tabContext: widget.tabContext,
       hasSelectedBroadcast: ref.read(selectedBroadcastModelProvider) != null,
     );
-    final args = BoardTabGameArgs(
-      gameId: openedGame.gameId,
-      pgn: pgn ?? '',
-      label: '${openedGame.whitePlayer.name} vs ${openedGame.blackPlayer.name}',
-      whiteName: openedGame.whitePlayer.name,
-      blackName: openedGame.blackPlayer.name,
-      whiteFederation: openedGame.whitePlayer.federation,
-      blackFederation: openedGame.blackPlayer.federation,
-      whiteTitle: openedGame.whitePlayer.title,
-      blackTitle: openedGame.blackPlayer.title,
-      whiteRating: openedGame.whitePlayer.rating,
-      blackRating: openedGame.blackPlayer.rating,
-      whiteFideId: openedGame.whitePlayer.fideId,
-      blackFideId: openedGame.blackPlayer.fideId,
-      fenSeed: openedGame.fen,
-      sourceGame: openedGame.copyWith(pgn: pgn),
+    final args = buildTournamentBoardTabArgs(
+      ref,
+      openedGame,
+      tournamentTitle,
+      eventGames: contextGames,
       viewSource: boardViewSource,
-      tournamentTitle: tournamentTitle,
-      eventGames: _summariesFromGames(contextGames),
-      gameListSelectedId: openedGame.gameId,
+      includeServerEventRail: false,
     );
     // Keep the legacy board provider in sync with the same resolved source.
     ref.read(chessboardViewFromProviderNew.notifier).state = boardViewSource;
@@ -569,7 +854,7 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
       hasEventContext: hasEventContext,
       gamesContext: gamesContext,
       profileDataSource: profileDataSource,
-      selectedBroadcast: selectedBroadcast,
+      selectedBroadcastId: selectedBroadcast?.id,
     );
     final boardContextTitle = _eventTitleFromGames(
       selectedBroadcast?.name ?? '',
@@ -682,7 +967,7 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
     required bool hasEventContext,
     required List<GamesTourModel>? gamesContext,
     required PlayerProfileDataSource profileDataSource,
-    required Object? selectedBroadcast,
+    required String? selectedBroadcastId,
   }) {
     final contextTourId =
         (gamesContext != null && gamesContext.isNotEmpty)
@@ -729,42 +1014,54 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
       );
     }
 
-    if (selectedBroadcast != null) {
-      final merged = ref.watch(mergedTournamentGamesProvider);
-      final tourAsync = ref.watch(gamesTourScreenProvider);
-      return tourAsync.when(
-        data: (_) => _ResolvedGames(games: merged, isLoading: false),
-        loading: () => const _ResolvedGames(games: [], isLoading: true),
-        error: (_, __) => const _ResolvedGames(games: [], isLoading: false),
+    if (selectedBroadcastId != null) {
+      final detailAsync = ref.watch(tourDetailScreenProvider);
+      final detail = detailAsync.valueOrNull;
+      if (detail == null) {
+        return _ResolvedGames(
+          games: gamesContext ?? const <GamesTourModel>[],
+          isLoading: detailAsync.isLoading,
+        );
+      }
+      final selectedTour = detail.aboutTourModel;
+      final detailBroadcastId = selectedTour.groupBroadcastId?.trim() ?? '';
+      if (detailBroadcastId.isNotEmpty &&
+          detailBroadcastId != selectedBroadcastId) {
+        // Per-tab scorecard context is restored before the legacy global
+        // tournament provider finishes switching. Never issue an exact query
+        // against the previous tab's event during that hand-off.
+        return _ResolvedGames(
+          games: gamesContext ?? const <GamesTourModel>[],
+          isLoading: true,
+        );
+      }
+      final tourIds = resolveEventPlayerTourIds(
+        selectedTourId: selectedTour.id,
+        selectedTourName: selectedTour.name,
+        eventTours: detail.tours.map(
+          (model) => (id: model.tour.id, name: model.tour.name),
+        ),
+      );
+      if (tourIds.isEmpty) {
+        return _ResolvedGames(
+          games: gamesContext ?? const <GamesTourModel>[],
+          isLoading: false,
+        );
+      }
+      return _watchExactEventPlayerGames(
+        ref: ref,
+        player: player,
+        tourIds: tourIds,
+        gamesContext: gamesContext,
       );
     }
 
     if (shouldFetchEvent) {
-      final async = ref.watch(gamesTourProvider(contextTourId));
-      return async.when(
-        data: (rows) {
-          final converted = <GamesTourModel>[];
-          for (final g in rows) {
-            try {
-              converted.add(GamesTourModel.fromGame(g));
-            } catch (_) {}
-          }
-          return _ResolvedGames(
-            games:
-                converted.isNotEmpty ? converted : (gamesContext ?? const []),
-            isLoading: false,
-          );
-        },
-        loading:
-            () => _ResolvedGames(
-              games: gamesContext ?? const [],
-              isLoading: true,
-            ),
-        error:
-            (_, __) => _ResolvedGames(
-              games: gamesContext ?? const [],
-              isLoading: false,
-            ),
+      return _watchExactEventPlayerGames(
+        ref: ref,
+        player: player,
+        tourIds: <String>[contextTourId],
+        gamesContext: gamesContext,
       );
     }
 
@@ -774,6 +1071,39 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
 
     // No valid game source — score cards only show event-context games.
     return const _ResolvedGames(games: [], isLoading: false);
+  }
+
+  _ResolvedGames _watchExactEventPlayerGames({
+    required WidgetRef ref,
+    required PlayerStandingModel player,
+    required List<String> tourIds,
+    required List<GamesTourModel>? gamesContext,
+  }) {
+    final async = ref.watch(
+      eventPlayerGamesProvider(
+        EventPlayerGamesKey(
+          tourId: tourIds.first,
+          additionalTourIds: tourIds.skip(1).toList(growable: false),
+          playerName: player.name,
+          fideId: player.fideId,
+          ownerId: widget.tabId,
+        ),
+      ),
+    );
+    return async.when(
+      data:
+          (converted) => _ResolvedGames(
+            games:
+                converted.isNotEmpty ? converted : (gamesContext ?? const []),
+            isLoading: false,
+          ),
+      loading:
+          () =>
+              _ResolvedGames(games: gamesContext ?? const [], isLoading: true),
+      error:
+          (_, __) =>
+              _ResolvedGames(games: gamesContext ?? const [], isLoading: false),
+    );
   }
 
   bool _hasMultipleTourIds(List<GamesTourModel>? games) {
@@ -865,16 +1195,6 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
     }
     return result;
   }
-}
-
-List<TournamentGameSummary> _summariesFromGames(List<GamesTourModel> games) {
-  final byId = <String, TournamentGameSummary>{};
-  for (final game in games) {
-    final id = game.gameId.trim();
-    if (id.isEmpty) continue;
-    byId[id] = TournamentGameSummary.fromGamesTourModel(game);
-  }
-  return byId.values.toList(growable: false);
 }
 
 String _eventTitleFromGames(String explicitTitle, List<GamesTourModel> games) {

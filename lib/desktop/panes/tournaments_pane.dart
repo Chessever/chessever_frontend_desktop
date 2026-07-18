@@ -50,7 +50,6 @@ import 'package:chessever/screens/premium_games/providers/premium_games_provider
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_list_view_mode_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
-import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/location_service_provider.dart';
@@ -65,9 +64,10 @@ LiveGamesBatchKey _desktopForYouLiveBatchKey({
   required String tourId,
   required List<GamesTourModel> games,
 }) {
-  return LiveGamesBatchKey(
-    scopeId: 'desktop_for_you:$eventId:$tourId',
-    gameIds: games.where(shouldSubscribeToLiveGame).map((game) => game.gameId),
+  return forYouEventLiveBatchKey(
+    eventId: eventId,
+    tourId: tourId,
+    games: games,
   );
 }
 
@@ -3169,7 +3169,7 @@ class _GamesStrip extends ConsumerWidget {
               final liveBatchKey = _desktopForYouLiveBatchKey(
                 eventId: eventId,
                 tourId: snapshot.tourId,
-                games: games,
+                games: snapshot.visibleGames,
               );
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 onVisibleGameIdsChanged(
@@ -3215,7 +3215,7 @@ class _GamesStrip extends ConsumerWidget {
             final liveBatchKey = _desktopForYouLiveBatchKey(
               eventId: eventId,
               tourId: snapshot.tourId,
-              games: games,
+              games: snapshot.visibleGames,
             );
             return Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3426,10 +3426,7 @@ class _TeamGamesStrip extends StatelessWidget {
         final liveBatchKey = _desktopForYouLiveBatchKey(
           eventId: eventId,
           tourId: snapshot.tourId,
-          games: [
-            for (final gameId in displayedGameIds)
-              snapshot.visibleGames.firstWhere((game) => game.gameId == gameId),
-          ],
+          games: snapshot.visibleGames,
         );
         final panelWidth = _forYouGroupPanelWidth(
           constraints.maxWidth,
@@ -3533,10 +3530,7 @@ class _KnockoutGamesStrip extends StatelessWidget {
         final liveBatchKey = _desktopForYouLiveBatchKey(
           eventId: eventId,
           tourId: snapshot.tourId,
-          games: [
-            for (final gameId in displayedGameIds)
-              snapshot.visibleGames.firstWhere((game) => game.gameId == gameId),
-          ],
+          games: snapshot.visibleGames,
         );
         final panelWidth = _forYouGroupPanelWidth(
           constraints.maxWidth,

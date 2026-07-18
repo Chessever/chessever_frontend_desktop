@@ -172,7 +172,8 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
   BoardEvalNotifier(this.ref, this.fen, this.config)
     : super(const BoardEvalState.evaluating()) {
     // _start mutates the shared depth tracker; keep provider creation side-effect free.
-    Timer.run(() {
+    _startTimer = Timer(Duration.zero, () {
+      _startTimer = null;
       if (!mounted) return;
       unawaited(_start());
     });
@@ -182,6 +183,7 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
   final String fen;
   final BoardEvalConfig config;
   static const Duration _minUiUpdateInterval = Duration(milliseconds: 80);
+  Timer? _startTimer;
   late final String _ownerId = StockfishSingleton.generateOwnerId(
     'boardEval',
     identityHashCode(this),
@@ -396,6 +398,8 @@ class BoardEvalNotifier extends StateNotifier<BoardEvalState> {
 
   @override
   void dispose() {
+    _startTimer?.cancel();
+    _startTimer = null;
     _cancelPendingSearchUpdate();
     // Tear down the in-flight Stockfish job tied to this widget so the engine
     // can move on to the next position immediately rather than burning cycles.

@@ -66,6 +66,7 @@ class BoardTabGameArgs {
     this.tournamentTitle = '',
     this.eventGames = const <TournamentGameSummary>[],
     this.eventGamesLoading = false,
+    this.eventGamesKey,
     this.routeTitle = '',
     this.routeGames = const <TournamentGameSummary>[],
     this.routeGamesContinuation,
@@ -138,6 +139,13 @@ class BoardTabGameArgs {
   final List<TournamentGameSummary> eventGames;
   final bool eventGamesLoading;
 
+  /// Lightweight server-backed event rail for tournament Board tabs.
+  ///
+  /// The selected row remains in [eventGames] as an immediate fallback, while
+  /// the rail loads bounded metadata pages around it. Detached, Favorites,
+  /// and database tabs leave this null and keep their existing local context.
+  final BoardTabEventGamesKey? eventGamesKey;
+
   /// Route/source context that produced the Board tab.
   ///
   /// For example, when a player-profile Games tab is filtered down to 129
@@ -198,12 +206,15 @@ class BoardTabGameArgs {
     int? blackFideId,
     bool? initialBoardFlipped,
     String? fenSeed,
+    bool clearFenSeed = false,
     String? initialFen,
     GamesTourModel? sourceGame,
     ChessboardView? viewSource,
     String? tournamentTitle,
     List<TournamentGameSummary>? eventGames,
     bool? eventGamesLoading,
+    BoardTabEventGamesKey? eventGamesKey,
+    bool clearEventGamesKey = false,
     String? routeTitle,
     List<TournamentGameSummary>? routeGames,
     BoardTabGamesContinuation? routeGamesContinuation,
@@ -234,13 +245,15 @@ class BoardTabGameArgs {
       whiteFideId: whiteFideId ?? this.whiteFideId,
       blackFideId: blackFideId ?? this.blackFideId,
       initialBoardFlipped: initialBoardFlipped ?? this.initialBoardFlipped,
-      fenSeed: fenSeed ?? this.fenSeed,
+      fenSeed: clearFenSeed ? null : fenSeed ?? this.fenSeed,
       initialFen: initialFen ?? this.initialFen,
       sourceGame: sourceGame ?? this.sourceGame,
       viewSource: viewSource ?? this.viewSource,
       tournamentTitle: tournamentTitle ?? this.tournamentTitle,
       eventGames: eventGames ?? this.eventGames,
       eventGamesLoading: eventGamesLoading ?? this.eventGamesLoading,
+      eventGamesKey:
+          clearEventGamesKey ? null : eventGamesKey ?? this.eventGamesKey,
       routeTitle: routeTitle ?? this.routeTitle,
       routeGames: routeGames ?? this.routeGames,
       routeGamesContinuation:
@@ -265,6 +278,54 @@ class BoardTabGameArgs {
       librarySaveOrigin: librarySaveOrigin ?? this.librarySaveOrigin,
     );
   }
+}
+
+@immutable
+class BoardTabEventGamesKey {
+  const BoardTabEventGamesKey({
+    required this.tourId,
+    this.selectedGameId = '',
+    this.selectedRoundId = '',
+    this.selectedBoardNumber,
+  });
+
+  final String tourId;
+  final String selectedGameId;
+  final String selectedRoundId;
+  final int? selectedBoardNumber;
+
+  BoardTabEventGamesKey copyWith({
+    String? tourId,
+    String? selectedGameId,
+    String? selectedRoundId,
+    int? selectedBoardNumber,
+  }) {
+    return BoardTabEventGamesKey(
+      tourId: tourId ?? this.tourId,
+      selectedGameId: selectedGameId ?? this.selectedGameId,
+      selectedRoundId: selectedRoundId ?? this.selectedRoundId,
+      selectedBoardNumber: selectedBoardNumber ?? this.selectedBoardNumber,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        other is BoardTabEventGamesKey &&
+            other.tourId == tourId &&
+            other.selectedGameId == selectedGameId &&
+            other.selectedRoundId == selectedRoundId &&
+            other.selectedBoardNumber == selectedBoardNumber;
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(tourId, selectedGameId, selectedRoundId, selectedBoardNumber);
+
+  @override
+  String toString() =>
+      'BoardTabEventGamesKey($tourId, $selectedRoundId, '
+      '$selectedBoardNumber, $selectedGameId)';
 }
 
 enum BoardTabGamesContinuationKind {

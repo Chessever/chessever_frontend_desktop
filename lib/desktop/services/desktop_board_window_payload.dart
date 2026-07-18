@@ -122,6 +122,7 @@ Map<String, Object?> _argsToJson(BoardTabGameArgs args) => <String, Object?>{
   'tournamentTitle': args.tournamentTitle,
   'eventGames': _summariesToJson(args.eventGames),
   'eventGamesLoading': args.eventGamesLoading,
+  'eventGamesKey': _eventGamesKeyToJson(args.eventGamesKey),
   'eventGamesContinuation': _continuationToJson(args.eventGamesContinuation),
   'routeTitle': args.routeTitle,
   'routeGames': _summariesToJson(args.routeGames),
@@ -158,6 +159,7 @@ BoardTabGameArgs _argsFromJson(Map<String, Object?> json) {
     tournamentTitle: _string(json['tournamentTitle']),
     eventGames: _summariesFromJson(json['eventGames']),
     eventGamesLoading: json['eventGamesLoading'] == true,
+    eventGamesKey: _eventGamesKeyFromJson(json['eventGamesKey']),
     eventGamesContinuation: _continuationFromJson(
       json['eventGamesContinuation'],
     ),
@@ -173,6 +175,29 @@ BoardTabGameArgs _argsFromJson(Map<String, Object?> json) {
     ),
     gameListSelectedId: _nullableString(json['gameListSelectedId']),
     librarySaveOrigin: _librarySaveOriginFromJson(json['librarySaveOrigin']),
+  );
+}
+
+Map<String, Object?>? _eventGamesKeyToJson(BoardTabEventGamesKey? key) {
+  if (key == null) return null;
+  return <String, Object?>{
+    'tourId': key.tourId,
+    'selectedGameId': key.selectedGameId,
+    'selectedRoundId': key.selectedRoundId,
+    'selectedBoardNumber': key.selectedBoardNumber,
+  };
+}
+
+BoardTabEventGamesKey? _eventGamesKeyFromJson(Object? value) {
+  if (value is! Map) return null;
+  final json = value.cast<String, Object?>();
+  final tourId = _string(json['tourId']).trim();
+  if (tourId.isEmpty) return null;
+  return BoardTabEventGamesKey(
+    tourId: tourId,
+    selectedGameId: _string(json['selectedGameId']),
+    selectedRoundId: _string(json['selectedRoundId']),
+    selectedBoardNumber: _nullableInt(json['selectedBoardNumber']),
   );
 }
 

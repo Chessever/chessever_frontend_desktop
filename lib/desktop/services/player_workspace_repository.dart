@@ -26,17 +26,9 @@ import 'package:chessever/utils/eco_openings.dart';
 const String _workspaceStorageKey = 'desktop_player_workspace_v1';
 const String _httpUserAgent =
     'ChessEverDesktop/1.0 (https://chessever.com; support@chessever.com)';
-const List<Duration> _lichessTransientRetryDelays = <Duration>[
-  Duration(seconds: 2),
-  Duration(seconds: 5),
-  Duration(seconds: 10),
-];
-const Duration _lichessRateLimitRetryDelay = Duration(minutes: 1);
-const int _chessComArchiveConcurrency = 1;
-const double _chessComArchiveProgressFloor = 0.08;
 const Duration _importStatsTimeout = Duration(seconds: 8);
-const Duration _lichessGamebaseSourceTimeout = Duration(seconds: 3);
-const Duration _chessComGamebaseSourceTimeout = Duration(seconds: 12);
+// The API may be building a shared 50k-game Lichess cache on a cold request.
+const Duration _externalGamebaseSourceTimeout = Duration(hours: 3);
 const double _chessEverExportInitialProgress = 0.05;
 const List<double> _chessEverSnapshotWaitProgressSteps = <double>[
   0.18,
@@ -48,33 +40,6 @@ const List<double> _chessEverSnapshotWaitProgressSteps = <double>[
 typedef PlayerWorkspaceProgress =
     void Function(String message, double? progress);
 typedef PlayerWorkspaceSupportDirectoryResolver = Future<Directory> Function();
-typedef PlayerWorkspaceRetryWait =
-    Future<void> Function(
-      Duration delay,
-      OperationCancellationToken? cancellationToken,
-    );
-
-Future<void> _waitForPlayerWorkspaceRetry(
-  Duration delay,
-  OperationCancellationToken? cancellationToken,
-) async {
-  cancellationToken?.throwIfCanceled();
-  if (delay <= Duration.zero) return;
-  final completer = Completer<void>();
-  final timer = Timer(delay, () => completer.complete());
-  final removeCancelListener = cancellationToken?.addListener(() {
-    timer.cancel();
-    if (!completer.isCompleted) {
-      completer.completeError(const OperationCanceledException());
-    }
-  });
-  try {
-    await completer.future;
-  } finally {
-    timer.cancel();
-    removeCancelListener?.call();
-  }
-}
 
 class PlayerWorkspaceCleanupTargets {
   const PlayerWorkspaceCleanupTargets({
@@ -114,20 +79,17 @@ class PlayerWorkspaceRepository {
     Duration? importStatsTimeout,
     GamebaseRepository? gamebaseRepository,
     PlayerWorkspaceSupportDirectoryResolver? supportDirectory,
-    PlayerWorkspaceRetryWait? retryWait,
   }) : importStatsTimeout = importStatsTimeout ?? _importStatsTimeout,
        _appDatabase = appDatabase ?? AppDatabase.instance,
        _client = client ?? http.Client(),
        _gamebaseRepository = gamebaseRepository,
-       _supportDirectory = supportDirectory ?? getApplicationSupportDirectory,
-       _retryWait = retryWait ?? _waitForPlayerWorkspaceRetry;
+       _supportDirectory = supportDirectory ?? getApplicationSupportDirectory;
 
   final AppDatabase _appDatabase;
   final http.Client _client;
   final GamebaseRepository? _gamebaseRepository;
   final Duration importStatsTimeout;
   final PlayerWorkspaceSupportDirectoryResolver _supportDirectory;
-  final PlayerWorkspaceRetryWait _retryWait;
 
   Future<PlayerWorkspaceSnapshot> loadSnapshot() async {
     final raw = await _appDatabase.getJson<Object?>(_workspaceStorageKey);
@@ -615,248 +577,78 @@ class PlayerWorkspaceRepository {
   Future<PlayerWorkspaceDownloadedPgn> downloadLichessGames({
     required String username,
     int? sinceMs,
+    bool forceRefresh = false,
     int? expectedGameCount,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
     cancellationToken?.throwIfCanceled();
-    PlayerWorkspaceDownloadedPgn? exported;
-    var useDirectFallback = false;
     try {
-      exported = await _downloadExternalPlayerPgnExport(
+      final exported = await _downloadExternalPlayerPgnExport(
         externalSource: GamebaseExternalPlayerSource.lichess,
         workspaceSource: PlayerWorkspaceSource.lichess,
         username: username,
         sinceMs: sinceMs,
+        forceRefresh: forceRefresh,
         onProgress: onProgress,
         cancellationToken: cancellationToken,
       );
+      if (exported != null) return exported;
     } on DioException catch (error) {
+      if (error.response?.statusCode == 413) {
+        throw const _PlayerWorkspaceDownloadException(
+          _playerPgnDatasetLimitMessage,
+        );
+      }
       if (error.response?.statusCode == 429) {
         throw const _PlayerWorkspaceDownloadException(
           'Lichess is limiting downloads right now. Please wait one minute and try again.',
         );
       }
       if (!_isTransientGamebaseSourceFailure(error)) rethrow;
-      useDirectFallback = true;
-      onProgress?.call(
-        'ChessEver source service is temporarily unavailable. '
-        'Downloading directly from Lichess...',
-        null,
+      throw const _PlayerWorkspaceDownloadException(
+        'ChessEver could not load the shared Lichess game cache. '
+        'Please try again shortly.',
       );
     }
-    if (exported != null) return exported;
-    if (_gamebaseRepository != null && !useDirectFallback) {
-      throw StateError('Lichess source export is not available from gamebase.');
-    }
-
-    final query = <String, String>{
-      'perfType': 'ultraBullet,bullet,blitz,rapid,classical,correspondence',
-      'sort': 'dateAsc',
-      'tags': 'true',
-      'opening': 'true',
-      if (sinceMs != null && sinceMs > 0) 'since': sinceMs.toString(),
-    };
-    final uri = Uri.https(
-      'lichess.org',
-      '/api/games/user/${username.trim()}',
-      query,
+    throw StateError(
+      'Lichess games are only available through the ChessEver source cache.',
     );
-    final downloaded = await _downloadLichessPgnWithRetry(
-      uri: uri,
-      expectedGameCount: expectedGameCount,
-      onProgress: onProgress,
-      cancellationToken: cancellationToken,
-    );
-    cancellationToken?.throwIfCanceled();
-    return PlayerWorkspaceDownloadedPgn(
-      source: PlayerWorkspaceSource.lichess,
-      pgn: downloaded.pgn,
-      gameCount: downloaded.gameCount,
-      replaceExistingSource: sinceMs == null,
-    );
-  }
-
-  Future<({String pgn, int gameCount})> _downloadLichessPgnWithRetry({
-    required Uri uri,
-    required int? expectedGameCount,
-    required PlayerWorkspaceProgress? onProgress,
-    required OperationCancellationToken? cancellationToken,
-  }) async {
-    var transientRetryIndex = 0;
-    var rateLimitRetries = 0;
-    while (true) {
-      cancellationToken?.throwIfCanceled();
-      final progress = _LichessPgnStreamProgress(
-        expectedGameCount: expectedGameCount,
-        onProgress: onProgress,
-      )..start();
-      try {
-        final pgn = await _downloadText(
-          uri,
-          accept: 'application/x-chess-pgn',
-          onTextChunk: progress.addChunk,
-          cancellationToken: cancellationToken,
-        );
-        cancellationToken?.throwIfCanceled();
-        progress.finish();
-        return (
-          pgn: pgn,
-          gameCount:
-              progress.receivedGames > 0
-                  ? progress.receivedGames
-                  : countPgnGames(pgn),
-        );
-      } on Object catch (error) {
-        if (isOperationCanceled(error)) rethrow;
-        final statusCode =
-            error is _HttpDownloadException ? error.statusCode : null;
-        Duration? delay;
-        String? retryMessage;
-        if (statusCode == 429 && rateLimitRetries == 0) {
-          rateLimitRetries += 1;
-          delay = _longerDuration(
-            _lichessRateLimitRetryDelay,
-            (error as _HttpDownloadException).retryAfter,
-          );
-          retryMessage =
-              'Lichess is limiting downloads. Retrying in ${_delayLabel(delay)}...';
-        } else if (_isTransientLichessDownloadFailure(error) &&
-            transientRetryIndex < _lichessTransientRetryDelays.length) {
-          delay = _longerDuration(
-            _lichessTransientRetryDelays[transientRetryIndex],
-            error is _HttpDownloadException ? error.retryAfter : null,
-          );
-          transientRetryIndex += 1;
-          retryMessage =
-              'Lichess is temporarily unavailable. Retrying in ${_delayLabel(delay)}...';
-        }
-        if (delay == null || retryMessage == null) {
-          throw _friendlyLichessDownloadFailure(error);
-        }
-        onProgress?.call(retryMessage, null);
-        await _retryWait(delay, cancellationToken);
-      }
-    }
   }
 
   Future<PlayerWorkspaceDownloadedPgn> downloadChessComGames({
     required String username,
     int? sinceMs,
+    bool forceRefresh = false,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
     cancellationToken?.throwIfCanceled();
-    PlayerWorkspaceDownloadedPgn? exported;
-    var useDirectFallback = false;
     try {
-      exported = await _downloadExternalPlayerPgnExport(
+      final exported = await _downloadExternalPlayerPgnExport(
         externalSource: GamebaseExternalPlayerSource.chesscom,
         workspaceSource: PlayerWorkspaceSource.chesscom,
         username: username,
         sinceMs: sinceMs,
+        forceRefresh: forceRefresh,
         onProgress: onProgress,
         cancellationToken: cancellationToken,
       );
+      if (exported != null) return exported;
     } on DioException catch (error) {
+      if (error.response?.statusCode == 413) {
+        throw const _PlayerWorkspaceDownloadException(
+          _playerPgnDatasetLimitMessage,
+        );
+      }
       if (!_isTransientGamebaseSourceFailure(error)) rethrow;
-      useDirectFallback = true;
-      onProgress?.call(
-        'ChessEver source service is temporarily unavailable. '
-        'Downloading directly from Chess.com...',
-        null,
+      throw const _PlayerWorkspaceDownloadException(
+        'ChessEver could not load the shared Chess.com game cache. '
+        'Please try again shortly.',
       );
     }
-    if (exported != null) return exported;
-    if (_gamebaseRepository != null && !useDirectFallback) {
-      throw StateError(
-        'Chess.com source export is not available from gamebase.',
-      );
-    }
-
-    final clean = username.trim().toLowerCase();
-    final archivesUri = Uri.https(
-      'api.chess.com',
-      '/pub/player/$clean/games/archives',
-    );
-    onProgress?.call('Chess.com: loading monthly archive list...', null);
-    cancellationToken?.throwIfCanceled();
-    final response = await _client.get(
-      archivesUri,
-      headers: const <String, String>{
-        'Accept': 'application/json',
-        'User-Agent': _httpUserAgent,
-      },
-    );
-    _throwForBadResponse(response, 'Chess.com archives');
-    final json = jsonDecode(response.body) as Map<String, dynamic>;
-    final archives = (json['archives'] as List? ?? const <Object?>[])
-        .map((value) => value.toString())
-        .where((value) => value.isNotEmpty)
-        .where((value) => _archiveIsAfterSinceMonth(value, sinceMs))
-        .toList(growable: false);
-    if (archives.isEmpty) {
-      onProgress?.call('Chess.com: no monthly archives to download.', 1);
-    }
-    var completedArchives = 0;
-    var downloadedGames = 0;
-    if (archives.isNotEmpty) {
-      onProgress?.call(
-        'Chess.com: downloading ${archives.length} monthly archives '
-        '(${_chessComArchiveConcurrency.clamp(1, archives.length)} at a time)...',
-        _chessComArchiveProgressFloor,
-      );
-    }
-    final downloads = await _mapConcurrentIndexed<String, _IndexedPgn>(
-      archives,
-      concurrency: _chessComArchiveConcurrency,
-      mapper: (archiveUrl, index) async {
-        cancellationToken?.throwIfCanceled();
-        final pgnUrl =
-            archiveUrl.endsWith('/pgn') ? archiveUrl : '$archiveUrl/pgn';
-        onProgress?.call(
-          'Chess.com: started ${_chessComArchiveLabel(archiveUrl)} '
-          '(${index + 1}/${archives.length}); $completedArchives done, '
-          '$downloadedGames games received...',
-          _chessComArchiveProgress(completedArchives, archives.length),
-        );
-        final pgn = await _downloadText(
-          Uri.parse(pgnUrl),
-          accept: 'application/x-chess-pgn',
-          cancellationToken: cancellationToken,
-        );
-        cancellationToken?.throwIfCanceled();
-        final gameCount = countPgnGames(pgn);
-        completedArchives += 1;
-        downloadedGames += gameCount;
-        onProgress?.call(
-          'Chess.com: $completedArchives/${archives.length} archives done; '
-          '$downloadedGames games received...',
-          _chessComArchiveProgress(completedArchives, archives.length),
-        );
-        return _IndexedPgn(index, pgn);
-      },
-    );
-    cancellationToken?.throwIfCanceled();
-    downloads.sort((a, b) => a.index.compareTo(b.index));
-    final buffer = StringBuffer();
-    for (final download in downloads) {
-      final pgn = download.pgn.trim();
-      if (pgn.isEmpty) continue;
-      if (buffer.isNotEmpty) buffer.writeln();
-      buffer.writeln(pgn);
-    }
-    final text = buffer.toString();
-    if (archives.isNotEmpty) {
-      onProgress?.call(
-        'Chess.com: parsing $downloadedGames received games...',
-        1,
-      );
-    }
-    return PlayerWorkspaceDownloadedPgn(
-      source: PlayerWorkspaceSource.chesscom,
-      pgn: text,
-      gameCount: downloadedGames > 0 ? downloadedGames : countPgnGames(text),
+    throw StateError(
+      'Chess.com games are only available through the ChessEver source cache.',
     );
   }
 
@@ -873,14 +665,24 @@ class PlayerWorkspaceRepository {
     // Player ChessEver sources use one compact path only. Never silently fall
     // back to the paginated JSON endpoint: its embedded game payload is much
     // larger and caused severe I/O and UI stalls on desktop.
-    final exported = await _downloadChessEverPgnExport(
-      repository: repository,
-      playerId: playerId,
-      fideId: fideId,
-      dateFrom: null,
-      progress: progress,
-      cancellationToken: cancellationToken,
-    );
+    final PlayerWorkspaceDownloadedPgn? exported;
+    try {
+      exported = await _downloadChessEverPgnExport(
+        repository: repository,
+        playerId: playerId,
+        fideId: fideId,
+        dateFrom: sinceDate?.toUtc().toIso8601String().substring(0, 10),
+        progress: progress,
+        cancellationToken: cancellationToken,
+      );
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 413) {
+        throw const _PlayerWorkspaceDownloadException(
+          _playerPgnDatasetLimitMessage,
+        );
+      }
+      rethrow;
+    }
     if (exported == null) {
       throw StateError(
         'ChessEver PGN export is unavailable. Please try again.',
@@ -935,6 +737,7 @@ class PlayerWorkspaceRepository {
     required PlayerWorkspaceSource workspaceSource,
     required String username,
     required int? sinceMs,
+    required bool forceRefresh,
     PlayerWorkspaceProgress? onProgress,
     OperationCancellationToken? cancellationToken,
   }) async {
@@ -942,19 +745,13 @@ class PlayerWorkspaceRepository {
     if (repository == null) return null;
 
     cancellationToken?.throwIfCanceled();
-    final isChessCom = externalSource == GamebaseExternalPlayerSource.chesscom;
-    onProgress?.call(
-      '${externalSource.label}: checking source cache...',
-      null,
-    );
+    onProgress?.call('${externalSource.label}: checking source cache...', null);
     final export = await repository.getExternalPlayerGamesPgn(
       source: externalSource,
       username: username,
+      refresh: forceRefresh,
       sinceMs: sinceMs,
-      receiveTimeout:
-          isChessCom
-              ? _chessComGamebaseSourceTimeout
-              : _lichessGamebaseSourceTimeout,
+      receiveTimeout: _externalGamebaseSourceTimeout,
     );
     cancellationToken?.throwIfCanceled();
     if (export == null) return null;
@@ -1172,17 +969,41 @@ class PlayerWorkspaceRepository {
       cancellationToken: cancellationToken,
     );
     cancellationToken?.throwIfCanceled();
-    cancellationToken?.throwIfCanceled();
+    var authoritativeStats = PlayerWorkspaceImportStats(
+      gameCount: prepared.stats.gameCount,
+      newGameCount: prepared.stats.gameCount,
+      winCount: prepared.stats.winCount,
+      drawCount: prepared.stats.drawCount,
+      lossCount: prepared.stats.lossCount,
+    );
+    try {
+      final cachedStats = await localRepository.localDatabaseResultStats(
+        databasePath: prepared.path,
+        playerAliases: playerAliases,
+        playerFideId: playerFideId,
+        preferDirectDatabase: true,
+      );
+      cancellationToken?.throwIfCanceled();
+      if (cachedStats.gameCount > 0) {
+        authoritativeStats = PlayerWorkspaceImportStats(
+          gameCount: cachedStats.gameCount,
+          newGameCount: cachedStats.gameCount,
+          winCount: cachedStats.winCount,
+          drawCount: cachedStats.drawCount,
+          lossCount: cachedStats.lossCount,
+        );
+      }
+    } catch (error) {
+      if (isOperationCanceled(error)) rethrow;
+      // The Players workspace is file-backed and intentionally does not
+      // materialize a second Combined cache. A Library cache may nevertheless
+      // already exist; when it does, its complete path is authoritative. On a
+      // cold workspace, keep the stats prepared while writing the PGN.
+    }
     onProgress?.call('Finalizing combined database...', 0.99);
     return PlayerWorkspaceImportResult(
       path: prepared.path,
-      stats: PlayerWorkspaceImportStats(
-        gameCount: prepared.stats.gameCount,
-        newGameCount: prepared.stats.gameCount,
-        winCount: prepared.stats.winCount,
-        drawCount: prepared.stats.drawCount,
-        lossCount: prepared.stats.lossCount,
-      ),
+      stats: authoritativeStats,
     );
   }
 
@@ -1220,121 +1041,6 @@ class PlayerWorkspaceRepository {
     if (create && !await dir.exists()) await dir.create(recursive: true);
     return dir;
   }
-
-  Future<String> _downloadText(
-    Uri uri, {
-    required String accept,
-    void Function(String chunk)? onTextChunk,
-    OperationCancellationToken? cancellationToken,
-  }) async {
-    cancellationToken?.throwIfCanceled();
-    final request = http.Request('GET', uri)
-      ..headers.addAll(<String, String>{
-        'Accept': accept,
-        'User-Agent': _httpUserAgent,
-      });
-    final response = await _client.send(request);
-    cancellationToken?.throwIfCanceled();
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      final body = await response.stream.bytesToString();
-      throw _HttpDownloadException(
-        statusCode: response.statusCode,
-        uri: uri,
-        body: body.trim(),
-        retryAfter: _retryAfterDuration(response.headers['retry-after']),
-      );
-    }
-    final buffer = StringBuffer();
-    final completer = Completer<String>();
-    late final StreamSubscription<String> subscription;
-    VoidCallback? removeCancelListener;
-    subscription = response.stream
-        .transform(utf8.decoder)
-        .listen(
-          (chunk) {
-            if (cancellationToken?.isCanceled == true) {
-              unawaited(subscription.cancel());
-              if (!completer.isCompleted) {
-                completer.completeError(const OperationCanceledException());
-              }
-              return;
-            }
-            buffer.write(chunk);
-            onTextChunk?.call(chunk);
-          },
-          onError: (Object error, StackTrace stackTrace) {
-            if (!completer.isCompleted) {
-              completer.completeError(error, stackTrace);
-            }
-          },
-          onDone: () {
-            if (!completer.isCompleted) completer.complete(buffer.toString());
-          },
-          cancelOnError: true,
-        );
-    removeCancelListener = cancellationToken?.addListener(() {
-      unawaited(subscription.cancel());
-      if (!completer.isCompleted) {
-        completer.completeError(const OperationCanceledException());
-      }
-    });
-    try {
-      return await completer.future;
-    } finally {
-      removeCancelListener?.call();
-    }
-  }
-}
-
-Future<List<R>> _mapConcurrentIndexed<T, R>(
-  List<T> items, {
-  required int concurrency,
-  required Future<R> Function(T item, int index) mapper,
-}) async {
-  if (items.isEmpty) return <R>[];
-  final width = concurrency.clamp(1, items.length).toInt();
-  final results = List<R?>.filled(items.length, null);
-  var nextIndex = 0;
-
-  Future<void> worker() async {
-    while (true) {
-      final index = nextIndex;
-      nextIndex += 1;
-      if (index >= items.length) return;
-      results[index] = await mapper(items[index], index);
-    }
-  }
-
-  await Future.wait<void>(<Future<void>>[
-    for (var i = 0; i < width; i++) worker(),
-  ]);
-  return <R>[for (final result in results) result as R];
-}
-
-@immutable
-class _IndexedPgn {
-  const _IndexedPgn(this.index, this.pgn);
-
-  final int index;
-  final String pgn;
-}
-
-class _HttpDownloadException implements Exception {
-  const _HttpDownloadException({
-    required this.statusCode,
-    required this.uri,
-    required this.body,
-    required this.retryAfter,
-  });
-
-  final int statusCode;
-  final Uri uri;
-  final String body;
-  final Duration? retryAfter;
-
-  @override
-  String toString() =>
-      'Request failed ($statusCode) for $uri${body.isEmpty ? '' : ': $body'}';
 }
 
 class _PlayerWorkspaceDownloadException implements Exception {
@@ -1345,6 +1051,10 @@ class _PlayerWorkspaceDownloadException implements Exception {
   @override
   String toString() => message;
 }
+
+const _playerPgnDatasetLimitMessage =
+    'This player dataset is larger than ChessEver currently supports. '
+    'The limit is 50,000 games and 800 MiB of raw PGN per source.';
 
 bool _isTransientGamebaseSourceFailure(DioException error) {
   final statusCode = error.response?.statusCode;
@@ -1357,71 +1067,6 @@ bool _isTransientGamebaseSourceFailure(DioException error) {
     DioExceptionType.unknown => true,
     _ => false,
   };
-}
-
-bool _isTransientLichessDownloadFailure(Object error) {
-  if (error is _HttpDownloadException) {
-    return error.statusCode >= 500 && error.statusCode <= 599;
-  }
-  return error is http.ClientException ||
-      error is SocketException ||
-      error is TimeoutException;
-}
-
-_PlayerWorkspaceDownloadException _friendlyLichessDownloadFailure(
-  Object error,
-) {
-  if (error is _HttpDownloadException && error.statusCode == 429) {
-    return const _PlayerWorkspaceDownloadException(
-      'Lichess is limiting downloads right now. '
-      'Please wait one minute and try again.',
-    );
-  }
-  if (_isTransientLichessDownloadFailure(error)) {
-    return const _PlayerWorkspaceDownloadException(
-      'Lichess is temporarily unavailable. '
-      'Please try downloading again in a few minutes.',
-    );
-  }
-  if (error is _HttpDownloadException) {
-    return _PlayerWorkspaceDownloadException(
-      'Lichess could not download games right now '
-      '(server response ${error.statusCode}). Please try again.',
-    );
-  }
-  return const _PlayerWorkspaceDownloadException(
-    'Lichess could not download games right now. Please try again.',
-  );
-}
-
-Duration _longerDuration(Duration minimum, Duration? suggested) {
-  if (suggested == null || suggested.compareTo(minimum) < 0) return minimum;
-  return suggested;
-}
-
-Duration? _retryAfterDuration(String? raw) {
-  final value = raw?.trim();
-  if (value == null || value.isEmpty) return null;
-  final seconds = int.tryParse(value);
-  if (seconds != null) {
-    return Duration(seconds: seconds.clamp(0, 86400).toInt());
-  }
-  try {
-    final retryAt = HttpDate.parse(value).toUtc();
-    final delay = retryAt.difference(DateTime.now().toUtc());
-    return delay.isNegative ? Duration.zero : delay;
-  } on FormatException {
-    return null;
-  }
-}
-
-String _delayLabel(Duration delay) {
-  if (delay.inSeconds >= 60 && delay.inSeconds % 60 == 0) {
-    final minutes = delay.inMinutes;
-    return '$minutes ${minutes == 1 ? 'minute' : 'minutes'}';
-  }
-  final seconds = delay.inSeconds <= 0 ? 1 : delay.inSeconds;
-  return '$seconds ${seconds == 1 ? 'second' : 'seconds'}';
 }
 
 class _ChessEverDownloadProgress {
@@ -1442,9 +1087,7 @@ class _ChessEverDownloadProgress {
     var step = 0;
     return Timer.periodic(const Duration(seconds: 5), (_) {
       final index =
-          step
-              .clamp(0, _chessEverSnapshotWaitProgressSteps.length - 1)
-              .toInt();
+          step.clamp(0, _chessEverSnapshotWaitProgressSteps.length - 1).toInt();
       _emit(
         'ChessEver: preparing source snapshot...',
         _chessEverSnapshotWaitProgressSteps[index],
@@ -1460,138 +1103,6 @@ class _ChessEverDownloadProgress {
 
   void _emit(String message, double? progress, {bool force = false}) {
     onProgress?.call(message, progress);
-  }
-}
-
-class _PgnStreamGameCounter {
-  var _pendingLine = '';
-  var _receivedGames = 0;
-  var _finished = false;
-
-  int get receivedGames => _receivedGames;
-
-  void addChunk(String chunk) {
-    final normalized = chunk.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
-    final text = _pendingLine + normalized;
-    final lines = text.split('\n');
-    _pendingLine = lines.removeLast();
-    for (final line in lines) {
-      if (line.trimLeft().startsWith('[Event "')) _receivedGames += 1;
-    }
-  }
-
-  void finish() {
-    if (_finished) return;
-    _finished = true;
-    if (_pendingLine.trimLeft().startsWith('[Event "')) {
-      _receivedGames += 1;
-    }
-    _pendingLine = '';
-  }
-}
-
-class _ProgressThrottle {
-  _ProgressThrottle() : _watch = Stopwatch()..start();
-
-  static const int _minDelta = 25;
-  static const Duration _minInterval = Duration(milliseconds: 180);
-  final Stopwatch _watch;
-  var _lastValue = -1;
-  var _lastMs = 0;
-
-  bool shouldReport(int value) {
-    if (_lastValue < 0) {
-      _lastValue = value;
-      _lastMs = _watch.elapsedMilliseconds;
-      return true;
-    }
-    final elapsed = _watch.elapsedMilliseconds;
-    if (value != _lastValue && (value - _lastValue).abs() >= _minDelta) {
-      _lastValue = value;
-      _lastMs = elapsed;
-      return true;
-    }
-    if (value != _lastValue &&
-        elapsed - _lastMs >= _minInterval.inMilliseconds) {
-      _lastValue = value;
-      _lastMs = elapsed;
-      return true;
-    }
-    return false;
-  }
-}
-
-class _LichessPgnStreamProgress {
-  _LichessPgnStreamProgress({
-    required this.expectedGameCount,
-    required this.onProgress,
-  });
-
-  final int? expectedGameCount;
-  final PlayerWorkspaceProgress? onProgress;
-
-  final _counter = _PgnStreamGameCounter();
-  final _throttle = _ProgressThrottle();
-  var _lastReportedGames = -1;
-  var _finished = false;
-
-  int get receivedGames => _counter.receivedGames;
-
-  void start() {
-    final expected = expectedGameCount;
-    if (expected != null && expected > 0) {
-      onProgress?.call(
-        'Opening Lichess download: 0 of about $expected games received...',
-        0,
-      );
-    } else {
-      onProgress?.call('Opening Lichess download...', null);
-    }
-  }
-
-  void addChunk(String chunk) {
-    _counter.addChunk(chunk);
-    _report();
-  }
-
-  void finish() {
-    if (_finished) return;
-    _finished = true;
-    _counter.finish();
-    final expected = expectedGameCount;
-    if (expected != null && expected > 0) {
-      onProgress?.call(
-        'Parsing Lichess PGN: $receivedGames of about $expected games received...',
-        (receivedGames / expected).clamp(0.0, 1.0).toDouble(),
-      );
-    } else {
-      onProgress?.call(
-        receivedGames > 0
-            ? 'Parsing Lichess PGN: $receivedGames games received...'
-            : 'Parsing Lichess PGN...',
-        null,
-      );
-    }
-  }
-
-  void _report() {
-    if (receivedGames == _lastReportedGames) return;
-    if (!_finished && !_throttle.shouldReport(receivedGames)) return;
-    _lastReportedGames = receivedGames;
-    final expected = expectedGameCount;
-    if (expected != null && expected > 0) {
-      onProgress?.call(
-        'Receiving Lichess games: $receivedGames of about $expected...',
-        (receivedGames / expected).clamp(0.0, 1.0).toDouble(),
-      );
-    } else {
-      onProgress?.call(
-        receivedGames > 0
-            ? 'Receiving Lichess games: $receivedGames received...'
-            : 'Receiving Lichess games...',
-        null,
-      );
-    }
   }
 }
 
@@ -2186,9 +1697,7 @@ PlayerWorkspaceImportStats _analyzePgnFileHeaderStatsSync(
   String? playerFideId,
 ) {
   final counter = _PgnStatsCounter(aliases, playerFideId: playerFideId);
-  final header = RegExp(
-    r'^\s*\[([A-Za-z0-9_]+)\s+"((?:\\.|[^"\\])*)"\]\s*$',
-  );
+  final header = RegExp(r'^\s*\[([A-Za-z0-9_]+)\s+"((?:\\.|[^"\\])*)"\]\s*$');
   Map<String, String>? headers;
 
   void finishGame() {
@@ -2425,34 +1934,6 @@ String? _normalizeFideId(String? value) {
   final clean = value?.trim().toLowerCase();
   if (clean == null || clean.isEmpty || clean == '?') return null;
   return clean;
-}
-
-bool _archiveIsAfterSinceMonth(String archiveUrl, int? sinceMs) {
-  if (sinceMs == null || sinceMs <= 0) return true;
-  final match = RegExp(r'/games/(\d{4})/(\d{2})/?$').firstMatch(archiveUrl);
-  if (match == null) return true;
-  final year = int.tryParse(match.group(1) ?? '');
-  final month = int.tryParse(match.group(2) ?? '');
-  if (year == null || month == null) return true;
-  final archiveStart = DateTime.utc(year, month).millisecondsSinceEpoch;
-  final since = DateTime.fromMillisecondsSinceEpoch(sinceMs, isUtc: true);
-  final sinceMonth =
-      DateTime.utc(since.year, since.month).millisecondsSinceEpoch;
-  return archiveStart >= sinceMonth;
-}
-
-double _chessComArchiveProgress(int completedArchives, int totalArchives) {
-  if (totalArchives <= 0) return 1;
-  final archiveFraction = (completedArchives / totalArchives).clamp(0.0, 1.0);
-  return (_chessComArchiveProgressFloor +
-          archiveFraction * (1 - _chessComArchiveProgressFloor))
-      .clamp(_chessComArchiveProgressFloor, 1.0);
-}
-
-String _chessComArchiveLabel(String archiveUrl) {
-  final match = RegExp(r'/games/(\d{4})/(\d{2})/?$').firstMatch(archiveUrl);
-  if (match == null) return 'archive';
-  return '${match.group(1)}/${match.group(2)}';
 }
 
 void _throwForBadResponse(http.Response response, String label) {

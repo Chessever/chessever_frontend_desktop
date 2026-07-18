@@ -11,6 +11,7 @@ import 'package:chessever/repository/supabase/round/round_repository.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_pin_provider.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -207,6 +208,35 @@ GroupEventCardModel _event(String id, {required TourEventCategory category}) {
 }
 
 void main() {
+  test('For You shares one bounded batch that retains terminal rows', () {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final games = List<GamesTourModel>.generate(
+      kDesktopForYouGamesPerEvent + 2,
+      (index) =>
+          index == 1
+              ? _game('game-$index').copyWith(gameStatus: GameStatus.whiteWins)
+              : _game('game-$index'),
+      growable: false,
+    );
+
+    final key = forYouEventLiveBatchKey(
+      eventId: 'event-1',
+      tourId: 'tour-1',
+      games: games,
+    );
+    final sameKeyForCardLeaves = forYouEventLiveBatchKey(
+      eventId: 'event-1',
+      tourId: 'tour-1',
+      games: games,
+    );
+
+    expect(key, sameKeyForCardLeaves);
+    expect(key.gameIds, hasLength(kDesktopForYouGamesPerEvent));
+    expect(key.gameIds, contains('game-1'));
+    expect(key.gameIds, isNot(contains('game-12')));
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
   final triggerPinRefreshProvider = Provider.family<void Function(), String?>((
     ref,

@@ -123,6 +123,11 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
   @override
   void didUpdateWidget(covariant EnginePanel oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.isForegroundTab &&
+        !widget.isForegroundTab &&
+        _reportController.state.isRunning) {
+      unawaited(_reportController.cancel());
+    }
     final nextFingerprint = _fingerprint(widget.game);
     if (_gameFingerprint != nextFingerprint) {
       _gameFingerprint = nextFingerprint;
@@ -164,7 +169,9 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
 
   Future<void> _analyze() async {
     final game = widget.game;
-    if (game == null || game.mainline.isEmpty) return;
+    if (!widget.isForegroundTab || game == null || game.mainline.isEmpty) {
+      return;
+    }
     await _reportController.analyze(
       game,
       whiteRating: _headerRating('WhiteElo'),
