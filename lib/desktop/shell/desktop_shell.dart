@@ -42,7 +42,6 @@ import 'package:chessever/desktop/shell/desktop_sidebar.dart';
 import 'package:chessever/desktop/shell/desktop_tab_bar.dart';
 import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
-import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/pane_keyboard_scroll.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_board_shortcuts.dart';
@@ -691,18 +690,13 @@ class DesktopShell extends HookConsumerWidget {
                                       onToggleSidebar: toggleSidebar,
                                     ),
                                   Expanded(
-                                    // One cursor-proximity field over all pane content:
-                                    // every MotionCard inside magnifies by the cursor's
-                                    // nearness instead of binary hover.
-                                    child: CursorProximityScope(
-                                      child: PageStorage(
-                                        bucket: tabPageStorageBucket,
-                                        child: _DesktopTabStack(
-                                          tabs: tabsState.tabs,
-                                          activeId: tabsState.activeId,
-                                          feedbackScreenshotKey:
-                                              feedbackScreenshotKey,
-                                        ),
+                                    child: PageStorage(
+                                      bucket: tabPageStorageBucket,
+                                      child: _DesktopTabStack(
+                                        tabs: tabsState.tabs,
+                                        activeId: tabsState.activeId,
+                                        feedbackScreenshotKey:
+                                            feedbackScreenshotKey,
                                       ),
                                     ),
                                   ),

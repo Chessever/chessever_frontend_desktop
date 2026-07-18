@@ -5,7 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('survives proximity cursor tick while sliver card is removed', (
+  testWidgets('survives a hover callback while a sliver card is removed', (
     tester,
   ) async {
     final cardKey = UniqueKey();
@@ -14,21 +14,19 @@ void main() {
     Widget buildHarness() {
       return Directionality(
         textDirection: TextDirection.ltr,
-        child: CursorProximityScope(
-          child: CustomScrollView(
-            slivers: [
-              SliverList(
-                delegate: SliverChildListDelegate([
-                  if (showCard)
-                    MotionCard(
-                      key: cardKey,
-                      child: const SizedBox(width: 120, height: 80),
-                    ),
-                  const SizedBox(width: 120, height: 80),
-                ]),
-              ),
-            ],
-          ),
+        child: CustomScrollView(
+          slivers: [
+            SliverList(
+              delegate: SliverChildListDelegate([
+                if (showCard)
+                  MotionCard(
+                    key: cardKey,
+                    child: const SizedBox(width: 120, height: 80),
+                  ),
+                const SizedBox(width: 120, height: 80),
+              ]),
+            ),
+          ],
         ),
       );
     }

@@ -308,7 +308,6 @@ class _ListLayoutState extends State<_ListLayout>
       onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
       onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: MotionCard(
-        depressOnPress: false,
         borderRadius: 12,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
@@ -874,7 +873,6 @@ class _CompactLayoutState extends State<_CompactLayout>
       onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
       onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: MotionCard(
-        depressOnPress: false,
         borderRadius: 10,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
@@ -997,7 +995,6 @@ class _GridLayoutState extends State<_GridLayout>
       onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
       onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: MotionCard(
-        depressOnPress: false,
         borderRadius: 12,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 140),

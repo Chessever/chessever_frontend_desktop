@@ -162,7 +162,9 @@ void main() {
     expect(find.text('23:45'), findsOneWidget);
   });
 
-  testWidgets('grid game card does not depress before opening', (tester) async {
+  testWidgets('grid game card keeps its content outside transformed layers', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: _cardProviderOverrides(),
@@ -183,8 +185,11 @@ void main() {
     );
 
     expect(
-      tester.widget<MotionCard>(find.byType(MotionCard)).depressOnPress,
-      isFalse,
+      find.descendant(
+        of: find.byType(MotionCard),
+        matching: find.byType(Transform),
+      ),
+      findsNothing,
     );
   });
 
