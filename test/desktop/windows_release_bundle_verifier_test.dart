@@ -20,6 +20,49 @@ const _requiredFiles = <String>[
 ];
 
 void main() {
+  test('finds bundled Dart from FLUTTER_ROOT before PATH', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'chessever_dart_executable_flutter_root_',
+    );
+    try {
+      final configuredRoot = Directory('${temp.path}/configured');
+      final configuredDart = _createFakeDartExecutable(configuredRoot);
+      final pathRoot = Directory('${temp.path}/path');
+      _createFakeDartExecutable(pathRoot);
+      final flutter = _createFakeFlutterExecutable(pathRoot);
+
+      expect(
+        _findBundledDartExecutable(
+          environment: {
+            'FLUTTER_ROOT': configuredRoot.path,
+            'PATH': flutter.parent.path,
+          },
+        ),
+        configuredDart.path,
+      );
+    } finally {
+      await temp.delete(recursive: true);
+    }
+  });
+
+  test('finds bundled Dart from Flutter on PATH', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'chessever_dart_executable_path_',
+    );
+    try {
+      final flutterRoot = Directory('${temp.path}/flutter');
+      final dart = _createFakeDartExecutable(flutterRoot);
+      final flutter = _createFakeFlutterExecutable(flutterRoot);
+
+      expect(
+        _findBundledDartExecutable(environment: {'PATH': flutter.parent.path}),
+        dart.path,
+      );
+    } finally {
+      await temp.delete(recursive: true);
+    }
+  });
+
   test('Windows release verifier checks PE architecture and exports', () async {
     final repository = Directory.current;
     final temp = await Directory.systemTemp.createTemp(
@@ -71,9 +114,86 @@ Future<ProcessResult> _runVerifier({
   required Directory repository,
   required Directory cwd,
 }) {
-  return Process.run(Platform.resolvedExecutable, [
+  return Process.run(_findBundledDartExecutable(), [
     '${repository.path}/tool/verify_windows_release_bundle.dart',
   ], workingDirectory: cwd.path);
+}
+
+String _findBundledDartExecutable({Map<String, String>? environment}) {
+  final currentEnvironment = environment ?? Platform.environment;
+  final flutterRoots = <Directory>[];
+  final configuredRoot = _environmentValue(currentEnvironment, 'FLUTTER_ROOT');
+  if (configuredRoot != null && configuredRoot.trim().isNotEmpty) {
+    flutterRoots.add(Directory(_unquote(configuredRoot)));
+  }
+
+  final path = _environmentValue(currentEnvironment, 'PATH');
+  if (path != null) {
+    final flutterName = Platform.isWindows ? 'flutter.bat' : 'flutter';
+    final pathSeparator = Platform.isWindows ? ';' : ':';
+    for (final rawEntry in path.split(pathSeparator)) {
+      final entry = _unquote(rawEntry);
+      if (entry.isEmpty) continue;
+      final flutter = File('$entry${Platform.pathSeparator}$flutterName');
+      if (!flutter.existsSync()) continue;
+      try {
+        flutterRoots.add(
+          File(flutter.resolveSymbolicLinksSync()).parent.parent,
+        );
+      } on FileSystemException {
+        flutterRoots.add(flutter.parent.parent);
+      }
+    }
+  }
+
+  final searched = <String>[];
+  final dartName = Platform.isWindows ? 'dart.exe' : 'dart';
+  for (final flutterRoot in flutterRoots) {
+    final dart = File(
+      '${flutterRoot.path}${Platform.pathSeparator}bin'
+      '${Platform.pathSeparator}cache${Platform.pathSeparator}dart-sdk'
+      '${Platform.pathSeparator}bin${Platform.pathSeparator}$dartName',
+    );
+    searched.add(dart.path);
+    if (dart.existsSync()) return dart.path;
+  }
+
+  throw StateError(
+    'Could not find Flutter bundled Dart executable. Searched: '
+    '${searched.isEmpty ? '(no Flutter SDK candidates)' : searched.join(', ')}',
+  );
+}
+
+String? _environmentValue(Map<String, String> environment, String name) {
+  for (final entry in environment.entries) {
+    if (entry.key.toUpperCase() == name) return entry.value;
+  }
+  return null;
+}
+
+String _unquote(String value) {
+  final trimmed = value.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.substring(1, trimmed.length - 1);
+  }
+  return trimmed;
+}
+
+File _createFakeDartExecutable(Directory flutterRoot) {
+  final dartName = Platform.isWindows ? 'dart.exe' : 'dart';
+  return File(
+    '${flutterRoot.path}${Platform.pathSeparator}bin'
+    '${Platform.pathSeparator}cache${Platform.pathSeparator}dart-sdk'
+    '${Platform.pathSeparator}bin${Platform.pathSeparator}$dartName',
+  )..createSync(recursive: true);
+}
+
+File _createFakeFlutterExecutable(Directory flutterRoot) {
+  final flutterName = Platform.isWindows ? 'flutter.bat' : 'flutter';
+  return File(
+    '${flutterRoot.path}${Platform.pathSeparator}bin'
+    '${Platform.pathSeparator}$flutterName',
+  )..createSync(recursive: true);
 }
 
 Uint8List _syntheticResqliteDll({
