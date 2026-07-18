@@ -299,7 +299,7 @@ case "$RESQLITE_FILE_INFO" in
   *) die "resqlite framework launcher is not a Mach-O binary" ;;
 esac
 lipo -info "$RESQLITE_BIN"
-lipo -verify_arch arm64 x86_64 "$RESQLITE_BIN" ||
+lipo "$RESQLITE_BIN" -verify_arch arm64 x86_64 ||
   die "resqlite framework must contain arm64 and x86_64 slices"
 nm -gU "$RESQLITE_BIN" | awk '$NF == "_resqlite_open" { found = 1 } END { exit !found }' ||
   die "resqlite_open is not exported"

@@ -44,7 +44,10 @@ void main() {
         isNot(contains('Removing unhashed macOS archive symlink')),
       );
       expect(script, contains('validate_versioned_frameworks'));
-      expect(script, contains('lipo -verify_arch arm64 x86_64'));
+      expect(
+        script,
+        contains(r'lipo "$RESQLITE_BIN" -verify_arch arm64 x86_64'),
+      );
       expect(script, contains('"_resqlite_open"'));
       expect(
         script,
