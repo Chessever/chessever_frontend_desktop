@@ -235,6 +235,160 @@ void main() {
       expectFocus(focus, eventIndex: 2, column: EventGameCardFocusColumn.event);
     });
 
+    test(
+      'game-only feed starts on the first board and never selects headers',
+      () {
+        var focus = moveEventGameCardFocus(
+          current: null,
+          key: LogicalKeyboardKey.arrowDown,
+          eventCount: gameCounts.length,
+          gameCountForEvent: gameCountForEvent,
+          gameLayout: EventGameCardNavigationLayout.grid,
+          gameColumnCountForEvent: (_) => 2,
+          eventColumnCount: 2,
+          preferGameCards: true,
+        );
+        expectFocus(
+          focus,
+          eventIndex: 0,
+          column: EventGameCardFocusColumn.game,
+        );
+
+        focus = moveEventGameCardFocus(
+          current: focus,
+          key: LogicalKeyboardKey.arrowRight,
+          eventCount: gameCounts.length,
+          gameCountForEvent: gameCountForEvent,
+          gameLayout: EventGameCardNavigationLayout.grid,
+          gameColumnCountForEvent: (_) => 2,
+          eventColumnCount: 2,
+          preferGameCards: true,
+        );
+        expectFocus(
+          focus,
+          eventIndex: 0,
+          column: EventGameCardFocusColumn.game,
+          gameIndex: 1,
+        );
+
+        focus = moveEventGameCardFocus(
+          current: focus,
+          key: LogicalKeyboardKey.arrowRight,
+          eventCount: gameCounts.length,
+          gameCountForEvent: gameCountForEvent,
+          gameLayout: EventGameCardNavigationLayout.grid,
+          gameColumnCountForEvent: (_) => 2,
+          eventColumnCount: 2,
+          preferGameCards: true,
+        );
+        expectFocus(
+          focus,
+          eventIndex: 1,
+          column: EventGameCardFocusColumn.game,
+        );
+      },
+    );
+
+    test('game-only feed moves down by board row and pages across events', () {
+      var focus = const EventGameCardFocus(
+        eventIndex: 1,
+        column: EventGameCardFocusColumn.game,
+      );
+
+      focus =
+          moveEventGameCardFocus(
+            current: focus,
+            key: LogicalKeyboardKey.arrowDown,
+            eventCount: gameCounts.length,
+            gameCountForEvent: gameCountForEvent,
+            gameLayout: EventGameCardNavigationLayout.grid,
+            gameColumnCountForEvent: (_) => 2,
+            eventColumnCount: 2,
+            preferGameCards: true,
+          )!;
+      expectFocus(
+        focus,
+        eventIndex: 1,
+        column: EventGameCardFocusColumn.game,
+        gameIndex: 2,
+      );
+
+      focus =
+          moveEventGameCardFocus(
+            current: focus,
+            key: LogicalKeyboardKey.arrowDown,
+            eventCount: gameCounts.length,
+            gameCountForEvent: gameCountForEvent,
+            gameLayout: EventGameCardNavigationLayout.grid,
+            gameColumnCountForEvent: (_) => 2,
+            eventColumnCount: 2,
+            preferGameCards: true,
+          )!;
+      expectFocus(focus, eventIndex: 3, column: EventGameCardFocusColumn.game);
+
+      focus =
+          moveEventGameCardFocus(
+            current: const EventGameCardFocus(
+              eventIndex: 0,
+              column: EventGameCardFocusColumn.game,
+            ),
+            key: LogicalKeyboardKey.pageDown,
+            eventCount: gameCounts.length,
+            eventPageStride: 2,
+            gameCountForEvent: gameCountForEvent,
+            gameLayout: EventGameCardNavigationLayout.grid,
+            gameColumnCountForEvent: (_) => 2,
+            eventColumnCount: 2,
+            preferGameCards: true,
+          )!;
+      expectFocus(focus, eventIndex: 3, column: EventGameCardFocusColumn.game);
+    });
+
+    test('tablet grid moves across events then down into its games', () {
+      var focus = const EventGameCardFocus(eventIndex: 0);
+
+      focus =
+          moveEventGameCardFocus(
+            current: focus,
+            key: LogicalKeyboardKey.arrowRight,
+            eventCount: gameCounts.length,
+            gameCountForEvent: gameCountForEvent,
+            gameLayout: EventGameCardNavigationLayout.grid,
+            gameColumnCountForEvent: (_) => 2,
+            eventColumnCount: 2,
+          )!;
+      expectFocus(focus, eventIndex: 1, column: EventGameCardFocusColumn.event);
+
+      focus =
+          moveEventGameCardFocus(
+            current: focus,
+            key: LogicalKeyboardKey.arrowDown,
+            eventCount: gameCounts.length,
+            gameCountForEvent: gameCountForEvent,
+            gameLayout: EventGameCardNavigationLayout.grid,
+            gameColumnCountForEvent: (_) => 2,
+            eventColumnCount: 2,
+          )!;
+      expectFocus(focus, eventIndex: 1, column: EventGameCardFocusColumn.game);
+
+      focus = const EventGameCardFocus(
+        eventIndex: 0,
+        column: EventGameCardFocusColumn.game,
+        gameIndex: 1,
+      );
+      focus =
+          moveEventGameCardFocus(
+            current: focus,
+            key: LogicalKeyboardKey.arrowDown,
+            eventCount: gameCounts.length,
+            gameCountForEvent: gameCountForEvent,
+            gameLayout: EventGameCardNavigationLayout.grid,
+            gameColumnCountForEvent: (_) => 2,
+            eventColumnCount: 2,
+          )!;
+      expectFocus(focus, eventIndex: 2, column: EventGameCardFocusColumn.event);
+    });
+
     test('horizontal rows keep the same game column between events', () {
       var focus = const EventGameCardFocus(
         eventIndex: 0,
@@ -360,6 +514,113 @@ void main() {
 
       expectFocus(focus, eventIndex: 0, column: EventGameCardFocusColumn.event);
     });
+
+    test('hierarchical navigation visits event header before its boards', () {
+      EventGameCardFocus? focus = const EventGameCardFocus(eventIndex: 0);
+
+      focus = moveEventGameCardFocus(
+        current: focus,
+        key: LogicalKeyboardKey.arrowDown,
+        eventCount: 3,
+        gameCountForEvent: (_) => 4,
+        gameColumnCountForEvent: (_) => 2,
+        hierarchicalGroups: true,
+      );
+      expectFocus(
+        focus,
+        eventIndex: 0,
+        column: EventGameCardFocusColumn.game,
+        gameIndex: 0,
+      );
+
+      focus = moveEventGameCardFocus(
+        current: focus,
+        key: LogicalKeyboardKey.arrowUp,
+        eventCount: 3,
+        gameCountForEvent: (_) => 4,
+        gameColumnCountForEvent: (_) => 2,
+        hierarchicalGroups: true,
+      );
+      expectFocus(focus, eventIndex: 0, column: EventGameCardFocusColumn.event);
+    });
+
+    test('hierarchical left and right move exactly one board', () {
+      EventGameCardFocus? focus = const EventGameCardFocus(
+        eventIndex: 0,
+        column: EventGameCardFocusColumn.game,
+        gameIndex: 0,
+      );
+
+      for (var expectedIndex = 1; expectedIndex <= 2; expectedIndex++) {
+        focus = moveEventGameCardFocus(
+          current: focus,
+          key: LogicalKeyboardKey.arrowRight,
+          eventCount: 2,
+          gameCountForEvent: (_) => 6,
+          gameColumnCountForEvent: (_) => 3,
+          hierarchicalGroups: true,
+        );
+        expectFocus(
+          focus,
+          eventIndex: 0,
+          column: EventGameCardFocusColumn.game,
+          gameIndex: expectedIndex,
+        );
+      }
+
+      focus = moveEventGameCardFocus(
+        current: focus,
+        key: LogicalKeyboardKey.arrowLeft,
+        eventCount: 2,
+        gameCountForEvent: (_) => 6,
+        gameColumnCountForEvent: (_) => 3,
+        hierarchicalGroups: true,
+      );
+      expectFocus(
+        focus,
+        eventIndex: 0,
+        column: EventGameCardFocusColumn.game,
+        gameIndex: 1,
+      );
+    });
+
+    test(
+      'hierarchical down moves from final board row to next event header',
+      () {
+        var focus = moveEventGameCardFocus(
+          current: const EventGameCardFocus(
+            eventIndex: 0,
+            column: EventGameCardFocusColumn.game,
+            gameIndex: 3,
+          ),
+          key: LogicalKeyboardKey.arrowDown,
+          eventCount: 3,
+          gameCountForEvent: (_) => 4,
+          gameColumnCountForEvent: (_) => 2,
+          hierarchicalGroups: true,
+        );
+        expectFocus(
+          focus,
+          eventIndex: 1,
+          column: EventGameCardFocusColumn.event,
+        );
+
+        focus = moveEventGameCardFocus(
+          current: focus,
+          key: LogicalKeyboardKey.arrowUp,
+          eventCount: 3,
+          gameCountForEvent: (_) => 4,
+          gameColumnCountForEvent: (_) => 2,
+          hierarchicalGroups: true,
+        );
+        expectFocus(
+          focus,
+          eventIndex: 0,
+          column: EventGameCardFocusColumn.game,
+          gameIndex: 3,
+        );
+      },
+    );
 
     test(
       'activation target distinguishes event list view from in-game view',

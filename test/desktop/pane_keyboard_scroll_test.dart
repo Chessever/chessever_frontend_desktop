@@ -57,6 +57,62 @@ Widget _indexedHarness({
   );
 }
 
+class _PaneActivationHarness extends StatefulWidget {
+  const _PaneActivationHarness({required this.controller});
+
+  final ScrollController controller;
+
+  @override
+  State<_PaneActivationHarness> createState() => _PaneActivationHarnessState();
+}
+
+class _PaneActivationHarnessState extends State<_PaneActivationHarness> {
+  final FocusNode chromeFocusNode = FocusNode(debugLabel: 'test-pane-chrome');
+  bool active = false;
+
+  @override
+  void dispose() {
+    chromeFocusNode.dispose();
+    super.dispose();
+  }
+
+  void showPane() => setState(() => active = true);
+
+  void focusChrome() => chromeFocusNode.requestFocus();
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: Column(
+          children: [
+            Focus(focusNode: chromeFocusNode, child: const SizedBox(height: 1)),
+            Expanded(
+              child: TickerMode(
+                enabled: active,
+                child: ExcludeFocus(
+                  excluding: !active,
+                  child: PaneKeyboardScroll(
+                    child: ListView.builder(
+                      controller: widget.controller,
+                      itemCount: 200,
+                      itemBuilder:
+                          (_, i) => SizedBox(
+                            height: 40,
+                            child: Text('activated row $i'),
+                          ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 void main() {
   testWidgets('PageDown scrolls down by ~viewport*0.9', (tester) async {
     final controller = ScrollController();
@@ -138,7 +194,7 @@ void main() {
     expect(visibleController.offset, greaterThan(400));
   });
 
-  testWidgets('arrow keys are passed through (not intercepted)', (
+  testWidgets('arrow keys scroll ordinary panes by a smaller step', (
     tester,
   ) async {
     final controller = ScrollController();
@@ -149,6 +205,35 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pumpAndSettle();
 
+    expect(controller.offset, greaterThan(before));
+    expect(controller.offset, lessThan(150));
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pumpAndSettle();
+
     expect(controller.offset, before);
+  });
+
+  testWidgets('newly active pane reclaims focus from sibling shell chrome', (
+    tester,
+  ) async {
+    final controller = ScrollController();
+    await tester.pumpWidget(_PaneActivationHarness(controller: controller));
+    await tester.pumpAndSettle();
+
+    final state = tester.state<_PaneActivationHarnessState>(
+      find.byType(_PaneActivationHarness),
+    );
+    state.focusChrome();
+    await tester.pump();
+    expect(state.chromeFocusNode.hasFocus, isTrue);
+
+    state.showPane();
+    await tester.pump();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
+
+    expect(controller.offset, greaterThan(0));
   });
 }

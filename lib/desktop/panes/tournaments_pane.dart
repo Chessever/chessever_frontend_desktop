@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:country_flags/country_flags.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -11,6 +12,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
 import 'package:chessever/desktop/state/global_search_query.dart';
+import 'package:chessever/desktop/utils/desktop_for_you_pane_layout.dart';
 import 'package:chessever/desktop/utils/event_game_card_keyboard_navigation.dart';
 import 'package:chessever/desktop/utils/list_keyboard_nav.dart';
 import 'package:chessever/desktop/utils/tournament_event_grid_layout.dart';
@@ -19,6 +21,7 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_event_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_event_favorite_button.dart';
+import 'package:chessever/desktop/widgets/desktop_event_countdown.dart';
 import 'package:chessever/desktop/widgets/desktop_collection_cards.dart';
 import 'package:chessever/desktop/widgets/desktop_for_you_game_context.dart';
 import 'package:chessever/desktop/widgets/desktop_for_you_strip_layout.dart';
@@ -248,7 +251,18 @@ class TournamentsPane extends HookConsumerWidget {
                     onOpenTournament: openTournament,
                   )
                   : selectedCategory == ge.GroupEventCategory.forYou
-                  ? _ForYouFeed(tabId: tabId, onOpenTournament: openTournament)
+                  ? LayoutBuilder(
+                    builder: (context, constraints) {
+                      final paneWidth = DesktopForYouPaneLayout.paneWidthFor(
+                        constraints.maxWidth,
+                      );
+                      return _ForYouFeed(
+                        tabId: tabId,
+                        paneWidth: paneWidth,
+                        onOpenTournament: openTournament,
+                      );
+                    },
+                  )
                   : asyncTournaments.when(
                     data:
                         (tournaments) => Focus(
@@ -923,17 +937,28 @@ class _EventPosterCard extends StatelessWidget {
 }
 
 class _EventCardMedia extends StatelessWidget {
-  const _EventCardMedia({required this.event, required this.padding});
+  const _EventCardMedia({
+    required this.event,
+    required this.padding,
+    this.imageFit = BoxFit.cover,
+    this.showFavorite = true,
+  });
 
   final GroupEventCardModel event;
   final double padding;
+  final BoxFit imageFit;
+  final bool showFavorite;
 
   @override
   Widget build(BuildContext context) {
     return Stack(
       fit: StackFit.expand,
       children: [
-        _DesktopEventVisual(event: event, borderRadius: BorderRadius.zero),
+        _DesktopEventVisual(
+          event: event,
+          borderRadius: BorderRadius.zero,
+          fit: imageFit,
+        ),
         DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -951,11 +976,12 @@ class _EventCardMedia extends StatelessWidget {
         // Only the favorite icon sits on the photo — an icon reads on any
         // artwork. The status badge + time control were unreadable overlaid on
         // the image, so they move to the solid info panel below.
-        Positioned(
-          top: padding,
-          right: padding,
-          child: DesktopEventFavoriteIconButton(event: event, compact: true),
-        ),
+        if (showFavorite)
+          Positioned(
+            top: padding,
+            right: padding,
+            child: DesktopEventFavoriteIconButton(event: event, compact: true),
+          ),
       ],
     );
   }
@@ -1058,10 +1084,15 @@ class _EventPosterInfoPanel extends StatelessWidget {
 }
 
 class _DesktopEventVisual extends ConsumerWidget {
-  const _DesktopEventVisual({required this.event, required this.borderRadius});
+  const _DesktopEventVisual({
+    required this.event,
+    required this.borderRadius,
+    this.fit = BoxFit.cover,
+  });
 
   final GroupEventCardModel event;
   final BorderRadius borderRadius;
+  final BoxFit fit;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1091,8 +1122,8 @@ class _DesktopEventVisual extends ConsumerWidget {
                         : 360.0);
             // Width-only: ResizeImage decodes to an exact width x height box
             // when both are given, squashing the source photo to the card's
-            // aspect ratio before BoxFit.cover gets a chance to crop it. One
-            // free axis keeps the source aspect intact through decode.
+            // aspect ratio before the selected BoxFit is applied. One free
+            // axis keeps the source aspect intact through decode.
             final cacheWidth =
                 (logicalWidth * dpr).round().clamp(96, 900).toInt();
             final image = ref.watch(eventImageProvider(event.id));
@@ -1103,7 +1134,7 @@ class _DesktopEventVisual extends ConsumerWidget {
                 if (data.hasImage) {
                   return CachedNetworkImage(
                     imageUrl: data.imageUrl!,
-                    fit: BoxFit.cover,
+                    fit: fit,
                     memCacheWidth: cacheWidth,
                     fadeInDuration: const Duration(milliseconds: 180),
                     fadeOutDuration: const Duration(milliseconds: 120),
@@ -1814,8 +1845,7 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
             onTap: widget.onTap,
             child: MotionCard(
               borderRadius: 10,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 130),
+              child: Container(
                 clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
                   color: highlight ? kBlack3Color : kBlack2Color,
@@ -1823,11 +1853,22 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
                   border: Border.all(
                     color:
                         widget.selected
-                            ? categoryColor.withValues(alpha: 0.36)
+                            ? kPrimaryColor.withValues(alpha: 0.96)
                             : (_hovered
                                 ? kWhiteColor.withValues(alpha: 0.12)
                                 : kDividerColor),
+                    width: widget.selected ? 2 : 1,
                   ),
+                  boxShadow:
+                      widget.selected
+                          ? [
+                            BoxShadow(
+                              color: kPrimaryColor.withValues(alpha: 0.16),
+                              blurRadius: 8,
+                              spreadRadius: 0.5,
+                            ),
+                          ]
+                          : null,
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2046,6 +2087,15 @@ String _eventMetaLine(GroupEventCardModel tournament) {
   return parts.isEmpty ? 'No schedule metadata' : parts.join(' · ');
 }
 
+String _eventTimeControlAsset(String timeControl) {
+  final normalized = timeControl.toLowerCase();
+  if (normalized.contains('ultra')) return 'assets/pngs/ultra_bullet.png';
+  if (normalized.contains('bullet')) return 'assets/pngs/bullet.png';
+  if (normalized.contains('blitz')) return 'assets/pngs/blitz.png';
+  if (normalized.contains('rapid')) return 'assets/pngs/rapid.png';
+  return 'assets/pngs/classical.png';
+}
+
 bool _shouldShowStatusBadge(TourEventCategory category) {
   return category != TourEventCategory.ongoing;
 }
@@ -2186,27 +2236,53 @@ class _ForYouCardSelection {
     required this.eventId,
     required this.column,
     this.gameIndex = 0,
+    this.gameId,
   });
 
   final String eventId;
   final EventGameCardFocusColumn column;
   final int gameIndex;
+  final String? gameId;
 
   bool get isEvent => column == EventGameCardFocusColumn.event;
   bool get isGame => column == EventGameCardFocusColumn.game;
+
+  bool matches(_ForYouCardSelection other) {
+    return eventId == other.eventId &&
+        column == other.column &&
+        gameIndex == other.gameIndex &&
+        gameId == other.gameId;
+  }
 }
 
-/// Single-column "feed" version of the For You category — mirrors the mobile
-/// For You tab structure: a top strip of `DesktopCollectionCards`
-/// (Favorites + Countrymen), then each event paired with its top games.
+class _ForYouNavigationBookmark {
+  const _ForYouNavigationBookmark({this.selection, this.scrollOffset = 0});
+
+  final _ForYouCardSelection? selection;
+  final double scrollOffset;
+}
+
+final _forYouNavigationBookmarkProvider =
+    StateProvider.family<_ForYouNavigationBookmark, String>(
+      (ref, tabId) => const _ForYouNavigationBookmark(),
+    );
+
+/// Full-width desktop version of the tablet For You hierarchy: compact
+/// destination cards, then one event per row with a responsive line of larger
+/// board previews.
 ///
 /// Sources:
 ///   - `forYouEventsProvider`         → paginated events
 ///   - `forYouEventSnapshotProvider`  → per-event games (lazily watched per row)
 class _ForYouFeed extends ConsumerStatefulWidget {
-  const _ForYouFeed({required this.tabId, required this.onOpenTournament});
+  const _ForYouFeed({
+    required this.tabId,
+    required this.paneWidth,
+    required this.onOpenTournament,
+  });
 
   final String tabId;
+  final double paneWidth;
   final void Function(GroupEventCardModel) onOpenTournament;
 
   @override
@@ -2225,28 +2301,52 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   final FocusNode _focusNode = FocusNode(
     debugLabel: 'DesktopForYouEventGameCards',
   );
-  final ScrollController _scroll = ScrollController();
+  late final ScrollController _scroll;
   final Set<String> _animatedEventIds = <String>{};
   final Map<String, GlobalKey> _eventKeys = <String, GlobalKey>{};
+  final Map<String, GlobalKey> _selectionItemKeys = <String, GlobalKey>{};
   final Map<String, List<String>> _visibleGameIds = <String, List<String>>{};
   final Map<String, bool> _eventVisibility = <String, bool>{};
   Timer? _scrollIdleTimer;
   _ForYouCardSelection? _selection;
   bool _liveCardsPausedForScroll = false;
+  bool _keyboardScrollingActive = false;
+  int? _middleDragPointer;
+  double? _middleDragLastY;
+  double _lastScrollOffset = 0;
+  int _visibilityRequestSerial = 0;
+  bool _restoreSelectionPending = false;
+  int _eventColumns = 2;
 
   String get _liveCardsPauseReason => 'desktop_for_you_scroll_${widget.tabId}';
 
   @override
   void initState() {
     super.initState();
+    final bookmark = ref.read(_forYouNavigationBookmarkProvider(widget.tabId));
+    _selection = bookmark.selection;
+    _lastScrollOffset = bookmark.scrollOffset;
+    _restoreSelectionPending = bookmark.selection != null;
+    _scroll = ScrollController(
+      initialScrollOffset:
+          bookmark.scrollOffset.clamp(0.0, double.infinity).toDouble(),
+    );
     _scroll.addListener(_onScroll);
+    HardwareKeyboard.instance.addHandler(_handleGlobalKeyboardScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _focusNode.requestFocus();
+      _restoreSavedSelectionIfPossible();
+    });
   }
 
   @override
   void dispose() {
+    _persistNavigationBookmark();
     _scrollIdleTimer?.cancel();
     _setLiveCardsPausedForScroll(false);
     _scroll.removeListener(_onScroll);
+    HardwareKeyboard.instance.removeHandler(_handleGlobalKeyboardScroll);
     _focusNode.dispose();
     _scroll.dispose();
     super.dispose();
@@ -2254,12 +2354,30 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
 
   void _onScroll() {
     if (!_scroll.hasClients) return;
+    _lastScrollOffset = _scroll.position.pixels;
     _markScrolling();
     final max = _scroll.position.maxScrollExtent;
     final cur = _scroll.position.pixels;
     if (max - cur <= 300) {
       ref.read(forYouEventsProvider.notifier).loadMore();
     }
+  }
+
+  void _persistNavigationBookmark() {
+    ref
+        .read(_forYouNavigationBookmarkProvider(widget.tabId).notifier)
+        .state = _ForYouNavigationBookmark(
+      selection: _selection,
+      scrollOffset: _lastScrollOffset,
+    );
+  }
+
+  void _restoreSavedSelectionIfPossible() {
+    final selection = _selection;
+    if (!_restoreSelectionPending || selection == null) return;
+    if (_selectionItemKeyFor(selection)?.currentContext == null) return;
+    _restoreSelectionPending = false;
+    _ensureSelectionVisible(selection);
   }
 
   void _markScrolling() {
@@ -2292,6 +2410,42 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     );
   }
 
+  GlobalKey _selectionItemKey(String eventId, [String? gameId]) {
+    final identity =
+        gameId == null
+            ? 'event\u0000$eventId'
+            : 'game\u0000$eventId\u0000$gameId';
+    return _selectionItemKeys.putIfAbsent(
+      identity,
+      () => GlobalKey(
+        debugLabel:
+            gameId == null
+                ? 'desktop-for-you-event-selection-$eventId'
+                : 'desktop-for-you-game-selection-$eventId-$gameId',
+      ),
+    );
+  }
+
+  GlobalKey? _selectionItemKeyFor(_ForYouCardSelection selection) {
+    if (selection.isEvent) return _selectionItemKey(selection.eventId);
+    var gameId = selection.gameId;
+    if (gameId == null) {
+      final gameIds = _gameIdsForEventId(selection.eventId);
+      if (gameIds.isEmpty) return null;
+      gameId =
+          gameIds[selection.gameIndex.clamp(0, gameIds.length - 1).toInt()];
+    }
+    return _selectionItemKey(selection.eventId, gameId);
+  }
+
+  List<String> _gameIdsForEventId(String eventId) {
+    final events = ref.read(forYouEventsProvider).events;
+    for (final event in events) {
+      if (event.id == eventId) return _gameIdsFor(event);
+    }
+    return const <String>[];
+  }
+
   List<GroupEventCardModel> _visibleEvents(List<GroupEventCardModel> events) {
     return [
       for (final event in events)
@@ -2308,6 +2462,10 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
         _selection = null;
       }
     });
+    if (!visible) {
+      _syncSelectionWithEvents(ref.read(forYouEventsProvider).events);
+      _persistNavigationBookmark();
+    }
   }
 
   void _setVisibleGameIds(String eventId, List<String> gameIds) {
@@ -2332,30 +2490,56 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
             eventId: eventId,
             column: EventGameCardFocusColumn.event,
           );
-        } else if (selection.gameIndex >= gameIds.length) {
+        } else {
+          final savedIndex =
+              selection.gameId == null
+                  ? -1
+                  : gameIds.indexOf(selection.gameId!);
+          final resolvedIndex =
+              savedIndex >= 0
+                  ? savedIndex
+                  : selection.gameIndex.clamp(0, gameIds.length - 1).toInt();
           _selection = _ForYouCardSelection(
             eventId: eventId,
             column: EventGameCardFocusColumn.game,
-            gameIndex: gameIds.length - 1,
+            gameIndex: resolvedIndex,
+            gameId: gameIds[resolvedIndex],
           );
         }
       }
     });
+    _persistNavigationBookmark();
+    if (_restoreSelectionPending && _selection?.eventId == eventId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _restoreSavedSelectionIfPossible();
+      });
+    }
   }
 
   List<String> _gameIdsFor(GroupEventCardModel event) {
     final reported = _visibleGameIds[event.id];
-    final snapshot =
-        ref.read(forYouEventSnapshotProvider(event.id)).valueOrNull;
+    final snapshot = _snapshotFor(event.id);
     final snapshotIds =
-        snapshot?.visibleGames.map((game) => game.gameId).toList() ??
-        const <String>[];
+        snapshot == null
+            ? const <String>[]
+            : selectDesktopForYouPreviewRoundGames(
+              snapshot.visibleGames,
+            ).map((game) => game.gameId).toList();
     if (reported == null) return snapshotIds;
     // The rendered strip reports exactly which game cards fit after layout,
     // but that callback can briefly lag behind provider updates or keep a stale
     // empty pass. If a snapshot already has games, let Right Arrow enter the
     // first board card instead of appearing dead.
     return reported.isNotEmpty ? reported : snapshotIds;
+  }
+
+  ForYouEventGamesSnapshot? _snapshotFor(String eventId) {
+    // The visible strip can render immediately from the prefetched cache while
+    // the auto-disposed snapshot provider is being re-established after
+    // returning from an event/game tab. Keyboard navigation and activation
+    // must use the same snapshot the user can already see.
+    return ref.read(forYouEventSnapshotProvider(eventId)).valueOrNull ??
+        ref.read(forYouTopGamesSnapshotCacheProvider)[eventId];
   }
 
   int _gameCountFor(GroupEventCardModel event) {
@@ -2365,13 +2549,29 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   int _eventPageStrideFor(DesktopCardLayout layout) {
     final viewport =
         _scroll.hasClients ? _scroll.position.viewportDimension : 0.0;
-    final rowExtent = _ForYouEventSection._rowHeightFor(layout) + 28.0;
-    return eventGameCardPageStrideForViewport(
+    final rowExtent = _ForYouEventSection._estimatedTabletHeightFor(layout);
+    final visibleRows = eventGameCardPageStrideForViewport(
       viewportExtent: viewport,
       rowExtent: rowExtent,
       fallback: 1,
       maxStride: 4,
     );
+    return visibleRows * _eventColumns;
+  }
+
+  int _gameColumnCountFor(DesktopCardLayout layout) {
+    final columns = _eventColumns < 1 ? 1 : _eventColumns;
+    final contentWidth =
+        (widget.paneWidth -
+                40 -
+                DesktopForYouPaneLayout.eventColumnGap * (columns - 1))
+            .clamp(0.0, double.infinity)
+            .toDouble();
+    final eventWidth = contentWidth / columns;
+    if (layout == DesktopCardLayout.grid) {
+      return DesktopForYouPaneLayout.boardColumnCountForEventWidth(eventWidth);
+    }
+    return DesktopGameCardsFlow.columnCountForWidth(layout, eventWidth);
   }
 
   bool _hasNavigationModifier() {
@@ -2382,6 +2582,90 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
         pressed.contains(LogicalKeyboardKey.controlRight) ||
         pressed.contains(LogicalKeyboardKey.metaLeft) ||
         pressed.contains(LogicalKeyboardKey.metaRight);
+  }
+
+  bool _handleGlobalKeyboardScroll(KeyEvent event) {
+    if (!_keyboardScrollingActive || _hasNavigationModifier()) {
+      return false;
+    }
+    // When the For You focus host (or one of its descendants) owns focus,
+    // `Focus.onKeyEvent` below will receive this same physical key. Handling
+    // it here as well advances the structured cursor twice: event -> board ->
+    // next event, or board -> board two places away. The hardware hook is only
+    // the fallback for focus parked on sibling shell chrome after navigation.
+    if (_focusNode.hasFocus) return false;
+    final key = event.logicalKey;
+    final isNavigationKey =
+        key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.arrowDown ||
+        key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.pageDown ||
+        key == LogicalKeyboardKey.pageUp ||
+        key == LogicalKeyboardKey.home ||
+        key == LogicalKeyboardKey.end;
+    final isActivationKey =
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter;
+    if ((!isNavigationKey && !isActivationKey) || _hasEditableTextFocus()) {
+      return false;
+    }
+    // Own repeat events without advancing the structured selection again.
+    // Otherwise they bubble to PaneKeyboardScroll and move the viewport away
+    // from the highlighted event or board.
+    if (event is KeyRepeatEvent) return true;
+    if (event is! KeyDownEvent) return false;
+    final events = ref.read(forYouEventsProvider).events;
+    final result = _handleKeyboard(event, events);
+    if (result == KeyEventResult.handled) return true;
+    // A selection host must never fall back to raw pixel scrolling. That can
+    // move the viewport while leaving the highlight behind. Consume the
+    // navigation key and wait for a valid event/game target instead.
+    return isNavigationKey;
+  }
+
+  bool _hasEditableTextFocus() {
+    final focusContext = FocusManager.instance.primaryFocus?.context;
+    if (focusContext == null) return false;
+    return focusContext.widget is EditableText ||
+        focusContext.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
+  void _startMiddleDrag(PointerDownEvent event) {
+    if (event.kind != PointerDeviceKind.mouse ||
+        event.buttons & kMiddleMouseButton == 0) {
+      return;
+    }
+    _focusNode.requestFocus();
+    setState(() {
+      _middleDragPointer = event.pointer;
+      _middleDragLastY = event.position.dy;
+    });
+  }
+
+  void _updateMiddleDrag(PointerMoveEvent event) {
+    if (event.pointer != _middleDragPointer || !_scroll.hasClients) return;
+    final previousY = _middleDragLastY;
+    _middleDragLastY = event.position.dy;
+    if (previousY == null) return;
+    final position = _scroll.position;
+    final target = DesktopForYouPaneLayout.clampedScrollTarget(
+      currentOffset: position.pixels,
+      delta: previousY - event.position.dy,
+      minScrollExtent: position.minScrollExtent,
+      maxScrollExtent: position.maxScrollExtent,
+    );
+    if ((target - position.pixels).abs() > 0.1) {
+      position.jumpTo(target);
+    }
+  }
+
+  void _stopMiddleDrag(PointerEvent event) {
+    if (event.pointer != _middleDragPointer) return;
+    setState(() {
+      _middleDragPointer = null;
+      _middleDragLastY = null;
+    });
   }
 
   void _syncSelectionWithEvents(List<GroupEventCardModel> events) {
@@ -2395,8 +2679,9 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
         selection != null &&
         visibleEvents.any((event) => event.id == selection.eventId);
     if (!selectedStillVisible) {
+      final firstEvent = visibleEvents.first;
       _selection = _ForYouCardSelection(
-        eventId: visibleEvents.first.id,
+        eventId: firstEvent.id,
         column: EventGameCardFocusColumn.event,
       );
     }
@@ -2406,28 +2691,29 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     KeyEvent event,
     List<GroupEventCardModel> events,
   ) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
-      return KeyEventResult.ignored;
-    }
     if (_hasNavigationModifier()) return KeyEventResult.ignored;
 
     final key = event.logicalKey;
-    if (key == LogicalKeyboardKey.enter ||
-        key == LogicalKeyboardKey.numpadEnter) {
+    final isActivationKey =
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter;
+    final isMoveKey =
+        key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.arrowDown ||
+        key == LogicalKeyboardKey.pageUp ||
+        key == LogicalKeyboardKey.pageDown ||
+        key == LogicalKeyboardKey.home ||
+        key == LogicalKeyboardKey.end;
+    if (!isActivationKey && !isMoveKey) return KeyEventResult.ignored;
+    if (event is KeyRepeatEvent) return KeyEventResult.handled;
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+    if (isActivationKey) {
       _activateSelection(events);
       return KeyEventResult.handled;
     }
-
-    final isMoveKey =
-        key == LogicalKeyboardKey.arrowDown ||
-        key == LogicalKeyboardKey.arrowUp ||
-        key == LogicalKeyboardKey.arrowLeft ||
-        key == LogicalKeyboardKey.arrowRight ||
-        key == LogicalKeyboardKey.pageDown ||
-        key == LogicalKeyboardKey.pageUp ||
-        key == LogicalKeyboardKey.home ||
-        key == LogicalKeyboardKey.end;
-    if (!isMoveKey) return KeyEventResult.ignored;
 
     final visibleEvents = _visibleEvents(events);
     if (visibleEvents.isEmpty) return KeyEventResult.ignored;
@@ -2452,33 +2738,36 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
       eventCount: visibleEvents.length,
       eventPageStride: _eventPageStrideFor(layout),
       gameCountForEvent: (index) => _gameCountFor(visibleEvents[index]),
-      gameLayout:
-          layout == DesktopCardLayout.grid
-              ? EventGameCardNavigationLayout.horizontalRow
-              : EventGameCardNavigationLayout.verticalList,
+      gameLayout: EventGameCardNavigationLayout.grid,
+      gameColumnCountForEvent: (index) => _gameColumnCountFor(layout),
+      eventColumnCount: _eventColumns,
+      hierarchicalGroups: true,
     );
     if (nextFocus == null) return KeyEventResult.ignored;
 
     final nextEvent = visibleEvents[nextFocus.eventIndex];
+    final nextGameIds = _gameIdsFor(nextEvent);
+    final nextGameId =
+        nextFocus.isGame &&
+                nextFocus.gameIndex >= 0 &&
+                nextFocus.gameIndex < nextGameIds.length
+            ? nextGameIds[nextFocus.gameIndex]
+            : null;
+    final nextSelection = _ForYouCardSelection(
+      eventId: nextEvent.id,
+      column: nextFocus.column,
+      gameIndex: nextFocus.gameIndex,
+      gameId: nextGameId,
+    );
     setState(() {
-      _selection = _ForYouCardSelection(
-        eventId: nextEvent.id,
-        column: nextFocus.column,
-        gameIndex: nextFocus.gameIndex,
-      );
+      _selection = nextSelection;
     });
+    _persistNavigationBookmark();
+    if (!_focusNode.hasFocus) _focusNode.requestFocus();
     if (nextFocus.eventIndex >= visibleEvents.length - 2) {
       ref.read(forYouEventsProvider.notifier).loadMore();
     }
-    _ensureSelectionVisible(
-      nextEvent.id,
-      pageDirection:
-          key == LogicalKeyboardKey.pageDown
-              ? 1
-              : key == LogicalKeyboardKey.pageUp
-              ? -1
-              : 0,
-    );
+    _ensureSelectionVisible(nextSelection, navigationKey: key);
     return KeyEventResult.handled;
   }
 
@@ -2506,7 +2795,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
       case EventGameCardActivationTarget.eventGameList:
         // For You is event-first: Enter on the event opens that event's
         // tournament Games tab / game list view.
-        widget.onOpenTournament(event);
+        _openEvent(event);
         return;
       case EventGameCardActivationTarget.inGameView:
         // Right Arrow moves For You focus onto a game; Enter there opens the
@@ -2514,8 +2803,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
         break;
     }
 
-    final snapshot =
-        ref.read(forYouEventSnapshotProvider(event.id)).valueOrNull;
+    final snapshot = _snapshotFor(event.id);
     if (snapshot == null) return;
     final gameContext = _forYouGameContext(snapshot);
     final gameIds = _gameIdsFor(event);
@@ -2528,7 +2816,15 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
         if (gamesById[gameId] != null) gamesById[gameId]!,
     ];
     if (games.isEmpty) return;
-    final gameIndex = _clampIndex(selection.gameIndex, 0, games.length - 1);
+    final savedGameIndex =
+        selection.gameId == null
+            ? -1
+            : games.indexWhere((game) => game.gameId == selection.gameId);
+    final gameIndex =
+        savedGameIndex >= 0
+            ? savedGameIndex
+            : _clampIndex(selection.gameIndex, 0, games.length - 1);
+    _persistNavigationBookmark();
     openTournamentGameTab(
       ref,
       games[gameIndex],
@@ -2538,40 +2834,81 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     );
   }
 
+  void _openEvent(GroupEventCardModel event) {
+    _persistNavigationBookmark();
+    widget.onOpenTournament(event);
+  }
+
   int _clampIndex(int value, int min, int max) {
     if (value < min) return min;
     if (value > max) return max;
     return value;
   }
 
-  void _ensureSelectionVisible(String eventId, {int pageDirection = 0}) {
-    if (pageDirection != 0 && _scroll.hasClients) {
-      final position = _scroll.position;
-      final target =
-          (position.pixels + position.viewportDimension * pageDirection)
-              .clamp(position.minScrollExtent, position.maxScrollExtent)
-              .toDouble();
-      if ((target - position.pixels).abs() > 1) {
-        unawaited(
-          _scroll.animateTo(
-            target,
-            duration: const Duration(milliseconds: 160),
-            curve: Curves.easeOut,
-          ),
-        );
-      }
-    }
+  void _ensureSelectionVisible(
+    _ForYouCardSelection expected, {
+    LogicalKeyboardKey? navigationKey,
+    int attempt = 0,
+    int? requestSerial,
+  }) {
+    final serial = requestSerial ?? ++_visibilityRequestSerial;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final ctx = _eventKeys[eventId]?.currentContext;
-      if (ctx == null) return;
-      Scrollable.ensureVisible(
-        ctx,
-        alignment: 0.35,
-        duration: const Duration(milliseconds: 160),
-        curve: Curves.easeOut,
+      if (!mounted || serial != _visibilityRequestSerial) return;
+      final current = _selection;
+      if (current == null || !current.matches(expected)) return;
+      final selectedContext = _selectionItemKeyFor(expected)?.currentContext;
+      if (selectedContext != null) {
+        Scrollable.ensureVisible(
+          selectedContext,
+          duration: Duration.zero,
+          alignmentPolicy:
+              _isBackwardNavigationKey(navigationKey)
+                  ? ScrollPositionAlignmentPolicy.keepVisibleAtStart
+                  : ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+        );
+        if (_restoreSelectionPending) _restoreSelectionPending = false;
+        return;
+      }
+      if (navigationKey == null ||
+          attempt >= 2 ||
+          !_scroll.hasClients ||
+          navigationKey == LogicalKeyboardKey.arrowLeft ||
+          navigationKey == LogicalKeyboardKey.arrowRight) {
+        return;
+      }
+
+      final position = _scroll.position;
+      final isBackward = _isBackwardNavigationKey(navigationKey);
+      final target = switch (navigationKey) {
+        LogicalKeyboardKey.home => position.minScrollExtent,
+        LogicalKeyboardKey.end => position.maxScrollExtent,
+        _ =>
+          (position.pixels +
+                  (isBackward ? -1 : 1) *
+                      position.viewportDimension *
+                      (navigationKey == LogicalKeyboardKey.pageUp ||
+                              navigationKey == LogicalKeyboardKey.pageDown
+                          ? 0.9
+                          : 0.45))
+              .clamp(position.minScrollExtent, position.maxScrollExtent)
+              .toDouble(),
+      };
+      if ((target - position.pixels).abs() < 0.5) return;
+      _scroll.jumpTo(target);
+      _ensureSelectionVisible(
+        expected,
+        navigationKey: navigationKey,
+        attempt: attempt + 1,
+        requestSerial: serial,
       );
     });
+  }
+
+  bool _isBackwardNavigationKey(LogicalKeyboardKey? key) {
+    return key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.pageUp ||
+        key == LogicalKeyboardKey.home;
   }
 
   void _navigateToTab(TabKind kind) {
@@ -2593,6 +2930,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     final streamingEnabled = ref.watch(
       desktopTabsProvider.select((state) => state.activeId == widget.tabId),
     );
+    _keyboardScrollingActive = streamingEnabled;
 
     if (state.isLoading && state.events.isEmpty) {
       return const _LoadingState();
@@ -2614,8 +2952,16 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
       _syncSelectionWithEvents(events);
     }
     final showTrailingSpinner = state.hasMore && !state.isLoading;
+    _eventColumns = DesktopForYouPaneLayout.eventColumnCountFor(
+      widget.paneWidth,
+    );
+    final visibleEvents = _visibleEvents(events);
+    final eventRowCount = DesktopForYouPaneLayout.eventRowCount(
+      eventCount: visibleEvents.length,
+      columnCount: _eventColumns,
+    );
     // +1 for the collection cards header, +1 for the trailing spinner.
-    final itemCount = 1 + events.length + (showTrailingSpinner ? 1 : 0);
+    final itemCount = 1 + eventRowCount + (showTrailingSpinner ? 1 : 0);
 
     return Focus(
       focusNode: _focusNode,
@@ -2627,93 +2973,151 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
         onTapDown: (_) {
           if (!_focusNode.hasFocus) _focusNode.requestFocus();
         },
-        child: RefreshIndicator(
-          onRefresh: () => ref.read(forYouEventsProvider.notifier).refresh(),
-          color: kPrimaryColor,
-          backgroundColor: kBlack2Color,
-          child: ListView.builder(
-            key: PageStorageKey<String>('desktop_for_you_feed_${widget.tabId}'),
-            controller: _scroll,
-            physics: const DesktopScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-            itemCount: itemCount,
-            // ignore: deprecated_member_use
-            cacheExtent: _cacheExtentFor(viewMode),
-            // Each For You row owns real chessboard previews plus a bounded
-            // live batch for the cards that fit the row. AutomaticKeepAlive
-            // forces those subscriptions to stay live for off-screen rows the
-            // viewport has already left behind. Disable it so the cache window
-            // is the only thing keeping nearby rows hot.
-            addAutomaticKeepAlives: false,
-            itemBuilder: (context, index) {
-              if (index == 0) {
-                return DesktopCollectionCards(
-                  onFavoritesTap: () {
-                    ref
-                        .read(selectedFavoritesModeProvider.notifier)
-                        .update((_) => FavoritesScreenMode.games);
-                    _navigateToTab(TabKind.favorites);
-                  },
-                  onCountrymenTap: () {
-                    ref
-                        .read(selectedCountrymenModeProvider.notifier)
-                        .update((_) => CountrymenScreenMode.games);
-                    _navigateToTab(TabKind.countrymen);
-                  },
-                  onSmartCollectionTap: (type) {
-                    final tabId = ref
-                        .read(desktopTabsProvider.notifier)
-                        .open(
-                          TabKind.smartGames,
-                          title: _smartCollectionTitle(type),
-                          reuseExisting: false,
-                        );
-                    ref
-                        .read(desktopSmartGamesTypeByTabIdProvider.notifier)
-                        .update((types) => {...types, tabId: type});
-                  },
-                );
-              }
-              final eventIdx = index - 1;
-              if (eventIdx >= events.length) {
-                return const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 16),
-                  child: Center(
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation(kPrimaryColor),
-                      ),
-                    ),
-                  ),
-                );
-              }
-              final event = events[eventIdx];
-              // RepaintBoundary isolates each row's repaints from the scrolling
-              // list so live clock ticks and PV/board updates don't repaint the
-              // whole viewport. Cheap to add — Flutter inserts these for grid
-              // tiles by default but not for ListView.builder children.
-              return RepaintBoundary(
-                child: _ForYouEventSection(
-                  key: _eventKey(event.id),
-                  event: event,
-                  isFirst: eventIdx == 0,
-                  selection:
-                      _selection?.eventId == event.id ? _selection : null,
-                  animatedEventIds: _animatedEventIds,
-                  streamingEnabled: streamingEnabled,
-                  onOpen: () => widget.onOpenTournament(event),
-                  onVisibilityChanged:
-                      (visible) => _setEventVisibility(event.id, visible),
-                  onVisibleGameIdsChanged:
-                      (gameIds) => _setVisibleGameIds(event.id, gameIds),
+        child: MouseRegion(
+          cursor:
+              _middleDragPointer == null
+                  ? MouseCursor.defer
+                  : SystemMouseCursors.grabbing,
+          child: Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: _startMiddleDrag,
+            onPointerMove: _updateMiddleDrag,
+            onPointerUp: _stopMiddleDrag,
+            onPointerCancel: _stopMiddleDrag,
+            child: RefreshIndicator(
+              onRefresh:
+                  () => ref.read(forYouEventsProvider.notifier).refresh(),
+              color: kPrimaryColor,
+              backgroundColor: kBlack2Color,
+              child: ListView.builder(
+                key: PageStorageKey<String>(
+                  'desktop_for_you_feed_${widget.tabId}',
                 ),
-              );
-            },
+                controller: _scroll,
+                physics: const DesktopScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                itemCount: itemCount,
+                // ignore: deprecated_member_use
+                cacheExtent: _cacheExtentFor(viewMode),
+                // Each For You row owns real chessboard previews plus a bounded
+                // live batch for the cards that fit the row. AutomaticKeepAlive
+                // forces those subscriptions to stay live for off-screen rows the
+                // viewport has already left behind. Disable it so the cache window
+                // is the only thing keeping nearby rows hot.
+                addAutomaticKeepAlives: false,
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    return DesktopCollectionCards(
+                      onFavoritesTap: () {
+                        ref
+                            .read(selectedFavoritesModeProvider.notifier)
+                            .update((_) => FavoritesScreenMode.games);
+                        _navigateToTab(TabKind.favorites);
+                      },
+                      onCountrymenTap: () {
+                        ref
+                            .read(selectedCountrymenModeProvider.notifier)
+                            .update((_) => CountrymenScreenMode.games);
+                        _navigateToTab(TabKind.countrymen);
+                      },
+                      onSmartCollectionTap: (type) {
+                        final tabId = ref
+                            .read(desktopTabsProvider.notifier)
+                            .open(
+                              TabKind.smartGames,
+                              title: _smartCollectionTitle(type),
+                              reuseExisting: false,
+                            );
+                        ref
+                            .read(desktopSmartGamesTypeByTabIdProvider.notifier)
+                            .update((types) => {...types, tabId: type});
+                      },
+                    );
+                  }
+                  final rowIndex = index - 1;
+                  if (rowIndex >= eventRowCount) {
+                    return const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Center(
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+                  final firstEventIndex = rowIndex * _eventColumns;
+                  final previewLimit =
+                      DesktopForYouPaneLayout.previewLimitForEventWidth(
+                        (widget.paneWidth - 40)
+                            .clamp(0.0, double.infinity)
+                            .toDouble(),
+                      );
+                  // RepaintBoundary isolates each row's repaints from the scrolling
+                  // list so live clock ticks and PV/board updates don't repaint the
+                  // whole viewport. Cheap to add — Flutter inserts these for grid
+                  // tiles by default but not for ListView.builder children.
+                  return Padding(
+                    padding: EdgeInsets.only(top: rowIndex == 0 ? 0 : 18),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (
+                          var column = 0;
+                          column < _eventColumns;
+                          column++
+                        ) ...[
+                          if (column > 0)
+                            const SizedBox(
+                              width: DesktopForYouPaneLayout.eventColumnGap,
+                            ),
+                          Expanded(
+                            child:
+                                firstEventIndex + column < visibleEvents.length
+                                    ? _buildTabletEventColumn(
+                                      visibleEvents[firstEventIndex + column],
+                                      streamingEnabled,
+                                      previewLimit,
+                                    )
+                                    : const SizedBox.shrink(),
+                          ),
+                        ],
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildTabletEventColumn(
+    GroupEventCardModel event,
+    bool streamingEnabled,
+    int previewLimit,
+  ) {
+    return RepaintBoundary(
+      child: _ForYouEventSection(
+        key: _eventKey(event.id),
+        event: event,
+        selection: _selection?.eventId == event.id ? _selection : null,
+        eventItemKey: _selectionItemKey(event.id),
+        gameItemKeyFor: (gameId) => _selectionItemKey(event.id, gameId),
+        animatedEventIds: _animatedEventIds,
+        streamingEnabled: streamingEnabled,
+        previewLimit: previewLimit,
+        onOpen: () => _openEvent(event),
+        onVisibilityChanged:
+            (visible) => _setEventVisibility(event.id, visible),
+        onVisibleGameIdsChanged:
+            (gameIds) => _setVisibleGameIds(event.id, gameIds),
       ),
     );
   }
@@ -2721,9 +3125,8 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
 
 /// One event in the For You feed.
 ///
-/// Layout: a single horizontal row — the event card sits on the left at a
-/// fixed footprint, the top games flow to the right as a strip of grid-
-/// style cards (each with a real chessboard preview). Width-adaptive:
+/// Layout: one event summary followed by two responsive rows of real chessboard
+/// previews. Two event columns share the workspace when space allows.
 /// renders as many games as fit at [DesktopForYouStripLayout.minCardWidth],
 /// individual card width clamped to [DesktopForYouStripLayout.maxCardWidth]
 /// so nothing stretches. No hard game-count cap. Hides itself when the
@@ -2732,23 +3135,29 @@ class _ForYouEventSection extends ConsumerWidget {
   const _ForYouEventSection({
     super.key,
     required this.event,
-    required this.isFirst,
     required this.selection,
+    required this.eventItemKey,
+    required this.gameItemKeyFor,
     required this.animatedEventIds,
     required this.streamingEnabled,
+    required this.previewLimit,
     required this.onOpen,
     required this.onVisibilityChanged,
     required this.onVisibleGameIdsChanged,
   });
 
-  static const double eventCardWidth = 280;
-  static const double eventToGamesGap = 18;
+  static const double eventCardHeight =
+      DesktopForYouPaneLayout.eventSummaryHeight;
+  static const double eventToGamesGap =
+      DesktopForYouPaneLayout.eventSummaryToGamesGap;
 
   final GroupEventCardModel event;
-  final bool isFirst;
   final _ForYouCardSelection? selection;
+  final Key eventItemKey;
+  final Key Function(String gameId) gameItemKeyFor;
   final Set<String> animatedEventIds;
   final bool streamingEnabled;
+  final int previewLimit;
   final VoidCallback onOpen;
   final ValueChanged<bool> onVisibilityChanged;
   final ValueChanged<List<String>> onVisibleGameIdsChanged;
@@ -2811,38 +3220,36 @@ class _ForYouEventSection extends ConsumerWidget {
       animatedEventIds.add(event.id);
     }
 
-    final rowHeight = _rowHeightFor(layout);
-    final row = Padding(
-      padding: EdgeInsets.only(top: isFirst ? 0 : 28),
-      child: SizedBox(
-        height: rowHeight,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(
-              width: eventCardWidth,
-              child: _ForYouEventSummaryCard(
-                event: event,
-                selected: selection?.isEvent ?? false,
-                onOpen: onOpen,
-              ),
+    final row = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        KeyedSubtree(
+          key: eventItemKey,
+          child: SizedBox(
+            height: eventCardHeight,
+            child: _ForYouEventSummaryCard(
+              event: event,
+              selected: selection?.isEvent ?? false,
+              onOpen: onOpen,
             ),
-            const SizedBox(width: eventToGamesGap),
-            Expanded(
-              child: _GamesStrip(
-                eventId: event.id,
-                tournamentTitle: event.title,
-                snapshotAsync: snapshotAsync,
-                layout: layout,
-                streamingEnabled: streamingEnabled,
-                selectedGameIndex:
-                    selection?.isGame == true ? selection!.gameIndex : null,
-                onVisibleGameIdsChanged: onVisibleGameIdsChanged,
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
+        const SizedBox(height: eventToGamesGap),
+        _GamesStrip(
+          eventId: event.id,
+          tournamentTitle: event.title,
+          snapshotAsync: snapshotAsync,
+          layout: layout,
+          streamingEnabled: streamingEnabled,
+          maxPreviewGames: previewLimit,
+          selectedGameIndex:
+              selection?.isGame == true ? selection!.gameIndex : null,
+          gameItemKeyFor: gameItemKeyFor,
+          onVisibleGameIdsChanged: onVisibleGameIdsChanged,
+          tabletGrid: true,
+        ),
+      ],
     );
 
     if (shouldAnimate) {
@@ -2860,6 +3267,15 @@ class _ForYouEventSection extends ConsumerWidget {
       DesktopCardLayout.list => 286,
       DesktopCardLayout.compact => 220,
     };
+  }
+
+  static double _estimatedTabletHeightFor(DesktopCardLayout layout) {
+    final gamesHeight = switch (layout) {
+      DesktopCardLayout.grid => 390.0,
+      DesktopCardLayout.list => 120.0,
+      DesktopCardLayout.compact => 110.0,
+    };
+    return eventCardHeight + eventToGamesGap + gamesHeight;
   }
 }
 
@@ -2886,7 +3302,6 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
   Widget build(BuildContext context) {
     final event = widget.event;
     final highlighted = widget.selected || _hovered;
-    final categoryColor = _categoryColor(event.tourEventCategory);
     return DesktopEventContextMenu(
       event: event,
       onOpen: widget.onOpen,
@@ -2899,8 +3314,7 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
             onTap: widget.onOpen,
             child: MotionCard(
               borderRadius: 10,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 130),
+              child: Container(
                 clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
                   color: highlighted ? kBlack3Color : kBlack2Color,
@@ -2908,100 +3322,42 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
                   border: Border.all(
                     color:
                         widget.selected
-                            ? categoryColor.withValues(alpha: 0.42)
+                            ? kPrimaryColor.withValues(alpha: 0.96)
                             : _hovered
                             ? kWhiteColor.withValues(alpha: 0.12)
                             : kDividerColor,
+                    width: widget.selected ? 2 : 1,
                   ),
+                  boxShadow:
+                      widget.selected
+                          ? [
+                            BoxShadow(
+                              color: kPrimaryColor.withValues(alpha: 0.16),
+                              blurRadius: 8,
+                              spreadRadius: 0.5,
+                            ),
+                          ]
+                          : null,
                 ),
                 child: LayoutBuilder(
                   builder: (context, constraints) {
-                    final roomy = constraints.maxHeight >= 260;
-                    return Column(
+                    final mediaWidth =
+                        (constraints.maxWidth * 0.4)
+                            .clamp(120.0, 300.0)
+                            .toDouble();
+                    return Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        _ForYouEventHeroImage(
-                          event: event,
-                          statusColor: categoryColor,
-                          selected: widget.selected,
-                          height: roomy ? 104 : 82,
-                        ),
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 12, 14, 14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // Status + favorite, moved off the photo onto
-                                // the solid body where their colours read.
-                                Row(
-                                  children: [
-                                    if (_shouldShowStatusBadge(
-                                      event.tourEventCategory,
-                                    ))
-                                      _StatusBadge(
-                                        category: event.tourEventCategory,
-                                      ),
-                                    const Spacer(),
-                                    DesktopEventFavoriteIconButton(
-                                      event: event,
-                                      compact: true,
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 10),
-                                Text(
-                                  event.title,
-                                  maxLines: roomy ? 3 : 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: kWhiteColor,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w800,
-                                    height: 1.16,
-                                    letterSpacing: 0,
-                                  ),
-                                ),
-                                const Spacer(),
-                                Text(
-                                  _eventMetaLine(event),
-                                  maxLines: roomy ? 2 : 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: kLightGreyColor,
-                                    fontSize: 11,
-                                    height: 1.25,
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                Row(
-                                  children: [
-                                    if (event.timeControl.isNotEmpty)
-                                      Flexible(
-                                        child: _TournamentTilePill(
-                                          label: event.timeControl,
-                                          icon: Icons.schedule_rounded,
-                                        ),
-                                      ),
-                                    if (event.maxAvgElo > 0) ...[
-                                      const SizedBox(width: 8),
-                                      _TournamentTilePill(
-                                        label: 'Avg ${event.maxAvgElo}',
-                                        icon: Icons.leaderboard_rounded,
-                                      ),
-                                    ],
-                                    const Spacer(),
-                                    Icon(
-                                      Icons.open_in_new_rounded,
-                                      size: 14,
-                                      color: categoryColor,
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
+                        SizedBox(
+                          width: mediaWidth,
+                          child: _EventCardMedia(
+                            event: event,
+                            padding: 8,
+                            imageFit: BoxFit.cover,
+                            showFavorite: false,
                           ),
                         ),
+                        Expanded(child: _ForYouEventInfoPanel(event: event)),
                       ],
                     );
                   },
@@ -3015,60 +3371,87 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
   }
 }
 
-class _ForYouEventHeroImage extends StatelessWidget {
-  const _ForYouEventHeroImage({
-    required this.event,
-    required this.statusColor,
-    required this.selected,
-    required this.height,
-  });
+class _ForYouEventInfoPanel extends StatelessWidget {
+  const _ForYouEventInfoPanel({required this.event});
 
   final GroupEventCardModel event;
-  final Color statusColor;
-  final bool selected;
-  final double height;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: height,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          _DesktopEventVisual(event: event, borderRadius: BorderRadius.zero),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  kBlackColor.withValues(alpha: 0.54),
-                  kBlackColor.withValues(alpha: 0.1),
-                  kBlackColor.withValues(alpha: 0.2),
-                ],
-                stops: const [0, 0.58, 1],
-              ),
-            ),
-          ),
-          // No text/controls overlaid on the photo — they were unreadable
-          // against varying artwork. The status badge, time control and
-          // favorite now live on the solid card body below, where contrast is
-          // guaranteed. The image stays clean.
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(
-                    color:
-                        selected
-                            ? statusColor.withValues(alpha: 0.3)
-                            : kWhiteColor.withValues(alpha: 0.08),
+    return DecoratedBox(
+      decoration: BoxDecoration(color: kBlack2Color),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    event.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      height: 1.15,
+                    ),
                   ),
                 ),
-              ),
+                const SizedBox(width: 8),
+                DesktopEventFavoriteIconButton(event: event, compact: true),
+              ],
             ),
-          ),
-        ],
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Image.asset(
+                  _eventTimeControlAsset(event.timeControl),
+                  width: 17,
+                  height: 17,
+                  fit: BoxFit.contain,
+                  cacheWidth:
+                      (17 * MediaQuery.devicePixelRatioOf(context)).round(),
+                  cacheHeight:
+                      (17 * MediaQuery.devicePixelRatioOf(context)).round(),
+                ),
+                if (event.maxAvgElo > 0) ...[
+                  const SizedBox(width: 7),
+                  Text(
+                    'Avg ${event.maxAvgElo}',
+                    style: const TextStyle(
+                      color: kWhiteColor70,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(width: 1, height: 12, color: kDividerColor),
+                ],
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _eventMetaLine(event),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: kLightGreyColor,
+                      fontSize: 10.5,
+                      height: 1.2,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            DesktopEventCountdownLine(event: event),
+          ],
+        ),
       ),
     );
   }
@@ -3085,7 +3468,10 @@ class _GamesStrip extends ConsumerWidget {
     required this.layout,
     required this.streamingEnabled,
     required this.selectedGameIndex,
+    required this.gameItemKeyFor,
     required this.onVisibleGameIdsChanged,
+    this.tabletGrid = false,
+    this.maxPreviewGames = 6,
   });
 
   final String eventId;
@@ -3094,7 +3480,14 @@ class _GamesStrip extends ConsumerWidget {
   final DesktopCardLayout layout;
   final bool streamingEnabled;
   final int? selectedGameIndex;
+  final Key Function(String gameId) gameItemKeyFor;
   final ValueChanged<List<String>> onVisibleGameIdsChanged;
+  final bool tabletGrid;
+  final int maxPreviewGames;
+
+  Widget _selectionTarget(String gameId, Widget child) {
+    return KeyedSubtree(key: gameItemKeyFor(gameId), child: child);
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -3111,6 +3504,61 @@ class _GamesStrip extends ConsumerWidget {
           return const SizedBox.shrink();
         }
         final gameContext = _forYouGameContext(snapshot);
+        if (tabletGrid) {
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final columns =
+                  layout == DesktopCardLayout.grid
+                      ? DesktopForYouPaneLayout.boardColumnCountForEventWidth(
+                        constraints.maxWidth,
+                      )
+                      : DesktopGameCardsFlow.columnCountForWidth(
+                        layout,
+                        constraints.maxWidth,
+                      );
+              final games = gameContext.stripGames
+                  .take(maxPreviewGames)
+                  .toList(growable: false);
+              final liveBatchKey = _desktopForYouLiveBatchKey(
+                eventId: eventId,
+                tourId: snapshot.tourId,
+                games: snapshot.visibleGames,
+              );
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                onVisibleGameIdsChanged(
+                  games.map((game) => game.gameId).toList(growable: false),
+                );
+              });
+              return DesktopGameCardsFlow(
+                layout: layout,
+                itemCount: games.length,
+                embedded: true,
+                columnCountOverride:
+                    layout == DesktopCardLayout.grid ? columns : null,
+                centerIncompleteRow: layout == DesktopCardLayout.grid,
+                itemBuilder:
+                    (context, i) => _selectionTarget(
+                      games[i].gameId,
+                      LiveDesktopGameCard(
+                        game: games[i],
+                        eventGames: gameContext.boardGames,
+                        tournamentTitle: tournamentTitle,
+                        layout: layout,
+                        selected: selectedGameIndex == i,
+                        viewSource: ChessboardView.forYou,
+                        forYouRoundLabel: desktopForYouBackfillRoundLabel(
+                          game: games[i],
+                          currentGame: games.first,
+                        ),
+                        liveBatchKey: liveBatchKey,
+                        streamingEnabled: cardStreamingEnabled,
+                        allowStockfishFallback: true,
+                      ),
+                    ),
+              );
+            },
+          );
+        }
         if (layout != DesktopCardLayout.grid) {
           if (snapshot.isGroupEvent) {
             return _TeamGamesStrip(
@@ -3121,6 +3569,7 @@ class _GamesStrip extends ConsumerWidget {
               layout: layout,
               streamingEnabled: cardStreamingEnabled,
               selectedGameIndex: selectedGameIndex,
+              gameItemKeyFor: gameItemKeyFor,
               onVisibleGameIdsChanged: onVisibleGameIdsChanged,
             );
           }
@@ -3133,6 +3582,7 @@ class _GamesStrip extends ConsumerWidget {
               layout: layout,
               streamingEnabled: cardStreamingEnabled,
               selectedGameIndex: selectedGameIndex,
+              gameItemKeyFor: gameItemKeyFor,
               onVisibleGameIdsChanged: onVisibleGameIdsChanged,
             );
           }
@@ -3181,16 +3631,23 @@ class _GamesStrip extends ConsumerWidget {
                 itemCount: games.length,
                 embedded: true,
                 itemBuilder:
-                    (context, i) => LiveDesktopGameCard(
-                      game: games[i],
-                      eventGames: gameContext.boardGames,
-                      tournamentTitle: tournamentTitle,
-                      layout: layout,
-                      selected: selectedGameIndex == i,
-                      viewSource: ChessboardView.forYou,
-                      liveBatchKey: liveBatchKey,
-                      streamingEnabled: cardStreamingEnabled,
-                      allowStockfishFallback: true,
+                    (context, i) => _selectionTarget(
+                      games[i].gameId,
+                      LiveDesktopGameCard(
+                        game: games[i],
+                        eventGames: gameContext.boardGames,
+                        tournamentTitle: tournamentTitle,
+                        layout: layout,
+                        selected: selectedGameIndex == i,
+                        viewSource: ChessboardView.forYou,
+                        forYouRoundLabel: desktopForYouBackfillRoundLabel(
+                          game: games[i],
+                          currentGame: games.first,
+                        ),
+                        liveBatchKey: liveBatchKey,
+                        streamingEnabled: cardStreamingEnabled,
+                        allowStockfishFallback: true,
+                      ),
                     ),
               );
             },
@@ -3225,16 +3682,23 @@ class _GamesStrip extends ConsumerWidget {
                     const SizedBox(width: DesktopForYouStripLayout.gap),
                   SizedBox(
                     width: strip.cardWidth,
-                    child: LiveDesktopGameCard(
-                      game: games[i],
-                      eventGames: gameContext.boardGames,
-                      tournamentTitle: tournamentTitle,
-                      layout: DesktopCardLayout.grid,
-                      selected: selectedGameIndex == i,
-                      viewSource: ChessboardView.forYou,
-                      liveBatchKey: liveBatchKey,
-                      streamingEnabled: cardStreamingEnabled,
-                      allowStockfishFallback: true,
+                    child: _selectionTarget(
+                      games[i].gameId,
+                      LiveDesktopGameCard(
+                        game: games[i],
+                        eventGames: gameContext.boardGames,
+                        tournamentTitle: tournamentTitle,
+                        layout: DesktopCardLayout.grid,
+                        selected: selectedGameIndex == i,
+                        viewSource: ChessboardView.forYou,
+                        forYouRoundLabel: desktopForYouBackfillRoundLabel(
+                          game: games[i],
+                          currentGame: games.first,
+                        ),
+                        liveBatchKey: liveBatchKey,
+                        streamingEnabled: cardStreamingEnabled,
+                        allowStockfishFallback: true,
+                      ),
                     ),
                   ),
                 ],
@@ -3247,6 +3711,32 @@ class _GamesStrip extends ConsumerWidget {
       loading:
           () => LayoutBuilder(
             builder: (context, constraints) {
+              if (tabletGrid) {
+                final columns =
+                    layout == DesktopCardLayout.grid
+                        ? DesktopForYouPaneLayout.boardColumnCountForEventWidth(
+                          constraints.maxWidth,
+                        )
+                        : DesktopGameCardsFlow.columnCountForWidth(
+                          layout,
+                          constraints.maxWidth,
+                        );
+                return DesktopGameCardsFlow(
+                  layout: layout,
+                  itemCount: maxPreviewGames,
+                  embedded: true,
+                  columnCountOverride:
+                      layout == DesktopCardLayout.grid ? columns : null,
+                  itemBuilder:
+                      (context, _) => DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: kBlack2Color,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: kDividerColor),
+                        ),
+                      ),
+                );
+              }
               if (layout != DesktopCardLayout.grid) {
                 // Match the data-state cap: cols × rows fits the bounded
                 // event row, skeletons render at the same density as the
@@ -3372,6 +3862,7 @@ class _TeamGamesStrip extends StatelessWidget {
     required this.layout,
     required this.streamingEnabled,
     required this.selectedGameIndex,
+    required this.gameItemKeyFor,
     required this.onVisibleGameIdsChanged,
   });
 
@@ -3382,6 +3873,7 @@ class _TeamGamesStrip extends StatelessWidget {
   final DesktopCardLayout layout;
   final bool streamingEnabled;
   final int? selectedGameIndex;
+  final Key Function(String gameId) gameItemKeyFor;
   final ValueChanged<List<String>> onVisibleGameIdsChanged;
 
   @override
@@ -3444,6 +3936,7 @@ class _TeamGamesStrip extends StatelessWidget {
                   group: displayedGroups[i],
                   games: panelGames[displayedGroups[i]] ?? const [],
                   selectedGameId: selectedGameId,
+                  gameItemKeyFor: gameItemKeyFor,
                   tournamentTitle: tournamentTitle,
                   eventGames: boardGames,
                   liveBatchKey: liveBatchKey,
@@ -3468,6 +3961,7 @@ class _KnockoutGamesStrip extends StatelessWidget {
     required this.layout,
     required this.streamingEnabled,
     required this.selectedGameIndex,
+    required this.gameItemKeyFor,
     required this.onVisibleGameIdsChanged,
   });
 
@@ -3478,6 +3972,7 @@ class _KnockoutGamesStrip extends StatelessWidget {
   final DesktopCardLayout layout;
   final bool streamingEnabled;
   final int? selectedGameIndex;
+  final Key Function(String gameId) gameItemKeyFor;
   final ValueChanged<List<String>> onVisibleGameIdsChanged;
 
   @override
@@ -3548,6 +4043,7 @@ class _KnockoutGamesStrip extends StatelessWidget {
                   header: displayedHeaders[i],
                   games: panelGames[displayedHeaders[i]] ?? const [],
                   selectedGameId: selectedGameId,
+                  gameItemKeyFor: gameItemKeyFor,
                   tournamentTitle: tournamentTitle,
                   eventGames: boardGames,
                   liveBatchKey: liveBatchKey,
@@ -3568,6 +4064,7 @@ class _ForYouTeamMatchPanel extends StatelessWidget {
     required this.group,
     required this.games,
     required this.selectedGameId,
+    required this.gameItemKeyFor,
     required this.tournamentTitle,
     required this.eventGames,
     required this.liveBatchKey,
@@ -3577,6 +4074,7 @@ class _ForYouTeamMatchPanel extends StatelessWidget {
   final DesktopTeamMatchGroup group;
   final List<GamesTourModel> games;
   final String? selectedGameId;
+  final Key Function(String gameId) gameItemKeyFor;
   final String tournamentTitle;
   final List<GamesTourModel> eventGames;
   final LiveGamesBatchKey liveBatchKey;
@@ -3588,6 +4086,7 @@ class _ForYouTeamMatchPanel extends StatelessWidget {
       header: _ForYouTeamMatchHeader(group: group),
       games: games,
       selectedGameId: selectedGameId,
+      gameItemKeyFor: gameItemKeyFor,
       tournamentTitle: tournamentTitle,
       eventGames: eventGames,
       liveBatchKey: liveBatchKey,
@@ -3601,6 +4100,7 @@ class _ForYouKnockoutMatchPanel extends StatelessWidget {
     required this.header,
     required this.games,
     required this.selectedGameId,
+    required this.gameItemKeyFor,
     required this.tournamentTitle,
     required this.eventGames,
     required this.liveBatchKey,
@@ -3610,6 +4110,7 @@ class _ForYouKnockoutMatchPanel extends StatelessWidget {
   final MatchHeaderModel header;
   final List<GamesTourModel> games;
   final String? selectedGameId;
+  final Key Function(String gameId) gameItemKeyFor;
   final String tournamentTitle;
   final List<GamesTourModel> eventGames;
   final LiveGamesBatchKey liveBatchKey;
@@ -3621,6 +4122,7 @@ class _ForYouKnockoutMatchPanel extends StatelessWidget {
       header: _ForYouKnockoutMatchHeader(header: header),
       games: games,
       selectedGameId: selectedGameId,
+      gameItemKeyFor: gameItemKeyFor,
       tournamentTitle: tournamentTitle,
       eventGames: eventGames,
       liveBatchKey: liveBatchKey,
@@ -3634,6 +4136,7 @@ class _ForYouGroupedPanelFrame extends StatelessWidget {
     required this.header,
     required this.games,
     required this.selectedGameId,
+    required this.gameItemKeyFor,
     required this.tournamentTitle,
     required this.eventGames,
     required this.liveBatchKey,
@@ -3643,6 +4146,7 @@ class _ForYouGroupedPanelFrame extends StatelessWidget {
   final Widget header;
   final List<GamesTourModel> games;
   final String? selectedGameId;
+  final Key Function(String gameId) gameItemKeyFor;
   final String tournamentTitle;
   final List<GamesTourModel> eventGames;
   final LiveGamesBatchKey liveBatchKey;
@@ -3668,16 +4172,19 @@ class _ForYouGroupedPanelFrame extends StatelessWidget {
               if (i > 0) SizedBox(height: metrics.spacing),
               SizedBox(
                 height: metrics.tileHeight,
-                child: LiveDesktopGameCard(
-                  game: games[i],
-                  eventGames: eventGames,
-                  tournamentTitle: tournamentTitle,
-                  layout: DesktopCardLayout.compact,
-                  selected: selectedGameId == games[i].gameId,
-                  viewSource: ChessboardView.forYou,
-                  liveBatchKey: liveBatchKey,
-                  streamingEnabled: streamingEnabled,
-                  allowStockfishFallback: true,
+                child: KeyedSubtree(
+                  key: gameItemKeyFor(games[i].gameId),
+                  child: LiveDesktopGameCard(
+                    game: games[i],
+                    eventGames: eventGames,
+                    tournamentTitle: tournamentTitle,
+                    layout: DesktopCardLayout.compact,
+                    selected: selectedGameId == games[i].gameId,
+                    viewSource: ChessboardView.forYou,
+                    liveBatchKey: liveBatchKey,
+                    streamingEnabled: streamingEnabled,
+                    allowStockfishFallback: true,
+                  ),
                 ),
               ),
             ],

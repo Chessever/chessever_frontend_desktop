@@ -1,10 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderIndexedStack, RenderObject;
 import 'package:flutter/services.dart';
 
-/// Wraps the active pane content so PageUp / PageDown / Home / End
-/// scroll the first vertical descendant `Scrollable` even when nothing
-/// inside the pane has explicitly grabbed focus.
+/// Wraps the active pane content so ArrowUp / ArrowDown / PageUp / PageDown /
+/// Home / End scroll the first vertical descendant `Scrollable` even when
+/// nothing inside the pane has explicitly grabbed focus.
 ///
 /// The shell's `FocusableActionDetector` autofocuses at boot, which
 /// means descendant `Scrollable`s never receive keyboard events from
@@ -12,8 +13,9 @@ import 'package:flutter/services.dart';
 /// (`ListKeyboardScrollFocus`) exist for a couple of panes; this
 /// blanket wrapper covers every pane that did not opt in.
 ///
-/// Arrow keys are intentionally left alone so panes with selection
-/// based arrow navigation keep working.
+/// Descendant selection hosts receive key events first. Their handled result
+/// stops propagation, so these arrow bindings act only as a fallback for
+/// ordinary scrollable pages without their own row/card navigation.
 class PaneKeyboardScroll extends StatefulWidget {
   const PaneKeyboardScroll({super.key, required this.child});
 
@@ -28,6 +30,7 @@ class _PaneKeyboardScrollState extends State<PaneKeyboardScroll> {
     debugLabel: 'PaneKeyboardScroll',
     skipTraversal: true,
   );
+  ValueListenable<TickerModeData>? _tickerMode;
 
   @override
   void initState() {
@@ -45,14 +48,77 @@ class _PaneKeyboardScrollState extends State<PaneKeyboardScroll> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final notifier = TickerMode.getValuesNotifier(context);
+    if (identical(notifier, _tickerMode)) return;
+    _tickerMode?.removeListener(_handleTickerModeChanged);
+    _tickerMode = notifier..addListener(_handleTickerModeChanged);
+    if (notifier.value.enabled) _scheduleFocusClaim();
+  }
+
+  void _handleTickerModeChanged() {
+    if (_tickerMode?.value.enabled == true) _scheduleFocusClaim();
+  }
+
+  void _scheduleFocusClaim() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !TickerMode.valuesOf(context).enabled) return;
+      if (_canClaimFocus()) _focusNode.requestFocus();
+    });
+  }
+
+  bool _canClaimFocus() {
+    final primary = FocusManager.instance.primaryFocus;
+    if (primary == null || primary == _focusNode) return true;
+    if (!primary.canRequestFocus) return true;
+
+    final primaryContext = primary.context;
+    if (primaryContext == null) return false;
+    if (primaryContext.widget is EditableText ||
+        primaryContext.findAncestorWidgetOfExactType<EditableText>() != null) {
+      return false;
+    }
+
+    // A child selection host or pane-specific control owns a more precise
+    // keyboard contract than this generic scroll fallback.
+    if (_isContextInsidePane(primaryContext)) return false;
+
+    final primaryRoute = ModalRoute.of(primaryContext);
+    final paneRoute = ModalRoute.of(context);
+    if (primaryRoute != null &&
+        paneRoute != null &&
+        primaryRoute != paneRoute) {
+      return false;
+    }
+
+    // Focus parked on sibling shell chrome (sidebar/tab strip) is safe to
+    // reclaim when this pane becomes active.
+    return true;
+  }
+
+  bool _isContextInsidePane(BuildContext candidateContext) {
+    var inside = false;
+    candidateContext.visitAncestorElements((element) {
+      if (element == context) {
+        inside = true;
+        return false;
+      }
+      return true;
+    });
+    return inside;
+  }
+
+  @override
   void dispose() {
+    _tickerMode?.removeListener(_handleTickerModeChanged);
     HardwareKeyboard.instance.removeHandler(_handleHardwareKey);
     _focusNode.dispose();
     super.dispose();
   }
 
   bool _handleHardwareKey(KeyEvent event) {
-    if (!mounted) return false;
+    if (!mounted || !TickerMode.valuesOf(context).enabled) return false;
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
     final key = event.logicalKey;
     final isPageDown = key == LogicalKeyboardKey.pageDown;
@@ -206,9 +272,16 @@ class _PaneKeyboardScrollState extends State<PaneKeyboardScroll> {
     final key = event.logicalKey;
     final isPageDown = key == LogicalKeyboardKey.pageDown;
     final isPageUp = key == LogicalKeyboardKey.pageUp;
+    final isArrowDown = key == LogicalKeyboardKey.arrowDown;
+    final isArrowUp = key == LogicalKeyboardKey.arrowUp;
     final isHome = key == LogicalKeyboardKey.home;
     final isEnd = key == LogicalKeyboardKey.end;
-    if (!isPageDown && !isPageUp && !isHome && !isEnd) {
+    if (!isPageDown &&
+        !isPageUp &&
+        !isArrowDown &&
+        !isArrowUp &&
+        !isHome &&
+        !isEnd) {
       return KeyEventResult.ignored;
     }
     final scrollable = _findScrollable();
@@ -217,6 +290,10 @@ class _PaneKeyboardScrollState extends State<PaneKeyboardScroll> {
       _scrollBy(scrollable, scrollable.position.viewportDimension * 0.9);
     } else if (isPageUp) {
       _scrollBy(scrollable, -scrollable.position.viewportDimension * 0.9);
+    } else if (isArrowDown) {
+      _scrollBy(scrollable, 72);
+    } else if (isArrowUp) {
+      _scrollBy(scrollable, -72);
     } else if (isHome) {
       _scrollTo(scrollable, scrollable.position.minScrollExtent);
     } else if (isEnd) {

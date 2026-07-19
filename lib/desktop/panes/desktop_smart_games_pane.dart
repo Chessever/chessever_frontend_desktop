@@ -11,7 +11,9 @@ import 'package:chessever/desktop/utils/desktop_smart_game_sections.dart';
 import 'package:chessever/desktop/utils/game_date_groups.dart';
 import 'package:chessever/desktop/widgets/desktop_date_group_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
-import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
+import 'package:chessever/desktop/widgets/desktop_grouped_game_keyboard_focus.dart';
+import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart'
+    show DesktopGameKeyboardItem;
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_miniatures_filter_controls.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -536,9 +538,13 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
     final groupedGames = <GamesTourModel>[
       for (final section in sections) ...section.games,
     ];
-    final keyboardGames = <GamesTourModel>[
+    final keyboardGroups = <DesktopGameKeyboardGroup>[
       for (final section in sections)
-        if (!_collapsedGroups.contains(section.key)) ...section.games,
+        DesktopGameKeyboardGroup(
+          id: section.key,
+          games: section.games,
+          expanded: !_collapsedGroups.contains(section.key),
+        ),
     ];
     _maybeLoadMoreForCollapsedMiniatures(sections);
     final scopeId = 'smart-games-${widget.type.name}';
@@ -559,16 +565,24 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
             2,
             6,
           );
-          return DesktopGameKeyboardFocus(
+          return DesktopGroupedGameKeyboardFocus(
             scopeId: scopeId,
-            games: keyboardGames,
-            pageStride: columns * 3,
-            resolveColumnCount: () => columns,
+            groups: keyboardGroups,
+            scrollController: _scrollController,
+            resolveColumnCount: (_) => columns,
             ensureInitialSelectionVisible: false,
+            onActivateGroup: _toggleGroup,
             onActivateGame:
                 (game) =>
                     _openSmartGame(ref, game, widget.routeTitle, groupedGames),
-            builder: (context, selectedGameId, selectGame, keyForGame) {
+            builder: (
+              context,
+              selection,
+              selectGroup,
+              selectGame,
+              keyForGroup,
+              keyForGame,
+            ) {
               return CustomScrollView(
                 controller: _scrollController,
                 physics: const DesktopScrollPhysics(),
@@ -578,7 +592,15 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                     sectionIndex < sections.length;
                     sectionIndex++
                   ) ...[
-                    _sectionHeader(sections[sectionIndex], sectionIndex),
+                    _sectionHeader(
+                      sections[sectionIndex],
+                      sectionIndex,
+                      selected:
+                          selection?.isGroup == true &&
+                          selection?.groupId == sections[sectionIndex].key,
+                      onSelect: selectGroup,
+                      itemKey: keyForGroup(sections[sectionIndex].key),
+                    ),
                     if (!_collapsedGroups.contains(sections[sectionIndex].key))
                       SliverPadding(
                         padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -592,8 +614,12 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                               ),
                           delegate: SliverChildBuilderDelegate((context, i) {
                             final game = sections[sectionIndex].games[i];
-                            return DesktopGameKeyboardItem(
-                              itemKey: keyForGame(game.gameId),
+                            return DesktopGroupedGameKeyboardItem(
+                              itemKey: keyForGame(
+                                sections[sectionIndex].key,
+                                game.gameId,
+                              ),
+                              groupId: sections[sectionIndex].key,
                               gameId: game.gameId,
                               onSelect: selectGame,
                               child: LiveDesktopGameCard(
@@ -605,7 +631,10 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                                 routeTitle: widget.routeTitle,
                                 routeGames: groupedGames,
                                 layout: DesktopCardLayout.grid,
-                                selected: selectedGameId == game.gameId,
+                                selected:
+                                    selection?.groupId ==
+                                        sections[sectionIndex].key &&
+                                    selection?.gameId == game.gameId,
                                 viewSource: ChessboardView.tour,
                                 streamingEnabled: cardStreamingEnabled,
                                 allowStockfishFallback: true,
@@ -626,13 +655,22 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
       );
     }
     if (layout == DesktopCardLayout.list) {
-      return DesktopGameKeyboardFocus(
+      return DesktopGroupedGameKeyboardFocus(
         scopeId: scopeId,
-        games: keyboardGames,
+        groups: keyboardGroups,
+        scrollController: _scrollController,
+        onActivateGroup: _toggleGroup,
         onActivateGame:
             (game) =>
                 _openSmartGame(ref, game, widget.routeTitle, groupedGames),
-        builder: (context, selectedGameId, selectGame, keyForGame) {
+        builder: (
+          context,
+          selection,
+          selectGroup,
+          selectGame,
+          keyForGroup,
+          keyForGame,
+        ) {
           return CustomScrollView(
             controller: _scrollController,
             physics: const DesktopScrollPhysics(),
@@ -642,7 +680,15 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                 sectionIndex < sections.length;
                 sectionIndex++
               ) ...[
-                _sectionHeader(sections[sectionIndex], sectionIndex),
+                _sectionHeader(
+                  sections[sectionIndex],
+                  sectionIndex,
+                  selected:
+                      selection?.isGroup == true &&
+                      selection?.groupId == sections[sectionIndex].key,
+                  onSelect: selectGroup,
+                  itemKey: keyForGroup(sections[sectionIndex].key),
+                ),
                 if (!_collapsedGroups.contains(sections[sectionIndex].key))
                   SliverPadding(
                     padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -652,9 +698,20 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                         routeTitle: widget.routeTitle,
                         routeGames: groupedGames,
                         streamingEnabled: cardStreamingEnabled,
-                        selectedGameId: selectedGameId,
-                        onSelectGame: selectGame,
-                        keyForGame: keyForGame,
+                        selectedGameId:
+                            selection?.groupId == sections[sectionIndex].key
+                                ? selection?.gameId
+                                : null,
+                        onSelectGame:
+                            (gameId) => selectGame(
+                              sections[sectionIndex].key,
+                              gameId,
+                            ),
+                        keyForGame:
+                            (gameId) => keyForGame(
+                              sections[sectionIndex].key,
+                              gameId,
+                            ),
                       ),
                     ),
                   ),
@@ -668,14 +725,23 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
       );
     }
 
-    return DesktopGameKeyboardFocus(
+    return DesktopGroupedGameKeyboardFocus(
       scopeId: scopeId,
-      games: keyboardGames,
-      resolveColumnCount: () => _keyboardColumns,
+      groups: keyboardGroups,
+      scrollController: _scrollController,
+      resolveColumnCount: (_) => _keyboardColumns,
       ensureInitialSelectionVisible: false,
+      onActivateGroup: _toggleGroup,
       onActivateGame:
           (game) => _openSmartGame(ref, game, widget.routeTitle, groupedGames),
-      builder: (context, selectedGameId, selectGame, keyForGame) {
+      builder: (
+        context,
+        selection,
+        selectGroup,
+        selectGame,
+        keyForGroup,
+        keyForGame,
+      ) {
         return CustomScrollView(
           controller: _scrollController,
           physics: const DesktopScrollPhysics(),
@@ -685,7 +751,15 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
               sectionIndex < sections.length;
               sectionIndex++
             ) ...[
-              _sectionHeader(sections[sectionIndex], sectionIndex),
+              _sectionHeader(
+                sections[sectionIndex],
+                sectionIndex,
+                selected:
+                    selection?.isGroup == true &&
+                    selection?.groupId == sections[sectionIndex].key,
+                onSelect: selectGroup,
+                itemKey: keyForGroup(sections[sectionIndex].key),
+              ),
               if (!_collapsedGroups.contains(sections[sectionIndex].key))
                 SliverPadding(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -697,8 +771,12 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                       itemCount: sections[sectionIndex].games.length,
                       itemBuilder: (context, i) {
                         final game = sections[sectionIndex].games[i];
-                        return DesktopGameKeyboardItem(
-                          itemKey: keyForGame(game.gameId),
+                        return DesktopGroupedGameKeyboardItem(
+                          itemKey: keyForGame(
+                            sections[sectionIndex].key,
+                            game.gameId,
+                          ),
+                          groupId: sections[sectionIndex].key,
                           gameId: game.gameId,
                           onSelect: selectGame,
                           child: LiveDesktopGameCard(
@@ -710,7 +788,10 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                             routeTitle: widget.routeTitle,
                             routeGames: groupedGames,
                             layout: layout,
-                            selected: selectedGameId == game.gameId,
+                            selected:
+                                selection?.groupId ==
+                                    sections[sectionIndex].key &&
+                                selection?.gameId == game.gameId,
                             viewSource: ChessboardView.tour,
                             streamingEnabled: cardStreamingEnabled,
                             allowStockfishFallback: true,
@@ -730,20 +811,25 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
     );
   }
 
+  void _toggleGroup(String groupId) {
+    setState(() {
+      if (!_collapsedGroups.remove(groupId)) {
+        _collapsedGroups.add(groupId);
+      }
+    });
+  }
+
   SliverPadding _sectionHeader(
     DesktopSmartGameSection section,
     int sectionIndex,
+    {
+    required bool selected,
+    required ValueChanged<String> onSelect,
+    required Key itemKey,
+    }
   ) {
     final collapsed = _collapsedGroups.contains(section.key);
-    void toggleCollapsed() {
-      setState(() {
-        if (collapsed) {
-          _collapsedGroups.remove(section.key);
-        } else {
-          _collapsedGroups.add(section.key);
-        }
-      });
-    }
+    void toggleCollapsed() => _toggleGroup(section.key);
 
     final usesDateHeader =
         widget.type == PremiumGamesType.miniatures ||
@@ -755,18 +841,27 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
               gameCount: section.gameCount,
               showCount: widget.showCounts,
               collapsed: collapsed,
+              selected: selected,
               onToggle: toggleCollapsed,
             )
             : _SmartEventSectionCard(
               section: section,
               showCount: widget.showCounts,
               collapsed: collapsed,
+              selected: selected,
               onToggle: toggleCollapsed,
             );
 
     return SliverPadding(
       padding: EdgeInsets.fromLTRB(24, sectionIndex == 0 ? 4 : 16, 24, 8),
-      sliver: SliverToBoxAdapter(child: header),
+      sliver: SliverToBoxAdapter(
+        child: DesktopGroupedGameKeyboardHeader(
+          itemKey: itemKey,
+          groupId: section.key,
+          onSelect: onSelect,
+          child: header,
+        ),
+      ),
     );
   }
 }
@@ -775,12 +870,14 @@ class _SmartEventSectionCard extends StatelessWidget {
   const _SmartEventSectionCard({
     required this.section,
     required this.collapsed,
+    required this.selected,
     required this.onToggle,
     this.showCount = true,
   });
 
   final DesktopSmartGameSection section;
   final bool collapsed;
+  final bool selected;
   final VoidCallback onToggle;
 
   /// Whether to render the game-count badge. Hidden while the feed is still
@@ -808,11 +905,13 @@ class _SmartEventSectionCard extends StatelessWidget {
             style:
                 (style) => style.copyWith(
                   decoration: BoxDecoration(
-                    color: kBlack2Color,
+                    color: selected ? kBlack3Color : kBlack2Color,
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
                       color:
-                          section.hasLiveGames
+                          selected
+                              ? kPrimaryColor.withValues(alpha: 0.58)
+                              : section.hasLiveGames
                               ? kPrimaryColor.withValues(alpha: 0.32)
                               : kDividerColor,
                     ),

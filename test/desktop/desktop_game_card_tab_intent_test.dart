@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
+import 'package:chessever/desktop/widgets/desktop_player_title_chip.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
@@ -162,6 +163,96 @@ void main() {
     expect(find.text('23:45'), findsOneWidget);
   });
 
+  testWidgets('grid mini-board uses compact names and plain title text', (
+    tester,
+  ) async {
+    const forYouData = GameCardData(
+      id: 'for-you-game',
+      title: 'Ghazarian vs Hardaway',
+      whiteName: 'Ghazarian, Kirk',
+      blackName: 'Hardaway, Brewington',
+      whiteFederation: 'USA',
+      blackFederation: 'USA',
+      whiteTitle: 'GM',
+      blackTitle: 'GM',
+      whiteRating: 2546,
+      blackRating: 2501,
+      fen: null,
+      status: GameStatus.ongoing,
+      hasStarted: true,
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _cardProviderOverrides(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 320,
+              height: 360,
+              child: DesktopGameCard(
+                data: forYouData,
+                layout: DesktopCardLayout.grid,
+                forYouRoundLabel: 'R5',
+                onTap: _noop,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Ghazarian, K.'), findsOneWidget);
+    expect(find.text('Hardaway, B.'), findsOneWidget);
+    expect(find.byType(DesktopPlayerTitleChip), findsNothing);
+    expect(find.text('GM'), findsNWidgets(2));
+    expect(find.text('R5'), findsOneWidget);
+  });
+
+  testWidgets('grid mini-board keeps recognizable single-name players', (
+    tester,
+  ) async {
+    const singleNameData = GameCardData(
+      id: 'single-name-game',
+      title: 'Gukesh vs Praggnanandhaa',
+      whiteName: 'Gukesh D',
+      blackName: 'Praggnanandhaa R',
+      whiteFederation: 'IND',
+      blackFederation: 'IND',
+      whiteTitle: 'GM',
+      blackTitle: 'GM',
+      whiteRating: 2777,
+      blackRating: 2768,
+      fen: null,
+      status: GameStatus.ongoing,
+      hasStarted: true,
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _cardProviderOverrides(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 320,
+              height: 360,
+              child: DesktopGameCard(
+                data: singleNameData,
+                layout: DesktopCardLayout.grid,
+                onTap: _noop,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Gukesh'), findsOneWidget);
+    expect(find.text('Praggnanandhaa'), findsOneWidget);
+    expect(find.text('D, G.'), findsNothing);
+    expect(find.text('R, P.'), findsNothing);
+  });
+
   testWidgets('grid game card keeps its content outside transformed layers', (
     tester,
   ) async {
@@ -191,6 +282,59 @@ void main() {
       ),
       findsNothing,
     );
+  });
+
+  testWidgets('selected grid card highlight is strong and immediate', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _cardProviderOverrides(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 320,
+              height: 360,
+              child: DesktopGameCard(
+                data: _startedLiveDataWithClocks,
+                layout: DesktopCardLayout.grid,
+                selected: true,
+                onTap: _noop,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.descendant(
+        of: find.byType(MotionCard),
+        matching: find.byType(AnimatedContainer),
+      ),
+      findsNothing,
+    );
+
+    final selectedShell = tester
+        .widgetList<Container>(
+          find.descendant(
+            of: find.byType(MotionCard),
+            matching: find.byType(Container),
+          ),
+        )
+        .firstWhere((container) {
+          final decoration = container.decoration;
+          if (decoration is! BoxDecoration || decoration.border is! Border) {
+            return false;
+          }
+          return (decoration.border! as Border).top.width == 2;
+        });
+    final decoration = selectedShell.decoration! as BoxDecoration;
+    final border = decoration.border! as Border;
+
+    expect(border.top.width, 2);
+    expect(border.top.color, kPrimaryColor.withValues(alpha: 0.96));
+    expect(decoration.boxShadow, isNotEmpty);
   });
 
   testWidgets('running live clock uses the primary color', (tester) async {

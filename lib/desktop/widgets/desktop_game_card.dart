@@ -87,6 +87,8 @@ class DesktopGameCard extends ConsumerWidget {
     this.dragPayload,
     this.onContextMenu,
     this.allowStockfishFallback = true,
+    this.compactMiniBoardPresentation = true,
+    this.forYouRoundLabel,
   });
 
   final GameCardData data;
@@ -94,6 +96,11 @@ class DesktopGameCard extends ConsumerWidget {
   final DesktopCardLayout layout;
   final bool selected;
   final ValueChanged<Offset>? onContextMenu;
+
+  /// Uses the denser, edge-to-edge treatment shared by desktop mini-board
+  /// grids. Callers can opt out for a deliberately card-like grid surface.
+  final bool compactMiniBoardPresentation;
+  final String? forYouRoundLabel;
 
   /// When false, the eval bar inside this card will only display cached or
   /// server-resolved evaluations and skip the local Stockfish fallback path.
@@ -134,6 +141,8 @@ class DesktopGameCard extends ConsumerWidget {
           selected: selected,
           allowStockfishFallback: allowStockfishFallback,
           showEvaluationBar: showEvaluationBar,
+          compactMiniBoardPresentation: compactMiniBoardPresentation,
+          forYouRoundLabel: forYouRoundLabel,
         );
       case DesktopCardLayout.compact:
         card = _CompactLayout(
@@ -298,7 +307,7 @@ class _ListLayoutState extends State<_ListLayout>
     final baseFill = _tileBaseFill(data: widget.data, highlight: highlight);
     final borderColor =
         widget.selected
-            ? kPrimaryColor.withValues(alpha: 0.48)
+            ? kPrimaryColor.withValues(alpha: 0.96)
             : (_hovered
                 ? kPrimaryColor.withValues(alpha: 0.14)
                 : kDividerColor);
@@ -309,21 +318,23 @@ class _ListLayoutState extends State<_ListLayout>
       onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: MotionCard(
         borderRadius: 12,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
+        child: Container(
           decoration: BoxDecoration(
             color: baseFill,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: borderColor),
+            border: Border.all(
+              color: borderColor,
+              width: widget.selected ? 2 : 1,
+            ),
             // Selection keeps a persistent shadow; the hover/press shadow is
             // now owned by the [MotionCard] dock above.
             boxShadow:
                 widget.selected
                     ? [
                       BoxShadow(
-                        color: kPrimaryColor.withValues(alpha: 0.08),
-                        blurRadius: 12,
-                        offset: const Offset(0, 6),
+                        color: kPrimaryColor.withValues(alpha: 0.16),
+                        blurRadius: 8,
+                        spreadRadius: 0.5,
                       ),
                     ]
                     : null,
@@ -863,7 +874,7 @@ class _CompactLayoutState extends State<_CompactLayout>
     final baseFill = _tileBaseFill(data: widget.data, highlight: highlight);
     final borderColor =
         widget.selected
-            ? kPrimaryColor.withValues(alpha: 0.48)
+            ? kPrimaryColor.withValues(alpha: 0.96)
             : (_hovered
                 ? kPrimaryColor.withValues(alpha: 0.14)
                 : kDividerColor);
@@ -874,22 +885,24 @@ class _CompactLayoutState extends State<_CompactLayout>
       onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: MotionCard(
         borderRadius: 10,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
+        child: Container(
           height: cardHeight,
           decoration: BoxDecoration(
             color: baseFill,
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: borderColor),
+            border: Border.all(
+              color: borderColor,
+              width: widget.selected ? 2 : 1,
+            ),
             // Selection keeps a persistent shadow; hover/press shadow is
             // now owned by the [MotionCard] dock above.
             boxShadow:
                 widget.selected
                     ? [
                       BoxShadow(
-                        color: kPrimaryColor.withValues(alpha: 0.08),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
+                        color: kPrimaryColor.withValues(alpha: 0.16),
+                        blurRadius: 8,
+                        spreadRadius: 0.5,
                       ),
                     ]
                     : null,
@@ -974,11 +987,15 @@ class _GridLayout extends StatefulWidget {
     required this.selected,
     required this.allowStockfishFallback,
     required this.showEvaluationBar,
+    required this.compactMiniBoardPresentation,
+    this.forYouRoundLabel,
   });
   final GameCardData data;
   final bool selected;
   final bool allowStockfishFallback;
   final bool showEvaluationBar;
+  final bool compactMiniBoardPresentation;
+  final String? forYouRoundLabel;
 
   @override
   State<_GridLayout> createState() => _GridLayoutState();
@@ -991,49 +1008,67 @@ class _GridLayoutState extends State<_GridLayout>
   @override
   Widget build(BuildContext context) {
     final highlight = widget.selected || _hovered;
+    final compactMiniBoardPresentation = widget.compactMiniBoardPresentation;
+    final borderRadius = compactMiniBoardPresentation ? 4.0 : 12.0;
+    final playerInset =
+        compactMiniBoardPresentation && widget.showEvaluationBar ? 16.0 : 0.0;
     return MouseRegion(
       onEnter: (_) => setStateAfterPointerEvent(() => _hovered = true),
       onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: MotionCard(
-        borderRadius: 12,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 140),
+        borderRadius: borderRadius,
+        child: Container(
           decoration: BoxDecoration(
-            color: highlight ? kBlack3Color : kBlack2Color,
-            borderRadius: BorderRadius.circular(12),
+            color:
+                compactMiniBoardPresentation
+                    ? Colors.transparent
+                    : (highlight ? kBlack3Color : kBlack2Color),
+            borderRadius: BorderRadius.circular(borderRadius),
             // Selection keeps a persistent shadow; hover/press shadow is
             // now owned by the [MotionCard] dock above.
             boxShadow:
                 widget.selected
                     ? [
                       BoxShadow(
-                        color: kPrimaryColor.withValues(alpha: 0.08),
-                        blurRadius: 12,
-                        offset: const Offset(0, 6),
+                        color: kPrimaryColor.withValues(alpha: 0.18),
+                        blurRadius: 8,
+                        spreadRadius: 0.5,
                       ),
                     ]
                     : null,
-            border: Border.all(
-              color:
-                  widget.selected
-                      ? kPrimaryColor.withValues(alpha: 0.48)
-                      : (_hovered
-                          ? kPrimaryColor.withValues(alpha: 0.16)
-                          : kDividerColor),
-            ),
+            border:
+                compactMiniBoardPresentation && !widget.selected
+                    ? null
+                    : Border.all(
+                      color:
+                          widget.selected
+                              ? kPrimaryColor.withValues(alpha: 0.96)
+                              : (_hovered
+                                  ? kPrimaryColor.withValues(alpha: 0.16)
+                                  : kDividerColor),
+                      width: widget.selected ? 2 : 1,
+                    ),
           ),
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding:
+                compactMiniBoardPresentation
+                    ? const EdgeInsets.symmetric(horizontal: 2, vertical: 2)
+                    : const EdgeInsets.all(12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _PlayerRow(
-                  data: widget.data,
-                  isWhite: false,
-                  result: _resultFor(widget.data.status, isWhite: false),
-                  compact: true,
+                Padding(
+                  padding: EdgeInsets.only(left: playerInset),
+                  child: _PlayerRow(
+                    data: widget.data,
+                    isWhite: false,
+                    result: _resultFor(widget.data.status, isWhite: false),
+                    compact: true,
+                    compactMiniBoardPresentation: compactMiniBoardPresentation,
+                    trailingLabel: widget.forYouRoundLabel,
+                  ),
                 ),
-                const SizedBox(height: 10),
+                SizedBox(height: compactMiniBoardPresentation ? 4 : 10),
                 Expanded(
                   // Build the eval-bar + board-preview square *off the cell
                   // width*, not via AspectRatio inside the Expanded. The
@@ -1065,7 +1100,10 @@ class _GridLayoutState extends State<_GridLayout>
                       if (!side.isFinite || side <= 0) {
                         return const SizedBox.shrink();
                       }
-                      final railWidth = widget.showEvaluationBar ? 14.0 : 0.0;
+                      final railWidth =
+                          widget.showEvaluationBar
+                              ? (compactMiniBoardPresentation ? 12.0 : 14.0)
+                              : 0.0;
                       final boardSide = math.min(w - railWidth, hSafe);
                       if (!boardSide.isFinite || boardSide <= 0) {
                         return const SizedBox.shrink();
@@ -1075,7 +1113,9 @@ class _GridLayoutState extends State<_GridLayout>
                           width: boardSide + railWidth,
                           height: boardSide,
                           child: ClipRRect(
-                            borderRadius: BorderRadius.circular(6),
+                            borderRadius: BorderRadius.circular(
+                              compactMiniBoardPresentation ? 2 : 6,
+                            ),
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
@@ -1111,12 +1151,16 @@ class _GridLayoutState extends State<_GridLayout>
                     },
                   ),
                 ),
-                const SizedBox(height: 10),
-                _PlayerRow(
-                  data: widget.data,
-                  isWhite: true,
-                  result: _resultFor(widget.data.status, isWhite: true),
-                  compact: true,
+                SizedBox(height: compactMiniBoardPresentation ? 4 : 10),
+                Padding(
+                  padding: EdgeInsets.only(left: playerInset),
+                  child: _PlayerRow(
+                    data: widget.data,
+                    isWhite: true,
+                    result: _resultFor(widget.data.status, isWhite: true),
+                    compact: true,
+                    compactMiniBoardPresentation: compactMiniBoardPresentation,
+                  ),
                 ),
               ],
             ),
@@ -1255,12 +1299,16 @@ class _PlayerRow extends StatelessWidget {
     required this.isWhite,
     required this.result,
     this.compact = false,
+    this.compactMiniBoardPresentation = false,
+    this.trailingLabel,
   });
 
   final GameCardData data;
   final bool isWhite;
   final String result; // '1', '0', '½', or empty while ongoing/unknown.
   final bool compact;
+  final bool compactMiniBoardPresentation;
+  final String? trailingLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -1283,24 +1331,38 @@ class _PlayerRow extends StatelessWidget {
         ((isWhite && data.activePlayer == Side.white) ||
             (!isWhite && data.activePlayer == Side.black));
     final isClockRunning = isOngoing && isOnMove && data.lastMoveTime != null;
+    final displayName =
+        compactMiniBoardPresentation ? _compactMiniBoardPlayerName(name) : name;
+    final federationFlag = BackfilledFederationFlag(
+      federation: fed,
+      fideId: fideId,
+      width: compact ? 16 : 22,
+      height: compact ? 11 : 15,
+      borderRadius: BorderRadius.circular(3),
+    );
 
     return Row(
       children: [
-        BackfilledFederationFlag(
-          federation: fed,
-          fideId: fideId,
-          width: compact ? 16 : 22,
-          height: compact ? 11 : 15,
-          borderRadius: BorderRadius.circular(3),
-        ),
-        const SizedBox(width: 8),
+        federationFlag,
+        SizedBox(width: compactMiniBoardPresentation ? 4 : 8),
         if (title.isNotEmpty) ...[
-          DesktopPlayerTitleChip(title: title, compact: compact),
+          if (compactMiniBoardPresentation)
+            Text(
+              title,
+              style: TextStyle(
+                color: kPrimaryColor,
+                fontSize: compact ? 9.5 : 10.5,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.4,
+              ),
+            )
+          else
+            DesktopPlayerTitleChip(title: title, compact: compact),
           const SizedBox(width: 6),
         ],
         Expanded(
           child: Text(
-            name.isEmpty ? 'Unknown' : name,
+            displayName.isEmpty ? 'Unknown' : displayName,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -1311,6 +1373,18 @@ class _PlayerRow extends StatelessWidget {
             ),
           ),
         ),
+        if (trailingLabel?.isNotEmpty ?? false) ...[
+          const SizedBox(width: 6),
+          Text(
+            trailingLabel!,
+            style: TextStyle(
+              color: kLightGreyColor,
+              fontSize: compact ? 9.5 : 10.5,
+              fontWeight: FontWeight.w600,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
         if (rating > 0) ...[
           const SizedBox(width: 8),
           Text(
@@ -1334,12 +1408,76 @@ class _PlayerRow extends StatelessWidget {
           ),
         ],
         if (result.isNotEmpty) ...[
-          const SizedBox(width: 10),
-          _ResultBadge(label: result, compact: compact),
+          SizedBox(width: compactMiniBoardPresentation ? 6 : 10),
+          if (compactMiniBoardPresentation)
+            Text(
+              result,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: _resultBadgeColor(result),
+                fontSize: compact ? 11 : 13,
+                fontWeight: FontWeight.w800,
+                height: 1,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            )
+          else
+            _ResultBadge(label: result, compact: compact),
         ],
       ],
     );
   }
+}
+
+String _compactMiniBoardPlayerName(String rawName) {
+  final name = rawName.trim();
+  if (name.isEmpty) return '';
+
+  final comma = name.indexOf(',');
+  if (comma >= 0) {
+    final surname = name.substring(0, comma).trim();
+    final givenNames = name.substring(comma + 1).trim();
+    if (givenNames.isEmpty) return surname;
+    if (_isPlayerInitial(surname) && !_isPlayerInitial(givenNames)) {
+      return _longestPlayerNamePart(givenNames);
+    }
+    if (_isPlayerInitial(givenNames) && !_isPlayerInitial(surname)) {
+      return surname;
+    }
+    return '$surname, ${givenNames[0].toUpperCase()}.';
+  }
+
+  final parts = name.split(RegExp(r'\s+'));
+  if (parts.length == 1) return name;
+  if (_isPlayerInitial(parts.first) && !_isPlayerInitial(parts.last)) {
+    return _longestPlayerNamePart(name);
+  }
+  if (_isPlayerInitial(parts.last) && !_isPlayerInitial(parts.first)) {
+    return _longestPlayerNamePart(name);
+  }
+  return '${parts.last}, ${parts.first[0].toUpperCase()}.';
+}
+
+bool _isPlayerInitial(String value) {
+  final withoutInitialPunctuation = value.trim().replaceAll(
+    RegExp(r'[\s.,]'),
+    '',
+  );
+  return withoutInitialPunctuation.runes.length <= 1;
+}
+
+String _longestPlayerNamePart(String value) {
+  final parts = value
+      .split(RegExp(r'[\s,]+'))
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty)
+      .toList(growable: false);
+  if (parts.isEmpty) return value.trim();
+  return parts.reduce((longest, part) {
+    final longestLength = longest.replaceAll(RegExp(r'[.]'), '').runes.length;
+    final partLength = part.replaceAll(RegExp(r'[.]'), '').runes.length;
+    return partLength > longestLength ? part : longest;
+  });
 }
 
 class _ClockPill extends StatelessWidget {
@@ -1584,6 +1722,8 @@ class DesktopGameCardsFlow extends StatelessWidget {
     this.scrollController,
     this.embedded = false,
     this.onColumnsResolved,
+    this.columnCountOverride,
+    this.centerIncompleteRow = false,
   });
 
   final DesktopCardLayout layout;
@@ -1595,6 +1735,15 @@ class DesktopGameCardsFlow extends StatelessWidget {
   /// When true, render inside a parent scrollable: shrink-wrap and disable
   /// our own scroll physics so the outer view drives scrolling.
   final bool embedded;
+
+  /// Optional per-surface column choice. The ordinary responsive calculation
+  /// remains the default; For You uses this to balance events with only a few
+  /// previewable games.
+  final int? columnCountOverride;
+
+  /// Centers the final partial row. Only applies to embedded grid layouts,
+  /// where the item count is intentionally small and bounded.
+  final bool centerIncompleteRow;
 
   /// Fired during layout with the column count this flow resolved for the
   /// current width. Keyboard-focus hosts point this at a mutable field so
@@ -1663,8 +1812,39 @@ class DesktopGameCardsFlow extends StatelessWidget {
         const aspect = 0.95;
 
         final rawCols = (innerWidth / metrics.targetWidth).floor();
-        final columns = rawCols.clamp(metrics.minCols, metrics.maxCols).toInt();
+        final responsiveColumns =
+            rawCols.clamp(metrics.minCols, metrics.maxCols).toInt();
+        final columns =
+            columnCountOverride?.clamp(1, metrics.maxCols).toInt() ??
+            responsiveColumns;
         onColumnsResolved?.call(columns);
+
+        if (layout == DesktopCardLayout.grid &&
+            embedded &&
+            centerIncompleteRow) {
+          final tileWidth =
+              ((innerWidth - metrics.spacing * (columns - 1)) / columns)
+                  .clamp(0.0, double.infinity)
+                  .toDouble();
+          return Padding(
+            padding: padInsets ?? EdgeInsets.zero,
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              spacing: metrics.spacing,
+              runSpacing: metrics.spacing,
+              children: [
+                for (var index = 0; index < itemCount; index++)
+                  SizedBox(
+                    width: tileWidth,
+                    child: AspectRatio(
+                      aspectRatio: aspect,
+                      child: itemBuilder(context, index),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        }
 
         final delegate =
             mainAxisExtent != null

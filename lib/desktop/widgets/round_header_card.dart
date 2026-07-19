@@ -19,12 +19,14 @@ class RoundHeaderCard extends StatefulWidget {
     required this.gameCount,
     required this.expanded,
     required this.onToggle,
+    this.selected = false,
   });
 
   final GamesAppBarModel round;
   final int gameCount;
   final bool expanded;
   final VoidCallback onToggle;
+  final bool selected;
 
   @override
   State<RoundHeaderCard> createState() => _RoundHeaderCardState();
@@ -56,13 +58,17 @@ class _RoundHeaderCardState extends State<RoundHeaderCard> {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
             decoration: BoxDecoration(
               color:
-                  _pressed
+                  widget.selected
+                      ? kBlack3Color
+                      : _pressed
                       ? kBlack3Color
                       : (_hovered ? kBlack3Color : kBlack2Color),
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
                 color:
-                    _pressed
+                    widget.selected
+                        ? kPrimaryColor.withValues(alpha: 0.58)
+                        : _pressed
                         ? kPrimaryColor.withValues(alpha: 0.55)
                         : (_hovered
                             ? kPrimaryColor.withValues(alpha: 0.3)
