@@ -268,8 +268,7 @@ EventGameCardFocus _moveHierarchicalGroupFocus({
         ? _gameFocus(lastEvent, lastGameCount - 1)
         : _eventFocus(lastEvent);
   }
-  if (key == LogicalKeyboardKey.pageUp ||
-      key == LogicalKeyboardKey.pageDown) {
+  if (key == LogicalKeyboardKey.pageUp || key == LogicalKeyboardKey.pageDown) {
     final direction = key == LogicalKeyboardKey.pageUp ? -1 : 1;
     return _eventFocus(
       _clampInt(eventIndex + direction * pageStride, 0, eventCount - 1),
@@ -277,9 +276,13 @@ EventGameCardFocus _moveHierarchicalGroupFocus({
   }
 
   if (current.isEvent) {
-    if (key == LogicalKeyboardKey.arrowDown) {
+    if (key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.arrowDown) {
       final gameCount = gameCountAt(eventIndex);
       if (gameCount > 0) return _gameFocus(eventIndex, 0);
+      if (key == LogicalKeyboardKey.arrowRight) {
+        return _eventFocus(eventIndex);
+      }
       return eventIndex + 1 < eventCount
           ? _eventFocus(eventIndex + 1)
           : _eventFocus(eventIndex);
@@ -300,7 +303,7 @@ EventGameCardFocus _moveHierarchicalGroupFocus({
   if (key == LogicalKeyboardKey.arrowLeft) {
     return gameIndex > 0
         ? _gameFocus(eventIndex, gameIndex - 1)
-        : _gameFocus(eventIndex, gameIndex);
+        : _eventFocus(eventIndex);
   }
   if (key == LogicalKeyboardKey.arrowRight) {
     return gameIndex + 1 < gameCount
@@ -309,22 +312,27 @@ EventGameCardFocus _moveHierarchicalGroupFocus({
   }
 
   final columns = _clampInt(
-    gameColumnCountForEvent == null
-        ? 1
-        : gameColumnCountForEvent(eventIndex),
+    gameColumnCountForEvent == null ? 1 : gameColumnCountForEvent(eventIndex),
     1,
     gameCount,
   );
-  if (key == LogicalKeyboardKey.arrowUp) {
-    final target = gameIndex - columns;
-    return target >= 0 ? _gameFocus(eventIndex, target) : _eventFocus(eventIndex);
-  }
-  if (key == LogicalKeyboardKey.arrowDown) {
-    final target = gameIndex + columns;
-    if (target < gameCount) return _gameFocus(eventIndex, target);
-    return eventIndex + 1 < eventCount
-        ? _eventFocus(eventIndex + 1)
-        : _gameFocus(eventIndex, gameIndex);
+  if (key == LogicalKeyboardKey.arrowUp ||
+      key == LogicalKeyboardKey.arrowDown) {
+    final direction = key == LogicalKeyboardKey.arrowUp ? -1 : 1;
+    final preferredColumn = gameIndex % columns;
+    for (
+      var targetEvent = eventIndex + direction;
+      targetEvent >= 0 && targetEvent < eventCount;
+      targetEvent += direction
+    ) {
+      final targetCount = gameCountAt(targetEvent);
+      if (targetCount > 0) {
+        return _gameFocus(
+          targetEvent,
+          _clampInt(preferredColumn, 0, targetCount - 1),
+        );
+      }
+    }
   }
   return _gameFocus(eventIndex, gameIndex);
 }

@@ -515,13 +515,48 @@ void main() {
       expectFocus(focus, eventIndex: 0, column: EventGameCardFocusColumn.event);
     });
 
-    test('hierarchical navigation visits event header before its boards', () {
-      EventGameCardFocus? focus = const EventGameCardFocus(eventIndex: 0);
+    test(
+      'hierarchical navigation enters boards and keeps vertical board focus',
+      () {
+        EventGameCardFocus? focus = const EventGameCardFocus(eventIndex: 0);
 
-      focus = moveEventGameCardFocus(
-        current: focus,
-        key: LogicalKeyboardKey.arrowDown,
-        eventCount: 3,
+        focus = moveEventGameCardFocus(
+          current: focus,
+          key: LogicalKeyboardKey.arrowDown,
+          eventCount: 3,
+          gameCountForEvent: (_) => 4,
+          gameColumnCountForEvent: (_) => 2,
+          hierarchicalGroups: true,
+        );
+        expectFocus(
+          focus,
+          eventIndex: 0,
+          column: EventGameCardFocusColumn.game,
+          gameIndex: 0,
+        );
+
+        focus = moveEventGameCardFocus(
+          current: focus,
+          key: LogicalKeyboardKey.arrowUp,
+          eventCount: 3,
+          gameCountForEvent: (_) => 4,
+          gameColumnCountForEvent: (_) => 2,
+          hierarchicalGroups: true,
+        );
+        expectFocus(
+          focus,
+          eventIndex: 0,
+          column: EventGameCardFocusColumn.game,
+          gameIndex: 0,
+        );
+      },
+    );
+
+    test('hierarchical right enters boards and left returns to the event', () {
+      var focus = moveEventGameCardFocus(
+        current: const EventGameCardFocus(eventIndex: 0),
+        key: LogicalKeyboardKey.arrowRight,
+        eventCount: 2,
         gameCountForEvent: (_) => 4,
         gameColumnCountForEvent: (_) => 2,
         hierarchicalGroups: true,
@@ -535,13 +570,18 @@ void main() {
 
       focus = moveEventGameCardFocus(
         current: focus,
-        key: LogicalKeyboardKey.arrowUp,
-        eventCount: 3,
+        key: LogicalKeyboardKey.arrowLeft,
+        eventCount: 2,
         gameCountForEvent: (_) => 4,
         gameColumnCountForEvent: (_) => 2,
         hierarchicalGroups: true,
       );
-      expectFocus(focus, eventIndex: 0, column: EventGameCardFocusColumn.event);
+      expectFocus(
+        focus,
+        eventIndex: 0,
+        column: EventGameCardFocusColumn.event,
+        gameIndex: 0,
+      );
     });
 
     test('hierarchical left and right move exactly one board', () {
@@ -585,7 +625,7 @@ void main() {
     });
 
     test(
-      'hierarchical down moves from final board row to next event header',
+      'hierarchical up and down preserve the board column across events',
       () {
         var focus = moveEventGameCardFocus(
           current: const EventGameCardFocus(
@@ -602,7 +642,8 @@ void main() {
         expectFocus(
           focus,
           eventIndex: 1,
-          column: EventGameCardFocusColumn.event,
+          column: EventGameCardFocusColumn.game,
+          gameIndex: 1,
         );
 
         focus = moveEventGameCardFocus(
@@ -617,10 +658,37 @@ void main() {
           focus,
           eventIndex: 0,
           column: EventGameCardFocusColumn.game,
-          gameIndex: 3,
+          gameIndex: 1,
         );
       },
     );
+
+    test('hierarchical vertical navigation skips events without boards', () {
+      final focus = moveEventGameCardFocus(
+        current: const EventGameCardFocus(
+          eventIndex: 0,
+          column: EventGameCardFocusColumn.game,
+          gameIndex: 2,
+        ),
+        key: LogicalKeyboardKey.arrowDown,
+        eventCount: 3,
+        gameCountForEvent:
+            (index) => switch (index) {
+              0 => 4,
+              1 => 0,
+              _ => 2,
+            },
+        gameColumnCountForEvent: (_) => 4,
+        hierarchicalGroups: true,
+      );
+
+      expectFocus(
+        focus,
+        eventIndex: 2,
+        column: EventGameCardFocusColumn.game,
+        gameIndex: 1,
+      );
+    });
 
     test(
       'activation target distinguishes event list view from in-game view',

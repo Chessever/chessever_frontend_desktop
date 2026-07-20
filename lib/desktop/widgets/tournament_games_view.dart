@@ -466,9 +466,8 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
       final notifier = ref.read(
         _tournamentRoundExpandedProvider(expansionKey).notifier,
       );
-      notifier.state = !ref.read(
-        _tournamentRoundExpandedProvider(expansionKey),
-      );
+      notifier.state =
+          !ref.read(_tournamentRoundExpandedProvider(expansionKey));
     }
 
     Widget searchField({required EdgeInsetsGeometry padding}) {
@@ -621,15 +620,11 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                                                 ? selection?.gameId
                                                 : null,
                                         onSelectGame:
-                                            (gameId) => selectGame(
-                                              round.id,
-                                              gameId,
-                                            ),
+                                            (gameId) =>
+                                                selectGame(round.id, gameId),
                                         keyForGame:
-                                            (gameId) => keyForGame(
-                                              round.id,
-                                              gameId,
-                                            ),
+                                            (gameId) =>
+                                                keyForGame(round.id, gameId),
                                         selectedHeader:
                                             selection?.isGroup == true &&
                                             selection?.groupId == round.id,
@@ -2005,6 +2000,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
     this.roundNameById = const <String, String>{},
     this.selected = false,
     this.onTap,
+    this.onSelect,
     this.enableContextMenu = true,
     this.viewSource = ChessboardView.tour,
     this.liveBatchKey,
@@ -2012,7 +2008,6 @@ class LiveDesktopGameCard extends ConsumerWidget {
     this.allowStockfishFallback = true,
     this.federationFallbackForName,
     this.federationFallback,
-    this.forYouRoundLabel,
   });
 
   final GamesTourModel game;
@@ -2042,13 +2037,17 @@ class LiveDesktopGameCard extends ConsumerWidget {
   /// player score-card pane) when needed.
   final VoidCallback? onTap;
 
+  /// When supplied, a normal click only selects the card and a double-click
+  /// performs the usual game-open action. Other game-card surfaces keep their
+  /// existing single-click behavior by leaving this null.
+  final VoidCallback? onSelect;
+
   /// When set together with [federationFallback], any side whose name
   /// matches and whose federation is empty inherits the fallback ISO2 code.
   /// Used by the player profile to honour the user's Countrymen selection
   /// when the profile player has no federation on file.
   final String? federationFallbackForName;
   final String? federationFallback;
-  final String? forYouRoundLabel;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -2091,25 +2090,39 @@ class LiveDesktopGameCard extends ConsumerWidget {
         data = data.copyWith(blackFederation: fallback);
       }
     }
+    void openGame() {
+      final callback = onTap;
+      if (callback != null) {
+        callback();
+        return;
+      }
+      openTournamentGameTab(
+        ref,
+        displayGame,
+        tournamentTitle,
+        eventGames: eventGames,
+        routeTitle: routeTitle,
+        routeGames: routeGames,
+        eventGamesContinuation: eventGamesContinuation,
+        routeGamesContinuation: routeGamesContinuation,
+        roundStartsAtById: roundStartsAtById,
+        roundNameById: roundNameById,
+        viewSource: viewSource,
+      );
+    }
+
     return DesktopGameCard(
       // Re-derive every rebuild so the eval bar's FEN, the status pill,
       // and the "In play"/result label pick up Realtime deltas.
       data: data,
-      onTap:
-          onTap ??
-          () => openTournamentGameTab(
-            ref,
-            displayGame,
-            tournamentTitle,
-            eventGames: eventGames,
-            routeTitle: routeTitle,
-            routeGames: routeGames,
-            eventGamesContinuation: eventGamesContinuation,
-            routeGamesContinuation: routeGamesContinuation,
-            roundStartsAtById: roundStartsAtById,
-            roundNameById: roundNameById,
-            viewSource: viewSource,
-          ),
+      onTap: onSelect ?? openGame,
+      onDoubleTap:
+          onSelect == null
+              ? null
+              : () {
+                onSelect!();
+                openGame();
+              },
       onContextMenu:
           enableContextMenu
               ? (position) {
@@ -2146,7 +2159,6 @@ class LiveDesktopGameCard extends ConsumerWidget {
       ),
       layout: layout,
       selected: selected,
-      forYouRoundLabel: forYouRoundLabel,
       allowStockfishFallback:
           streamingEnabled &&
           allowStockfishFallback &&

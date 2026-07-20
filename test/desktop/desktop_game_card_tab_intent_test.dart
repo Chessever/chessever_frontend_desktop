@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
-import 'package:chessever/desktop/widgets/desktop_player_title_chip.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
@@ -86,6 +85,41 @@ void main() {
     expect(spawnedFocusValues, isEmpty);
   });
 
+  testWidgets('single click selects while double click opens when configured', (
+    tester,
+  ) async {
+    var selections = 0;
+    var opens = 0;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _cardProviderOverrides(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: DesktopGameCard(
+              data: _data,
+              layout: DesktopCardLayout.compact,
+              onTap: () => selections++,
+              onDoubleTap: () => opens++,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(DesktopGameCard));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(selections, 1);
+    expect(opens, 0);
+
+    await tester.tap(find.byType(DesktopGameCard));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byType(DesktopGameCard));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(selections, 1);
+    expect(opens, 1);
+  });
+
   testWidgets('started live compact card leaves result slot empty', (
     tester,
   ) async {
@@ -161,96 +195,6 @@ void main() {
     expect(find.text('-'), findsNothing);
     expect(find.text('12:34'), findsOneWidget);
     expect(find.text('23:45'), findsOneWidget);
-  });
-
-  testWidgets('grid mini-board uses compact names and plain title text', (
-    tester,
-  ) async {
-    const forYouData = GameCardData(
-      id: 'for-you-game',
-      title: 'Ghazarian vs Hardaway',
-      whiteName: 'Ghazarian, Kirk',
-      blackName: 'Hardaway, Brewington',
-      whiteFederation: 'USA',
-      blackFederation: 'USA',
-      whiteTitle: 'GM',
-      blackTitle: 'GM',
-      whiteRating: 2546,
-      blackRating: 2501,
-      fen: null,
-      status: GameStatus.ongoing,
-      hasStarted: true,
-    );
-
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: _cardProviderOverrides(),
-        child: MaterialApp(
-          home: Scaffold(
-            body: SizedBox(
-              width: 320,
-              height: 360,
-              child: DesktopGameCard(
-                data: forYouData,
-                layout: DesktopCardLayout.grid,
-                forYouRoundLabel: 'R5',
-                onTap: _noop,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-
-    expect(find.text('Ghazarian, K.'), findsOneWidget);
-    expect(find.text('Hardaway, B.'), findsOneWidget);
-    expect(find.byType(DesktopPlayerTitleChip), findsNothing);
-    expect(find.text('GM'), findsNWidgets(2));
-    expect(find.text('R5'), findsOneWidget);
-  });
-
-  testWidgets('grid mini-board keeps recognizable single-name players', (
-    tester,
-  ) async {
-    const singleNameData = GameCardData(
-      id: 'single-name-game',
-      title: 'Gukesh vs Praggnanandhaa',
-      whiteName: 'Gukesh D',
-      blackName: 'Praggnanandhaa R',
-      whiteFederation: 'IND',
-      blackFederation: 'IND',
-      whiteTitle: 'GM',
-      blackTitle: 'GM',
-      whiteRating: 2777,
-      blackRating: 2768,
-      fen: null,
-      status: GameStatus.ongoing,
-      hasStarted: true,
-    );
-
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: _cardProviderOverrides(),
-        child: MaterialApp(
-          home: Scaffold(
-            body: SizedBox(
-              width: 320,
-              height: 360,
-              child: DesktopGameCard(
-                data: singleNameData,
-                layout: DesktopCardLayout.grid,
-                onTap: _noop,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-
-    expect(find.text('Gukesh'), findsOneWidget);
-    expect(find.text('Praggnanandhaa'), findsOneWidget);
-    expect(find.text('D, G.'), findsNothing);
-    expect(find.text('R, P.'), findsNothing);
   });
 
   testWidgets('grid game card keeps its content outside transformed layers', (

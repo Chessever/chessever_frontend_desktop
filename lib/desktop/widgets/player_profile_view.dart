@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:cue/cue.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,6 +11,7 @@ import 'package:chessever/desktop/models/player_workspace_models.dart';
 import 'package:chessever/desktop/panes/player_workspace_pane.dart';
 import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
+import 'package:chessever/desktop/services/fide_rating_history_service.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
@@ -71,21 +71,12 @@ import 'package:chessever/widgets/player_initials_avatar.dart';
 
 /// Desktop-native player profile pane.
 ///
-/// Ground-up rewrite of the previous shell that wrapped the mobile/tablet
-/// `Player*Tab` widgets. Layout:
-///
-/// ```text
-/// ┌──────────────────────────────────────────────────────────────────┐
-/// │ Header  flag · TITLE · Name      [♥]  [Build tree]  [Save]       │
-/// ├───────────────────────┬──────────────────────────────────────────┤
-/// │  Ratings tiles        │  About | Games | Events                  │
-/// │  TWIC source badge    │  ──── tab body ────                      │
-/// │  Bio rows             │                                          │
-/// └───────────────────────┴──────────────────────────────────────────┘
-/// ```
-///
-/// Mobile responsive helpers (`.h/.w/.sp`) are gone — fixed pixels chosen for
-/// a 1440p desktop viewport.
+/// The compact identity header keeps profile actions visible while the
+/// full-width Overview, Games, and Events tabs use the remaining desktop
+/// canvas. Overview follows the public profile hierarchy: three rating cards,
+/// performance and colour summaries, openings, and recent events. Official
+/// monthly FIDE history is loaded independently so it does not block the
+/// profile's first frame.
 class PlayerProfileView extends ConsumerStatefulWidget {
   const PlayerProfileView({super.key, required this.tabId, required this.args});
 
@@ -100,7 +91,7 @@ extension on PlayerProfileSection {
   String get label {
     switch (this) {
       case PlayerProfileSection.about:
-        return 'About';
+        return 'Overview';
       case PlayerProfileSection.games:
         return 'Games';
       case PlayerProfileSection.events:
@@ -293,84 +284,6 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
     }
   }
 
-  Future<void> _openSaveToLibrary({
-    required PlayerProfileKey playerKey,
-    int? knownTotalCount,
-  }) async {
-    final state = ref.read(playerProfileGamesKeyProvider(playerKey));
-    final action = await _showPlayerProfileSaveActions(
-      context: context,
-      playerName: playerKey.playerName,
-      hasActiveFilters: state.hasActiveFilters,
-      visibleCount: state.filteredGames.length,
-      knownTotalCount: state.totalCount ?? knownTotalCount,
-    );
-    if (action == null || !mounted) return;
-
-    switch (action) {
-      case _PlayerProfileSaveAction.chooseManually:
-        _setTab(PlayerProfileSection.games);
-        ref.read(playerGamesSelectionModeProvider(playerKey).notifier).state =
-            true;
-        break;
-      case _PlayerProfileSaveAction.addAll:
-        await _saveCurrentGamesToLibrary(
-          playerKey: playerKey,
-          knownTotalCount: knownTotalCount,
-        );
-        break;
-    }
-  }
-
-  Future<void> _saveCurrentGamesToLibrary({
-    required PlayerProfileKey playerKey,
-    int? knownTotalCount,
-  }) async {
-    var state = ref.read(playerProfileGamesKeyProvider(playerKey));
-    if (!mounted) return;
-
-    try {
-      if (playerKey.source == PlayerProfileDataSource.twic &&
-          state.hasMorePages) {
-        _showToast('Preparing ${playerKey.playerName} games…');
-        await ref
-            .read(playerProfileGamesKeyProvider(playerKey).notifier)
-            .loadAllRemainingPages(maxPages: _resolveBulkMaxPages(state));
-      }
-
-      state = ref.read(playerProfileGamesKeyProvider(playerKey));
-      final games = state.filteredGames;
-      if (games.isEmpty) {
-        _showToast('No games found to save.');
-        return;
-      }
-
-      if (!mounted) return;
-      await _saveGamesToLibrary(
-        context: context,
-        ref: ref,
-        games: games,
-        sourceLabel: playerKey.playerName,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      _showToast('Failed to prepare games: $e', error: true);
-    }
-  }
-
-  int _resolveBulkMaxPages(PlayerProfileGamesState state) {
-    const defaultMaxPages = 250;
-    const fallbackPageSize = 60;
-    final totalCount = state.totalCount;
-    if (totalCount == null || totalCount <= 0) return defaultMaxPages;
-    final remaining = totalCount - state.allGames.length;
-    if (remaining <= 0) return defaultMaxPages;
-    return (remaining / fallbackPageSize)
-        .ceil()
-        .clamp(defaultMaxPages, 5000)
-        .toInt();
-  }
-
   void _showToast(String message, {bool error = false}) {
     if (!mounted) return;
     showDesktopToast(context, message, error: error);
@@ -450,8 +363,29 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
     final hasActiveFilter = gamesState.hasActiveFilters;
     final isTwicLoading =
         _dataSource == PlayerProfileDataSource.twic && gamesState.isLoading;
-
-    final showEventCounts = currentTab == PlayerProfileSection.events;
+    final filteredStatsAsync =
+        hasActiveFilter && activeKey.source == PlayerProfileDataSource.twic
+            ? ref.watch(
+              twicPlayerStatsProvider(
+                TwicPlayerStatsRequest(
+                  playerKey: activeKey,
+                  scope: TwicStatsScope.filtered,
+                ),
+              ),
+            )
+            : null;
+    final authoritativeGameCount =
+        hasActiveFilter
+            ? filteredStatsAsync?.valueOrNull?.resultStats.totalGames
+            : twicSummaryAsync.valueOrNull?.totalGames;
+    final filteredGameCount = playerProfileGameCountForTab(
+      gamesState,
+      authoritativeTotal: authoritativeGameCount,
+    );
+    final isGameCountLoading =
+        hasActiveFilter
+            ? (filteredStatsAsync?.isLoading ?? false)
+            : twicSummaryAsync.isLoading && authoritativeGameCount == null;
 
     final ratings = _ProfileRatings(
       classical: activeProfile?.classicalRating ?? widget.args.rating,
@@ -475,13 +409,16 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
             name: effectiveName,
             title: effectiveTitle,
             federation: effectiveFederation,
+            fideId: effectiveFideId,
+            birthday: activeProfile?.birthday,
+            totalGames: twicSummaryAsync.valueOrNull?.totalGames,
+            isSummaryLoading: twicSummaryAsync.isLoading,
             isFavorite: isFavorite,
             hasFideId: hasFideId,
             hasPlayerWorkspace: workspacePlayer != null,
             isBuildingProfile: _isBuildingProfile,
             isBuildingTree: _isBuildingTree,
             hasBuildTree: hasFideId,
-            hasActiveFilter: hasActiveFilter,
             onToggleFavorite: _toggleFavorite,
             onOpenPlayerWorkspace:
                 hasFideId
@@ -491,69 +428,52 @@ class _PlayerProfileViewState extends ConsumerState<PlayerProfileView> {
                 effectiveFideId == null
                     ? () {}
                     : () => _buildChessEverPlayerTree(effectiveFideId),
-            onSaveToLibrary: () {
-              _openSaveToLibrary(
-                playerKey: activeKey,
-                knownTotalCount:
-                    _dataSource == PlayerProfileDataSource.twic
-                        ? twicSummaryAsync.valueOrNull?.totalGames
-                        : null,
-              );
-            },
           ),
           const Divider(height: 1, thickness: 1, color: kDividerColor),
           Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _IdentityRail(
-                  ratings: ratings,
-                  fideId: effectiveFideId,
-                  name: effectiveName,
-                  title: effectiveTitle,
-                  activeProfile: activeProfile,
-                  twicSummaryAsync: twicSummaryAsync,
-                  isTwicLoading: isTwicLoading,
-                  showEventCounts: showEventCounts,
-                  dataSource: _dataSource,
-                  federation: effectiveFederation,
-                  currentTimeControl: gamesState.filter.timeControl,
-                  onSelectTimeControl: (timeControl) {
-                    final next =
-                        gamesState.filter.timeControl == timeControl
-                            ? GameTimeControlFilter.all
-                            : timeControl;
-                    ref
-                        .read(playerProfileGamesKeyProvider(activeKey).notifier)
-                        .mergeFilter(timeControl: next);
-                  },
-                ),
-                const VerticalDivider(
-                  width: 1,
-                  thickness: 1,
-                  color: kDividerColor,
-                ),
-                Expanded(
-                  child: _RightPane(
-                    tabId: widget.tabId,
-                    currentTab: currentTab,
-                    onSelectTab: _setTab,
-                    hasActiveFilter: hasActiveFilter,
-                    isTwicLoading: isTwicLoading,
-                    activeKey: activeKey,
-                    fideId: widget.args.fideId,
-                    playerName: widget.args.playerName,
-                    dataSource: _dataSource,
-                    gamebasePlayerId: _gamebasePlayerId,
-                  ),
-                ),
-              ],
+            child: _RightPane(
+              tabId: widget.tabId,
+              currentTab: currentTab,
+              onSelectTab: _setTab,
+              hasActiveFilter: hasActiveFilter,
+              isTwicLoading: isTwicLoading,
+              filteredGameCount: filteredGameCount,
+              isGameCountLoading: isGameCountLoading,
+              activeKey: activeKey,
+              fideId: effectiveFideId,
+              playerName: effectiveName,
+              dataSource: _dataSource,
+              gamebasePlayerId: _gamebasePlayerId,
+              ratings: ratings,
+              currentTimeControl: gamesState.filter.timeControl,
+              onSelectTimeControl: (timeControl) {
+                final next =
+                    gamesState.filter.timeControl == timeControl
+                        ? GameTimeControlFilter.all
+                        : timeControl;
+                ref
+                    .read(playerProfileGamesKeyProvider(activeKey).notifier)
+                    .mergeFilter(timeControl: next);
+              },
             ),
           ),
         ],
       ),
     );
   }
+}
+
+@visibleForTesting
+int playerProfileGameCountForTab(
+  PlayerProfileGamesState state, {
+  int? authoritativeTotal,
+}) {
+  if (state.playerKey.source == PlayerProfileDataSource.twic) {
+    return authoritativeTotal ??
+        state.totalCount ??
+        state.filteredGames.length;
+  }
+  return state.filteredGames.length;
 }
 
 String _playerProfileRouteTitle(String playerName) {
@@ -591,33 +511,37 @@ class _Header extends StatelessWidget {
     required this.name,
     required this.title,
     required this.federation,
+    required this.fideId,
+    required this.birthday,
+    required this.totalGames,
+    required this.isSummaryLoading,
     required this.isFavorite,
     required this.hasFideId,
     required this.hasPlayerWorkspace,
     required this.isBuildingProfile,
     required this.isBuildingTree,
     required this.hasBuildTree,
-    required this.hasActiveFilter,
     required this.onToggleFavorite,
     required this.onOpenPlayerWorkspace,
     required this.onBuildTree,
-    required this.onSaveToLibrary,
   });
 
   final String name;
   final String? title;
   final String? federation;
+  final int? fideId;
+  final String? birthday;
+  final int? totalGames;
+  final bool isSummaryLoading;
   final bool isFavorite;
   final bool hasFideId;
   final bool hasPlayerWorkspace;
   final bool isBuildingProfile;
   final bool isBuildingTree;
   final bool hasBuildTree;
-  final bool hasActiveFilter;
   final VoidCallback onToggleFavorite;
   final VoidCallback? onOpenPlayerWorkspace;
   final VoidCallback onBuildTree;
-  final VoidCallback onSaveToLibrary;
 
   @override
   Widget build(BuildContext context) {
@@ -626,60 +550,101 @@ class _Header extends StatelessWidget {
     final showFlag =
         (federation?.toUpperCase() == 'FID') || countryCode.isNotEmpty;
     return Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      height: 98,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       decoration: const BoxDecoration(color: kBackgroundColor),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          _ProfileAvatar(fideId: fideId, name: name, size: 68),
+          const SizedBox(width: 14),
           Expanded(
-            child: Row(
+            child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (showFlag) ...[
-                  federation?.toUpperCase() == 'FID'
-                      ? Image.asset(
-                        PngAsset.fideLogo,
-                        height: 16,
-                        width: 22,
-                        cacheWidth:
-                            (22 * MediaQuery.devicePixelRatioOf(context))
-                                .round(),
-                        cacheHeight:
-                            (16 * MediaQuery.devicePixelRatioOf(context))
-                                .round(),
-                      )
-                      : FederationFlag(
-                        federation: countryCode,
-                        height: 16,
-                        width: 22,
-                        borderRadius: BorderRadius.circular(2),
+                Row(
+                  children: [
+                    if ((title ?? '').isNotEmpty) ...[
+                      Text(
+                        title!,
+                        style: const TextStyle(
+                          color: kPrimaryColor,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.25,
+                        ),
                       ),
-                  const SizedBox(width: 10),
-                ],
-                if ((title ?? '').isNotEmpty) ...[
-                  Text(
-                    title!,
-                    style: const TextStyle(
-                      color: kLightYellowColor,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.2,
+                      const SizedBox(width: 8),
+                    ],
+                    Flexible(
+                      child: Text(
+                        _formatDisplayName(name),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: kWhiteColor,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.35,
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                Flexible(
-                  child: Text(
-                    _formatDisplayName(name),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: kWhiteColor,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.1,
-                    ),
-                  ),
+                  ],
+                ),
+                const SizedBox(height: 7),
+                Wrap(
+                  spacing: 14,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    if (showFlag)
+                      _HeaderMeta(
+                        label: federation?.toUpperCase() ?? countryCode,
+                        child:
+                            federation?.toUpperCase() == 'FID'
+                                ? Image.asset(
+                                  PngAsset.fideLogo,
+                                  height: 14,
+                                  width: 20,
+                                  cacheWidth:
+                                      (20 *
+                                              MediaQuery.devicePixelRatioOf(
+                                                context,
+                                              ))
+                                          .round(),
+                                  cacheHeight:
+                                      (14 *
+                                              MediaQuery.devicePixelRatioOf(
+                                                context,
+                                              ))
+                                          .round(),
+                                )
+                                : FederationFlag(
+                                  federation: countryCode,
+                                  height: 14,
+                                  width: 20,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                      ),
+                    if (fideId != null && fideId! > 0)
+                      _HeaderMeta(label: 'FIDE $fideId'),
+                    if ((birthday ?? '').trim().isNotEmpty)
+                      _HeaderMeta(label: 'Born ${birthday!.trim()}'),
+                    if (totalGames != null && totalGames! > 0)
+                      _HeaderMeta(
+                        label: '${formatCompactCount(totalGames!)} games',
+                      )
+                    else if (isSummaryLoading)
+                      const SizedBox(
+                        width: 11,
+                        height: 11,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.4,
+                          valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+                        ),
+                      ),
+                  ],
                 ),
               ],
             ),
@@ -715,14 +680,6 @@ class _Header extends StatelessWidget {
               loading: isBuildingTree,
             ),
           ],
-          const SizedBox(width: 8),
-          DesktopHeaderActionButton(
-            label: 'Save',
-            icon: Icons.library_add_outlined,
-            onPress: onSaveToLibrary,
-            tooltip: 'Save this player\'s games to your library',
-            accented: hasActiveFilter,
-          ),
         ],
       ),
     );
@@ -736,130 +693,52 @@ class _Header extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------
-// Identity rail (left column)
-// ---------------------------------------------------------------------
+class _HeaderMeta extends StatelessWidget {
+  const _HeaderMeta({required this.label, this.child});
 
-class _IdentityRail extends StatelessWidget {
-  const _IdentityRail({
-    required this.ratings,
-    required this.fideId,
-    required this.name,
-    required this.title,
-    required this.activeProfile,
-    required this.twicSummaryAsync,
-    required this.isTwicLoading,
-    required this.showEventCounts,
-    required this.dataSource,
-    required this.federation,
-    required this.currentTimeControl,
-    required this.onSelectTimeControl,
-  });
-
-  final _ProfileRatings ratings;
-  final int? fideId;
-  final String name;
-  final String? title;
-  final PlayerProfileData? activeProfile;
-  final AsyncValue<TwicProfileSummary?> twicSummaryAsync;
-  final bool isTwicLoading;
-  final bool showEventCounts;
-  final PlayerProfileDataSource dataSource;
-  final String? federation;
-  final GameTimeControlFilter currentTimeControl;
-  final ValueChanged<GameTimeControlFilter> onSelectTimeControl;
+  final String label;
+  final Widget? child;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 320,
-      child: SingleChildScrollView(
-        physics: const DesktopScrollPhysics(),
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _ProfileAvatarCard(fideId: fideId, name: name, title: title),
-            const SizedBox(height: 16),
-            Cue.onMount(
-              motion: const CueMotion.smooth(),
-              acts: const [Act.fadeIn(), Act.slideY(from: 0.15)],
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _RatingTile(
-                      label: 'Classical',
-                      asset: PngAsset.classicalIcon,
-                      value: ratings.classical,
-                      selected:
-                          currentTimeControl == GameTimeControlFilter.classical,
-                      onTap:
-                          () => onSelectTimeControl(
-                            GameTimeControlFilter.classical,
-                          ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _RatingTile(
-                      label: 'Rapid',
-                      asset: PngAsset.rapidIcon,
-                      value: ratings.rapid,
-                      selected:
-                          currentTimeControl == GameTimeControlFilter.rapid,
-                      onTap:
-                          () =>
-                              onSelectTimeControl(GameTimeControlFilter.rapid),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _RatingTile(
-                      label: 'Blitz',
-                      asset: PngAsset.blitzIcon,
-                      value: ratings.blitz,
-                      selected:
-                          currentTimeControl == GameTimeControlFilter.blitz,
-                      onTap:
-                          () =>
-                              onSelectTimeControl(GameTimeControlFilter.blitz),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            _DataSourceCard(
-              dataSource: dataSource,
-              twicSummaryAsync: twicSummaryAsync,
-              isTwicLoading: isTwicLoading,
-              showEventCounts: showEventCounts,
-            ),
-            const SizedBox(height: 16),
-            _BioCard(profile: activeProfile, federation: federation),
-          ],
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (child != null) ...[child!, const SizedBox(width: 6)],
+        Text(
+          label,
+          style: const TextStyle(
+            color: kWhiteColor70,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
         ),
-      ),
+      ],
     );
   }
 }
 
-class _ProfileAvatarCard extends StatefulWidget {
-  const _ProfileAvatarCard({
+// ---------------------------------------------------------------------
+// Profile avatar and rating overview
+// ---------------------------------------------------------------------
+
+class _ProfileAvatar extends StatefulWidget {
+  const _ProfileAvatar({
     required this.fideId,
     required this.name,
-    required this.title,
+    required this.size,
   });
 
   final int? fideId;
   final String name;
-  final String? title;
+  final double size;
 
   @override
-  State<_ProfileAvatarCard> createState() => _ProfileAvatarCardState();
+  State<_ProfileAvatar> createState() => _ProfileAvatarState();
 }
 
-class _ProfileAvatarCardState extends State<_ProfileAvatarCard> {
+class _ProfileAvatarState extends State<_ProfileAvatar> {
   Future<String?>? _photoFuture;
 
   @override
@@ -869,7 +748,7 @@ class _ProfileAvatarCardState extends State<_ProfileAvatarCard> {
   }
 
   @override
-  void didUpdateWidget(covariant _ProfileAvatarCard oldWidget) {
+  void didUpdateWidget(covariant _ProfileAvatar oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.fideId != widget.fideId) _configurePhotoFuture();
   }
@@ -885,61 +764,102 @@ class _ProfileAvatarCardState extends State<_ProfileAvatarCard> {
   @override
   Widget build(BuildContext context) {
     final initials = getPlayerInitials(widget.name);
-    final title = widget.title?.trim();
 
-    return Cue.onMount(
-      motion: const CueMotion.smooth(),
-      acts: const [Act.fadeIn(), Act.slideY(from: 0.12)],
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(18, 20, 18, 18),
-        decoration: BoxDecoration(
-          color: kBlack2Color,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: kDividerColor),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.35),
-              blurRadius: 18,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
-        child: Center(
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.55),
-                  blurRadius: 24,
-                  offset: const Offset(0, 12),
-                ),
-              ],
-            ),
-            child: FutureBuilder<String?>(
-              future: _photoFuture,
-              builder: (context, snapshot) {
-                return PlayerInitialsAvatar(
-                  photoUrl: snapshot.data,
-                  initials: initials,
-                  size: 184,
-                  borderRadius: 14,
-                  title: title != null && title.isNotEmpty ? title : null,
-                );
-              },
-            ),
-          ),
-        ),
-      ),
+    return FutureBuilder<String?>(
+      future: _photoFuture,
+      builder: (context, snapshot) {
+        return PlayerInitialsAvatar(
+          photoUrl: snapshot.data,
+          initials: initials,
+          size: widget.size,
+          borderRadius: 10,
+        );
+      },
     );
   }
 }
 
-class _RatingTile extends StatefulWidget {
-  const _RatingTile({
+class _RatingOverviewRow extends StatelessWidget {
+  const _RatingOverviewRow({
+    required this.ratings,
+    required this.history,
+    required this.historyLoading,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  final _ProfileRatings ratings;
+  final FideRatingHistory? history;
+  final bool historyLoading;
+  final GameTimeControlFilter selected;
+  final ValueChanged<GameTimeControlFilter> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final classical = history?.cardTrend(FideRatingHistoryType.classical);
+    final rapid = history?.cardTrend(FideRatingHistoryType.rapid);
+    final blitz = history?.cardTrend(FideRatingHistoryType.blitz);
+    return Row(
+      children: [
+        Expanded(
+          child: _OverviewRatingCard(
+            label: 'Classical',
+            asset: PngAsset.classicalIcon,
+            value: classical?.current ?? ratings.classical,
+            games: classical?.games,
+            change: classical?.change,
+            trend: classical?.series ?? const [],
+            historyLoading: historyLoading,
+            accent: kPrimaryColor,
+            selected: selected == GameTimeControlFilter.classical,
+            onTap: () => onSelect(GameTimeControlFilter.classical),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _OverviewRatingCard(
+            label: 'Rapid',
+            asset: PngAsset.rapidIcon,
+            value: rapid?.current ?? ratings.rapid,
+            games: rapid?.games,
+            change: rapid?.change,
+            trend: rapid?.series ?? const [],
+            historyLoading: historyLoading,
+            accent: const Color(0xFFF4B942),
+            selected: selected == GameTimeControlFilter.rapid,
+            onTap: () => onSelect(GameTimeControlFilter.rapid),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _OverviewRatingCard(
+            label: 'Blitz',
+            asset: PngAsset.blitzIcon,
+            value: blitz?.current ?? ratings.blitz,
+            games: blitz?.games,
+            change: blitz?.change,
+            trend: blitz?.series ?? const [],
+            historyLoading: historyLoading,
+            accent: const Color(0xFFD16DF0),
+            selected: selected == GameTimeControlFilter.blitz,
+            onTap: () => onSelect(GameTimeControlFilter.blitz),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _OverviewRatingCard extends StatefulWidget {
+  const _OverviewRatingCard({
     required this.label,
     required this.asset,
     required this.value,
+    required this.games,
+    required this.change,
+    required this.trend,
+    required this.historyLoading,
+    required this.accent,
     required this.selected,
     required this.onTap,
   });
@@ -947,14 +867,19 @@ class _RatingTile extends StatefulWidget {
   final String label;
   final String asset;
   final int? value;
+  final int? games;
+  final int? change;
+  final List<FideRatingHistoryPoint> trend;
+  final bool historyLoading;
+  final Color accent;
   final bool selected;
   final VoidCallback onTap;
 
   @override
-  State<_RatingTile> createState() => _RatingTileState();
+  State<_OverviewRatingCard> createState() => _OverviewRatingCardState();
 }
 
-class _RatingTileState extends State<_RatingTile> {
+class _OverviewRatingCardState extends State<_OverviewRatingCard> {
   bool _hover = false;
 
   @override
@@ -973,7 +898,7 @@ class _RatingTileState extends State<_RatingTile> {
                     ? 'Clear ${widget.label.toLowerCase()} filter'
                     : 'Filter games by ${widget.label.toLowerCase()}',
             child: SingleMotionBuilder(
-              value: _hover ? 1.015 : 1.0,
+              value: _hover ? 1.008 : 1.0,
               motion: DesktopMotion.hover,
               builder:
                   (context, scale, child) => Transform.scale(
@@ -982,357 +907,888 @@ class _RatingTileState extends State<_RatingTile> {
                     child: child,
                   ),
               child: AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
+                duration: const Duration(milliseconds: 140),
                 curve: Curves.easeOut,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 12,
-                ),
-                height: 104,
+                height: 112,
+                padding: const EdgeInsets.fromLTRB(16, 14, 14, 13),
                 decoration: BoxDecoration(
                   color:
                       selected
-                          ? kPrimaryColor.withValues(alpha: 0.15)
+                          ? kPrimaryColor.withValues(alpha: 0.12)
                           : (_hover ? kBlack3Color : kBlack2Color),
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                     color:
                         selected
-                            ? kPrimaryColor.withValues(alpha: 0.6)
+                            ? kPrimaryColor.withValues(alpha: 0.62)
                             : (_hover
-                                ? kPrimaryColor.withValues(alpha: 0.35)
+                                ? kPrimaryColor.withValues(alpha: 0.3)
                                 : kDividerColor),
-                    width: selected ? 1.2 : 1.0,
+                    width: selected ? 1.2 : 1,
                   ),
-                  boxShadow:
-                      selected
-                          ? [
-                            BoxShadow(
-                              color: kPrimaryColor.withValues(alpha: 0.22),
-                              blurRadius: 18,
-                              spreadRadius: -2,
-                              offset: const Offset(0, 4),
-                            ),
-                          ]
-                          : (_hover
-                              ? [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.35),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ]
-                              : null),
                 ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                child: Row(
                   children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Image.asset(
-                          widget.asset,
-                          width: 14,
-                          height: 14,
-                          cacheWidth:
-                              (14 * MediaQuery.devicePixelRatioOf(context))
-                                  .round(),
-                          cacheHeight:
-                              (14 * MediaQuery.devicePixelRatioOf(context))
-                                  .round(),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          widget.label.toUpperCase(),
-                          style: TextStyle(
-                            color: selected ? kPrimaryColor : kLightGreyColor,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.9,
+                    Expanded(
+                      flex: 5,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Image.asset(
+                                widget.asset,
+                                width: 14,
+                                height: 14,
+                                cacheWidth:
+                                    (14 *
+                                            MediaQuery.devicePixelRatioOf(
+                                              context,
+                                            ))
+                                        .round(),
+                                cacheHeight:
+                                    (14 *
+                                            MediaQuery.devicePixelRatioOf(
+                                              context,
+                                            ))
+                                        .round(),
+                              ),
+                              const SizedBox(width: 7),
+                              Text(
+                                widget.label.toUpperCase(),
+                                style: TextStyle(
+                                  color:
+                                      selected ? kPrimaryColor : kWhiteColor70,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0.75,
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 8),
+                          Text(
+                            widget.value?.toString() ?? '—',
+                            style: TextStyle(
+                              color:
+                                  widget.value == null
+                                      ? kLightGreyColor
+                                      : kWhiteColor,
+                              fontSize: 24,
+                              fontWeight: FontWeight.w900,
+                              height: 1,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 7),
+                          _RatingCardFootnote(
+                            change: widget.change,
+                            games: widget.games,
+                            historyLoading: widget.historyLoading,
+                            accent: widget.accent,
+                          ),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      flex: 4,
+                      child: SizedBox(
+                        height: 58,
+                        child:
+                            widget.historyLoading && widget.trend.isEmpty
+                                ? Center(
+                                  child: SizedBox.square(
+                                    dimension: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 1.8,
+                                      color: widget.accent,
+                                    ),
+                                  ),
+                                )
+                                : widget.trend.length < 2
+                                ? const Center(
+                                  child: Text(
+                                    'History unavailable',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: kLightGreyColor,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                )
+                                : _InteractiveRatingSparkline(
+                                  points: widget.trend,
+                                  color: _ratingTrendColor(
+                                    widget.change,
+                                    widget.accent,
+                                  ),
+                                ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RatingCardFootnote extends StatelessWidget {
+  const _RatingCardFootnote({
+    required this.change,
+    required this.games,
+    required this.historyLoading,
+    required this.accent,
+  });
+
+  final int? change;
+  final int? games;
+  final bool historyLoading;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    if (historyLoading) {
+      return const Text(
+        'Loading history...',
+        style: TextStyle(
+          color: kLightGreyColor,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
+      );
+    }
+    return Row(
+      children: [
+        if (change != null) ...[
+          Text(
+            '${change! >= 0 ? '+' : ''}$change in 12M',
+            style: TextStyle(
+              color: _ratingTrendColor(change, accent),
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+          if (games != null) const SizedBox(width: 9),
+        ],
+        if (games != null)
+          Flexible(
+            child: Text(
+              '${formatCompactCount(games!)} rated games in 12M',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kLightGreyColor,
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          )
+        else
+          const Text(
+            'Current FIDE rating',
+            style: TextStyle(
+              color: kLightGreyColor,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+Color _ratingTrendColor(int? change, Color accent) {
+  if (change == null || change == 0) return accent;
+  if (change > 0) return kGreenColor;
+  return kRedColor;
+}
+
+class _InteractiveRatingSparkline extends StatefulWidget {
+  const _InteractiveRatingSparkline({
+    required this.points,
+    required this.color,
+  });
+
+  final List<FideRatingHistoryPoint> points;
+  final Color color;
+
+  @override
+  State<_InteractiveRatingSparkline> createState() =>
+      _InteractiveRatingSparklineState();
+}
+
+class _InteractiveRatingSparklineState
+    extends State<_InteractiveRatingSparkline> {
+  int? _hoveredIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return MouseRegion(
+          onExit: (_) {
+            if (_hoveredIndex != null) setState(() => _hoveredIndex = null);
+          },
+          onHover: (event) {
+            const inset = 4.0;
+            final plotWidth = constraints.maxWidth - inset * 2;
+            if (plotWidth <= 0) return;
+            final next = closestRatingPointIndex(
+              event.localPosition.dx,
+              inset,
+              constraints.maxWidth - inset,
+              widget.points.length,
+            );
+            if (next != _hoveredIndex) setState(() => _hoveredIndex = next);
+          },
+          child: CustomPaint(
+            size: Size(constraints.maxWidth, constraints.maxHeight),
+            painter: _RatingSparklinePainter(
+              points: widget.points,
+              color: widget.color,
+              hoveredIndex: _hoveredIndex,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _RatingSparklinePainter extends CustomPainter {
+  const _RatingSparklinePainter({
+    required this.points,
+    required this.color,
+    required this.hoveredIndex,
+  });
+
+  final List<FideRatingHistoryPoint> points;
+  final Color color;
+  final int? hoveredIndex;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0 || points.length < 2) return;
+    final values = points.map((point) => point.rating).toList(growable: false);
+    final minValue = values.reduce((a, b) => a < b ? a : b).toDouble();
+    final maxValue = values.reduce((a, b) => a > b ? a : b).toDouble();
+    final spread = (maxValue - minValue).abs();
+    final ratingPadding = spread < 40 ? 8.0 : spread * 0.16;
+    final domainMin = minValue - ratingPadding;
+    final domainSpread = spread + ratingPadding * 2;
+    const horizontalInset = 4.0;
+    const verticalInset = 5.0;
+    final path = Path();
+    for (var i = 0; i < values.length; i++) {
+      final x =
+          horizontalInset +
+          (size.width - horizontalInset * 2) * i / (values.length - 1);
+      final normalized = (values[i].toDouble() - domainMin) / domainSpread;
+      final y =
+          size.height -
+          verticalInset -
+          normalized * (size.height - verticalInset * 2);
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color
+        ..strokeWidth = 2.2
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke,
+    );
+
+    final hover = hoveredIndex;
+    if (hover != null && hover >= 0 && hover < points.length) {
+      final x =
+          horizontalInset +
+          (size.width - horizontalInset * 2) * hover / (points.length - 1);
+      final normalized =
+          (points[hover].rating.toDouble() - domainMin) / domainSpread;
+      final y =
+          size.height -
+          verticalInset -
+          normalized * (size.height - verticalInset * 2);
+      final point = Offset(x, y);
+      canvas.drawLine(
+        Offset(x, verticalInset),
+        Offset(x, size.height - verticalInset),
+        Paint()
+          ..color = kWhiteColor.withValues(alpha: 0.16)
+          ..strokeWidth = 0.8,
+      );
+      canvas.drawCircle(
+        point,
+        5,
+        Paint()..color = kBackgroundColor.withValues(alpha: 0.94),
+      );
+      canvas.drawCircle(point, 2.8, Paint()..color = color);
+      _paintRatingTooltip(
+        canvas,
+        Rect.fromLTRB(0, 0, size.width, size.height),
+        point,
+        points[hover],
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RatingSparklinePainter oldDelegate) {
+    return oldDelegate.color != color ||
+        oldDelegate.hoveredIndex != hoveredIndex ||
+        oldDelegate.points != points;
+  }
+}
+
+enum _RatingHistoryRange {
+  oneYear(12, '1Y'),
+  twoYears(24, '2Y'),
+  threeYears(36, '3Y'),
+  all(null, 'All');
+
+  const _RatingHistoryRange(this.months, this.label);
+
+  final int? months;
+  final String label;
+}
+
+class _RatingHistoryPanel extends StatefulWidget {
+  const _RatingHistoryPanel({
+    required this.history,
+    required this.loading,
+    required this.initialTimeControl,
+  });
+
+  final FideRatingHistory? history;
+  final bool loading;
+  final GameTimeControlFilter initialTimeControl;
+
+  @override
+  State<_RatingHistoryPanel> createState() => _RatingHistoryPanelState();
+}
+
+class _RatingHistoryPanelState extends State<_RatingHistoryPanel> {
+  late FideRatingHistoryType _type;
+  _RatingHistoryRange _range = _RatingHistoryRange.all;
+
+  @override
+  void initState() {
+    super.initState();
+    _type = _historyTypeForFilter(widget.initialTimeControl);
+  }
+
+  @override
+  void didUpdateWidget(covariant _RatingHistoryPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialTimeControl != widget.initialTimeControl &&
+        widget.initialTimeControl != GameTimeControlFilter.all) {
+      _type = _historyTypeForFilter(widget.initialTimeControl);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final series =
+        widget.history?.chartSeries(_type, months: _range.months) ?? const [];
+    final accent = _ratingHistoryAccent(_type);
+    final current = series.isEmpty ? null : series.last.rating;
+
+    return Container(
+      height: 292,
+      padding: const EdgeInsets.fromLTRB(16, 14, 14, 12),
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final controls = <Widget>[
+            SizedBox(
+              width: 286,
+              child: DesktopSegmentedTabs<FideRatingHistoryType>(
+                tabs: const [
+                  DesktopSegmentedTab(
+                    value: FideRatingHistoryType.classical,
+                    label: 'Classical',
+                  ),
+                  DesktopSegmentedTab(
+                    value: FideRatingHistoryType.rapid,
+                    label: 'Rapid',
+                  ),
+                  DesktopSegmentedTab(
+                    value: FideRatingHistoryType.blitz,
+                    label: 'Blitz',
+                  ),
+                ],
+                selected: _type,
+                expand: true,
+                onChanged: (value) => setState(() => _type = value),
+              ),
+            ),
+            const SizedBox(width: 8, height: 8),
+            SizedBox(
+              width: 226,
+              child: DesktopSegmentedTabs<_RatingHistoryRange>(
+                tabs: [
+                  for (final range in _RatingHistoryRange.values)
+                    DesktopSegmentedTab(value: range, label: range.label),
+                ],
+                selected: _range,
+                expand: true,
+                onChanged: (value) => setState(() => _range = value),
+              ),
+            ),
+          ];
+          final title = Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Rating history',
+                    style: TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  if (current != null) ...[
+                    const SizedBox(width: 10),
                     Text(
-                      widget.value?.toString() ?? '–',
+                      '$current',
                       style: TextStyle(
-                        color:
-                            widget.value == null
-                                ? kLightGreyColor
-                                : kWhiteColor,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        height: 1.0,
+                        color: accent,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
                         fontFeatures: const [FontFeature.tabularFigures()],
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeOut,
-                      height: 2,
-                      width: selected ? 26 : 10,
-                      decoration: BoxDecoration(
-                        color:
-                            selected
-                                ? kPrimaryColor
-                                : kDividerColor.withValues(alpha: 0.8),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
                   ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _DataSourceCard extends StatelessWidget {
-  const _DataSourceCard({
-    required this.dataSource,
-    required this.twicSummaryAsync,
-    required this.isTwicLoading,
-    required this.showEventCounts,
-  });
-
-  final PlayerProfileDataSource dataSource;
-  final AsyncValue<TwicProfileSummary?> twicSummaryAsync;
-  final bool isTwicLoading;
-  final bool showEventCounts;
-
-  @override
-  Widget build(BuildContext context) {
-    final summary = twicSummaryAsync.valueOrNull;
-    final twicTotal =
-        showEventCounts ? summary?.totalEvents : summary?.totalGames;
-    final twicLabel =
-        twicTotal != null
-            ? 'ChessEver - ${formatCompactCount(twicTotal)}'
-            : 'ChessEver';
-
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: kBlack2Color,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: kDividerColor),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _SourceChip(
-              label: twicLabel,
-              isActive: dataSource == PlayerProfileDataSource.twic,
-              loading: twicSummaryAsync.isLoading || isTwicLoading,
-              onTap: null,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SourceChip extends StatefulWidget {
-  const _SourceChip({
-    required this.label,
-    required this.isActive,
-    required this.onTap,
-    this.loading = false,
-  });
-
-  final String label;
-  final bool isActive;
-  final bool loading;
-  final VoidCallback? onTap;
-
-  @override
-  State<_SourceChip> createState() => _SourceChipState();
-}
-
-class _SourceChipState extends State<_SourceChip> {
-  bool _hover = false;
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = widget.onTap != null;
-    return ClickCursor(
-      enabled: enabled,
-      child: MouseRegion(
-        onEnter: (_) => enabled ? setState(() => _hover = true) : null,
-        onExit:
-            (_) =>
-                enabled
-                    ? setState(() {
-                      _hover = false;
-                      _pressed = false;
-                    })
-                    : null,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: widget.onTap,
-          onTapDown: enabled ? (_) => setState(() => _pressed = true) : null,
-          onTapUp: enabled ? (_) => setState(() => _pressed = false) : null,
-          onTapCancel: enabled ? () => setState(() => _pressed = false) : null,
-          child: SingleMotionBuilder(
-            value: enabled ? (_pressed ? 0.95 : (_hover ? 1.02 : 1.0)) : 1.0,
-            motion: _pressed ? DesktopMotion.tap : DesktopMotion.hover,
-            builder:
-                (context, scale, child) => Transform.scale(
-                  scale: scale,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
-                ),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color:
-                    widget.isActive
-                        ? kPrimaryColor.withValues(alpha: 0.14)
-                        : (_hover ? kBlack3Color : Colors.transparent),
-                borderRadius: BorderRadius.circular(7),
-                border: Border.all(
-                  color:
-                      widget.isActive
-                          ? kPrimaryColor.withValues(alpha: 0.3)
-                          : Colors.transparent,
-                ),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (widget.loading) ...[
-                    const SizedBox(
-                      width: 10,
-                      height: 10,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.4,
-                        valueColor: AlwaysStoppedAnimation(kPrimaryColor),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                  ],
-                  Flexible(
-                    child: Text(
-                      widget.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color:
-                            widget.isActive
-                                ? kWhiteColor
-                                : (enabled ? kWhiteColor70 : kLightGreyColor),
-                        fontSize: 11,
-                        fontWeight:
-                            widget.isActive ? FontWeight.w700 : FontWeight.w500,
-                      ),
-                    ),
-                  ),
                 ],
               ),
-            ),
-          ),
-        ),
+              const SizedBox(height: 2),
+              const Text(
+                'Official monthly FIDE ratings',
+                style: TextStyle(
+                  color: kLightGreyColor,
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          );
+          final header =
+              constraints.maxWidth >= 760
+                  ? Row(children: [title, const Spacer(), ...controls])
+                  : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      title,
+                      const SizedBox(height: 8),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(children: controls),
+                      ),
+                    ],
+                  );
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              header,
+              const SizedBox(height: 10),
+              Expanded(
+                child:
+                    widget.loading
+                        ? Center(
+                          child: SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.8,
+                              color: accent,
+                            ),
+                          ),
+                        )
+                        : series.length < 2
+                        ? const Center(
+                          child: Text(
+                            'Rating history is unavailable for this format.',
+                            style: TextStyle(
+                              color: kLightGreyColor,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        )
+                        : _InteractiveRatingHistoryChart(
+                          points: series,
+                          color: accent,
+                        ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 }
 
-class _BioCard extends StatelessWidget {
-  const _BioCard({required this.profile, required this.federation});
-  final PlayerProfileData? profile;
-  final String? federation;
+FideRatingHistoryType _historyTypeForFilter(GameTimeControlFilter filter) {
+  switch (filter) {
+    case GameTimeControlFilter.rapid:
+      return FideRatingHistoryType.rapid;
+    case GameTimeControlFilter.blitz:
+      return FideRatingHistoryType.blitz;
+    case GameTimeControlFilter.classical:
+    case GameTimeControlFilter.all:
+      return FideRatingHistoryType.classical;
+  }
+}
+
+Color _ratingHistoryAccent(FideRatingHistoryType type) {
+  switch (type) {
+    case FideRatingHistoryType.classical:
+      return kPrimaryColor;
+    case FideRatingHistoryType.rapid:
+      return const Color(0xFFF4B942);
+    case FideRatingHistoryType.blitz:
+      return const Color(0xFFD16DF0);
+  }
+}
+
+class _InteractiveRatingHistoryChart extends StatefulWidget {
+  const _InteractiveRatingHistoryChart({
+    required this.points,
+    required this.color,
+  });
+
+  final List<FideRatingHistoryPoint> points;
+  final Color color;
+
+  @override
+  State<_InteractiveRatingHistoryChart> createState() =>
+      _InteractiveRatingHistoryChartState();
+}
+
+class _InteractiveRatingHistoryChartState
+    extends State<_InteractiveRatingHistoryChart> {
+  int? _hoveredIndex;
 
   @override
   Widget build(BuildContext context) {
-    final rows = <_BioRow>[];
-    if ((federation ?? '').trim().isNotEmpty) {
-      rows.add(_BioRow(label: 'Federation', value: federation!.trim()));
-    }
-    if ((profile?.birthday ?? '').trim().isNotEmpty) {
-      rows.add(_BioRow(label: 'Born', value: profile!.birthday!.trim()));
-    }
-    if ((profile?.sex ?? '').trim().isNotEmpty) {
-      rows.add(_BioRow(label: 'Sex', value: _humanSex(profile!.sex!)));
-    }
-    final classical = profile?.classicalRating;
-    final rapid = profile?.rapidRating;
-    final blitz = profile?.blitzRating;
-    if (classical != null || rapid != null || blitz != null) {
-      final peak = [classical, rapid, blitz].whereType<int>().fold<int?>(
-        null,
-        (acc, v) => acc == null ? v : (v > acc ? v : acc),
-      );
-      if (peak != null) {
-        rows.add(_BioRow(label: 'Peak', value: peak.toString()));
-      }
-    }
-    if (rows.isEmpty) return const SizedBox.shrink();
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: kBlack2Color,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: kDividerColor),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (final row in rows) ...[
-            Row(
-              children: [
-                SizedBox(
-                  width: 80,
-                  child: Text(
-                    row.label.toUpperCase(),
-                    style: const TextStyle(
-                      color: kLightGreyColor,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.6,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    row.value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: kWhiteColor,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return MouseRegion(
+          onExit: (_) {
+            if (_hoveredIndex != null) setState(() => _hoveredIndex = null);
+          },
+          onHover: (event) {
+            const plotLeft = 46.0;
+            final plotRight = constraints.maxWidth - 10;
+            if (event.localPosition.dx < plotLeft ||
+                event.localPosition.dx > plotRight) {
+              if (_hoveredIndex != null) setState(() => _hoveredIndex = null);
+              return;
+            }
+            final next = closestRatingPointIndex(
+              event.localPosition.dx,
+              plotLeft,
+              plotRight,
+              widget.points.length,
+            );
+            if (next != _hoveredIndex) setState(() => _hoveredIndex = next);
+          },
+          child: CustomPaint(
+            size: Size(constraints.maxWidth, constraints.maxHeight),
+            painter: _RatingHistoryChartPainter(
+              points: widget.points,
+              color: widget.color,
+              hoveredIndex: _hoveredIndex,
             ),
-            if (row != rows.last) const SizedBox(height: 8),
-          ],
-        ],
-      ),
+          ),
+        );
+      },
     );
-  }
-
-  String _humanSex(String raw) {
-    final n = raw.trim().toLowerCase();
-    if (n == 'm' || n.startsWith('male')) return 'Male';
-    if (n == 'f' || n.startsWith('female')) return 'Female';
-    return raw.trim();
   }
 }
 
-class _BioRow {
-  const _BioRow({required this.label, required this.value});
-  final String label;
-  final String value;
+@visibleForTesting
+int closestRatingPointIndex(
+  double x,
+  double plotLeft,
+  double plotRight,
+  int pointCount,
+) {
+  if (pointCount <= 1 || plotRight <= plotLeft) return 0;
+  final ratio = ((x - plotLeft) / (plotRight - plotLeft)).clamp(0.0, 1.0);
+  return (ratio * (pointCount - 1)).round();
+}
+
+class _RatingHistoryChartPainter extends CustomPainter {
+  const _RatingHistoryChartPainter({
+    required this.points,
+    required this.color,
+    required this.hoveredIndex,
+  });
+
+  final List<FideRatingHistoryPoint> points;
+  final Color color;
+  final int? hoveredIndex;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (points.length < 2 || size.width < 100 || size.height < 80) return;
+
+    final ratings = points.map((point) => point.rating).toList(growable: false);
+    final minRating = ratings.reduce((a, b) => a < b ? a : b).toDouble();
+    final maxRating = ratings.reduce((a, b) => a > b ? a : b).toDouble();
+    final spread = (maxRating - minRating).abs();
+    final padding = spread < 40 ? 12.0 : spread * 0.1;
+    final domainMin = minRating - padding;
+    final domainMax = maxRating + padding;
+    final domainSpread = domainMax - domainMin;
+    final plot = Rect.fromLTRB(46, 8, size.width - 10, size.height - 25);
+    final gridPaint =
+        Paint()
+          ..color = kDividerColor.withValues(alpha: 0.72)
+          ..strokeWidth = 0.8;
+
+    for (var index = 0; index < 4; index++) {
+      final ratio = index / 3;
+      final y = plot.bottom - plot.height * ratio;
+      canvas.drawLine(Offset(plot.left, y), Offset(plot.right, y), gridPaint);
+      final value = (domainMin + domainSpread * ratio).round();
+      _paintChartLabel(
+        canvas,
+        '$value',
+        Offset(plot.left - 8, y),
+        alignRight: true,
+        centerVertically: true,
+      );
+    }
+
+    final line = Path();
+    for (var index = 0; index < points.length; index++) {
+      final x = plot.left + plot.width * index / (points.length - 1);
+      final normalized = (points[index].rating - domainMin) / domainSpread;
+      final y = plot.bottom - plot.height * normalized;
+      if (index == 0) {
+        line.moveTo(x, y);
+      } else {
+        line.lineTo(x, y);
+      }
+    }
+    final area =
+        Path.from(line)
+          ..lineTo(plot.right, plot.bottom)
+          ..lineTo(plot.left, plot.bottom)
+          ..close();
+    canvas.drawPath(
+      area,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            color.withValues(alpha: 0.24),
+            color.withValues(alpha: 0.015),
+          ],
+        ).createShader(plot),
+    );
+    canvas.drawPath(
+      line,
+      Paint()
+        ..color = color
+        ..strokeWidth = 2.2
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke,
+    );
+
+    final labelIndexes =
+        <int>{
+            0,
+            ((points.length - 1) / 3).round(),
+            ((points.length - 1) * 2 / 3).round(),
+            points.length - 1,
+          }.toList()
+          ..sort();
+    final spansSeveralYears =
+        points.last.month.year - points.first.month.year >= 3;
+    for (var label = 0; label < labelIndexes.length; label++) {
+      final pointIndex = labelIndexes[label];
+      final x = plot.left + plot.width * pointIndex / (points.length - 1);
+      _paintChartLabel(
+        canvas,
+        _ratingMonthLabel(points[pointIndex].month, spansSeveralYears),
+        Offset(x, plot.bottom + 8),
+        centerHorizontally: label > 0 && label < labelIndexes.length - 1,
+        alignRight: label == labelIndexes.length - 1,
+      );
+    }
+
+    final last = Offset(
+      plot.right,
+      plot.bottom -
+          plot.height * (points.last.rating - domainMin) / domainSpread,
+    );
+    canvas.drawCircle(
+      last,
+      6.2,
+      Paint()
+        ..color = color.withValues(alpha: 0.22)
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawCircle(last, 3.4, Paint()..color = color);
+
+    final hover = hoveredIndex;
+    if (hover != null && hover >= 0 && hover < points.length) {
+      final point = points[hover];
+      final pointOffset = Offset(
+        plot.left + plot.width * hover / (points.length - 1),
+        plot.bottom - plot.height * (point.rating - domainMin) / domainSpread,
+      );
+      canvas.drawLine(
+        Offset(pointOffset.dx, plot.top),
+        Offset(pointOffset.dx, plot.bottom),
+        Paint()
+          ..color = kWhiteColor.withValues(alpha: 0.18)
+          ..strokeWidth = 0.9,
+      );
+      canvas.drawCircle(
+        pointOffset,
+        6,
+        Paint()..color = kBackgroundColor.withValues(alpha: 0.92),
+      );
+      canvas.drawCircle(pointOffset, 3.5, Paint()..color = color);
+      _paintRatingTooltip(canvas, plot, pointOffset, point);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RatingHistoryChartPainter oldDelegate) {
+    return oldDelegate.color != color ||
+        oldDelegate.points != points ||
+        oldDelegate.hoveredIndex != hoveredIndex;
+  }
+}
+
+void _paintRatingTooltip(
+  Canvas canvas,
+  Rect plot,
+  Offset point,
+  FideRatingHistoryPoint rating,
+) {
+  final textPainter = TextPainter(
+    text: TextSpan(
+      children: [
+        TextSpan(
+          text: _ratingMonthLabel(rating.month, false),
+          style: const TextStyle(
+            color: kWhiteColor70,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        TextSpan(
+          text: '   ${rating.rating}',
+          style: const TextStyle(
+            color: kWhiteColor,
+            fontSize: 11,
+            fontWeight: FontWeight.w900,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  final tooltipSize = Size(textPainter.width + 16, textPainter.height + 12);
+  var left = point.dx + 10;
+  if (left + tooltipSize.width > plot.right) {
+    left = point.dx - tooltipSize.width - 10;
+  }
+  final top =
+      (point.dy - tooltipSize.height - 9)
+          .clamp(plot.top, plot.bottom - tooltipSize.height)
+          .toDouble();
+  final rect = Rect.fromLTWH(left, top, tooltipSize.width, tooltipSize.height);
+  final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(6));
+  canvas.drawRRect(rrect, Paint()..color = kBlack3Color);
+  canvas.drawRRect(
+    rrect,
+    Paint()
+      ..color = kWhiteColor.withValues(alpha: 0.16)
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke,
+  );
+  textPainter.paint(canvas, Offset(left + 8, top + 6));
+}
+
+void _paintChartLabel(
+  Canvas canvas,
+  String text,
+  Offset anchor, {
+  bool alignRight = false,
+  bool centerHorizontally = false,
+  bool centerVertically = false,
+}) {
+  final painter = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: const TextStyle(
+        color: kLightGreyColor,
+        fontSize: 9,
+        fontWeight: FontWeight.w600,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  var dx = anchor.dx;
+  var dy = anchor.dy;
+  if (alignRight) dx -= painter.width;
+  if (centerHorizontally) dx -= painter.width / 2;
+  if (centerVertically) dy -= painter.height / 2;
+  painter.paint(canvas, Offset(dx, dy));
+}
+
+String _ratingMonthLabel(DateTime month, bool yearOnly) {
+  if (yearOnly) return '${month.year}';
+  const labels = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return '${labels[month.month - 1]} ${month.year}';
 }
 
 // ---------------------------------------------------------------------
@@ -1346,11 +1802,16 @@ class _RightPane extends StatelessWidget {
     required this.onSelectTab,
     required this.hasActiveFilter,
     required this.isTwicLoading,
+    required this.filteredGameCount,
+    required this.isGameCountLoading,
     required this.activeKey,
     required this.fideId,
     required this.playerName,
     required this.dataSource,
     required this.gamebasePlayerId,
+    required this.ratings,
+    required this.currentTimeControl,
+    required this.onSelectTimeControl,
   });
 
   final String tabId;
@@ -1358,18 +1819,29 @@ class _RightPane extends StatelessWidget {
   final ValueChanged<PlayerProfileSection> onSelectTab;
   final bool hasActiveFilter;
   final bool isTwicLoading;
+  final int filteredGameCount;
+  final bool isGameCountLoading;
   final PlayerProfileKey activeKey;
   final int? fideId;
   final String playerName;
   final PlayerProfileDataSource dataSource;
   final String? gamebasePlayerId;
+  final _ProfileRatings ratings;
+  final GameTimeControlFilter currentTimeControl;
+  final ValueChanged<GameTimeControlFilter> onSelectTimeControl;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _TabStrip(current: currentTab, onSelect: onSelectTab),
+        _TabStrip(
+          current: currentTab,
+          onSelect: onSelectTab,
+          gameCount: filteredGameCount,
+          gameCountLoading: isGameCountLoading,
+          hasActiveFilter: hasActiveFilter,
+        ),
         _IndicatorBar(
           hasActiveFilter: hasActiveFilter,
           isLoading: isTwicLoading,
@@ -1383,7 +1855,10 @@ class _RightPane extends StatelessWidget {
                 activeKey: activeKey,
                 fideId: fideId,
                 playerName: playerName,
-                onShowGames: () => onSelectTab(PlayerProfileSection.games),
+                ratings: ratings,
+                currentTimeControl: currentTimeControl,
+                onSelectTimeControl: onSelectTimeControl,
+                onShowEvents: () => onSelectTab(PlayerProfileSection.events),
               ),
               _GamesBody(
                 tabId: tabId,
@@ -1407,9 +1882,18 @@ class _RightPane extends StatelessWidget {
 }
 
 class _TabStrip extends StatelessWidget {
-  const _TabStrip({required this.current, required this.onSelect});
+  const _TabStrip({
+    required this.current,
+    required this.onSelect,
+    required this.gameCount,
+    required this.gameCountLoading,
+    required this.hasActiveFilter,
+  });
   final PlayerProfileSection current;
   final ValueChanged<PlayerProfileSection> onSelect;
+  final int gameCount;
+  final bool gameCountLoading;
+  final bool hasActiveFilter;
 
   @override
   Widget build(BuildContext context) {
@@ -1423,6 +1907,14 @@ class _TabStrip extends StatelessWidget {
           for (final t in PlayerProfileSection.values)
             _TabUnderlineItem(
               label: t.label,
+              badge:
+                  t == PlayerProfileSection.games
+                      ? (gameCountLoading
+                          ? '…'
+                          : formatCompactCount(gameCount))
+                      : null,
+              emphasizeBadge:
+                  t == PlayerProfileSection.games && hasActiveFilter,
               selected: t == current,
               onTap: () => onSelect(t),
             ),
@@ -1437,10 +1929,14 @@ class _TabUnderlineItem extends StatefulWidget {
     required this.label,
     required this.selected,
     required this.onTap,
+    this.badge,
+    this.emphasizeBadge = false,
   });
   final String label;
   final bool selected;
   final VoidCallback onTap;
+  final String? badge;
+  final bool emphasizeBadge;
 
   @override
   State<_TabUnderlineItem> createState() => _TabUnderlineItemState();
@@ -1485,14 +1981,57 @@ class _TabUnderlineItemState extends State<_TabUnderlineItem> {
                   ),
                 ),
               ),
-              child: Text(
-                widget.label,
-                style: TextStyle(
-                  color: fg,
-                  fontSize: 13,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  letterSpacing: 0.1,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    widget.label,
+                    style: TextStyle(
+                      color: fg,
+                      fontSize: 13,
+                      fontWeight:
+                          selected ? FontWeight.w700 : FontWeight.w500,
+                      letterSpacing: 0.1,
+                    ),
+                  ),
+                  if (widget.badge != null) ...[
+                    const SizedBox(width: 7),
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 120),
+                      constraints: const BoxConstraints(minWidth: 24),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color:
+                            widget.emphasizeBadge
+                                ? kPrimaryColor.withValues(alpha: 0.14)
+                                : kWhiteColor.withValues(alpha: 0.055),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color:
+                              widget.emphasizeBadge
+                                  ? kPrimaryColor.withValues(alpha: 0.32)
+                                  : kDividerColor,
+                        ),
+                      ),
+                      child: Text(
+                        widget.badge!,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color:
+                              widget.emphasizeBadge
+                                  ? kPrimaryColor
+                                  : kWhiteColor70,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w800,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
           ),
@@ -1533,33 +2072,24 @@ class _AboutBody extends ConsumerWidget {
     required this.activeKey,
     required this.fideId,
     required this.playerName,
-    required this.onShowGames,
+    required this.ratings,
+    required this.currentTimeControl,
+    required this.onSelectTimeControl,
+    required this.onShowEvents,
   });
 
   final PlayerProfileKey activeKey;
   final int? fideId;
   final String playerName;
-  final VoidCallback onShowGames;
+  final _ProfileRatings ratings;
+  final GameTimeControlFilter currentTimeControl;
+  final ValueChanged<GameTimeControlFilter> onSelectTimeControl;
+  final VoidCallback onShowEvents;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(playerProfileGamesKeyProvider(activeKey));
     final isTwic = activeKey.source == PlayerProfileDataSource.twic;
-    if (!isTwic && state.isLoading && state.allGames.isEmpty) {
-      return const Center(
-        child: SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            valueColor: AlwaysStoppedAnimation(kPrimaryColor),
-          ),
-        ),
-      );
-    }
-    if (!isTwic && state.error != null && state.allGames.isEmpty) {
-      return _ErrorState(message: state.error!);
-    }
     final analyticsAsync =
         isTwic
             ? ref.watch(
@@ -1583,29 +2113,74 @@ class _AboutBody extends ConsumerWidget {
                     ),
                   ),
             );
-
     final analytics = analyticsAsync.valueOrNull;
-    if (analytics == null) {
-      if (analyticsAsync.isLoading ||
-          (isTwic && state.isLoading && state.allGames.isEmpty)) {
-        return const Center(
-          child: SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              valueColor: AlwaysStoppedAnimation(kPrimaryColor),
-            ),
-          ),
-        );
-      }
-      if (analyticsAsync.hasError) {
-        return _ErrorState(message: analyticsAsync.error.toString());
-      }
-      if (state.error != null) {
-        return _ErrorState(message: state.error!);
-      }
-      return const _EmptyAbout();
+    final eventsAsync = ref.watch(playerEventsKeyProvider(activeKey));
+    final historyAsync =
+        fideId != null && fideId! > 0
+            ? ref.watch(fideRatingHistoryProvider(fideId!))
+            : null;
+
+    Widget details;
+    if (analytics != null) {
+      details = _OverviewDashboard(
+        analytics: analytics,
+        ratingHistory: historyAsync?.valueOrNull,
+        ratingHistoryLoading: historyAsync?.isLoading ?? false,
+        currentTimeControl: currentTimeControl,
+        selectedResult: state.playerResultFilter,
+        selectedColor: state.filter.color,
+        selectedEco: state.filter.eco,
+        recentEvents: eventsAsync.valueOrNull ?? const [],
+        eventsLoading: eventsAsync.isLoading,
+        onSelectResult: (filter) {
+          final next =
+              state.playerResultFilter == filter
+                  ? PlayerResultFilter.all
+                  : filter;
+          ref
+              .read(playerProfileGamesKeyProvider(activeKey).notifier)
+              .mergeFilter(playerResultFilter: next);
+        },
+        onSelectColor: (color) {
+          final next =
+              state.filter.color == color ? GameColorFilter.all : color;
+          ref
+              .read(playerProfileGamesKeyProvider(activeKey).notifier)
+              .mergeFilter(
+                color: next,
+                eco: next == GameColorFilter.all ? null : GameEcoFilter.all,
+              );
+        },
+        onSelectEco: (eco) {
+          final current = state.filter.eco.code?.toUpperCase();
+          final next =
+              current == eco.toUpperCase()
+                  ? GameEcoFilter.all
+                  : GameEcoFilter.forCode(eco);
+          ref
+              .read(playerProfileGamesKeyProvider(activeKey).notifier)
+              .mergeFilter(eco: next);
+        },
+        onShowEvents: onShowEvents,
+      );
+    } else if (analyticsAsync.hasError ||
+        (state.error != null && state.allGames.isEmpty)) {
+      details = _OverviewStatusPanel(
+        message:
+            analyticsAsync.hasError
+                ? analyticsAsync.error.toString()
+                : state.error!,
+        isError: true,
+      );
+    } else if (analyticsAsync.isLoading || state.isLoading) {
+      details = const _OverviewStatusPanel(
+        message: 'Loading player statistics…',
+        isLoading: true,
+      );
+    } else {
+      details = const _OverviewStatusPanel(
+        message: 'No completed games are available for this overview yet.',
+      );
     }
 
     return SingleChildScrollView(
@@ -1614,69 +2189,490 @@ class _AboutBody extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Cue.onMount(
-            motion: const CueMotion.smooth(),
-            acts: const [Act.fadeIn(), Act.slideY(from: 0.1)],
-            child: DesktopPlayerProfileResultSummary(
-              stats: analytics.resultStats,
-              selected: state.playerResultFilter,
-              onSelect: (filter) {
-                final next =
-                    state.playerResultFilter == filter
-                        ? PlayerResultFilter.all
-                        : filter;
-                ref
-                    .read(playerProfileGamesKeyProvider(activeKey).notifier)
-                    .mergeFilter(playerResultFilter: next);
-                if (next != PlayerResultFilter.all) onShowGames();
-              },
-            ),
+          _RatingOverviewRow(
+            ratings: ratings,
+            history: historyAsync?.valueOrNull,
+            historyLoading: historyAsync?.isLoading ?? false,
+            selected: currentTimeControl,
+            onSelect: onSelectTimeControl,
           ),
-          const SizedBox(height: 16),
-          Cue.onMount(
-            motion: const CueMotion.smooth(),
-            acts: const [Act.fadeIn(), Act.slideY(from: 0.1)],
-            child: _ColorStatsRow(
-              stats: analytics.colorStats,
-              selected: state.filter.color,
-              onSelect: (color) {
-                final next =
-                    state.filter.color == color ? GameColorFilter.all : color;
-                ref
-                    .read(playerProfileGamesKeyProvider(activeKey).notifier)
-                    .mergeFilter(
-                      color: next,
-                      eco:
-                          next == GameColorFilter.all
-                              ? null
-                              : GameEcoFilter.all,
-                    );
-              },
+          const SizedBox(height: 14),
+          details,
+        ],
+      ),
+    );
+  }
+}
+
+class _OverviewStatusPanel extends StatelessWidget {
+  const _OverviewStatusPanel({
+    required this.message,
+    this.isError = false,
+    this.isLoading = false,
+  });
+
+  final String message;
+  final bool isError;
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 112,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isError ? kRedColor.withValues(alpha: 0.42) : kDividerColor,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isError)
+            const Icon(Icons.error_outline_rounded, size: 17, color: kRedColor)
+          else if (isLoading)
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.6,
+                valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+              ),
+            )
+          else
+            const Icon(
+              Icons.info_outline_rounded,
+              size: 17,
+              color: kLightGreyColor,
             ),
-          ),
-          const SizedBox(height: 16),
-          Cue.onMount(
-            motion: const CueMotion.smooth(),
-            acts: const [Act.fadeIn(), Act.slideY(from: 0.1)],
-            child: _OpeningTable(
-              stats: analytics.openingStats,
-              selected: state.filter.eco,
-              onSelect: (eco) {
-                final current = state.filter.eco.code?.toUpperCase();
-                final next =
-                    current == eco.toUpperCase()
-                        ? GameEcoFilter.all
-                        : GameEcoFilter.forCode(eco);
-                ref
-                    .read(playerProfileGamesKeyProvider(activeKey).notifier)
-                    .mergeFilter(eco: next);
-              },
+          const SizedBox(width: 10),
+          Flexible(
+            child: Text(
+              message,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: isError ? kRedColor : kWhiteColor70,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
       ),
     );
   }
+}
+
+class _OverviewDashboard extends StatelessWidget {
+  const _OverviewDashboard({
+    required this.analytics,
+    required this.ratingHistory,
+    required this.ratingHistoryLoading,
+    required this.currentTimeControl,
+    required this.selectedResult,
+    required this.selectedColor,
+    required this.selectedEco,
+    required this.recentEvents,
+    required this.eventsLoading,
+    required this.onSelectResult,
+    required this.onSelectColor,
+    required this.onSelectEco,
+    required this.onShowEvents,
+  });
+
+  final PlayerAnalytics analytics;
+  final FideRatingHistory? ratingHistory;
+  final bool ratingHistoryLoading;
+  final GameTimeControlFilter currentTimeControl;
+  final PlayerResultFilter selectedResult;
+  final GameColorFilter selectedColor;
+  final GameEcoFilter selectedEco;
+  final List<PlayerEventData> recentEvents;
+  final bool eventsLoading;
+  final ValueChanged<PlayerResultFilter> onSelectResult;
+  final ValueChanged<GameColorFilter> onSelectColor;
+  final ValueChanged<String> onSelectEco;
+  final VoidCallback onShowEvents;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 1040;
+        final performance = DesktopPlayerProfileResultSummary(
+          stats: analytics.resultStats,
+          title: 'Overall performance',
+          embedded: true,
+          selected: selectedResult,
+          avgOpponentRating: analytics.avgOpponentRating,
+          recentForm: analytics.recentForm,
+          onSelect: onSelectResult,
+        );
+        final colors = _ColorStatsRow(
+          stats: analytics.colorStats,
+          selected: selectedColor,
+          onSelect: onSelectColor,
+        );
+        final chart = _RatingHistoryPanel(
+          history: ratingHistory,
+          loading: ratingHistoryLoading,
+          initialTimeControl: currentTimeControl,
+        );
+        final performanceColumn = Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: kBlack2Color,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: kDividerColor),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              performance,
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Divider(height: 1, color: kDividerColor),
+              ),
+              const _SectionTitle(title: 'Performance by color'),
+              const SizedBox(height: 8),
+              colors,
+            ],
+          ),
+        );
+        final top =
+            wide
+                ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(flex: 62, child: chart),
+                    const SizedBox(width: 12),
+                    Expanded(flex: 38, child: performanceColumn),
+                  ],
+                )
+                : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    chart,
+                    const SizedBox(height: 12),
+                    performanceColumn,
+                  ],
+                );
+
+        final openings = _OpeningTable(
+          stats: analytics.openingStats,
+          selected: selectedEco,
+          onSelect: onSelectEco,
+        );
+        final recentEventsPanel = _RecentEventsPanel(
+          events: recentEvents,
+          loading: eventsLoading,
+          onShowAll: onShowEvents,
+        );
+        final lower =
+            wide
+                ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(flex: 6, child: openings),
+                    const SizedBox(width: 12),
+                    Expanded(flex: 4, child: recentEventsPanel),
+                  ],
+                )
+                : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    openings,
+                    const SizedBox(height: 12),
+                    recentEventsPanel,
+                  ],
+                );
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [top, const SizedBox(height: 12), lower],
+        );
+      },
+    );
+  }
+}
+
+class _RecentEventsPanel extends StatelessWidget {
+  const _RecentEventsPanel({
+    required this.events,
+    required this.loading,
+    required this.onShowAll,
+  });
+
+  final List<PlayerEventData> events;
+  final bool loading;
+  final VoidCallback onShowAll;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = events.take(4).toList(growable: false);
+    return _OverviewPanel(
+      title: 'Recent tournaments',
+      actionLabel: events.isEmpty ? null : 'View all',
+      onAction: events.isEmpty ? null : onShowAll,
+      child:
+          loading && visible.isEmpty
+              ? const _CompactLoadingRow(label: 'Loading tournaments…')
+              : visible.isEmpty
+              ? const _CompactEmptyRow(label: 'No tournaments on file yet.')
+              : Column(
+                children: [
+                  for (var i = 0; i < visible.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 5),
+                    _RecentEventRow(event: visible[i], onTap: onShowAll),
+                  ],
+                ],
+              ),
+    );
+  }
+}
+
+class _RecentEventRow extends StatefulWidget {
+  const _RecentEventRow({required this.event, required this.onTap});
+
+  final PlayerEventData event;
+  final VoidCallback onTap;
+
+  @override
+  State<_RecentEventRow> createState() => _RecentEventRowState();
+}
+
+class _RecentEventRowState extends State<_RecentEventRow> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final games = widget.event.gamesPlayed;
+    final score = widget.event.score;
+    return ClickCursor(
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 110),
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 9),
+            decoration: BoxDecoration(
+              color: kBlack3Color.withValues(alpha: _hover ? 0.78 : 0.42),
+              borderRadius: BorderRadius.circular(7),
+              border: Border.all(
+                color:
+                    _hover
+                        ? kPrimaryColor.withValues(alpha: 0.24)
+                        : kDividerColor.withValues(alpha: 0.58),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.event.tourName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: kWhiteColor,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        _formatProfileEventDates(
+                          widget.event.startDate,
+                          widget.event.endDate,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: kLightGreyColor,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: kWhiteColor.withValues(alpha: 0.055),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    score == null
+                        ? '$games games'
+                        : '${_fmtScoreValue(score)}/$games',
+                    style: const TextStyle(
+                      color: kWhiteColor70,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w800,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OverviewPanel extends StatelessWidget {
+  const _OverviewPanel({
+    required this.title,
+    required this.child,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final String title;
+  final Widget child;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: kDividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(child: _SectionTitle(title: title)),
+              if (actionLabel != null && onAction != null)
+                ClickCursor(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: onAction,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 3,
+                      ),
+                      child: Text(
+                        actionLabel!,
+                        style: const TextStyle(
+                          color: kPrimaryColor,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _CompactLoadingRow extends StatelessWidget {
+  const _CompactLoadingRow({required this.label});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 18),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.5,
+              valueColor: AlwaysStoppedAnimation(kPrimaryColor),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: const TextStyle(color: kLightGreyColor, fontSize: 10.5),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CompactEmptyRow extends StatelessWidget {
+  const _CompactEmptyRow({required this.label});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 18),
+      child: Text(
+        label,
+        textAlign: TextAlign.center,
+        style: const TextStyle(color: kLightGreyColor, fontSize: 10.5),
+      ),
+    );
+  }
+}
+
+String _fmtScoreValue(double score) {
+  return score == score.roundToDouble()
+      ? score.toInt().toString()
+      : score.toStringAsFixed(1);
+}
+
+String _formatProfileEventDates(DateTime? start, DateTime? end) {
+  if (start == null && end == null) return 'Date unavailable';
+  final first = start ?? end!;
+  final last = end ?? start!;
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  if (first.year == last.year && first.month == last.month) {
+    if (first.day == last.day) {
+      return '${months[first.month - 1]} ${first.day}, ${first.year}';
+    }
+    return '${months[first.month - 1]} ${first.day}–${last.day}, ${first.year}';
+  }
+  return '${months[first.month - 1]} ${first.day}, ${first.year} – '
+      '${months[last.month - 1]} ${last.day}, ${last.year}';
 }
 
 /// The first section of the desktop player-profile About tab.
@@ -1690,10 +2686,18 @@ class DesktopPlayerProfileResultSummary extends StatelessWidget {
     required this.stats,
     required this.selected,
     required this.onSelect,
+    this.title = 'Results',
+    this.embedded = false,
+    this.avgOpponentRating,
+    this.recentForm = const [],
   });
   final ResultStatistics stats;
   final PlayerResultFilter selected;
   final ValueChanged<PlayerResultFilter> onSelect;
+  final String title;
+  final bool embedded;
+  final int? avgOpponentRating;
+  final List<double> recentForm;
 
   @override
   Widget build(BuildContext context) {
@@ -1728,6 +2732,37 @@ class DesktopPlayerProfileResultSummary extends StatelessWidget {
       ),
     ];
 
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionTitle(title: title, subtitle: '$total completed games'),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(child: pills[0]),
+            const SizedBox(width: 8),
+            Expanded(child: pills[1]),
+            const SizedBox(width: 8),
+            Expanded(child: pills[2]),
+          ],
+        ),
+        const SizedBox(height: 12),
+        _ProfileResultDistribution(stats: stats),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            _MicroStat(label: 'Total games', value: '$total'),
+            const SizedBox(width: 14),
+            if ((avgOpponentRating ?? 0) > 0)
+              _MicroStat(label: 'Avg opponent', value: '$avgOpponentRating'),
+            const Spacer(),
+            if (recentForm.isNotEmpty)
+              _RecentFormStrip(form: recentForm.take(10).toList()),
+          ],
+        ),
+      ],
+    );
+    if (embedded) return content;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1735,22 +2770,90 @@ class DesktopPlayerProfileResultSummary extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: kDividerColor),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _SectionTitle(title: 'Results', subtitle: '$total completed games'),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(child: pills[0]),
-              const SizedBox(width: 8),
-              Expanded(child: pills[1]),
-              const SizedBox(width: 8),
-              Expanded(child: pills[2]),
-            ],
-          ),
-        ],
+      child: content,
+    );
+  }
+}
+
+class _ProfileResultDistribution extends StatelessWidget {
+  const _ProfileResultDistribution({required this.stats});
+
+  final ResultStatistics stats;
+
+  @override
+  Widget build(BuildContext context) {
+    if (stats.totalGames <= 0) {
+      return Container(
+        height: 7,
+        decoration: BoxDecoration(
+          color: kDividerColor,
+          borderRadius: BorderRadius.circular(999),
+        ),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: SizedBox(
+        height: 7,
+        child: Row(
+          children: [
+            if (stats.wins > 0)
+              Expanded(
+                flex: stats.wins,
+                child: const ColoredBox(color: kPrimaryColor),
+              ),
+            if (stats.draws > 0)
+              Expanded(
+                flex: stats.draws,
+                child: const ColoredBox(color: Color(0xFF6D7487)),
+              ),
+            if (stats.losses > 0)
+              Expanded(
+                flex: stats.losses,
+                child: const ColoredBox(color: kRedColor),
+              ),
+          ],
+        ),
       ),
+    );
+  }
+}
+
+class _RecentFormStrip extends StatelessWidget {
+  const _RecentFormStrip({required this.form});
+
+  final List<double> form;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text(
+          'FORM',
+          style: TextStyle(
+            color: kLightGreyColor,
+            fontSize: 9,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.55,
+          ),
+        ),
+        const SizedBox(width: 7),
+        for (final result in form) ...[
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color:
+                  result >= 0.75
+                      ? kPrimaryColor
+                      : (result <= 0.25 ? kRedColor : const Color(0xFF747B8D)),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 3),
+        ],
+      ],
     );
   }
 }
@@ -1792,37 +2895,42 @@ class _ResultPill extends StatelessWidget {
             child: Center(
               child: FittedBox(
                 fit: BoxFit.scaleDown,
-                child: Row(
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      label,
+                      '${(pct * 100).toStringAsFixed(1)}%',
                       style: TextStyle(
                         color: color,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.4,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      '$value',
-                      style: TextStyle(
-                        color: color,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                        height: 1,
+                        fontWeight: FontWeight.w900,
                         fontFeatures: const [FontFeature.tabularFigures()],
                       ),
                     ),
-                    const SizedBox(width: 6),
-                    Text(
-                      '${(pct * 100).toStringAsFixed(0)}%',
-                      style: const TextStyle(
-                        color: kWhiteColor70,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                      ),
+                    const SizedBox(height: 5),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          label,
+                          style: const TextStyle(
+                            color: kWhiteColor70,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '$value',
+                          style: const TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -1924,7 +3032,7 @@ class _ColorCard extends StatelessWidget {
               color:
                   selected
                       ? kPrimaryColor.withValues(alpha: 0.1)
-                      : kBlack2Color,
+                      : kBlack3Color.withValues(alpha: 0.72),
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
                 color:
@@ -2049,7 +3157,8 @@ class _OpeningTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (stats.isEmpty) {
+    final groups = playerProfileOpeningResultGroups(stats);
+    if (groups.best.isEmpty && groups.worst.isEmpty) {
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -2063,8 +3172,6 @@ class _OpeningTable extends StatelessWidget {
         ),
       );
     }
-    final top = [...stats]..sort((a, b) => b.count.compareTo(a.count));
-    final visible = top.take(8).toList();
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
       decoration: BoxDecoration(
@@ -2075,9 +3182,151 @@ class _OpeningTable extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const _SectionTitle(title: 'Top openings'),
+          const _SectionTitle(
+            title: 'Opening results',
+            subtitle: 'Frequently played openings ranked relative to this player',
+          ),
           const SizedBox(height: 10),
-          for (final stat in visible)
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final best = _OpeningResultGroup(
+                title: 'Best results',
+                color: kGreenColor,
+                stats: groups.best,
+                selected: selected,
+                onSelect: onSelect,
+              );
+              final worst = _OpeningResultGroup(
+                title: 'Lowest scores',
+                color: kRedColor,
+                stats: groups.worst,
+                selected: selected,
+                onSelect: onSelect,
+              );
+              if (constraints.maxWidth < 720 || groups.worst.isEmpty) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    best,
+                    if (groups.worst.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      worst,
+                    ],
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: best),
+                  const SizedBox(width: 14),
+                  Expanded(child: worst),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+@visibleForTesting
+({List<OpeningStatistic> best, List<OpeningStatistic> worst})
+playerProfileOpeningResultGroups(
+  Iterable<OpeningStatistic> stats, {
+  int limit = 4,
+}) {
+  final known = stats.where(shouldShowPlayerProfileOpening).toList();
+  if (known.isEmpty || limit <= 0) return (best: const [], worst: const []);
+
+  final maxCount = known
+      .map((stat) => stat.count)
+      .reduce((a, b) => a > b ? a : b);
+  final proportionalFloor = (maxCount / 10).ceil();
+  final sampleFloor = proportionalFloor < 3 ? 3 : proportionalFloor;
+  var eligible = known.where((stat) => stat.count >= sampleFloor).toList();
+  if (eligible.length < 2) eligible = known;
+  eligible.sort((a, b) {
+    final byScore = b.score.compareTo(a.score);
+    return byScore != 0 ? byScore : b.count.compareTo(a.count);
+  });
+
+  final perSide = eligible.length >= limit * 2 ? limit : (eligible.length ~/ 2);
+  if (perSide == 0) {
+    return (best: [eligible.first], worst: const []);
+  }
+  return (
+    best: eligible.take(perSide).toList(growable: false),
+    worst: eligible.reversed.take(perSide).toList(growable: false),
+  );
+}
+
+@visibleForTesting
+bool shouldShowPlayerProfileOpening(OpeningStatistic stat) {
+  final eco = stat.eco.trim().toLowerCase();
+  final opening = stat.openingName?.trim().toLowerCase() ?? '';
+  return eco.isNotEmpty &&
+      eco != 'unknown' &&
+      !eco.startsWith('unknown') &&
+      opening.isNotEmpty &&
+      opening != 'unknown' &&
+      !opening.startsWith('unknown');
+}
+
+class _OpeningResultGroup extends StatelessWidget {
+  const _OpeningResultGroup({
+    required this.title,
+    required this.color,
+    required this.stats,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  final String title;
+  final Color color;
+  final List<OpeningStatistic> stats;
+  final GameEcoFilter selected;
+  final ValueChanged<String> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
+      decoration: BoxDecoration(
+        color: kBlack3Color.withValues(alpha: 0.48),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 1, 4, 7),
+            child: Row(
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: kWhiteColor70,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          for (final stat in stats)
             _OpeningRow(
               stat: stat,
               selected: selected.code?.toUpperCase() == stat.eco.toUpperCase(),
@@ -2174,6 +3423,8 @@ class _OpeningRow extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 10),
+                  SizedBox(width: 72, child: _OpeningResultBar(stat: stat)),
+                  const SizedBox(width: 10),
                   SizedBox(
                     width: 44,
                     child: Text(
@@ -2191,6 +3442,42 @@ class _OpeningRow extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OpeningResultBar extends StatelessWidget {
+  const _OpeningResultBar({required this.stat});
+
+  final OpeningStatistic stat;
+
+  @override
+  Widget build(BuildContext context) {
+    if (stat.count <= 0) return const SizedBox.shrink();
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(99),
+      child: SizedBox(
+        height: 6,
+        child: Row(
+          children: [
+            if (stat.wins > 0)
+              Expanded(
+                flex: stat.wins,
+                child: const ColoredBox(color: kPrimaryColor),
+              ),
+            if (stat.draws > 0)
+              Expanded(
+                flex: stat.draws,
+                child: const ColoredBox(color: Color(0xFF6D7487)),
+              ),
+            if (stat.losses > 0)
+              Expanded(
+                flex: stat.losses,
+                child: const ColoredBox(color: kRedColor),
+              ),
+          ],
         ),
       ),
     );
@@ -2229,36 +3516,6 @@ class _SectionTitle extends StatelessWidget {
           ),
         ],
       ],
-    );
-  }
-}
-
-class _EmptyAbout extends StatelessWidget {
-  const _EmptyAbout();
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            Icon(Icons.menu_book_outlined, size: 32, color: kLightGreyColor),
-            SizedBox(height: 12),
-            Text(
-              'No data yet',
-              style: TextStyle(color: kWhiteColor70, fontSize: 13),
-            ),
-            SizedBox(height: 6),
-            Text(
-              'Player insights appear once games are loaded.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: kLightGreyColor, fontSize: 11),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -3636,141 +4893,6 @@ class _NumberRangeFieldsState extends State<_NumberRangeFields> {
       ],
     );
   }
-}
-
-enum _PlayerProfileSaveAction { addAll, chooseManually }
-
-Future<_PlayerProfileSaveAction?> _showPlayerProfileSaveActions({
-  required BuildContext context,
-  required String playerName,
-  required bool hasActiveFilters,
-  required int visibleCount,
-  int? knownTotalCount,
-}) {
-  final count = knownTotalCount ?? visibleCount;
-  return showGeneralDialog<_PlayerProfileSaveAction>(
-    context: context,
-    barrierDismissible: true,
-    barrierLabel: 'Save player games',
-    barrierColor: Colors.black.withValues(alpha: 0.55),
-    transitionDuration: const Duration(milliseconds: 150),
-    pageBuilder:
-        (ctx, _, _) => FTheme(
-          data: FThemes.zinc.dark,
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: kBlack2Color,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: kDividerColor),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.45),
-                      blurRadius: 28,
-                      offset: const Offset(0, 12),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 16, 12, 14),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.library_add_outlined,
-                            color: kPrimaryColor,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Save to library',
-                                  style: TextStyle(
-                                    color: kWhiteColor,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  '${formatCompactCount(count)} ${hasActiveFilters ? 'filtered ' : ''}games from $playerName',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: kLightGreyColor,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          DesktopDialogIconButton(
-                            icon: Icons.close_rounded,
-                            tooltip: 'Close',
-                            onPress: () => Navigator.of(ctx).pop(),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const FDivider(),
-                    Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          DesktopDialogButton(
-                            label:
-                                hasActiveFilters
-                                    ? 'Add all filtered games'
-                                    : 'Add all games',
-                            icon: Icons.all_inclusive_rounded,
-                            fillWidth: true,
-                            onPress:
-                                () => Navigator.of(
-                                  ctx,
-                                ).pop(_PlayerProfileSaveAction.addAll),
-                          ),
-                          const SizedBox(height: 10),
-                          DesktopDialogButton(
-                            label: 'Choose games manually',
-                            icon: Icons.checklist_rounded,
-                            fillWidth: true,
-                            onPress:
-                                () => Navigator.of(
-                                  ctx,
-                                ).pop(_PlayerProfileSaveAction.chooseManually),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-    transitionBuilder: (ctx, anim, _, child) {
-      final eased = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
-      return FadeTransition(
-        opacity: eased,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, 0.02),
-            end: Offset.zero,
-          ).animate(eased),
-          child: child,
-        ),
-      );
-    },
-  );
 }
 
 Future<void> _saveGamesToLibrary({
