@@ -1200,7 +1200,7 @@ class _ReportRecapRow extends StatelessWidget {
                     classification.label,
                     style: TextStyle(
                       color: color,
-                      fontSize: 10,
+                      fontSize: 12,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -1224,7 +1224,7 @@ class _ReportRecapRow extends StatelessWidget {
         textAlign: TextAlign.center,
         style: TextStyle(
           color: color,
-          fontSize: 11,
+          fontSize: 13,
           fontWeight: FontWeight.w700,
           fontFeatures: const [FontFeature.tabularFigures()],
         ),
