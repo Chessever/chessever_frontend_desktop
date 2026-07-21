@@ -1185,7 +1185,7 @@ class _ReportRecapRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Expanded(child: _count(whiteCount, onWhite)),
+          Expanded(child: _count(whiteCount, onWhite, color)),
           SizedBox(
             width: 104,
             child: Row(
@@ -1198,19 +1198,23 @@ class _ReportRecapRow extends StatelessWidget {
                 Expanded(
                   child: Text(
                     classification.label,
-                    style: TextStyle(color: color, fontSize: 10),
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ],
             ),
           ),
-          Expanded(child: _count(blackCount, onBlack)),
+          Expanded(child: _count(blackCount, onBlack, color)),
         ],
       ),
     );
   }
 
-  Widget _count(int count, VoidCallback onTap) => ClickCursor(
+  Widget _count(int count, VoidCallback onTap, Color color) => ClickCursor(
     enabled: count > 0,
     child: GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -1219,8 +1223,9 @@ class _ReportRecapRow extends StatelessWidget {
         '$count',
         textAlign: TextAlign.center,
         style: TextStyle(
-          color: count > 0 ? kWhiteColor : kLightGreyColor,
+          color: color,
           fontSize: 11,
+          fontWeight: FontWeight.w700,
           fontFeatures: const [FontFeature.tabularFigures()],
         ),
       ),
@@ -1263,11 +1268,10 @@ String _classificationIconAsset(GameMoveClassification classification) =>
       GameMoveClassification.brilliant => 'assets/svgs/brilliant.svg',
       GameMoveClassification.goodMove => 'assets/svgs/good_move.svg',
       GameMoveClassification.bestMove => 'assets/svgs/best_move.svg',
-      GameMoveClassification.forced => 'assets/svgs/forced_move.svg',
+      GameMoveClassification.missedWin => 'assets/svgs/missed_win.svg',
       GameMoveClassification.inaccuracy => 'assets/svgs/inaccuracy.svg',
       GameMoveClassification.mistake => 'assets/svgs/mistake.svg',
       GameMoveClassification.blunder => 'assets/svgs/blunder.svg',
-      GameMoveClassification.missedWin => 'assets/svgs/missed_win.svg',
     };
 
 Color _classificationColor(GameMoveClassification classification) =>
@@ -1275,11 +1279,10 @@ Color _classificationColor(GameMoveClassification classification) =>
       GameMoveClassification.brilliant => const Color(0xFF177A68),
       GameMoveClassification.goodMove => const Color(0xFF177A68),
       GameMoveClassification.bestMove => const Color(0xFF28833A),
-      GameMoveClassification.forced => const Color(0xFF6B7A8A),
+      GameMoveClassification.missedWin => const Color(0xFF8F1E1E),
       GameMoveClassification.inaccuracy => const Color(0xFFFABE46),
       GameMoveClassification.mistake => const Color(0xFFC55A1E),
       GameMoveClassification.blunder => const Color(0xFFC9342E),
-      GameMoveClassification.missedWin => const Color(0xFF8F1E1E),
     };
 
 class _PvLine extends StatefulWidget {

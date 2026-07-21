@@ -8154,11 +8154,10 @@ LichessMoveAnnotationType _annotationTypeForReportClassification(
   GameMoveClassification.brilliant => LichessMoveAnnotationType.brilliant,
   GameMoveClassification.goodMove => LichessMoveAnnotationType.goodMove,
   GameMoveClassification.bestMove => LichessMoveAnnotationType.bestMove,
-  GameMoveClassification.forced => LichessMoveAnnotationType.forced,
+  GameMoveClassification.missedWin => LichessMoveAnnotationType.missedWin,
   GameMoveClassification.inaccuracy => LichessMoveAnnotationType.inaccuracy,
   GameMoveClassification.mistake => LichessMoveAnnotationType.mistake,
   GameMoveClassification.blunder => LichessMoveAnnotationType.blunder,
-  GameMoveClassification.missedWin => LichessMoveAnnotationType.missedWin,
 };
 
 String _annotationIconAssetPath(LichessMoveAnnotationType type) {

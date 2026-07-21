@@ -157,9 +157,10 @@ void main() {
     expect(find.text('2050'), findsOneWidget);
     expect(find.text('C20'), findsOneWidget);
     expect(find.text('Brilliant'), findsOneWidget);
-    expect(find.text('Good Move'), findsWidgets);
-    expect(find.text('Best move'), findsOneWidget);
+    expect(find.text('Best'), findsWidgets);
+    expect(find.text('Great'), findsOneWidget);
     expect(find.text('Missed Win'), findsOneWidget);
+    expect(find.text('Forced'), findsNothing);
     expect(find.text('Excellent'), findsNothing);
     expect(find.text('Okay'), findsNothing);
     expect(find.byType(SvgPicture), findsWidgets);

@@ -175,18 +175,15 @@ void main() {
       expect(_classify(game, 50, 25), GameMoveClassification.blunder);
     });
 
-    test('best and forced take precedence over score thresholds', () {
+    test('best takes precedence and forced moves stay uncategorized', () {
       expect(
         _classify(game, 50, 20, bestMove: 'e2e4'),
         GameMoveClassification.bestMove,
       );
-      expect(
-        _classify(game, 50, 20, alternatives: false),
-        GameMoveClassification.forced,
-      );
+      expect(_classify(game, 50, 20, alternatives: false), isNull);
     });
 
-    test('only-good-move heuristic produces Perfect', () {
+    test('only-good-move heuristic produces Best', () {
       final positions = [
         GameReportPosition(
           fen: game.startingFen,

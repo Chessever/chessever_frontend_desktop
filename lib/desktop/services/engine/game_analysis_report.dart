@@ -21,13 +21,12 @@ bool shouldRunLiveBoardAnalysis({
 
 enum GameMoveClassification {
   brilliant('Brilliant'),
-  goodMove('Good Move'),
-  bestMove('Best move'),
-  forced('Forced'),
+  goodMove('Best'),
+  bestMove('Great'),
+  missedWin('Missed Win'),
   inaccuracy('Inaccuracy'),
   mistake('Mistake'),
-  blunder('Blunder'),
-  missedWin('Missed Win');
+  blunder('Blunder');
 
   const GameMoveClassification(this.label);
   final String label;
@@ -525,7 +524,7 @@ GameMoveClassification? classifyGameReportMove({
       .toList(growable: false);
 
   if (before.lines.where((line) => line.moves.isNotEmpty).length <= 1) {
-    return GameMoveClassification.forced;
+    return null;
   }
 
   final alternativeWin =
