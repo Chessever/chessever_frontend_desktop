@@ -41,12 +41,12 @@ void main() {
       ),
     );
 
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.text('GM'), findsOneWidget);
 
     await tester.tap(find.text('GM'));
-    await tester.pumpAndSettle();
+    await tester.pump();
 
     expect(selectedType, PremiumGamesType.gm);
   });

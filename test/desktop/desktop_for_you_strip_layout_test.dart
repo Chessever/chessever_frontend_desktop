@@ -14,6 +14,21 @@ void main() {
     expect(source, isNot(contains('ref.watch(gamesTourProvider(tourId))')));
   });
 
+  test('For You selection anchors stay attached to their own cards', () {
+    final source =
+        File('lib/desktop/panes/tournaments_pane.dart').readAsStringSync();
+
+    expect(source, isNot(contains('final GlobalKey _selectedItemKey')));
+    expect(source, contains('key: eventItemKey'));
+    expect(
+      source,
+      contains(
+        'return KeyedSubtree(key: gameItemKeyFor(gameId), child: child);',
+      ),
+    );
+    expect(source, contains('key: gameItemKeyFor(games[i].gameId)'));
+  });
+
   group('DesktopForYouStripLayout', () {
     test('keeps four boards on ordinary wide rows', () {
       const availableForFour =
@@ -79,6 +94,50 @@ void main() {
       ]);
     },
   );
+
+  test('ordinary For You previews never backfill an older round', () {
+    final games = [
+      _game('r6-g1', round: 6),
+      _game('r6-g2', round: 6),
+      _game('r5-g1', round: 5),
+      _game('r5-g2', round: 5),
+    ];
+
+    final selected = selectDesktopForYouPreviewRoundGames(games);
+
+    expect(selected.map((game) => game.gameId), ['r6-g1', 'r6-g2']);
+  });
+
+  test('two-player matches backfill up to three recent rounds', () {
+    final games = [
+      _matchGame('match-r6', round: 6),
+      _matchGame('match-r5', round: 5),
+      _matchGame('match-r4', round: 4),
+      _matchGame('match-r3', round: 3),
+    ];
+
+    final selected = selectDesktopForYouPreviewRoundGames(games);
+
+    expect(selected.map((game) => game.gameId), [
+      'match-r6',
+      'match-r5',
+      'match-r4',
+    ]);
+    expect(
+      desktopForYouBackfillRoundLabel(
+        game: selected.first,
+        currentGame: selected.first,
+      ),
+      isNull,
+    );
+    expect(
+      desktopForYouBackfillRoundLabel(
+        game: selected[1],
+        currentGame: selected.first,
+      ),
+      'R5',
+    );
+  });
 }
 
 GamesTourModel _game(
@@ -109,5 +168,21 @@ PlayerCard _player(String name) {
     rating: 0,
     countryCode: '',
     team: null,
+  );
+}
+
+GamesTourModel _matchGame(String gameId, {required int round}) {
+  return GamesTourModel(
+    gameId: gameId,
+    whitePlayer: _player(round.isEven ? 'Player A' : 'Player B'),
+    blackPlayer: _player(round.isEven ? 'Player B' : 'Player A'),
+    whiteTimeDisplay: '',
+    blackTimeDisplay: '',
+    whiteClockCentiseconds: 0,
+    blackClockCentiseconds: 0,
+    gameStatus: GameStatus.whiteWins,
+    roundId: 'round-$round',
+    roundSlug: 'round-$round',
+    tourId: 'match-tour',
   );
 }

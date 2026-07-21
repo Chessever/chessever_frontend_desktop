@@ -82,6 +82,7 @@ class DesktopGameCard extends ConsumerWidget {
     super.key,
     required this.data,
     required this.onTap,
+    this.onDoubleTap,
     this.layout = DesktopCardLayout.list,
     this.selected = false,
     this.dragPayload,
@@ -91,6 +92,7 @@ class DesktopGameCard extends ConsumerWidget {
 
   final GameCardData data;
   final VoidCallback onTap;
+  final VoidCallback? onDoubleTap;
   final DesktopCardLayout layout;
   final bool selected;
   final ValueChanged<Offset>? onContextMenu;
@@ -182,6 +184,7 @@ class DesktopGameCard extends ConsumerWidget {
             }
             onTap();
           },
+          onDoubleTap: onDoubleTap,
           child: card,
         ),
       ),
@@ -298,7 +301,7 @@ class _ListLayoutState extends State<_ListLayout>
     final baseFill = _tileBaseFill(data: widget.data, highlight: highlight);
     final borderColor =
         widget.selected
-            ? kPrimaryColor.withValues(alpha: 0.48)
+            ? kPrimaryColor.withValues(alpha: 0.96)
             : (_hovered
                 ? kPrimaryColor.withValues(alpha: 0.14)
                 : kDividerColor);
@@ -309,21 +312,23 @@ class _ListLayoutState extends State<_ListLayout>
       onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: MotionCard(
         borderRadius: 12,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
+        child: Container(
           decoration: BoxDecoration(
             color: baseFill,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: borderColor),
+            border: Border.all(
+              color: borderColor,
+              width: widget.selected ? 2 : 1,
+            ),
             // Selection keeps a persistent shadow; the hover/press shadow is
             // now owned by the [MotionCard] dock above.
             boxShadow:
                 widget.selected
                     ? [
                       BoxShadow(
-                        color: kPrimaryColor.withValues(alpha: 0.08),
-                        blurRadius: 12,
-                        offset: const Offset(0, 6),
+                        color: kPrimaryColor.withValues(alpha: 0.16),
+                        blurRadius: 8,
+                        spreadRadius: 0.5,
                       ),
                     ]
                     : null,
@@ -863,7 +868,7 @@ class _CompactLayoutState extends State<_CompactLayout>
     final baseFill = _tileBaseFill(data: widget.data, highlight: highlight);
     final borderColor =
         widget.selected
-            ? kPrimaryColor.withValues(alpha: 0.48)
+            ? kPrimaryColor.withValues(alpha: 0.96)
             : (_hovered
                 ? kPrimaryColor.withValues(alpha: 0.14)
                 : kDividerColor);
@@ -874,22 +879,24 @@ class _CompactLayoutState extends State<_CompactLayout>
       onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: MotionCard(
         borderRadius: 10,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
+        child: Container(
           height: cardHeight,
           decoration: BoxDecoration(
             color: baseFill,
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: borderColor),
+            border: Border.all(
+              color: borderColor,
+              width: widget.selected ? 2 : 1,
+            ),
             // Selection keeps a persistent shadow; hover/press shadow is
             // now owned by the [MotionCard] dock above.
             boxShadow:
                 widget.selected
                     ? [
                       BoxShadow(
-                        color: kPrimaryColor.withValues(alpha: 0.08),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
+                        color: kPrimaryColor.withValues(alpha: 0.16),
+                        blurRadius: 8,
+                        spreadRadius: 0.5,
                       ),
                     ]
                     : null,
@@ -996,8 +1003,7 @@ class _GridLayoutState extends State<_GridLayout>
       onExit: (_) => setStateAfterPointerEvent(() => _hovered = false),
       child: MotionCard(
         borderRadius: 12,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 140),
+        child: Container(
           decoration: BoxDecoration(
             color: highlight ? kBlack3Color : kBlack2Color,
             borderRadius: BorderRadius.circular(12),
@@ -1007,19 +1013,20 @@ class _GridLayoutState extends State<_GridLayout>
                 widget.selected
                     ? [
                       BoxShadow(
-                        color: kPrimaryColor.withValues(alpha: 0.08),
-                        blurRadius: 12,
-                        offset: const Offset(0, 6),
+                        color: kPrimaryColor.withValues(alpha: 0.18),
+                        blurRadius: 8,
+                        spreadRadius: 0.5,
                       ),
                     ]
                     : null,
             border: Border.all(
               color:
                   widget.selected
-                      ? kPrimaryColor.withValues(alpha: 0.48)
+                      ? kPrimaryColor.withValues(alpha: 0.96)
                       : (_hovered
                           ? kPrimaryColor.withValues(alpha: 0.16)
                           : kDividerColor),
+              width: widget.selected ? 2 : 1,
             ),
           ),
           child: Padding(

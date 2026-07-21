@@ -1,7 +1,6 @@
 import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -41,14 +40,14 @@ class _GridHost extends StatelessWidget {
     required this.games,
     this.height = 300,
     this.pageStride = kDesktopGameKeyboardDefaultPageStride,
-    this.scrollCacheExtent = const ScrollCacheExtent.pixels(250),
+    this.cacheExtent = 250,
   });
 
   final ScrollController controller;
   final List<GamesTourModel> games;
   final double height;
   final int pageStride;
-  final ScrollCacheExtent scrollCacheExtent;
+  final double cacheExtent;
 
   static const int columns = 3;
 
@@ -69,7 +68,7 @@ class _GridHost extends StatelessWidget {
               builder: (context, selectedGameId, selectGame, keyForGame) {
                 return CustomScrollView(
                   controller: controller,
-                  scrollCacheExtent: scrollCacheExtent,
+                  cacheExtent: cacheExtent,
                   slivers: [
                     SliverGrid(
                       gridDelegate:
@@ -181,7 +180,7 @@ void main() {
       _GridHost(
         controller: controller,
         games: games,
-        scrollCacheExtent: const ScrollCacheExtent.pixels(0),
+        cacheExtent: 0,
       ),
     );
     await tester.pumpAndSettle();
@@ -221,7 +220,7 @@ void main() {
         controller: controller,
         games: games,
         pageStride: 45,
-        scrollCacheExtent: const ScrollCacheExtent.pixels(0),
+        cacheExtent: 0,
       ),
     );
     await tester.pumpAndSettle();
@@ -259,7 +258,7 @@ void main() {
         controller: controller,
         games: games,
         height: 100,
-        scrollCacheExtent: const ScrollCacheExtent.pixels(0),
+        cacheExtent: 0,
       ),
     );
     await tester.pumpAndSettle();

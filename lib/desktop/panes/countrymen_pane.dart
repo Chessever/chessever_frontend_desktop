@@ -15,7 +15,7 @@ import 'package:chessever/desktop/widgets/desktop_game_filter_dialog.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_player_title_chip.dart';
-import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
+import 'package:chessever/desktop/widgets/desktop_grouped_game_keyboard_focus.dart';
 import 'package:chessever/desktop/widgets/desktop_hero_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -1662,6 +1662,7 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
   static const Duration _scrollIdleDelay = Duration(milliseconds: 180);
 
   final ScrollController _scrollController = ScrollController();
+  final Set<String> _collapsedGroups = <String>{};
   Timer? _scrollIdleTimer;
   bool _liveCardsPausedForScroll = false;
   // On-screen column count of the compact/list flow, stashed from its layout
@@ -1725,6 +1726,21 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
     );
     final cardStreamingEnabled = streamingEnabled;
     final groups = buildDesktopGameDateGroups(widget.games);
+    final keyboardGroups = [
+      for (final group in groups)
+        DesktopGameKeyboardGroup(
+          id: group.key,
+          games: group.games,
+          expanded: !_collapsedGroups.contains(group.key),
+        ),
+    ];
+    void toggleGroup(String groupId) {
+      setState(() {
+        if (!_collapsedGroups.remove(groupId)) {
+          _collapsedGroups.add(groupId);
+        }
+      });
+    }
     if (layout == DesktopCardLayout.grid) {
       // Compute column count first so PageUp/PageDown can stride by a full
       // page (~3 rows of `columns` cards). The previous `pageStride: 9`
@@ -1736,11 +1752,12 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
             2,
             6,
           );
-          return DesktopGameKeyboardFocus(
+          return DesktopGroupedGameKeyboardFocus(
             scopeId: 'countrymen-games',
-            games: widget.games,
-            pageStride: columns * 3,
-            resolveColumnCount: () => columns,
+            groups: keyboardGroups,
+            scrollController: _scrollController,
+            resolveColumnCount: (_) => columns,
+            onActivateGroup: toggleGroup,
             onActivateGame:
                 (game) => _openCountrymenGame(
                   ref,
@@ -1748,7 +1765,14 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                   widget.routeTitle,
                   widget.games,
                 ),
-            builder: (context, selectedGameId, selectGame, keyForGame) {
+            builder: (
+              context,
+              selection,
+              selectGroup,
+              selectGame,
+              keyForGroup,
+              keyForGame,
+            ) {
               return CustomScrollView(
                 controller: _scrollController,
                 physics: const DesktopScrollPhysics(),
@@ -1766,13 +1790,27 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                         8,
                       ),
                       sliver: SliverToBoxAdapter(
-                        child: DesktopDateGroupCard(
-                          label: groups[groupIndex].label,
-                          gameCount: groups[groupIndex].games.length,
+                        child: DesktopGroupedGameKeyboardHeader(
+                          itemKey: keyForGroup(groups[groupIndex].key),
+                          groupId: groups[groupIndex].key,
+                          onSelect: selectGroup,
+                          child: DesktopDateGroupCard(
+                            label: groups[groupIndex].label,
+                            gameCount: groups[groupIndex].games.length,
+                            collapsed: _collapsedGroups.contains(
+                              groups[groupIndex].key,
+                            ),
+                            selected:
+                                selection?.isGroup == true &&
+                                selection?.groupId == groups[groupIndex].key,
+                            onToggle:
+                                () => toggleGroup(groups[groupIndex].key),
+                          ),
                         ),
                       ),
                     ),
-                    SliverPadding(
+                    if (!_collapsedGroups.contains(groups[groupIndex].key))
+                      SliverPadding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
                       sliver: SliverGrid(
                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -1794,8 +1832,12 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                             milliseconds: (flatIndex.clamp(0, 12)) * 32,
                           );
                           final game = groups[groupIndex].games[i];
-                          return DesktopGameKeyboardItem(
-                            itemKey: keyForGame(game.gameId),
+                          return DesktopGroupedGameKeyboardItem(
+                            itemKey: keyForGame(
+                              groups[groupIndex].key,
+                              game.gameId,
+                            ),
+                            groupId: groups[groupIndex].key,
                             gameId: game.gameId,
                             onSelect: selectGame,
                             child: Cue.onMount(
@@ -1815,7 +1857,10 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                                   routeGamesContinuation:
                                       const BoardTabGamesContinuation.countrymen(),
                                   layout: DesktopCardLayout.grid,
-                                  selected: selectedGameId == game.gameId,
+                                  selected:
+                                      selection?.groupId ==
+                                          groups[groupIndex].key &&
+                                      selection?.gameId == game.gameId,
                                   viewSource: ChessboardView.countryman,
                                   streamingEnabled: cardStreamingEnabled,
                                   allowStockfishFallback: true,
@@ -1840,14 +1885,23 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
         },
       );
     }
-    return DesktopGameKeyboardFocus(
+    return DesktopGroupedGameKeyboardFocus(
       scopeId: 'countrymen-games',
-      games: widget.games,
-      resolveColumnCount: () => _keyboardColumns,
+      groups: keyboardGroups,
+      scrollController: _scrollController,
+      resolveColumnCount: (_) => _keyboardColumns,
+      onActivateGroup: toggleGroup,
       onActivateGame:
           (game) =>
               _openCountrymenGame(ref, game, widget.routeTitle, widget.games),
-      builder: (context, selectedGameId, selectGame, keyForGame) {
+      builder: (
+        context,
+        selection,
+        selectGroup,
+        selectGame,
+        keyForGroup,
+        keyForGame,
+      ) {
         return CustomScrollView(
           controller: _scrollController,
           physics: const DesktopScrollPhysics(),
@@ -1865,13 +1919,26 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                   8,
                 ),
                 sliver: SliverToBoxAdapter(
-                  child: DesktopDateGroupCard(
-                    label: groups[groupIndex].label,
-                    gameCount: groups[groupIndex].games.length,
+                  child: DesktopGroupedGameKeyboardHeader(
+                    itemKey: keyForGroup(groups[groupIndex].key),
+                    groupId: groups[groupIndex].key,
+                    onSelect: selectGroup,
+                    child: DesktopDateGroupCard(
+                      label: groups[groupIndex].label,
+                      gameCount: groups[groupIndex].games.length,
+                      collapsed: _collapsedGroups.contains(
+                        groups[groupIndex].key,
+                      ),
+                      selected:
+                          selection?.isGroup == true &&
+                          selection?.groupId == groups[groupIndex].key,
+                      onToggle: () => toggleGroup(groups[groupIndex].key),
+                    ),
                   ),
                 ),
               ),
-              SliverPadding(
+              if (!_collapsedGroups.contains(groups[groupIndex].key))
+                SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 sliver: SliverToBoxAdapter(
                   child: DesktopGameCardsFlow(
@@ -1892,9 +1959,13 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                         milliseconds: (flatIndex.clamp(0, 12)) * 32,
                       );
                       final game = groups[groupIndex].games[i];
-                      return DesktopGameKeyboardItem(
-                        itemKey: keyForGame(game.gameId),
-                        gameId: game.gameId,
+                    return DesktopGroupedGameKeyboardItem(
+                      itemKey: keyForGame(
+                        groups[groupIndex].key,
+                        game.gameId,
+                      ),
+                      groupId: groups[groupIndex].key,
+                      gameId: game.gameId,
                         onSelect: selectGame,
                         child: Cue.onMount(
                           motion: const CueMotion.smooth(),
@@ -1909,7 +1980,9 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
                               routeGamesContinuation:
                                   const BoardTabGamesContinuation.countrymen(),
                               layout: layout,
-                              selected: selectedGameId == game.gameId,
+                            selected:
+                                selection?.groupId == groups[groupIndex].key &&
+                                selection?.gameId == game.gameId,
                               viewSource: ChessboardView.countryman,
                               streamingEnabled: cardStreamingEnabled,
                               allowStockfishFallback: true,

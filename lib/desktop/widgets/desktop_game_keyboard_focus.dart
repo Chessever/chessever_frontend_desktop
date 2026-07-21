@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
-const int kDesktopGameKeyboardDefaultPageStride = 8;
+const int kDesktopGameKeyboardDefaultPageStride = 12;
 
 @visibleForTesting
 int nextDesktopGameKeyboardIndex({
@@ -116,13 +116,7 @@ class DesktopGameKeyboardFocus extends StatefulWidget {
 
 class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
   late final FocusNode _focusNode;
-  // Singleton global key reused for whichever item is currently selected.
-  // Only the selected row mounts under this key, so we never trigger the
-  // "duplicate GlobalKey in widget tree" assertion even when knockout or
-  // match-card layouts render the same gameId in multiple subtrees.
-  final GlobalKey _selectedItemKey = GlobalKey(
-    debugLabel: 'desktop-keyboard-selected',
-  );
+  final Map<String, GlobalKey> _itemKeys = <String, GlobalKey>{};
   String? _selectedGameId;
   ValueListenable<TickerModeData>? _tickerMode;
 
@@ -182,7 +176,31 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
     final primary = FocusManager.instance.primaryFocus;
     if (primary == null || primary == _focusNode) return true;
     if (!primary.canRequestFocus) return true;
-    return _focusNode.ancestors.contains(primary);
+    if (_focusNode.ancestors.contains(primary)) return true;
+
+    final primaryContext = primary.context;
+    if (primaryContext != null) {
+      final ownsEditableText =
+          primaryContext.widget is EditableText ||
+          primaryContext.findAncestorWidgetOfExactType<EditableText>() != null;
+      if (ownsEditableText) return false;
+
+      // A modal route owns focus deliberately (dialog, menu, sheet). Never
+      // pull keyboard control out from under it when a games tab wakes up.
+      final primaryRoute = ModalRoute.of(primaryContext);
+      final gamesRoute = ModalRoute.of(context);
+      if (primaryRoute != null &&
+          gamesRoute != null &&
+          primaryRoute != gamesRoute) {
+        return false;
+      }
+    }
+
+    // Sidebar and tab-strip buttons live beside the pane rather than above it
+    // in the focus tree. Clicking one to open a games surface leaves focus on
+    // that chrome button, so the old ancestor-only rule made the cards appear
+    // selected but left every navigation key dead until a card was clicked.
+    return true;
   }
 
   @override
@@ -216,9 +234,14 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
     super.dispose();
   }
 
-  Key _keyForGame(String gameId) {
-    if (gameId == _selectedGameId) return _selectedItemKey;
-    return ValueKey<String>('desktop-keyboard-item:${widget.scopeId}:$gameId');
+  GlobalKey _keyForGame(String gameId) {
+    final identity = '${widget.scopeId}\u0000$gameId';
+    return _itemKeys.putIfAbsent(
+      identity,
+      () => GlobalKey(
+        debugLabel: 'desktop-keyboard-item:${widget.scopeId}:$gameId',
+      ),
+    );
   }
 
   void _syncSelectionWithGames() {
@@ -280,9 +303,7 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
   }
 
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
-      return KeyEventResult.ignored;
-    }
+    if (_hasNavigationModifier()) return KeyEventResult.ignored;
     final key = event.logicalKey;
     final isNavigationKey =
         key == LogicalKeyboardKey.arrowRight ||
@@ -298,10 +319,10 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
         key == LogicalKeyboardKey.numpadEnter;
 
     if (!isNavigationKey && !isActivationKey) return KeyEventResult.ignored;
-
-    // Modifier-held key events belong to global shortcuts (Cmd/Ctrl+Enter,
-    // Cmd+End, Alt+Arrow, etc). Let them bubble.
-    if (_hasNavigationModifier()) return KeyEventResult.ignored;
+    // Own repeat events without advancing again, or an ancestor scroll view
+    // can move while the highlighted game remains behind.
+    if (event is KeyRepeatEvent) return KeyEventResult.handled;
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
 
     if (isActivationKey) {
       final game = _selectedGame();
@@ -370,7 +391,11 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
     // for the previous selection. Never let that stale callback move the
     // viewport away from the currently selected game.
     if (expectedGameId != null && _selectedGameId != expectedGameId) return;
-    final context = _selectedItemKey.currentContext;
+    final selectedGameId = expectedGameId ?? _selectedGameId;
+    final context =
+        selectedGameId == null
+            ? null
+            : _keyForGame(selectedGameId).currentContext;
     if (context == null) {
       // Lazy slivers intentionally do not mount cards outside their viewport.
       // Move their owning scroll position toward the keyboard destination so
@@ -416,8 +441,7 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
     }
     Scrollable.ensureVisible(
       context,
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOutCubic,
+      duration: Duration.zero,
       alignmentPolicy: alignment,
     );
   }

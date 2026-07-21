@@ -24,6 +24,7 @@ The Ralph loop will keep waking you. Make every iteration land a verifiable, con
 ## 2. Branching and commits
 
 - Stay on `main` unless the user gave you a branch.
+- Push commits and open a pull request only when the user explicitly asks.
 - One commit per coherent chunk. Imperative subject, focused body.
 - Do **not** commit unless the chunk leaves the tree in a buildable state (or the chunk *is* the buildable state).
 - Never commit `.env`, `.env.e2e`, `.flutter-plugins-dependencies` (regenerated), `build/`, `.dart_tool/`, `flutter_*.png` debug screenshots.

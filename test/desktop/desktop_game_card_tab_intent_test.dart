@@ -85,6 +85,41 @@ void main() {
     expect(spawnedFocusValues, isEmpty);
   });
 
+  testWidgets('single click selects while double click opens when configured', (
+    tester,
+  ) async {
+    var selections = 0;
+    var opens = 0;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _cardProviderOverrides(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: DesktopGameCard(
+              data: _data,
+              layout: DesktopCardLayout.compact,
+              onTap: () => selections++,
+              onDoubleTap: () => opens++,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(DesktopGameCard));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(selections, 1);
+    expect(opens, 0);
+
+    await tester.tap(find.byType(DesktopGameCard));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byType(DesktopGameCard));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(selections, 1);
+    expect(opens, 1);
+  });
+
   testWidgets('started live compact card leaves result slot empty', (
     tester,
   ) async {
@@ -191,6 +226,59 @@ void main() {
       ),
       findsNothing,
     );
+  });
+
+  testWidgets('selected grid card highlight is strong and immediate', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _cardProviderOverrides(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 320,
+              height: 360,
+              child: DesktopGameCard(
+                data: _startedLiveDataWithClocks,
+                layout: DesktopCardLayout.grid,
+                selected: true,
+                onTap: _noop,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.descendant(
+        of: find.byType(MotionCard),
+        matching: find.byType(AnimatedContainer),
+      ),
+      findsNothing,
+    );
+
+    final selectedShell = tester
+        .widgetList<Container>(
+          find.descendant(
+            of: find.byType(MotionCard),
+            matching: find.byType(Container),
+          ),
+        )
+        .firstWhere((container) {
+          final decoration = container.decoration;
+          if (decoration is! BoxDecoration || decoration.border is! Border) {
+            return false;
+          }
+          return (decoration.border! as Border).top.width == 2;
+        });
+    final decoration = selectedShell.decoration! as BoxDecoration;
+    final border = decoration.border! as Border;
+
+    expect(border.top.width, 2);
+    expect(border.top.color, kPrimaryColor.withValues(alpha: 0.96));
+    expect(decoration.boxShadow, isNotEmpty);
   });
 
   testWidgets('running live clock uses the primary color', (tester) async {

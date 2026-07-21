@@ -17,7 +17,7 @@ import 'package:chessever/desktop/widgets/desktop_date_group_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_filter_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_player_title_chip.dart';
-import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
+import 'package:chessever/desktop/widgets/desktop_grouped_game_keyboard_focus.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
@@ -416,6 +416,7 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
   static const Duration _scrollIdleDelay = Duration(milliseconds: 180);
 
   final ScrollController _scrollController = ScrollController();
+  final Set<String> _collapsedGroups = <String>{};
   Timer? _scrollIdleTimer;
   bool _liveCardsPausedForScroll = false;
   // On-screen column count of the compact/list flow, stashed from its layout
@@ -475,6 +476,21 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
   Widget build(BuildContext context) {
     final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
     final groups = buildDesktopGameDateGroups(widget.games);
+    final keyboardGroups = [
+      for (final group in groups)
+        DesktopGameKeyboardGroup(
+          id: group.key,
+          games: group.games,
+          expanded: !_collapsedGroups.contains(group.key),
+        ),
+    ];
+    void toggleGroup(String groupId) {
+      setState(() {
+        if (!_collapsedGroups.remove(groupId)) {
+          _collapsedGroups.add(groupId);
+        }
+      });
+    }
     const cardStreamingEnabled = true;
     if (layout == DesktopCardLayout.grid) {
       // Compute column count first so PageUp/PageDown can stride by a full
@@ -487,14 +503,22 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
             2,
             6,
           );
-          return DesktopGameKeyboardFocus(
+          return DesktopGroupedGameKeyboardFocus(
             scopeId: 'favorites-games',
-            games: widget.games,
-            pageStride: columns * 3,
-            resolveColumnCount: () => columns,
+            groups: keyboardGroups,
+            scrollController: _scrollController,
+            resolveColumnCount: (_) => columns,
+            onActivateGroup: toggleGroup,
             onActivateGame:
                 (game) => _openFavoriteGame(ref, game, widget.games),
-            builder: (context, selectedGameId, selectGame, keyForGame) {
+            builder: (
+              context,
+              selection,
+              selectGroup,
+              selectGame,
+              keyForGroup,
+              keyForGame,
+            ) {
               return CustomScrollView(
                 controller: _scrollController,
                 physics: const DesktopScrollPhysics(),
@@ -510,13 +534,27 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
                         bottom: 8,
                       ),
                       sliver: SliverToBoxAdapter(
-                        child: DesktopDateGroupCard(
-                          label: groups[groupIndex].label,
-                          gameCount: groups[groupIndex].games.length,
+                        child: DesktopGroupedGameKeyboardHeader(
+                          itemKey: keyForGroup(groups[groupIndex].key),
+                          groupId: groups[groupIndex].key,
+                          onSelect: selectGroup,
+                          child: DesktopDateGroupCard(
+                            label: groups[groupIndex].label,
+                            gameCount: groups[groupIndex].games.length,
+                            collapsed: _collapsedGroups.contains(
+                              groups[groupIndex].key,
+                            ),
+                            selected:
+                                selection?.isGroup == true &&
+                                selection?.groupId == groups[groupIndex].key,
+                            onToggle:
+                                () => toggleGroup(groups[groupIndex].key),
+                          ),
                         ),
                       ),
                     ),
-                    SliverGrid(
+                    if (!_collapsedGroups.contains(groups[groupIndex].key))
+                      SliverGrid(
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: columns,
                         mainAxisSpacing: 8,
@@ -525,15 +563,21 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
                       ),
                       delegate: SliverChildBuilderDelegate((context, i) {
                         final game = groups[groupIndex].games[i];
-                        return DesktopGameKeyboardItem(
-                          itemKey: keyForGame(game.gameId),
+                        return DesktopGroupedGameKeyboardItem(
+                          itemKey: keyForGame(
+                            groups[groupIndex].key,
+                            game.gameId,
+                          ),
+                          groupId: groups[groupIndex].key,
                           gameId: game.gameId,
                           onSelect: selectGame,
                           child: _FavoriteLiveGameCard(
                             game: game,
                             layout: DesktopCardLayout.grid,
                             allGames: widget.games,
-                            selected: selectedGameId == game.gameId,
+                            selected:
+                                selection?.groupId == groups[groupIndex].key &&
+                                selection?.gameId == game.gameId,
                             streamEnabled: cardStreamingEnabled,
                           ),
                         );
@@ -551,12 +595,21 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
       );
     }
 
-    return DesktopGameKeyboardFocus(
+    return DesktopGroupedGameKeyboardFocus(
       scopeId: 'favorites-games',
-      games: widget.games,
-      resolveColumnCount: () => _keyboardColumns,
+      groups: keyboardGroups,
+      scrollController: _scrollController,
+      resolveColumnCount: (_) => _keyboardColumns,
+      onActivateGroup: toggleGroup,
       onActivateGame: (game) => _openFavoriteGame(ref, game, widget.games),
-      builder: (context, selectedGameId, selectGame, keyForGame) {
+      builder: (
+        context,
+        selection,
+        selectGroup,
+        selectGame,
+        keyForGroup,
+        keyForGame,
+      ) {
         return CustomScrollView(
           controller: _scrollController,
           physics: const DesktopScrollPhysics(),
@@ -572,13 +625,26 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
                   bottom: 8,
                 ),
                 sliver: SliverToBoxAdapter(
-                  child: DesktopDateGroupCard(
-                    label: groups[groupIndex].label,
-                    gameCount: groups[groupIndex].games.length,
+                  child: DesktopGroupedGameKeyboardHeader(
+                    itemKey: keyForGroup(groups[groupIndex].key),
+                    groupId: groups[groupIndex].key,
+                    onSelect: selectGroup,
+                    child: DesktopDateGroupCard(
+                      label: groups[groupIndex].label,
+                      gameCount: groups[groupIndex].games.length,
+                      collapsed: _collapsedGroups.contains(
+                        groups[groupIndex].key,
+                      ),
+                      selected:
+                          selection?.isGroup == true &&
+                          selection?.groupId == groups[groupIndex].key,
+                      onToggle: () => toggleGroup(groups[groupIndex].key),
+                    ),
                   ),
                 ),
               ),
-              SliverToBoxAdapter(
+              if (!_collapsedGroups.contains(groups[groupIndex].key))
+                SliverToBoxAdapter(
                 child: DesktopGameCardsFlow(
                   layout: layout,
                   embedded: true,
@@ -586,15 +652,21 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
                   itemCount: groups[groupIndex].games.length,
                   itemBuilder: (context, i) {
                     final game = groups[groupIndex].games[i];
-                    return DesktopGameKeyboardItem(
-                      itemKey: keyForGame(game.gameId),
+                    return DesktopGroupedGameKeyboardItem(
+                      itemKey: keyForGame(
+                        groups[groupIndex].key,
+                        game.gameId,
+                      ),
+                      groupId: groups[groupIndex].key,
                       gameId: game.gameId,
                       onSelect: selectGame,
                       child: _FavoriteLiveGameCard(
                         game: game,
                         layout: layout,
                         allGames: widget.games,
-                        selected: selectedGameId == game.gameId,
+                        selected:
+                            selection?.groupId == groups[groupIndex].key &&
+                            selection?.gameId == game.gameId,
                         streamEnabled: cardStreamingEnabled,
                       ),
                     );

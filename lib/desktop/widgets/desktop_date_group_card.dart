@@ -14,6 +14,7 @@ class DesktopDateGroupCard extends StatelessWidget {
     required this.gameCount,
     this.showCount = true,
     this.collapsed = false,
+    this.selected = false,
     this.onToggle,
   });
 
@@ -24,6 +25,7 @@ class DesktopDateGroupCard extends StatelessWidget {
   /// paginating and the total would be misleading.
   final bool showCount;
   final bool collapsed;
+  final bool selected;
   final VoidCallback? onToggle;
 
   @override
@@ -37,9 +39,14 @@ class DesktopDateGroupCard extends StatelessWidget {
           style:
               (style) => style.copyWith(
                 decoration: BoxDecoration(
-                  color: kBlack2Color,
+                  color: selected ? kBlack3Color : kBlack2Color,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: kDividerColor),
+                  border: Border.all(
+                    color:
+                        selected
+                            ? kPrimaryColor.withValues(alpha: 0.58)
+                            : kDividerColor,
+                  ),
                 ),
               ),
           child: Padding(
@@ -98,9 +105,7 @@ class DesktopDateGroupCard extends StatelessWidget {
                             ),
                       ),
                     ),
-                    child: Text(
-                      gameCount == 1 ? '1 game' : '$gameCount games',
-                    ),
+                    child: Text(gameCount == 1 ? '1 game' : '$gameCount games'),
                   ),
                 ],
                 if (onToggle != null) ...[

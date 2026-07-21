@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -80,7 +79,7 @@ void main() {
                     games: games,
                     scrollController: scrollController,
                     layout: DesktopCardLayout.compact,
-                    scrollCacheExtent: const ScrollCacheExtent.pixels(400),
+                    cacheExtent: 400,
                     scopeId: 'thousand-games',
                   ),
                 );

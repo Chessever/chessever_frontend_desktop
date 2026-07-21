@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -20,6 +19,7 @@ import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
+import 'package:chessever/desktop/widgets/desktop_grouped_game_keyboard_focus.dart';
 import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
@@ -421,29 +421,52 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     // rows aren't rendered — stepping into those would land the highlight on an
     // invisible item with no `currentContext` for `Scrollable.ensureVisible`.
     // Filter to expanded rounds only, in on-screen (descending) order.
-    final keyboardGames = <GamesTourModel>[];
+    final keyboardGroups = <DesktopGameKeyboardGroup>[];
     for (final round in displayRounds) {
-      if (!isRoundExpanded(round)) continue;
+      final expanded = isRoundExpanded(round);
       final roundGames =
           grouped.gamesByRound[round.id] ?? const <GamesTourModel>[];
+      final visibleRoundGames = <GamesTourModel>[];
       final showMatches =
           grouped.isKnockoutTournament &&
           KnockoutMatchDetector.isKnockoutMatchFormat(roundGames);
-      if (!showMatches) {
-        keyboardGames.addAll(roundGames);
-        continue;
-      }
-      for (final entry
-          in KnockoutMatchDetector.groupByMatches(roundGames).entries) {
-        final expansionKey = (
-          scopeId: tournamentScopeId,
-          roundId: round.id,
-          matchId: entry.key,
-        );
-        if (ref.watch(_tournamentMatchExpandedProvider(expansionKey))) {
-          keyboardGames.addAll(entry.value);
+      if (expanded) {
+        if (!showMatches) {
+          visibleRoundGames.addAll(roundGames);
+        } else {
+          for (final entry
+              in KnockoutMatchDetector.groupByMatches(roundGames).entries) {
+            final expansionKey = (
+              scopeId: tournamentScopeId,
+              roundId: round.id,
+              matchId: entry.key,
+            );
+            if (ref.watch(_tournamentMatchExpandedProvider(expansionKey))) {
+              visibleRoundGames.addAll(entry.value);
+            }
+          }
         }
       }
+      keyboardGroups.add(
+        DesktopGameKeyboardGroup(
+          id: round.id,
+          games: visibleRoundGames,
+          expanded: expanded,
+        ),
+      );
+    }
+
+    void toggleRound(String roundId) {
+      final round = displayRounds.firstWhere((item) => item.id == roundId);
+      final expansionKey = (
+        id: round.id,
+        initiallyExpanded: initialExpanded(round),
+      );
+      final notifier = ref.read(
+        _tournamentRoundExpandedProvider(expansionKey).notifier,
+      );
+      notifier.state =
+          !ref.read(_tournamentRoundExpandedProvider(expansionKey));
     }
 
     Widget searchField({required EdgeInsetsGeometry padding}) {
@@ -518,11 +541,12 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                   contentWidth,
                 );
                 final keyboardColumns = isMatchStyle ? 1 : cardColumns;
-                return DesktopGameKeyboardFocus(
+                return DesktopGroupedGameKeyboardFocus(
                   scopeId: tournamentScopeId,
-                  games: keyboardGames,
+                  groups: keyboardGroups,
                   scrollController: _scrollController,
-                  resolveColumnCount: () => keyboardColumns,
+                  resolveColumnCount: (_) => keyboardColumns,
+                  onActivateGroup: toggleRound,
                   onActivateGame:
                       (game) => openTournamentGameTab(
                         ref,
@@ -534,8 +558,10 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                   builder:
                       (
                         context,
-                        selectedGameId,
+                        selection,
+                        selectGroup,
                         selectGame,
+                        keyForGroup,
                         keyForGame,
                       ) => _TournamentLiveBatchScope(
                         keysByGameId: liveBatchKeyByGameId,
@@ -550,9 +576,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                             // A small overscan keeps wheel/trackpad scrolling
                             // smooth without mounting an entire 1,000-board
                             // broadcast and its realtime subscriptions.
-                            scrollCacheExtent: const ScrollCacheExtent.pixels(
-                              400,
-                            ),
+                            cacheExtent: 400,
                             slivers: [
                               SliverPadding(
                                 padding: const EdgeInsets.fromLTRB(
@@ -588,9 +612,21 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                                       _RoundSliverSection(
                                         key: ValueKey<String>(round.id),
                                         scopeId: tournamentScopeId,
-                                        selectedGameId: selectedGameId,
-                                        onSelectGame: selectGame,
-                                        keyForGame: keyForGame,
+                                        selectedGameId:
+                                            selection?.groupId == round.id
+                                                ? selection?.gameId
+                                                : null,
+                                        onSelectGame:
+                                            (gameId) =>
+                                                selectGame(round.id, gameId),
+                                        keyForGame:
+                                            (gameId) =>
+                                                keyForGame(round.id, gameId),
+                                        selectedHeader:
+                                            selection?.isGroup == true &&
+                                            selection?.groupId == round.id,
+                                        onSelectHeader: selectGroup,
+                                        headerKey: keyForGroup(round.id),
                                         round: round,
                                         initiallyExpanded: initialExpanded(
                                           round,
@@ -781,6 +817,9 @@ class _RoundSliverSection extends ConsumerWidget {
     required this.selectedGameId,
     required this.onSelectGame,
     required this.keyForGame,
+    required this.selectedHeader,
+    required this.onSelectHeader,
+    required this.headerKey,
     required this.round,
     required this.initiallyExpanded,
     required this.games,
@@ -799,6 +838,9 @@ class _RoundSliverSection extends ConsumerWidget {
   final String? selectedGameId;
   final ValueChanged<String> onSelectGame;
   final Key Function(String gameId) keyForGame;
+  final bool selectedHeader;
+  final ValueChanged<String> onSelectHeader;
+  final Key headerKey;
   final GamesAppBarModel round;
 
   /// Status-derived default open/closed state. Also the second half of the
@@ -904,19 +946,25 @@ class _RoundSliverSection extends ConsumerWidget {
     return SliverMainAxisGroup(
       slivers: [
         SliverToBoxAdapter(
-          child: RoundHeaderCard(
-            round: round,
-            gameCount: games.length,
-            expanded: expanded,
-            onToggle:
-                () =>
-                    ref
-                        .read(
-                          _tournamentRoundExpandedProvider(
-                            expansionKey,
-                          ).notifier,
-                        )
-                        .state = !expanded,
+          child: DesktopGroupedGameKeyboardHeader(
+            itemKey: headerKey,
+            groupId: round.id,
+            onSelect: onSelectHeader,
+            child: RoundHeaderCard(
+              round: round,
+              gameCount: games.length,
+              expanded: expanded,
+              selected: selectedHeader,
+              onToggle:
+                  () =>
+                      ref
+                          .read(
+                            _tournamentRoundExpandedProvider(
+                              expansionKey,
+                            ).notifier,
+                          )
+                          .state = !expanded,
+            ),
           ),
         ),
         if (expanded) const SliverToBoxAdapter(child: SizedBox(height: 8)),
@@ -1144,7 +1192,7 @@ Widget buildLazyTournamentGamesViewportForTesting({
   required ScrollController scrollController,
   DesktopCardLayout layout = DesktopCardLayout.compact,
   bool streamingEnabled = true,
-  ScrollCacheExtent scrollCacheExtent = const ScrollCacheExtent.pixels(400),
+  double cacheExtent = 400,
   String scopeId = 'tournament-lazy-stress',
 }) {
   final batchKeys =
@@ -1165,7 +1213,7 @@ Widget buildLazyTournamentGamesViewportForTesting({
         keysByGameId: batchKeys,
         child: CustomScrollView(
           controller: scrollController,
-          scrollCacheExtent: scrollCacheExtent,
+          cacheExtent: cacheExtent,
           slivers: [
             SliverPadding(
               padding: const EdgeInsets.all(24),
@@ -1949,6 +1997,7 @@ class LiveDesktopGameCard extends ConsumerWidget {
     this.roundNameById = const <String, String>{},
     this.selected = false,
     this.onTap,
+    this.onSelect,
     this.enableContextMenu = true,
     this.viewSource = ChessboardView.tour,
     this.liveBatchKey,
@@ -1984,6 +2033,11 @@ class LiveDesktopGameCard extends ConsumerWidget {
   /// boilerplate; pass a custom callback (e.g. to land on a dedicated
   /// player score-card pane) when needed.
   final VoidCallback? onTap;
+
+  /// When supplied, a normal click only selects the card and a double-click
+  /// performs the usual game-open action. Other game-card surfaces keep their
+  /// existing single-click behavior by leaving this null.
+  final VoidCallback? onSelect;
 
   /// When set together with [federationFallback], any side whose name
   /// matches and whose federation is empty inherits the fallback ISO2 code.
@@ -2033,25 +2087,39 @@ class LiveDesktopGameCard extends ConsumerWidget {
         data = data.copyWith(blackFederation: fallback);
       }
     }
+    void openGame() {
+      final callback = onTap;
+      if (callback != null) {
+        callback();
+        return;
+      }
+      openTournamentGameTab(
+        ref,
+        displayGame,
+        tournamentTitle,
+        eventGames: eventGames,
+        routeTitle: routeTitle,
+        routeGames: routeGames,
+        eventGamesContinuation: eventGamesContinuation,
+        routeGamesContinuation: routeGamesContinuation,
+        roundStartsAtById: roundStartsAtById,
+        roundNameById: roundNameById,
+        viewSource: viewSource,
+      );
+    }
+
     return DesktopGameCard(
       // Re-derive every rebuild so the eval bar's FEN, the status pill,
       // and the "In play"/result label pick up Realtime deltas.
       data: data,
-      onTap:
-          onTap ??
-          () => openTournamentGameTab(
-            ref,
-            displayGame,
-            tournamentTitle,
-            eventGames: eventGames,
-            routeTitle: routeTitle,
-            routeGames: routeGames,
-            eventGamesContinuation: eventGamesContinuation,
-            routeGamesContinuation: routeGamesContinuation,
-            roundStartsAtById: roundStartsAtById,
-            roundNameById: roundNameById,
-            viewSource: viewSource,
-          ),
+      onTap: onSelect ?? openGame,
+      onDoubleTap:
+          onSelect == null
+              ? null
+              : () {
+                onSelect!();
+                openGame();
+              },
       onContextMenu:
           enableContextMenu
               ? (position) {
