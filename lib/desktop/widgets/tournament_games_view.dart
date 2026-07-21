@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -577,9 +576,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                             // A small overscan keeps wheel/trackpad scrolling
                             // smooth without mounting an entire 1,000-board
                             // broadcast and its realtime subscriptions.
-                            scrollCacheExtent: const ScrollCacheExtent.pixels(
-                              400,
-                            ),
+                            cacheExtent: 400,
                             slivers: [
                               SliverPadding(
                                 padding: const EdgeInsets.fromLTRB(
@@ -1195,7 +1192,7 @@ Widget buildLazyTournamentGamesViewportForTesting({
   required ScrollController scrollController,
   DesktopCardLayout layout = DesktopCardLayout.compact,
   bool streamingEnabled = true,
-  ScrollCacheExtent scrollCacheExtent = const ScrollCacheExtent.pixels(400),
+  double cacheExtent = 400,
   String scopeId = 'tournament-lazy-stress',
 }) {
   final batchKeys =
@@ -1216,7 +1213,7 @@ Widget buildLazyTournamentGamesViewportForTesting({
         keysByGameId: batchKeys,
         child: CustomScrollView(
           controller: scrollController,
-          scrollCacheExtent: scrollCacheExtent,
+          cacheExtent: cacheExtent,
           slivers: [
             SliverPadding(
               padding: const EdgeInsets.all(24),
