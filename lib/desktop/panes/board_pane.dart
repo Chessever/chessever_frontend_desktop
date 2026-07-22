@@ -21,6 +21,7 @@ import 'package:chessever/desktop/panes/board_editor_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
 import 'package:chessever/desktop/services/board_pgn_clipboard.dart';
 import 'package:chessever/desktop/services/board_pgn_paste.dart';
+import 'package:chessever/desktop/services/board_opening_metadata.dart';
 import 'package:chessever/desktop/services/board_tab_pgn_resolver.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
@@ -563,6 +564,14 @@ class _BoardPaneContent extends HookConsumerWidget {
             ? null
             : ref.watch(
               boardTabGameArgsByTabIdProvider.select((m) => m[activeTabId]),
+            );
+    final attachedLibrarySaveOrigin =
+        activeTabId == null
+            ? null
+            : ref.watch(
+              boardTabAttachedLibrarySaveOriginByTabIdProvider.select(
+                (origins) => origins[activeTabId],
+              ),
             );
     final boardExplorerScope =
         activeTabId == null
@@ -1484,6 +1493,11 @@ class _BoardPaneContent extends HookConsumerWidget {
         final tabId = activeTabId ?? 'board-default';
         ref.read(boardAnnotationsProvider(tabId).notifier).clear();
         ref.read(userMoveNagsProvider.notifier).clearTab(tabId);
+      }
+      if (activeTabId != null) {
+        ref
+            .read(boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier)
+            .clear(activeTabId);
       }
       applyPgn(next.pgn, origin: next.path, gameId: next.gameId);
     });
@@ -2464,13 +2478,19 @@ class _BoardPaneContent extends HookConsumerWidget {
               'desktop-board-${DateTime.now().microsecondsSinceEpoch}',
           pgn,
         );
-        final metadata = Map<String, dynamic>.from(snapshot.metadata);
+        final metadata = metadataWithRecognizedBoardEco(
+          metadata: snapshot.metadata,
+          startingFen: snapshot.startingFen,
+          movesUci: lineUcis,
+        );
         metadata[ChessGame.metadataIsLiveKey] = false;
         metadata[ChessGame.metadataAllowMainlineExtensionKey] = false;
         final eventLabel = headers['Event']?.trim();
         final gameSnapshot = snapshot.copyWith(metadata: metadata);
+        final librarySaveOrigin =
+            boardArgs?.librarySaveOrigin ?? attachedLibrarySaveOrigin;
         final isLocalPgnSaveOrigin =
-            boardArgs?.librarySaveOrigin?.kind ==
+            librarySaveOrigin?.kind ==
             BoardTabLibrarySaveOriginKind.localPgnFile;
         final outcome = await showLibrarySaveToFolderDialog(
           context: context,
@@ -2485,6 +2505,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           updateTarget: _libraryUpdateTargetForBoardArgs(
             ref: ref,
             boardArgs: boardArgs,
+            attachedOrigin: attachedLibrarySaveOrigin,
             game: gameSnapshot,
           ),
           destinationMode:
@@ -2493,6 +2514,24 @@ class _BoardPaneContent extends HookConsumerWidget {
                   : LibrarySaveDestinationMode.cloudAndLocal,
         );
         if (!context.mounted || outcome == null || !outcome.didSave) return;
+        final localUpdateTarget = outcome.localUpdateTarget;
+        if (localUpdateTarget != null &&
+            activeTabId != null &&
+            shouldAttachLocalPgnIdentityAfterSave(
+              sourceOrigin: boardArgs?.librarySaveOrigin,
+              attachedOrigin: attachedLibrarySaveOrigin,
+              hasLocalUpdateTarget: true,
+            )) {
+          ref
+              .read(boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier)
+              .attachLocalPgn(
+                tabId: activeTabId,
+                sourcePath: localUpdateTarget.sourcePath,
+                sourceIndex: localUpdateTarget.indexInFile,
+                sourceFileGameCount: localUpdateTarget.fileGameCount,
+                title: _libraryGameTitle(gameSnapshot),
+              );
+        }
         showToast(outcome.toToastMessage());
       } catch (e) {
         if (!context.mounted) return;
@@ -4647,9 +4686,10 @@ final _emptyChessGame = ChessGame(
 LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
   required WidgetRef ref,
   required BoardTabGameArgs? boardArgs,
+  required BoardTabLibrarySaveOrigin? attachedOrigin,
   required ChessGame game,
 }) {
-  final origin = boardArgs?.librarySaveOrigin;
+  final origin = boardArgs?.librarySaveOrigin ?? attachedOrigin;
   if (origin == null) return null;
   switch (origin.kind) {
     case BoardTabLibrarySaveOriginKind.cloudSavedAnalysis:

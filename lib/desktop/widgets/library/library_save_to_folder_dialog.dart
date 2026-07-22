@@ -10,6 +10,8 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/library_save_destination_recency.dart';
+import 'package:chessever/desktop/services/local_library_game_updater.dart';
 import 'package:chessever/desktop/services/local_library_writer.dart';
 import 'package:chessever/desktop/services/local_source_deletion.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
@@ -37,6 +39,7 @@ class LibrarySaveOutcome {
     this.localFilesWritten = 0,
     this.localFoldersUsed = 0,
     this.didUpdateOriginal = false,
+    this.localUpdateTarget,
   });
 
   /// Number of rows written to the cloud `saved_analyses` table.
@@ -54,6 +57,11 @@ class LibrarySaveOutcome {
   /// True when the caller updated the source library game rather than saving a
   /// new copy into another destination.
   final bool didUpdateOriginal;
+
+  /// Newly appended local PGN record that this game can update on its next
+  /// save. Null for cloud saves, folder exports, bulk saves, and ambiguous
+  /// multi-destination saves.
+  final LocalLibraryGameUpdateTarget? localUpdateTarget;
 
   /// Total entries persisted across cloud + local destinations.
   int get totalEntries => savedRows + localFilesWritten;
@@ -84,6 +92,23 @@ class LibrarySaveOutcome {
     if (parts.isEmpty) return 'Nothing saved.';
     return 'Saved ${parts.join(' · ')}';
   }
+}
+
+@visibleForTesting
+LocalLibraryGameUpdateTarget? libraryLocalUpdateTargetForCompletedSave({
+  required int gameCount,
+  required int selectedCloudFolderCount,
+  required int selectedLocalPathCount,
+  required List<LocalLibraryWriteOutcome> outcomes,
+}) {
+  if (gameCount != 1 ||
+      selectedCloudFolderCount != 0 ||
+      selectedLocalPathCount != 1 ||
+      outcomes.length != 1) {
+    return null;
+  }
+  final targets = outcomes.single.updateTargets;
+  return targets.length == 1 ? targets.single : null;
 }
 
 class LibraryUpdateTarget {
@@ -205,6 +230,8 @@ class _SaveToFolderDialog extends ConsumerStatefulWidget {
 }
 
 class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
+  static const _recencyStore = LibrarySaveDestinationRecencyStore();
+
   final Set<String> _selected = <String>{};
   final Set<String> _selectedLocalPaths = <String>{};
   bool _isSaving = false;
@@ -212,6 +239,8 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
   int _localWritten = 0;
   bool _isUpdatingOriginal = false;
   bool _isDeletingLocalDestination = false;
+  LibrarySaveDestinationRecency _destinationRecency =
+      const LibrarySaveDestinationRecency();
 
   // Single-game metadata editor. Only allocated when [widget.games] holds
   // exactly one game, since editing 200 PGN headers from one form does not
@@ -248,6 +277,13 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     if (_supportsMetadataEdit) {
       _seedMetadataControllers(widget.games.first.metadata);
     }
+    unawaited(_loadDestinationRecency());
+  }
+
+  Future<void> _loadDestinationRecency() async {
+    final recency = await _recencyStore.load();
+    if (!mounted) return;
+    setState(() => _destinationRecency = recency);
   }
 
   void _seedMetadataControllers(Map<String, dynamic> metadata) {
@@ -258,20 +294,22 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
     _blackSurnameCtrl = TextEditingController(text: blackParts.surname);
     _blackFirstNameCtrl = TextEditingController(text: blackParts.firstName);
     _eventCtrl = TextEditingController(
-      text: metadata['Event']?.toString() ?? '',
+      text: libraryGameDetailInputValue(metadata['Event']),
     );
-    _ecoCtrl = TextEditingController(text: metadata['ECO']?.toString() ?? '');
+    _ecoCtrl = TextEditingController(
+      text: libraryGameDetailInputValue(metadata['ECO']),
+    );
     _whiteEloCtrl = TextEditingController(
-      text: metadata['WhiteElo']?.toString() ?? '',
+      text: libraryGameDetailInputValue(metadata['WhiteElo']),
     );
     _blackEloCtrl = TextEditingController(
-      text: metadata['BlackElo']?.toString() ?? '',
+      text: libraryGameDetailInputValue(metadata['BlackElo']),
     );
     _roundCtrl = TextEditingController(
-      text: metadata['Round']?.toString() ?? '',
+      text: libraryGameDetailInputValue(metadata['Round']),
     );
     _subroundCtrl = TextEditingController(
-      text: metadata['Subround']?.toString() ?? '',
+      text: libraryGameDetailInputValue(metadata['Subround']),
     );
     final dateParts = (metadata['Date']?.toString() ?? '').split('.');
     _yearCtrl = TextEditingController(
@@ -527,10 +565,12 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
 
       var localFoldersUsed = 0;
       final localErrors = <String>[];
+      final localWriteOutcomes = <LocalLibraryWriteOutcome>[];
       if (selectedLocalPaths.isNotEmpty) {
         for (final path in selectedLocalPaths) {
           final writer = LocalLibraryWriter(folderPath: path);
           final outcome = await writer.writeGames(effectiveGames);
+          localWriteOutcomes.add(outcome);
           if (!mounted) return;
           if (outcome.written > 0) {
             localFoldersUsed++;
@@ -575,12 +615,30 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
         );
       }
 
+      await _recencyStore.recordSuccessfulSave(
+        cloudFolderIds:
+            _savedRows > 0
+                ? selectedFolders.map((folder) => folder.id).toList()
+                : const <String>[],
+        localPathKeys: localWriteOutcomes
+            .where((outcome) => outcome.written > 0)
+            .map((outcome) => _normalizeLocalPath(outcome.folderPath))
+            .toList(growable: false),
+      );
+      if (!mounted) return;
+
       Navigator.of(context).pop(
         LibrarySaveOutcome(
           savedRows: _savedRows,
           folderCount: selectedFolders.length,
           localFilesWritten: _localWritten,
           localFoldersUsed: localFoldersUsed,
+          localUpdateTarget: libraryLocalUpdateTargetForCompletedSave(
+            gameCount: effectiveGames.length,
+            selectedCloudFolderCount: selectedFolders.length,
+            selectedLocalPathCount: selectedLocalPaths.length,
+            outcomes: localWriteOutcomes,
+          ),
         ),
       );
     } catch (e) {
@@ -627,15 +685,24 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       folders: folders,
       destinationMode: widget.destinationMode,
     );
-    final ordered = _hierarchical(writable);
+    final ordered = orderLibrarySaveCloudFolders(
+      folders: writable,
+      recentFolderIds: _destinationRecency.cloudFolderIds,
+    );
     final selectedFolders = ordered
         .where((f) => _selected.contains(f.id))
         .toList(growable: false);
 
-    final localEntries =
+    final unsortedLocalEntries =
         librarySaveAllowsLocalDestinations(widget.destinationMode)
             ? ref.watch(localLibraryRegistryProvider).entries
             : const <LocalLibraryEntry>[];
+    final localEntries =
+        orderLibrarySaveDestinationsByRecent<LocalLibraryEntry>(
+          values: unsortedLocalEntries,
+          recentKeys: _destinationRecency.localPathKeys,
+          keyOf: (entry) => _normalizeLocalPath(entry.path),
+        );
     final selectedLocalPaths = localEntries
         .map((e) => e.path)
         .where(
@@ -1150,34 +1217,6 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
       ),
     );
   }
-
-  /// Sort folders so each child appears directly after its parent. Falls
-  /// back to insertion order when a parent isn't present (e.g. orphan).
-  List<LibraryFolder> _hierarchical(List<LibraryFolder> folders) {
-    final byParent = <String?, List<LibraryFolder>>{};
-    for (final f in folders) {
-      byParent.putIfAbsent(f.parentId, () => []).add(f);
-    }
-    final out = <LibraryFolder>[];
-    void visit(String? parentId) {
-      final children = byParent[parentId];
-      if (children == null || children.isEmpty) return;
-      children.sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
-      for (final folder in children) {
-        out.add(folder);
-        visit(folder.id);
-      }
-    }
-
-    visit(null);
-    if (out.length < folders.length) {
-      final ids = out.map((f) => f.id).toSet();
-      for (final folder in folders) {
-        if (!ids.contains(folder.id)) out.add(folder);
-      }
-    }
-    return out;
-  }
 }
 
 class _Header extends StatelessWidget {
@@ -1598,6 +1637,18 @@ class PlayerNameParts {
   const PlayerNameParts({required this.surname, required this.firstName});
   final String surname;
   final String firstName;
+}
+
+/// Converts PGN-required unknown markers into quiet empty form values.
+///
+/// The writer still restores standards-compliant unknown headers on save;
+/// users should not have to delete parser placeholders before entering real
+/// game details.
+@visibleForTesting
+String libraryGameDetailInputValue(Object? raw) {
+  final value = raw?.toString().trim() ?? '';
+  if (value.isEmpty || RegExp(r'^\?+$').hasMatch(value)) return '';
+  return value;
 }
 
 /// PGN headers store player names as "Surname, FirstName". The form splits

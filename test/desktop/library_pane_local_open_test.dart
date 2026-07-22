@@ -54,6 +54,16 @@ void main() {
     expect(localDatabaseWorkspacePath(source, source.root.path), filePath);
   });
 
+  test('local database workspace resolves an empty PGN file', () {
+    const filePath = '/db/empty.pgn';
+    final source = _singleFileSource(
+      filePath,
+      status: LocalChessFileStatus.noGames,
+    );
+
+    expect(localDatabaseWorkspacePath(source, source.root.path), filePath);
+  });
+
   test('local database workspace opens the live preview while indexing', () {
     const filePath = '/db/local.pgn';
     final source = _singleFileSource(filePath);
@@ -151,7 +161,10 @@ void main() {
   );
 }
 
-LocalChessSource _singleFileSource(String filePath) {
+LocalChessSource _singleFileSource(
+  String filePath, {
+  LocalChessFileStatus status = LocalChessFileStatus.parsed,
+}) {
   return LocalChessSource(
     id: 'local',
     label: 'local.pgn',
@@ -169,7 +182,7 @@ LocalChessSource _singleFileSource(String filePath) {
           relativePath: 'local.pgn',
           extension: 'pgn',
           sizeBytes: 0,
-          status: LocalChessFileStatus.parsed,
+          status: status,
           games: <LocalChessGame>[],
         ),
       ],

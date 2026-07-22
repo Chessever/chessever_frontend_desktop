@@ -213,7 +213,7 @@ class MoveStatisticsPanel extends ConsumerWidget {
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
                 child: Container(
-                  color: Colors.black.withOpacity(0.4),
+                  color: Colors.black.withValues(alpha: 0.4),
                   child: GestureDetector(
                     onTap: () => requirePremiumGuard(context, ref),
                     behavior: HitTestBehavior.opaque,
@@ -463,7 +463,7 @@ class _MoveStatisticsRow extends ConsumerWidget {
 }
 
 String _formatLastPlayed(DateTime? date) {
-  if (date == null) return '—';
+  if (date == null) return '';
   return DateFormat('MMM yyyy').format(date);
 }
 

@@ -67,7 +67,7 @@ extension TabKindLabel on TabKind {
       case TabKind.board:
         return 'Board';
       case TabKind.tournaments:
-        return 'Tournaments';
+        return 'Events';
       case TabKind.tournamentDetail:
         return 'Tournament';
       case TabKind.smartGames:
@@ -238,7 +238,7 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
             DesktopTab(
               id: 'tournaments-default',
               kind: TabKind.tournaments,
-              title: 'Tournaments',
+              title: 'Events',
             ),
           ],
           activeId: 'tournaments-default',

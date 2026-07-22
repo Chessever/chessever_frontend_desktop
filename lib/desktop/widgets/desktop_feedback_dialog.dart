@@ -15,6 +15,8 @@ import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/services/telegram_notification_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 
+const desktopFeedbackDialogTitle = 'Feedback';
+
 class DesktopFeedbackDialog extends StatefulWidget {
   const DesktopFeedbackDialog({super.key, required this.screenshotKey});
 
@@ -26,7 +28,7 @@ class DesktopFeedbackDialog extends StatefulWidget {
   }) {
     return showDesktopModal<void>(
       context,
-      title: 'Feedback / Report issue',
+      title: desktopFeedbackDialogTitle,
       maxWidth: 620,
       maxHeight: 760,
       builder: (_) => DesktopFeedbackDialog(screenshotKey: screenshotKey),

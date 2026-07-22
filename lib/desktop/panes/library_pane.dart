@@ -79,6 +79,7 @@ import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
+import 'package:chessever/desktop/widgets/table_display_value.dart';
 import 'package:chessever/repository/library/library_repository.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/repository/library/models/saved_analysis.dart';
@@ -1044,16 +1045,10 @@ class _FolderRowState extends ConsumerState<_FolderRow>
                         (_) =>
                             setStateAfterPointerEvent(() => _pressed = false),
                     onTapCancel:
-                        () =>
-                            setStateAfterPointerEvent(() => _pressed = false),
+                        () => setStateAfterPointerEvent(() => _pressed = false),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 120),
-                      padding: EdgeInsets.fromLTRB(
-                        isChild ? 20 : 10,
-                        7,
-                        8,
-                        7,
-                      ),
+                      padding: EdgeInsets.fromLTRB(isChild ? 20 : 10, 7, 8, 7),
                       decoration: BoxDecoration(
                         color: bg,
                         borderRadius: BorderRadius.circular(6),
@@ -1431,7 +1426,6 @@ class _MyDatabasesHomeView extends HookConsumerWidget {
                 children: [
                   SplitChild(
                     minSize: 124,
-                    maxSize: 220,
                     initialWeight: 0.24,
                     label: 'My Databases',
                     child: _MyDatabasesBoard(
@@ -2777,8 +2771,9 @@ class _DatabaseBoardItem {
       final databases = group.entries.length;
       final databaseLabel = databases == 1 ? 'database' : 'databases';
       final games = count;
-      if (games == null) return 'Folder · $databases $databaseLabel';
-      return 'Folder · $databases $databaseLabel · ${formatCompactCount(games)} games';
+      if (games == null) return '$databases $databaseLabel';
+      final gameLabel = games == 1 ? 'game' : 'games';
+      return '$databases $databaseLabel · ${formatCompactCount(games)} $gameLabel';
     }
     final localEntry = entry;
     if (localEntry != null) {
@@ -2788,31 +2783,21 @@ class _DatabaseBoardItem {
   }
 
   /// Kind-aware fallback when [subtitle] is null (typical cloud folders).
-  String subtitleForKind(_DatabaseBoardIconKind kind) {
+  String? subtitleForKind(_DatabaseBoardIconKind kind) {
     final existing = subtitle;
     if (existing != null && existing.isNotEmpty) return existing;
     final games = count;
+    final gamesLabel =
+        games == null
+            ? null
+            : '${formatCompactCount(games)} ${games == 1 ? 'game' : 'games'}';
     return switch (kind) {
-      _DatabaseBoardIconKind.folder =>
-        games == null
-            ? 'Folder · holds databases'
-            : 'Folder · ${formatCompactCount(games)} games inside',
-      _DatabaseBoardIconKind.twic =>
-        games == null
-            ? 'System database'
-            : '${formatCompactCount(games)} games',
+      _DatabaseBoardIconKind.folder => gamesLabel,
+      _DatabaseBoardIconKind.twic => gamesLabel,
       _DatabaseBoardIconKind.subscribedDatabase =>
-        games == null
-            ? 'Cloud database · read-only'
-            : '${formatCompactCount(games)} games · read-only',
-      _DatabaseBoardIconKind.localDatabase =>
-        games == null
-            ? 'Local database · games only'
-            : '${formatCompactCount(games)} games · local',
-      _DatabaseBoardIconKind.cloudDatabase =>
-        games == null
-            ? 'Database · games only'
-            : '${formatCompactCount(games)} games',
+        gamesLabel == null ? 'Read-only' : '$gamesLabel · read-only',
+      _DatabaseBoardIconKind.localDatabase => gamesLabel,
+      _DatabaseBoardIconKind.cloudDatabase => gamesLabel,
     };
   }
 
@@ -3097,11 +3082,7 @@ class _FolderHierarchyGlyph extends StatelessWidget {
         clipBehavior: Clip.none,
         children: [
           Positioned.fill(
-            child: Icon(
-              Icons.folder_rounded,
-              color: color,
-              size: size * 0.96,
-            ),
+            child: Icon(Icons.folder_rounded, color: color, size: size * 0.96),
           ),
           Positioned(
             right: -size * 0.06,
@@ -3360,7 +3341,7 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
                             children: [
                               Row(
                                 children: [
-                                  Flexible(
+                                  Expanded(
                                     child: Text(
                                       widget.title,
                                       maxLines: 1,
@@ -3373,8 +3354,6 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
                                       ),
                                     ),
                                   ),
-                                  const SizedBox(width: 6),
-                                  _LibraryKindChip(chrome: chrome),
                                 ],
                               ),
                               if (widget.subtitle != null) ...[
@@ -3401,34 +3380,6 @@ class _DatabaseBoardTileState extends State<_DatabaseBoardTile>
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _LibraryKindChip extends StatelessWidget {
-  const _LibraryKindChip({required this.chrome});
-
-  final _LibraryKindChrome chrome;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-      decoration: BoxDecoration(
-        color: chrome.wellFill,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: chrome.wellBorder),
-      ),
-      child: Text(
-        chrome.kindLabel,
-        style: TextStyle(
-          color: chrome.accent,
-          fontSize: 9,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0.15,
-          height: 1,
         ),
       ),
     );
@@ -4700,9 +4651,11 @@ class _LocalMiniPreviewTableRowState extends State<_LocalMiniPreviewTableRow>
     final md = widget.game.game.metadata;
     final eventTag = _meta(md, 'Event');
     final event =
-        eventTag.isEmpty || eventTag == '?' ? _meta(md, 'Site') : eventTag;
+        desktopTableDisplayValue(eventTag).isEmpty
+            ? desktopTableDisplayValue(_meta(md, 'Site'))
+            : desktopTableDisplayValue(eventTag);
     final dateTag = _meta(md, 'Date');
-    final date = dateTag.isEmpty || dateTag == '?' ? '' : dateTag;
+    final date = _displayGameDate(dateTag);
     final resultTag = _meta(md, 'Result').replaceAll('½', '1/2');
     final result = resultTag.isEmpty ? '*' : resultTag;
 
@@ -4751,7 +4704,7 @@ class _LocalMiniPreviewTableRowState extends State<_LocalMiniPreviewTableRow>
                 Expanded(
                   flex: _kPreviewColEvent,
                   child: Text(
-                    event.isEmpty || event == '?' ? '—' : event,
+                    event,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: kWhiteColor, fontSize: 12),
@@ -4766,7 +4719,7 @@ class _LocalMiniPreviewTableRowState extends State<_LocalMiniPreviewTableRow>
                 SizedBox(
                   width: _kPreviewColDate,
                   child: Text(
-                    date.isEmpty ? '—' : date,
+                    date,
                     textAlign: TextAlign.right,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -5304,9 +5257,7 @@ class _FolderHeader extends StatelessWidget {
           isDatabase
               ? _LibraryKindChrome.databaseCyan
               : _LibraryKindChrome.folderAmber,
-      badge:
-          badge ??
-          (folder.isSubscribed ? const _ReadOnlyBadge() : null),
+      badge: badge ?? (folder.isSubscribed ? const _ReadOnlyBadge() : null),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -6606,8 +6557,8 @@ class _GamesTableRowState extends State<_GamesTableRow>
     final blackRating = s('BlackElo');
     final whiteFideId = fideId('WhiteFideId');
     final blackFideId = fideId('BlackFideId');
-    final event = s('Event');
-    final round = s('Round');
+    final event = desktopTableDisplayValue(s('Event'));
+    final round = desktopTableDisplayValue(s('Round'));
     final eco = s('ECO');
     final result = s('Result');
 
@@ -6653,7 +6604,7 @@ class _GamesTableRowState extends State<_GamesTableRow>
           ),
           _GamesTableColumn.blackElo => _RatingCell(rating: blackRating),
           _GamesTableColumn.event => Text(
-            eventLine.isEmpty ? '—' : eventLine,
+            eventLine,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: kWhiteColor70, fontSize: 12),
@@ -6858,13 +6809,14 @@ void _sortAnalyses(List<SavedAnalysis> rows, _SortConfig c) {
 }
 
 String _displayGameDate(String raw) {
-  final value = raw.trim();
-  if (value.isEmpty || value == '?') return '—';
+  final value = desktopTableDisplayValue(raw);
+  if (value.isEmpty) return '';
   final parts = value.split('.');
   if (parts.length == 3) {
     final year = parts[0];
     final month = parts[1];
     final day = parts[2];
+    if (year.isEmpty || year.contains('?')) return '';
     if (month == '??' && day == '??') return year;
     if (day == '??') return '$month.$year';
     return '$day.$month.$year';
@@ -9161,14 +9113,8 @@ class _TwicTableRowState extends State<_TwicTableRow>
                   SizedBox(
                     width: _kPreviewColEco,
                     child:
-                        eco.isEmpty
-                            ? const Text(
-                              '—',
-                              style: TextStyle(
-                                color: kLightGreyColor,
-                                fontSize: 11,
-                              ),
-                            )
+                        desktopTableDisplayValue(eco).isEmpty
+                            ? const SizedBox.shrink()
                             : Container(
                               alignment: Alignment.center,
                               padding: const EdgeInsets.symmetric(
@@ -9236,7 +9182,7 @@ class _TwicLoadingMoreRow extends StatelessWidget {
 }
 
 String _formatTwicDate(DateTime? date) {
-  if (date == null) return '—';
+  if (date == null) return '';
   final m = date.month.toString().padLeft(2, '0');
   final d = date.day.toString().padLeft(2, '0');
   return '${date.year}-$m-$d';
@@ -10706,8 +10652,8 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow>
     final blackRating = s('BlackElo');
     final whiteFideId = fideId('WhiteFideId');
     final blackFideId = fideId('BlackFideId');
-    final event = s('Event');
-    final round = s('Round');
+    final event = desktopTableDisplayValue(s('Event'));
+    final round = desktopTableDisplayValue(s('Round'));
     final eco = s('ECO');
     final result = s('Result');
     final saved = _formatSavedDate(a.updatedAt);
@@ -10745,7 +10691,7 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow>
           ),
           _GamesTableColumn.blackElo => _RatingCell(rating: blackRating),
           _GamesTableColumn.event => Text(
-            eventLine.isEmpty ? '—' : eventLine,
+            eventLine,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: kWhiteColor70, fontSize: 12),
@@ -11208,12 +11154,24 @@ _PreviewPlayerLine _previewPlayerLine(
 }) {
   final md = game.metadata;
   String s(String key) => (md[key]?.toString() ?? '').trim();
-  final white = s('White');
-  final black = s('Black');
-  if (white.isNotEmpty || black.isNotEmpty) {
+  return _previewPlayerLineFromValues(
+    white: s('White'),
+    black: s('Black'),
+    fallbackTitle: fallbackTitle,
+  );
+}
+
+_PreviewPlayerLine _previewPlayerLineFromValues({
+  required String white,
+  required String black,
+  required String fallbackTitle,
+}) {
+  final visibleWhite = desktopTableDisplayValue(white);
+  final visibleBlack = desktopTableDisplayValue(black);
+  if (visibleWhite.isNotEmpty || visibleBlack.isNotEmpty) {
     return _PreviewPlayerLine(
-      white: white.isEmpty ? 'White' : white,
-      black: black.isEmpty ? 'Black' : black,
+      white: visibleWhite,
+      black: visibleBlack,
     );
   }
   final parts = fallbackTitle.split(
@@ -11221,11 +11179,25 @@ _PreviewPlayerLine _previewPlayerLine(
   );
   if (parts.length >= 2) {
     return _PreviewPlayerLine(
-      white: parts.first.trim(),
-      black: parts[1].trim(),
+      white: desktopTableDisplayValue(parts.first),
+      black: desktopTableDisplayValue(parts[1]),
     );
   }
-  return const _PreviewPlayerLine(white: 'White', black: 'Black');
+  return const _PreviewPlayerLine(white: '', black: '');
+}
+
+@visibleForTesting
+({String white, String black}) debugLibraryPreviewPlayerNames({
+  required String white,
+  required String black,
+  required String fallbackTitle,
+}) {
+  final line = _previewPlayerLineFromValues(
+    white: white,
+    black: black,
+    fallbackTitle: fallbackTitle,
+  );
+  return (white: line.white, black: line.black);
 }
 
 class _PreviewPlayersHeader extends StatelessWidget {
@@ -11239,10 +11211,21 @@ class _PreviewPlayersHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final white = desktopTableDisplayValue(whiteName);
+    final black = desktopTableDisplayValue(blackName);
+    if (white.isEmpty && black.isEmpty) return const SizedBox.shrink();
+    if (white.isEmpty || black.isEmpty) {
+      return Center(
+        child: _PreviewPlayerName(
+          name: white.isNotEmpty ? white : black,
+          alignRight: false,
+        ),
+      );
+    }
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Flexible(child: _PreviewPlayerName(name: whiteName, alignRight: true)),
+        Flexible(child: _PreviewPlayerName(name: white, alignRight: true)),
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 10),
           child: Text(
@@ -11254,11 +11237,51 @@ class _PreviewPlayersHeader extends StatelessWidget {
             ),
           ),
         ),
-        Flexible(child: _PreviewPlayerName(name: blackName, alignRight: false)),
+        Flexible(child: _PreviewPlayerName(name: black, alignRight: false)),
       ],
     );
   }
 }
+
+String _previewMetadataTitle(String raw) {
+  final value = desktopTableDisplayValue(raw);
+  if (value.isEmpty) return '';
+  final parts = value.split(
+    RegExp(r'\s+v(?:s\.?|\.)\s+', caseSensitive: false),
+  );
+  if (parts.length >= 2 &&
+      desktopTableDisplayValue(parts.first).isEmpty &&
+      desktopTableDisplayValue(parts[1]).isEmpty) {
+    return '';
+  }
+  return value;
+}
+
+String _previewMetadataLine({
+  required String event,
+  required String date,
+  required String fallbackTitle,
+}) {
+  final visibleEvent = desktopTableDisplayValue(event);
+  final title =
+      visibleEvent.isEmpty ? _previewMetadataTitle(fallbackTitle) : visibleEvent;
+  final visibleDate = _displayGameDate(date);
+  return <String>[
+    if (title.isNotEmpty) title,
+    if (visibleDate.isNotEmpty) visibleDate,
+  ].join('  ·  ');
+}
+
+@visibleForTesting
+String debugLibraryPreviewMetadataLine({
+  required String event,
+  required String date,
+  required String fallbackTitle,
+}) => _previewMetadataLine(
+  event: event,
+  date: date,
+  fallbackTitle: fallbackTitle,
+);
 
 class _PreviewGameMeta extends StatelessWidget {
   const _PreviewGameMeta({required this.game, required this.fallbackTitle});
@@ -11270,12 +11293,14 @@ class _PreviewGameMeta extends StatelessWidget {
   Widget build(BuildContext context) {
     final md = game.metadata;
     String s(String key) => (md[key]?.toString() ?? '').trim();
-    final event = s('Event').isEmpty ? fallbackTitle.trim() : s('Event');
-    final date = _displayGameDate(s('Date'));
-    final pieces = <String>[if (event.isNotEmpty) event, if (date != '—') date];
-    if (pieces.isEmpty) return const SizedBox.shrink();
+    final line = _previewMetadataLine(
+      event: s('Event'),
+      date: s('Date'),
+      fallbackTitle: fallbackTitle,
+    );
+    if (line.isEmpty) return const SizedBox.shrink();
     return Text(
-      pieces.join('  ·  '),
+      line,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       textAlign: TextAlign.center,

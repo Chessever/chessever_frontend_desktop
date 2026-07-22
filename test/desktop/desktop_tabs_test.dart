@@ -7,13 +7,13 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 
 void main() {
   group('DesktopTabsNotifier', () {
-    test('starts on the Tournaments tab', () {
+    test('starts on the Events tab', () {
       final tabs = DesktopTabsNotifier();
 
       expect(tabs.state.tabs, hasLength(1));
       expect(tabs.state.activeId, 'tournaments-default');
       expect(tabs.state.active?.kind, TabKind.tournaments);
-      expect(tabs.state.active?.title, 'Tournaments');
+      expect(tabs.state.active?.title, 'Events');
     });
 
     test('opens background tabs without changing the active tab', () {

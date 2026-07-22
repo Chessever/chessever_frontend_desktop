@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:chessever/desktop/services/local_library_game_updater.dart';
 import 'package:chessever/desktop/services/local_library_writer.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
@@ -26,6 +27,10 @@ void main() {
       expect(outcome.hasError, isFalse);
       expect(outcome.written, 1);
       expect(outcome.writtenPaths.single, file.path);
+      expect(outcome.updateTargets, hasLength(1));
+      expect(outcome.updateTargets.single.sourcePath, file.path);
+      expect(outcome.updateTargets.single.indexInFile, 1);
+      expect(outcome.updateTargets.single.fileGameCount, 2);
 
       final saved = await file.readAsString();
       expect(saved, contains('[Event "Existing"]'));
@@ -51,6 +56,37 @@ void main() {
         expect(outcome.written, 1);
         expect(await file.exists(), isTrue);
         expect(await file.readAsString(), contains('1. c4 e5 *'));
+      },
+    );
+
+    test(
+      'returned target updates the just-saved game without a duplicate',
+      () async {
+        final temp = await Directory.systemTemp.createTemp('local-pgn-update-');
+        addTearDown(() async => temp.delete(recursive: true));
+
+        final file = File('${temp.path}/empty database.pgn');
+        await file.writeAsBytes(const <int>[0xEF, 0xBB, 0xBF]);
+        final firstSave = ChessGame.fromPgn(
+          'saved-game',
+          '[White "White"]\n[Black "Black"]\n[Result "*"]\n\n1. e4 *',
+        );
+        final writeOutcome = await LocalLibraryWriter(
+          folderPath: file.path,
+        ).writeGames(<ChessGame>[firstSave]);
+
+        final updatedGame = ChessGame.fromPgn(
+          'saved-game',
+          '[White "White"]\n[Black "Black"]\n[Result "*"]\n\n1. e4 e5 2. Nf3 *',
+        );
+        await updateLocalLibraryPgnGame(
+          target: writeOutcome.updateTargets.single,
+          game: updatedGame,
+        );
+
+        final saved = await file.readAsString();
+        expect(pgnGameRanges(saved), hasLength(1));
+        expect(saved, contains('1. e4 e5 2. Nf3 *'));
       },
     );
 

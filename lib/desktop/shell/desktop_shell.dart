@@ -154,6 +154,9 @@ class DesktopShell extends HookConsumerWidget {
           ref.read(boardTabFenProvider.notifier).clear(t.id);
           ref.read(boardTabSoundMuteProvider.notifier).clear(t.id);
           ref.read(boardPaneSessionByTabIdProvider.notifier).clear(t.id);
+          ref
+              .read(boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier)
+              .clear(t.id);
           ref.read(tournamentByTabIdProvider.notifier).update((m) {
             if (!m.containsKey(t.id)) return m;
             final next = <String, dynamic>{...m}..remove(t.id);

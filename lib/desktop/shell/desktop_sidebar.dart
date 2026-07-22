@@ -538,7 +538,7 @@ final List<_NavEntry> _primaryNav = desktopMainRoutes
 
 const _NavEntry _feedbackEntry = _NavEntry(
   pane: DesktopPane.settings,
-  label: 'Feedback / Report issue',
+  label: 'Feedback',
   icon: Icons.feedback_outlined,
 );
 

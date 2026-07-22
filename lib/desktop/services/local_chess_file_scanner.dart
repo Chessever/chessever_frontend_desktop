@@ -289,6 +289,32 @@ class LocalChessFolderNode extends LocalChessNode {
     return count == 1 ? match : null;
   }
 
+  LocalChessFileNode? get singleOpenableDatabaseInSubtree {
+    LocalChessFileNode? match;
+    var count = 0;
+
+    void visit(LocalChessNode node) {
+      if (count > 1) return;
+      switch (node) {
+        case LocalChessFolderNode(:final children):
+          for (final child in children) {
+            visit(child);
+            if (count > 1) return;
+          }
+        case LocalChessFileNode(:final isOpenableDatabase):
+          if (!isOpenableDatabase) return;
+          match = node;
+          count++;
+      }
+    }
+
+    for (final child in children) {
+      visit(child);
+      if (count > 1) return null;
+    }
+    return count == 1 ? match : null;
+  }
+
   LocalChessNode? find(String targetPath) {
     if (_samePath(path, targetPath)) return this;
     for (final child in children) {
@@ -349,6 +375,10 @@ class LocalChessFileNode extends LocalChessNode {
   final String contentFingerprint;
 
   bool get isPlayable => status == LocalChessFileStatus.parsed;
+
+  bool get isOpenableDatabase =>
+      status == LocalChessFileStatus.parsed ||
+      status == LocalChessFileStatus.noGames;
 }
 
 @immutable
@@ -395,8 +425,9 @@ class LocalChessPgnOffsetIndex {
 
 LocalChessFileNode? selectedLocalChessDatabaseFile(LocalChessNode node) {
   return switch (node) {
-    LocalChessFileNode(:final isPlayable) => isPlayable ? node : null,
-    LocalChessFolderNode() => node.singlePlayableDatabaseInSubtree,
+    LocalChessFileNode(:final isOpenableDatabase) =>
+      isOpenableDatabase ? node : null,
+    LocalChessFolderNode() => node.singleOpenableDatabaseInSubtree,
     _ => null,
   };
 }
@@ -1282,7 +1313,9 @@ Future<CompactLocalTreeBuildResult> buildCompactLocalTreeFromPgn({
         );
       } else {
         completeWithError(
-          StateError('Player PGN tree worker exited before returning a result.'),
+          StateError(
+            'Player PGN tree worker exited before returning a result.',
+          ),
           StackTrace.current,
         );
       }
@@ -1920,9 +1953,7 @@ Future<void> _buildCompactPgnTreeWorker(
   final cancellationSubscription = cancellationPort.listen((_) {
     canceled = true;
   });
-  request.sendPort.send(
-    _CompactPgnTreeWorkerReady(cancellationPort.sendPort),
-  );
+  request.sendPort.send(_CompactPgnTreeWorkerReady(cancellationPort.sendPort));
   void throwIfCanceled() {
     if (canceled) throw const OperationCanceledException();
   }
@@ -1990,8 +2021,7 @@ Future<void> _buildCompactPgnTreeWorker(
             for (final item in entry.game.metadata.entries)
               if (item.value != null) item.key: item.value.toString(),
           };
-          final gameId =
-              'local_${_stableId('${request.path}#$sourceIndex')}';
+          final gameId = 'local_${_stableId('${request.path}#$sourceIndex')}';
           final input = LocalOpeningTreeGameInput(
             id: gameId,
             rawPgn: entry.rawPgn,
@@ -4010,8 +4040,7 @@ class _PgnByteLineScanner {
 
     if (byte >= 0x30 && byte <= 0x39) {
       final digit = byte - 0x30;
-      _lineMoveNumberCandidate =
-          (_lineMoveNumberCandidate ?? 0) * 10 + digit;
+      _lineMoveNumberCandidate = (_lineMoveNumberCandidate ?? 0) * 10 + digit;
     } else if (byte == 0x2E && _lineMoveNumberCandidate != null) {
       _lineHasMoveHint = true;
       if (_lineMoveNumberCandidate! > _lineMaxMoveNumber) {

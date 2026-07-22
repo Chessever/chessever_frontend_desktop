@@ -616,8 +616,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                 localOpeningTreeTitle: widget.localOpeningTreeTitle,
                 enableLocalOpeningTreePicker:
                     widget.enableLocalOpeningTreePicker,
-                hideLocalOpeningTreePicker:
-                    widget.hideLocalOpeningTreePicker,
+                hideLocalOpeningTreePicker: widget.hideLocalOpeningTreePicker,
                 sourceController: _explorerSourceController,
                 exactFenSearch: !_isInitialPositionFen(widget.startingFen),
               )
@@ -666,6 +665,18 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
               child:
                   widget.enginePanel == null
                       ? notationContent
+                      : !widget.showEngine && !widget.reportSelected
+                      ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // Keep only the compact Stockfish header in flow
+                          // while analysis/report content is off. The previous
+                          // collapsed split reserved a blank strip and painted
+                          // an engine chip in its center.
+                          widget.enginePanel!,
+                          Expanded(child: notationContent),
+                        ],
+                      )
                       : ResizableSplitView(
                         axis: Axis.vertical,
                         controller: _railController,

@@ -280,7 +280,7 @@ class _StandingsPlayerRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final score = player.matchScore?.trim();
-    final rating = player.score > 0 ? player.score.toString() : '-';
+    final rating = player.score > 0 ? player.score.toString() : '';
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
@@ -345,7 +345,7 @@ class _StandingsPlayerRow extends StatelessWidget {
           SizedBox(
             width: scoreWidth,
             child: Text(
-              (score == null || score.isEmpty) ? '-' : score,
+              (score == null || score.isEmpty) ? '' : score,
               textAlign: TextAlign.right,
               style: const TextStyle(
                 color: kWhiteColor,

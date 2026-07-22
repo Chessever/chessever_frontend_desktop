@@ -28,6 +28,22 @@ void main() {
       }
     });
 
+    test('openPaths opens an empty PGN as a writable database', () async {
+      final notifier = LocalChessLibraryNotifier();
+      final file = File('${temp.path}/new-database.pgn');
+      await file.writeAsBytes(const <int>[0xEF, 0xBB, 0xBF]);
+
+      final opened = await notifier.openPaths(<String>[file.path]);
+
+      expect(opened, isTrue);
+      expect(notifier.state.error, isNull);
+      expect(notifier.state.selectedPath, isNotNull);
+      final loadedFile =
+          notifier.state.source!.nodeForPath(file.path) as LocalChessFileNode;
+      expect(loadedFile.status, LocalChessFileStatus.noGames);
+      expect(loadedFile.games, isEmpty);
+    });
+
     test(
       'openPaths reports failure without replacing previous source',
       () async {
@@ -1272,8 +1288,7 @@ class _FailingLocalChessDatabaseRepository
   }
 
   @override
-  Future<LocalChessOpeningTreeRebuildResult?>
-  rebuildOpeningTreeFromPgnFile({
+  Future<LocalChessOpeningTreeRebuildResult?> rebuildOpeningTreeFromPgnFile({
     required String databasePath,
     void Function(LocalChessScanProgress progress)? onProgress,
     OperationCancellationToken? cancellationToken,

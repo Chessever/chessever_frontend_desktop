@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'package:chessever/desktop/services/local_library_game_updater.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
@@ -12,12 +13,14 @@ class LocalLibraryWriteOutcome {
     required this.folderPath,
     required this.writtenPaths,
     required this.skipped,
+    this.updateTargets = const <LocalLibraryGameUpdateTarget>[],
     this.errorMessage,
   });
 
   final String folderPath;
   final List<String> writtenPaths;
   final int skipped;
+  final List<LocalLibraryGameUpdateTarget> updateTargets;
   final String? errorMessage;
 
   int get written => writtenPaths.length;
@@ -74,6 +77,7 @@ class LocalLibraryWriter {
 
     try {
       final existing = await file.exists() ? await file.readAsString() : '';
+      final existingGameCount = pgnGameRanges(existing).length;
       final buffer = StringBuffer();
       final existingTrimmed = existing.trimRight();
       if (existingTrimmed.isNotEmpty) {
@@ -97,6 +101,23 @@ class LocalLibraryWriter {
       if (written.isNotEmpty) {
         await file.writeAsString(buffer.toString(), flush: true);
       }
+
+      final finalGameCount = existingGameCount + written.length;
+      final updateTargets = <LocalLibraryGameUpdateTarget>[
+        for (var i = 0; i < written.length; i++)
+          LocalLibraryGameUpdateTarget(
+            sourcePath: file.path,
+            indexInFile: existingGameCount + i,
+            fileGameCount: finalGameCount,
+          ),
+      ];
+
+      return LocalLibraryWriteOutcome(
+        folderPath: folderPath,
+        writtenPaths: written,
+        skipped: skipped,
+        updateTargets: updateTargets,
+      );
     } catch (e) {
       error = e.toString();
       skipped += games.length - written.length;
@@ -200,11 +221,12 @@ String? _normalizePgnDate(String? value) {
   if (value == null) return null;
   final trimmed = value.trim();
   if (trimmed.isEmpty) return null;
-  final segments = trimmed
-      .split('.')
-      .map((seg) => seg.replaceAll('?', '').trim())
-      .where((seg) => seg.isNotEmpty)
-      .toList();
+  final segments =
+      trimmed
+          .split('.')
+          .map((seg) => seg.replaceAll('?', '').trim())
+          .where((seg) => seg.isNotEmpty)
+          .toList();
   if (segments.isEmpty) return null;
   return segments.join('-');
 }
@@ -213,16 +235,34 @@ String? _normalizePgnDate(String? value) {
 /// in filenames. Falls back to `Game` for an empty result.
 String sanitizeFilenameStem(String input) {
   final replaced = input.replaceAll(RegExp(r'[\x00-]+'), ' ');
-  final stripped = replaced
-      .replaceAll(RegExp(r'[<>:"/\\|?*]'), ' ')
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .trim();
+  final stripped =
+      replaced
+          .replaceAll(RegExp(r'[<>:"/\\|?*]'), ' ')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
   const reserved = <String>{
-    'CON', 'PRN', 'AUX', 'NUL',
-    'COM1', 'COM2', 'COM3', 'COM4', 'COM5',
-    'COM6', 'COM7', 'COM8', 'COM9',
-    'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5',
-    'LPT6', 'LPT7', 'LPT8', 'LPT9',
+    'CON',
+    'PRN',
+    'AUX',
+    'NUL',
+    'COM1',
+    'COM2',
+    'COM3',
+    'COM4',
+    'COM5',
+    'COM6',
+    'COM7',
+    'COM8',
+    'COM9',
+    'LPT1',
+    'LPT2',
+    'LPT3',
+    'LPT4',
+    'LPT5',
+    'LPT6',
+    'LPT7',
+    'LPT8',
+    'LPT9',
   };
   final upper = stripped.toUpperCase();
   if (stripped.isEmpty || reserved.contains(upper)) return 'Game';
