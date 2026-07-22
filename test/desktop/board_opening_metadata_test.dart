@@ -2,6 +2,7 @@ import 'package:dartchess/dartchess.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:chessever/desktop/services/board_opening_metadata.dart';
+import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
 void main() {
   test('recognizes the deepest known ECO for the current board line', () {
@@ -51,6 +52,21 @@ void main() {
       )['ECO'],
       'B90',
     );
+  });
+
+  test('saved ECO uses the exported game mainline rather than a UI cursor', () {
+    final game = ChessGame.fromPgn(
+      'game',
+      '1. e4 e5 2. Nf3 Nc6 3. d4 exd4 4. Nxd4 Nf6 5. Nxc6 dxc6 6. Qf3 Nxe4 *',
+    );
+
+    final metadata = metadataWithRecognizedBoardEco(
+      metadata: game.metadata,
+      startingFen: game.startingFen,
+      movesUci: boardEcoMainlineUcis(game),
+    );
+
+    expect(metadata['ECO'], 'C45');
   });
 
   test('does not invent ECO for an unrecognized or custom-start position', () {

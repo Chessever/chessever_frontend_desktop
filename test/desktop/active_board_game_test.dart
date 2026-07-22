@@ -29,6 +29,7 @@ void main() {
           sourcePath: r'C:\Games\prep.pgn',
           sourceIndex: 2,
           sourceFileGameCount: 3,
+          sourcePgnFingerprint: 'fingerprint-3',
           title: 'White vs Black',
         );
 
@@ -40,6 +41,7 @@ void main() {
     expect(origin?.sourcePath, r'C:\Games\prep.pgn');
     expect(origin?.sourceIndex, 2);
     expect(origin?.sourceFileGameCount, 3);
+    expect(origin?.sourcePgnFingerprint, 'fingerprint-3');
   });
 
   test('saving a copy does not replace an existing update identity', () {

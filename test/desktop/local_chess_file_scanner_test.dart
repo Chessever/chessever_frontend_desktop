@@ -581,6 +581,32 @@ void main() {
       );
     });
 
+    test('malformed non-empty PGN is not an openable empty database', () async {
+      final file = File('${temp.path}/malformed.pgn');
+      await file.writeAsString('This is not PGN data.');
+
+      final source = await scanLocalChessPaths(<String>[file.path]);
+      final scanned = source.root.files.single;
+
+      expect(scanned.status, LocalChessFileStatus.failed);
+      expect(scanned.isOpenableDatabase, isFalse);
+      expect(scanned.games, isEmpty);
+    });
+
+    test('empty compressed PGN is not an openable writable database', () async {
+      final file = File('${temp.path}/empty.pgn.bz2');
+      await file.writeAsBytes(
+        BZip2Encoder().encodeBytes(utf8.encode('  \n\t')),
+      );
+
+      final source = await scanLocalChessPaths(<String>[file.path]);
+      final scanned = source.root.files.single;
+
+      expect(scanned.status, LocalChessFileStatus.noGames);
+      expect(scanned.isOpenableDatabase, isFalse);
+      expect(scanned.games, isEmpty);
+    });
+
     test('parses bzip2-compressed PGN databases', () async {
       final file = File('${temp.path}/archive.bz2');
       await file.writeAsBytes(

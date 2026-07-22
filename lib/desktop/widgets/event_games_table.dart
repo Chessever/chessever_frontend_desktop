@@ -4013,6 +4013,7 @@ BoardTabLibrarySaveOrigin? _localPgnSaveOriginForSummary(
     sourcePath: source.sourcePath,
     sourceIndex: source.sourceIndex,
     sourceFileGameCount: source.sourceFileGameCount,
+    sourcePgnFingerprint: source.pgnFingerprint,
     title: source.title,
   );
 }

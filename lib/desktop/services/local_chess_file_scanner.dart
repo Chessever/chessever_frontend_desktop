@@ -344,6 +344,44 @@ class LocalChessFolderNode extends LocalChessNode {
 
 enum LocalChessFileStatus { parsed, noGames, unsupported, failed }
 
+Future<bool> _isWritableEmptyPgnSource(
+  String path, {
+  required String extension,
+  required FileStat expectedStat,
+  required String expectedContentFingerprint,
+}) async {
+  if (extension.toLowerCase() != '.pgn') return false;
+  const bom = <int>[0xEF, 0xBB, 0xBF];
+  var bomOffset = 0;
+  await for (final chunk in File(path).openRead()) {
+    for (final byte in chunk) {
+      if (bomOffset < bom.length && byte == bom[bomOffset]) {
+        bomOffset++;
+        continue;
+      }
+      if (bomOffset > 0 && bomOffset < bom.length) return false;
+      if (byte != 0x09 && byte != 0x0A && byte != 0x0D && byte != 0x20) {
+        return false;
+      }
+    }
+  }
+  if (bomOffset > 0 && bomOffset < bom.length) return false;
+  if (expectedContentFingerprint.isNotEmpty) {
+    await validateLocalChessFileSnapshotSource(
+      path,
+      expectedStat: expectedStat,
+      expectedContentFingerprint: expectedContentFingerprint,
+    );
+  } else {
+    final currentStat = await File(path).stat();
+    if (currentStat.size != expectedStat.size ||
+        currentStat.modified != expectedStat.modified) {
+      throw LocalChessFileAccessException.changed(path: path);
+    }
+  }
+  return true;
+}
+
 @immutable
 class LocalChessFileNode extends LocalChessNode {
   LocalChessFileNode({
@@ -359,6 +397,7 @@ class LocalChessFileNode extends LocalChessNode {
     this.openingTreeIndex,
     this.pgnOffsetIndex,
     this.contentFingerprint = '',
+    this.isWritableEmptyDatabase = false,
     int? gameCount,
   }) : games = List<LocalChessGame>.unmodifiable(games),
        gameCount = gameCount ?? games.length;
@@ -373,12 +412,12 @@ class LocalChessFileNode extends LocalChessNode {
   final PlayerOpeningTreeIndex? openingTreeIndex;
   final LocalChessPgnOffsetIndex? pgnOffsetIndex;
   final String contentFingerprint;
+  final bool isWritableEmptyDatabase;
 
   bool get isPlayable => status == LocalChessFileStatus.parsed;
 
   bool get isOpenableDatabase =>
-      status == LocalChessFileStatus.parsed ||
-      status == LocalChessFileStatus.noGames;
+      status == LocalChessFileStatus.parsed || isWritableEmptyDatabase;
 }
 
 @immutable
@@ -975,17 +1014,30 @@ Future<LocalChessFileNode> _scanLocalChessFileNodeForImportInline({
               expectedStat: scan.sourceStat,
               expectedContentFingerprint: scan.contentFingerprint,
             );
+            final isWritableEmptyDatabase = await _isWritableEmptyPgnSource(
+              scanPath,
+              extension: extension,
+              expectedStat: scan.sourceStat,
+              expectedContentFingerprint: scan.contentFingerprint,
+            );
             return LocalChessFileNode(
               name: localChessDatabaseDisplayNameForPath(scanPath),
               path: scanPath,
               relativePath: relativePath,
               extension: extension,
-              status: LocalChessFileStatus.noGames,
+              status:
+                  isWritableEmptyDatabase
+                      ? LocalChessFileStatus.noGames
+                      : LocalChessFileStatus.failed,
               games: const <LocalChessGame>[],
               sizeBytes: scan.offsetIndex.fileSizeBytes,
               modifiedAt: scan.offsetIndex.modifiedAt,
-              message: 'No playable entries were found.',
+              message:
+                  isWritableEmptyDatabase
+                      ? 'No playable entries were found.'
+                      : 'Could not parse this non-empty PGN file.',
               contentFingerprint: scan.contentFingerprint,
+              isWritableEmptyDatabase: isWritableEmptyDatabase,
             );
           }
           await onImportStart?.call(
@@ -2677,17 +2729,32 @@ class _ScanWorker {
             expectedContentFingerprint: contentFingerprint,
           );
         }
+        final isWritableEmptyDatabase = await _isWritableEmptyPgnSource(
+          path,
+          extension: extension,
+          expectedStat: parsedSourceStat,
+          expectedContentFingerprint: contentFingerprint,
+        );
+        final malformedPlainPgn =
+            extension.toLowerCase() == '.pgn' && !isWritableEmptyDatabase;
         return LocalChessFileNode(
           name: localChessDatabaseDisplayNameForPath(path),
           path: path,
           relativePath: _relative(rootPath, path),
           extension: extension,
-          status: LocalChessFileStatus.noGames,
+          status:
+              malformedPlainPgn
+                  ? LocalChessFileStatus.failed
+                  : LocalChessFileStatus.noGames,
           games: const <LocalChessGame>[],
           sizeBytes: parsedSourceStat.size,
           modifiedAt: parsedSourceStat.modified,
-          message: 'No playable entries were found.',
+          message:
+              malformedPlainPgn
+                  ? 'Could not parse this non-empty PGN file.'
+                  : 'No playable entries were found.',
           contentFingerprint: contentFingerprint,
+          isWritableEmptyDatabase: isWritableEmptyDatabase,
         );
       }
 
@@ -3637,8 +3704,16 @@ Future<LocalChessFileNode> _scanPgnCatalogFile(
   );
   final relativePath = _relative(rootPath, path);
   final games = <LocalChessGame>[];
+  var isWritableEmptyDatabase = false;
   try {
-    if (scan.ranges.isNotEmpty) {
+    if (scan.ranges.isEmpty) {
+      isWritableEmptyDatabase = await _isWritableEmptyPgnSource(
+        path,
+        extension: '.pgn',
+        expectedStat: scan.sourceStat,
+        expectedContentFingerprint: scan.contentFingerprint,
+      );
+    } else {
       final raf = File(path).openSync();
       try {
         for (var index = 0; index < scan.ranges.length; index++) {
@@ -3712,12 +3787,19 @@ Future<LocalChessFileNode> _scanPgnCatalogFile(
       path: path,
       relativePath: relativePath,
       extension: '.pgn',
-      status: LocalChessFileStatus.noGames,
+      status:
+          isWritableEmptyDatabase
+              ? LocalChessFileStatus.noGames
+              : LocalChessFileStatus.failed,
       games: const <LocalChessGame>[],
       sizeBytes: scan.sourceStat.size,
       modifiedAt: scan.sourceStat.modified,
-      message: 'No playable entries were found.',
+      message:
+          isWritableEmptyDatabase
+              ? 'No playable entries were found.'
+              : 'Could not parse this non-empty PGN file.',
       pgnOffsetIndex: scan.offsetIndex,
+      isWritableEmptyDatabase: isWritableEmptyDatabase,
     );
   }
   return LocalChessFileNode(

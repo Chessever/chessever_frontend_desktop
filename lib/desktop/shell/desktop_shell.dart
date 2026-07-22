@@ -273,10 +273,9 @@ class DesktopShell extends HookConsumerWidget {
       },
     );
 
-    /// Sidebar nav handler — `inNewTab` is `true` when the user
-    /// Cmd/Ctrl-clicks. Plain click usually navigates the *active* tab to the
-    /// selected pane (main-route semantics), while protected workspace tabs
-    /// such as an open game are preserved by the shared navigation helper.
+    /// Sidebar nav handler — plain clicks open or activate the destination's
+    /// category tab without rewriting the active tab. Cmd/Ctrl-click forces an
+    /// additional destination tab.
     void openPane(DesktopPane pane, {bool inNewTab = false}) {
       openDesktopPaneFromContainer(
         ProviderScope.containerOf(context, listen: false),

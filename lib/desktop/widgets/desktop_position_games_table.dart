@@ -1283,6 +1283,7 @@ class _DesktopPositionGamesTableState
       sourcePath: sourcePath,
       sourceIndex: sourceIndex,
       sourceFileGameCount: sourceFileGameCount,
+      sourcePgnFingerprint: (row['pgnHash']?.toString() ?? '').trim(),
       title: title,
     );
   }
@@ -2476,9 +2477,10 @@ List<Map<String, dynamic>> _hydrateLocalPgnRowsInBackground(
         final raf = file.openSync();
         try {
           raf.setPositionSync(start);
-          final pgn = utf8
-              .decode(raf.readSync(end - start), allowMalformed: true)
-              .trim();
+          final pgn =
+              utf8
+                  .decode(raf.readSync(end - start), allowMalformed: true)
+                  .trim();
           if (pgn.isNotEmpty) hydrated['pgn'] = pgn;
         } finally {
           raf.closeSync();

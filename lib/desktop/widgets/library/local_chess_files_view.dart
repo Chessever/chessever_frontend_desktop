@@ -3027,6 +3027,7 @@ BoardTabGameArgs _boardArgsForLocalGame(
       sourcePath: localGame.sourcePath,
       sourceIndex: localGame.indexInFile,
       sourceFileGameCount: localGame.fileGameCount,
+      sourcePgnFingerprint: localGame.pgnFingerprint,
       title: localGame.title,
     ),
   );
@@ -3099,6 +3100,7 @@ TournamentGameSummary _summaryFromLocalGame(LocalChessGame localGame) {
       sourcePath: localGame.sourcePath,
       sourceIndex: localGame.indexInFile,
       sourceFileGameCount: localGame.fileGameCount,
+      pgnFingerprint: localGame.pgnFingerprint,
       title: localGame.title,
     ),
   );

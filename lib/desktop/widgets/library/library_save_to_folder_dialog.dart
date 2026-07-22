@@ -615,15 +615,17 @@ class _SaveToFolderDialogState extends ConsumerState<_SaveToFolderDialog> {
         );
       }
 
-      await _recencyStore.recordSuccessfulSave(
-        cloudFolderIds:
-            _savedRows > 0
-                ? selectedFolders.map((folder) => folder.id).toList()
-                : const <String>[],
-        localPathKeys: localWriteOutcomes
-            .where((outcome) => outcome.written > 0)
-            .map((outcome) => _normalizeLocalPath(outcome.folderPath))
-            .toList(growable: false),
+      await persistLibrarySaveRecencyBestEffort(
+        () => _recencyStore.recordSuccessfulSave(
+          cloudFolderIds:
+              _savedRows > 0
+                  ? selectedFolders.map((folder) => folder.id).toList()
+                  : const <String>[],
+          localPathKeys: localWriteOutcomes
+              .where((outcome) => outcome.written > 0)
+              .map((outcome) => _normalizeLocalPath(outcome.folderPath))
+              .toList(growable: false),
+        ),
       );
       if (!mounted) return;
 

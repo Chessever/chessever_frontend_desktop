@@ -386,6 +386,7 @@ TournamentGameLocalPgnSource? _localPgnSourceFromPositionRow(
     sourcePath: sourcePath,
     sourceIndex: sourceIndex,
     sourceFileGameCount: sourceFileGameCount,
+    pgnFingerprint: (row['pgnHash']?.toString() ?? '').trim(),
     title: title,
   );
 }

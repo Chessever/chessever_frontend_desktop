@@ -14,11 +14,26 @@ void main() {
 
     expect(players.white, '');
     expect(players.black, '');
+    final genericPlayers = debugLibraryPreviewPlayerNames(
+      white: '',
+      black: '',
+      fallbackTitle: 'White vs Black',
+    );
+    expect(genericPlayers.white, '');
+    expect(genericPlayers.black, '');
     expect(
       debugLibraryPreviewMetadataLine(
         event: '?',
         date: '????.??.??',
         fallbackTitle: '? vs ?',
+      ),
+      '',
+    );
+    expect(
+      debugLibraryPreviewMetadataLine(
+        event: '',
+        date: '',
+        fallbackTitle: 'White vs Black',
       ),
       '',
     );

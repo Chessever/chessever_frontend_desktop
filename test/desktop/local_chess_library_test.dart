@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:resqlite/resqlite.dart' as resqlite;
@@ -42,6 +43,32 @@ void main() {
           notifier.state.source!.nodeForPath(file.path) as LocalChessFileNode;
       expect(loadedFile.status, LocalChessFileStatus.noGames);
       expect(loadedFile.games, isEmpty);
+    });
+
+    test('openPaths rejects a malformed non-empty PGN', () async {
+      final notifier = LocalChessLibraryNotifier();
+      final file = File('${temp.path}/malformed.pgn');
+      await file.writeAsString('This is not PGN data.');
+
+      final opened = await notifier.openPaths(<String>[file.path]);
+
+      expect(opened, isFalse);
+      expect(notifier.state.source, isNull);
+      expect(notifier.state.error, contains('Could not parse'));
+    });
+
+    test('openPaths rejects an empty compressed PGN as unwritable', () async {
+      final notifier = LocalChessLibraryNotifier();
+      final file = File('${temp.path}/empty.pgn.bz2');
+      await file.writeAsBytes(
+        BZip2Encoder().encodeBytes(utf8.encode('  \n\t')),
+      );
+
+      final opened = await notifier.openPaths(<String>[file.path]);
+
+      expect(opened, isFalse);
+      expect(notifier.state.source, isNull);
+      expect(notifier.state.error, contains('No playable entries'));
     });
 
     test(

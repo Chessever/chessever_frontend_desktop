@@ -71,6 +71,19 @@ class LibrarySaveDestinationRecencyStore {
   }
 }
 
+/// Recency is a convenience only. Once cloud/local writes have committed, a
+/// preferences failure must not make the save look failed or invite a retry.
+Future<bool> persistLibrarySaveRecencyBestEffort(
+  Future<void> Function() persist,
+) async {
+  try {
+    await persist();
+    return true;
+  } on Object {
+    return false;
+  }
+}
+
 /// Stable most-recent-first ordering used independently by the cloud and local
 /// groups in the Library save dialog.
 List<T> orderLibrarySaveDestinationsByRecent<T>({

@@ -97,6 +97,15 @@ void main() {
       expect(restored.localPathKeys, const <String>['local-b', 'local-a']);
     },
   );
+
+  test('recency persistence failure does not fail a completed save', () async {
+    expect(
+      await persistLibrarySaveRecencyBestEffort(
+        () async => throw StateError('preferences unavailable'),
+      ),
+      isFalse,
+    );
+  });
 }
 
 LibraryFolder _folder({

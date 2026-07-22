@@ -31,6 +31,7 @@ void main() {
       expect(outcome.updateTargets.single.sourcePath, file.path);
       expect(outcome.updateTargets.single.indexInFile, 1);
       expect(outcome.updateTargets.single.fileGameCount, 2);
+      expect(outcome.updateTargets.single.pgnFingerprint, isNotEmpty);
 
       final saved = await file.readAsString();
       expect(saved, contains('[Event "Existing"]'));

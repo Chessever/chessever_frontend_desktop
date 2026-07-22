@@ -159,17 +159,62 @@ Map<String, dynamic> finalizeBroadcastPgnMetadata({
   required Map<String, dynamic> parsedMetadata,
   required String? acceptedLiveStatus,
 }) {
+  final acceptedStatus = GameStatus.fromString(acceptedLiveStatus);
   final metadata =
       mergeRecognizedLiveStatusMetadata(
         currentMetadata: parsedMetadata,
         rawStatus: acceptedLiveStatus,
       ) ??
       Map<String, dynamic>.of(parsedMetadata);
-  final result = (metadata['Result']?.toString() ?? '').trim();
-  final isLive = result.isEmpty || result == '*';
+  // `Result "*"` only means the PGN has no decided result. It does not prove
+  // that a database/file snapshot is currently owned by a live broadcast.
+  // Only an accepted live-row status may protect the tail from mainline edits.
+  final isLive =
+      acceptedStatus != GameStatus.unknown && acceptedStatus.isOngoing;
   metadata[ChessGame.metadataAllowMainlineExtensionKey] = !isLive;
   metadata[ChessGame.metadataIsLiveKey] = isLive;
   return metadata;
+}
+
+@visibleForTesting
+bool isDatabaseBoardSnapshot(BoardTabGameArgs? args) {
+  if (args == null) return false;
+  return args.databaseTitle.trim().isNotEmpty ||
+      args.databaseGames.isNotEmpty ||
+      args.databaseGamesPagination != null ||
+      args.databaseGamesContinuation != null ||
+      args.librarySaveOrigin != null ||
+      args.localOpeningTreeIndex != null ||
+      args.localOpeningTreeTitle.trim().isNotEmpty ||
+      args.enableLocalOpeningTreePicker ||
+      args.hideLocalOpeningTreePicker;
+}
+
+@visibleForTesting
+String? resolveInitialBoardPgnLiveStatus({
+  required String? acceptedLiveStatus,
+  required bool isDatabaseSnapshot,
+  required String? gameId,
+  required GameStatus? sourceGameStatus,
+  required Object? parsedResult,
+}) {
+  final accepted = acceptedLiveStatus?.trim();
+  if (accepted != null &&
+      accepted.isNotEmpty &&
+      GameStatus.fromString(accepted) != GameStatus.unknown) {
+    return accepted;
+  }
+  if (isDatabaseSnapshot || gameId == null || gameId.trim().isEmpty) {
+    return null;
+  }
+  if (sourceGameStatus != null && sourceGameStatus != GameStatus.unknown) {
+    return sourceGameStatus.displayText;
+  }
+  final parsedStatus = GameStatus.fromString(parsedResult?.toString());
+  if (parsedStatus != GameStatus.unknown) return parsedStatus.displayText;
+  // A bound non-database game is broadcast-owned even if its initial row failed
+  // to hydrate. Protect its tail until realtime delivers an authoritative row.
+  return GameStatus.ongoing.displayText;
 }
 
 /// Chooses the monotonic base snapshot for a focused Board live packet.
@@ -980,12 +1025,18 @@ class _BoardPaneContent extends HookConsumerWidget {
         game: tabArgs?.sourceGame,
         gameId: gameId ?? tabArgs?.gameId,
       );
+      final initialSourceStatus = resolveInitialBoardPgnLiveStatus(
+        acceptedLiveStatus: acceptedLiveStatus,
+        isDatabaseSnapshot: isDatabaseBoardSnapshot(tabArgs),
+        gameId: gameId,
+        sourceGameStatus: tabArgs?.sourceGame?.gameStatus,
+        parsedResult: updatedMetadata['Result'],
+      );
       final finalizedMetadata = finalizeBroadcastPgnMetadata(
         parsedMetadata: updatedMetadata,
-        acceptedLiveStatus: acceptedLiveStatus,
+        acceptedLiveStatus: initialSourceStatus,
       );
-      final result = (finalizedMetadata['Result']?.toString() ?? '').trim();
-      final isLive = result.isEmpty || result == '*';
+      final isLive = finalizedMetadata[ChessGame.metadataIsLiveKey] == true;
       final freshGame = parsed
           .copyWith(metadata: finalizedMetadata)
           .rememberGameEndingPlyIndex(parsed.mainline.length - 1);
@@ -2481,7 +2532,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         final metadata = metadataWithRecognizedBoardEco(
           metadata: snapshot.metadata,
           startingFen: snapshot.startingFen,
-          movesUci: lineUcis,
+          movesUci: boardEcoMainlineUcis(snapshot),
         );
         metadata[ChessGame.metadataIsLiveKey] = false;
         metadata[ChessGame.metadataAllowMainlineExtensionKey] = false;
@@ -2529,6 +2580,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                 sourcePath: localUpdateTarget.sourcePath,
                 sourceIndex: localUpdateTarget.indexInFile,
                 sourceFileGameCount: localUpdateTarget.fileGameCount,
+                sourcePgnFingerprint: localUpdateTarget.pgnFingerprint,
                 title: _libraryGameTitle(gameSnapshot),
               );
         }
@@ -4742,6 +4794,7 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
               sourcePath: sourcePath,
               indexInFile: sourceIndex,
               fileGameCount: sourceFileGameCount,
+              pgnFingerprint: origin.sourcePgnFingerprint ?? '',
             ),
             game: updatedGame,
             repository: ref.read(localChessDatabaseRepositoryProvider),

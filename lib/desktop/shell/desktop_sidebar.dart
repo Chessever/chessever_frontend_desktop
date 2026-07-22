@@ -41,11 +41,9 @@ class DesktopSidebar extends StatelessWidget {
 
   final DesktopPane? current;
 
-  /// Sidebar tap handler. `inNewTab` is `true` when the user holds
-  /// Cmd / Ctrl while clicking — Chrome convention for "open in a new
-  /// tab". When `false`, the shell navigates the *active* tab to the
-  /// selected pane (it doesn't spawn a new tab — main routes are not
-  /// tabbed by themselves).
+  /// Sidebar tap handler. A plain click opens or activates the destination's
+  /// category tab without rewriting the active tab. `inNewTab` is `true` when
+  /// the user holds Cmd / Ctrl and forces an additional destination tab.
   final void Function(DesktopPane pane, {required bool inNewTab}) onSelect;
   final GlobalKey feedbackScreenshotKey;
   final VoidCallback onToggleExpanded;

@@ -289,6 +289,7 @@ Map<String, Object?>? _localPgnSourceToJson(
     'sourcePath': source.sourcePath,
     'sourceIndex': source.sourceIndex,
     'sourceFileGameCount': source.sourceFileGameCount,
+    'pgnFingerprint': source.pgnFingerprint,
     'title': source.title,
   };
 }
@@ -302,6 +303,7 @@ TournamentGameLocalPgnSource? _localPgnSourceFromJson(Object? value) {
     sourcePath: sourcePath,
     sourceIndex: _int(json['sourceIndex']),
     sourceFileGameCount: _int(json['sourceFileGameCount']),
+    pgnFingerprint: _string(json['pgnFingerprint']),
     title: _string(json['title']),
   );
 }
@@ -316,6 +318,7 @@ Map<String, Object?>? _librarySaveOriginToJson(
     'sourcePath': origin.sourcePath,
     'sourceIndex': origin.sourceIndex,
     'sourceFileGameCount': origin.sourceFileGameCount,
+    'sourcePgnFingerprint': origin.sourcePgnFingerprint,
     'title': origin.title,
   };
 }
@@ -340,6 +343,7 @@ BoardTabLibrarySaveOrigin? _librarySaveOriginFromJson(Object? value) {
         sourcePath: sourcePath,
         sourceIndex: _int(json['sourceIndex']),
         sourceFileGameCount: _int(json['sourceFileGameCount']),
+        sourcePgnFingerprint: _string(json['sourcePgnFingerprint']),
         title: title,
       );
   }

@@ -2,6 +2,12 @@ import 'package:dartchess/dartchess.dart';
 
 import 'package:chessever/desktop/services/tournament_server/eco_library.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_models.dart';
+import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+
+/// Canonical opening line for persistence. Unlike the board cursor path, this
+/// remains stable when the user browses backward or enters a variation.
+List<String> boardEcoMainlineUcis(ChessGame game) =>
+    game.mainline.map((move) => move.uci).toList(growable: false);
 
 /// Returns the most specific built-in ECO whose move sequence is a prefix of
 /// the current standard-start board line.

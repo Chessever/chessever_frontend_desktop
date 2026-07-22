@@ -25,12 +25,14 @@ class BoardTabLibrarySaveOrigin {
   }) : kind = BoardTabLibrarySaveOriginKind.cloudSavedAnalysis,
        sourcePath = null,
        sourceIndex = null,
-       sourceFileGameCount = null;
+       sourceFileGameCount = null,
+       sourcePgnFingerprint = null;
 
   const BoardTabLibrarySaveOrigin.localPgnFile({
     required this.sourcePath,
     required this.sourceIndex,
     required this.sourceFileGameCount,
+    this.sourcePgnFingerprint = '',
     required this.title,
   }) : kind = BoardTabLibrarySaveOriginKind.localPgnFile,
        analysisId = null;
@@ -40,6 +42,7 @@ class BoardTabLibrarySaveOrigin {
   final String? sourcePath;
   final int? sourceIndex;
   final int? sourceFileGameCount;
+  final String? sourcePgnFingerprint;
   final String title;
 }
 
@@ -438,6 +441,7 @@ extension BoardTabAttachedLibrarySaveOriginWriter
     required String sourcePath,
     required int sourceIndex,
     required int sourceFileGameCount,
+    required String sourcePgnFingerprint,
     required String title,
   }) {
     state = <String, BoardTabLibrarySaveOrigin>{
@@ -446,6 +450,7 @@ extension BoardTabAttachedLibrarySaveOriginWriter
         sourcePath: sourcePath,
         sourceIndex: sourceIndex,
         sourceFileGameCount: sourceFileGameCount,
+        sourcePgnFingerprint: sourcePgnFingerprint,
         title: title,
       ),
     };

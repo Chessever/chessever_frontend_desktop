@@ -19,6 +19,7 @@ import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
 import 'package:chessever/desktop/services/local_opening_tree_builder.dart';
+import 'package:chessever/desktop/services/local_pgn_atomic_write.dart';
 import 'package:chessever/desktop/services/operation_cancellation.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/services/time_control_classifier.dart';
@@ -447,9 +448,7 @@ Future<void> createLocalChessResqliteDatabaseSchema(
   );
 }
 
-Future<bool> _localChessResqliteSchemaIsCurrent(
-  resqlite.Database db,
-) async {
+Future<bool> _localChessResqliteSchemaIsCurrent(resqlite.Database db) async {
   try {
     const requiredTables = <String>{
       _localChessMigrationsTable,
@@ -3139,8 +3138,7 @@ class LocalChessDatabaseRepository {
     return true;
   }
 
-  Future<LocalChessOpeningTreeRebuildResult?>
-  rebuildOpeningTreeFromPgnFile({
+  Future<LocalChessOpeningTreeRebuildResult?> rebuildOpeningTreeFromPgnFile({
     required String databasePath,
     void Function(LocalChessScanProgress progress)? onProgress,
     OperationCancellationToken? cancellationToken,
@@ -4473,69 +4471,69 @@ class LocalChessDatabaseRepository {
         preferDirectDatabase ? await _openDirectReadDatabase() : null;
     final db = directDatabase ?? await _database();
     try {
-    final placeholders = List.filled(databaseIds.length, '?').join(', ');
-    final aliasList = aliases.toList(growable: false);
-    final hasAliases = aliasList.isNotEmpty;
-    final aliasPlaceholders = List.filled(aliasList.length, '?').join(', ');
+      final placeholders = List.filled(databaseIds.length, '?').join(', ');
+      final aliasList = aliases.toList(growable: false);
+      final hasAliases = aliasList.isNotEmpty;
+      final aliasPlaceholders = List.filled(aliasList.length, '?').join(', ');
 
-    // Counting happens entirely in SQL so only four integers cross the isolate
-    // boundary. The previous implementation `SELECT`ed every game row of the
-    // target databases and deduplicated/classified them in a Dart loop on the
-    // UI isolate — for prolific players' Combined databases (tens of thousands
-    // of games) that pinned the main thread for seconds (App Hang) and could
-    // exhaust the heap, because the Players workspace repairs stats for every
-    // player on open. The predicates below mirror that classification exactly
-    // (locked by the resultStatsForDatabases regression tests): FIDE id takes
-    // priority, a present-but-different FIDE id excludes the row even when the
-    // name matches, and names are normalized with the same stripping rule as
-    // `_normalizePlayerAliasForStats`.
-    final params = <Object?>[];
-    final whiteName = _statsNameNormalizationSql('wp.name');
-    final blackName = _statsNameNormalizationSql('bp.name');
-    const whiteFide =
-        "NULLIF(LOWER(TRIM(COALESCE("
-        "json_extract(g.headers_json, '\$.WhiteFideId'), ''))), '')";
-    const blackFide =
-        "NULLIF(LOWER(TRIM(COALESCE("
-        "json_extract(g.headers_json, '\$.BlackFideId'), ''))), '')";
+      // Counting happens entirely in SQL so only four integers cross the isolate
+      // boundary. The previous implementation `SELECT`ed every game row of the
+      // target databases and deduplicated/classified them in a Dart loop on the
+      // UI isolate — for prolific players' Combined databases (tens of thousands
+      // of games) that pinned the main thread for seconds (App Hang) and could
+      // exhaust the heap, because the Players workspace repairs stats for every
+      // player on open. The predicates below mirror that classification exactly
+      // (locked by the resultStatsForDatabases regression tests): FIDE id takes
+      // priority, a present-but-different FIDE id excludes the row even when the
+      // name matches, and names are normalized with the same stripping rule as
+      // `_normalizePlayerAliasForStats`.
+      final params = <Object?>[];
+      final whiteName = _statsNameNormalizationSql('wp.name');
+      final blackName = _statsNameNormalizationSql('bp.name');
+      const whiteFide =
+          "NULLIF(LOWER(TRIM(COALESCE("
+          "json_extract(g.headers_json, '\$.WhiteFideId'), ''))), '')";
+      const blackFide =
+          "NULLIF(LOWER(TRIM(COALESCE("
+          "json_extract(g.headers_json, '\$.BlackFideId'), ''))), '')";
 
-    String sidePredicate({
-      required String fideExpression,
-      required String nameExpression,
-      required bool matchesEverythingWhenUnfiltered,
-    }) {
-      if (fideId != null) {
-        params.add(fideId);
-        if (hasAliases) {
-          params.addAll(aliasList);
-          return 'COALESCE($fideExpression = ? OR ($fideExpression IS NULL '
-              'AND $nameExpression IN ($aliasPlaceholders)), 0)';
+      String sidePredicate({
+        required String fideExpression,
+        required String nameExpression,
+        required bool matchesEverythingWhenUnfiltered,
+      }) {
+        if (fideId != null) {
+          params.add(fideId);
+          if (hasAliases) {
+            params.addAll(aliasList);
+            return 'COALESCE($fideExpression = ? OR ($fideExpression IS NULL '
+                'AND $nameExpression IN ($aliasPlaceholders)), 0)';
+          }
+          return 'COALESCE($fideExpression = ?, 0)';
         }
-        return 'COALESCE($fideExpression = ?, 0)';
+        if (!hasAliases) {
+          return matchesEverythingWhenUnfiltered ? '1' : '0';
+        }
+        params.addAll(aliasList);
+        return 'COALESCE($nameExpression IN ($aliasPlaceholders), 0)';
       }
-      if (!hasAliases) {
-        return matchesEverythingWhenUnfiltered ? '1' : '0';
-      }
-      params.addAll(aliasList);
-      return 'COALESCE($nameExpression IN ($aliasPlaceholders), 0)';
-    }
 
-    final isWhite = sidePredicate(
-      fideExpression: whiteFide,
-      nameExpression: whiteName,
-      matchesEverythingWhenUnfiltered: true,
-    );
-    final isBlack = sidePredicate(
-      fideExpression: blackFide,
-      nameExpression: blackName,
-      matchesEverythingWhenUnfiltered: false,
-    );
-    params.addAll(databaseIds);
+      final isWhite = sidePredicate(
+        fideExpression: whiteFide,
+        nameExpression: whiteName,
+        matchesEverythingWhenUnfiltered: true,
+      );
+      final isBlack = sidePredicate(
+        fideExpression: blackFide,
+        nameExpression: blackName,
+        matchesEverythingWhenUnfiltered: false,
+      );
+      params.addAll(databaseIds);
 
-    // Keep every matching source row, classify it from the player's side, and
-    // sum. COALESCE keeps the flags 0 instead of NULL when a FIDE compare is
-    // against a NULL id.
-    final rows = await db.select('''
+      // Keep every matching source row, classify it from the player's side, and
+      // sum. COALESCE keeps the flags 0 instead of NULL when a FIDE compare is
+      // against a NULL id.
+      final rows = await db.select('''
       SELECT
         COALESCE(SUM(matched), 0) AS games,
         COALESCE(SUM(CASE WHEN outcome = 'w' THEN 1 ELSE 0 END), 0) AS wins,
@@ -4565,13 +4563,13 @@ class LocalChessDatabaseRepository {
       )
       ''', params);
 
-    final row = rows.isEmpty ? const <String, Object?>{} : rows.first;
-    return LocalChessDatabaseResultStats(
-      gameCount: _readInt(row['games']),
-      winCount: _readInt(row['wins']),
-      drawCount: _readInt(row['draws']),
-      lossCount: _readInt(row['losses']),
-    );
+      final row = rows.isEmpty ? const <String, Object?>{} : rows.first;
+      return LocalChessDatabaseResultStats(
+        gameCount: _readInt(row['games']),
+        winCount: _readInt(row['wins']),
+        drawCount: _readInt(row['draws']),
+        lossCount: _readInt(row['losses']),
+      );
     } finally {
       await directDatabase?.close();
     }
@@ -4697,6 +4695,10 @@ class LocalChessDatabaseRepository {
     );
     final index = buildResult.index;
     final stat = await File(databasePath).stat();
+    final contentFingerprint = await computeLocalChessFileContentFingerprint(
+      databasePath,
+      stat: stat,
+    );
     final now = DateTime.now().millisecondsSinceEpoch;
 
     await _lockedTransaction(db, (txn) async {
@@ -4780,6 +4782,7 @@ class LocalChessDatabaseRepository {
         SET
           size_bytes = ?,
           modified_at_ms = ?,
+          content_fingerprint = ?,
           game_count = game_count + ?,
           position_count = ?,
           tree_snapshot = NULL,
@@ -4790,6 +4793,7 @@ class LocalChessDatabaseRepository {
         <Object?>[
           stat.size,
           stat.modified.millisecondsSinceEpoch,
+          contentFingerprint,
           games.length,
           nextPositionCount,
           updateOpeningTree ? treeMaxPly : null,
@@ -4806,6 +4810,8 @@ class LocalChessDatabaseRepository {
     required String databasePath,
     required int indexInFile,
     required String rawPgn,
+    int? expectedFileGameCount,
+    String? expectedPgnFingerprint,
   }) async {
     final replacementRawPgn = rawPgn.trim();
     if (indexInFile < 0 || replacementRawPgn.isEmpty) return false;
@@ -4832,6 +4838,7 @@ class LocalChessDatabaseRepository {
             currentStat.modified.millisecondsSinceEpoch) {
       return null;
     }
+    final expectedFileText = await file.readAsString();
 
     final rows = await db.select(
       '''
@@ -4843,6 +4850,9 @@ class LocalChessDatabaseRepository {
       <Object?>[databaseId],
     );
     if (rows.isEmpty) return null;
+    if (expectedFileGameCount != null && rows.length != expectedFileGameCount) {
+      return false;
+    }
 
     Map<String, Object?>? targetRow;
     var targetOrdinal = -1;
@@ -4872,6 +4882,11 @@ class LocalChessDatabaseRepository {
 
     final oldRawPgn = _rawPgnForRow(targetRow).trim();
     if (oldRawPgn.isEmpty) return null;
+    final normalizedExpectedFingerprint = expectedPgnFingerprint?.trim() ?? '';
+    if (normalizedExpectedFingerprint.isNotEmpty &&
+        localChessPgnFingerprint(oldRawPgn) != normalizedExpectedFingerprint) {
+      return false;
+    }
 
     final fileGameCount = rows.length;
     final oldInput = LocalOpeningTreeGameInput(
@@ -4941,6 +4956,7 @@ class LocalChessDatabaseRepository {
     final rewrite = await _rewritePgnFileFromCachedRows(
       databasePath,
       rewriteRows,
+      expectedText: expectedFileText,
     );
     if (rewrite == null) return null;
 
@@ -4960,6 +4976,11 @@ class LocalChessDatabaseRepository {
       targetId,
     );
     final nextStat = await file.stat();
+    final nextContentFingerprint =
+        await computeLocalChessFileContentFingerprint(
+          databasePath,
+          stat: nextStat,
+        );
     final now = DateTime.now().millisecondsSinceEpoch;
 
     await _lockedTransaction(db, (txn) async {
@@ -5071,6 +5092,7 @@ class LocalChessDatabaseRepository {
         SET
           size_bytes = ?,
           modified_at_ms = ?,
+          content_fingerprint = ?,
           game_count = ?,
           position_count = ?,
           tree_snapshot = NULL,
@@ -5081,6 +5103,7 @@ class LocalChessDatabaseRepository {
         <Object?>[
           nextStat.size,
           nextStat.modified.millisecondsSinceEpoch,
+          nextContentFingerprint,
           fileGameCount,
           nextPositionCount,
           updateOpeningTree ? treeMaxPly : null,
@@ -5161,9 +5184,21 @@ class LocalChessDatabaseRepository {
     );
     if (deleteDelta.skippedGames.isNotEmpty) return null;
 
-    final rewrite = await _rewritePgnFileFromCachedRows(databasePath, keptRows);
+    final expectedFileText = await File(databasePath).readAsString();
+    final rewrite = await _rewritePgnFileFromCachedRows(
+      databasePath,
+      keptRows,
+      expectedText: expectedFileText,
+    );
     if (rewrite == null) return null;
     final stat = await File(databasePath).stat();
+    final contentFingerprint =
+        keptRows.isEmpty
+            ? ''
+            : await computeLocalChessFileContentFingerprint(
+              databasePath,
+              stat: stat,
+            );
     final now = DateTime.now().millisecondsSinceEpoch;
     final deletedIds = <String>{
       for (final row in deletedRows) row['id'] as String,
@@ -5245,6 +5280,7 @@ class LocalChessDatabaseRepository {
         SET
           size_bytes = ?,
           modified_at_ms = ?,
+          content_fingerprint = ?,
           game_count = ?,
           position_count = ?,
           tree_snapshot = NULL,
@@ -5255,6 +5291,7 @@ class LocalChessDatabaseRepository {
         <Object?>[
           stat.size,
           stat.modified.millisecondsSinceEpoch,
+          contentFingerprint,
           keptRows.length,
           nextPositionCount,
           updateOpeningTree ? treeMaxPly : null,
@@ -5473,8 +5510,7 @@ class LocalChessDatabaseRepository {
     );
   }
 
-  Future<List<MoveAggregate>>
-  _localUnfilteredCompactTreeMoveAggregatesForFen({
+  Future<List<MoveAggregate>> _localUnfilteredCompactTreeMoveAggregatesForFen({
     required String databasePath,
     required String fen,
   }) async {
@@ -5841,16 +5877,16 @@ class LocalChessDatabaseRepository {
     }
 
     if (!filters.hasFilters && sortBy == GamebaseSortField.date) {
-      final ordered = List<CompactLocalTreePositionMatch>.of(matches)
-        ..sort((left, right) {
-          final byDate = left.dateDays.compareTo(right.dateDays);
-          if (byDate != 0) {
-            return sortDirection == GamebaseSortDirection.asc
-                ? byDate
-                : -byDate;
-          }
-          return left.indexInFile.compareTo(right.indexInFile);
-        });
+      final ordered = List<CompactLocalTreePositionMatch>.of(matches)..sort((
+        left,
+        right,
+      ) {
+        final byDate = left.dateDays.compareTo(right.dateDays);
+        if (byDate != 0) {
+          return sortDirection == GamebaseSortDirection.asc ? byDate : -byDate;
+        }
+        return left.indexInFile.compareTo(right.indexInFile);
+      });
       final total = ordered.length;
       final offset = page * size;
       if (offset >= total) {
@@ -9032,8 +9068,9 @@ String _rawPgnForRow(Map<String, Object?> row) {
 
 Future<_PgnRewriteResult?> _rewritePgnFileFromCachedRows(
   String databasePath,
-  List<Map<String, Object?>> rows,
-) async {
+  List<Map<String, Object?>> rows, {
+  required String expectedText,
+}) async {
   final buffer = StringBuffer();
   final spans = <_PgnRewriteSpan>[];
   var cursor = 0;
@@ -9055,7 +9092,11 @@ Future<_PgnRewriteResult?> _rewritePgnFileFromCachedRows(
   if (rows.isNotEmpty) {
     buffer.write('\n');
   }
-  await File(databasePath).writeAsString(buffer.toString(), flush: true);
+  await writeLocalPgnAtomically(
+    file: File(databasePath),
+    expectedText: expectedText,
+    nextText: buffer.toString(),
+  );
   return _PgnRewriteResult(spans);
 }
 

@@ -1208,6 +1208,8 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       message: file.message,
       openingTreeIndex: index,
       pgnOffsetIndex: file.pgnOffsetIndex,
+      contentFingerprint: file.contentFingerprint,
+      isWritableEmptyDatabase: file.isWritableEmptyDatabase,
     );
   }
 
@@ -1346,10 +1348,18 @@ String localChessOpenErrorMessage(Object error) {
           case LocalChessFileStatus.parsed:
             openableDatabaseCount++;
           case LocalChessFileStatus.noGames:
-            // An empty PGN is still a valid local database destination. Open
-            // it so the user can add games later instead of treating it as a
-            // failed import.
-            openableDatabaseCount++;
+            if (node.isOpenableDatabase) {
+              // A genuinely empty plain PGN is a valid writable destination.
+              openableDatabaseCount++;
+            } else {
+              addIssue(
+                key,
+                ArgumentError(
+                  node.message ??
+                      'No playable PGN games were found in this source.',
+                ),
+              );
+            }
           case LocalChessFileStatus.failed:
             final message = node.message ?? 'Could not read this PGN file.';
             final accessError = LocalChessFileAccessException.from(

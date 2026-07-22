@@ -2,7 +2,9 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
 import 'package:chessever/desktop/services/local_library_game_updater.dart';
+import 'package:chessever/desktop/services/local_pgn_atomic_write.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
@@ -72,6 +74,7 @@ class LocalLibraryWriter {
     }
 
     final written = <String>[];
+    final writtenFingerprints = <String>[];
     var skipped = 0;
     String? error;
 
@@ -96,10 +99,15 @@ class LocalLibraryWriter {
           ..write(pgn)
           ..write('\n\n');
         written.add(file.path);
+        writtenFingerprints.add(localChessPgnFingerprint(pgn));
       }
 
       if (written.isNotEmpty) {
-        await file.writeAsString(buffer.toString(), flush: true);
+        await writeLocalPgnAtomically(
+          file: file,
+          expectedText: existing,
+          nextText: buffer.toString(),
+        );
       }
 
       final finalGameCount = existingGameCount + written.length;
@@ -109,6 +117,7 @@ class LocalLibraryWriter {
             sourcePath: file.path,
             indexInFile: existingGameCount + i,
             fileGameCount: finalGameCount,
+            pgnFingerprint: writtenFingerprints[i],
           ),
       ];
 

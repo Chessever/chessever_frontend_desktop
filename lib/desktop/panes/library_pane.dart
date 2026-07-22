@@ -6998,6 +6998,7 @@ BoardTabGameArgs _boardArgsForLocalPreviewGame(
       sourcePath: localGame.sourcePath,
       sourceIndex: localGame.indexInFile,
       sourceFileGameCount: localGame.fileGameCount,
+      sourcePgnFingerprint: localGame.pgnFingerprint,
       title: localGame.title,
     ),
   );
@@ -7067,6 +7068,7 @@ TournamentGameSummary _summaryFromLocalPreviewGame(LocalChessGame localGame) {
       sourcePath: localGame.sourcePath,
       sourceIndex: localGame.indexInFile,
       sourceFileGameCount: localGame.fileGameCount,
+      pgnFingerprint: localGame.pgnFingerprint,
       title: localGame.title,
     ),
   );
@@ -11166,8 +11168,8 @@ _PreviewPlayerLine _previewPlayerLineFromValues({
   required String black,
   required String fallbackTitle,
 }) {
-  final visibleWhite = desktopTableDisplayValue(white);
-  final visibleBlack = desktopTableDisplayValue(black);
+  final visibleWhite = desktopTablePlayerValue(white);
+  final visibleBlack = desktopTablePlayerValue(black);
   if (visibleWhite.isNotEmpty || visibleBlack.isNotEmpty) {
     return _PreviewPlayerLine(
       white: visibleWhite,
@@ -11179,8 +11181,8 @@ _PreviewPlayerLine _previewPlayerLineFromValues({
   );
   if (parts.length >= 2) {
     return _PreviewPlayerLine(
-      white: desktopTableDisplayValue(parts.first),
-      black: desktopTableDisplayValue(parts[1]),
+      white: desktopTablePlayerValue(parts.first),
+      black: desktopTablePlayerValue(parts[1]),
     );
   }
   return const _PreviewPlayerLine(white: '', black: '');
@@ -11211,8 +11213,8 @@ class _PreviewPlayersHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final white = desktopTableDisplayValue(whiteName);
-    final black = desktopTableDisplayValue(blackName);
+    final white = desktopTablePlayerValue(whiteName);
+    final black = desktopTablePlayerValue(blackName);
     if (white.isEmpty && black.isEmpty) return const SizedBox.shrink();
     if (white.isEmpty || black.isEmpty) {
       return Center(
@@ -11250,8 +11252,8 @@ String _previewMetadataTitle(String raw) {
     RegExp(r'\s+v(?:s\.?|\.)\s+', caseSensitive: false),
   );
   if (parts.length >= 2 &&
-      desktopTableDisplayValue(parts.first).isEmpty &&
-      desktopTableDisplayValue(parts[1]).isEmpty) {
+      desktopTablePlayerValue(parts.first).isEmpty &&
+      desktopTablePlayerValue(parts[1]).isEmpty) {
     return '';
   }
   return value;
