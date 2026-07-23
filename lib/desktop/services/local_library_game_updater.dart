@@ -4,17 +4,21 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
+import 'package:chessever/desktop/services/local_pgn_atomic_write.dart';
 
 class LocalLibraryGameUpdateTarget {
   const LocalLibraryGameUpdateTarget({
     required this.sourcePath,
     required this.indexInFile,
     required this.fileGameCount,
+    this.pgnFingerprint = '',
   });
 
   final String sourcePath;
   final int indexInFile;
   final int fileGameCount;
+  final String pgnFingerprint;
 }
 
 class LocalLibraryGameUpdateOutcome {
@@ -41,6 +45,8 @@ Future<LocalLibraryGameUpdateOutcome> updateLocalLibraryPgnGame({
     databasePath: path,
     indexInFile: target.indexInFile,
     rawPgn: nextPgn,
+    expectedFileGameCount: target.fileGameCount,
+    expectedPgnFingerprint: target.pgnFingerprint,
   );
   if (cachedUpdate == true) {
     return LocalLibraryGameUpdateOutcome(sourcePath: path);
@@ -70,6 +76,15 @@ Future<LocalLibraryGameUpdateOutcome> updateLocalLibraryPgnGame({
   }
 
   final range = ranges[index];
+  final originalRawPgn = text.substring(range.start, range.end).trim();
+  final expectedFingerprint = target.pgnFingerprint.trim();
+  if (expectedFingerprint.isNotEmpty &&
+      localChessPgnFingerprint(originalRawPgn) != expectedFingerprint) {
+    throw StateError(
+      'The source PGN game changed since it was opened. Refresh the database '
+      'before updating it.',
+    );
+  }
   final before = text.substring(0, range.start).trimRight();
   final after = text.substring(range.end).trimLeft();
   final buffer = StringBuffer();
@@ -83,7 +98,11 @@ Future<LocalLibraryGameUpdateOutcome> updateLocalLibraryPgnGame({
     buffer.write(after);
   }
   buffer.write('\n');
-  await file.writeAsString(buffer.toString(), flush: true);
+  await writeLocalPgnAtomically(
+    file: file,
+    expectedText: text,
+    nextText: buffer.toString(),
+  );
   return LocalLibraryGameUpdateOutcome(sourcePath: path);
 }
 

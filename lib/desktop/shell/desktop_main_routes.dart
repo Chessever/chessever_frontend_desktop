@@ -25,8 +25,8 @@ class DesktopMainRoute {
 const List<DesktopMainRoute> desktopMainRoutes = [
   DesktopMainRoute(
     pane: DesktopPane.tournaments,
-    label: 'Tournaments',
-    paletteTitle: 'Open Tournaments',
+    label: 'Events',
+    paletteTitle: 'Open Events',
     paletteSubtitle: 'Live broadcasts and recent events',
     icon: Icons.emoji_events_outlined,
   ),

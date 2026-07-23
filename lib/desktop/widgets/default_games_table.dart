@@ -8,6 +8,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/utils/library_multi_select.dart';
 import 'package:chessever/desktop/widgets/adaptive_games_table.dart';
+import 'package:chessever/desktop/widgets/table_display_value.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
     show openTournamentGameTab;
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
@@ -573,7 +574,7 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         sortField: GamebaseSortField.eco,
         cellBuilder:
             (_, game) => _DefaultGamesTextCell(
-              value: game.eco ?? '—',
+              value: game.eco ?? '',
               color: kWhiteColor70,
               maxWidth: 44,
             ),
@@ -584,7 +585,7 @@ class _DefaultGamesTableState extends ConsumerState<DefaultGamesTable> {
         sortField: GamebaseSortField.opening,
         cellBuilder:
             (_, game) => _DefaultGamesTextCell(
-              value: game.openingName ?? '—',
+              value: game.openingName ?? '',
               color: kWhiteColor70,
               maxWidth: 260,
             ),
@@ -636,7 +637,7 @@ class _DefaultGamesTextCell extends StatelessWidget {
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxWidth),
       child: Text(
-        value.trim().isEmpty ? '—' : value.trim(),
+        defaultGameTableDisplayValue(value),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         textAlign: align,
@@ -654,7 +655,7 @@ class _DefaultGamesNumberCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(
-      (value == null || value! <= 0) ? '—' : value.toString(),
+      (value == null || value! <= 0) ? '' : value.toString(),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       textAlign: TextAlign.right,
@@ -675,7 +676,8 @@ class _DefaultGamesResultCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = result.trim().isEmpty ? '*' : result.trim();
+    final text = defaultGameTableDisplayValue(result);
+    if (text.isEmpty) return const SizedBox.shrink();
     return Container(
       constraints: const BoxConstraints(minWidth: 34),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
@@ -710,6 +712,8 @@ class _DefaultGamesPlayerCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final flagFederation = defaultGamePlayerFlagFederation(player);
     final title = player.title.trim();
+    final playerName = defaultGamePlayerName(player.name);
+    if (playerName.isEmpty) return const SizedBox.shrink();
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 170),
       child: Row(
@@ -740,7 +744,7 @@ class _DefaultGamesPlayerCell extends StatelessWidget {
           ],
           Flexible(
             child: Text(
-              defaultGamePlayerName(player.name),
+              playerName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -761,27 +765,28 @@ DateTime? _gameDate(GamesTourModel game) => game.bucketDate;
 
 String defaultGameEventLabel(GamesTourModel game) {
   return _resolveDefaultGameEventName(
-        metadataEvent: null,
+        metadataEvent: game.eventName ?? game.tourName,
         tourSlug: game.tourSlug,
         tourId: game.tourId,
       ) ??
-      'Event';
+      '';
 }
 
 String defaultGameSite(GamesTourModel game) {
   if (game.isOnline) return 'Online';
   final slug = game.tourSlug?.trim() ?? '';
-  if (slug.isEmpty) return '—';
+  if (defaultGameTableDisplayValue(slug).isEmpty) return '';
   return _humanizeDefaultGameSlug(slug);
 }
 
 String defaultGamePlayerName(String rawName) {
-  var name = rawName.trim();
+  var name = defaultGameTableDisplayValue(rawName);
   if (name.isEmpty) return name;
   name = name.replaceFirst(
     RegExp(r'^(GM|IM|FM|CM|WGM|WIM|WFM|WCM)\s+', caseSensitive: false),
     '',
   );
+  if (const {'white', 'black'}.contains(name.trim().toLowerCase())) return '';
 
   final commaIndex = name.indexOf(',');
   if (commaIndex >= 0) {
@@ -802,11 +807,20 @@ String defaultGamePlayerName(String rawName) {
 String defaultGameRoundLabel(GamesTourModel game) {
   final candidates = <String?>[game.roundSlug, game.roundId];
   for (final candidate in candidates) {
-    final value = candidate?.trim() ?? '';
+    final value = defaultGameTableDisplayValue(candidate);
     if (value.isEmpty || _looksLikeEcoCode(value)) continue;
     return value;
   }
-  return '—';
+  return '';
+}
+
+/// Normalizes unavailable metadata at the compact desktop-table boundary.
+///
+/// Stored PGN values remain untouched; only their table presentation is
+/// blanked. This keeps real values while preventing parser/storage sentinels
+/// from becoming visible data.
+String defaultGameTableDisplayValue(Object? raw) {
+  return desktopTableDisplayValue(raw);
 }
 
 String? _firstNameInitial(String firstName) {
@@ -840,12 +854,14 @@ String? _resolveDefaultGameEventName({
 }
 
 bool _isReadableDefaultGameEventName(String value) {
-  if (value.isEmpty) return false;
-  final lower = value.toLowerCase();
+  final displayValue = defaultGameTableDisplayValue(value);
+  if (displayValue.isEmpty) return false;
+  final lower = displayValue.toLowerCase();
   if (lower == 'library' ||
       lower == 'gamebase' ||
       lower == 'opening_explorer' ||
-      lower == 'import_preview') {
+      lower == 'import_preview' ||
+      lower == 'event') {
     return false;
   }
   return !_looksLikeOpaqueDefaultGameEventId(value);
@@ -880,7 +896,7 @@ String _humanizeDefaultGameSlug(String value) {
 
 String defaultGameDateLabel(GamesTourModel game) {
   final date = _gameDate(game);
-  if (date == null) return '—';
+  if (date == null) return '';
   final y = date.year.toString().padLeft(4, '0');
   final m = date.month.toString().padLeft(2, '0');
   final d = date.day.toString().padLeft(2, '0');
@@ -896,7 +912,7 @@ String defaultGameResultText(GameStatus status) {
     case GameStatus.draw:
       return '½-½';
     case GameStatus.ongoing:
-      return '*';
+      return '';
     case GameStatus.unknown:
       return '';
   }

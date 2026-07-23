@@ -21,6 +21,7 @@ import 'package:chessever/desktop/panes/board_editor_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
 import 'package:chessever/desktop/services/board_pgn_clipboard.dart';
 import 'package:chessever/desktop/services/board_pgn_paste.dart';
+import 'package:chessever/desktop/services/board_opening_metadata.dart';
 import 'package:chessever/desktop/services/board_tab_pgn_resolver.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
@@ -158,17 +159,62 @@ Map<String, dynamic> finalizeBroadcastPgnMetadata({
   required Map<String, dynamic> parsedMetadata,
   required String? acceptedLiveStatus,
 }) {
+  final acceptedStatus = GameStatus.fromString(acceptedLiveStatus);
   final metadata =
       mergeRecognizedLiveStatusMetadata(
         currentMetadata: parsedMetadata,
         rawStatus: acceptedLiveStatus,
       ) ??
       Map<String, dynamic>.of(parsedMetadata);
-  final result = (metadata['Result']?.toString() ?? '').trim();
-  final isLive = result.isEmpty || result == '*';
+  // `Result "*"` only means the PGN has no decided result. It does not prove
+  // that a database/file snapshot is currently owned by a live broadcast.
+  // Only an accepted live-row status may protect the tail from mainline edits.
+  final isLive =
+      acceptedStatus != GameStatus.unknown && acceptedStatus.isOngoing;
   metadata[ChessGame.metadataAllowMainlineExtensionKey] = !isLive;
   metadata[ChessGame.metadataIsLiveKey] = isLive;
   return metadata;
+}
+
+@visibleForTesting
+bool isDatabaseBoardSnapshot(BoardTabGameArgs? args) {
+  if (args == null) return false;
+  return args.databaseTitle.trim().isNotEmpty ||
+      args.databaseGames.isNotEmpty ||
+      args.databaseGamesPagination != null ||
+      args.databaseGamesContinuation != null ||
+      args.librarySaveOrigin != null ||
+      args.localOpeningTreeIndex != null ||
+      args.localOpeningTreeTitle.trim().isNotEmpty ||
+      args.enableLocalOpeningTreePicker ||
+      args.hideLocalOpeningTreePicker;
+}
+
+@visibleForTesting
+String? resolveInitialBoardPgnLiveStatus({
+  required String? acceptedLiveStatus,
+  required bool isDatabaseSnapshot,
+  required String? gameId,
+  required GameStatus? sourceGameStatus,
+  required Object? parsedResult,
+}) {
+  final accepted = acceptedLiveStatus?.trim();
+  if (accepted != null &&
+      accepted.isNotEmpty &&
+      GameStatus.fromString(accepted) != GameStatus.unknown) {
+    return accepted;
+  }
+  if (isDatabaseSnapshot || gameId == null || gameId.trim().isEmpty) {
+    return null;
+  }
+  if (sourceGameStatus != null && sourceGameStatus != GameStatus.unknown) {
+    return sourceGameStatus.displayText;
+  }
+  final parsedStatus = GameStatus.fromString(parsedResult?.toString());
+  if (parsedStatus != GameStatus.unknown) return parsedStatus.displayText;
+  // A bound non-database game is broadcast-owned even if its initial row failed
+  // to hydrate. Protect its tail until realtime delivers an authoritative row.
+  return GameStatus.ongoing.displayText;
 }
 
 /// Chooses the monotonic base snapshot for a focused Board live packet.
@@ -563,6 +609,14 @@ class _BoardPaneContent extends HookConsumerWidget {
             ? null
             : ref.watch(
               boardTabGameArgsByTabIdProvider.select((m) => m[activeTabId]),
+            );
+    final attachedLibrarySaveOrigin =
+        activeTabId == null
+            ? null
+            : ref.watch(
+              boardTabAttachedLibrarySaveOriginByTabIdProvider.select(
+                (origins) => origins[activeTabId],
+              ),
             );
     final boardExplorerScope =
         activeTabId == null
@@ -971,12 +1025,18 @@ class _BoardPaneContent extends HookConsumerWidget {
         game: tabArgs?.sourceGame,
         gameId: gameId ?? tabArgs?.gameId,
       );
+      final initialSourceStatus = resolveInitialBoardPgnLiveStatus(
+        acceptedLiveStatus: acceptedLiveStatus,
+        isDatabaseSnapshot: isDatabaseBoardSnapshot(tabArgs),
+        gameId: gameId,
+        sourceGameStatus: tabArgs?.sourceGame?.gameStatus,
+        parsedResult: updatedMetadata['Result'],
+      );
       final finalizedMetadata = finalizeBroadcastPgnMetadata(
         parsedMetadata: updatedMetadata,
-        acceptedLiveStatus: acceptedLiveStatus,
+        acceptedLiveStatus: initialSourceStatus,
       );
-      final result = (finalizedMetadata['Result']?.toString() ?? '').trim();
-      final isLive = result.isEmpty || result == '*';
+      final isLive = finalizedMetadata[ChessGame.metadataIsLiveKey] == true;
       final freshGame = parsed
           .copyWith(metadata: finalizedMetadata)
           .rememberGameEndingPlyIndex(parsed.mainline.length - 1);
@@ -1484,6 +1544,11 @@ class _BoardPaneContent extends HookConsumerWidget {
         final tabId = activeTabId ?? 'board-default';
         ref.read(boardAnnotationsProvider(tabId).notifier).clear();
         ref.read(userMoveNagsProvider.notifier).clearTab(tabId);
+      }
+      if (activeTabId != null) {
+        ref
+            .read(boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier)
+            .clear(activeTabId);
       }
       applyPgn(next.pgn, origin: next.path, gameId: next.gameId);
     });
@@ -2464,13 +2529,19 @@ class _BoardPaneContent extends HookConsumerWidget {
               'desktop-board-${DateTime.now().microsecondsSinceEpoch}',
           pgn,
         );
-        final metadata = Map<String, dynamic>.from(snapshot.metadata);
+        final metadata = metadataWithRecognizedBoardEco(
+          metadata: snapshot.metadata,
+          startingFen: snapshot.startingFen,
+          movesUci: boardEcoMainlineUcis(snapshot),
+        );
         metadata[ChessGame.metadataIsLiveKey] = false;
         metadata[ChessGame.metadataAllowMainlineExtensionKey] = false;
         final eventLabel = headers['Event']?.trim();
         final gameSnapshot = snapshot.copyWith(metadata: metadata);
+        final librarySaveOrigin =
+            boardArgs?.librarySaveOrigin ?? attachedLibrarySaveOrigin;
         final isLocalPgnSaveOrigin =
-            boardArgs?.librarySaveOrigin?.kind ==
+            librarySaveOrigin?.kind ==
             BoardTabLibrarySaveOriginKind.localPgnFile;
         final outcome = await showLibrarySaveToFolderDialog(
           context: context,
@@ -2485,6 +2556,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           updateTarget: _libraryUpdateTargetForBoardArgs(
             ref: ref,
             boardArgs: boardArgs,
+            attachedOrigin: attachedLibrarySaveOrigin,
             game: gameSnapshot,
           ),
           destinationMode:
@@ -2493,6 +2565,25 @@ class _BoardPaneContent extends HookConsumerWidget {
                   : LibrarySaveDestinationMode.cloudAndLocal,
         );
         if (!context.mounted || outcome == null || !outcome.didSave) return;
+        final localUpdateTarget = outcome.localUpdateTarget;
+        if (localUpdateTarget != null &&
+            activeTabId != null &&
+            shouldAttachLocalPgnIdentityAfterSave(
+              sourceOrigin: boardArgs?.librarySaveOrigin,
+              attachedOrigin: attachedLibrarySaveOrigin,
+              hasLocalUpdateTarget: true,
+            )) {
+          ref
+              .read(boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier)
+              .attachLocalPgn(
+                tabId: activeTabId,
+                sourcePath: localUpdateTarget.sourcePath,
+                sourceIndex: localUpdateTarget.indexInFile,
+                sourceFileGameCount: localUpdateTarget.fileGameCount,
+                sourcePgnFingerprint: localUpdateTarget.pgnFingerprint,
+                title: _libraryGameTitle(gameSnapshot),
+              );
+        }
         showToast(outcome.toToastMessage());
       } catch (e) {
         if (!context.mounted) return;
@@ -4647,9 +4738,10 @@ final _emptyChessGame = ChessGame(
 LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
   required WidgetRef ref,
   required BoardTabGameArgs? boardArgs,
+  required BoardTabLibrarySaveOrigin? attachedOrigin,
   required ChessGame game,
 }) {
-  final origin = boardArgs?.librarySaveOrigin;
+  final origin = boardArgs?.librarySaveOrigin ?? attachedOrigin;
   if (origin == null) return null;
   switch (origin.kind) {
     case BoardTabLibrarySaveOriginKind.cloudSavedAnalysis:
@@ -4702,6 +4794,7 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
               sourcePath: sourcePath,
               indexInFile: sourceIndex,
               fileGameCount: sourceFileGameCount,
+              pgnFingerprint: origin.sourcePgnFingerprint ?? '',
             ),
             game: updatedGame,
             repository: ref.read(localChessDatabaseRepositoryProvider),

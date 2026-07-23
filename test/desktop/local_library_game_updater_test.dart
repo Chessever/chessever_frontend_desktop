@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
 import 'package:chessever/desktop/services/local_library_game_updater.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
@@ -86,6 +87,38 @@ void main() {
           throwsA(isA<StateError>()),
         );
         expect(await file.readAsString(), currentPgn);
+      },
+    );
+
+    test(
+      'rejects in-place updates when the indexed game fingerprint changed',
+      () async {
+        final dir = await Directory.systemTemp.createTemp(
+          'chessever-local-update-reordered-',
+        );
+        addTearDown(() => dir.delete(recursive: true));
+        final file = File('${dir.path}/database.pgn');
+        const first = '[Event "One"]\n[White "A"]\n[Black "B"]\n\n1. e4 e5 *';
+        const second = '[Event "Two"]\n[White "C"]\n[Black "D"]\n\n1. d4 d5 *';
+        await file.writeAsString('$second\n\n$first\n');
+        final replacement = ChessGame.fromPgn(
+          'replacement',
+          '[Event "Two"]\n[White "C"]\n[Black "D"]\n\n1. Nf3 Nf6 *',
+        );
+
+        expect(
+          () => updateLocalLibraryPgnGame(
+            target: LocalLibraryGameUpdateTarget(
+              sourcePath: file.path,
+              indexInFile: 1,
+              fileGameCount: 2,
+              pgnFingerprint: localChessPgnFingerprint(second),
+            ),
+            game: replacement,
+          ),
+          throwsA(isA<StateError>()),
+        );
+        expect(await file.readAsString(), '$second\n\n$first\n');
       },
     );
   });

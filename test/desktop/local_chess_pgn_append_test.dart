@@ -534,6 +534,51 @@ void main() {
         expect(moves.map((move) => move.uci), isNot(contains('d2d4')));
       },
     );
+
+    test(
+      'rejects cached replacement when the indexed game identity changed',
+      () async {
+        final dir = await Directory.systemTemp.createTemp(
+          'chessever-local-replace-stale-',
+        );
+        addTearDown(() => dir.delete(recursive: true));
+        final file = File('${dir.path}/local.pgn');
+        await file.writeAsString(
+          '${_existingPgn.trim()}\n\n${_secondPgn.trim()}\n',
+        );
+        final db = await resqlite.Database.open('${dir.path}/local_chess.db');
+        addTearDown(db.close);
+        await db.execute('PRAGMA foreign_keys=ON');
+        await createLocalChessResqliteDatabaseSchema(db);
+        final initialSource = await scanLocalChessPaths(<String>[file.path]);
+        final initialNode = initialSource.root.singlePlayableDatabaseInSubtree!;
+        final expectedFingerprint = initialNode.games.last.pgnFingerprint;
+        final repo = LocalChessDatabaseRepository(database: () async => db);
+        await repo.persistFileNode(initialNode, sourceLabel: initialSource.label);
+
+        await file.writeAsString(
+          '${_secondPgn.trim()}\n\n${_existingPgn.trim()}\n',
+          flush: true,
+        );
+        final reorderedSource = await scanLocalChessPaths(<String>[file.path]);
+        await repo.persistFileNode(
+          reorderedSource.root.singlePlayableDatabaseInSubtree!,
+          sourceLabel: reorderedSource.label,
+        );
+        final before = await file.readAsString();
+
+        final replaced = await repo.replaceLocalPgnGame(
+          databasePath: file.path,
+          indexInFile: 1,
+          expectedFileGameCount: 2,
+          expectedPgnFingerprint: expectedFingerprint,
+          rawPgn: _replacementPgn,
+        );
+
+        expect(replaced, isFalse);
+        expect(await file.readAsString(), before);
+      },
+    );
   });
 }
 
@@ -604,6 +649,7 @@ class _CandidateFingerprintRepository extends LocalChessDatabaseRepository {
   Future<Set<String>?> localDatabaseMatchingPgnFingerprints({
     required String databasePath,
     required Iterable<String> fingerprints,
+    bool preferDirectDatabase = false,
   }) async {
     queriedFingerprints.addAll(fingerprints);
     return existingFingerprints.intersection(queriedFingerprints);

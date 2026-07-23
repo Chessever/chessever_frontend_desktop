@@ -33,8 +33,98 @@ void main() {
       defaultGameRoundLabel(
         _game(0).copyWith(roundSlug: 'B48', roundId: 'E90'),
       ),
-      '—',
+      '',
     );
+  });
+
+  test('missing compact-table metadata is rendered as blank', () {
+    final game = GamesTourModel(
+      gameId: 'missing-metadata',
+      whitePlayer: _player(
+        'White',
+        federation: '',
+        countryCode: '',
+        title: '',
+        rating: 0,
+      ),
+      blackPlayer: _player(
+        'Black',
+        federation: '',
+        countryCode: '',
+        title: '',
+        rating: 0,
+      ),
+      whiteTimeDisplay: '',
+      blackTimeDisplay: '',
+      whiteClockCentiseconds: 0,
+      blackClockCentiseconds: 0,
+      gameStatus: GameStatus.unknown,
+      roundId: '?',
+      roundSlug: '—',
+      tourId: 'library',
+      tourSlug: '-',
+      eco: '?',
+      openingName: 'Unknown',
+    );
+
+    expect(defaultGamePlayerName(game.whitePlayer.name), '');
+    expect(defaultGamePlayerName(game.blackPlayer.name), '');
+    expect(defaultGameEventLabel(game), '');
+    expect(defaultGameRoundLabel(game), '');
+    expect(defaultGameSite(game), '');
+    expect(defaultGameDateLabel(game), '');
+    expect(defaultGameResultText(game.gameStatus), '');
+  });
+
+  testWidgets('does not paint missing values or placeholders in table rows', (
+    tester,
+  ) async {
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+    final game = GamesTourModel(
+      gameId: 'blank-row',
+      whitePlayer: _player(
+        'White',
+        federation: '',
+        countryCode: '',
+        title: '',
+        rating: 0,
+      ),
+      blackPlayer: _player(
+        'Black',
+        federation: '',
+        countryCode: '',
+        title: '',
+        rating: 0,
+      ),
+      whiteTimeDisplay: '',
+      blackTimeDisplay: '',
+      whiteClockCentiseconds: 0,
+      blackClockCentiseconds: 0,
+      gameStatus: GameStatus.unknown,
+      roundId: '?',
+      tourId: 'library',
+      tourSlug: '—',
+      eco: '?',
+      openingName: 'Unknown opening',
+    );
+
+    await tester.pumpWidget(
+      _wrap(controller: controller, onOpen: (_) {}, games: [game]),
+    );
+    await tester.pump();
+
+    for (final placeholder in const [
+      '—',
+      '–',
+      '-',
+      '?',
+      '*',
+      'White',
+      'Black',
+    ]) {
+      expect(find.text(placeholder), findsNothing);
+    }
   });
 
   testWidgets('can hide host-specific metadata columns', (tester) async {
@@ -273,12 +363,14 @@ PlayerCard _player(
   String name, {
   String federation = 'USA',
   String? countryCode,
+  String title = 'GM',
+  int rating = 2600,
 }) {
   return PlayerCard(
     name: name,
     federation: federation,
-    title: 'GM',
-    rating: 2600,
+    title: title,
+    rating: rating,
     countryCode: countryCode ?? federation,
     team: null,
   );

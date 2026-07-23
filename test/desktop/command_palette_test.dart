@@ -58,7 +58,7 @@ void main() {
 
   test('command palette route shortcuts match sidebar numbering', () {
     expect(
-      debugCommandPaletteShortcutForTitle('Open Tournaments', isMacOS: false),
+      debugCommandPaletteShortcutForTitle('Open Events', isMacOS: false),
       'Ctrl+1',
     );
     expect(

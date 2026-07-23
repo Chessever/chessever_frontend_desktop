@@ -1645,13 +1645,7 @@ class _ScoreCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final total = aggregate.total;
     if (total <= 0) {
-      return const Align(
-        alignment: Alignment.centerRight,
-        child: Text(
-          '—',
-          style: TextStyle(color: kLightGreyColor, fontSize: 12),
-        ),
-      );
+      return const SizedBox.shrink();
     }
     final score = (aggregate.white + aggregate.draws * 0.5) / total;
     final pct = (score * 100).toStringAsFixed(decimals);
@@ -1832,6 +1826,6 @@ String _formatTotalCount(int total) => formatOpeningExplorerGameCount(total);
 
 final DateFormat _monthYearFormat = DateFormat('MMM yyyy');
 String _formatLastPlayed(DateTime? d) {
-  if (d == null) return '—';
+  if (d == null) return '';
   return _monthYearFormat.format(d);
 }

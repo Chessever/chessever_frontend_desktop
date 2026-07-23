@@ -40,6 +40,7 @@ import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_player_title_chip.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
@@ -1770,7 +1771,7 @@ class _SourceCard extends StatelessWidget {
         source == PlayerWorkspaceSource.lichess &&
         connected &&
         !hasGames &&
-        operation?.progress != null &&
+        operation != null &&
         !operationMessage.startsWith('importing') &&
         !operationMessage.contains('already current');
     return DecoratedBox(
@@ -1865,10 +1866,12 @@ class _SourceCard extends StatelessWidget {
               _OperationProgress(operation: operation!),
               if (showInitialLichessDownloadNotice) ...[
                 const SizedBox(height: 7),
-                const Text(
-                  'Lichess limits full-history downloads, so large accounts '
-                  'may take several minutes. Future syncs will be faster.',
-                  style: TextStyle(
+                Text(
+                  playerWorkspaceLichessDownloadNotice(
+                    currentAccount!,
+                    operation!,
+                  ),
+                  style: const TextStyle(
                     color: kLightGreyColor,
                     fontSize: 10.5,
                     height: 1.3,
@@ -1978,8 +1981,7 @@ class _OperationProgress extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final percent = operation.percent;
-    final status = percent == null ? 'Working' : '$percent%';
+    final status = playerWorkspaceOperationStatus(operation);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1994,40 +1996,37 @@ class _OperationProgress extends StatelessWidget {
               ),
             ),
             const Spacer(),
-            SizedBox(
-              width: 58,
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: Text(
-                  status,
-                  maxLines: 1,
-                  overflow: TextOverflow.clip,
-                  style: const TextStyle(
-                    color: kWhiteColor,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                    height: 1.25,
-                  ),
-                ),
+            Text(
+              status,
+              maxLines: 1,
+              overflow: TextOverflow.clip,
+              style: const TextStyle(
+                color: kWhiteColor,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                fontFeatures: [FontFeature.tabularFigures()],
+                height: 1.25,
               ),
             ),
           ],
         ),
         const SizedBox(height: 4),
-        SizedBox(
-          height: 30,
-          child: Align(
-            alignment: Alignment.topLeft,
-            child: Text(
-              operation.message,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: kPrimaryColor,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
-                height: 1.25,
+        DesktopTooltip(
+          message: operation.message,
+          child: SizedBox(
+            height: 30,
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: Text(
+                operation.message,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: kPrimaryColor,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  height: 1.25,
+                ),
               ),
             ),
           ),
@@ -6380,6 +6379,42 @@ String _formatInt(int value) {
 String _formatPercent(double? value) {
   if (value == null) return '—';
   return '${(value * 100).round()}%';
+}
+
+bool _isPreparingExternalHistory(PlayerWorkspaceOperation operation) {
+  if (operation.source != PlayerWorkspaceSource.lichess ||
+      operation.progress != null) {
+    return false;
+  }
+  return operation.message.toLowerCase().contains(
+    'preparing the complete game history on chessever',
+  );
+}
+
+@visibleForTesting
+String playerWorkspaceOperationStatus(PlayerWorkspaceOperation operation) {
+  if (_isPreparingExternalHistory(operation)) return 'Preparing online';
+  final percent = operation.percent;
+  return percent == null ? 'Working' : '$percent%';
+}
+
+@visibleForTesting
+String playerWorkspaceLichessDownloadNotice(
+  PlayerWorkspaceAccount account,
+  PlayerWorkspaceOperation operation,
+) {
+  if (_isPreparingExternalHistory(operation)) {
+    final available = account.effectiveAvailableGameCount;
+    final readyCopy =
+        available > 0
+            ? 'all ${_formatInt(available)} games are ready'
+            : 'the full history is ready';
+    return 'ChessEver is preparing your Lichess history on its servers. The '
+        'imported count stays at 0 until $readyCopy. Large accounts can take '
+        '20 minutes or longer; future syncs are faster.';
+  }
+  return 'Lichess limits full-history downloads, so large accounts may take '
+      'several minutes. Future syncs will be faster.';
 }
 
 @visibleForTesting

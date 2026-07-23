@@ -80,6 +80,38 @@ void main() {
   });
 
   testWidgets(
+    'engine off keeps its compact header without a collapsed engine symbol',
+    (tester) async {
+      final repository = _FakeExplorerRepository();
+
+      await tester.pumpWidget(
+        _harness(
+          repository: repository,
+          enginePanel: const SizedBox(
+            key: ValueKey<String>('engine-panel'),
+            height: 52,
+          ),
+          showEngine: false,
+          height: 720,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final engineSplit = find.byWidgetPredicate(
+        (widget) =>
+            widget is ResizableSplitView &&
+            widget.storageKey == desktopEngineRightRailSplitStorageKey,
+      );
+      expect(engineSplit, findsNothing);
+      expect(
+        find.byKey(const ValueKey<String>('engine-panel')),
+        findsOneWidget,
+      );
+      expect(find.byIcon(Icons.memory_rounded), findsNothing);
+    },
+  );
+
+  testWidgets(
     'engine rail uses the compact resettable default with a visible gutter',
     (tester) async {
       final repository = _FakeExplorerRepository();
@@ -2074,6 +2106,8 @@ Widget _harness({
   String localOpeningTreeTitle = '',
   bool hideLocalOpeningTreePicker = false,
   Widget? enginePanel,
+  bool showEngine = true,
+  bool reportSelected = false,
 }) {
   return ProviderScope(
     overrides: [
@@ -2122,6 +2156,8 @@ Widget _harness({
             localOpeningTreeTitle: localOpeningTreeTitle,
             hideLocalOpeningTreePicker: hideLocalOpeningTreePicker,
             enginePanel: enginePanel,
+            showEngine: showEngine,
+            reportSelected: reportSelected,
           ),
         ),
       ),

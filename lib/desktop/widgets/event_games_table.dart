@@ -25,6 +25,7 @@ import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
+import 'package:chessever/desktop/widgets/table_display_value.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
@@ -4012,6 +4013,7 @@ BoardTabLibrarySaveOrigin? _localPgnSaveOriginForSummary(
     sourcePath: source.sourcePath,
     sourceIndex: source.sourceIndex,
     sourceFileGameCount: source.sourceFileGameCount,
+    sourcePgnFingerprint: source.pgnFingerprint,
     title: source.title,
   );
 }
@@ -5245,7 +5247,7 @@ class _BoardBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final boardNumber = game.boardNumber;
-    final label = boardNumber == null ? '-' : '$boardNumber';
+    final label = boardNumber == null ? '' : '$boardNumber';
     return Text(
       label,
       maxLines: 1,
@@ -5261,8 +5263,8 @@ class _BoardBadge extends StatelessWidget {
 }
 
 String _compactPlayerName(String name) {
-  final trimmed = name.trim();
-  if (trimmed.isEmpty) return '-';
+  final trimmed = desktopTablePlayerValue(name);
+  if (trimmed.isEmpty) return '';
   final commaParts = trimmed.split(',');
   if (commaParts.length >= 2) {
     final last = commaParts.first.trim();
@@ -5300,6 +5302,7 @@ class _PlayerCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final playerName = _compactPlayerName(name);
+    if (playerName.isEmpty) return const SizedBox.shrink();
     final titleText = title.trim();
     final ratingText = rating > 0 ? rating.toString() : '';
 
@@ -5385,8 +5388,10 @@ class _StatusPill extends StatelessWidget {
       // raw status text in the muted treatment so it reads as "in progress"
       // without competing with finished results.
       final txt = status.displayText.trim();
+      final displayText = desktopTableDisplayValue(txt);
+      if (displayText.isEmpty) return const SizedBox.shrink();
       return Text(
-        txt.isEmpty ? '·' : txt,
+        displayText,
         maxLines: 1,
         textAlign: TextAlign.center,
         style: TextStyle(
@@ -5397,17 +5402,7 @@ class _StatusPill extends StatelessWidget {
         ),
       );
     }
-    return Text(
-      '—',
-      maxLines: 1,
-      textAlign: TextAlign.center,
-      style: TextStyle(
-        color: kWhiteColor.withValues(alpha: 0.32),
-        fontSize: 11,
-        fontWeight: FontWeight.w500,
-        letterSpacing: 0.4,
-      ),
-    );
+    return const SizedBox.shrink();
   }
 }
 
@@ -5457,10 +5452,7 @@ class _ResultText extends StatelessWidget {
       _ => ('', '', _ResultOutcome.none),
     };
     if (outcome == _ResultOutcome.none) {
-      return const Text(
-        '—',
-        style: TextStyle(color: kLightGreyColor, fontSize: 11),
-      );
+      return const SizedBox.shrink();
     }
     const base = TextStyle(
       fontSize: 12,

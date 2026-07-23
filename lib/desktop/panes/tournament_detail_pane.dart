@@ -500,7 +500,7 @@ class _EmptyState extends StatelessWidget {
             ),
             SizedBox(height: 6),
             Text(
-              'Open a tournament from the Tournaments tab to see its '
+              'Open an event from the Events tab to see its '
               'about page, rounds, and standings here.',
               style: TextStyle(color: kLightGreyColor, fontSize: 12),
               textAlign: TextAlign.center,

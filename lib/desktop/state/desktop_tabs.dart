@@ -67,7 +67,7 @@ extension TabKindLabel on TabKind {
       case TabKind.board:
         return 'Board';
       case TabKind.tournaments:
-        return 'Tournaments';
+        return 'Events';
       case TabKind.tournamentDetail:
         return 'Tournament';
       case TabKind.smartGames:
@@ -238,7 +238,7 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
             DesktopTab(
               id: 'tournaments-default',
               kind: TabKind.tournaments,
-              title: 'Tournaments',
+              title: 'Events',
             ),
           ],
           activeId: 'tournaments-default',
@@ -326,11 +326,9 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
 
   /// Replace the *active* tab's route in-place (without changing its position
   /// in the strip or its id). Returns the id of the now-active tab, or `null`
-  /// if there is no active tab to navigate. Used by the sidebar — clicking a
-  /// sidebar entry navigates the current tab to that route ("main route"
-  /// semantics) instead of spawning a new tab every time. Cmd/Ctrl-click on the
-  /// sidebar bypasses this and calls `open(...)` for explicit new-tab
-  /// behaviour.
+  /// if there is no active tab to navigate. Used for route changes that belong
+  /// inside an existing workspace tab; top-level sidebar destinations use
+  /// [open] so they cannot overwrite the current tab.
   ///
   /// Note: per-tab metadata (player args, board-game args, tournament args)
   /// attached to the old route remains keyed by the tab id. Panes ignore

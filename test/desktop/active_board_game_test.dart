@@ -18,6 +18,66 @@ import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
 void main() {
+  test('scratch board keeps the local PGN identity after its first save', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    container
+        .read(boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier)
+        .attachLocalPgn(
+          tabId: 'scratch-board',
+          sourcePath: r'C:\Games\prep.pgn',
+          sourceIndex: 2,
+          sourceFileGameCount: 3,
+          sourcePgnFingerprint: 'fingerprint-3',
+          title: 'White vs Black',
+        );
+
+    final origin =
+        container.read(
+          boardTabAttachedLibrarySaveOriginByTabIdProvider,
+        )['scratch-board'];
+    expect(origin?.kind, BoardTabLibrarySaveOriginKind.localPgnFile);
+    expect(origin?.sourcePath, r'C:\Games\prep.pgn');
+    expect(origin?.sourceIndex, 2);
+    expect(origin?.sourceFileGameCount, 3);
+    expect(origin?.sourcePgnFingerprint, 'fingerprint-3');
+  });
+
+  test('saving a copy does not replace an existing update identity', () {
+    const existing = BoardTabLibrarySaveOrigin.localPgnFile(
+      sourcePath: r'C:\Games\original.pgn',
+      sourceIndex: 0,
+      sourceFileGameCount: 1,
+      title: 'Original',
+    );
+
+    expect(
+      shouldAttachLocalPgnIdentityAfterSave(
+        sourceOrigin: null,
+        attachedOrigin: null,
+        hasLocalUpdateTarget: true,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldAttachLocalPgnIdentityAfterSave(
+        sourceOrigin: existing,
+        attachedOrigin: null,
+        hasLocalUpdateTarget: true,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldAttachLocalPgnIdentityAfterSave(
+        sourceOrigin: null,
+        attachedOrigin: existing,
+        hasLocalUpdateTarget: true,
+      ),
+      isFalse,
+    );
+  });
+
   testWidgets('replaceActive opens the same game in the current tab', (
     tester,
   ) async {

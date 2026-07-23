@@ -35,6 +35,7 @@ import 'package:chessever/desktop/widgets/library/library_chrome_bar.dart';
 import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
+import 'package:chessever/desktop/widgets/table_display_value.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/local_pgn_metadata.dart';
@@ -572,8 +573,7 @@ class LocalChessFilesView extends HookConsumerWidget {
                     onOpenTree:
                         openableTreeIndex == null ? null : openDatabaseTree,
                     onBuildTree:
-                        selectedDatabase == null ||
-                                openableTreeIndex != null
+                        selectedDatabase == null || openableTreeIndex != null
                             ? null
                             : rebuildDatabaseTree,
                     onCancelTreeBuild:
@@ -1217,11 +1217,11 @@ class _LocalGamesTable extends HookConsumerWidget {
 
     void resetColumnResize(_LocalGamesSortKey key) {
       if (!resizedColumnWidths.value.containsKey(key)) return;
-      final next = Map<_LocalGamesSortKey, double>.of(
-        resizedColumnWidths.value,
-      )..remove(key);
+      final next = Map<_LocalGamesSortKey, double>.of(resizedColumnWidths.value)
+        ..remove(key);
       resizedColumnWidths.value = next;
     }
+
     final openableTreeIndex =
         database?.openingTreeIndex?.isUsable == true
             ? database!.openingTreeIndex
@@ -2070,9 +2070,7 @@ Map<int, TableColumnWidth> _localGamesTableColumnWidths(
     TableColumnWidth defaultWidth,
   ) {
     final resizedWidth = resized[key];
-    return resizedWidth == null
-        ? defaultWidth
-        : FixedColumnWidth(resizedWidth);
+    return resizedWidth == null ? defaultWidth : FixedColumnWidth(resizedWidth);
   }
 
   return <int, TableColumnWidth>{
@@ -2095,15 +2093,9 @@ Map<int, TableColumnWidth> _localGamesTableColumnWidths(
       const FixedColumnWidth(_kLocalColElo),
     ),
     6: width(_LocalGamesSortKey.event, const FlexColumnWidth(4)),
-    7: width(
-      _LocalGamesSortKey.eco,
-      const FixedColumnWidth(_kLocalColEco),
-    ),
+    7: width(_LocalGamesSortKey.eco, const FixedColumnWidth(_kLocalColEco)),
     8: width(_LocalGamesSortKey.opening, const FlexColumnWidth(4)),
-    9: width(
-      _LocalGamesSortKey.date,
-      const FixedColumnWidth(_kLocalColDate),
-    ),
+    9: width(_LocalGamesSortKey.date, const FixedColumnWidth(_kLocalColDate)),
   };
 }
 
@@ -2273,8 +2265,7 @@ class _LocalGamesHeaderRow extends StatelessWidget {
                   padding: _localGamesCellPadding(i),
                   active: resizedColumnWidths.containsKey(cells[i].key),
                   onDragStart: () => onResizeStart(cells[i].key),
-                  onDragUpdate:
-                      (delta) => onResizeUpdate(cells[i].key, delta),
+                  onDragUpdate: (delta) => onResizeUpdate(cells[i].key, delta),
                   onReset: () => onResizeReset(cells[i].key),
                   child: _LocalHeaderCell(
                     cells[i].label,
@@ -2327,9 +2318,7 @@ class _LocalResizableHeaderCell extends StatelessWidget {
             bottom: -10,
             width: 9,
             child: _LocalColumnResizeHandle(
-              key: ValueKey<String>(
-                'local-column-resizer-${columnKey.name}',
-              ),
+              key: ValueKey<String>('local-column-resizer-${columnKey.name}'),
               active: active,
               onDragStart: onDragStart,
               onDragUpdate: onDragUpdate,
@@ -2505,9 +2494,7 @@ class _LocalGamesDataRowState extends State<_LocalGamesDataRow>
                 children: [
                   Padding(
                     padding: _localGamesCellPadding(0),
-                    child: _LocalMonoRight(
-                      '${widget.game.indexInFile + 1}',
-                    ),
+                    child: _LocalMonoRight('${widget.game.indexInFile + 1}'),
                   ),
                   Padding(
                     padding: _localGamesCellPadding(1),
@@ -2551,10 +2538,7 @@ class _LocalGamesDataRowState extends State<_LocalGamesDataRow>
                   ),
                   Padding(
                     padding: _localGamesCellPadding(8),
-                    child: _LocalCellText(
-                      _opening(md),
-                      color: kWhiteColor70,
-                    ),
+                    child: _LocalCellText(_opening(md), color: kWhiteColor70),
                   ),
                   Padding(
                     padding: _localGamesCellPadding(9),
@@ -2579,9 +2563,9 @@ class _LocalCellText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final display = value.trim();
+    final display = desktopTableDisplayValue(value);
     return Text(
-      display.isEmpty || display == '?' ? '—' : display,
+      display,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(color: color, fontSize: 12, height: 1.1),
@@ -2597,9 +2581,9 @@ class _LocalMonoRight extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final display = value.trim();
+    final display = desktopTableDisplayValue(value);
     return Text(
-      display.isEmpty || display == '?' ? '—' : display,
+      display,
       textAlign: TextAlign.right,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
@@ -2617,9 +2601,7 @@ String _meta(Map<String, dynamic> md, String key) =>
     (md[key]?.toString().trim() ?? '');
 
 String _playerName(Map<String, dynamic> md, String key) {
-  final name = _meta(md, key);
-  if (name.isEmpty || name == '?') return key;
-  return name;
+  return desktopTablePlayerValue(_meta(md, key));
 }
 
 int? _rating(Map<String, dynamic> md, String key) {
@@ -2633,14 +2615,14 @@ String _result(Map<String, dynamic> md) {
 }
 
 String _opening(Map<String, dynamic> md) {
-  final opening = _meta(md, 'Opening');
-  if (opening.isNotEmpty && opening != '?') return opening;
-  return _meta(md, 'Variation');
+  final opening = desktopTableDisplayValue(_meta(md, 'Opening'));
+  if (opening.isNotEmpty) return opening;
+  return desktopTableDisplayValue(_meta(md, 'Variation'));
 }
 
 String _event(Map<String, dynamic> md) {
-  final event = _meta(md, 'Event');
-  return event.isEmpty || event == '?' ? _meta(md, 'Site') : event;
+  final event = desktopTableDisplayValue(_meta(md, 'Event'));
+  return event.isEmpty ? desktopTableDisplayValue(_meta(md, 'Site')) : event;
 }
 
 String _date(Map<String, dynamic> md) {
@@ -3045,6 +3027,7 @@ BoardTabGameArgs _boardArgsForLocalGame(
       sourcePath: localGame.sourcePath,
       sourceIndex: localGame.indexInFile,
       sourceFileGameCount: localGame.fileGameCount,
+      sourcePgnFingerprint: localGame.pgnFingerprint,
       title: localGame.title,
     ),
   );
@@ -3117,6 +3100,7 @@ TournamentGameSummary _summaryFromLocalGame(LocalChessGame localGame) {
       sourcePath: localGame.sourcePath,
       sourceIndex: localGame.indexInFile,
       sourceFileGameCount: localGame.fileGameCount,
+      pgnFingerprint: localGame.pgnFingerprint,
       title: localGame.title,
     ),
   );

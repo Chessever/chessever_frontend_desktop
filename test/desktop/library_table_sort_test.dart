@@ -5,11 +5,65 @@ import 'package:dartchess/dartchess.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('library preview hides unknown player and metadata placeholders', () {
+    final players = debugLibraryPreviewPlayerNames(
+      white: '?',
+      black: '?',
+      fallbackTitle: '? vs ?',
+    );
+
+    expect(players.white, '');
+    expect(players.black, '');
+    final genericPlayers = debugLibraryPreviewPlayerNames(
+      white: '',
+      black: '',
+      fallbackTitle: 'White vs Black',
+    );
+    expect(genericPlayers.white, '');
+    expect(genericPlayers.black, '');
+    expect(
+      debugLibraryPreviewMetadataLine(
+        event: '?',
+        date: '????.??.??',
+        fallbackTitle: '? vs ?',
+      ),
+      '',
+    );
+    expect(
+      debugLibraryPreviewMetadataLine(
+        event: '',
+        date: '',
+        fallbackTitle: 'White vs Black',
+      ),
+      '',
+    );
+  });
+
+  test('library preview preserves meaningful player and event metadata', () {
+    final players = debugLibraryPreviewPlayerNames(
+      white: 'Carlsen',
+      black: 'Nepo',
+      fallbackTitle: 'Carlsen vs Nepo',
+    );
+
+    expect(players.white, 'Carlsen');
+    expect(players.black, 'Nepo');
+    expect(
+      debugLibraryPreviewMetadataLine(
+        event: 'World Championship',
+        date: '2021.12.10',
+        fallbackTitle: 'Carlsen vs Nepo',
+      ),
+      'World Championship  ·  10.12.2021',
+    );
+  });
+
   test('formats PGN game dates separately from saved timestamps', () {
     expect(debugLibraryDisplayGameDate('2021.??.??'), '2021');
     expect(debugLibraryDisplayGameDate('2024.06.??'), '06.2024');
     expect(debugLibraryDisplayGameDate('2024.06.15'), '15.06.2024');
-    expect(debugLibraryDisplayGameDate('?'), '—');
+    expect(debugLibraryDisplayGameDate('?'), '');
+    expect(debugLibraryDisplayGameDate('????.??.??'), '');
   });
 
   test('sorts library table by explicit reference-style columns', () {

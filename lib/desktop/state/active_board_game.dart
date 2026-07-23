@@ -25,12 +25,14 @@ class BoardTabLibrarySaveOrigin {
   }) : kind = BoardTabLibrarySaveOriginKind.cloudSavedAnalysis,
        sourcePath = null,
        sourceIndex = null,
-       sourceFileGameCount = null;
+       sourceFileGameCount = null,
+       sourcePgnFingerprint = null;
 
   const BoardTabLibrarySaveOrigin.localPgnFile({
     required this.sourcePath,
     required this.sourceIndex,
     required this.sourceFileGameCount,
+    this.sourcePgnFingerprint = '',
     required this.title,
   }) : kind = BoardTabLibrarySaveOriginKind.localPgnFile,
        analysisId = null;
@@ -40,6 +42,7 @@ class BoardTabLibrarySaveOrigin {
   final String? sourcePath;
   final int? sourceIndex;
   final int? sourceFileGameCount;
+  final String? sourcePgnFingerprint;
   final String title;
 }
 
@@ -416,6 +419,49 @@ final boardTabGameArgsByTabIdProvider =
       (_) => const <String, BoardTabGameArgs>{},
     );
 
+/// Save identity attached after a scratch/detached Board tab appends one game
+/// to one local PGN. Keeping this separate from [BoardTabGameArgs] avoids
+/// converting the scratch tab into a source-bound game tab merely because it
+/// was saved once.
+final boardTabAttachedLibrarySaveOriginByTabIdProvider =
+    StateProvider<Map<String, BoardTabLibrarySaveOrigin>>(
+      (_) => const <String, BoardTabLibrarySaveOrigin>{},
+    );
+
+bool shouldAttachLocalPgnIdentityAfterSave({
+  required BoardTabLibrarySaveOrigin? sourceOrigin,
+  required BoardTabLibrarySaveOrigin? attachedOrigin,
+  required bool hasLocalUpdateTarget,
+}) => hasLocalUpdateTarget && sourceOrigin == null && attachedOrigin == null;
+
+extension BoardTabAttachedLibrarySaveOriginWriter
+    on StateController<Map<String, BoardTabLibrarySaveOrigin>> {
+  void attachLocalPgn({
+    required String tabId,
+    required String sourcePath,
+    required int sourceIndex,
+    required int sourceFileGameCount,
+    required String sourcePgnFingerprint,
+    required String title,
+  }) {
+    state = <String, BoardTabLibrarySaveOrigin>{
+      ...state,
+      tabId: BoardTabLibrarySaveOrigin.localPgnFile(
+        sourcePath: sourcePath,
+        sourceIndex: sourceIndex,
+        sourceFileGameCount: sourceFileGameCount,
+        sourcePgnFingerprint: sourcePgnFingerprint,
+        title: title,
+      ),
+    };
+  }
+
+  void clear(String tabId) {
+    if (!state.containsKey(tabId)) return;
+    state = <String, BoardTabLibrarySaveOrigin>{...state}..remove(tabId);
+  }
+}
+
 /// Board player-name taps can show event score cards only when the tab still
 /// carries a tournament/live source game with a usable tour id.
 GamesTourModel? boardPlayerTapEventContextGame(GamesTourModel? sourceGame) {
@@ -546,6 +592,9 @@ void _putBoardGameArgs(
     final next = Map<String, BoardExplorerScope>.of(m)..remove(tabId);
     return next;
   });
+  container
+      .read(boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier)
+      .clear(tabId);
   container
       .read(boardTabGameArgsByTabIdProvider.notifier)
       .update((m) => <String, BoardTabGameArgs>{...m, tabId: args});
