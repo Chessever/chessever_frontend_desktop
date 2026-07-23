@@ -40,6 +40,7 @@ import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_player_title_chip.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/library/local_tree_action_button.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
@@ -2010,19 +2011,22 @@ class _OperationProgress extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 4),
-        SizedBox(
-          height: 30,
-          child: Align(
-            alignment: Alignment.topLeft,
-            child: Text(
-              operation.message,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: kPrimaryColor,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
-                height: 1.25,
+        DesktopTooltip(
+          message: operation.message,
+          child: SizedBox(
+            height: 30,
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: Text(
+                operation.message,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: kPrimaryColor,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  height: 1.25,
+                ),
               ),
             ),
           ),
