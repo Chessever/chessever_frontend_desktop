@@ -42,6 +42,7 @@ import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
 import 'package:chessever/desktop/state/cloud_library_refresh.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/opening_explorer_seed.dart';
 import 'package:chessever/desktop/state/pgn_intake.dart';
@@ -75,7 +76,12 @@ import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.
 import 'package:chessever/desktop/widgets/move_navigation_bar.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
+import 'package:chessever/desktop/widgets/player_hover_preview.dart';
+import 'package:chessever/desktop/widgets/player_score_card_view.dart'
+    show EventPlayerGamesKey, eventPlayerGamesProvider;
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
+import 'package:chessever/desktop/widgets/tournament_games_view.dart'
+    show openTournamentGameTab;
 import 'package:chessever/desktop/widgets/variation_fork_chooser.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
@@ -94,6 +100,7 @@ import 'package:chessever/screens/library/providers/library_folders_provider.dar
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 import 'package:chessever/screens/chessboard/widgets/nag_display.dart';
 import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
+import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/standings/score_card_screen.dart'
     show
         scoreCardGamesContextProvider,
@@ -101,6 +108,7 @@ import 'package:chessever/screens/standings/score_card_screen.dart'
         scoreCardPlayerProfileDataSourceProvider;
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
+import 'package:chessever/screens/tour_detail/player_tour/player_tour_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart'
     show selectedBroadcastModelProvider;
 import 'package:chessever/services/lichess_move_annotations_service.dart';
@@ -111,7 +119,7 @@ import 'package:chessever/utils/pgn_clock_utils.dart';
 import 'package:fast_immutable_collections/fast_immutable_collections.dart'
     as fic;
 import 'package:chessever/theme/app_theme.dart';
-import 'package:chessever/utils/broadcast_custom_scoring.dart';
+
 import 'package:chessever/utils/chess_title_utils.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
@@ -2538,6 +2546,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         metadata[ChessGame.metadataAllowMainlineExtensionKey] = false;
         final eventLabel = headers['Event']?.trim();
         final gameSnapshot = snapshot.copyWith(metadata: metadata);
+        final savingGame = chessGame.value;
         final librarySaveOrigin =
             boardArgs?.librarySaveOrigin ?? attachedLibrarySaveOrigin;
         final isLocalPgnSaveOrigin =
@@ -2554,7 +2563,9 @@ class _BoardPaneContent extends HookConsumerWidget {
                       ? 'analysis'
                       : tournamentTitle),
           updateTarget: _libraryUpdateTargetForBoardArgs(
+            context: context,
             ref: ref,
+            tabId: activeTabId,
             boardArgs: boardArgs,
             attachedOrigin: attachedLibrarySaveOrigin,
             game: gameSnapshot,
@@ -2566,13 +2577,31 @@ class _BoardPaneContent extends HookConsumerWidget {
         );
         if (!context.mounted || outcome == null || !outcome.didSave) return;
         final localUpdateTarget = outcome.localUpdateTarget;
-        if (localUpdateTarget != null &&
-            activeTabId != null &&
-            shouldAttachLocalPgnIdentityAfterSave(
-              sourceOrigin: boardArgs?.librarySaveOrigin,
-              attachedOrigin: attachedLibrarySaveOrigin,
-              hasLocalUpdateTarget: true,
-            )) {
+        if (localUpdateTarget != null && activeTabId != null) {
+          final tabs = ref.read(desktopTabsProvider);
+          final tabStillExists = tabs.tabs.any(
+            (tab) => tab.id == activeTabId && tab.kind == TabKind.board,
+          );
+          final currentArgs =
+              ref.read(boardTabGameArgsByTabIdProvider)[activeTabId];
+          final currentAttachedOrigin =
+              ref.read(
+                boardTabAttachedLibrarySaveOriginByTabIdProvider,
+              )[activeTabId];
+          final mayAttachLocalIdentity =
+              shouldAttachLocalPgnIdentityAfterSaveCompletion(
+                tabStillExists: tabStillExists,
+                gameStillMatches: identical(chessGame.value, savingGame),
+                savingArgs: boardArgs,
+                currentArgs: currentArgs,
+                savingAttachedOrigin: attachedLibrarySaveOrigin,
+                currentAttachedOrigin: currentAttachedOrigin,
+                hasLocalUpdateTarget: true,
+              );
+          if (!mayAttachLocalIdentity) {
+            showToast(outcome.toToastMessage());
+            return;
+          }
           ref
               .read(boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier)
               .attachLocalPgn(
@@ -3516,6 +3545,11 @@ class _BoardPaneContent extends HookConsumerWidget {
     final reportOutputVisible = openedReportFingerprints.value.contains(
       currentReportFingerprint,
     );
+    final reportAnalyzedPlies = <int>{
+      if (reportMatchesGame && reportOutputVisible)
+        for (final move in completedReport.moves)
+          if (move.ply > 0) move.ply - 1,
+    };
     final reportAnnotations = <int, LichessMoveAnnotation>{
       if (reportMatchesGame && reportOutputVisible)
         for (final move in completedReport.moves)
@@ -3526,17 +3560,19 @@ class _BoardPaneContent extends HookConsumerWidget {
               ),
               comment: '',
               useClassificationIcon: true,
+              reportOwnsMoveQuality: true,
             ),
     };
-    final moveAnnotations = <int, LichessMoveAnnotation>{
-      ...lichessAnnotations,
-      ...reportAnnotations,
-    };
+    final moveAnnotations = mergeReportMoveAnnotations(
+      lichessAnnotations: lichessAnnotations,
+      reportAnnotations: reportAnnotations,
+      reportAnalyzedPlies: reportAnalyzedPlies,
+    );
 
-    // Resolve the on-board badge for the current ply: user-applied NAGs
-    // take precedence (the user just typed `!` and expects to see it),
-    // then PGN-baked NAGs (author intent), then Lichess analysis (engine
-    // classification). Only $1–$4 get the high-fidelity SVG; anything
+    // Resolve the on-board badge for the current ply. A generated report owns
+    // move quality (including a neutral/no-badge result); otherwise user NAGs
+    // precede the PGN's original NAG and then the Lichess annotation.
+    // Only $1–$4 get the high-fidelity SVG; anything
     // else falls through to the Unicode-glyph badge.
     //
     // User NAGs are mainline-only and keyed by zero-based half-move
@@ -3552,33 +3588,22 @@ class _BoardPaneContent extends HookConsumerWidget {
           isOnMainline
               ? (userNagsForTab[cursor - 1] ?? const <int>[])
               : const <int>[];
-      // User NAGs win over PGN NAGs of the same quality slot; otherwise
-      // both contribute (e.g. user `!` + PGN `±`). Dedupe via a Set.
-      final mergedNags = <int>[
-        ...userNagsForPly,
-        ...currentPly.nags.where(
-          (n) =>
-              !userNagsForPly.contains(n) &&
-              !(_isQualityNag(n) && userNagsForPly.any(_isQualityNag)),
-        ),
-      ];
-      if (mergedNags.isNotEmpty) {
-        final primary = primaryBoardNag(mergedNags) ?? mergedNags.first;
-        final mapped = _mapNagToAnnotationType(primary);
-        if (mapped != null) {
-          boardAnnotation = LichessMoveAnnotation(type: mapped, comment: '');
-        } else {
-          boardAnnotationGlyph = getNagDisplay(primary);
-        }
-      } else if (isOnMainline) {
-        // Lichess annotations are mainline-only and keyed by zero-based
-        // half-move index, matching NotationDisplayToken.moveIndex.
-        final annotationIndex = mainlineAnnotationIndexForPointer(
-          pointer.value,
-        );
-        boardAnnotation =
-            annotationIndex == null ? null : moveAnnotations[annotationIndex];
-      }
+      // Mainline annotations use the same zero-based half-move index as
+      // NotationDisplayToken.moveIndex. A generated report classification is
+      // authoritative for the ply and therefore owns the board badge too.
+      final annotationIndex =
+          isOnMainline
+              ? mainlineAnnotationIndexForPointer(pointer.value)
+              : null;
+      final resolved = resolveBoardMoveAssessment(
+        isOnMainline: isOnMainline,
+        userNags: userNagsForPly,
+        pgnNags: currentPly.nags,
+        moveAnnotation:
+            annotationIndex == null ? null : moveAnnotations[annotationIndex],
+      );
+      boardAnnotation = resolved.annotation;
+      boardAnnotationGlyph = resolved.glyph;
     }
     final boardAnnotationSquare = currentPly.lastMoveSquare;
     final pgnShapes = _shapesFromPgnComments(currentPly.comments).toList();
@@ -3589,10 +3614,12 @@ class _BoardPaneContent extends HookConsumerWidget {
     // king-tilt / peace-icon overlay disappears immediately. Navigating
     // back to the actual game-ending move brings the overlay back.
     final gameEndingPlyIndex = chessGame.value.gameEndingPlyIndex;
-    final isAtGameEndingPly =
-        isOnMainline &&
-        gameEndingPlyIndex != null &&
-        pointer.value.first == gameEndingPlyIndex;
+    final showFinishedResult = shouldShowFinishedBoardResult(
+      pointer.value,
+      gameEndingPlyIndex: gameEndingPlyIndex,
+      isPreviewing: explorerPreview != null || explorerLinePreview != null,
+    );
+    final isAtGameEndingPly = showFinishedResult && pointer.value.isNotEmpty;
     final gameEnding =
         isAtGameEndingPly
             ? _gameEndingFor(headers['Result'] ?? '', position)
@@ -4350,6 +4377,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                                   : null,
                           gameEnding:
                               explorerPreview == null ? gameEnding : null,
+                          showFinishedResult: showFinishedResult,
                           onWheelStep: stepNotationHorizontally,
                           isLiveAtTip: isLiveAtTip,
                           isForegroundTab: isForegroundTab,
@@ -4685,6 +4713,95 @@ ChessLine _stripCommentsAndNags(ChessLine line) {
 /// or `⟳` (observation) NAG just because the user added a quality glyph.
 bool _isQualityNag(int nag) => nag >= 1 && nag <= 7;
 
+/// Applies generated report classifications without discarding incoming
+/// Lichess commentary attached to the same move.
+///
+/// The report owns the move-quality type and icon, while comments from either
+/// source remain additive annotation data.
+@visibleForTesting
+Map<int, LichessMoveAnnotation> mergeReportMoveAnnotations({
+  required Map<int, LichessMoveAnnotation> lichessAnnotations,
+  required Map<int, LichessMoveAnnotation> reportAnnotations,
+  Set<int> reportAnalyzedPlies = const <int>{},
+}) {
+  final merged = <int, LichessMoveAnnotation>{...lichessAnnotations};
+  for (final entry in reportAnnotations.entries) {
+    final incoming = merged[entry.key];
+    final report = entry.value;
+    final comments = <String>[];
+    for (final comment in <String>[incoming?.comment ?? '', report.comment]) {
+      final value = comment.trim();
+      if (value.isNotEmpty && !comments.contains(value)) comments.add(value);
+    }
+    merged[entry.key] = LichessMoveAnnotation(
+      type: report.type,
+      comment: comments.join('\n'),
+      useClassificationIcon: report.useClassificationIcon,
+      reportOwnsMoveQuality: true,
+    );
+  }
+  for (final ply in reportAnalyzedPlies) {
+    if (reportAnnotations.containsKey(ply)) continue;
+    final incoming = merged[ply];
+    merged[ply] = LichessMoveAnnotation(
+      // Neutral report plies deliberately carry no classification icon or
+      // NAG. Keep an incoming type only as inert metadata so its commentary
+      // survives; [reportOwnsMoveQuality] prevents that stale type from being
+      // rendered as a quality judgment.
+      type: incoming?.type ?? LichessMoveAnnotationType.forced,
+      comment: incoming?.comment ?? '',
+      reportOwnsMoveQuality: true,
+    );
+  }
+  return Map<int, LichessMoveAnnotation>.unmodifiable(merged);
+}
+
+@visibleForTesting
+({LichessMoveAnnotation? annotation, NagDisplay? glyph})
+resolveBoardMoveAssessment({
+  required bool isOnMainline,
+  required Iterable<int> userNags,
+  required Iterable<int> pgnNags,
+  required LichessMoveAnnotation? moveAnnotation,
+}) {
+  final reportOwnsMoveQuality =
+      moveAnnotation?.reportOwnsMoveQuality == true ||
+      moveAnnotation?.useClassificationIcon == true;
+  if (isOnMainline && moveAnnotation?.useClassificationIcon == true) {
+    return (annotation: moveAnnotation, glyph: null);
+  }
+
+  // User NAGs win over PGN NAGs of the same quality slot; otherwise both
+  // contribute (for example user `!` plus PGN `±`).
+  final user = userNags
+      .where((nag) => !reportOwnsMoveQuality || !_isQualityNag(nag))
+      .toList(growable: false);
+  final mergedNags = <int>[
+    ...user,
+    ...pgnNags.where(
+      (nag) =>
+          (!reportOwnsMoveQuality || !_isQualityNag(nag)) &&
+          !user.contains(nag) &&
+          !(_isQualityNag(nag) && user.any(_isQualityNag)),
+    ),
+  ];
+  if (mergedNags.isNotEmpty) {
+    final primary = primaryBoardNag(mergedNags) ?? mergedNags.first;
+    final mapped = _mapNagToAnnotationType(primary);
+    if (mapped != null) {
+      return (
+        annotation: LichessMoveAnnotation(type: mapped, comment: ''),
+        glyph: null,
+      );
+    }
+    return (annotation: null, glyph: getNagDisplay(primary));
+  }
+  return (
+    annotation: isOnMainline && !reportOwnsMoveQuality ? moveAnnotation : null,
+    glyph: null,
+  );
+}
+
 bool _setsEqual(Set<cg.Shape> a, Set<cg.Shape> b) {
   if (identical(a, b)) return true;
   if (a.length != b.length) return false;
@@ -4736,12 +4853,17 @@ final _emptyChessGame = ChessGame(
 );
 
 LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
+  required BuildContext context,
   required WidgetRef ref,
+  required String? tabId,
   required BoardTabGameArgs? boardArgs,
   required BoardTabLibrarySaveOrigin? attachedOrigin,
   required ChessGame game,
 }) {
-  final origin = boardArgs?.librarySaveOrigin ?? attachedOrigin;
+  final origin = resolveBoardTabLibrarySaveOrigin(
+    sourceOrigin: boardArgs?.librarySaveOrigin,
+    attachedOrigin: attachedOrigin,
+  );
   if (origin == null) return null;
   switch (origin.kind) {
     case BoardTabLibrarySaveOriginKind.cloudSavedAnalysis:
@@ -4789,7 +4911,7 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
                 : origin.title,
         subtitle: 'Local PGN file',
         onUpdate: (updatedGame) async {
-          await updateLocalLibraryPgnGame(
+          final outcome = await updateLocalLibraryPgnGame(
             target: LocalLibraryGameUpdateTarget(
               sourcePath: sourcePath,
               indexInFile: sourceIndex,
@@ -4799,6 +4921,43 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
             game: updatedGame,
             repository: ref.read(localChessDatabaseRepositoryProvider),
           );
+          if (!context.mounted) return;
+          if (tabId != null) {
+            final tabs = ref.read(desktopTabsProvider);
+            final tabStillExists = tabs.tabs.any(
+              (tab) => tab.id == tabId && tab.kind == TabKind.board,
+            );
+            final currentArgs =
+                ref.read(boardTabGameArgsByTabIdProvider)[tabId];
+            final currentAttachedOrigin =
+                ref.read(
+                  boardTabAttachedLibrarySaveOriginByTabIdProvider,
+                )[tabId];
+            final mayAttachRefreshedOrigin =
+                boardArgs != null &&
+                shouldAttachRefreshedLocalPgnOriginAfterUpdate(
+                  tabStillExists: tabStillExists,
+                  updatingArgs: boardArgs,
+                  currentArgs: currentArgs,
+                  updatingOrigin: origin,
+                  currentAttachedOrigin: currentAttachedOrigin,
+                );
+            final refreshedTarget = outcome.updateTarget;
+            if (mayAttachRefreshedOrigin) {
+              ref
+                  .read(
+                    boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier,
+                  )
+                  .attachLocalPgn(
+                    tabId: tabId,
+                    sourcePath: refreshedTarget.sourcePath,
+                    sourceIndex: refreshedTarget.indexInFile,
+                    sourceFileGameCount: refreshedTarget.fileGameCount,
+                    sourcePgnFingerprint: refreshedTarget.pgnFingerprint,
+                    title: _libraryGameTitle(updatedGame),
+                  );
+            }
+          }
           unawaited(ref.read(localChessLibraryProvider.notifier).refresh());
         },
       );
@@ -4865,16 +5024,130 @@ GameStatus _resolveHeaderGameStatus({
   return GameStatus.unknown;
 }
 
-String? _resultScoreForSide(
+enum DesktopBoardPlayerResult { won, lost, draw }
+
+@visibleForTesting
+String? compactBoardMatchScore(String? rawScore, {int? requiredPlayed}) {
+  final compact = rawScore?.replaceAll(RegExp(r'\s+'), '').trim() ?? '';
+  final parts = compact.split('/');
+  if (parts.length != 2 || parts.first.isEmpty) return null;
+  final played = int.tryParse(parts.last);
+  if (played == null || played <= 0) return null;
+  if (requiredPlayed != null && played != requiredPlayed) return null;
+  return '${parts.first}/$played';
+}
+
+@visibleForTesting
+int? boardGameRoundNumber(GamesTourModel? game) {
+  if (game == null) return null;
+  for (final value in <String>[game.roundSlug ?? '', game.roundId]) {
+    final match = RegExp(
+      r'(?:^|[^a-z0-9])round[\s_\-:]*(\d+)',
+      caseSensitive: false,
+    ).firstMatch(value);
+    final round = match == null ? null : int.tryParse(match.group(1)!);
+    if (round != null && round > 0) return round;
+  }
+  return null;
+}
+
+@visibleForTesting
+String? boardPlayerMatchScore({
+  required List<PlayerStandingModel> standings,
+  required int? fideId,
+  required String name,
+  int? requiredPlayed,
+}) {
+  final matched = boardPlayerStanding(
+    standings: standings,
+    fideId: fideId,
+    name: name,
+  );
+  return compactBoardMatchScore(
+    matched?.matchScore,
+    requiredPlayed: requiredPlayed,
+  );
+}
+
+@visibleForTesting
+PlayerStandingModel? boardPlayerStanding({
+  required List<PlayerStandingModel> standings,
+  required int? fideId,
+  required String name,
+}) {
+  PlayerStandingModel? matched;
+  if (fideId != null && fideId > 0) {
+    for (final standing in standings) {
+      if (standing.fideId == fideId) {
+        matched = standing;
+        break;
+      }
+    }
+  }
+  if (matched == null) {
+    final playerKey = _normalizeBoardPlayerName(name);
+    final nameMatches = <PlayerStandingModel>[];
+    for (final standing in standings) {
+      if (_normalizeBoardPlayerName(standing.name) == playerKey) {
+        final standingFideId = standing.fideId;
+        if (fideId != null &&
+            fideId > 0 &&
+            standingFideId != null &&
+            standingFideId > 0 &&
+            standingFideId != fideId) {
+          continue;
+        }
+        nameMatches.add(standing);
+      }
+    }
+    if (fideId == null || fideId <= 0) {
+      final positiveIds =
+          nameMatches
+              .map((standing) => standing.fideId)
+              .whereType<int>()
+              .where((id) => id > 0)
+              .toSet();
+      if (positiveIds.length > 1) return null;
+    }
+    matched = nameMatches.firstOrNull;
+  }
+  return matched;
+}
+
+String _normalizeBoardPlayerName(String name) {
+  return name
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+      .trim()
+      .replaceAll(RegExp(r'\s+'), ' ');
+}
+
+@visibleForTesting
+DesktopBoardPlayerResult? boardPlayerResultForSide(
   GameStatus status, {
   required bool isWhite,
-  double? customPoints,
 }) {
-  return customAwareResultLabelForSide(
-    status,
-    isWhite: isWhite,
-    customPoints: customPoints,
-  );
+  return switch (status) {
+    GameStatus.whiteWins =>
+      isWhite ? DesktopBoardPlayerResult.won : DesktopBoardPlayerResult.lost,
+    GameStatus.blackWins =>
+      isWhite ? DesktopBoardPlayerResult.lost : DesktopBoardPlayerResult.won,
+    GameStatus.draw => DesktopBoardPlayerResult.draw,
+    GameStatus.ongoing || GameStatus.unknown => null,
+  };
+}
+
+@visibleForTesting
+bool shouldShowFinishedBoardResult(
+  List<int> pointer, {
+  required int? gameEndingPlyIndex,
+  bool isPreviewing = false,
+}) {
+  if (isPreviewing) return false;
+  if (pointer.isEmpty) return true;
+  return pointer.length == 1 &&
+      gameEndingPlyIndex != null &&
+      pointer.first == gameEndingPlyIndex;
 }
 
 bool _pointersEqual(ChessMovePointer a, ChessMovePointer b) {
@@ -6180,6 +6453,7 @@ class _BoardArea extends ConsumerWidget {
     required this.boardAnnotationGlyph,
     required this.boardAnnotationSquare,
     required this.gameEnding,
+    required this.showFinishedResult,
     required this.onWheelStep,
     required this.isLiveAtTip,
     required this.isForegroundTab,
@@ -6279,6 +6553,10 @@ class _BoardArea extends ConsumerWidget {
   /// End-of-game effect descriptor. Non-null only at the final mainline
   /// ply of a finished game; drives the king-tilt / peace-icon overlay.
   final _GameEndingData? gameEnding;
+
+  /// Finished-game outcome capsules stay visible at move zero and the
+  /// original terminal ply, but remain quiet while browsing other positions.
+  final bool showFinishedResult;
 
   final ValueChanged<int> onWheelStep;
   final bool focusMode;
@@ -6495,14 +6773,10 @@ class _BoardArea extends ConsumerWidget {
           final topTitle = topIsWhite ? whiteTitle : blackTitle;
           final topRating = topIsWhite ? whiteRating : blackRating;
           final topClock = topIsWhite ? whiteClockDisplay : blackClockDisplay;
-          final topResultScore = _resultScoreForSide(
-            gameStatus,
-            isWhite: topIsWhite,
-            customPoints:
-                topIsWhite
-                    ? sourceGame?.whitePlayer.customPoints
-                    : sourceGame?.blackPlayer.customPoints,
-          );
+          final topResult =
+              showFinishedResult
+                  ? boardPlayerResultForSide(gameStatus, isWhite: topIsWhite)
+                  : null;
           final bottomIsWhite = !flipped;
           final bottomName =
               bottomIsWhite ? displayWhiteName : displayBlackName;
@@ -6511,14 +6785,10 @@ class _BoardArea extends ConsumerWidget {
           final bottomRating = bottomIsWhite ? whiteRating : blackRating;
           final bottomClock =
               bottomIsWhite ? whiteClockDisplay : blackClockDisplay;
-          final bottomResultScore = _resultScoreForSide(
-            gameStatus,
-            isWhite: bottomIsWhite,
-            customPoints:
-                bottomIsWhite
-                    ? sourceGame?.whitePlayer.customPoints
-                    : sourceGame?.blackPlayer.customPoints,
-          );
+          final bottomResult =
+              showFinishedResult
+                  ? boardPlayerResultForSide(gameStatus, isWhite: bottomIsWhite)
+                  : null;
 
           final boardRow = SizedBox(
             height: boardSize,
@@ -6667,7 +6937,7 @@ class _BoardArea extends ConsumerWidget {
                             height: topRowHeight,
                             header:
                                 hasHeaders
-                                    ? _PlayerHeader(
+                                    ? DesktopBoardPlayerHeader(
                                       name: topName,
                                       federation: topFed,
                                       title: topTitle,
@@ -6676,7 +6946,7 @@ class _BoardArea extends ConsumerWidget {
                                           topIsWhite
                                               ? whiteFideId
                                               : blackFideId,
-                                      resultScore: topResultScore,
+                                      result: topResult,
                                       isWhite: topIsWhite,
                                       isToMove:
                                           (topIsWhite &&
@@ -6691,11 +6961,13 @@ class _BoardArea extends ConsumerWidget {
                                         dimension: _focusButtonSize,
                                       ),
                                       activeGameId: activeGameId,
+                                      historyOwnerId: tabId,
                                       useLiveClock:
                                           isForegroundTab && isLiveAtTip,
                                       boardArgs: boardArgs,
                                       sourceGame: sourceGame,
                                       viewSource: viewSource,
+                                      openAbove: false,
                                     )
                                     : null,
                             trailing: null,
@@ -6707,7 +6979,7 @@ class _BoardArea extends ConsumerWidget {
                             height: bottomRowHeight,
                             header:
                                 hasHeaders
-                                    ? _PlayerHeader(
+                                    ? DesktopBoardPlayerHeader(
                                       name: bottomName,
                                       federation: bottomFed,
                                       title: bottomTitle,
@@ -6716,7 +6988,7 @@ class _BoardArea extends ConsumerWidget {
                                           bottomIsWhite
                                               ? whiteFideId
                                               : blackFideId,
-                                      resultScore: bottomResultScore,
+                                      result: bottomResult,
                                       isWhite: bottomIsWhite,
                                       isToMove:
                                           (bottomIsWhite &&
@@ -6731,11 +7003,13 @@ class _BoardArea extends ConsumerWidget {
                                                 dimension: _resizeHandleSize,
                                               ),
                                       activeGameId: activeGameId,
+                                      historyOwnerId: tabId,
                                       useLiveClock:
                                           isForegroundTab && isLiveAtTip,
                                       boardArgs: boardArgs,
                                       sourceGame: sourceGame,
                                       viewSource: viewSource,
+                                      openAbove: true,
                                     )
                                     : null,
                             trailing: null,
@@ -7341,23 +7615,59 @@ cg.Arrow? _engineArrowFromUci({
   }
 }
 
-class _PlayerHeader extends ConsumerWidget {
-  const _PlayerHeader({
+@visibleForTesting
+EventPlayerGamesKey? boardPlayerHistoryKey({
+  required BoardTabEventGamesKey? eventKey,
+  required Iterable<TournamentGameSummary> eventGames,
+  required String playerName,
+  required int? fideId,
+  required String ownerId,
+  GamesTourModel? sourceGame,
+}) {
+  final primaryTourId = eventKey?.tourId.trim() ?? '';
+  if (primaryTourId.isEmpty || playerName.trim().isEmpty) return null;
+
+  final additionalTourIds = <String>{};
+  void addTourId(String? value) {
+    final id = value?.trim() ?? '';
+    if (id.isNotEmpty && id != primaryTourId) additionalTourIds.add(id);
+  }
+
+  addTourId(sourceGame?.tourId);
+  for (final game in eventGames) {
+    addTourId(game.tourId);
+  }
+
+  return EventPlayerGamesKey(
+    tourId: primaryTourId,
+    additionalTourIds: additionalTourIds,
+    playerName: playerName,
+    fideId: fideId,
+    ownerId: ownerId,
+  );
+}
+
+class DesktopBoardPlayerHeader extends HookConsumerWidget {
+  const DesktopBoardPlayerHeader({
+    super.key,
     required this.name,
     required this.federation,
     required this.title,
     required this.rating,
     required this.fideId,
-    required this.resultScore,
+    required this.result,
     required this.isWhite,
     required this.isToMove,
     this.clockText,
+    this.pointsText,
     this.trailingControl,
     this.activeGameId,
+    this.historyOwnerId,
     this.useLiveClock = false,
     this.boardArgs,
     this.sourceGame,
     this.viewSource = ChessboardView.tour,
+    this.openAbove = false,
   });
 
   final String name;
@@ -7365,7 +7675,7 @@ class _PlayerHeader extends ConsumerWidget {
   final String title;
   final int rating;
   final int? fideId;
-  final String? resultScore;
+  final DesktopBoardPlayerResult? result;
   final bool isWhite;
   final bool isToMove;
 
@@ -7375,6 +7685,10 @@ class _PlayerHeader extends ConsumerWidget {
   /// `1:23:45`, `12:30`, etc.
   final String? clockText;
 
+  /// Optional score override used by isolated surfaces/tests. Event-backed
+  /// Board tabs resolve the canonical tournament score from standings.
+  final String? pointsText;
+
   /// Optional board chrome control (focus toggle / resize grip) rendered inside
   /// the same horizontal player bar so idle controls share the exact bar color.
   final Widget? trailingControl;
@@ -7382,6 +7696,9 @@ class _PlayerHeader extends ConsumerWidget {
   /// Live game stream id. The header reads only the clock snapshot so
   /// broadcast ticks rebuild this compact row instead of the full board pane.
   final String? activeGameId;
+
+  /// Board-tab owner used by the lifecycle-aware complete-history provider.
+  final String? historyOwnerId;
 
   /// Switch between the ticking live clock (live broadcast at the
   /// mainline tip) and the static PGN-baked clock string (any earlier
@@ -7398,6 +7715,9 @@ class _PlayerHeader extends ConsumerWidget {
 
   /// Mobile-equivalent source view for this board tab.
   final ChessboardView viewSource;
+
+  /// The lower player row opens over the board; the upper row opens below it.
+  final bool openAbove;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -7421,6 +7741,34 @@ class _PlayerHeader extends ConsumerWidget {
                 .valueOrNull
                 ?.trim();
     final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
+    final eventStanding = _resolveEventStanding(ref);
+    final matchScore = _resolveMatchScore(eventStanding);
+    final eventKey = boardArgs?.eventGamesKey;
+    final hydratedEventGames =
+        boardArgs?.eventGames ?? const <TournamentGameSummary>[];
+    final historyKey = boardPlayerHistoryKey(
+      eventKey: eventKey,
+      eventGames: hydratedEventGames,
+      sourceGame: sourceGame,
+      playerName: name,
+      fideId: fideId,
+      ownerId: historyOwnerId ?? '',
+    );
+    final requestedHistoryContext = useState<String?>(null);
+    final historyRequestContext =
+        historyKey == null
+            ? null
+            : '${historyKey.tourIds.join(',')}|${fideId ?? 0}|${name.trim()}';
+    final completeHistoryState =
+        historyRequestContext == null ||
+                requestedHistoryContext.value != historyRequestContext
+            ? null
+            : ref.watch(eventPlayerGamesProvider(historyKey!));
+    final completeHistoryGames =
+        completeHistoryState?.valueOrNull
+            ?.map(TournamentGameSummary.fromGamesTourModel)
+            .toList(growable: false) ??
+        const <TournamentGameSummary>[];
 
     // Local PGNs (e.g. TWIC) often carry a FIDE ID but no title tag; resolve
     // the title on demand from chess_players, same as the flag backfill.
@@ -7438,6 +7786,94 @@ class _PlayerHeader extends ConsumerWidget {
             );
 
     final hasName = name.isNotEmpty;
+    final hoverGames = useMemoized<List<TournamentGameSummary>>(
+      () => _hoverGameSummaries(hydratedEventGames, completeHistoryGames),
+      [boardArgs, sourceGame, hydratedEventGames, completeHistoryGames],
+    );
+    final hoverIsLoading =
+        completeHistoryState?.isLoading ??
+        (boardArgs?.eventGamesLoading ?? false);
+    final hoverContextKey =
+        boardArgs?.gameListSelectedId ??
+        boardArgs?.gameId ??
+        sourceGame?.gameId ??
+        '';
+    final hoverPreview = useMemoized<Widget>(
+      () {
+        if (!hasName) {
+          return const Text(
+            '—',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: kWhiteColor,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          );
+        }
+        return PlayerHoverPreview(
+          player: PlayerHoverPreviewIdentity(
+            name: name,
+            federation: federation,
+            title: resolvedTitle,
+            rating: rating,
+            ratingChange: eventStanding?.scoreChange,
+            pointsText: matchScore,
+            fideId: fideId,
+            photoUrl: photoUrl,
+          ),
+          games: hoverGames,
+          isLoading: hoverIsLoading,
+          openAbove: openAbove,
+          contextKey: hoverContextKey,
+          onPreviewOpened:
+              historyRequestContext == null
+                  ? null
+                  : () {
+                    requestedHistoryContext.value = historyRequestContext;
+                  },
+          onPreviewClosed:
+              historyRequestContext == null
+                  ? null
+                  : () {
+                    if (requestedHistoryContext.value ==
+                        historyRequestContext) {
+                      requestedHistoryContext.value = null;
+                    }
+                  },
+          textStyle: const TextStyle(
+            color: kWhiteColor,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+          onOpenPlayerInNewTab: (player) => _openProfileInNewTab(ref, player),
+          onOpenOpponentInNewTab:
+              (opponent) => _openProfileInNewTab(ref, opponent),
+          onOpenGameInNewTab:
+              (game) => _openPreviewGameInNewTab(ref, game, hoverGames),
+        );
+      },
+      [
+        hasName,
+        name,
+        federation,
+        resolvedTitle,
+        rating,
+        eventStanding,
+        matchScore,
+        fideId,
+        photoUrl,
+        hoverGames,
+        hoverIsLoading,
+        historyRequestContext,
+        boardArgs,
+        sourceGame,
+        viewSource,
+        openAbove,
+        hoverContextKey,
+      ],
+    );
     final body = Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
@@ -7451,48 +7887,48 @@ class _PlayerHeader extends ConsumerWidget {
       ),
       child: Row(
         children: [
-          if (resultScore != null) ...[
-            SizedBox(
-              width: 18,
-              child: Text(
-                resultScore!,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  height: 1,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                ),
-              ),
+          Container(
+            key: const ValueKey<String>('desktop-board-player-avatar'),
+            width: 42,
+            height: 42,
+            padding: const EdgeInsets.all(1),
+            decoration: BoxDecoration(
+              color: kBlack3Color,
+              borderRadius: BorderRadius.circular(7),
+              border: Border.all(color: kWhiteColor.withValues(alpha: 0.24)),
             ),
-            const SizedBox(width: 8),
-          ],
-          if (hasPhoto) ...[
-            Container(
-              width: 42,
-              height: 42,
-              padding: const EdgeInsets.all(1),
-              decoration: BoxDecoration(
-                color: kBlack3Color,
-                borderRadius: BorderRadius.circular(7),
-                border: Border.all(color: kWhiteColor.withValues(alpha: 0.24)),
-              ),
-              child: PlayerInitialsAvatarCompact(
-                photoUrl: photoUrl,
-                initials: _playerHeaderInitials(name),
-                size: 40,
-                borderRadius: 6,
-              ),
-            ),
-            const SizedBox(width: 8),
-          ],
+            child:
+                hasPhoto
+                    ? PlayerInitialsAvatarCompact(
+                      photoUrl: photoUrl,
+                      initials: _playerHeaderInitials(name),
+                      size: 40,
+                      borderRadius: 6,
+                    )
+                    : Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2A2B2F),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        _playerHeaderInitials(name),
+                        style: TextStyle(
+                          color: kWhiteColor.withValues(alpha: 0.78),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                    ),
+          ),
+          const SizedBox(width: 8),
           BackfilledFederationFlag(
             federation: federation,
             fideId: fideId,
             playerName: name,
-            width: 22,
-            height: 16,
+            width: 24,
+            height: 17,
             borderRadius: BorderRadius.circular(2),
           ),
           const SizedBox(width: 8),
@@ -7501,48 +7937,50 @@ class _PlayerHeader extends ConsumerWidget {
               resolvedTitle,
               style: const TextStyle(
                 color: kPrimaryColor,
-                fontSize: 13,
+                fontSize: 14,
                 fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(width: 6),
           ],
           Expanded(
-            child: Text(
-              hasName ? name : '—',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: kWhiteColor,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
+            child: Row(
+              children: [
+                Flexible(fit: FlexFit.loose, child: hoverPreview),
+                if (rating > 0) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    '($rating)',
+                    style: TextStyle(
+                      color: kWhiteColor.withValues(alpha: 0.82),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
-          if (rating > 0) ...[
-            const SizedBox(width: 8),
-            Text(
-              '$rating',
-              style: const TextStyle(
-                color: kWhiteColor70,
-                fontSize: 12,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ],
           if (useLiveClock &&
               (liveClockSeconds != null || liveLastMoveTime != null)) ...[
             const SizedBox(width: 10),
             _PlayerClock(
               text: clockText ?? '',
               isToMove: isToMove,
+              result: result,
               liveClockSeconds: liveClockSeconds,
               liveLastMoveTime: liveLastMoveTime,
               liveCountdownActive: isToMove && liveLastMoveTime != null,
             ),
-          ] else if (clockText != null && clockText!.trim().isNotEmpty) ...[
+          ] else if ((clockText != null && clockText!.trim().isNotEmpty) ||
+              result != null) ...[
             const SizedBox(width: 10),
-            _PlayerClock(text: clockText!, isToMove: isToMove),
+            _PlayerClock(
+              text: clockText ?? '',
+              isToMove: isToMove,
+              result: result,
+            ),
           ],
           if (trailingControl != null) ...[
             const SizedBox(width: 8),
@@ -7559,6 +7997,260 @@ class _PlayerHeader extends ConsumerWidget {
         onTap: () => _openPlayer(ref, name),
         child: body,
       ),
+    );
+  }
+
+  List<TournamentGameSummary> _hoverGameSummaries(
+    List<TournamentGameSummary> hydratedEventGames,
+    List<TournamentGameSummary> completeHistoryGames,
+  ) {
+    final args = boardArgs;
+    final candidates =
+        args == null
+            ? const <TournamentGameSummary>[]
+            : args.eventGamesKey != null && hydratedEventGames.isNotEmpty
+            ? hydratedEventGames
+            : args.eventGames.isNotEmpty
+            ? args.eventGames
+            : args.routeGames.isNotEmpty
+            ? args.routeGames
+            : args.databaseGames;
+    if (completeHistoryGames.isNotEmpty) {
+      final byId = <String, TournamentGameSummary>{
+        for (final game in candidates)
+          if (game.id.trim().isNotEmpty) game.id: game,
+        for (final game in completeHistoryGames)
+          if (game.id.trim().isNotEmpty) game.id: game,
+      };
+      final current = sourceGame;
+      if (current != null && current.gameId.trim().isNotEmpty) {
+        byId[current.gameId] = TournamentGameSummary.fromGamesTourModel(
+          current,
+        );
+      }
+      final currentId =
+          current?.gameId.trim().isNotEmpty == true
+              ? current!.gameId.trim()
+              : (args?.gameListSelectedId ?? args?.gameId ?? '').trim();
+      final ordered = <TournamentGameSummary>[];
+      final included = <String>{};
+
+      void include(TournamentGameSummary? game) {
+        if (game == null || !included.add(game.id)) return;
+        ordered.add(game);
+      }
+
+      include(byId[currentId]);
+      final priorRounds =
+          completeHistoryGames.asMap().entries.toList()..sort((left, right) {
+            final leftRound = _hoverRoundNumber(left.value);
+            final rightRound = _hoverRoundNumber(right.value);
+            if (leftRound != null &&
+                rightRound != null &&
+                leftRound != rightRound) {
+              return rightRound.compareTo(leftRound);
+            }
+            if (leftRound != null && rightRound == null) return -1;
+            if (leftRound == null && rightRound != null) return 1;
+            return right.key.compareTo(left.key);
+          });
+      for (final entry in priorRounds) {
+        include(byId[entry.value.id]);
+      }
+      for (final game in candidates) {
+        include(byId[game.id]);
+      }
+      return List<TournamentGameSummary>.unmodifiable(ordered);
+    }
+    final byId = <String, TournamentGameSummary>{
+      for (final game in candidates)
+        if (game.id.trim().isNotEmpty) game.id: game,
+    };
+    final current = sourceGame;
+    if (current != null && current.gameId.trim().isNotEmpty) {
+      byId[current.gameId] = TournamentGameSummary.fromGamesTourModel(current);
+    }
+    return byId.values.toList(growable: false);
+  }
+
+  int? _hoverRoundNumber(TournamentGameSummary game) {
+    for (final value in <String>[
+      game.roundLabel,
+      game.roundSlug,
+      game.roundId,
+    ]) {
+      final matches = RegExp(r'\d+').allMatches(value).toList();
+      if (matches.isEmpty) continue;
+      return int.tryParse(matches.last.group(0)!);
+    }
+    return null;
+  }
+
+  void _openProfileInNewTab(
+    WidgetRef ref,
+    PlayerHoverPreviewIdentity opponent,
+  ) {
+    final playerName = opponent.name.trim();
+    if (playerName.isEmpty) return;
+    openPlayerProfile(
+      ref,
+      PlayerProfileArgs(
+        playerName: playerName,
+        fideId: opponent.fideId,
+        title: opponent.title.trim().isEmpty ? null : opponent.title.trim(),
+        federation:
+            opponent.federation.trim().isEmpty
+                ? null
+                : opponent.federation.trim(),
+        rating: opponent.rating > 0 ? opponent.rating : null,
+        dataSource: _profileSourceFor(
+          sourceGame?.source ?? GameSource.supabase,
+        ),
+      ),
+      focus: true,
+      reuseExisting: false,
+    );
+  }
+
+  void _openPreviewGameInNewTab(
+    WidgetRef ref,
+    TournamentGameSummary selected,
+    List<TournamentGameSummary> previewGames,
+  ) {
+    final args = boardArgs;
+    if (args?.databaseGames.isNotEmpty == true) {
+      final pgn = selected.pgn?.trim() ?? '';
+      final localPgnSaveOrigin = _boardLibrarySaveOriginForSummary(selected);
+      final hasPlayableLocalPgn = pgnHasMoves(pgn);
+      openBoardGameTab(
+        ref,
+        BoardTabGameArgs(
+          gameId:
+              hasPlayableLocalPgn || localPgnSaveOrigin != null
+                  ? null
+                  : selected.id,
+          pgn: pgn,
+          label:
+              selected.name.trim().isEmpty
+                  ? '${selected.whitePlayer} – ${selected.blackPlayer}'
+                  : selected.name.trim(),
+          whiteName: selected.whitePlayer,
+          blackName: selected.blackPlayer,
+          whiteFederation: selected.whiteFederation,
+          blackFederation: selected.blackFederation,
+          whiteTitle: selected.whiteTitle,
+          blackTitle: selected.blackTitle,
+          whiteRating: selected.whiteRating,
+          blackRating: selected.blackRating,
+          whiteFideId: selected.whiteFideId,
+          blackFideId: selected.blackFideId,
+          fenSeed: selected.fen,
+          initialFen: args!.initialFen ?? selected.fen,
+          viewSource: args.viewSource,
+          eventBroadcastId: args.eventBroadcastId,
+          databaseTitle: args.databaseTitle,
+          databaseGames: [
+            for (final game in args.databaseGames)
+              if (game.id == selected.id) selected else game,
+          ],
+          databaseGamesPagination: args.databaseGamesPagination,
+          databaseGamesContinuation: args.databaseGamesContinuation,
+          localOpeningTreeIndex: args.localOpeningTreeIndex,
+          localOpeningTreeTitle: args.localOpeningTreeTitle,
+          enableLocalOpeningTreePicker: args.enableLocalOpeningTreePicker,
+          hideLocalOpeningTreePicker: args.hideLocalOpeningTreePicker,
+          gameListSelectedId: selected.id,
+          librarySaveOrigin: localPgnSaveOrigin,
+        ),
+        focus: true,
+        reuseExisting: false,
+        replaceActive: false,
+      );
+      return;
+    }
+
+    final source = sourceGame?.source ?? GameSource.supabase;
+    final selectedGame = _gamesTourModelFromSummary(selected, source: source);
+    final eventContext = args?.eventGames.isNotEmpty == true;
+    final routeContext = !eventContext && args?.routeGames.isNotEmpty == true;
+    final eventSummaries =
+        eventContext && previewGames.isNotEmpty
+            ? previewGames
+            : (args?.eventGames ?? const <TournamentGameSummary>[]);
+    final eventGames =
+        eventContext
+            ? [
+              for (final summary in eventSummaries)
+                _gamesTourModelFromSummary(summary, source: source),
+            ]
+            : const <GamesTourModel>[];
+    final routeGames =
+        routeContext
+            ? [
+              for (final summary in args!.routeGames)
+                _gamesTourModelFromSummary(summary, source: source),
+            ]
+            : const <GamesTourModel>[];
+    final title =
+        eventContext && args!.tournamentTitle.trim().isNotEmpty
+            ? args.tournamentTitle
+            : routeContext && args!.routeTitle.trim().isNotEmpty
+            ? args.routeTitle
+            : (selected.tourSlug.trim().isEmpty
+                ? 'Game'
+                : selected.tourSlug.trim());
+    unawaited(
+      openTournamentGameTab(
+        ref,
+        selectedGame,
+        title,
+        eventGames: eventGames,
+        routeTitle: routeContext ? args!.routeTitle : '',
+        routeGames: routeGames,
+        eventGamesContinuation:
+            eventContext ? args!.eventGamesContinuation : null,
+        routeGamesContinuation:
+            routeContext ? args!.routeGamesContinuation : null,
+        focus: true,
+        reuseExisting: false,
+        replaceActive: false,
+        viewSource: viewSource,
+        eventBroadcastId: args?.eventBroadcastId,
+      ),
+    );
+  }
+
+  PlayerStandingModel? _resolveEventStanding(WidgetRef ref) {
+    final game = sourceGame;
+    final tourId = game?.tourId.trim() ?? '';
+    if (game == null || tourId.isEmpty) return null;
+
+    // The keyed stream merges only live standings explicitly tagged with this
+    // tour and refreshable official roster data. It therefore remains stable
+    // across desktop tab changes without pairing a preserved async value with
+    // another event's newly selected scope.
+    final standings =
+        ref.watch(tournamentRosterStandingsProvider(tourId)).valueOrNull;
+    if (standings == null || standings.isEmpty) return null;
+    return boardPlayerStanding(
+      standings: standings,
+      fideId: fideId,
+      name: name,
+    );
+  }
+
+  String? _resolveMatchScore(PlayerStandingModel? eventStanding) {
+    final game = sourceGame;
+    final roundNumber = boardGameRoundNumber(game);
+    final override =
+        game != null && roundNumber == null
+            ? null
+            : compactBoardMatchScore(pointsText, requiredPlayed: roundNumber);
+    if (override != null) return override;
+    if (game == null || roundNumber == null) return null;
+    return compactBoardMatchScore(
+      eventStanding?.matchScore,
+      requiredPlayed: roundNumber,
     );
   }
 
@@ -7636,14 +8328,30 @@ class _PlayerHeader extends ConsumerWidget {
   }
 }
 
+BoardTabLibrarySaveOrigin? _boardLibrarySaveOriginForSummary(
+  TournamentGameSummary game,
+) {
+  final source = game.localPgnSource;
+  if (source == null || source.sourcePath.trim().isEmpty) return null;
+  return BoardTabLibrarySaveOrigin.localPgnFile(
+    sourcePath: source.sourcePath,
+    sourceIndex: source.sourceIndex,
+    sourceFileGameCount: source.sourceFileGameCount,
+    sourcePgnFingerprint: source.pgnFingerprint,
+    title: source.title,
+  );
+}
+
 String _playerHeaderInitials(String name) {
   final trimmed = name.trim();
   if (trimmed.isEmpty) return '?';
-  final commaParts = trimmed.split(', ');
-  if (commaParts.length >= 2 &&
-      commaParts[0].isNotEmpty &&
-      commaParts[1].isNotEmpty) {
-    return '${commaParts[1][0]}${commaParts[0][0]}'.toUpperCase();
+  final commaParts = trimmed.split(',');
+  if (commaParts.length >= 2) {
+    final leftName = commaParts[0].trim();
+    final rightName = commaParts[1].trim();
+    if (leftName.isNotEmpty && rightName.isNotEmpty) {
+      return '${leftName[0]}${rightName[0]}'.toUpperCase();
+    }
   }
   final words =
       trimmed.split(RegExp(r'\s+')).where((word) => word.isNotEmpty).toList();
@@ -7939,14 +8647,29 @@ class _LiveClockSnapshot {
 ///     `text`. Tabular-figures keeps every digit slot fixed during the
 ///     swap so the badge width never jitters.
 ///
-/// Sizing: the badge is sized to its content. No `minHeight` is
-/// imposed (the previous 26 px floor clipped the 13 px text inside the
-/// 32 px header row); padding is tight enough that the badge fits
-/// comfortably inside [_BoardArea.headerHeight] with room to spare.
+String _desktopBoardResultLabel(DesktopBoardPlayerResult result) {
+  return switch (result) {
+    DesktopBoardPlayerResult.won => 'WON',
+    DesktopBoardPlayerResult.lost => 'LOST',
+    DesktopBoardPlayerResult.draw => 'DRAW',
+  };
+}
+
+Color _desktopBoardResultColor(DesktopBoardPlayerResult result) {
+  return switch (result) {
+    DesktopBoardPlayerResult.won => kPrimaryColor.withValues(alpha: 0.78),
+    DesktopBoardPlayerResult.lost => kRedColor.withValues(alpha: 0.82),
+    DesktopBoardPlayerResult.draw => kMoveStatDrawColor,
+  };
+}
+
+/// Sizing: the segmented result/clock capsule is 32 px high inside the
+/// 48 px player bar. The larger 16 px tabular clock remains steady as it ticks.
 class _PlayerClock extends StatelessWidget {
   const _PlayerClock({
     required this.text,
     required this.isToMove,
+    this.result,
     this.liveClockSeconds,
     this.liveLastMoveTime,
     this.liveCountdownActive = false,
@@ -7957,6 +8680,7 @@ class _PlayerClock extends StatelessWidget {
   /// is present.
   final String text;
   final bool isToMove;
+  final DesktopBoardPlayerResult? result;
 
   /// Live broadcast snapshot of this side's clock in seconds. When set
   /// (alongside [liveLastMoveTime]) the badge renders the live time
@@ -7977,12 +8701,14 @@ class _PlayerClock extends StatelessWidget {
         hasLive
             ? formatClockDisplayFromSeconds(liveClockSeconds ?? 0)
             : formatPgnClockForDisplay(text);
-    if (fallbackText.isEmpty) return const SizedBox.shrink();
+    if (fallbackText.isEmpty && result == null) {
+      return const SizedBox.shrink();
+    }
 
     final countdownActive = liveCountdownActive && liveLastMoveTime != null;
 
     return SingleMotionBuilder(
-      value: isToMove ? 1.0 : 0.0,
+      value: isToMove && result == null ? 1.0 : 0.0,
       motion: DesktopMotion.layout,
       builder: (context, t, _) {
         final bg = Color.lerp(
@@ -7991,24 +8717,28 @@ class _PlayerClock extends StatelessWidget {
           t,
         );
         final borderColor =
-            t <= 0.01
+            result != null
+                ? kDividerColor
+                : t <= 0.01
                 ? Colors.transparent
                 : (Color.lerp(kDividerColor, kPrimaryColor, t) ??
                     kDividerColor);
         final textColor =
-            Color.lerp(kWhiteColor70, kWhiteColor, t * 0.6) ?? kWhiteColor70;
+            result != null
+                ? kWhiteColor.withValues(alpha: 0.92)
+                : Color.lerp(kWhiteColor70, kWhiteColor, t * 0.6) ??
+                    kWhiteColor70;
         final textStyle = TextStyle(
           color: textColor,
-          fontSize: 13,
+          fontSize: 16,
           fontWeight: FontWeight.w700,
           fontFeatures: const [FontFeature.tabularFigures()],
           height: 1.0,
         );
         return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+          key: const Key('desktop-board-result-clock-capsule'),
           decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(5),
+            borderRadius: BorderRadius.circular(7),
             border: Border.all(color: borderColor),
             boxShadow:
                 t > 0.05
@@ -8021,18 +8751,50 @@ class _PlayerClock extends StatelessWidget {
                     ]
                     : null,
           ),
-          alignment: Alignment.center,
-          // Plain Text — a clock face should count down in place, not
-          // slide+fade every second. The badge background/border still
-          // springs when the side-to-move flips; only the digits stay
-          // calm. (#461 feedback: "Clock movement in the live game
-          // should be like a normal one.")
-          child: _ClockText(
-            countdownActive: countdownActive,
-            liveClockSeconds: liveClockSeconds,
-            liveLastMoveTime: liveLastMoveTime,
-            fallbackText: fallbackText,
-            style: textStyle,
+          clipBehavior: Clip.antiAlias,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (result != null)
+                Container(
+                  key: const Key('desktop-board-result-status'),
+                  width: 52,
+                  height: 32,
+                  color: _desktopBoardResultColor(result!),
+                  alignment: Alignment.center,
+                  child: Text(
+                    _desktopBoardResultLabel(result!),
+                    style: const TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.15,
+                      height: 1,
+                    ),
+                  ),
+                ),
+              if (fallbackText.isNotEmpty)
+                Container(
+                  key: const Key('desktop-board-clock-segment'),
+                  height: 32,
+                  constraints: const BoxConstraints(minWidth: 72),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  color: bg,
+                  alignment: Alignment.center,
+                  // Plain Text — a clock face should count down in place, not
+                  // slide+fade every second. The badge background/border still
+                  // springs when the side-to-move flips; only the digits stay
+                  // calm. (#461 feedback: "Clock movement in the live game
+                  // should be like a normal one.")
+                  child: _ClockText(
+                    countdownActive: countdownActive,
+                    liveClockSeconds: liveClockSeconds,
+                    liveLastMoveTime: liveLastMoveTime,
+                    fallbackText: fallbackText,
+                    style: textStyle,
+                  ),
+                ),
+            ],
           ),
         );
       },

@@ -22,9 +22,13 @@ class LocalLibraryGameUpdateTarget {
 }
 
 class LocalLibraryGameUpdateOutcome {
-  const LocalLibraryGameUpdateOutcome({required this.sourcePath});
+  const LocalLibraryGameUpdateOutcome({
+    required this.sourcePath,
+    required this.updateTarget,
+  });
 
   final String sourcePath;
+  final LocalLibraryGameUpdateTarget updateTarget;
 }
 
 Future<LocalLibraryGameUpdateOutcome> updateLocalLibraryPgnGame({
@@ -40,6 +44,12 @@ Future<LocalLibraryGameUpdateOutcome> updateLocalLibraryPgnGame({
   if (nextPgn.isEmpty) {
     throw ArgumentError('Cannot update the source file with an empty PGN.');
   }
+  final refreshedTarget = LocalLibraryGameUpdateTarget(
+    sourcePath: path,
+    indexInFile: target.indexInFile,
+    fileGameCount: target.fileGameCount,
+    pgnFingerprint: localChessPgnFingerprint(nextPgn),
+  );
 
   final cachedUpdate = await repository?.replaceLocalPgnGame(
     databasePath: path,
@@ -49,7 +59,10 @@ Future<LocalLibraryGameUpdateOutcome> updateLocalLibraryPgnGame({
     expectedPgnFingerprint: target.pgnFingerprint,
   );
   if (cachedUpdate == true) {
-    return LocalLibraryGameUpdateOutcome(sourcePath: path);
+    return LocalLibraryGameUpdateOutcome(
+      sourcePath: path,
+      updateTarget: refreshedTarget,
+    );
   }
   if (cachedUpdate == false) {
     throw StateError('Could not update the cached local PGN database.');
@@ -103,7 +116,10 @@ Future<LocalLibraryGameUpdateOutcome> updateLocalLibraryPgnGame({
     expectedText: text,
     nextText: buffer.toString(),
   );
-  return LocalLibraryGameUpdateOutcome(sourcePath: path);
+  return LocalLibraryGameUpdateOutcome(
+    sourcePath: path,
+    updateTarget: refreshedTarget,
+  );
 }
 
 bool isLocalLibraryPgnUpdateSupported(String path) {
