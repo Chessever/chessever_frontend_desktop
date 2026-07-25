@@ -1,10 +1,13 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/repository/supabase/supabase.dart';
+import 'package:chessever/repository/supabase/tour/tour_repository.dart';
 import 'package:chessever/repository/local_storage/favorite/favourate_standings_player_services.dart';
 import 'package:chessever/repository/supabase/tour/tour.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
+import 'package:chessever/screens/group_event/model/tour_detail_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
@@ -31,21 +34,51 @@ bool shouldFetchStandingsFideEnrichment({
 /// games across pagination-purposed categories (e.g. "Boards 1-66" and "Boards 67-126").
 /// This ensures components like the ScoreCardScreen have the full context.
 final mergedTournamentGamesProvider = AutoDisposeProvider<List<GamesTourModel>>(
-  (ref) {
-    final tourDetailAsync = ref.watch(tourDetailScreenProvider);
-    final gamesTourAsync = ref.watch(gamesTourScreenProvider);
+  (ref) => ref.watch(_retainedMergedTournamentGamesProvider),
+);
+
+final _retainedMergedTournamentGamesProvider = AutoDisposeNotifierProvider<
+  _RetainedMergedTournamentGamesNotifier,
+  List<GamesTourModel>
+>(_RetainedMergedTournamentGamesNotifier.new);
+
+typedef MergedTournamentGamesSourceState =
+    ({
+      AsyncValue<TourDetailViewModel> tourDetail,
+      AsyncValue<GamesScreenModel> gamesTour,
+    });
+
+@visibleForTesting
+final mergedTournamentGamesSourceProvider =
+    Provider.autoDispose<MergedTournamentGamesSourceState>((ref) {
+      return (
+        tourDetail: ref.watch(tourDetailScreenProvider),
+        gamesTour: ref.watch(gamesTourScreenProvider),
+      );
+    });
+
+class _RetainedMergedTournamentGamesNotifier
+    extends AutoDisposeNotifier<List<GamesTourModel>> {
+  List<GamesTourModel> _lastSnapshot = const [];
+
+  @override
+  List<GamesTourModel> build() {
+    final sources = ref.watch(mergedTournamentGamesSourceProvider);
+    final tourDetailAsync = sources.tourDetail;
+    final gamesTourAsync = sources.gamesTour;
 
     if (tourDetailAsync.isLoading ||
         tourDetailAsync.hasError ||
         gamesTourAsync.isLoading ||
         gamesTourAsync.hasError) {
-      return const [];
+      return _lastSnapshot;
     }
 
-    final tourDetail = tourDetailAsync.value!;
+    final tourDetail = tourDetailAsync.requireValue;
     final aboutTourModel = tourDetail.aboutTourModel;
     if (aboutTourModel.id.isEmpty) {
-      return const [];
+      _lastSnapshot = const [];
+      return _lastSnapshot;
     }
 
     bool isPaginationCategory(String name) {
@@ -97,14 +130,371 @@ final mergedTournamentGamesProvider = AutoDisposeProvider<List<GamesTourModel>>(
       allGames.addAll(gamesTourAsync.value?.gamesTourModels ?? []);
     }
 
-    return allGames;
-  },
-);
+    _lastSnapshot = List<GamesTourModel>.unmodifiable(allGames);
+    return _lastSnapshot;
+  }
+}
 
 /// Search query for the standings tab
 final standingsSearchQueryProvider = StateProvider.autoDispose<String>(
   (ref) => '',
 );
+
+/// The standings value and the tour scope that produced it.
+///
+/// Riverpod preserves the previous value while an async provider reloads. The
+/// scope must therefore travel with the emitted standings instead of being
+/// recomputed independently from the currently selected event.
+@immutable
+class PlayerTourStandingsSnapshot {
+  const PlayerTourStandingsSnapshot({
+    this.broadcastId = '',
+    this.selectedTourId = '',
+    required this.tourIds,
+    required this.standings,
+  });
+
+  static const empty = PlayerTourStandingsSnapshot(
+    tourIds: <String>{},
+    standings: <PlayerStandingModel>[],
+  );
+
+  final String broadcastId;
+  final String selectedTourId;
+  final Set<String> tourIds;
+  final List<PlayerStandingModel> standings;
+}
+
+final playerTourStandingsSnapshotProvider = AutoDisposeAsyncNotifierProvider<
+  PlayerTourScreenNotifier,
+  PlayerTourStandingsSnapshot
+>(PlayerTourScreenNotifier.new);
+
+/// List-compatible facade retained for standings UI consumers.
+final playerTourScreenProvider =
+    Provider.autoDispose<AsyncValue<List<PlayerStandingModel>>>((ref) {
+      return ref
+          .watch(playerTourStandingsSnapshotProvider)
+          .whenData((snapshot) => snapshot.standings);
+    });
+
+final tournamentRosterRefreshIntervalProvider = Provider<Duration>(
+  (ref) => const Duration(minutes: 1),
+);
+final tournamentRosterRetryDelayProvider = Provider<Duration>(
+  (ref) => const Duration(seconds: 3),
+);
+
+enum _StandingSnapshotSource { roster, live }
+
+class _StandingSnapshotAccumulator {
+  final List<({PlayerStandingModel player, _StandingSnapshotSource source})>
+  _players = [];
+  final Map<int, int> _indexByFideId = {};
+  final Map<String, int> _indexByName = {};
+  final Map<String, int> _anonymousIndexByName = {};
+  final Set<String> _ambiguousNames = {};
+
+  void clear() {
+    _players.clear();
+    _indexByFideId.clear();
+    _indexByName.clear();
+    _anonymousIndexByName.clear();
+    _ambiguousNames.clear();
+  }
+
+  List<PlayerStandingModel> merge(
+    Iterable<PlayerStandingModel> candidates, {
+    required _StandingSnapshotSource source,
+  }) {
+    for (final candidate in candidates) {
+      final fideId = _positiveStandingFideId(candidate.fideId);
+      final name = _standingSnapshotNormalizeName(candidate.name);
+      var index = fideId == null ? null : _indexByFideId[fideId];
+      if (index == null &&
+          fideId == null &&
+          name.isNotEmpty &&
+          _ambiguousNames.contains(name)) {
+        index = _anonymousIndexByName[name];
+      }
+      final nameIndex =
+          name.isEmpty || _ambiguousNames.contains(name)
+              ? null
+              : _indexByName[name];
+      if (index == null && nameIndex != null) {
+        final existingFideId = _positiveStandingFideId(
+          _players[nameIndex].player.fideId,
+        );
+        if (fideId == null ||
+            existingFideId == null ||
+            fideId == existingFideId) {
+          index = nameIndex;
+        }
+      }
+
+      if (index == null) {
+        index = _players.length;
+        _players.add((player: candidate, source: source));
+        if (fideId == null &&
+            name.isNotEmpty &&
+            _ambiguousNames.contains(name)) {
+          _anonymousIndexByName[name] = index;
+        }
+      } else {
+        final current = _players[index];
+        var resolvedPlayer = current.player;
+        var resolvedSource = current.source;
+        if (_shouldReplaceStandingSnapshot(
+          current.player,
+          current.source,
+          candidate,
+          source,
+        )) {
+          resolvedPlayer = candidate;
+          resolvedSource = source;
+        }
+        final learnedFideId =
+            _positiveStandingFideId(resolvedPlayer.fideId) ??
+            _positiveStandingFideId(current.player.fideId) ??
+            fideId;
+        if (_positiveStandingFideId(resolvedPlayer.fideId) == null &&
+            learnedFideId != null) {
+          resolvedPlayer = resolvedPlayer.copyWith(fideId: learnedFideId);
+        }
+        _players[index] = (player: resolvedPlayer, source: resolvedSource);
+      }
+
+      if (fideId != null) _indexByFideId[fideId] = index;
+      if (name.isNotEmpty && !_ambiguousNames.contains(name)) {
+        if (nameIndex != null && nameIndex != index) {
+          final previousFideId = _positiveStandingFideId(
+            _players[nameIndex].player.fideId,
+          );
+          final currentFideId = _positiveStandingFideId(
+            _players[index].player.fideId,
+          );
+          if (previousFideId != null &&
+              currentFideId != null &&
+              previousFideId != currentFideId) {
+            _ambiguousNames.add(name);
+            _indexByName.remove(name);
+          } else {
+            _indexByName[name] = index;
+          }
+        } else {
+          _indexByName[name] = index;
+        }
+      }
+    }
+    return List<PlayerStandingModel>.unmodifiable(
+      _players.map((entry) => entry.player),
+    );
+  }
+}
+
+int? _positiveStandingFideId(int? fideId) {
+  return fideId != null && fideId > 0 ? fideId : null;
+}
+
+String _standingSnapshotNormalizeName(String name) => name
+    .toLowerCase()
+    .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+    .trim()
+    .replaceAll(RegExp(r'\s+'), ' ');
+
+bool _shouldReplaceStandingSnapshot(
+  PlayerStandingModel current,
+  _StandingSnapshotSource currentSource,
+  PlayerStandingModel candidate,
+  _StandingSnapshotSource candidateSource,
+) {
+  final currentPlayed = _standingSnapshotPlayed(current.matchScore);
+  final candidatePlayed = _standingSnapshotPlayed(candidate.matchScore);
+  if (candidatePlayed != currentPlayed) return candidatePlayed > currentPlayed;
+  if (candidateSource == _StandingSnapshotSource.live) return true;
+  return currentSource == _StandingSnapshotSource.roster;
+}
+
+int _standingSnapshotPlayed(String? score) {
+  final parts = score?.replaceAll(RegExp(r'\s+'), '').split('/') ?? const [];
+  return parts.length == 2 ? int.tryParse(parts.last) ?? -1 : -1;
+}
+
+/// Refreshable official standings keyed by the immutable tour owned by a Board
+/// tab. A tagged live snapshot can update this stream only when it explicitly
+/// includes [tourId], so a preserved async value can never leak across events.
+final tournamentRosterStandingsProvider = StreamProvider.autoDispose
+    .family<List<PlayerStandingModel>, String>((ref, rawTourId) {
+      final tourId = rawTourId.trim();
+      if (tourId.isEmpty) {
+        return Stream.value(const <PlayerStandingModel>[]);
+      }
+
+      final repository = ref.read(tourRepositoryProvider);
+      final refreshInterval = ref.read(tournamentRosterRefreshIntervalProvider);
+      final retryDelay = ref.read(tournamentRosterRetryDelayProvider);
+
+      final controller = StreamController<List<PlayerStandingModel>>();
+      final accumulator = _StandingSnapshotAccumulator();
+      Timer? timer;
+      var disposed = false;
+      var hasListeners = false;
+      var listenerGeneration = 0;
+      var rosterAuthoritativelyEmpty = false;
+      Future<void>? activeRefresh;
+      var refreshQueued = false;
+      late void Function(Duration delay) schedule;
+      late Future<void> Function() refresh;
+
+      void emit(
+        Iterable<PlayerStandingModel> standings, {
+        required _StandingSnapshotSource source,
+      }) {
+        if (disposed) return;
+        final rows = standings.toList(growable: false);
+        if (source == _StandingSnapshotSource.roster) {
+          rosterAuthoritativelyEmpty = rows.isEmpty;
+          if (rosterAuthoritativelyEmpty) {
+            accumulator.clear();
+            controller.add(const <PlayerStandingModel>[]);
+            return;
+          }
+        } else if (rosterAuthoritativelyEmpty) {
+          return;
+        }
+        controller.add(accumulator.merge(rows, source: source));
+      }
+
+      schedule = (Duration delay) {
+        timer?.cancel();
+        if (!disposed && hasListeners) {
+          timer = Timer(delay, () => unawaited(refresh()));
+        }
+      };
+
+      Future<void> performRefresh() async {
+        final generation = listenerGeneration;
+        try {
+          final players = await repository.getTourPlayers(tourId);
+          if (disposed || !hasListeners || generation != listenerGeneration) {
+            return;
+          }
+          emit(
+            players.map(PlayerStandingModel.fromPlayer),
+            source: _StandingSnapshotSource.roster,
+          );
+          schedule(refreshInterval);
+        } catch (error, stackTrace) {
+          if (disposed || !hasListeners || generation != listenerGeneration) {
+            return;
+          }
+          controller.addError(error, stackTrace);
+          schedule(retryDelay);
+        }
+      }
+
+      refresh = () {
+        if (disposed || !hasListeners) return Future<void>.value();
+        final inFlight = activeRefresh;
+        if (inFlight != null) {
+          refreshQueued = true;
+          return inFlight;
+        }
+
+        timer?.cancel();
+        final operation = performRefresh();
+        activeRefresh = operation;
+        unawaited(
+          operation.whenComplete(() {
+            if (!identical(activeRefresh, operation)) return;
+            activeRefresh = null;
+            if (refreshQueued && !disposed && hasListeners) {
+              refreshQueued = false;
+              timer?.cancel();
+              unawaited(refresh());
+            }
+          }),
+        );
+        return operation;
+      };
+
+      ref.listen<AsyncValue<PlayerTourStandingsSnapshot>>(
+        playerTourStandingsSnapshotProvider,
+        (previous, next) {
+          final snapshot = next.valueOrNull;
+          if (snapshot != null && snapshot.tourIds.contains(tourId)) {
+            emit(snapshot.standings, source: _StandingSnapshotSource.live);
+          }
+        },
+        fireImmediately: true,
+      );
+
+      void pauseRefresh() {
+        if (!hasListeners) return;
+        hasListeners = false;
+        listenerGeneration += 1;
+        timer?.cancel();
+        refreshQueued = false;
+      }
+
+      void resumeRefresh() {
+        if (disposed || hasListeners) return;
+        hasListeners = true;
+        listenerGeneration += 1;
+        unawaited(refresh());
+      }
+
+      controller.onListen = resumeRefresh;
+      controller.onCancel = pauseRefresh;
+      ref.onCancel(pauseRefresh);
+      ref.onResume(resumeRefresh);
+      ref.onDispose(() {
+        disposed = true;
+        hasListeners = false;
+        listenerGeneration += 1;
+        refreshQueued = false;
+        timer?.cancel();
+        unawaited(controller.close());
+      });
+      return controller.stream;
+    });
+
+@visibleForTesting
+Set<String> resolveActiveStandingTourIds({
+  required String selectedTourId,
+  required String selectedTourName,
+  required Iterable<({String id, String name})> tours,
+}) {
+  if (selectedTourId.trim().isEmpty) return const <String>{};
+  final ids = <String>{selectedTourId};
+  if (!_isStandingPaginationCategory(selectedTourName)) {
+    return Set.unmodifiable(ids);
+  }
+  final baseName = _standingCategoryBaseName(selectedTourName);
+  for (final tour in tours) {
+    if (_isStandingPaginationCategory(tour.name) &&
+        _standingCategoryBaseName(tour.name) == baseName) {
+      ids.add(tour.id);
+    }
+  }
+  return Set.unmodifiable(ids);
+}
+
+bool _isStandingPaginationCategory(String name) {
+  return RegExp(
+    r'Boards?\s+\d+[\-\+]?\d*\+?$',
+    caseSensitive: false,
+  ).hasMatch(name);
+}
+
+String _standingCategoryBaseName(String name) {
+  return name
+      .replaceAll(
+        RegExp(r'\s*Boards?\s+\d+[\-\+]?\d*\+?$', caseSensitive: false),
+        '',
+      )
+      .trim();
+}
 
 List<PlayerStandingModel> assignOverallRanks(
   List<PlayerStandingModel> standings,
@@ -241,19 +631,10 @@ String _standingsPlayerSignature(Player player) {
   ].join(':');
 }
 
-final playerTourScreenProvider = AutoDisposeAsyncNotifierProvider<
-  PlayerTourScreenNotifier,
-  List<PlayerStandingModel>
->(PlayerTourScreenNotifier.new);
-
 class PlayerTourScreenNotifier
-    extends AutoDisposeAsyncNotifier<List<PlayerStandingModel>> {
-  String? _lastBroadcastId;
-  String? _lastTourId;
-  List<PlayerStandingModel>? _lastGoodStandings;
-
+    extends AutoDisposeAsyncNotifier<PlayerTourStandingsSnapshot> {
   @override
-  Future<List<PlayerStandingModel>> build() async {
+  Future<PlayerTourStandingsSnapshot> build() async {
     // Keep provider alive while the page is visible to avoid eager disposal
     ref.keepAlive();
 
@@ -265,12 +646,12 @@ class PlayerTourScreenNotifier
     final selectedBroadcast = ref.watch(selectedBroadcastModelProvider);
 
     if (selectedBroadcast == null || selectedBroadcast.id.isEmpty) {
-      return const [];
+      return PlayerTourStandingsSnapshot.empty;
     }
 
     final tourDetailAsync = ref.watch(tourDetailScreenProvider);
     if (tourDetailAsync.hasError) {
-      final last = _lastGoodForBroadcast(selectedBroadcast.id);
+      final last = _previousForBroadcast(selectedBroadcast.id);
       if (last != null) {
         return last;
       }
@@ -282,15 +663,16 @@ class PlayerTourScreenNotifier
 
     final tourDetail = tourDetailAsync.valueOrNull;
     if (tourDetail == null) {
-      return _lastGoodForBroadcast(selectedBroadcast.id) ?? const [];
+      return _previousForBroadcast(selectedBroadcast.id) ??
+          PlayerTourStandingsSnapshot.empty;
     }
     final aboutTourModel = tourDetail.aboutTourModel;
     if (aboutTourModel.id.isEmpty) {
-      return _lastGoodFor(
+      return _previousFor(
             broadcastId: selectedBroadcast.id,
             tourId: aboutTourModel.id,
           ) ??
-          const [];
+          PlayerTourStandingsSnapshot.empty;
     }
 
     // Detect if this is a pagination-purposed category (e.g. "Boards 1-66")
@@ -339,49 +721,43 @@ class PlayerTourScreenNotifier
     );
 
     if (builtStandings.isEmpty) {
-      return _lastGoodFor(
+      return _previousFor(
             broadcastId: selectedBroadcast.id,
             tourId: aboutTourModel.id,
           ) ??
-          const [];
+          PlayerTourStandingsSnapshot.empty;
     }
 
     // Assign 1-based ranks in unfiltered order. These stay attached to each
     // player so in-widget filter preserves the overall standing position.
     final rankedStandings = assignOverallRanks(builtStandings);
-    _rememberGoodStandings(
+    return PlayerTourStandingsSnapshot(
       broadcastId: selectedBroadcast.id,
-      tourId: aboutTourModel.id,
+      selectedTourId: aboutTourModel.id,
+      tourIds: {for (final tour in relatedTours) tour.tour.id},
       standings: rankedStandings,
     );
-    return rankedStandings;
   }
 
-  List<PlayerStandingModel>? _lastGoodFor({
+  PlayerTourStandingsSnapshot? _previousFor({
     required String broadcastId,
     required String tourId,
   }) {
-    if (_lastBroadcastId != broadcastId || _lastTourId != tourId) {
+    final previous = state.valueOrNull;
+    if (previous == null ||
+        previous.broadcastId != broadcastId ||
+        previous.selectedTourId != tourId) {
       return null;
     }
-    return _lastGoodStandings;
+    return previous;
   }
 
-  List<PlayerStandingModel>? _lastGoodForBroadcast(String broadcastId) {
-    if (_lastBroadcastId != broadcastId) {
+  PlayerTourStandingsSnapshot? _previousForBroadcast(String broadcastId) {
+    final previous = state.valueOrNull;
+    if (previous == null || previous.broadcastId != broadcastId) {
       return null;
     }
-    return _lastGoodStandings;
-  }
-
-  void _rememberGoodStandings({
-    required String broadcastId,
-    required String tourId,
-    required List<PlayerStandingModel> standings,
-  }) {
-    _lastBroadcastId = broadcastId;
-    _lastTourId = tourId;
-    _lastGoodStandings = standings;
+    return previous;
   }
 
   List<GamesTourModel> _watchStandingsGamesForTours(
@@ -409,20 +785,12 @@ class PlayerTourScreenNotifier
 
   /// Identifies categories like "Boards 1-66", "Boards 67-126", "Boards 252+"
   bool _isPaginationCategory(String name) {
-    return RegExp(
-      r'Boards?\s+\d+[\-\+]?\d*\+?$',
-      caseSensitive: false,
-    ).hasMatch(name);
+    return _isStandingPaginationCategory(name);
   }
 
   /// Extracts the base name before the pagination suffix (e.g. "Open | Boards 1-50" -> "Open |")
   String _getCategoryBaseName(String name) {
-    return name
-        .replaceAll(
-          RegExp(r'\s*Boards?\s+\d+[\-\+]?\d*\+?$', caseSensitive: false),
-          '',
-        )
-        .trim();
+    return _standingCategoryBaseName(name);
   }
 
   Future<Map<int, _FideEloRow>> _fetchFideEloBatch(List<int> fideIds) async {

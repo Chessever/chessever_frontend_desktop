@@ -1624,6 +1624,7 @@ Future<void> openTournamentGameTab(
   bool replaceActive = true,
   ChessboardView viewSource = ChessboardView.tour,
   String? eventBroadcastId,
+  bool Function(ProviderContainer container)? canCommitOpen,
 }) async {
   // Capture the ProviderContainer up front. `ref` belongs to the widget
   // that owns the tap (often a LiveDesktopGameCard whose live-stream
@@ -1638,6 +1639,7 @@ Future<void> openTournamentGameTab(
     gameRepo: gameRepo,
     game: game,
   );
+  if (canCommitOpen != null && !canCommitOpen(container)) return;
   _seedBaseGameIfFresher(container, hydratedGame);
 
   final args = buildTournamentBoardTabArgs(
