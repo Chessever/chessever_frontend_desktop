@@ -476,4 +476,57 @@ void main() {
       reason: 'text input keeps focus across tab switches',
     );
   });
+
+  testWidgets('filtered games keep focus in a descendant search field', (
+    tester,
+  ) async {
+    final searchFocusNode = FocusNode(debugLabel: 'games-search');
+    final searchController = TextEditingController();
+    addTearDown(searchFocusNode.dispose);
+    addTearDown(searchController.dispose);
+
+    late StateSetter updateHost;
+    var games = <GamesTourModel>[_game('g0'), _game('g1')];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              updateHost = setState;
+              return DesktopGameKeyboardFocus(
+                scopeId: 'filtered-games-search',
+                games: games,
+                builder: (context, selectedGameId, selectGame, keyForGame) {
+                  return TextField(
+                    key: const Key('games-search-field'),
+                    controller: searchController,
+                    focusNode: searchFocusNode,
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('games-search-field')));
+    await tester.pump();
+    expect(searchFocusNode.hasPrimaryFocus, isTrue);
+
+    updateHost(() => games = <GamesTourModel>[_game('g0')]);
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      searchFocusNode.hasPrimaryFocus,
+      isTrue,
+      reason: 'filter refresh must not move focus into game navigation',
+    );
+    tester.testTextInput.enterText('martirosyan complete search');
+    await tester.pump();
+    expect(searchController.text, 'martirosyan complete search');
+  });
 }

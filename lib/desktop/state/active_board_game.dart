@@ -66,6 +66,7 @@ class BoardTabGameArgs {
     this.initialFen,
     this.sourceGame,
     this.viewSource = ChessboardView.tour,
+    this.eventBroadcastId,
     this.tournamentTitle = '',
     this.eventGames = const <TournamentGameSummary>[],
     this.eventGamesLoading = false,
@@ -132,6 +133,14 @@ class BoardTabGameArgs {
   /// Mobile board source this tab came from. Used when the desktop board
   /// needs to reproduce mobile's scorecard context rules.
   final ChessboardView viewSource;
+
+  /// Parent broadcast identity for event-derived Board tabs.
+  ///
+  /// Smart/For You rows may belong to a child tour while their standings and
+  /// sibling categories belong to a parent broadcast. Keeping that identity
+  /// on the tab avoids mutating the global Tournament Detail selection while
+  /// an asynchronous Board open is still hydrating.
+  final String? eventBroadcastId;
 
   /// Event context for Board tabs opened from a tournament game list.
   ///
@@ -213,6 +222,7 @@ class BoardTabGameArgs {
     String? initialFen,
     GamesTourModel? sourceGame,
     ChessboardView? viewSource,
+    String? eventBroadcastId,
     String? tournamentTitle,
     List<TournamentGameSummary>? eventGames,
     bool? eventGamesLoading,
@@ -252,6 +262,7 @@ class BoardTabGameArgs {
       initialFen: initialFen ?? this.initialFen,
       sourceGame: sourceGame ?? this.sourceGame,
       viewSource: viewSource ?? this.viewSource,
+      eventBroadcastId: eventBroadcastId ?? this.eventBroadcastId,
       tournamentTitle: tournamentTitle ?? this.tournamentTitle,
       eventGames: eventGames ?? this.eventGames,
       eventGamesLoading: eventGamesLoading ?? this.eventGamesLoading,

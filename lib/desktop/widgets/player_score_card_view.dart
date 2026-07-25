@@ -577,7 +577,6 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
       hasSelectedBroadcast: ref.read(selectedBroadcastModelProvider) != null,
     );
     final args = buildTournamentBoardTabArgs(
-      ref,
       openedGame,
       tournamentTitle,
       eventGames: contextGames,

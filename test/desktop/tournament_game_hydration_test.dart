@@ -134,7 +134,6 @@ void main() {
           child: Consumer(
             builder: (context, ref, child) {
               args = buildTournamentBoardTabArgs(
-                ref,
                 selected,
                 'Huge event',
                 eventGames: games,
@@ -171,7 +170,6 @@ void main() {
             child: Consumer(
               builder: (context, ref, child) {
                 args = buildTournamentBoardTabArgs(
-                  ref,
                   selected,
                   'Favorites',
                   eventGames: games,
@@ -217,7 +215,6 @@ void main() {
             child: Consumer(
               builder: (context, ref, child) {
                 args = buildTournamentBoardTabArgs(
-                  ref,
                   playerGames[5],
                   'Player scorecard',
                   eventGames: playerGames,

@@ -4,7 +4,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
+import 'package:chessever/desktop/widgets/desktop_player_title_chip.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
@@ -15,6 +17,94 @@ import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/date_time_provider.dart';
 
 void main() {
+  test('single-letter trailing names preserve Gukesh-style identities', () {
+    expect(
+      desktopCompactPlayerName('Tabatabaei, Mohammad Amin'),
+      'Tabatabaei, M.',
+    );
+    expect(desktopCompactPlayerName('Leon Luke Mendonca'), 'Mendonca, L.');
+    expect(desktopCompactPlayerName('Gukesh D'), 'Gukesh, D.');
+    expect(desktopCompactPlayerName('Praggnanandhaa R'), 'Praggnanandhaa, R.');
+  });
+
+  testWidgets(
+    'game card layouts use Last, F. names and plain ChessEver titles',
+    (tester) async {
+      for (final layout in DesktopCardLayout.values) {
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: _cardProviderOverrides(),
+            child: MaterialApp(
+              home: Scaffold(
+                body: Center(
+                  child: SizedBox(
+                    width: layout == DesktopCardLayout.list ? 520 : 320,
+                    height: layout == DesktopCardLayout.list ? 160 : 360,
+                    child: DesktopGameCard(
+                      data: _identityData,
+                      layout: layout,
+                      onTap: () {},
+                      allowStockfishFallback: false,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        final renderedNames =
+            tester
+                .widgetList<Text>(
+                  find.descendant(
+                    of: find.byType(DesktopCompactPlayerNameText),
+                    matching: find.byType(Text),
+                  ),
+                )
+                .toList();
+        expect(renderedNames, hasLength(2));
+        expect(
+          renderedNames.any(
+            (label) => _isFullOrSingleDotName(
+              label.data ?? '',
+              lastName: 'Tabatabaei',
+              firstInitial: 'M',
+            ),
+          ),
+          isTrue,
+        );
+        expect(
+          renderedNames.any(
+            (label) => _isFullOrSingleDotName(
+              label.data ?? '',
+              lastName: 'Mendonca',
+              firstInitial: 'L',
+            ),
+          ),
+          isTrue,
+        );
+        expect(
+          renderedNames.every(
+            (label) =>
+                label.overflow != TextOverflow.ellipsis &&
+                !(label.data ?? '').contains('…') &&
+                !(label.data ?? '').contains('...'),
+          ),
+          isTrue,
+        );
+        expect(find.byType(DesktopPlayerTitleChip), findsNothing);
+
+        final titleLabels = tester.widgetList<Text>(find.text('GM')).toList();
+        expect(titleLabels, hasLength(2));
+        expect(
+          titleLabels.every((label) => label.style?.color == kPrimaryColor),
+          isTrue,
+        );
+      }
+    },
+  );
+
   testWidgets('Command-click opens a draggable game card in a background tab', (
     tester,
   ) async {
@@ -50,6 +140,47 @@ void main() {
     expect(foregroundOpens, 0);
     expect(spawnedFocusValues, <bool>[false]);
   });
+
+  testWidgets(
+    'modifier click survives delayed tap resolution when double click is enabled',
+    (tester) async {
+      var selections = 0;
+      var doubleClickOpens = 0;
+      final spawnedFocusValues = <bool>[];
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: _cardProviderOverrides(),
+          child: MaterialApp(
+            home: Scaffold(
+              body: DesktopGameCard(
+                data: _data,
+                layout: DesktopCardLayout.compact,
+                onTap: () => selections++,
+                onDoubleTap: () => doubleClickOpens++,
+                dragPayload: GameTabDragPayload(
+                  id: _data.id,
+                  label: _data.title,
+                  spawn: (_, {required focus}) async {
+                    spawnedFocusValues.add(focus);
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.tap(find.byType(DesktopGameCard));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(selections, 0);
+      expect(doubleClickOpens, 0);
+      expect(spawnedFocusValues, <bool>[false]);
+    },
+  );
 
   testWidgets('plain click keeps the existing foreground open behavior', (
     tester,
@@ -335,6 +466,19 @@ void main() {
   });
 }
 
+bool _isFullOrSingleDotName(
+  String value, {
+  required String lastName,
+  required String firstInitial,
+}) {
+  if (value == '$lastName, $firstInitial.') return true;
+  if (!value.endsWith('.') || value.contains('...') || value.contains('…')) {
+    return false;
+  }
+  final prefix = value.substring(0, value.length - 1);
+  return prefix.isNotEmpty && lastName.startsWith(prefix);
+}
+
 void _noop() {}
 
 List<Override> _cardProviderOverrides({DateTime? clockNow}) {
@@ -360,6 +504,22 @@ const _data = GameCardData(
   fen: null,
   status: GameStatus.ongoing,
   hasStarted: false,
+);
+
+const _identityData = GameCardData(
+  id: 'identity-game',
+  title: 'Identity fixture',
+  whiteName: 'Tabatabaei, Mohammad Amin',
+  blackName: 'Leon Luke Mendonca',
+  whiteFederation: 'IRI',
+  blackFederation: 'IND',
+  whiteTitle: 'GM',
+  blackTitle: 'GM',
+  whiteRating: 2722,
+  blackRating: 2616,
+  fen: null,
+  status: GameStatus.ongoing,
+  hasStarted: true,
 );
 
 const _startedLiveData = GameCardData(
