@@ -148,6 +148,7 @@ void main() {
 
       expect(args, isNotNull);
       expect(args!.eventGamesKey?.tourId, 'tour');
+      expect(args!.eventGamesKey?.tourSlug, 'smart-event');
       expect(args!.eventGamesKey?.selectedGameId, selected.gameId);
       expect(args!.eventGames, hasLength(61));
       expect(

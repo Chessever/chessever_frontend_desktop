@@ -1551,6 +1551,7 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
           ? null
           : BoardTabEventGamesKey(
             tourId: eventTourId,
+            tourSlug: normalizedGame.tourSlug?.trim() ?? '',
             selectedGameId: normalizedGame.gameId,
             selectedRoundId: normalizedGame.roundId,
             selectedBoardNumber: normalizedGame.boardNr,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/event_rail_games.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/event_games_table.dart';
@@ -57,6 +58,58 @@ void main() {
     );
   });
 
+  test('event rail provider identity prefers a stable tour slug', () {
+    const first = EventRailGamesProviderKey(
+      ownerId: 'board-1',
+      eventKey: BoardTabEventGamesKey(
+        tourId: 'dole-fragment-a',
+        tourSlug: 'dole-open-aix-en-provence-2026',
+      ),
+    );
+    const second = EventRailGamesProviderKey(
+      ownerId: 'board-1',
+      eventKey: BoardTabEventGamesKey(
+        tourId: 'dole-fragment-b',
+        tourSlug: 'dole-open-aix-en-provence-2026',
+      ),
+    );
+
+    expect(first, second);
+    expect(first.hashCode, second.hashCode);
+  });
+
+  test(
+    'slug-scoped event rail uses bounded tournament identity queries',
+    () async {
+      final repository = _FakeGameRepository(
+        firstTourPage: <Games>[
+          _game(id: 'round-8-game-1', roundId: 'round-8', boardNumber: 1),
+        ],
+        selectedRoundPage: const <Games>[],
+        totalCount: 140,
+      );
+      final container = _container(repository);
+      addTearDown(container.dispose);
+      const eventKey = BoardTabEventGamesKey(
+        tourId: 'dole-fragment-a',
+        tourSlug: 'dole-open-aix-en-provence-2026',
+      );
+      final provider = eventRailGamesProvider(_providerKey(eventKey));
+      final subscription = container.listen(provider, (_, __) {});
+      addTearDown(subscription.close);
+
+      final state = await container.read(provider.future);
+
+      expect(state.totalCount, 140);
+      expect(repository.tournamentIdentityPageCalls, <String>[
+        'dole-fragment-a|dole-open-aix-en-provence-2026|64|0',
+      ]);
+      expect(repository.tournamentIdentityCountCalls, <String>[
+        'dole-fragment-a|dole-open-aix-en-provence-2026',
+      ]);
+    },
+  );
+
   test('lightweight rows preserve the canonical round stage name', () {
     final row = Games.fromJson(<String, dynamic>{
       'id': 'game-1',
@@ -76,6 +129,319 @@ void main() {
       'name': 'Armageddon',
       'starts_at': '2026-07-18T12:00:00.000Z',
     });
+  });
+
+  test(
+    'catalog merges unnamed loaded rounds and keeps no-date rounds upcoming',
+    () {
+      final loaded = TournamentGameSummary.fromGame(
+        _game(id: 'game-1', roundId: 'round-1', boardNumber: 1),
+      );
+      final projection = eventRailCatalogProjectionForTesting(
+        <TournamentGameSummary>[loaded],
+        const <EventRailRoundMetadata>[
+          EventRailRoundMetadata(
+            id: 'round-1',
+            name: '',
+            startsAt: null,
+            createdAt: null,
+            ongoing: false,
+          ),
+          EventRailRoundMetadata(
+            id: 'round-2',
+            name: 'Round 2',
+            startsAt: null,
+            createdAt: null,
+            ongoing: false,
+          ),
+        ],
+      );
+
+      final unnamed = projection.singleWhere(
+        (group) => group.id == 'round-id:round-1',
+      );
+      expect(unnamed.catalogOnly, isFalse);
+      expect(unnamed.gameIds, <String>['game-1']);
+      expect(
+        projection.where((group) => group.id == 'round-id:round-1'),
+        hasLength(1),
+      );
+      expect(
+        projection
+            .singleWhere((group) => group.id == 'round-name:round 2')
+            .status,
+        'upcoming',
+      );
+    },
+  );
+
+  test('named catalog metadata bridges a loaded row without roundName', () {
+    final loaded = TournamentGameSummary.fromGame(
+      _game(id: 'game-1', roundId: 'round-1', boardNumber: 1),
+    );
+    final projection = eventRailCatalogProjectionForTesting(
+      <TournamentGameSummary>[loaded],
+      const <EventRailRoundMetadata>[
+        EventRailRoundMetadata(
+          id: 'round-1',
+          name: 'Quarterfinal',
+          startsAt: null,
+          createdAt: null,
+          ongoing: false,
+        ),
+      ],
+    );
+
+    expect(projection, hasLength(1));
+    expect(projection.single.id, 'round-name:quarterfinal');
+    expect(projection.single.catalogOnly, isFalse);
+    expect(projection.single.gameIds, <String>['game-1']);
+  });
+
+  testWidgets('DOLE-shaped catalog loads all rounds by stable slug', (
+    tester,
+  ) async {
+    final repository = _FakeGameRepository(
+      firstTourPage: const <Games>[],
+      selectedRoundPage: const <Games>[],
+      totalCount: 140,
+      roundCatalog: <EventRailRoundMetadata>[
+        for (var round = 1; round <= 8; round++)
+          EventRailRoundMetadata(
+            id: 'round-$round',
+            name: 'Round $round',
+            startsAt: null,
+            createdAt: DateTime.utc(2026, 7, round),
+            ongoing: false,
+          ),
+      ],
+    );
+    const catalogKey = EventRailRoundCatalogKey(
+      ownerId: 'test-board-tab',
+      tourId: 'dole-fragment-a',
+      tourSlug: 'dole-open-aix-en-provence-2026',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [gameRepositoryProvider.overrideWithValue(repository)],
+        child: MaterialApp(
+          home: Consumer(
+            builder: (context, ref, _) {
+              ref.watch(eventRailRoundCatalogProvider(catalogKey));
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(repository.tournamentIdentityCatalogCalls, <String>[
+      'dole-fragment-a|dole-open-aix-en-provence-2026',
+    ]);
+  });
+
+  testWidgets('slow initial catalog request stays single-flight', (
+    tester,
+  ) async {
+    final catalogCompleter = Completer<List<EventRailRoundMetadata>>();
+    final repository = _FakeGameRepository(
+      firstTourPage: const <Games>[],
+      selectedRoundPage: const <Games>[],
+      totalCount: 0,
+      roundCatalogFuture: catalogCompleter.future,
+    );
+    const catalogKey = EventRailRoundCatalogKey(
+      ownerId: 'test-board-tab',
+      tourId: 'tour-1',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [gameRepositoryProvider.overrideWithValue(repository)],
+        child: MaterialApp(
+          home: Consumer(
+            builder: (context, ref, _) {
+              ref.watch(eventRailRoundCatalogProvider(catalogKey));
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(repository.roundCatalogCalls, <String>['tour-1']);
+
+    await tester.pump(const Duration(seconds: 6));
+    expect(
+      repository.roundCatalogCalls,
+      <String>['tour-1'],
+      reason: 'The refresh timer must not overlap the initial request.',
+    );
+
+    catalogCompleter.complete(const <EventRailRoundMetadata>[]);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 5));
+    expect(repository.roundCatalogCalls, <String>['tour-1', 'tour-1']);
+  });
+
+  testWidgets('collapsed Event keepalive starts no REST session', (
+    tester,
+  ) async {
+    final repository = _FakeGameRepository(
+      firstTourPage: const <Games>[],
+      selectedRoundPage: const <Games>[],
+      totalCount: 0,
+      roundCatalog: const <EventRailRoundMetadata>[],
+    );
+    const eventKey = BoardTabEventGamesKey(
+      tourId: 'tour-1',
+      selectedGameId: 'game-1',
+      selectedRoundId: 'round-1',
+      selectedBoardNumber: 1,
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          gameRepositoryProvider.overrideWithValue(repository),
+          boardTabGameArgsByTabIdProvider.overrideWith(
+            (ref) => const <String, BoardTabGameArgs>{
+              'board-1': BoardTabGameArgs(
+                gameId: 'game-1',
+                pgn: '*',
+                label: 'Event game',
+                whiteName: 'White',
+                blackName: 'Black',
+                eventGamesKey: eventKey,
+              ),
+            },
+          ),
+        ],
+        child: const MaterialApp(
+          home: BoardEventNavigationKeepAlive(tabId: 'board-1'),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 6));
+
+    expect(repository.roundCatalogCalls, isEmpty);
+    expect(repository.countCalls, isEmpty);
+    expect(repository.tourPageCalls, isEmpty);
+    expect(repository.selectedGameCalls, isEmpty);
+    expect(repository.roundIdsPageCalls, isEmpty);
+  });
+
+  test('hidden catalog refresh cannot publish its stale completion', () async {
+    const initial = EventRailRoundMetadata(
+      id: 'round-1',
+      name: 'Round 1',
+      startsAt: null,
+      createdAt: null,
+      ongoing: true,
+    );
+    const stale = EventRailRoundMetadata(
+      id: 'stale-round',
+      name: 'Stale round',
+      startsAt: null,
+      createdAt: null,
+      ongoing: true,
+    );
+    const fresh = EventRailRoundMetadata(
+      id: 'round-2',
+      name: 'Round 2',
+      startsAt: null,
+      createdAt: null,
+      ongoing: true,
+    );
+    final repository = _FakeGameRepository(
+      firstTourPage: const <Games>[],
+      selectedRoundPage: const <Games>[],
+      totalCount: 0,
+      roundCatalog: const <EventRailRoundMetadata>[initial],
+    );
+    final container = _container(repository);
+    addTearDown(container.dispose);
+    const key = EventRailRoundCatalogKey(
+      ownerId: 'test-board-tab',
+      tourId: 'tour-1',
+    );
+    final provider = eventRailRoundCatalogProvider(key);
+    final subscription = container
+        .listen<AsyncValue<List<EventRailRoundMetadata>>>(
+          provider,
+          (_, __) {},
+          fireImmediately: true,
+        );
+    addTearDown(subscription.close);
+    expect(
+      await container.read(provider.future),
+      const <EventRailRoundMetadata>[initial],
+    );
+    final notifier = container.read(provider.notifier);
+    final staleCompleter = Completer<List<EventRailRoundMetadata>>();
+    repository.roundCatalogFuture = staleCompleter.future;
+
+    final staleRefresh = notifier.refreshCatalog();
+    await Future<void>.delayed(Duration.zero);
+    notifier
+      ..setForeground(false)
+      ..setForeground(true);
+    staleCompleter.complete(const <EventRailRoundMetadata>[stale]);
+    repository.roundCatalogFuture = Future<List<EventRailRoundMetadata>>.value(
+      const <EventRailRoundMetadata>[fresh],
+    );
+    await staleRefresh;
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      container.read(provider).requireValue,
+      const <EventRailRoundMetadata>[fresh],
+    );
+  });
+
+  test('round header spanning pages prefers its current render page', () {
+    expect(
+      eventRailPreferredGroupPageForTesting(
+        firstGameOffset: 40,
+        gameCount: 80,
+        currentPageIndex: 1,
+      ),
+      1,
+    );
+    expect(
+      eventRailPreferredGroupPageForTesting(
+        firstGameOffset: 40,
+        gameCount: 80,
+        currentPageIndex: 2,
+      ),
+      0,
+    );
+  });
+
+  test('hydrated rail-focus target resolves across the 64-row boundary', () {
+    final games = List<TournamentGameSummary>.generate(
+      65,
+      (index) => TournamentGameSummary.fromGame(
+        _game(
+          id: 'game-$index',
+          roundId: 'round-1',
+          roundName: 'Round 1',
+          boardNumber: index + 1,
+        ),
+      ),
+    );
+
+    expect(
+      eventRailHydratedHighlightTargetForTesting(
+        games,
+        exactTargetGameId: 'game-64',
+      ),
+      (gameId: 'game-64', pageIndex: 1),
+    );
   });
 
   testWidgets('a selected Source rail does not start the Event session', (
@@ -139,7 +505,292 @@ void main() {
     expect(repository.roundPageCalls, isEmpty);
     expect(repository.selectedGameCalls, isEmpty);
     expect(repository.countCalls, isEmpty);
+    expect(repository.roundCatalogCalls, isEmpty);
   });
+
+  testWidgets('hidden and paused Event rails stop catalog refreshes', (
+    tester,
+  ) async {
+    final repository = _FakeGameRepository(
+      firstTourPage: <Games>[
+        _game(id: 'event-game', roundId: 'round-1', boardNumber: 1),
+      ],
+      selectedRoundPage: const <Games>[],
+      totalCount: 1,
+      roundCatalog: const <EventRailRoundMetadata>[
+        EventRailRoundMetadata(
+          id: 'round-1',
+          name: 'Round 1',
+          startsAt: null,
+          createdAt: null,
+          ongoing: false,
+        ),
+      ],
+    );
+    final game = TournamentGameSummary.fromGame(
+      repository.firstTourPage.single,
+    );
+    final args = BoardTabGameArgs(
+      gameId: game.id,
+      pgn: '',
+      label: game.name,
+      whiteName: game.whitePlayer,
+      blackName: game.blackPlayer,
+      tournamentTitle: 'Event',
+      eventGames: <TournamentGameSummary>[game],
+      eventGamesKey: const BoardTabEventGamesKey(tourId: 'tour-1'),
+      gameListSelectedId: game.id,
+    );
+    final tabs = DesktopTabsNotifier();
+    addTearDown(
+      () => tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      ),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          desktopTabsProvider.overrideWith((ref) => tabs),
+          gameRepositoryProvider.overrideWithValue(repository),
+          boardTabGameArgsByTabIdProvider.overrideWith(
+            (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+          ),
+          gameUpdatesBatchStreamProvider.overrideWith(
+            (ref, key) => const Stream<Map<String, LiveGameUpdate>>.empty(),
+          ),
+        ],
+        child: const MaterialApp(
+          home: SizedBox(
+            width: EventGamesTable.width,
+            height: 700,
+            child: EventGamesTable(tabId: 'tournaments-default'),
+          ),
+        ),
+      ),
+    );
+    for (var attempt = 0; attempt < 10; attempt++) {
+      await tester.pump(const Duration(milliseconds: 25));
+      if (repository.roundCatalogCalls.isNotEmpty) break;
+    }
+    expect(repository.roundCatalogCalls, <String>['tour-1']);
+
+    tabs.open(TabKind.library, title: 'Library', reuseExisting: false);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 6));
+    expect(repository.roundCatalogCalls, <String>['tour-1']);
+
+    tabs.activate('tournaments-default');
+    for (var attempt = 0; attempt < 10; attempt++) {
+      await tester.pump(const Duration(milliseconds: 25));
+      if (repository.roundCatalogCalls.length == 2) break;
+    }
+    expect(repository.roundCatalogCalls, <String>['tour-1', 'tour-1']);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 6));
+    expect(repository.roundCatalogCalls, <String>['tour-1', 'tour-1']);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    for (var attempt = 0; attempt < 10; attempt++) {
+      await tester.pump(const Duration(milliseconds: 25));
+      if (repository.roundCatalogCalls.length == 3) break;
+    }
+    expect(repository.roundCatalogCalls, <String>[
+      'tour-1',
+      'tour-1',
+      'tour-1',
+    ]);
+  });
+
+  testWidgets(
+    'catalog shows every round without draining tour pages and hydrates on expand',
+    (tester) async {
+      List<Games> roundGames(
+        int round,
+        int count, {
+        String status = 'not_started',
+        DateTime? startsAt,
+        int boardOffset = 0,
+      }) => List<Games>.generate(
+        count,
+        (index) => _game(
+          id: 'round-$round-board-${boardOffset + index + 1}',
+          roundId: 'round-$round',
+          roundName: 'Round $round',
+          roundStartsAt: startsAt ?? DateTime.utc(2030, 7, round),
+          boardNumber: boardOffset + index + 1,
+          status: status,
+          pgn: status == 'started' ? '1. e4 e5' : null,
+        ),
+        growable: false,
+      );
+
+      final firstPage = <Games>[
+        ...roundGames(
+          9,
+          1,
+          status: 'started',
+          startsAt: DateTime.now().subtract(const Duration(minutes: 1)),
+        ),
+        ...roundGames(8, 21),
+        ...roundGames(7, 21),
+        ...roundGames(1, 21),
+      ];
+      final secondPage = <Games>[
+        ...roundGames(6, 21),
+        ...roundGames(5, 21),
+        ...roundGames(4, 21),
+        ...roundGames(3, 1),
+      ];
+      final finalPage = <Games>[
+        ...roundGames(3, 8, boardOffset: 1),
+        ...roundGames(2, 4),
+      ];
+      final allGames = <Games>[...firstPage, ...secondPage, ...finalPage];
+      final selected = TournamentGameSummary.fromGame(firstPage.first);
+      final repository = _FakeGameRepository(
+        firstTourPage: firstPage,
+        selectedRoundPage: firstPage.take(1).toList(growable: false),
+        selectedGame: firstPage.first,
+        totalCount: 140,
+        roundCatalog: <EventRailRoundMetadata>[
+          for (var round = 1; round <= 9; round++)
+            EventRailRoundMetadata(
+              id: 'round-$round',
+              name: 'Round $round',
+              startsAt:
+                  round == 9
+                      ? DateTime.utc(2026, 7, 24)
+                      : DateTime.utc(2030, 7, round),
+              createdAt: DateTime.utc(2026, 7, round),
+              ongoing: false,
+            ),
+        ],
+        tourPagesByOffset: <int, List<Games>>{64: secondPage, 128: finalPage},
+        allRoundGames: allGames,
+      );
+      final args = BoardTabGameArgs(
+        gameId: selected.id,
+        pgn: '',
+        label: selected.name,
+        whiteName: selected.whitePlayer,
+        blackName: selected.blackPlayer,
+        tournamentTitle: 'Nine-round event',
+        eventGames: <TournamentGameSummary>[selected],
+        eventGamesKey: BoardTabEventGamesKey(
+          tourId: 'tour-1',
+          selectedGameId: selected.id,
+          selectedRoundId: selected.roundId,
+          selectedBoardNumber: selected.boardNumber,
+        ),
+        gameListSelectedId: selected.id,
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            gameRepositoryProvider.overrideWithValue(repository),
+            boardTabGameArgsByTabIdProvider.overrideWith(
+              (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+            ),
+            gameUpdatesBatchStreamProvider.overrideWith(
+              (ref, key) => const Stream<Map<String, LiveGameUpdate>>.empty(),
+            ),
+          ],
+          child: const MaterialApp(
+            home: SizedBox(
+              width: EventGamesTable.width,
+              height: 700,
+              child: EventGamesTable(tabId: 'tournaments-default'),
+            ),
+          ),
+        ),
+      );
+      for (var attempt = 0; attempt < 20; attempt++) {
+        await tester.pump(const Duration(milliseconds: 25));
+        if (repository.roundCatalogCalls.isNotEmpty &&
+            find.text('Round 2').evaluate().isNotEmpty) {
+          break;
+        }
+      }
+      await tester.pump();
+
+      expect(repository.tourPageCalls, <_PageCall>[
+        const _PageCall(id: 'tour-1', limit: 64, offset: 0),
+      ]);
+      expect(repository.roundCatalogCalls, <String>['tour-1']);
+      for (var round = 1; round <= 9; round++) {
+        expect(
+          find.text('Round $round'),
+          findsOneWidget,
+          reason: 'Round $round must remain represented in the event rail.',
+        );
+      }
+
+      await tester.tap(find.text('Round 2'));
+      for (var attempt = 0; attempt < 20; attempt++) {
+        await tester.pump(const Duration(milliseconds: 25));
+        if (repository.roundIdsPageCalls.isNotEmpty) break;
+      }
+
+      expect(repository.roundIdsPageCalls, <_RoundIdsPageCall>[
+        const _RoundIdsPageCall(
+          ids: <String>['round-2'],
+          limit: kEventRailGamesPageSize,
+          offset: 0,
+        ),
+      ]);
+      expect(repository.tourPageCalls, hasLength(1));
+
+      await tester.tap(find.text('Round 2'));
+      await tester.pump();
+      await tester.tap(find.text('Round 2'));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(
+        repository.roundIdsPageCalls,
+        hasLength(1),
+        reason: 'A previously hydrated round must reopen from memory.',
+      );
+
+      expect(find.text('Page 1 of 2'), findsOneWidget);
+      expect(
+        find
+            .byWidgetPredicate(
+              (widget) =>
+                  widget.runtimeType.toString() == '_EventGameStatusCell',
+            )
+            .evaluate(),
+        hasLength(lessThanOrEqualTo(kEventRailGamesPageSize)),
+      );
+      await tester.tap(
+        find.byKey(const ValueKey<String>('event-rail-next-page')),
+      );
+      await tester.pump();
+      expect(find.text('Page 2 of 2'), findsOneWidget);
+      for (var round = 1; round <= 9; round++) {
+        expect(
+          find.text('Round $round'),
+          findsOneWidget,
+          reason: 'Round $round must remain visible on every row page.',
+        );
+      }
+      await tester.tap(find.text('Round 2'));
+      await tester.pump();
+      expect(
+        find.text('Page 1 of 2'),
+        findsOneWidget,
+        reason: 'An expanded off-page header must navigate on the first click.',
+      );
+      expect(
+        repository.roundIdsPageCalls,
+        hasLength(1),
+        reason: 'Navigating to an expanded hydrated round must not refetch it.',
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+    },
+  );
 
   testWidgets('keyboard navigation crosses a lazy page without a full fetch', (
     tester,
@@ -2239,7 +2890,7 @@ void main() {
     });
 
     test(
-      'same-tab selection changes retain the tour cursor and pages',
+      'same-slug selection changes retain the event cursor across tour ids',
       () async {
         final firstPage = List<Games>.generate(
           kEventRailGamesPageSize,
@@ -2260,6 +2911,11 @@ void main() {
         final repository = _FakeGameRepository(
           firstTourPage: firstPage,
           selectedRoundPage: const <Games>[],
+          selectedGame: _game(
+            id: 'selected-outside-retained-pages',
+            roundId: 'round-3',
+            boardNumber: 4,
+          ),
           totalCount: kEventRailGamesPageSize * 2,
           continuationFuture: Future<List<Games>>.value(secondPage),
         );
@@ -2267,15 +2923,17 @@ void main() {
         addTearDown(container.dispose);
 
         const firstSelection = BoardTabEventGamesKey(
-          tourId: 'tour-1',
+          tourId: 'tour-fragment-a',
+          tourSlug: 'shared-event',
           selectedGameId: 'first-1',
           selectedRoundId: 'round-1',
           selectedBoardNumber: 2,
         );
         const secondSelection = BoardTabEventGamesKey(
-          tourId: 'tour-1',
-          selectedGameId: 'second-3',
-          selectedRoundId: 'round-2',
+          tourId: 'tour-fragment-b',
+          tourSlug: 'shared-event',
+          selectedGameId: 'selected-outside-retained-pages',
+          selectedRoundId: 'round-3',
           selectedBoardNumber: 4,
         );
         final firstProvider = eventRailGamesProvider(
@@ -2299,11 +2957,18 @@ void main() {
         await container.pump();
         final retained = container.read(secondProvider).requireValue;
         expect(retained.nextOffset, kEventRailGamesPageSize * 2);
-        expect(retained.games.map((game) => game.id), contains('second-3'));
+        expect(
+          retained.games.map((game) => game.id),
+          contains('selected-outside-retained-pages'),
+        );
+        expect(repository.selectedGameCalls, <String>[
+          'first-1',
+          'selected-outside-retained-pages',
+        ]);
         expect(repository.countCalls, hasLength(1));
         expect(repository.tourPageCalls, <_PageCall>[
-          const _PageCall(id: 'tour-1', limit: 64, offset: 0),
-          const _PageCall(id: 'tour-1', limit: 64, offset: 64),
+          const _PageCall(id: 'tour-fragment-a', limit: 64, offset: 0),
+          const _PageCall(id: 'tour-fragment-a', limit: 64, offset: 64),
         ]);
       },
     );
@@ -2394,6 +3059,562 @@ void main() {
         expect(completed.games.map((game) => game.id).toSet(), hasLength(128));
       },
     );
+
+    test('round expansion waits for the initial bounded seed', () async {
+      final initialPage = Completer<List<Games>>();
+      final roundTwo = _game(
+        id: 'round-2-board-1',
+        roundId: 'round-2',
+        boardNumber: 1,
+      );
+      final repository = _FakeGameRepository(
+        firstTourPage: const <Games>[],
+        selectedRoundPage: const <Games>[],
+        totalCount: 1,
+        initialTourFuture: initialPage.future,
+        allRoundGames: <Games>[roundTwo],
+      );
+      final container = _container(repository);
+      addTearDown(container.dispose);
+      final provider = eventRailGamesProvider(
+        _providerKey(const BoardTabEventGamesKey(tourId: 'tour-1')),
+      );
+      final subscription = container.listen<AsyncValue<EventRailGamesState>>(
+        provider,
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(subscription.close);
+
+      final hydration = container.read(provider.notifier).ensureRoundLoaded(
+        const <String>['round-2'],
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(repository.roundIdsPageCalls, isEmpty);
+
+      initialPage.complete(<Games>[
+        _game(id: 'round-1-board-1', roundId: 'round-1', boardNumber: 1),
+      ]);
+      await container.read(provider.future);
+      expect(await hydration.timeout(const Duration(seconds: 1)), isTrue);
+      expect(
+        container.read(provider).requireValue.games.map((game) => game.id),
+        contains(roundTwo.id),
+      );
+    });
+
+    test('three rapid round expansions hydrate in FIFO order', () async {
+      final first = Completer<List<Games>>();
+      final second = Completer<List<Games>>();
+      final third = Completer<List<Games>>();
+      final repository = _FakeGameRepository(
+        firstTourPage: const <Games>[],
+        selectedRoundPage: const <Games>[],
+        totalCount: 0,
+        roundIdsFuturesByKey: <String, Future<List<Games>>>{
+          'round-1': first.future,
+          'round-2': second.future,
+          'round-3': third.future,
+        },
+      );
+      final container = _container(repository);
+      addTearDown(container.dispose);
+      final provider = eventRailGamesProvider(
+        _providerKey(const BoardTabEventGamesKey(tourId: 'tour-1')),
+      );
+      final subscription = container.listen<AsyncValue<EventRailGamesState>>(
+        provider,
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(subscription.close);
+      await container.read(provider.future);
+      final notifier = container.read(provider.notifier);
+
+      final hydrations = <Future<bool>>[
+        notifier.ensureRoundLoaded(const <String>['round-1']),
+        notifier.ensureRoundLoaded(const <String>['round-2']),
+        notifier.ensureRoundLoaded(const <String>['round-3']),
+      ];
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        repository.roundIdsPageCalls.map((call) => call.ids.single),
+        <String>['round-1'],
+      );
+
+      first.complete(<Games>[
+        _game(id: 'one', roundId: 'round-1', boardNumber: 1),
+      ]);
+      expect(await hydrations[0], isTrue);
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        repository.roundIdsPageCalls.map((call) => call.ids.single),
+        <String>['round-1', 'round-2'],
+      );
+      second.complete(<Games>[
+        _game(id: 'two', roundId: 'round-2', boardNumber: 1),
+      ]);
+      expect(await hydrations[1], isTrue);
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        repository.roundIdsPageCalls.map((call) => call.ids.single),
+        <String>['round-1', 'round-2', 'round-3'],
+      );
+      third.complete(<Games>[
+        _game(id: 'three', roundId: 'round-3', boardNumber: 1),
+      ]);
+      expect(await hydrations[2].timeout(const Duration(seconds: 1)), isTrue);
+      expect(
+        container
+            .read(provider)
+            .requireValue
+            .games
+            .map((game) => game.id)
+            .toSet(),
+        containsAll(<String>['one', 'two', 'three']),
+      );
+    });
+
+    test(
+      'empty round hydration is cached and failed hydration retries',
+      () async {
+        final repository = _FakeGameRepository(
+          firstTourPage: const <Games>[],
+          selectedRoundPage: const <Games>[],
+          totalCount: 0,
+        );
+        final container = _container(repository);
+        addTearDown(container.dispose);
+        final provider = eventRailGamesProvider(
+          _providerKey(const BoardTabEventGamesKey(tourId: 'tour-1')),
+        );
+        final subscription = container.listen<AsyncValue<EventRailGamesState>>(
+          provider,
+          (_, __) {},
+          fireImmediately: true,
+        );
+        addTearDown(subscription.close);
+        await container.read(provider.future);
+        final notifier = container.read(provider.notifier);
+
+        expect(
+          await notifier.ensureRoundLoaded(const <String>['empty-round']),
+          isTrue,
+        );
+        expect(
+          await notifier.ensureRoundLoaded(const <String>['empty-round']),
+          isTrue,
+        );
+        expect(repository.roundIdsPageCalls, hasLength(1));
+
+        repository
+          ..totalCount = 1
+          ..allRoundGames = <Games>[
+            _game(
+              id: 'newly-published',
+              roundId: 'empty-round',
+              boardNumber: 1,
+            ),
+          ];
+        expect(await notifier.refreshLoadedMetadata(), isTrue);
+        expect(
+          await notifier.ensureRoundLoaded(const <String>['empty-round']),
+          isTrue,
+        );
+        expect(repository.roundIdsPageCalls, hasLength(2));
+        expect(
+          container.read(provider).requireValue.games.map((game) => game.id),
+          contains('newly-published'),
+        );
+
+        repository.roundIdsPageError = StateError('offline');
+        expect(
+          await notifier.ensureRoundLoaded(const <String>['retry-round']),
+          isFalse,
+        );
+        repository.roundIdsPageError = null;
+        expect(
+          await notifier.ensureRoundLoaded(const <String>['retry-round']),
+          isTrue,
+        );
+        expect(repository.roundIdsPageCalls, hasLength(4));
+      },
+    );
+  });
+
+  test('selection change rejects stale navigation hydration', () async {
+    final catalogCompleter = Completer<List<EventRailRoundMetadata>>();
+    final selected = _game(id: 'selected', roundId: 'round-2', boardNumber: 1);
+    final repository = _FakeGameRepository(
+      firstTourPage: <Games>[selected],
+      selectedRoundPage: <Games>[selected],
+      selectedGame: selected,
+      totalCount: 1,
+      roundCatalogFuture: catalogCompleter.future,
+    );
+    final container = _container(repository);
+    addTearDown(container.dispose);
+    const key = BoardTabEventGamesKey(
+      tourId: 'tour-1',
+      selectedGameId: 'selected',
+      selectedRoundId: 'round-2',
+      selectedBoardNumber: 1,
+    );
+    final provider = eventRailGamesProvider(_providerKey(key));
+    final subscription = container.listen<AsyncValue<EventRailGamesState>>(
+      provider,
+      (_, __) {},
+      fireImmediately: true,
+    );
+    addTearDown(subscription.close);
+    await container.read(provider.future);
+    final notifier = container.read(provider.notifier);
+
+    final navigation = notifier.ensureNavigationAdjacency(-1);
+    await Future<void>.delayed(Duration.zero);
+    expect(repository.roundCatalogCalls, <String>['tour-1']);
+    notifier.updateSelection(
+      const BoardTabEventGamesKey(
+        tourId: 'tour-1',
+        selectedGameId: 'replacement',
+        selectedRoundId: 'round-3',
+        selectedBoardNumber: 1,
+      ),
+    );
+    catalogCompleter.complete(const <EventRailRoundMetadata>[
+      EventRailRoundMetadata(
+        id: 'round-1',
+        name: 'Round 1',
+        startsAt: null,
+        createdAt: null,
+        ongoing: false,
+      ),
+      EventRailRoundMetadata(
+        id: 'round-2',
+        name: 'Round 2',
+        startsAt: null,
+        createdAt: null,
+        ongoing: false,
+      ),
+    ]);
+
+    expect(await navigation, isFalse);
+    expect(notifier.navigationTargetGameId, isNull);
+    expect(repository.roundIdsPageCalls, isEmpty);
+  });
+
+  test('hide and resume rejects stale navigation hydration', () async {
+    final catalogCompleter = Completer<List<EventRailRoundMetadata>>();
+    final selected = _game(id: 'selected', roundId: 'round-2', boardNumber: 1);
+    final repository = _FakeGameRepository(
+      firstTourPage: <Games>[selected],
+      selectedRoundPage: <Games>[selected],
+      selectedGame: selected,
+      totalCount: 1,
+      roundCatalogFuture: catalogCompleter.future,
+    );
+    final container = _container(repository);
+    addTearDown(container.dispose);
+    const key = BoardTabEventGamesKey(
+      tourId: 'tour-1',
+      selectedGameId: 'selected',
+      selectedRoundId: 'round-2',
+      selectedBoardNumber: 1,
+    );
+    final provider = eventRailGamesProvider(_providerKey(key));
+    final subscription = container.listen<AsyncValue<EventRailGamesState>>(
+      provider,
+      (_, __) {},
+      fireImmediately: true,
+    );
+    addTearDown(subscription.close);
+    await container.read(provider.future);
+    final notifier = container.read(provider.notifier);
+
+    final navigation = notifier.ensureNavigationAdjacency(-1);
+    await Future<void>.delayed(Duration.zero);
+    notifier
+      ..setForeground(false)
+      ..setForeground(true);
+    catalogCompleter.complete(const <EventRailRoundMetadata>[]);
+
+    expect(await navigation, isFalse);
+    expect(notifier.navigationTargetGameId, isNull);
+    expect(repository.roundIdsPageCalls, isEmpty);
+  });
+
+  test('multi-leg navigation hydrates only the selected matchup', () async {
+    final selected = _game(
+      id: 'match-a-game-1',
+      roundId: 'stage-game-1',
+      roundSlug: 'game-1',
+      roundName: 'Final',
+      boardNumber: 1,
+      whiteName: 'Alice',
+      blackName: 'Bob',
+    );
+    final adjacent = _game(
+      id: 'match-a-game-2',
+      roundId: 'stage-game-2',
+      roundSlug: 'game-2',
+      roundName: 'Final',
+      boardNumber: 1,
+      whiteName: 'Bob',
+      blackName: 'Alice',
+    );
+    final repository = _FakeGameRepository(
+      firstTourPage: <Games>[selected],
+      selectedRoundPage: <Games>[selected],
+      selectedGame: selected,
+      totalCount: 120,
+      roundCatalog: const <EventRailRoundMetadata>[
+        EventRailRoundMetadata(
+          id: 'stage-game-1',
+          name: 'Final',
+          startsAt: null,
+          createdAt: null,
+          ongoing: true,
+        ),
+        EventRailRoundMetadata(
+          id: 'stage-game-2',
+          name: 'Final',
+          startsAt: null,
+          createdAt: null,
+          ongoing: true,
+        ),
+      ],
+      allRoundGames: List<Games>.generate(
+        120,
+        (index) => _game(
+          id: 'stage-$index',
+          roundId: index.isEven ? 'stage-game-1' : 'stage-game-2',
+          roundSlug: index.isEven ? 'game-1' : 'game-2',
+          roundName: 'Final',
+          boardNumber: index ~/ 2 + 1,
+        ),
+      ),
+      playerGames: <Games>[adjacent, selected],
+    );
+    final container = _container(repository);
+    addTearDown(container.dispose);
+    const key = BoardTabEventGamesKey(
+      tourId: 'tour-1',
+      selectedGameId: 'match-a-game-1',
+      selectedRoundId: 'stage-game-1',
+      selectedBoardNumber: 1,
+    );
+    final provider = eventRailGamesProvider(_providerKey(key));
+    final subscription = container.listen<AsyncValue<EventRailGamesState>>(
+      provider,
+      (_, __) {},
+      fireImmediately: true,
+    );
+    addTearDown(subscription.close);
+    await container.read(provider.future);
+    final notifier = container.read(provider.notifier);
+
+    expect(await notifier.ensureNavigationAdjacency(1), isTrue);
+    expect(notifier.navigationTargetGameId, 'match-a-game-2');
+    expect(repository.playerGameCalls, hasLength(1));
+    expect(repository.roundIdsPageCalls, isEmpty);
+    expect(repository.tourPageCalls, const <_PageCall>[
+      _PageCall(id: 'tour-1', limit: 64, offset: 0),
+    ]);
+  });
+
+  test(
+    'navigation queries only the immediate adjacent catalog stage',
+    () async {
+      final now = DateTime.now();
+      final selected = _game(
+        id: 'round-4-game',
+        roundId: 'round-4',
+        boardNumber: 1,
+      );
+      final laterGame = _game(
+        id: 'round-2-game',
+        roundId: 'round-2',
+        boardNumber: 1,
+      );
+      final repository = _FakeGameRepository(
+        firstTourPage: <Games>[selected],
+        selectedRoundPage: <Games>[selected],
+        selectedGame: selected,
+        totalCount: 2,
+        roundCatalog: <EventRailRoundMetadata>[
+          EventRailRoundMetadata(
+            id: 'round-4',
+            name: 'Round 4',
+            startsAt: now.subtract(const Duration(hours: 1)),
+            createdAt: null,
+            ongoing: false,
+          ),
+          EventRailRoundMetadata(
+            id: 'round-3',
+            name: 'Round 3',
+            startsAt: now.subtract(const Duration(hours: 2)),
+            createdAt: null,
+            ongoing: false,
+          ),
+          EventRailRoundMetadata(
+            id: 'round-2',
+            name: 'Round 2',
+            startsAt: now.subtract(const Duration(hours: 3)),
+            createdAt: null,
+            ongoing: false,
+          ),
+        ],
+        allRoundGames: <Games>[selected, laterGame],
+      );
+      final container = _container(repository);
+      addTearDown(container.dispose);
+      const key = BoardTabEventGamesKey(
+        tourId: 'tour-1',
+        selectedGameId: 'round-4-game',
+        selectedRoundId: 'round-4',
+        selectedBoardNumber: 1,
+      );
+      final provider = eventRailGamesProvider(_providerKey(key));
+      final subscription = container.listen<AsyncValue<EventRailGamesState>>(
+        provider,
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(subscription.close);
+      await container.read(provider.future);
+
+      final notifier = container.read(provider.notifier);
+      expect(await notifier.ensureNavigationAdjacency(1), isFalse);
+      expect(notifier.navigationTargetGameId, isNull);
+      expect(repository.roundIdsCountCalls, <List<String>>[
+        <String>['round-4'],
+        <String>['round-3'],
+      ]);
+      expect(repository.roundIdsPageCalls, const <_RoundIdsPageCall>[
+        _RoundIdsPageCall(ids: <String>['round-4'], limit: 64, offset: 0),
+      ]);
+    },
+  );
+
+  for (final delta in <int>[-1, 1]) {
+    test(
+      'canonical navigation fallback requires an exact target for delta $delta',
+      () async {
+        final selected = _game(
+          id: 'selected-game',
+          roundId: 'selected-round',
+          boardNumber: 500,
+        );
+        final canonicalPage = List<Games>.generate(
+          64,
+          (index) => _game(
+            id: 'canonical-$index',
+            roundId: 'canonical-round',
+            boardNumber: index + 65,
+          ),
+        );
+        final repository = _FakeGameRepository(
+          firstTourPage: List<Games>.generate(
+            64,
+            (index) => _game(
+              id: 'seed-$index',
+              roundId: 'seed-round',
+              boardNumber: index + 1,
+            ),
+          ),
+          selectedRoundPage: <Games>[selected],
+          selectedGame: selected,
+          totalCount: 192,
+          tourPagesByOffset: <int, List<Games>>{64: canonicalPage},
+          roundCatalog: const <EventRailRoundMetadata>[],
+        );
+        final container = _container(repository);
+        addTearDown(container.dispose);
+        const key = BoardTabEventGamesKey(
+          tourId: 'tour-1',
+          selectedGameId: 'selected-game',
+          selectedRoundId: 'selected-round',
+          selectedBoardNumber: 500,
+        );
+        final provider = eventRailGamesProvider(_providerKey(key));
+        final subscription = container.listen<AsyncValue<EventRailGamesState>>(
+          provider,
+          (_, __) {},
+          fireImmediately: true,
+        );
+        addTearDown(subscription.close);
+        await container.read(provider.future);
+
+        final notifier = container.read(provider.notifier);
+        expect(await notifier.ensureNavigationAdjacency(delta), isFalse);
+        expect(notifier.navigationTargetGameId, isNull);
+        expect(repository.tourPageCalls, const <_PageCall>[
+          _PageCall(id: 'tour-1', limit: 64, offset: 0),
+          _PageCall(id: 'tour-1', limit: 64, offset: 64),
+        ]);
+      },
+    );
+  }
+
+  test('round catalog recovers and discovers appended rounds', () async {
+    final repository = _FakeGameRepository(
+      firstTourPage: const <Games>[],
+      selectedRoundPage: const <Games>[],
+      totalCount: 0,
+    )..roundCatalogError = StateError('offline');
+    final container = _container(repository);
+    addTearDown(container.dispose);
+    final provider = eventRailRoundCatalogProvider(
+      const EventRailRoundCatalogKey(
+        ownerId: 'test-board-tab',
+        tourId: 'tour-1',
+      ),
+    );
+    final subscription = container
+        .listen<AsyncValue<List<EventRailRoundMetadata>>>(
+          provider,
+          (_, __) {},
+          fireImmediately: true,
+        );
+    addTearDown(subscription.close);
+    await expectLater(container.read(provider.future), throwsStateError);
+
+    repository
+      ..roundCatalogError = null
+      ..roundCatalog = const <EventRailRoundMetadata>[
+        EventRailRoundMetadata(
+          id: 'round-1',
+          name: 'Round 1',
+          startsAt: null,
+          createdAt: null,
+          ongoing: false,
+        ),
+      ];
+    await container.read(provider.notifier).refreshCatalog();
+    expect(container.read(provider).requireValue, hasLength(1));
+
+    repository.roundCatalog = const <EventRailRoundMetadata>[
+      EventRailRoundMetadata(
+        id: 'round-1',
+        name: 'Round 1',
+        startsAt: null,
+        createdAt: null,
+        ongoing: false,
+      ),
+      EventRailRoundMetadata(
+        id: 'round-2',
+        name: 'Round 2',
+        startsAt: null,
+        createdAt: null,
+        ongoing: false,
+      ),
+    ];
+    await container.read(provider.notifier).refreshCatalog();
+    expect(container.read(provider).requireValue, hasLength(2));
+
+    repository.roundCatalogError = StateError('temporary');
+    await container.read(provider.notifier).refreshCatalog();
+    expect(container.read(provider).requireValue, hasLength(2));
   });
 }
 
@@ -2424,7 +3645,10 @@ class _FakeGameRepository implements GameRepository {
     this.tourPagesByOffset = const <int, List<Games>>{},
     this.roundPagesByOffset = const <int, List<Games>>{},
     this.roundCatalog = const <EventRailRoundMetadata>[],
+    this.roundCatalogFuture,
     this.allRoundGames = const <Games>[],
+    this.playerGames = const <Games>[],
+    this.roundIdsFuturesByKey = const <String, Future<List<Games>>>{},
   });
 
   List<Games> firstTourPage;
@@ -2439,16 +3663,26 @@ class _FakeGameRepository implements GameRepository {
   Map<int, List<Games>> tourPagesByOffset;
   Map<int, List<Games>> roundPagesByOffset;
   List<EventRailRoundMetadata> roundCatalog;
+  Future<List<EventRailRoundMetadata>>? roundCatalogFuture;
   List<Games> allRoundGames;
+  List<Games> playerGames;
+  Map<String, Future<List<Games>>> roundIdsFuturesByKey;
   Object? roundPageError;
+  Object? roundCatalogError;
+  Object? roundIdsPageError;
   Object? countError;
 
   final List<_PageCall> tourPageCalls = <_PageCall>[];
+  final List<String> tournamentIdentityPageCalls = <String>[];
+  final List<String> tournamentIdentityCountCalls = <String>[];
   final List<_PageCall> roundPageCalls = <_PageCall>[];
   final List<String> selectedGameCalls = <String>[];
   final List<String> countCalls = <String>[];
   final List<String> roundCatalogCalls = <String>[];
+  final List<String> tournamentIdentityCatalogCalls = <String>[];
   final List<_RoundIdsPageCall> roundIdsPageCalls = <_RoundIdsPageCall>[];
+  final List<List<String>> roundIdsCountCalls = <List<String>>[];
+  final List<String> playerGameCalls = <String>[];
   final List<_SelectedOffsetCall> selectedOffsetCalls = <_SelectedOffsetCall>[];
   int legacyFullTourCalls = 0;
 
@@ -2479,6 +3713,17 @@ class _FakeGameRepository implements GameRepository {
     final page = tourPagesByOffset[offset];
     if (page != null) return Future<List<Games>>.value(page);
     throw StateError('Unexpected tour page offset: $offset');
+  }
+
+  @override
+  Future<List<Games>> getEventRailGamesByTournamentIdentity({
+    required String tourId,
+    required String tourSlug,
+    required int limit,
+    required int offset,
+  }) {
+    tournamentIdentityPageCalls.add('$tourId|$tourSlug|$limit|$offset');
+    return getEventRailGamesByTourId(tourId, limit: limit, offset: offset);
   }
 
   @override
@@ -2527,11 +3772,35 @@ class _FakeGameRepository implements GameRepository {
     String tourId,
   ) async {
     roundCatalogCalls.add(tourId);
+    final error = roundCatalogError;
+    if (error != null) throw error;
+    final controlled = roundCatalogFuture;
+    if (controlled != null) return controlled;
     return roundCatalog;
   }
 
   @override
+  Future<List<EventRailRoundMetadata>> getEventRailRoundsByTournamentIdentity({
+    required String tourId,
+    required String tourSlug,
+  }) {
+    tournamentIdentityCatalogCalls.add('$tourId|$tourSlug');
+    return getEventRailRoundsByTourId(tourId);
+  }
+
+  @override
+  Future<List<Games>> getEventGamesByPlayer({
+    required String tourId,
+    int? fideId,
+    required String playerName,
+  }) async {
+    playerGameCalls.add('$tourId|$fideId|$playerName');
+    return playerGames;
+  }
+
+  @override
   Future<int> countEventRailGamesByRoundIds(List<String> roundIds) async {
+    roundIdsCountCalls.add(List<String>.of(roundIds));
     final ids = roundIds.toSet();
     return allRoundGames.where((game) => ids.contains(game.roundId)).length;
   }
@@ -2550,6 +3819,11 @@ class _FakeGameRepository implements GameRepository {
         offset: offset,
       ),
     );
+    final error = roundIdsPageError;
+    if (error != null) throw error;
+    final key = (List<String>.of(roundIds)..sort()).join('|');
+    final controlled = roundIdsFuturesByKey[key];
+    if (controlled != null) return await controlled;
     final matching = allRoundGames
         .where((game) => ids.contains(game.roundId))
         .toList(growable: false);
@@ -2576,6 +3850,15 @@ class _FakeGameRepository implements GameRepository {
     final error = countError;
     if (error != null) return Future<int>.error(error);
     return countFuture ?? Future<int>.value(totalCount);
+  }
+
+  @override
+  Future<int> countEventRailGamesByTournamentIdentity({
+    required String tourId,
+    required String tourSlug,
+  }) {
+    tournamentIdentityCountCalls.add('$tourId|$tourSlug');
+    return countGamesByTourId(tourId);
   }
 
   @override
@@ -2685,20 +3968,24 @@ Games _game({
   required String roundId,
   required int? boardNumber,
   String? roundName,
+  String? roundSlug,
   DateTime? roundStartsAt,
   String status = 'started',
+  String? pgn,
+  String? whiteName,
+  String? blackName,
 }) {
   return Games(
     id: id,
     roundId: roundId,
-    roundSlug: roundId,
+    roundSlug: roundSlug ?? roundId,
     tourId: 'tour-1',
     tourSlug: 'tour-1',
     name: 'Game $id',
     fen: 'fen-$id',
     players: <Player>[
       Player(
-        name: 'White $id',
+        name: whiteName ?? 'White $id',
         title: '',
         rating: 2500,
         fideId: (boardNumber ?? 0) * 2,
@@ -2707,7 +3994,7 @@ Games _game({
         team: '',
       ),
       Player(
-        name: 'Black $id',
+        name: blackName ?? 'Black $id',
         title: '',
         rating: 2490,
         fideId: (boardNumber ?? 0) * 2 + 1,
@@ -2717,7 +4004,7 @@ Games _game({
       ),
     ],
     status: status,
-    pgn: null,
+    pgn: pgn,
     boardNr: boardNumber,
     roundName: roundName,
     roundStartsAt: roundStartsAt,

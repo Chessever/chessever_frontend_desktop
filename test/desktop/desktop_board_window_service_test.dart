@@ -25,6 +25,7 @@ void main() {
       eventGames: [_summary('game-1')],
       eventGamesKey: const BoardTabEventGamesKey(
         tourId: 'tour-1',
+        tourSlug: 'event-2026',
         selectedGameId: 'game-1',
         selectedRoundId: 'round-1',
         selectedBoardNumber: 1,
@@ -76,6 +77,7 @@ void main() {
     expect(decoded.args?.eventGames.single.whitePlayer, 'Carlsen');
     expect(decoded.args?.eventGames.single.status, GameStatus.ongoing);
     expect(decoded.args?.eventGamesKey?.tourId, 'tour-1');
+    expect(decoded.args?.eventGamesKey?.tourSlug, 'event-2026');
     expect(decoded.args?.eventGamesKey?.selectedGameId, 'game-1');
     expect(decoded.args?.eventGamesKey?.selectedRoundId, 'round-1');
     expect(decoded.args?.eventGamesKey?.selectedBoardNumber, 1);

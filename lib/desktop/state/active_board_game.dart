@@ -287,24 +287,28 @@ class BoardTabGameArgs {
 class BoardTabEventGamesKey {
   const BoardTabEventGamesKey({
     required this.tourId,
+    this.tourSlug = '',
     this.selectedGameId = '',
     this.selectedRoundId = '',
     this.selectedBoardNumber,
   });
 
   final String tourId;
+  final String tourSlug;
   final String selectedGameId;
   final String selectedRoundId;
   final int? selectedBoardNumber;
 
   BoardTabEventGamesKey copyWith({
     String? tourId,
+    String? tourSlug,
     String? selectedGameId,
     String? selectedRoundId,
     int? selectedBoardNumber,
   }) {
     return BoardTabEventGamesKey(
       tourId: tourId ?? this.tourId,
+      tourSlug: tourSlug ?? this.tourSlug,
       selectedGameId: selectedGameId ?? this.selectedGameId,
       selectedRoundId: selectedRoundId ?? this.selectedRoundId,
       selectedBoardNumber: selectedBoardNumber ?? this.selectedBoardNumber,
@@ -316,18 +320,24 @@ class BoardTabEventGamesKey {
     return identical(this, other) ||
         other is BoardTabEventGamesKey &&
             other.tourId == tourId &&
+            other.tourSlug == tourSlug &&
             other.selectedGameId == selectedGameId &&
             other.selectedRoundId == selectedRoundId &&
             other.selectedBoardNumber == selectedBoardNumber;
   }
 
   @override
-  int get hashCode =>
-      Object.hash(tourId, selectedGameId, selectedRoundId, selectedBoardNumber);
+  int get hashCode => Object.hash(
+    tourId,
+    tourSlug,
+    selectedGameId,
+    selectedRoundId,
+    selectedBoardNumber,
+  );
 
   @override
   String toString() =>
-      'BoardTabEventGamesKey($tourId, $selectedRoundId, '
+      'BoardTabEventGamesKey($tourId, $tourSlug, $selectedRoundId, '
       '$selectedBoardNumber, $selectedGameId)';
 }
 

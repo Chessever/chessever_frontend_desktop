@@ -15,6 +15,15 @@ import 'package:chessever/repository/supabase/game/games.dart';
 const int kEventRailGamesPageSize = 64;
 const Duration _eventRailSafetyRefreshInterval = Duration(seconds: 5);
 
+String _tournamentIdentity(String tourId, String tourSlug) {
+  final slug = tourSlug.trim();
+  return slug.isNotEmpty ? 'slug:$slug' : 'id:${tourId.trim()}';
+}
+
+String _eventTournamentIdentity(BoardTabEventGamesKey key) {
+  return _tournamentIdentity(key.tourId, key.tourSlug);
+}
+
 @immutable
 class EventRailGamesState {
   const EventRailGamesState({
@@ -78,14 +87,15 @@ class EventRailGamesProviderKey {
     return identical(this, other) ||
         other is EventRailGamesProviderKey &&
             other.ownerId == ownerId &&
-            other.eventKey.tourId.trim() == eventKey.tourId.trim();
+            _eventTournamentIdentity(other.eventKey) ==
+                _eventTournamentIdentity(eventKey);
   }
 
   @override
-  int get hashCode => Object.hash(ownerId, eventKey.tourId.trim());
+  int get hashCode => Object.hash(ownerId, _eventTournamentIdentity(eventKey));
 
   @override
-  String toString() => '$ownerId:${eventKey.tourId.trim()}';
+  String toString() => '$ownerId:${_eventTournamentIdentity(eventKey)}';
 }
 
 /// Per-Board-tab tournament continuation.
@@ -101,6 +111,196 @@ final eventRailGamesProvider = AutoDisposeAsyncNotifierProvider.family<
   EventRailGamesProviderKey
 >(EventRailGamesNotifier.new);
 
+/// Authoritative round headings for a tournament rail.
+///
+/// This query is O(round count) and deliberately independent from paginated
+/// game hydration. A round therefore remains representable even when none of
+/// its games are present in the bounded event-game seed.
+@immutable
+class EventRailRoundCatalogKey {
+  const EventRailRoundCatalogKey({
+    required this.ownerId,
+    required this.tourId,
+    this.tourSlug = '',
+  });
+
+  final String ownerId;
+  final String tourId;
+  final String tourSlug;
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        other is EventRailRoundCatalogKey &&
+            other.ownerId == ownerId &&
+            _tournamentIdentity(other.tourId, other.tourSlug) ==
+                _tournamentIdentity(tourId, tourSlug);
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(ownerId, _tournamentIdentity(tourId, tourSlug));
+}
+
+final eventRailRoundCatalogProvider = AutoDisposeAsyncNotifierProvider.family<
+  EventRailRoundCatalogNotifier,
+  List<EventRailRoundMetadata>,
+  EventRailRoundCatalogKey
+>(EventRailRoundCatalogNotifier.new);
+
+class EventRailRoundCatalogNotifier
+    extends
+        AutoDisposeFamilyAsyncNotifier<
+          List<EventRailRoundMetadata>,
+          EventRailRoundCatalogKey
+        > {
+  Timer? _refreshTimer;
+  bool _disposed = false;
+  bool _refreshing = false;
+  bool _foreground = true;
+  int _requestEpoch = 0;
+  late String _tourId;
+  late String _tourSlug;
+
+  @override
+  Future<List<EventRailRoundMetadata>> build(
+    EventRailRoundCatalogKey key,
+  ) async {
+    _disposed = false;
+    _foreground = true;
+    _requestEpoch = 0;
+    _tourId = key.tourId.trim();
+    _tourSlug = key.tourSlug.trim();
+    ref.onDispose(() {
+      _disposed = true;
+      _refreshTimer?.cancel();
+      _refreshTimer = null;
+    });
+    if (_tourId.isEmpty) return const <EventRailRoundMetadata>[];
+    _refreshing = true;
+    final requestEpoch = _requestEpoch;
+    try {
+      final catalog = await ref
+          .watch(gameRepositoryProvider)
+          .getEventRailRoundsByTournamentIdentity(
+            tourId: _tourId,
+            tourSlug: _tourSlug,
+          );
+      if (_disposed || !_foreground || requestEpoch != _requestEpoch) {
+        return state.valueOrNull ?? const <EventRailRoundMetadata>[];
+      }
+      return catalog;
+    } finally {
+      _refreshing = false;
+      if (!_disposed && _foreground) _scheduleRefresh();
+    }
+  }
+
+  void setForeground(bool foreground) {
+    if (_disposed || _foreground == foreground) return;
+    _foreground = foreground;
+    if (!foreground) {
+      _requestEpoch++;
+      _refreshTimer?.cancel();
+      _refreshTimer = null;
+      return;
+    }
+    _scheduleRefresh();
+    unawaited(refreshCatalog());
+  }
+
+  void _scheduleRefresh() {
+    if (_disposed || !_foreground || _tourId.isEmpty) return;
+    _refreshTimer?.cancel();
+    _refreshTimer = Timer.periodic(
+      _eventRailSafetyRefreshInterval,
+      (_) => unawaited(refreshCatalog()),
+    );
+  }
+
+  Future<void> refreshCatalog() async {
+    if (_disposed || !_foreground || _refreshing || _tourId.isEmpty) return;
+    _refreshing = true;
+    final requestEpoch = _requestEpoch;
+    try {
+      final catalog = await ref
+          .read(gameRepositoryProvider)
+          .getEventRailRoundsByTournamentIdentity(
+            tourId: _tourId,
+            tourSlug: _tourSlug,
+          );
+      if (!_disposed && _foreground && requestEpoch == _requestEpoch) {
+        state = AsyncData(catalog);
+      }
+    } catch (error, stackTrace) {
+      // Preserve a previously successful catalog during transient outages.
+      if (!_disposed &&
+          _foreground &&
+          requestEpoch == _requestEpoch &&
+          state.valueOrNull == null) {
+        state = AsyncError(error, stackTrace);
+      }
+    } finally {
+      _refreshing = false;
+      if (!_disposed && _foreground && requestEpoch != _requestEpoch) {
+        scheduleMicrotask(refreshCatalog);
+      }
+    }
+  }
+}
+
+/// Identifies one player's complete lightweight history inside one event.
+///
+/// Unlike [EventRailGamesProviderKey], this query is immutable and can be
+/// shared by duplicate Board tabs. It contains metadata only and is requested
+/// lazily after the player-name hover intent succeeds.
+@immutable
+class EventRailPlayerGamesKey {
+  const EventRailPlayerGamesKey({
+    required this.tourId,
+    required this.playerName,
+    this.fideId,
+  });
+
+  final String tourId;
+  final String playerName;
+  final int? fideId;
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        other is EventRailPlayerGamesKey &&
+            other.tourId.trim() == tourId.trim() &&
+            other.playerName.trim() == playerName.trim() &&
+            other.fideId == fideId;
+  }
+
+  @override
+  int get hashCode => Object.hash(tourId.trim(), playerName.trim(), fideId);
+}
+
+final eventRailPlayerGamesProvider = FutureProvider.autoDispose.family<
+  List<TournamentGameSummary>,
+  EventRailPlayerGamesKey
+>((ref, key) async {
+  final rows = await ref
+      .read(gameRepositoryProvider)
+      .getEventGamesByPlayer(
+        tourId: key.tourId,
+        fideId: key.fideId,
+        playerName: key.playerName,
+      );
+  final games = <TournamentGameSummary>[];
+  for (final row in rows) {
+    try {
+      games.add(TournamentGameSummary.fromGame(row));
+    } catch (_) {
+      // A malformed legacy row must not hide the player's other valid rounds.
+    }
+  }
+  return List<TournamentGameSummary>.unmodifiable(games);
+});
+
 class EventRailGamesNotifier
     extends
         AutoDisposeFamilyAsyncNotifier<
@@ -115,6 +315,14 @@ class EventRailGamesNotifier
   Completer<bool>? _loadMoreCompletion;
   Completer<bool>? _refreshCompletion;
   Completer<bool>? _navigationHydrationCompletion;
+  int? _navigationHydrationActivityEpoch;
+  int? _navigationHydrationSelectionEpoch;
+  Completer<void>? _initialLoadCompletion;
+  Future<void> _roundHydrationTail = Future<void>.value();
+  final Map<String, Future<bool>> _roundHydrationFutures =
+      <String, Future<bool>>{};
+  final Set<String> _hydratedRoundKeys = <String>{};
+  final Set<String> _emptyHydratedRoundKeys = <String>{};
   bool _disposed = false;
   bool _tabForeground = true;
   bool _lifecycleAllowsStreaming = true;
@@ -131,8 +339,12 @@ class EventRailGamesNotifier
   List<String> _selectedRoundPageIds = const <String>[];
   Games? _selectedGameSeed;
   bool _selectedRoundBaselineInitialized = false;
+  String? _navigationTargetGameId;
+  List<String> _navigationTargetRoundIds = const <String>[];
 
   bool get _isActive => _tabForeground && _lifecycleAllowsStreaming;
+  String? get navigationTargetGameId => _navigationTargetGameId;
+  List<String> get navigationTargetRoundIds => _navigationTargetRoundIds;
 
   @override
   Future<EventRailGamesState> build(EventRailGamesProviderKey arg) async {
@@ -147,6 +359,12 @@ class EventRailGamesNotifier
     _loadMoreCompletion = null;
     _refreshCompletion = null;
     _navigationHydrationCompletion = null;
+    _navigationHydrationActivityEpoch = null;
+    _navigationHydrationSelectionEpoch = null;
+    _roundHydrationFutures.clear();
+    _roundHydrationTail = Future<void>.value();
+    _hydratedRoundKeys.clear();
+    _emptyHydratedRoundKeys.clear();
     _activityEpoch++;
     _selectionEpoch++;
     _eventKey = arg.eventKey;
@@ -156,7 +374,11 @@ class EventRailGamesNotifier
     _selectedRoundPageIds = const <String>[];
     _selectedGameSeed = null;
     _selectedRoundBaselineInitialized = false;
+    _navigationTargetGameId = null;
+    _navigationTargetRoundIds = const <String>[];
     _selectedContextHydratedSelectionEpoch = null;
+    final initialLoadCompletion = Completer<void>();
+    _initialLoadCompletion = initialLoadCompletion;
     ref.listen<bool>(liveGameStreamingLifecycleProvider, (_, next) {
       _setLifecycleAllowsStreaming(next);
     });
@@ -165,68 +387,80 @@ class EventRailGamesNotifier
       _activityEpoch++;
       _selectionEpoch++;
       _stopSafetyRefresh();
+      if (!initialLoadCompletion.isCompleted) {
+        initialLoadCompletion.complete();
+      }
     });
 
-    final eventKey = _eventKey;
-    final buildSelectionEpoch = _selectionEpoch;
-    final tourId = eventKey.tourId.trim();
-    if (tourId.isEmpty) return const EventRailGamesState();
+    try {
+      final eventKey = _eventKey;
+      final buildSelectionEpoch = _selectionEpoch;
+      final tourId = eventKey.tourId.trim();
+      if (tourId.isEmpty) return const EventRailGamesState();
 
-    final repository = ref.watch(gameRepositoryProvider);
-    final tourPageFuture = _loadInitialTourPage(repository, tourId);
-    final roundPageFuture = _loadSelectedRoundWindowOrEmpty(
-      repository,
-      eventKey,
-    );
-    final selectedGameFuture = _loadSelectedGameOrEmpty(repository, eventKey);
-    final totalCountFuture = _loadTotalCount(repository, tourId);
+      final repository = ref.watch(gameRepositoryProvider);
+      final tourPageFuture = _loadInitialTourPage(repository, eventKey);
+      final roundPageFuture = _loadSelectedRoundWindowOrEmpty(
+        repository,
+        eventKey,
+      );
+      final selectedGameFuture = _loadSelectedGameOrEmpty(repository, eventKey);
+      final totalCountFuture = _loadTotalCount(repository, eventKey);
 
-    final auxiliaryPagesFuture = Future.wait(<Future<List<Games>>>[
-      roundPageFuture,
-      selectedGameFuture,
-    ]);
-    final tourPageResult = await tourPageFuture;
-    final auxiliaryPages = await auxiliaryPagesFuture;
-    final tourPage = tourPageResult.games;
-    final selectedRoundPage = auxiliaryPages[0];
-    final selectedGamePage = auxiliaryPages[1];
-    final totalCount = await totalCountFuture;
-    final nextOffset = tourPage.length;
-    final pageCanContinue = tourPage.length >= kEventRailGamesPageSize;
-    _canonicalPageIdsByOffset[0] = _gameIds(tourPage);
-    if (buildSelectionEpoch == _selectionEpoch) {
-      _selectedRoundPageIds = _gameIds(selectedRoundPage);
-      _selectedRoundBaselineInitialized = true;
-      if (selectedRoundPage.isNotEmpty ||
-          eventKey.selectedRoundId.trim().isEmpty) {
-        _selectedContextHydratedSelectionEpoch = buildSelectionEpoch;
+      final auxiliaryPagesFuture = Future.wait(<Future<List<Games>>>[
+        roundPageFuture,
+        selectedGameFuture,
+      ]);
+      final tourPageResult = await tourPageFuture;
+      final auxiliaryPages = await auxiliaryPagesFuture;
+      final tourPage = tourPageResult.games;
+      final selectedRoundPage = auxiliaryPages[0];
+      final selectedGamePage = auxiliaryPages[1];
+      final totalCount = await totalCountFuture;
+      final nextOffset = tourPage.length;
+      final pageCanContinue = tourPage.length >= kEventRailGamesPageSize;
+      _canonicalPageIdsByOffset[0] = _gameIds(tourPage);
+      if (buildSelectionEpoch == _selectionEpoch) {
+        _selectedRoundPageIds = _gameIds(selectedRoundPage);
+        _selectedRoundBaselineInitialized = true;
+        if (selectedRoundPage.isNotEmpty ||
+            eventKey.selectedRoundId.trim().isEmpty) {
+          _selectedContextHydratedSelectionEpoch = buildSelectionEpoch;
+        }
+        _selectedGameSeed =
+            selectedGamePage.isEmpty ? null : selectedGamePage.first;
       }
-      _selectedGameSeed =
-          selectedGamePage.isEmpty ? null : selectedGamePage.first;
-    }
 
-    final initial = EventRailGamesState(
-      games: _mergeMetadataPages(<Games>[
-        ...selectedGamePage,
-        ...selectedRoundPage,
-      ], tourPage),
-      nextOffset: nextOffset,
-      totalCount: totalCount,
-      hasMore:
-          tourPageResult.error != null
-              ? totalCount == null || totalCount > 0
-              : pageCanContinue &&
-                  (totalCount == null || nextOffset < totalCount),
-      loadMoreError: tourPageResult.error,
-    );
-    if (!_disposed) {
-      _startSafetyRefresh();
-      if (_selectionRefreshNeeded && _isActive) {
-        _refreshRequested = true;
-        scheduleMicrotask(_runRequestedRefresh);
+      final initial = EventRailGamesState(
+        games: _mergeMetadataPages(<Games>[
+          ...selectedGamePage,
+          ...selectedRoundPage,
+        ], tourPage),
+        nextOffset: nextOffset,
+        totalCount: totalCount,
+        hasMore:
+            tourPageResult.error != null
+                ? totalCount == null || totalCount > 0
+                : pageCanContinue &&
+                    (totalCount == null || nextOffset < totalCount),
+        loadMoreError: tourPageResult.error,
+      );
+      if (!_disposed) {
+        _startSafetyRefresh();
+        if (_selectionRefreshNeeded && _isActive) {
+          _refreshRequested = true;
+          scheduleMicrotask(_runRequestedRefresh);
+        }
+      }
+      return initial;
+    } finally {
+      if (identical(_initialLoadCompletion, initialLoadCompletion)) {
+        _initialLoadCompletion = null;
+      }
+      if (!initialLoadCompletion.isCompleted) {
+        initialLoadCompletion.complete();
       }
     }
-    return initial;
   }
 
   /// Keeps a mounted background Board tab's cached rail intact while stopping
@@ -269,12 +503,13 @@ class EventRailGamesNotifier
   /// Updates the selected game without replacing the retained canonical
   /// pages for this Board tab and tournament.
   ///
-  /// The provider family is intentionally identified only by owner+tour.
+  /// The provider family is intentionally identified only by owner+event.
   /// Selection is mutable context: navigating within a tournament must not
   /// throw away the cursor and re-download count/first-page metadata.
   void updateSelection(BoardTabEventGamesKey selection) {
     if (_disposed ||
-        selection.tourId.trim() != _eventKey.tourId.trim() ||
+        _eventTournamentIdentity(selection) !=
+            _eventTournamentIdentity(_eventKey) ||
         selection == _eventKey) {
       return;
     }
@@ -282,6 +517,8 @@ class EventRailGamesNotifier
     final previousRoundId = _eventKey.selectedRoundId.trim();
     _eventKey = selection;
     _selectionEpoch++;
+    _navigationTargetGameId = null;
+    _navigationTargetRoundIds = const <String>[];
     if (selection.selectedRoundId.trim() != previousRoundId) {
       _selectedRoundPageIds = const <String>[];
       _selectedRoundBaselineInitialized = false;
@@ -347,38 +584,89 @@ class EventRailGamesNotifier
   /// preserving navigation rather than guessing.
   Future<bool> ensureNavigationAdjacency(int delta) async {
     if (_disposed || !_isActive || delta == 0) return false;
-    final selectedId = _eventKey.selectedGameId.trim();
+    final eventKey = _eventKey;
+    final activityEpoch = _activityEpoch;
+    final selectionEpoch = _selectionEpoch;
+    final selectedId = eventKey.selectedGameId.trim();
     if (selectedId.isEmpty) return false;
 
     final pendingNavigation = _navigationHydrationCompletion;
-    if (pendingNavigation != null) return pendingNavigation.future;
+    if (pendingNavigation != null) {
+      if (_navigationHydrationActivityEpoch == activityEpoch &&
+          _navigationHydrationSelectionEpoch == selectionEpoch) {
+        return pendingNavigation.future;
+      }
+      return false;
+    }
+    _navigationTargetGameId = null;
+    _navigationTargetRoundIds = const <String>[];
 
     await _awaitPendingRailMutation();
-    if (_disposed || !_isActive) return false;
+    if (!_navigationContextIsCurrent(
+      eventKey: eventKey,
+      activityEpoch: activityEpoch,
+      selectionEpoch: selectionEpoch,
+    )) {
+      return false;
+    }
+    final loadedNeighborId = _loadedPlainRoundNeighborId(eventKey, delta);
+    if (loadedNeighborId != null) {
+      _navigationTargetGameId = loadedNeighborId;
+      return true;
+    }
 
-    if (_eventKey.selectedRoundId.trim().isNotEmpty) {
+    if (eventKey.selectedRoundId.trim().isNotEmpty) {
       await ensureSelectionWindow();
-      if (_disposed || !_isActive) return false;
+      if (!_navigationContextIsCurrent(
+        eventKey: eventKey,
+        activityEpoch: activityEpoch,
+        selectionEpoch: selectionEpoch,
+      )) {
+        return false;
+      }
 
+      final selectedSummary =
+          state.valueOrNull?.games
+              .where((game) => game.id.trim() == selectedId)
+              .firstOrNull;
+      final isMultiLegMatch =
+          selectedSummary != null &&
+          _isEventRailMatchSlug(selectedSummary.roundSlug);
       final roundIndex = _selectedRoundPageIds.indexOf(selectedId);
       final hasSameRoundNeighbor =
-          delta < 0
+          !isMultiLegMatch &&
+          (delta < 0
               ? roundIndex > 0
               : roundIndex >= 0 &&
-                  roundIndex < _selectedRoundPageIds.length - 1;
-      if (hasSameRoundNeighbor) return true;
+                  roundIndex < _selectedRoundPageIds.length - 1);
+      if (hasSameRoundNeighbor) {
+        _navigationTargetGameId =
+            _selectedRoundPageIds[roundIndex + (delta < 0 ? -1 : 1)];
+        return true;
+      }
     }
 
     _navigationHydrationInFlight = true;
     final completion = Completer<bool>();
     _navigationHydrationCompletion = completion;
+    _navigationHydrationActivityEpoch = activityEpoch;
+    _navigationHydrationSelectionEpoch = selectionEpoch;
     var result = false;
     try {
-      result = await _hydrateAdjacentStageMetadata(delta);
+      result = await _hydrateAdjacentStageMetadata(
+        delta,
+        eventKey: eventKey,
+        activityEpoch: activityEpoch,
+        selectionEpoch: selectionEpoch,
+      );
       return result;
     } finally {
-      _navigationHydrationInFlight = false;
-      _navigationHydrationCompletion = null;
+      if (identical(_navigationHydrationCompletion, completion)) {
+        _navigationHydrationInFlight = false;
+        _navigationHydrationCompletion = null;
+        _navigationHydrationActivityEpoch = null;
+        _navigationHydrationSelectionEpoch = null;
+      }
       if (!completion.isCompleted) completion.complete(result);
       if (_refreshRequested && _isActive && !_disposed) {
         scheduleMicrotask(_runRequestedRefresh);
@@ -386,7 +674,57 @@ class EventRailGamesNotifier
     }
   }
 
-  Future<void> _awaitPendingRailMutation() async {
+  bool _navigationContextIsCurrent({
+    required BoardTabEventGamesKey eventKey,
+    required int activityEpoch,
+    required int selectionEpoch,
+  }) {
+    return !_disposed &&
+        _isActive &&
+        activityEpoch == _activityEpoch &&
+        selectionEpoch == _selectionEpoch &&
+        eventKey == _eventKey;
+  }
+
+  String? _loadedPlainRoundNeighborId(
+    BoardTabEventGamesKey eventKey,
+    int delta,
+  ) {
+    final selectedId = eventKey.selectedGameId.trim();
+    final selectedRoundId = eventKey.selectedRoundId.trim();
+    if (selectedId.isEmpty || selectedRoundId.isEmpty) return null;
+    final rows = state.valueOrNull?.games
+        .where((game) => game.roundId.trim() == selectedRoundId)
+        .toList(growable: false);
+    if (rows == null || rows.isEmpty) return null;
+    final selected =
+        rows.where((game) => game.id.trim() == selectedId).firstOrNull;
+    if (selected == null || _isEventRailMatchSlug(selected.roundSlug)) {
+      return null;
+    }
+    rows.sort((a, b) {
+      final boardCompare = (a.boardNumber ?? (1 << 30)).compareTo(
+        b.boardNumber ?? (1 << 30),
+      );
+      if (boardCompare != 0) return boardCompare;
+      return a.id.compareTo(b.id);
+    });
+    final index = rows.indexWhere((game) => game.id.trim() == selectedId);
+    final targetIndex = index + (delta < 0 ? -1 : 1);
+    if (index < 0 || targetIndex < 0 || targetIndex >= rows.length) return null;
+    final selectedBoard = rows[index].boardNumber;
+    final targetBoard = rows[targetIndex].boardNumber;
+    if (selectedBoard == null ||
+        targetBoard == null ||
+        targetBoard != selectedBoard + (delta < 0 ? -1 : 1)) {
+      return null;
+    }
+    return rows[targetIndex].id;
+  }
+
+  Future<void> _awaitPendingRailMutation({
+    bool waitForRoundHydrations = true,
+  }) async {
     while (!_disposed && _isActive) {
       final load = _loadMoreCompletion;
       if (load != null) {
@@ -403,109 +741,232 @@ class EventRailGamesNotifier
         await refresh.future;
         continue;
       }
+      if (waitForRoundHydrations && _roundHydrationFutures.isNotEmpty) {
+        await _roundHydrationTail;
+        continue;
+      }
       return;
     }
   }
 
-  Future<bool> _hydrateAdjacentStageMetadata(int delta) async {
+  Future<bool> _hydrateAdjacentStageMetadata(
+    int delta, {
+    required BoardTabEventGamesKey eventKey,
+    required int activityEpoch,
+    required int selectionEpoch,
+  }) async {
     final repository = ref.read(gameRepositoryProvider);
-    final tourId = _eventKey.tourId.trim();
-    final selectedRoundId = _eventKey.selectedRoundId.trim();
+    final tourId = eventKey.tourId.trim();
+    final selectedRoundId = eventKey.selectedRoundId.trim();
     if (tourId.isEmpty || selectedRoundId.isEmpty) return false;
 
     try {
       // Always refresh this catalog at a round edge. Live broadcasts can append
       // rounds while a Board tab remains retained for hours.
       final catalog = await repository.getEventRailRoundsByTourId(tourId);
-      if (_disposed || !_isActive) return false;
+      if (!_navigationContextIsCurrent(
+        eventKey: eventKey,
+        activityEpoch: activityEpoch,
+        selectionEpoch: selectionEpoch,
+      )) {
+        return false;
+      }
       final stages = _orderedNavigationStages(catalog);
       final currentIndex = stages.indexWhere(
         (stage) => stage.roundIds.contains(selectedRoundId),
       );
+      // Catalog metadata is the only bounded proof of cross-round adjacency.
+      // When it is unavailable, one canonical continuation page may still
+      // prove the adjacent row. Never loop through the remaining event.
       if (currentIndex < 0) {
-        return await _hydrateCanonicalNavigationFallback(
-          selectedId: _eventKey.selectedGameId,
+        return _loadOneCanonicalNavigationPage(
+          eventKey: eventKey,
+          activityEpoch: activityEpoch,
+          selectionEpoch: selectionEpoch,
+          delta: delta,
         );
       }
 
       final currentStage = stages[currentIndex];
-      final currentRows = await _loadNavigationStage(
-        repository,
-        currentStage,
-        // A multi-round knockout stage still needs its complete lightweight
-        // matchup ordering. For a normal one-round stage, load only the
-        // boundary in the direction of the selected row. This proves whether
-        // a same-round neighbor exists before crossing into another stage.
-        boundaryDelta: currentStage.roundIds.length > 1 ? null : -delta,
-      );
-      if (_disposed || !_isActive) return false;
-      _mergeNavigationMetadata(currentRows);
-      if (_rowsContainDirectionalNeighbor(
-        currentRows,
-        selectedId: _eventKey.selectedGameId,
-        delta: delta,
+      final currentRows =
+          currentStage.roundIds.length > 1
+              ? await _loadNavigationMatchup(
+                repository,
+                currentStage,
+                eventKey: eventKey,
+              )
+              : await _loadNavigationStageBoundary(
+                repository,
+                currentStage,
+                boundaryDelta: -delta,
+              );
+      if (!_navigationContextIsCurrent(
+        eventKey: eventKey,
+        activityEpoch: activityEpoch,
+        selectionEpoch: selectionEpoch,
       )) {
+        return false;
+      }
+      _mergeNavigationMetadata(currentRows);
+      final currentNeighborId = _directionalNeighborId(
+        currentRows,
+        selectedId: eventKey.selectedGameId,
+        delta: delta,
+      );
+      if (currentNeighborId != null) {
+        _navigationTargetGameId = currentNeighborId;
         return true;
       }
 
-      var targetIndex = currentIndex + (delta < 0 ? -1 : 1);
-      while (targetIndex >= 0 && targetIndex < stages.length) {
-        final rows = await _loadNavigationStage(
-          repository,
-          stages[targetIndex],
-          boundaryDelta: delta,
-        );
-        if (_disposed || !_isActive) return false;
-        _mergeNavigationMetadata(rows);
-        if (_containsRepresentableGame(rows)) return true;
-        targetIndex += delta < 0 ? -1 : 1;
+      final targetIndex = currentIndex + (delta < 0 ? -1 : 1);
+      if (targetIndex < 0 || targetIndex >= stages.length) return false;
+      final targetStage = stages[targetIndex];
+      final rows = await _loadNavigationStageBoundary(
+        repository,
+        targetStage,
+        boundaryDelta: delta,
+      );
+      if (!_navigationContextIsCurrent(
+        eventKey: eventKey,
+        activityEpoch: activityEpoch,
+        selectionEpoch: selectionEpoch,
+      )) {
+        return false;
       }
-
-      // Reaching the catalog edge is an exact no-op. Returning false stops the
-      // caller from waking unrelated canonical pages after the final board.
-      return false;
+      _mergeNavigationMetadata(rows);
+      final targetId = _boundaryRepresentableGameId(rows, delta: delta);
+      if (targetId == null) return false;
+      _navigationTargetGameId = targetId;
+      _navigationTargetRoundIds = List<String>.unmodifiable(
+        targetStage.roundIds,
+      );
+      return true;
     } catch (_) {
-      return _hydrateCanonicalNavigationFallback(
-        selectedId: _eventKey.selectedGameId,
+      return _loadOneCanonicalNavigationPage(
+        eventKey: eventKey,
+        activityEpoch: activityEpoch,
+        selectionEpoch: selectionEpoch,
+        delta: delta,
       );
     }
   }
 
-  Future<List<Games>> _loadNavigationStage(
+  Future<bool> _loadOneCanonicalNavigationPage({
+    required BoardTabEventGamesKey eventKey,
+    required int activityEpoch,
+    required int selectionEpoch,
+    required int delta,
+  }) async {
+    if (state.valueOrNull?.hasMore != true) return false;
+    final loaded = await _loadMorePage(forNavigation: true);
+    if (!loaded ||
+        !_navigationContextIsCurrent(
+          eventKey: eventKey,
+          activityEpoch: activityEpoch,
+          selectionEpoch: selectionEpoch,
+        )) {
+      return false;
+    }
+
+    final canonicalIds = <String>[];
+    final offsets = _canonicalPageIdsByOffset.keys.toList()..sort();
+    for (final offset in offsets) {
+      for (final id in _canonicalPageIdsByOffset[offset] ?? const <String>[]) {
+        if (id.trim().isNotEmpty && !canonicalIds.contains(id)) {
+          canonicalIds.add(id);
+        }
+      }
+    }
+    final selectedIndex = canonicalIds.indexOf(eventKey.selectedGameId.trim());
+    final targetIndex = selectedIndex + (delta < 0 ? -1 : 1);
+    if (selectedIndex < 0 ||
+        targetIndex < 0 ||
+        targetIndex >= canonicalIds.length) {
+      return false;
+    }
+    final targetId = canonicalIds[targetIndex];
+    final target =
+        state.valueOrNull?.games
+            .where((game) => game.id.trim() == targetId)
+            .firstOrNull;
+    if (target == null ||
+        !_isResolvedEventRailPlayer(target.whitePlayer) ||
+        !_isResolvedEventRailPlayer(target.blackPlayer)) {
+      return false;
+    }
+    _navigationTargetGameId = targetId;
+    return true;
+  }
+
+  Future<List<Games>> _loadNavigationStageBoundary(
     GameRepository repository,
     _EventRailNavigationStage stage, {
-    required int? boundaryDelta,
+    required int boundaryDelta,
   }) async {
     final roundIds = stage.roundIds;
     final count = await repository.countEventRailGamesByRoundIds(roundIds);
     if (count <= 0) return const <Games>[];
+    final offset =
+        boundaryDelta < 0 ? math.max(0, count - kEventRailGamesPageSize) : 0;
+    return repository.getEventRailGamesByRoundIds(
+      roundIds,
+      limit: kEventRailGamesPageSize,
+      offset: offset,
+    );
+  }
 
-    // A named knockout stage can span game-1/game-2/tiebreak DB rounds. Its
-    // exact matchup ordering depends on all of those lightweight rows, so load
-    // that stage only. Plain rounds need just the entering boundary page.
-    final loadWholeStage = roundIds.length > 1 || boundaryDelta == null;
-    if (!loadWholeStage) {
-      final offset =
-          boundaryDelta < 0 ? math.max(0, count - kEventRailGamesPageSize) : 0;
-      return repository.getEventRailGamesByRoundIds(
-        roundIds,
-        limit: kEventRailGamesPageSize,
-        offset: offset,
-      );
-    }
+  Future<List<Games>> _loadNavigationMatchup(
+    GameRepository repository,
+    _EventRailNavigationStage stage, {
+    required BoardTabEventGamesKey eventKey,
+  }) async {
+    final selectedId = eventKey.selectedGameId.trim();
+    final selected =
+        state.valueOrNull?.games
+            .where((game) => game.id.trim() == selectedId)
+            .firstOrNull;
+    if (selected == null) return const <Games>[];
 
-    final rows = <Games>[];
-    for (var offset = 0; offset < count; offset += kEventRailGamesPageSize) {
-      rows.addAll(
-        await repository.getEventRailGamesByRoundIds(
-          roundIds,
-          limit: kEventRailGamesPageSize,
-          offset: offset,
-        ),
-      );
-      if (_disposed || !_isActive) return const <Games>[];
+    var playerName = selected.whitePlayer.trim();
+    var fideId = selected.whiteFideId;
+    if (playerName.isEmpty) {
+      playerName = selected.blackPlayer.trim();
+      fideId = selected.blackFideId;
     }
-    return rows;
+    if (playerName.isEmpty) return const <Games>[];
+
+    final selectedPair = _eventRailPairKey(
+      selected.whitePlayer,
+      selected.blackPlayer,
+    );
+    final roundIds = stage.roundIds.toSet();
+    final rows = await repository.getEventGamesByPlayer(
+      tourId: eventKey.tourId.trim(),
+      fideId: fideId,
+      playerName: playerName,
+    );
+    final matchup = rows
+        .where((game) {
+          if (!roundIds.contains(game.roundId.trim())) return false;
+          final players = game.players;
+          if (players == null || players.length < 2) return false;
+          return _eventRailPairKey(players[0].name, players[1].name) ==
+              selectedPair;
+        })
+        .toList(growable: false);
+    matchup.sort((a, b) {
+      final slugCompare = compareEventRailMatchGameSlugs(
+        a.roundSlug,
+        b.roundSlug,
+      );
+      if (slugCompare != 0) return slugCompare;
+      final boardCompare = (a.boardNr ?? 1 << 30).compareTo(
+        b.boardNr ?? 1 << 30,
+      );
+      if (boardCompare != 0) return boardCompare;
+      return a.id.compareTo(b.id);
+    });
+    return matchup;
   }
 
   void _mergeNavigationMetadata(List<Games> rows) {
@@ -516,23 +977,6 @@ class EventRailGamesNotifier
     if (!_eventRailGameListsEqual(current.games, games)) {
       state = AsyncData(current.copyWith(games: games));
     }
-  }
-
-  Future<bool> _hydrateCanonicalNavigationFallback({
-    required String selectedId,
-  }) async {
-    while (state.valueOrNull?.hasMore == true) {
-      final previousOffset = state.valueOrNull?.nextOffset;
-      if (!await _loadMorePage(forNavigation: true)) return false;
-      final current = state.valueOrNull;
-      if (current == null ||
-          (current.hasMore && current.nextOffset == previousOffset)) {
-        return false;
-      }
-    }
-    return _canonicalPageIdsByOffset.values.any(
-      (ids) => ids.contains(selectedId.trim()),
-    );
   }
 
   Future<void> _runRequestedRefresh() async {
@@ -625,6 +1069,88 @@ class EventRailGamesNotifier
 
   Future<bool> loadMore() => _loadMorePage();
 
+  /// Hydrates one expanded catalog round without draining tour-wide pages.
+  ///
+  /// The first round-local metadata page is enough for normal tournaments and
+  /// remains bounded for very large opens. Round existence itself comes from
+  /// [eventRailRoundCatalogProvider], not from this game query.
+  Future<bool> ensureRoundLoaded(List<String> rawRoundIds) {
+    if (_disposed || !_isActive) return Future<bool>.value(false);
+
+    final roundIds = rawRoundIds
+      .map((id) => id.trim())
+      .where((id) => id.isNotEmpty)
+      .toSet()
+      .toList(growable: false)..sort();
+    if (roundIds.isEmpty) return Future<bool>.value(false);
+    final hydrationKey = roundIds.join('|');
+    if (_hydratedRoundKeys.contains(hydrationKey)) {
+      return Future<bool>.value(true);
+    }
+    final pending = _roundHydrationFutures[hydrationKey];
+    if (pending != null) return pending;
+
+    final previous = _roundHydrationTail;
+    final activityEpoch = _activityEpoch;
+    late final Future<bool> hydration;
+    hydration = () async {
+      try {
+        await previous;
+        final initialLoad = _initialLoadCompletion;
+        if (initialLoad != null) await initialLoad.future;
+        await _awaitPendingRailMutation(waitForRoundHydrations: false);
+        if (_disposed || !_isActive || activityEpoch != _activityEpoch) {
+          return false;
+        }
+
+        final repository = ref.read(gameRepositoryProvider);
+        final page = await repository.getEventRailGamesByRoundIds(
+          roundIds,
+          limit: kEventRailGamesPageSize,
+          offset: 0,
+        );
+        if (_disposed || !_isActive || activityEpoch != _activityEpoch) {
+          return false;
+        }
+
+        final current = state.valueOrNull;
+        if (current == null) return false;
+        if (page.isNotEmpty) {
+          state = AsyncData(
+            current.copyWith(
+              games: _mergeMetadataPages(
+                page,
+                const <Games>[],
+                existing: current.games,
+              ),
+              clearLoadMoreError: true,
+            ),
+          );
+        }
+        // Empty success is cached until bounded safety metadata proves that
+        // event membership changed. This keeps immediate reopen free while
+        // allowing a future round to hydrate after games are published.
+        _hydratedRoundKeys.add(hydrationKey);
+        if (page.isEmpty) {
+          _emptyHydratedRoundKeys.add(hydrationKey);
+        } else {
+          _emptyHydratedRoundKeys.remove(hydrationKey);
+        }
+        return true;
+      } catch (_) {
+        // Keep failed requests retryable on the next collapse/expand.
+        return false;
+      } finally {
+        if (identical(_roundHydrationFutures[hydrationKey], hydration)) {
+          _roundHydrationFutures.remove(hydrationKey);
+        }
+      }
+    }();
+    _roundHydrationFutures[hydrationKey] = hydration;
+    _roundHydrationTail = hydration.then<void>((_) {});
+    return hydration;
+  }
+
   Future<bool> _loadMorePage({bool forNavigation = false}) async {
     final pending = _loadMoreCompletion;
     if (pending != null) return pending.future;
@@ -634,6 +1160,7 @@ class EventRailGamesNotifier
         !current.hasMore ||
         _refreshInFlight ||
         _selectionRefreshInFlight ||
+        _roundHydrationFutures.isNotEmpty ||
         (_navigationHydrationInFlight && !forNavigation) ||
         !_isActive ||
         _disposed) {
@@ -650,9 +1177,10 @@ class EventRailGamesNotifier
 
     try {
       final repository = ref.read(gameRepositoryProvider);
-      final tourId = _eventKey.tourId.trim();
-      final page = await repository.getEventRailGamesByTourId(
-        tourId,
+      final eventKey = _eventKey;
+      final page = await repository.getEventRailGamesByTournamentIdentity(
+        tourId: eventKey.tourId.trim(),
+        tourSlug: eventKey.tourSlug.trim(),
         limit: kEventRailGamesPageSize,
         offset: current.nextOffset,
       );
@@ -723,6 +1251,7 @@ class EventRailGamesNotifier
         _refreshInFlight ||
         _selectionRefreshInFlight ||
         _navigationHydrationInFlight ||
+        _roundHydrationFutures.isNotEmpty ||
         !_isActive ||
         _disposed) {
       return false;
@@ -740,8 +1269,9 @@ class EventRailGamesNotifier
     var result = false;
     try {
       final repository = ref.read(gameRepositoryProvider);
-      final canonicalFuture = repository.getEventRailGamesByTourId(
-        tourId,
+      final canonicalFuture = repository.getEventRailGamesByTournamentIdentity(
+        tourId: tourId,
+        tourSlug: eventKey.tourSlug.trim(),
         limit: kEventRailGamesPageSize,
         offset: 0,
       );
@@ -749,13 +1279,14 @@ class EventRailGamesNotifier
       final sampledPageFuture =
           sampledPageOffset == null
               ? Future<List<Games>>.value(const <Games>[])
-              : repository.getEventRailGamesByTourId(
-                tourId,
+              : repository.getEventRailGamesByTournamentIdentity(
+                tourId: tourId,
+                tourSlug: eventKey.tourSlug.trim(),
                 limit: kEventRailGamesPageSize,
                 offset: sampledPageOffset,
               );
       final roundFuture = _loadSelectedRoundWindowStrict(repository, eventKey);
-      final totalCountFuture = _loadTotalCount(repository, tourId);
+      final totalCountFuture = _loadTotalCount(repository, eventKey);
       final pages = await Future.wait(<Future<List<Games>>>[
         canonicalFuture,
         roundFuture,
@@ -843,6 +1374,8 @@ class EventRailGamesNotifier
                 : nextOffset < totalCount,
       );
       if (gameSetChanged) {
+        _hydratedRoundKeys.removeAll(_emptyHydratedRoundKeys);
+        _emptyHydratedRoundKeys.clear();
         // Retain old page membership while the reset cursor re-downloads it.
         // Those rows stay represented in the rail instead of blinking away;
         // [loadMore] reconciles the complete authoritative id set once it
@@ -937,12 +1470,13 @@ class EventRailGamesNotifier
 
   Future<({List<Games> games, String? error})> _loadInitialTourPage(
     GameRepository repository,
-    String tourId,
+    BoardTabEventGamesKey eventKey,
   ) async {
     try {
       return (
-        games: await repository.getEventRailGamesByTourId(
-          tourId,
+        games: await repository.getEventRailGamesByTournamentIdentity(
+          tourId: eventKey.tourId.trim(),
+          tourSlug: eventKey.tourSlug.trim(),
           limit: kEventRailGamesPageSize,
           offset: 0,
         ),
@@ -1020,9 +1554,15 @@ class EventRailGamesNotifier
     );
   }
 
-  Future<int?> _loadTotalCount(GameRepository repository, String tourId) async {
+  Future<int?> _loadTotalCount(
+    GameRepository repository,
+    BoardTabEventGamesKey eventKey,
+  ) async {
     try {
-      return await repository.countGamesByTourId(tourId);
+      return await repository.countEventRailGamesByTournamentIdentity(
+        tourId: eventKey.tourId.trim(),
+        tourSlug: eventKey.tourSlug.trim(),
+      );
     } catch (_) {
       // Pagination remains correct using the page-length fallback. A failed
       // count must not hide the already available selected-game rail seed.
@@ -1141,27 +1681,74 @@ int _compareNavigationStageDates(
   return ascending ? result : -result;
 }
 
-bool _containsRepresentableGame(List<Games> rows) {
-  return rows.any((game) {
+String? _boundaryRepresentableGameId(List<Games> rows, {required int delta}) {
+  final candidates = delta < 0 ? rows.reversed : rows;
+  for (final game in candidates) {
     final players = game.players;
-    if (players == null || players.length < 2) return false;
-    return _isResolvedEventRailPlayer(players[0].name) &&
-        _isResolvedEventRailPlayer(players[1].name);
-  });
+    if (players == null || players.length < 2) continue;
+    if (_isResolvedEventRailPlayer(players[0].name) &&
+        _isResolvedEventRailPlayer(players[1].name)) {
+      return game.id;
+    }
+  }
+  return null;
 }
 
-bool _rowsContainDirectionalNeighbor(
+String _eventRailPairKey(String a, String b) {
+  final pair = [a.trim().toLowerCase(), b.trim().toLowerCase()]..sort();
+  return '${pair[0]}|${pair[1]}';
+}
+
+bool _isEventRailMatchSlug(String slug) {
+  final lower = slug.trim().toLowerCase();
+  return RegExp(r'^game-\d+$').hasMatch(lower) || lower.contains('tiebreak');
+}
+
+/// Shared ordering for games inside one knockout matchup.
+int compareEventRailMatchGameSlugs(String a, String b) {
+  final aInfo = _parseEventRailMatchSlugInfo(a);
+  final bInfo = _parseEventRailMatchSlugInfo(b);
+  if (aInfo.$1 != bInfo.$1) return aInfo.$1.compareTo(bInfo.$1);
+  if (aInfo.$2 != bInfo.$2) return aInfo.$2.compareTo(bInfo.$2);
+  return aInfo.$3.compareTo(bInfo.$3);
+}
+
+(int, int, int) _parseEventRailMatchSlugInfo(String slug) {
+  final lower = slug.trim().toLowerCase();
+  if (lower.startsWith('game-')) {
+    final number = int.tryParse(lower.replaceAll('game-', '')) ?? 0;
+    return (0, number, 0);
+  }
+  if (lower.contains('tiebreak')) {
+    final tiebreakMatch = RegExp(r'tiebreak-(\d+)').firstMatch(lower);
+    final rapidMatch = RegExp(r'rapid-(\d+)').firstMatch(lower);
+    final blitzMatch = RegExp(r'blitz-(\d+)').firstMatch(lower);
+    final tiebreakNumber = int.tryParse(tiebreakMatch?.group(1) ?? '1') ?? 1;
+    final subNumber =
+        int.tryParse(rapidMatch?.group(1) ?? blitzMatch?.group(1) ?? '1') ?? 1;
+    var typePriority = 10;
+    if (blitzMatch != null) typePriority = 20;
+    if (lower.contains('armageddon')) typePriority = 30;
+    return (typePriority + tiebreakNumber, tiebreakNumber, subNumber);
+  }
+  return (999, 0, 0);
+}
+
+String? _directionalNeighborId(
   List<Games> rows, {
   required String selectedId,
   required int delta,
 }) {
   final normalizedId = selectedId.trim();
-  if (normalizedId.isEmpty || delta == 0) return false;
+  if (normalizedId.isEmpty || delta == 0) return null;
   final selectedIndex = rows.indexWhere(
     (game) => game.id.trim() == normalizedId,
   );
-  if (selectedIndex < 0) return false;
-  return delta < 0 ? selectedIndex > 0 : selectedIndex < rows.length - 1;
+  if (selectedIndex < 0) return null;
+  final targetIndex = selectedIndex + (delta < 0 ? -1 : 1);
+  if (targetIndex < 0 || targetIndex >= rows.length) return null;
+  final targetId = rows[targetIndex].id.trim();
+  return targetId.isEmpty ? null : targetId;
 }
 
 bool _isResolvedEventRailPlayer(String name) {

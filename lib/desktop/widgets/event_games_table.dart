@@ -57,6 +57,22 @@ final _eventRoundExpandedProvider = StateProvider.autoDispose
 final _gameRailTabProvider = StateProvider.autoDispose
     .family<_GameRailTab?, String>((ref, tabId) => null);
 
+/// Retains only the active Board tab's selected rail tab while the visible
+/// games rail is collapsed. Event REST/catalog state must be allowed to dispose
+/// while its presentation is hidden; navigation can restart a bounded request
+/// on an explicit Previous/Next command.
+class BoardEventNavigationKeepAlive extends ConsumerWidget {
+  const BoardEventNavigationKeepAlive({required this.tabId, super.key});
+
+  final String tabId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(_gameRailTabProvider(tabId));
+    return const SizedBox.shrink();
+  }
+}
+
 bool _eventGameReplacementConfirmationOpen = false;
 
 @visibleForTesting
@@ -134,11 +150,69 @@ eventRailRoundSegmentsForTesting(List<TournamentGameSummary> games) {
 }
 
 @visibleForTesting
+List<({String id, bool catalogOnly, String status, List<String> gameIds})>
+eventRailCatalogProjectionForTesting(
+  List<TournamentGameSummary> games,
+  List<EventRailRoundMetadata> catalog,
+) {
+  final projection = _mergeEventRoundCatalog(
+    loadedGroups: _buildRoundGroups(games, groupByRound: true),
+    catalog: catalog,
+  );
+  return <({String id, bool catalogOnly, String status, List<String> gameIds})>[
+    for (final group in projection.groups)
+      (
+        id: group.id,
+        catalogOnly: group.catalogOnly,
+        status: group.status.name,
+        gameIds: <String>[for (final game in group.games) game.id],
+      ),
+  ];
+}
+
+@visibleForTesting
 List<TournamentGameSummary> eventRailMergeFreshEventGamesForTesting(
   List<TournamentGameSummary> fallbackGames,
   List<TournamentGameSummary> freshGames,
 ) {
   return _mergeFreshEventGameSummaries(fallbackGames, freshGames);
+}
+
+@visibleForTesting
+int eventRailPreferredGroupPageForTesting({
+  required int firstGameOffset,
+  required int gameCount,
+  required int currentPageIndex,
+  int pageSize = kEventRailGamesPageSize,
+}) {
+  final firstPage = firstGameOffset ~/ pageSize;
+  if (gameCount <= 0) return firstPage;
+  final lastPage = (firstGameOffset + gameCount - 1) ~/ pageSize;
+  if (currentPageIndex >= firstPage && currentPageIndex <= lastPage) {
+    return currentPageIndex;
+  }
+  return firstPage;
+}
+
+@visibleForTesting
+({String? gameId, int? pageIndex}) eventRailHydratedHighlightTargetForTesting(
+  List<TournamentGameSummary> refreshedGames, {
+  required String? exactTargetGameId,
+  bool preserveInputOrder = false,
+}) {
+  if (exactTargetGameId == null) return (gameId: null, pageIndex: null);
+  final ordered = _buildRoundGroups(
+    refreshedGames,
+    groupByRound: true,
+    preserveInputOrder: preserveInputOrder,
+  ).expand((group) => group.games).toList(growable: false);
+  final index = ordered.indexWhere((game) => game.id == exactTargetGameId);
+  return index < 0
+      ? (gameId: null, pageIndex: null)
+      : (
+        gameId: ordered[index].id,
+        pageIndex: index ~/ kEventRailGamesPageSize,
+      );
 }
 
 @visibleForTesting
@@ -212,7 +286,6 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
   static const int _continuationInitialContextRadius = 30;
   static const int _continuationVisiblePageSize =
       _continuationInitialContextRadius * 2 + 1;
-  static const int _eventRailRenderPageSize = kEventRailGamesPageSize;
 
   final ScrollController _scrollController = ScrollController();
   final FocusNode _railFocusNode = FocusNode(debugLabel: 'event-games-rail');
@@ -241,6 +314,9 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
   String? _eventRailPageScope;
   String? _eventRailPageSelectionId;
   int _eventRailPageIndex = 0;
+  String? _pendingEventRailGroupPageId;
+  EventRailRoundCatalogKey? _activeRoundCatalogKey;
+  int _roundCatalogScheduleGeneration = 0;
 
   @override
   void initState() {
@@ -368,10 +444,11 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     required String scope,
     required List<TournamentGameSummary> games,
     required String? selectedGameId,
+    int? requestedPageIndex,
   }) {
     final pageCount = math.max(
       1,
-      (games.length / _eventRailRenderPageSize).ceil(),
+      (games.length / kEventRailGamesPageSize).ceil(),
     );
     final normalizedSelectedId = selectedGameId?.trim();
     if (_eventRailPageScope != scope ||
@@ -383,11 +460,14 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
               ? -1
               : games.indexWhere((game) => game.id == normalizedSelectedId);
       _eventRailPageIndex =
-          selectedIndex < 0 ? 0 : selectedIndex ~/ _eventRailRenderPageSize;
+          selectedIndex < 0 ? 0 : selectedIndex ~/ kEventRailGamesPageSize;
+    }
+    if (requestedPageIndex != null) {
+      _eventRailPageIndex = requestedPageIndex;
     }
     _eventRailPageIndex = _eventRailPageIndex.clamp(0, pageCount - 1);
-    final start = _eventRailPageIndex * _eventRailRenderPageSize;
-    final end = math.min(games.length, start + _eventRailRenderPageSize);
+    final start = _eventRailPageIndex * kEventRailGamesPageSize;
+    final end = math.min(games.length, start + kEventRailGamesPageSize);
     return _EventRailPage(
       games: games.sublist(start, end),
       pageIndex: _eventRailPageIndex,
@@ -403,6 +483,30 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       if (mounted && _scrollController.hasClients) {
         _scrollController.jumpTo(0);
       }
+    });
+  }
+
+  void _routeEventRailGroupAfterHydration(String groupId) {
+    if (!mounted) return;
+    setState(() => _pendingEventRailGroupPageId = groupId);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _scrollController.hasClients) {
+        _scrollController.jumpTo(0);
+      }
+    });
+  }
+
+  void _scheduleRoundCatalogForeground(EventRailRoundCatalogKey catalogKey) {
+    final generation = ++_roundCatalogScheduleGeneration;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          generation != _roundCatalogScheduleGeneration ||
+          _activeRoundCatalogKey != catalogKey) {
+        return;
+      }
+      ref
+          .read(eventRailRoundCatalogProvider(catalogKey).notifier)
+          .setForeground(true);
     });
   }
 
@@ -535,16 +639,42 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       if (!await notifier.ensureNavigationAdjacency(delta) || !mounted) return;
 
       final refreshed = ref.read(provider).valueOrNull?.games ?? available;
-      final visibleRoundKeys = visibleOrderedGames.map(_roundKey).toSet();
-      final refreshedVisible = _buildRoundGroups(refreshed, groupByRound: true)
-          .where((group) => visibleRoundKeys.contains(group.id))
-          .expand((group) => group.games)
-          .toList(growable: false);
-      _moveHighlightedGame(
-        refreshedVisible.isEmpty ? visibleOrderedGames : refreshedVisible,
-        delta: delta,
-        fallbackSelectedGameId: fallbackSelectedGameId,
+      if (ref.read(desktopTabsProvider).activeId != activeTabId) return;
+      final preserveInputOrder =
+          activeArgs?.viewSource == ChessboardView.playerProfile;
+      final refreshedGroups = _buildRoundGroups(
+        refreshed,
+        groupByRound: true,
+        preserveInputOrder: preserveInputOrder,
       );
+      final exactTargetId = notifier.navigationTargetGameId;
+      final hydratedTarget = eventRailHydratedHighlightTargetForTesting(
+        refreshed,
+        exactTargetGameId: exactTargetId,
+        preserveInputOrder: preserveInputOrder,
+      );
+      if (hydratedTarget.gameId != null) {
+        final targetId = hydratedTarget.gameId!;
+        final targetGroup = refreshedGroups.firstWhere(
+          (group) => group.games.any((game) => game.id == targetId),
+        );
+        final expansionKey = _eventRoundExpansionKey(
+          targetGroup,
+          groups: refreshedGroups,
+          collapseUpcomingDuringActiveRound: true,
+        );
+        if (!ref.read(_eventRoundExpandedProvider(expansionKey))) {
+          ref.read(_eventRoundExpandedProvider(expansionKey).notifier).state =
+              true;
+        }
+        setState(() {
+          _highlightedGameId = targetId;
+          _rangeAnchorGameId = targetId;
+          _highlightedGameIds = const <String>{};
+          _eventRailPageIndex = hydratedTarget.pageIndex!;
+        });
+        return;
+      }
     }();
   }
 
@@ -1207,27 +1337,70 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     if (_activatedEventRailTourId != eventTourId) {
       _activatedEventRailTourId = eventTourId;
       _eventRailWasActivated = false;
+      _pendingEventRailGroupPageId = null;
     }
+    final fallbackRail =
+        eventRailProviderKey == null
+            ? null
+            : _resolveGameRail(activeArgs, null);
+    final fallbackResolved =
+        fallbackRail == null || fallbackRail.isEmpty
+            ? null
+            : fallbackRail.resolve(
+              _normalizeRailTab(requestedRailTab, fallbackRail),
+            );
     if (eventRailProviderKey != null && !_eventRailWasActivated) {
-      final fallbackRail = _resolveGameRail(activeArgs, null);
-      final fallbackResolved =
-          fallbackRail.isEmpty
-              ? null
-              : fallbackRail.resolve(
-                _normalizeRailTab(requestedRailTab, fallbackRail),
-              );
       _eventRailWasActivated =
           shouldStreamVisibleRail &&
           (fallbackResolved == null ||
               fallbackResolved.kind == _GameListKind.event);
     }
+    final shouldWatchEventRail =
+        eventRailProviderKey != null &&
+        _eventRailWasActivated &&
+        shouldStreamVisibleRail &&
+        (fallbackResolved == null ||
+            fallbackResolved.kind == _GameListKind.event);
     final eventRailAsync =
-        eventRailProviderKey == null || !_eventRailWasActivated
+        !shouldWatchEventRail
             ? null
             : ref.watch(eventRailGamesProvider(eventRailProviderKey));
     final eventRailValue = eventRailAsync?.valueOrNull;
+    final catalogEligible =
+        eventRailProviderKey != null &&
+        (fallbackResolved == null ||
+            fallbackResolved.kind == _GameListKind.event);
+    final shouldRunCatalog = catalogEligible && shouldStreamVisibleRail;
+    var eventRoundCatalog = const <EventRailRoundMetadata>[];
+    if (shouldRunCatalog) {
+      final catalogKey = EventRailRoundCatalogKey(
+        ownerId: activeTabId,
+        tourId: eventRailProviderKey.eventKey.tourId.trim(),
+        tourSlug: eventRailProviderKey.eventKey.tourSlug.trim(),
+      );
+      final previousKey = _activeRoundCatalogKey;
+      if (previousKey != null && previousKey != catalogKey) {
+        ref
+            .read(eventRailRoundCatalogProvider(previousKey).notifier)
+            .setForeground(false);
+      }
+      _activeRoundCatalogKey = catalogKey;
+      eventRoundCatalog =
+          ref.watch(eventRailRoundCatalogProvider(catalogKey)).valueOrNull ??
+          const <EventRailRoundMetadata>[];
+      _scheduleRoundCatalogForeground(catalogKey);
+    } else {
+      final previousKey = _activeRoundCatalogKey;
+      if (previousKey != null) {
+        _roundCatalogScheduleGeneration++;
+        ref
+            .read(eventRailRoundCatalogProvider(previousKey).notifier)
+            .setForeground(false);
+        _activeRoundCatalogKey = null;
+      }
+    }
     final eventRailSnapshot =
-        eventRailProviderKey == null || !_eventRailWasActivated
+        eventRailAsync == null
             ? null
             : _ContinuationSnapshot(
               games:
@@ -1239,11 +1412,12 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                             const <TournamentGameSummary>[],
                         eventRailValue.games,
                       ),
-              isLoading: eventRailAsync?.isLoading ?? false,
+              isLoading: eventRailAsync.isLoading,
               hasMore: eventRailValue?.hasMore ?? false,
               totalCount: eventRailValue?.totalCount,
               error: eventRailValue?.loadMoreError,
             );
+
     final routeContinuationSnapshot = _watchContinuationSnapshot(
       activeArgs?.routeGamesContinuation,
       fallbackGames: activeArgs?.routeGames ?? const <TournamentGameSummary>[],
@@ -1281,11 +1455,11 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
         effectiveArgs == null ? ref.watch(tournamentGamesProvider) : null;
     final rail = _resolveGameRail(effectiveArgs, legacy);
     if (rail.isEmpty) {
-      if (eventRailProviderKey == null || !_eventRailWasActivated) {
+      if (eventRailAsync == null) {
         _clearScheduledEventRail();
       } else {
         _scheduleEventRailForeground(
-          eventRailProviderKey,
+          eventRailProviderKey!,
           activeArgs!.eventGamesKey!,
           false,
         );
@@ -1296,9 +1470,9 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     final selectedTab = _normalizeRailTab(requestedRailTab, rail);
     final resolved = rail.resolve(selectedTab);
     if (resolved == null || resolved.games.isEmpty) {
-      if (eventRailProviderKey != null && _eventRailWasActivated) {
+      if (eventRailAsync != null) {
         _scheduleEventRailForeground(
-          eventRailProviderKey,
+          eventRailProviderKey!,
           activeArgs!.eventGamesKey!,
           false,
         );
@@ -1307,11 +1481,11 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       }
       return const SizedBox.shrink();
     }
-    if (eventRailProviderKey == null || !_eventRailWasActivated) {
+    if (eventRailAsync == null) {
       _clearScheduledEventRail();
     } else {
       _scheduleEventRailForeground(
-        eventRailProviderKey,
+        eventRailProviderKey!,
         activeArgs!.eventGamesKey!,
         shouldStreamVisibleRail && resolved.kind == _GameListKind.event,
       );
@@ -1328,7 +1502,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
         resolved.kind == _GameListKind.event &&
         effectiveArgs?.viewSource == ChessboardView.playerProfile;
 
-    final allRoundGroups =
+    final loadedRoundGroups =
         resolved.kind == _GameListKind.database
             ? const <_EventRoundGroup>[]
             : resolved.kind == _GameListKind.favorites
@@ -1338,12 +1512,38 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
               groupByRound: resolved.kind == _GameListKind.event,
               preserveInputOrder: preserveEventInputOrder,
             );
+    final catalogProjection =
+        resolved.kind == _GameListKind.event
+            ? _mergeEventRoundCatalog(
+              loadedGroups: loadedRoundGroups,
+              catalog: eventRoundCatalog,
+            )
+            : (
+              groups: loadedRoundGroups,
+              roundIdsByGroup: const <String, List<String>>{},
+            );
+    final allRoundGroups = catalogProjection.groups;
     final allOrderedGames =
         resolved.kind == _GameListKind.database
             ? resolved.games
             : allRoundGroups
                 .expand((round) => round.games)
                 .toList(growable: false);
+    final eventPageIndexByGroup = <String, int>{};
+    if (resolved.kind == _GameListKind.event) {
+      var gameOffset = 0;
+      for (final group in allRoundGroups) {
+        eventPageIndexByGroup[group.id] = gameOffset ~/ kEventRailGamesPageSize;
+        gameOffset += group.games.length;
+      }
+    }
+    final requestedGroupPage =
+        _pendingEventRailGroupPageId == null
+            ? null
+            : eventPageIndexByGroup[_pendingEventRailGroupPageId];
+    if (requestedGroupPage != null) {
+      _pendingEventRailGroupPageId = null;
+    }
     final eventPage =
         resolved.kind == _GameListKind.event
             ? _eventRailPageFor(
@@ -1351,20 +1551,33 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                   '$activeTabId:${eventRailProviderKey?.eventKey.tourId.trim() ?? eventTourId ?? resolved.title}',
               games: allOrderedGames,
               selectedGameId: activeSelectedGameId,
+              requestedPageIndex: requestedGroupPage,
             )
             : null;
-    // A Board rail is intentionally page-bounded. Grouping every row and
-    // watching every round made a thousand-board event expensive even though
-    // Flutter lazily painted the outer list. The current page alone owns row
-    // widgets, expansion providers, and realtime batch membership.
+    if (eventPage != null) {
+      var gameOffset = 0;
+      for (final group in allRoundGroups) {
+        // Headers repeat on every render page they occupy. Toggling one on
+        // page N must operate there instead of jumping to the group's first
+        // page; pending post-hydration routing was resolved above already.
+        eventPageIndexByGroup[group.id] = eventRailPreferredGroupPageForTesting(
+          firstGameOffset: gameOffset,
+          gameCount: group.games.length,
+          currentPageIndex: eventPage.pageIndex,
+        );
+        gameOffset += group.games.length;
+      }
+    }
+
+    // A Board rail is intentionally row-page-bounded. Every authoritative
+    // round header remains present, but only games on the current 64-row page
+    // own row widgets and realtime batch membership. This keeps a
+    // thousand-board event cheap without making later rounds disappear.
     final roundGroups =
         eventPage == null
             ? allRoundGroups
-            : _buildRoundGroups(
-              eventPage.games,
-              groupByRound: true,
-              preserveInputOrder: preserveEventInputOrder,
-            );
+            : _eventRoundGroupsForRenderPage(allRoundGroups, eventPage.games);
+
     final showBoardColumn = resolved.kind == _GameListKind.event;
     final expansionKeys = <String, _EventRoundExpansionKey>{
       for (final group in roundGroups)
@@ -1641,6 +1854,10 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                           showBoardColumn: showBoardColumn,
                           activeContinuation: activeContinuation,
                           eventPage: eventPage,
+                          eventPageIndexByGroup: eventPageIndexByGroup,
+                          eventRoundIdsByGroup:
+                              catalogProjection.roundIdsByGroup,
+                          eventRailProviderKey: eventRailProviderKey,
                           onEventPageChanged:
                               eventPage == null
                                   ? null
@@ -1684,6 +1901,9 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     required bool showBoardColumn,
     required BoardTabGamesContinuation? activeContinuation,
     required _EventRailPage? eventPage,
+    required Map<String, int> eventPageIndexByGroup,
+    required Map<String, List<String>> eventRoundIdsByGroup,
+    required EventRailGamesProviderKey? eventRailProviderKey,
     required ValueChanged<int>? onEventPageChanged,
     required bool hasEventRailPagination,
     required bool isLoadingMoreContinuation,
@@ -1713,6 +1933,44 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
           group: group,
           expanded: expanded,
           onToggle: () {
+            Future<bool>? hydration;
+            final hydrationProviderKey = eventRailProviderKey;
+            if (!expanded && hydrationProviderKey != null) {
+              final roundIds = eventRoundIdsByGroup[group.id];
+              if (roundIds != null && roundIds.isNotEmpty) {
+                hydration = ref
+                    .read(eventRailGamesProvider(hydrationProviderKey).notifier)
+                    .ensureRoundLoaded(roundIds);
+              }
+            }
+            final targetPage = eventPageIndexByGroup[group.id];
+            final shouldNavigate =
+                eventPage != null &&
+                targetPage != null &&
+                targetPage != eventPage.pageIndex;
+            if (shouldNavigate) {
+              onEventPageChanged?.call(targetPage);
+            }
+            if (hydration != null &&
+                hydrationProviderKey != null &&
+                targetPage != null) {
+              unawaited(() async {
+                if (!await hydration! || !mounted) return;
+                final currentArgs = ref.read(
+                  boardTabGameArgsByTabIdProvider.select(
+                    (argsByTabId) => argsByTabId[hydrationProviderKey.ownerId],
+                  ),
+                );
+                if (currentArgs?.eventGamesKey !=
+                    hydrationProviderKey.eventKey) {
+                  return;
+                }
+                _routeEventRailGroupAfterHydration(group.id);
+              }());
+            }
+            if (expanded && group.games.isEmpty && shouldNavigate) {
+              return;
+            }
             ref.read(_eventRoundExpandedProvider(expansionKey).notifier).state =
                 !expanded;
           },
@@ -1999,6 +2257,8 @@ Future<void> _navigateActiveEventGameNow(
     _normalizeRailTab(ref.read(_gameRailTabProvider(activeTabId)), rail),
   );
   if (resolved == null || resolved.games.isEmpty) return;
+  String? provenNavigationTargetId;
+  Set<String> provenNavigationTargetRoundIds = const <String>{};
 
   // A keyed event rail may still be publishing its initial bounded page.
   // Await that provider only when the Event list is actually selected; Source
@@ -2030,6 +2290,8 @@ Future<void> _navigateActiveEventGameNow(
     final notifier = ref.read(provider.notifier);
     notifier.updateSelection(initialEventKey);
     if (!await notifier.ensureNavigationAdjacency(delta)) return;
+    provenNavigationTargetId = notifier.navigationTargetGameId;
+    provenNavigationTargetRoundIds = notifier.navigationTargetRoundIds.toSet();
     activeArgs = _readNavigationBoardArgs(ref, activeTabId);
     legacy = activeArgs == null ? ref.read(tournamentGamesProvider) : null;
     rail = _resolveGameRail(activeArgs, legacy);
@@ -2050,6 +2312,26 @@ Future<void> _navigateActiveEventGameNow(
     gameCount: orderedGames.length,
     delta: delta,
   );
+  final provenTargetIndex =
+      provenNavigationTargetId == null
+          ? -1
+          : orderedGames.indexWhere(
+            (game) => game.id == provenNavigationTargetId,
+          );
+  if (provenTargetIndex >= 0) {
+    nextIdx = provenTargetIndex;
+  } else if (provenNavigationTargetRoundIds.isNotEmpty) {
+    final targetIndices = <int>[
+      for (var index = 0; index < orderedGames.length; index++)
+        if (provenNavigationTargetRoundIds.contains(
+          orderedGames[index].roundId.trim(),
+        ))
+          index,
+    ];
+    if (targetIndices.isNotEmpty) {
+      nextIdx = delta < 0 ? targetIndices.last : targetIndices.first;
+    }
+  }
 
   // Demand-load one adjacent metadata page when the current selection sits
   // at the loaded boundary. This crosses normal page boundaries without
@@ -2517,7 +2799,7 @@ List<LiveGamesBatchKey> _eventRailLiveBatchKeys({
   required List<TournamentGameSummary> games,
   required _GameListKind kind,
 }) {
-  if (kind == _GameListKind.database || games.isEmpty) {
+  if (kind != _GameListKind.event || games.isEmpty) {
     return const <LiveGamesBatchKey>[];
   }
 
@@ -2781,6 +3063,7 @@ class _EventRoundGroup {
     required this.status,
     required this.startsAt,
     required this.games,
+    this.catalogOnly = false,
     this.pairingOnly = false,
     this.segments,
   });
@@ -2795,6 +3078,10 @@ class _EventRoundGroup {
   /// exact order shown on screen.
   final List<TournamentGameSummary> games;
 
+  /// The authoritative round exists, but no round-scoped game page has been
+  /// projected into the rail yet.
+  final bool catalogOnly;
+
   /// True for upcoming rounds whose rows are published pairings with no
   /// moves yet (mobile's pairing-only round cards).
   final bool pairingOnly;
@@ -2804,6 +3091,43 @@ class _EventRoundGroup {
 
   List<_EventRoundSegment> get displaySegments =>
       segments ?? [_EventRoundSegment(games: games)];
+}
+
+List<_EventRoundGroup> _eventRoundGroupsForRenderPage(
+  List<_EventRoundGroup> allGroups,
+  List<TournamentGameSummary> pageGames,
+) {
+  final pageGameIds = pageGames.map((game) => game.id).toSet();
+  return <_EventRoundGroup>[
+    for (final group in allGroups)
+      _EventRoundGroup(
+        id: group.id,
+        title: group.title,
+        status: group.status,
+        startsAt: group.startsAt,
+        catalogOnly: group.catalogOnly,
+        games: group.games
+            .where((game) => pageGameIds.contains(game.id))
+            .toList(growable: false),
+        pairingOnly: group.pairingOnly,
+        segments:
+            group.segments == null
+                ? null
+                : <_EventRoundSegment>[
+                  for (final segment in group.segments!)
+                    if (segment.games.any(
+                      (game) => pageGameIds.contains(game.id),
+                    ))
+                      _EventRoundSegment(
+                        title: segment.title,
+                        score: segment.score,
+                        games: segment.games
+                            .where((game) => pageGameIds.contains(game.id))
+                            .toList(growable: false),
+                      ),
+                ],
+      ),
+  ];
 }
 
 /// A slice of a round's rows rendered under an optional matchup header.
@@ -2918,6 +3242,165 @@ List<_EventRoundGroup> _buildRoundGroups(
   ];
 }
 
+({List<_EventRoundGroup> groups, Map<String, List<String>> roundIdsByGroup})
+_mergeEventRoundCatalog({
+  required List<_EventRoundGroup> loadedGroups,
+  required List<EventRailRoundMetadata> catalog,
+}) {
+  if (catalog.isEmpty) {
+    return (
+      groups: loadedGroups,
+      roundIdsByGroup: <String, List<String>>{
+        for (final group in loadedGroups)
+          group.id: group.games
+              .map((game) => game.roundId.trim())
+              .where((id) => id.isNotEmpty)
+              .toSet()
+              .toList(growable: false),
+      },
+    );
+  }
+
+  final catalogByGroup = <String, List<EventRailRoundMetadata>>{};
+  for (final round in catalog) {
+    final id = round.id.trim();
+    if (id.isEmpty) continue;
+    final name = round.name.trim();
+    final key = name.isEmpty ? _roundIdGroupKey(id) : _roundNameGroupKey(name);
+    catalogByGroup
+        .putIfAbsent(key, () => <EventRailRoundMetadata>[])
+        .add(round);
+  }
+
+  final remainingLoaded = <String, _EventRoundGroup>{
+    for (final group in loadedGroups) group.id: group,
+  };
+  final roundIdsByGroup = <String, List<String>>{};
+  final merged = <_EventRoundGroup>[];
+  for (final entry in catalogByGroup.entries) {
+    final metadata = entry.value;
+    final roundIds = metadata
+        .map((round) => round.id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    roundIdsByGroup[entry.key] = roundIds;
+    var loaded = remainingLoaded.remove(entry.key);
+    if (loaded == null && roundIds.isNotEmpty) {
+      String? matchingLoadedKey;
+      for (final candidate in remainingLoaded.entries) {
+        final candidateRoundIds =
+            candidate.value.games
+                .map((game) => game.roundId.trim())
+                .where((id) => id.isNotEmpty)
+                .toSet();
+        if (candidateRoundIds.any(roundIds.contains)) {
+          matchingLoadedKey = candidate.key;
+          break;
+        }
+      }
+      if (matchingLoadedKey != null) {
+        loaded = remainingLoaded.remove(matchingLoadedKey);
+      }
+    }
+    final startsAt = _earliestCatalogDate(
+      metadata.map((round) => round.startsAt),
+    );
+    final title = metadata
+        .map((round) => round.name.trim())
+        .firstWhere((name) => name.isNotEmpty, orElse: () => 'Round');
+    if (loaded != null) {
+      merged.add(
+        _EventRoundGroup(
+          id: entry.key,
+          title: title,
+          status: loaded.status,
+          startsAt: loaded.startsAt ?? startsAt,
+          games: loaded.games,
+          pairingOnly: loaded.pairingOnly,
+          segments: loaded.segments,
+        ),
+      );
+      continue;
+    }
+
+    merged.add(
+      _EventRoundGroup(
+        id: entry.key,
+        title: title,
+        status: _catalogRoundStatus(metadata, startsAt: startsAt),
+        startsAt: startsAt,
+        games: const <TournamentGameSummary>[],
+        catalogOnly: true,
+      ),
+    );
+  }
+
+  for (final group in remainingLoaded.values) {
+    merged.add(group);
+    roundIdsByGroup[group.id] = group.games
+        .map((game) => game.roundId.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+  }
+
+  return (
+    groups: _sortEventRoundGroups(merged),
+    roundIdsByGroup: roundIdsByGroup,
+  );
+}
+
+RoundStatus _catalogRoundStatus(
+  List<EventRailRoundMetadata> metadata, {
+  required DateTime? startsAt,
+}) {
+  if (metadata.any((round) => round.ongoing)) return RoundStatus.live;
+  if (startsAt == null || startsAt.isAfter(DateTime.now())) {
+    return RoundStatus.upcoming;
+  }
+  return RoundStatus.completed;
+}
+
+DateTime? _earliestCatalogDate(Iterable<DateTime?> dates) {
+  DateTime? earliest;
+  for (final date in dates) {
+    if (date != null && (earliest == null || date.isBefore(earliest))) {
+      earliest = date;
+    }
+  }
+  return earliest;
+}
+
+List<_EventRoundGroup> _sortEventRoundGroups(List<_EventRoundGroup> groups) {
+  final groupsById = <String, _EventRoundGroup>{
+    for (final group in groups) group.id: group,
+  };
+  final models = <GamesAppBarModel>[
+    for (final group in groups)
+      GamesAppBarModel(
+        id: group.id,
+        name: group.title,
+        startsAt: group.startsAt,
+        roundStatus: group.status,
+      ),
+  ];
+  final sorted = sortRoundsForDisplay(
+    models,
+    resolveDate: (model) => model.startsAt,
+    isRoundFullyPlayed: (model) {
+      final group = groupsById[model.id];
+      return group != null &&
+          group.games.isNotEmpty &&
+          group.games.every((game) => game.status.isFinished);
+    },
+  );
+  return <_EventRoundGroup>[
+    for (final model in sorted)
+      if (groupsById[model.id] case final group?) group,
+  ];
+}
+
 _EventRoundExpansionKey _eventRoundExpansionKey(
   _EventRoundGroup group, {
   required List<_EventRoundGroup> groups,
@@ -2926,13 +3409,13 @@ _EventRoundExpansionKey _eventRoundExpansionKey(
   final hasActiveRound =
       collapseUpcomingDuringActiveRound &&
       groups.any((candidate) {
-        final gameStatus = _roundStatus(candidate.games);
-        return gameStatus == RoundStatus.live ||
-            gameStatus == RoundStatus.ongoing;
+        return candidate.status == RoundStatus.live ||
+            candidate.status == RoundStatus.ongoing;
       });
   return (
     id: group.id,
     initiallyExpanded:
+        !group.catalogOnly &&
         !(hasActiveRound && group.status == RoundStatus.upcoming),
   );
 }
@@ -2981,10 +3464,17 @@ String Function(TournamentGameSummary game) _roundKeyResolverFor(
       final roundId = game.roundId.trim();
       name = roundId.isEmpty ? '' : (nameByRoundId[roundId] ?? '');
     }
-    if (name.isNotEmpty) return 'round-name:${name.toLowerCase()}';
+    if (name.isNotEmpty) return _roundNameGroupKey(name);
+    final roundId = game.roundId.trim();
+    if (roundId.isNotEmpty) return _roundIdGroupKey(roundId);
     return _roundKey(game);
   };
 }
+
+String _roundNameGroupKey(String name) =>
+    'round-name:${name.trim().toLowerCase()}';
+
+String _roundIdGroupKey(String id) => 'round-id:${id.trim()}';
 
 String _roundGroupTitle(List<TournamentGameSummary> games) {
   for (final game in games) {
@@ -3018,7 +3508,7 @@ List<_EventRoundSegment>? _buildEventRoundSegments(
     );
     for (final segment in segments) {
       segment.games.sort(
-        (a, b) => _compareMatchGameSlugs(a.roundSlug, b.roundSlug),
+        (a, b) => compareEventRailMatchGameSlugs(a.roundSlug, b.roundSlug),
       );
     }
     return segments;
@@ -3093,37 +3583,6 @@ List<_EventRoundSegment> _matchupSegments(
 String _normalizedPairKey(String a, String b) {
   final pair = [a.trim().toLowerCase(), b.trim().toLowerCase()]..sort();
   return '${pair[0]}|${pair[1]}';
-}
-
-/// `game-N` before tiebreaks (rapid < blitz < armageddon), matching
-/// `KnockoutMatchDetector._compareRoundSlugs`.
-int _compareMatchGameSlugs(String a, String b) {
-  final aInfo = _parseMatchSlugInfo(a);
-  final bInfo = _parseMatchSlugInfo(b);
-  if (aInfo.$1 != bInfo.$1) return aInfo.$1.compareTo(bInfo.$1);
-  if (aInfo.$2 != bInfo.$2) return aInfo.$2.compareTo(bInfo.$2);
-  return aInfo.$3.compareTo(bInfo.$3);
-}
-
-(int, int, int) _parseMatchSlugInfo(String slug) {
-  final lower = slug.trim().toLowerCase();
-  if (lower.startsWith('game-')) {
-    final number = int.tryParse(lower.replaceAll('game-', '')) ?? 0;
-    return (0, number, 0);
-  }
-  if (lower.contains('tiebreak')) {
-    final tiebreakMatch = RegExp(r'tiebreak-(\d+)').firstMatch(lower);
-    final rapidMatch = RegExp(r'rapid-(\d+)').firstMatch(lower);
-    final blitzMatch = RegExp(r'blitz-(\d+)').firstMatch(lower);
-    final tiebreakNumber = int.tryParse(tiebreakMatch?.group(1) ?? '1') ?? 1;
-    final subNumber =
-        int.tryParse(rapidMatch?.group(1) ?? blitzMatch?.group(1) ?? '1') ?? 1;
-    var typePriority = 10;
-    if (blitzMatch != null) typePriority = 20;
-    if (lower.contains('armageddon')) typePriority = 30;
-    return (typePriority + tiebreakNumber, tiebreakNumber, subNumber);
-  }
-  return (999, 0, 0);
 }
 
 String _matchupScoreDisplay(
@@ -3791,6 +4250,41 @@ GameRepository? _tryReadGameRepositoryForEventOpen({
   }
 }
 
+typedef _EventGameOpenContext =
+    ({String activeTabId, BoardTabGameArgs? activeArgs});
+
+_EventGameOpenContext? _captureEventGameOpenContext(
+  WidgetRef ref, {
+  required bool replacesActiveTab,
+}) {
+  if (!replacesActiveTab) return null;
+  final activeTabId = ref.read(desktopTabsProvider).activeId;
+  if (activeTabId == null) return null;
+  return (
+    activeTabId: activeTabId,
+    activeArgs: ref.read(boardTabGameArgsByTabIdProvider)[activeTabId],
+  );
+}
+
+bool _eventGameOpenContextIsCurrent(
+  WidgetRef ref,
+  _EventGameOpenContext? captured,
+) {
+  if (captured == null) return true;
+  if (ref.read(desktopTabsProvider).activeId != captured.activeTabId) {
+    return false;
+  }
+  final current =
+      ref.read(boardTabGameArgsByTabIdProvider)[captured.activeTabId];
+  final original = captured.activeArgs;
+  if (identical(current, original)) return true;
+  if (current == null || original == null) return current == original;
+  return current.gameId == original.gameId &&
+      current.gameListSelectedId == original.gameListSelectedId &&
+      current.eventGamesKey == original.eventGamesKey &&
+      current.viewSource == original.viewSource;
+}
+
 Future<void> _openEventGame({
   required WidgetRef ref,
   BuildContext? context,
@@ -3803,6 +4297,10 @@ Future<void> _openEventGame({
   bool inNewTab = false,
   bool inNewWindow = false,
 }) async {
+  final capturedContext = _captureEventGameOpenContext(
+    ref,
+    replacesActiveTab: !inNewTab && !inNewWindow,
+  );
   final GameRepository? gameRepository =
       kind == _GameListKind.database
           ? null
@@ -3820,6 +4318,7 @@ Future<void> _openEventGame({
   )) {
     return;
   }
+  if (!_eventGameOpenContextIsCurrent(ref, capturedContext)) return;
 
   final openSeed =
       gameRepository == null
@@ -3828,6 +4327,7 @@ Future<void> _openEventGame({
             gameRepository: gameRepository,
             game: game,
           );
+  if (!_eventGameOpenContextIsCurrent(ref, capturedContext)) return;
   final openGame = openSeed.game;
   final openEventGames = _replaceEventSummary(eventGames, openGame);
 
@@ -5419,7 +5919,7 @@ class _LiveBadge extends StatelessWidget {
           width: 6,
           height: 6,
           decoration: const BoxDecoration(
-            color: kGreenColor,
+            color: kPrimaryColor,
             shape: BoxShape.circle,
           ),
         ),
@@ -5427,7 +5927,7 @@ class _LiveBadge extends StatelessWidget {
         const Text(
           'LIVE',
           style: TextStyle(
-            color: kGreenColor,
+            color: kPrimaryColor,
             fontSize: 10,
             fontWeight: FontWeight.w700,
             letterSpacing: 0.6,

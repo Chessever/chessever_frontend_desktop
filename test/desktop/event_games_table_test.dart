@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +12,7 @@ import 'package:chessever/desktop/widgets/event_games_table.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
+import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/gamebase/models/models.dart';
@@ -740,6 +743,23 @@ void main() {
     expect(keys, isEmpty);
   });
 
+  test('source rail does not subscribe to live tournament updates', () {
+    final keys = eventRailLiveBatchKeysForTesting(
+      activeTabId: 'tournaments-default',
+      games: [
+        _summary(
+          id: 'source-game-1',
+          roundLabel: 'R5',
+          status: GameStatus.ongoing,
+        ),
+      ],
+      isEventRail: false,
+      isDatabaseRail: false,
+    );
+
+    expect(keys, isEmpty);
+  });
+
   test('event rail chunks ids without shifting membership on finish', () {
     final games = [
       for (var i = 0; i < 26; i++)
@@ -803,8 +823,8 @@ void main() {
     expect(find.text('DATABASE GAMES'), findsNothing);
     expect(find.text('BD'), findsNothing);
     expect(find.text('R9'), findsNothing);
-    expect(find.text('White Player'), findsOneWidget);
-    expect(find.text('Black Player'), findsOneWidget);
+    expect(_playerIdentity('White Player'), findsOneWidget);
+    expect(_playerIdentity('Black Player'), findsOneWidget);
   });
 
   testWidgets('database game rows show result instead of vs fallback', (
@@ -869,8 +889,8 @@ void main() {
     await tester.pump();
 
     expect(find.text('Huge Local Database'), findsOneWidget);
-    expect(find.text('Local White 0'), findsOneWidget);
-    expect(find.text('Local White 999'), findsNothing);
+    expect(_playerIdentity('Local White 0'), findsOneWidget);
+    expect(_playerIdentity('Local White 999'), findsNothing);
   });
 
   testWidgets(
@@ -909,7 +929,7 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.text('Only Two'));
+      await tester.tap(_playerIdentity('Only Two'));
       await tester.pump();
 
       var container = ProviderScope.containerOf(
@@ -919,9 +939,9 @@ void main() {
       expect(args.gameId, 'db-game-1');
       expect(args.gameListSelectedId, 'db-game-1');
 
-      await tester.tap(find.text('Only Two'));
+      await tester.tap(_playerIdentity('Only Two'));
       await tester.pump(const Duration(milliseconds: 50));
-      await tester.tap(find.text('Only Two'));
+      await tester.tap(_playerIdentity('Only Two'));
       await tester.pump(const Duration(milliseconds: 100));
 
       container = ProviderScope.containerOf(
@@ -985,7 +1005,7 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.text('Local Three'));
+    await tester.tap(_playerIdentity('Local Three'));
     await tester.pump(const Duration(milliseconds: 400));
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
@@ -1109,7 +1129,7 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.text('White One'));
+    await tester.tap(_playerIdentity('White One'));
     await tester.pump(const Duration(milliseconds: 80));
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pump();
@@ -1161,7 +1181,7 @@ void main() {
 
       // Give the rail its own local highlight, then simulate Cmd/Ctrl+Down
       // changing the canonical board selection outside the rail.
-      await tester.tap(find.text('White One'));
+      await tester.tap(_playerIdentity('White One'));
       await tester.pump(const Duration(milliseconds: 400));
       final container = ProviderScope.containerOf(
         tester.element(find.byType(EventGamesTable)),
@@ -1224,6 +1244,8 @@ void main() {
             _summary(
               id: 'event-game-1',
               roundLabel: 'R5',
+              whitePlayer: 'Tabatabaei, Mohammad Amin',
+              blackPlayer: 'Leon Luke Mendonca',
               whiteTitle: 'GM',
               blackTitle: 'FM',
             ),
@@ -1373,15 +1395,15 @@ void main() {
     await tester.pump();
 
     expect(find.text('Round 2'), findsOneWidget);
-    expect(find.text('Selected White'), findsOneWidget);
+    expect(_playerIdentity('Selected White'), findsOneWidget);
 
     await tester.tap(find.text('Round 2'));
     await tester.pump();
     await tester.pump();
 
     expect(find.text('Round 2'), findsOneWidget);
-    expect(find.text('Selected White'), findsNothing);
-    expect(find.text('Round One White'), findsOneWidget);
+    expect(_playerIdentity('Selected White'), findsNothing);
+    expect(_playerIdentity('Round One White'), findsOneWidget);
   });
 
   testWidgets('event games within a round sort by board number ascending', (
@@ -1428,9 +1450,9 @@ void main() {
     );
     await tester.pump();
 
-    final board1Top = tester.getTopLeft(find.text('Board One White')).dy;
-    final board2Top = tester.getTopLeft(find.text('Board Two White')).dy;
-    final board10Top = tester.getTopLeft(find.text('Board Ten White')).dy;
+    final board1Top = tester.getTopLeft(_playerIdentity('Board One White')).dy;
+    final board2Top = tester.getTopLeft(_playerIdentity('Board Two White')).dy;
+    final board10Top = tester.getTopLeft(_playerIdentity('Board Ten White')).dy;
 
     expect(board1Top, lessThan(board2Top));
     expect(board2Top, lessThan(board10Top));
@@ -1482,13 +1504,13 @@ void main() {
       tester.getTopLeft(find.text('Round 2')).dy,
       lessThan(tester.getTopLeft(find.text('Round 4')).dy),
     );
-    expect(find.text('Live White'), findsOneWidget);
-    expect(find.text('Future White'), findsNothing);
+    expect(_playerIdentity('Live White'), findsOneWidget);
+    expect(_playerIdentity('Future White'), findsNothing);
 
     await tester.tap(find.text('Round 4'));
     await tester.pump();
 
-    expect(find.text('Future White'), findsOneWidget);
+    expect(_playerIdentity('Future White'), findsOneWidget);
   });
 
   testWidgets('upcoming event rows expand when the latest round is finished', (
@@ -1531,7 +1553,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('Round 3'), findsOneWidget);
-    expect(find.text('Next White'), findsOneWidget);
+    expect(_playerIdentity('Next White'), findsOneWidget);
   });
 
   testWidgets('event game rows are tappable in the fixed table rail', (
@@ -1566,9 +1588,9 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.text('Black Two'));
+    await tester.tap(_playerIdentity('Black Two'));
     await tester.pump(const Duration(milliseconds: 50));
-    await tester.tap(find.text('Black Two'));
+    await tester.tap(_playerIdentity('Black Two'));
     await tester.pump(const Duration(milliseconds: 100));
 
     final container = ProviderScope.containerOf(
@@ -1578,6 +1600,123 @@ void main() {
     expect(args.gameId, 'event-game-2');
     expect(args.gameListSelectedId, 'event-game-2');
     expect(args.pgn, '1. e4 e5 *');
+  });
+
+  testWidgets('delayed event hydration cannot replace a newer Board context', (
+    tester,
+  ) async {
+    final hydration = Completer<Games>();
+    final repository = _DelayedGameRepository(hydration.future);
+    final initialArgs = BoardTabGameArgs(
+      gameId: 'event-game-1',
+      pgn: '1. e4 e5 *',
+      label: 'Event game',
+      whiteName: 'White One',
+      blackName: 'Black One',
+      tournamentTitle: 'Event',
+      eventGames: [
+        _summary(
+          id: 'event-game-1',
+          roundLabel: 'R5',
+          whitePlayer: 'White One',
+          blackPlayer: 'Black One',
+        ),
+        _summary(
+          id: 'event-game-2',
+          roundLabel: 'R5',
+          whitePlayer: 'White Two',
+          blackPlayer: 'Black Two',
+        ),
+      ],
+      gameListSelectedId: 'event-game-1',
+    );
+    await tester.pumpWidget(
+      _wrap(
+        initialArgs,
+        overrides: [gameRepositoryProvider.overrideWithValue(repository)],
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(_playerIdentity('Black Two'));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(_playerIdentity('Black Two'));
+    await tester.pump();
+    expect(repository.requestedIds, <String>['event-game-2']);
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(EventGamesTable)),
+    );
+    const replacement = BoardTabGameArgs(
+      gameId: 'replacement-game',
+      pgn: '1. d4 d5 *',
+      label: 'Replacement',
+      whiteName: 'Replacement White',
+      blackName: 'Replacement Black',
+      gameListSelectedId: 'replacement-game',
+    );
+    container.read(boardTabGameArgsByTabIdProvider.notifier).state = const {
+      'tournaments-default': replacement,
+    };
+    await tester.pump();
+
+    hydration.complete(
+      Games.fromJson({
+        'id': 'event-game-2',
+        'tour_id': '',
+        'tour_slug': '',
+        'round_id': 'round-5',
+        'round_slug': 'round-5',
+        'players': [
+          {'name': 'White Two'},
+          {'name': 'Black Two'},
+        ],
+        'pgn': '1. c4 e5 *',
+      }),
+    );
+    await tester.pumpAndSettle();
+
+    final current = container.read(boardTabGameArgsByTabIdProvider);
+    expect(current['tournaments-default']?.gameId, 'replacement-game');
+    expect(current['tournaments-default']?.pgn, '1. d4 d5 *');
+  });
+
+  testWidgets('live game status uses the running-clock blue', (tester) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'live-game',
+          pgn: '1. e4 e5 *',
+          label: 'Live game',
+          whiteName: 'Live White',
+          blackName: 'Live Black',
+          tournamentTitle: 'Event',
+          eventGames: [
+            _summary(
+              id: 'live-game',
+              roundLabel: 'R7',
+              whitePlayer: 'Live White',
+              blackPlayer: 'Live Black',
+              status: GameStatus.ongoing,
+              lastMoveTime: DateTime.now(),
+            ),
+          ],
+          gameListSelectedId: 'live-game',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final liveLabels = tester.widgetList<Text>(find.text('LIVE')).toList();
+    expect(liveLabels, isNotEmpty);
+    expect(
+      liveLabels.any((label) => label.style?.color == kPrimaryColor),
+      isTrue,
+    );
+    expect(
+      liveLabels.any((label) => label.style?.color == kGreenColor),
+      isFalse,
+    );
   });
 
   testWidgets('selected event game gets a full-row container treatment', (
@@ -1644,7 +1783,7 @@ void main() {
     expect(firstDecoration.color, isNot(Colors.transparent));
     expect(secondDecoration.color, Colors.transparent);
 
-    await tester.tap(find.text('Black Two'));
+    await tester.tap(_playerIdentity('Black Two'));
     await tester.pump(const Duration(milliseconds: 350));
 
     table = tester.widget<Table>(find.byType(Table));
@@ -1724,15 +1863,15 @@ void main() {
     );
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-    await tester.ensureVisible(find.text('Round One Black One'));
-    await tester.tap(find.text('Round One Black One'));
+    await tester.ensureVisible(_playerIdentity('Round One Black One'));
+    await tester.tap(_playerIdentity('Round One Black One'));
     await tester.pump(const Duration(milliseconds: 400));
     await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
 
     secondRoundTable = tester.widget<Table>(
       find
           .ancestor(
-            of: find.text('Round One Black One'),
+            of: _playerIdentity('Round One Black One'),
             matching: find.byType(Table),
           )
           .first,
@@ -1742,12 +1881,12 @@ void main() {
       isNot(Colors.transparent),
     );
 
-    await tester.ensureVisible(find.text('Round Two White One'));
+    await tester.ensureVisible(_playerIdentity('Round Two White One'));
     await tester.pump();
     firstRoundTable = tester.widget<Table>(
       find
           .ancestor(
-            of: find.text('Round Two White One'),
+            of: _playerIdentity('Round Two White One'),
             matching: find.byType(Table),
           )
           .first,
@@ -1790,7 +1929,7 @@ void main() {
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.control);
     final ctrlClick = await tester.startGesture(
-      tester.getCenter(find.text('Black Two')),
+      tester.getCenter(_playerIdentity('Black Two')),
     );
     await tester.pump(const Duration(milliseconds: 200));
     await ctrlClick.up();
@@ -1882,16 +2021,16 @@ void main() {
       expect(find.text('Player games'), findsOneWidget);
       expect(find.text('Source'), findsOneWidget);
       expect(find.text('Event'), findsOneWidget);
-      expect(find.text('Route Two'), findsOneWidget);
-      expect(find.text('Event White'), findsNothing);
+      expect(_playerIdentity('Route Two'), findsOneWidget);
+      expect(_playerIdentity('Event White'), findsNothing);
 
       await tester.tap(find.text('Event'));
       await tester.pump(const Duration(milliseconds: 220));
 
       expect(find.text('EVENT GAMES'), findsNothing);
       expect(find.text('Tournament context'), findsOneWidget);
-      expect(find.text('Event White'), findsOneWidget);
-      expect(find.text('Route Two'), findsNothing);
+      expect(_playerIdentity('Event White'), findsOneWidget);
+      expect(_playerIdentity('Route Two'), findsNothing);
     },
   );
 
@@ -1929,9 +2068,9 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.text('Route Two'));
+    await tester.tap(_playerIdentity('Route Two'));
     await tester.pump(const Duration(milliseconds: 50));
-    await tester.tap(find.text('Route Two'));
+    await tester.tap(_playerIdentity('Route Two'));
     await tester.pump(const Duration(milliseconds: 100));
 
     final container = ProviderScope.containerOf(
@@ -1969,8 +2108,92 @@ void main() {
 
     expect(find.text('EVENT GAMES'), findsNothing);
     expect(find.text('Wrong Event'), findsNothing);
-    expect(find.text('White Player'), findsNothing);
+    expect(_playerIdentity('White Player'), findsNothing);
   });
+
+  testWidgets('collapsed rail keeps the selected event navigation sequence', (
+    tester,
+  ) async {
+    final args = BoardTabGameArgs(
+      gameId: 'event-game-1',
+      pgn: '1. e4 e5 *',
+      label: 'Event game',
+      whiteName: 'Event White',
+      blackName: 'Event Black',
+      tournamentTitle: 'Event games',
+      eventGames: [
+        _summary(
+          id: 'event-game-1',
+          roundLabel: 'R1',
+          whitePlayer: 'Event White',
+          blackPlayer: 'Event Black',
+        ),
+      ],
+      routeTitle: 'For You',
+      routeGames: [
+        _summary(
+          id: 'source-game-1',
+          roundLabel: 'R1',
+          whitePlayer: 'Source White',
+          blackPlayer: 'Source Black',
+        ),
+      ],
+      gameListSelectedId: 'event-game-1',
+    );
+    final container = ProviderContainer(
+      overrides: [
+        boardTabGameArgsByTabIdProvider.overrideWith(
+          (ref) => {'board-tab': args},
+        ),
+        gameUpdatesStreamProvider.overrideWith(
+          (ref, gameId) => const Stream<Map<String, dynamic>?>.empty(),
+        ),
+        gameUpdatesBatchStreamProvider.overrideWith(
+          (ref, key) => const Stream<Map<String, LiveGameUpdate>>.empty(),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    Widget rail() => UncontrolledProviderScope(
+      container: container,
+      child: const MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: EventGamesTable.width,
+            child: EventGamesTable(tabId: 'board-tab'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(rail());
+    await tester.pump();
+    await tester.tap(find.text('Event'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 250));
+    expect(_playerIdentity('Event White'), findsOneWidget);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(
+          home: BoardEventNavigationKeepAlive(tabId: 'board-tab'),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await tester.pumpWidget(rail());
+    await tester.pump();
+
+    expect(_playerIdentity('Event White'), findsOneWidget);
+    expect(_playerIdentity('Source White'), findsNothing);
+  });
+}
+
+Finder _playerIdentity(String rawName) {
+  return find.text(rawName);
 }
 
 Widget _wrap(
@@ -2012,6 +2235,22 @@ Widget _wrap(
       ),
     ),
   );
+}
+
+class _DelayedGameRepository implements GameRepository {
+  _DelayedGameRepository(this.hydration);
+
+  final Future<Games> hydration;
+  final List<String> requestedIds = <String>[];
+
+  @override
+  Future<Games> getGameWithPGN(String gameId) {
+    requestedIds.add(gameId);
+    return hydration;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _FakeGamebaseRepository extends GamebaseRepository {

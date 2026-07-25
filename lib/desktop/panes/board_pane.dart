@@ -4287,6 +4287,10 @@ class _BoardPaneContent extends HookConsumerWidget {
                 dismissible: false,
                 child: Column(
                   children: [
+                    if (hasGameRail)
+                      BoardEventNavigationKeepAlive(
+                        tabId: activeTabId ?? 'board-default',
+                      ),
                     Expanded(
                       child: GestureDetector(
                         onSecondaryTapUp: (details) {

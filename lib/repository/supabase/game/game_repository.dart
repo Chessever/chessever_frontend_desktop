@@ -285,6 +285,33 @@ class GameRepository extends BaseRepository {
     });
   }
 
+  Future<List<Games>> getEventRailGamesByTournamentIdentity({
+    required String tourId,
+    required String tourSlug,
+    required int limit,
+    required int offset,
+  }) async {
+    final normalizedSlug = tourSlug.trim();
+    if (normalizedSlug.isEmpty) {
+      return getEventRailGamesByTourId(tourId, limit: limit, offset: offset);
+    }
+    final range = eventRailPageRangeForTesting(limit: limit, offset: offset);
+    return handleApiCall(() async {
+      final response = await supabase
+          .from('games')
+          .select(_eventRailGameSelectColumns)
+          .eq('tour_slug', normalizedSlug)
+          .order('round_id', ascending: true)
+          .order('board_nr', ascending: true, nullsFirst: false)
+          .order('id', ascending: true)
+          .range(range.from, range.to);
+      final jsonList = (response as List)
+          .map((item) => json.encode(item))
+          .toList(growable: false);
+      return compute(_decodeGamesInIsolate, jsonList);
+    });
+  }
+
   Future<List<Games>> getEventRailGamesByRoundId(
     String roundId, {
     required int limit,
@@ -376,6 +403,32 @@ class GameRepository extends BaseRepository {
     });
   }
 
+  Future<List<EventRailRoundMetadata>> getEventRailRoundsByTournamentIdentity({
+    required String tourId,
+    required String tourSlug,
+  }) {
+    final normalizedSlug = tourSlug.trim();
+    if (normalizedSlug.isEmpty) return getEventRailRoundsByTourId(tourId);
+    return handleApiCall(() async {
+      final response = await supabase
+          .from('rounds')
+          .select('id,name,starts_at,created_at,ongoing')
+          .eq('tour_slug', normalizedSlug)
+          .order('created_at', ascending: true);
+      return <EventRailRoundMetadata>[
+        for (final raw in response as List)
+          if (raw is Map)
+            EventRailRoundMetadata(
+              id: raw['id']?.toString() ?? '',
+              name: raw['name']?.toString() ?? '',
+              startsAt: _tryParseRepositoryDateTime(raw['starts_at']),
+              createdAt: _tryParseRepositoryDateTime(raw['created_at']),
+              ongoing: raw['ongoing'] == true,
+            ),
+      ];
+    });
+  }
+
   Future<int> countEventRailGamesByRoundIds(List<String> roundIds) {
     final ids = roundIds.where((id) => id.trim().isNotEmpty).toSet().toList();
     if (ids.isEmpty) return Future<int>.value(0);
@@ -423,6 +476,17 @@ class GameRepository extends BaseRepository {
   Future<int> countGamesByTourId(String tourId) {
     return handleApiCall(
       () => supabase.from('games').count().eq('tour_id', tourId),
+    );
+  }
+
+  Future<int> countEventRailGamesByTournamentIdentity({
+    required String tourId,
+    required String tourSlug,
+  }) {
+    final normalizedSlug = tourSlug.trim();
+    if (normalizedSlug.isEmpty) return countGamesByTourId(tourId);
+    return handleApiCall(
+      () => supabase.from('games').count().eq('tour_slug', normalizedSlug),
     );
   }
 

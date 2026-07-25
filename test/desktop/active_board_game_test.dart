@@ -9,7 +9,7 @@ import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
-import 'package:chessever/desktop/widgets/event_games_table.dart';
+import 'package:chessever/desktop/state/event_rail_games.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
@@ -394,8 +394,12 @@ void main() {
           home: Consumer(
             builder: (context, ref, _) {
               return TextButton(
-                onPressed: () {
-                  openTournamentGameTab(ref, _game(tourId: 'tour-1'), 'Event');
+                onPressed: () async {
+                  await openTournamentGameTab(
+                    ref,
+                    _game(tourId: 'tour-1'),
+                    'Event',
+                  );
                   tabsState = ref.read(desktopTabsProvider);
                   argsByTab = ref.read(boardTabGameArgsByTabIdProvider);
                 },
@@ -408,7 +412,7 @@ void main() {
     );
 
     await tester.tap(find.text('open'));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     final activeId = tabsState.activeId;
     expect(activeId, isNotNull);
@@ -442,8 +446,8 @@ void main() {
           home: Consumer(
             builder: (context, ref, _) {
               return TextButton(
-                onPressed: () {
-                  openTournamentGameTab(
+                onPressed: () async {
+                  await openTournamentGameTab(
                     ref,
                     routeGames[50],
                     'Event',
@@ -461,7 +465,7 @@ void main() {
     );
 
     await tester.tap(find.text('open'));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     final args = argsByTab.values.single;
     expect(args.routeTitle, 'Player games');
@@ -472,7 +476,7 @@ void main() {
     expect(args.eventGames.map((game) => game.id), ['game-50']);
   });
 
-  testWidgets('tournament open keeps every event round in the board rail', (
+  testWidgets('tournament open keeps a bounded event seed for the board rail', (
     tester,
   ) async {
     late Map<String, BoardTabGameArgs> argsByTab;
@@ -521,14 +525,10 @@ void main() {
     await tester.pumpAndSettle();
 
     final args = argsByTab.values.single;
-    expect(args.eventGames, hasLength(108));
-    expect(args.eventGames.map((game) => game.roundId).toSet(), {
-      for (var round = 1; round <= 9; round++) 'round-$round',
-    });
-    expect(
-      eventRailRoundGroupsForTesting(args.eventGames).map((group) => group.id),
-      [for (var round = 9; round >= 1; round--) 'round-$round'],
-    );
+    expect(args.eventGames, hasLength(31));
+    expect(args.eventGames.map((game) => game.id), contains('round-9-game-12'));
+    expect(args.eventGames.length, lessThanOrEqualTo(kEventRailGamesPageSize));
+    expect(args.eventGamesKey?.tourId, 'tour-1');
     expect(args.gameListSelectedId, 'round-9-game-12');
   });
 }
@@ -593,6 +593,11 @@ class _BlockingGameRepository implements GameRepository {
   }
 
   @override
+  Future<Games> getGameWithPGN(String gameId) async {
+    throw StateError('No hydrated game fixture for $gameId');
+  }
+
+  @override
   Future<List<Games>> getGamesByTourId(
     String tourId, {
     int? limit,
@@ -615,6 +620,11 @@ class _BlockingGameRepository implements GameRepository {
 class _EmptyGameRepository implements GameRepository {
   @override
   Future<String?> getGamePgn(String gameId) async => null;
+
+  @override
+  Future<Games> getGameWithPGN(String gameId) async {
+    throw StateError('No hydrated game fixture for $gameId');
+  }
 
   @override
   Future<List<Games>> getGamesByTourId(

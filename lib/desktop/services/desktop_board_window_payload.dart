@@ -182,6 +182,7 @@ Map<String, Object?>? _eventGamesKeyToJson(BoardTabEventGamesKey? key) {
   if (key == null) return null;
   return <String, Object?>{
     'tourId': key.tourId,
+    'tourSlug': key.tourSlug,
     'selectedGameId': key.selectedGameId,
     'selectedRoundId': key.selectedRoundId,
     'selectedBoardNumber': key.selectedBoardNumber,
@@ -195,6 +196,7 @@ BoardTabEventGamesKey? _eventGamesKeyFromJson(Object? value) {
   if (tourId.isEmpty) return null;
   return BoardTabEventGamesKey(
     tourId: tourId,
+    tourSlug: _string(json['tourSlug']),
     selectedGameId: _string(json['selectedGameId']),
     selectedRoundId: _string(json['selectedRoundId']),
     selectedBoardNumber: _nullableInt(json['selectedBoardNumber']),
