@@ -4911,6 +4911,11 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
                 : origin.title,
         subtitle: 'Local PGN file',
         onUpdate: (updatedGame) async {
+          // Resolved before the write so the durable file change is always
+          // followed by a Library refresh, even when this Board is disposed
+          // mid-write. Reading `ref` after disposal would throw, which is what
+          // previously let a committed update leave Library UI stale.
+          final localLibrary = ref.read(localChessLibraryProvider.notifier);
           final outcome = await updateLocalLibraryPgnGame(
             target: LocalLibraryGameUpdateTarget(
               sourcePath: sourcePath,
@@ -4921,6 +4926,7 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
             game: updatedGame,
             repository: ref.read(localChessDatabaseRepositoryProvider),
           );
+          unawaited(localLibrary.refresh());
           if (!context.mounted) return;
           if (tabId != null) {
             final tabs = ref.read(desktopTabsProvider);
@@ -4933,8 +4939,11 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
                 ref.read(
                   boardTabAttachedLibrarySaveOriginByTabIdProvider,
                 )[tabId];
+            // A scratch/detached Board carries null args on both sides, so the
+            // identity check still holds. Requiring non-null args here used to
+            // strand the pre-update fingerprint on such tabs, which then failed
+            // the external-change guard on the next update.
             final mayAttachRefreshedOrigin =
-                boardArgs != null &&
                 shouldAttachRefreshedLocalPgnOriginAfterUpdate(
                   tabStillExists: tabStillExists,
                   updatingArgs: boardArgs,
@@ -4958,7 +4967,6 @@ LibraryUpdateTarget? _libraryUpdateTargetForBoardArgs({
                   );
             }
           }
-          unawaited(ref.read(localChessLibraryProvider.notifier).refresh());
         },
       );
   }
@@ -7746,19 +7754,28 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
     final eventKey = boardArgs?.eventGamesKey;
     final hydratedEventGames =
         boardArgs?.eventGames ?? const <TournamentGameSummary>[];
-    final historyKey = boardPlayerHistoryKey(
-      eventKey: eventKey,
-      eventGames: hydratedEventGames,
-      sourceGame: sourceGame,
-      playerName: name,
-      fideId: fideId,
-      ownerId: historyOwnerId ?? '',
+    // Memoized: this walks every hydrated event game to collect sibling tour
+    // ids, and the header rebuilds on every live-clock tick. Recomputing it per
+    // tick was an O(eventGames) scan plus a string join on the UI isolate.
+    final historyKey = useMemoized(
+      () => boardPlayerHistoryKey(
+        eventKey: eventKey,
+        eventGames: hydratedEventGames,
+        sourceGame: sourceGame,
+        playerName: name,
+        fideId: fideId,
+        ownerId: historyOwnerId ?? '',
+      ),
+      [eventKey, hydratedEventGames, sourceGame, name, fideId, historyOwnerId],
     );
     final requestedHistoryContext = useState<String?>(null);
-    final historyRequestContext =
-        historyKey == null
-            ? null
-            : '${historyKey.tourIds.join(',')}|${fideId ?? 0}|${name.trim()}';
+    final historyRequestContext = useMemoized(
+      () =>
+          historyKey == null
+              ? null
+              : '${historyKey.tourIds.join(',')}|${fideId ?? 0}|${name.trim()}',
+      [historyKey, fideId, name],
+    );
     final completeHistoryState =
         historyRequestContext == null ||
                 requestedHistoryContext.value != historyRequestContext

@@ -490,9 +490,12 @@ bool shouldAcceptRefreshedLocalPgnOrigin({
           updatingOrigin.sourcePgnFingerprint?.trim();
 }
 
+/// [updatingArgs] is nullable so scratch/detached Board tabs — which legitimately
+/// carry no open-time args — can still adopt the post-write fingerprint. Both
+/// sides being null is a valid identity match.
 bool shouldAttachRefreshedLocalPgnOriginAfterUpdate({
   required bool tabStillExists,
-  required BoardTabGameArgs updatingArgs,
+  required BoardTabGameArgs? updatingArgs,
   required BoardTabGameArgs? currentArgs,
   required BoardTabLibrarySaveOrigin updatingOrigin,
   required BoardTabLibrarySaveOrigin? currentAttachedOrigin,

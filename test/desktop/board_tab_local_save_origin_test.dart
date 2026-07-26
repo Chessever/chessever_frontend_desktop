@@ -31,6 +31,76 @@ void main() {
     expect(effective?.title, 'Renamed vs Opponent');
   });
 
+  test(
+    'a scratch board with no open-time args adopts the refreshed fingerprint',
+    () {
+      // A scratch/detached Board legitimately carries null args: its local-PGN
+      // identity lives only in the attached origin. Requiring non-null args here
+      // stranded the pre-update fingerprint, so the next update failed the
+      // external-change guard in replaceLocalPgnGame.
+      const attachedOrigin = BoardTabLibrarySaveOrigin.localPgnFile(
+        sourcePath: r'C:\Games\scratch.pgn',
+        sourceIndex: 0,
+        sourceFileGameCount: 1,
+        sourcePgnFingerprint: 'after-first-save',
+        title: 'Scratch analysis',
+      );
+
+      expect(
+        shouldAttachRefreshedLocalPgnOriginAfterUpdate(
+          tabStillExists: true,
+          updatingArgs: null,
+          currentArgs: null,
+          updatingOrigin: attachedOrigin,
+          currentAttachedOrigin: attachedOrigin,
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'a scratch board still rejects a refreshed identity after replacement',
+    () {
+      const attachedOrigin = BoardTabLibrarySaveOrigin.localPgnFile(
+        sourcePath: r'C:\Games\scratch.pgn',
+        sourceIndex: 0,
+        sourceFileGameCount: 1,
+        sourcePgnFingerprint: 'after-first-save',
+        title: 'Scratch analysis',
+      );
+      const replacementArgs = BoardTabGameArgs(
+        pgn: '1. d4 d5 *',
+        label: 'Replacement game',
+        whiteName: 'Replacement White',
+        blackName: 'Replacement Black',
+      );
+
+      // The scratch tab was replaced by a real game tab while the write was in
+      // flight: null -> non-null args must still fail the identity check.
+      expect(
+        shouldAttachRefreshedLocalPgnOriginAfterUpdate(
+          tabStillExists: true,
+          updatingArgs: null,
+          currentArgs: replacementArgs,
+          updatingOrigin: attachedOrigin,
+          currentAttachedOrigin: attachedOrigin,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldAttachRefreshedLocalPgnOriginAfterUpdate(
+          tabStillExists: false,
+          updatingArgs: null,
+          currentArgs: null,
+          updatingOrigin: attachedOrigin,
+          currentAttachedOrigin: attachedOrigin,
+        ),
+        isFalse,
+      );
+    },
+  );
+
   test('delayed update identity is rejected after the tab game changes', () {
     const updatingOrigin = BoardTabLibrarySaveOrigin.localPgnFile(
       sourcePath: r'C:\Games\first.pgn',
