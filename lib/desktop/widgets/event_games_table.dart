@@ -1440,6 +1440,11 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
               eventPage.games,
               groupByRound: true,
               preserveInputOrder: preserveEventInputOrder,
+              // The catalog has to reach the groups that actually render.
+              // Without it only rounds holding a game inside the current window
+              // got a heading, so a 9-round event listed 9, 7, 5, 4 and simply
+              // dropped 8, 6, 3, 2 and 1.
+              roundCatalog: eventRoundCatalog,
             );
     final showBoardColumn = resolved.kind == _GameListKind.event;
     final expansionKeys = <String, _EventRoundExpansionKey>{
@@ -3012,14 +3017,26 @@ List<_EventRoundGroup> _buildRoundGroups(
   // heading. Without this the rail only showed rounds whose games happened to
   // be loaded, so rounds appeared (and the list re-ordered) as rows streamed in.
   final knownIds = <String>{
+    ...byRound.keys,
     for (final group in playedGroups) group.id,
     for (final group in pairingGroups) group.id,
   };
   final catalogGroups = <_EventRoundGroup>[
     for (final round in roundCatalog)
-      if (round.id.trim().isNotEmpty && knownIds.add(round.id.trim()))
+      // Keyed exactly like a game-derived group (`_roundKeyResolverFor`), which
+      // groups by round *name*, not round id. Using the raw round id here made
+      // every catalog round look new and listed each round twice.
+      if (round.id.trim().isNotEmpty &&
+          knownIds.add(
+            round.name.trim().isEmpty
+                ? 'round-id:${round.id.trim()}'
+                : 'round-name:${round.name.trim().toLowerCase()}',
+          ))
         _EventRoundGroup(
-          id: round.id.trim(),
+          id:
+              round.name.trim().isEmpty
+                  ? 'round-id:${round.id.trim()}'
+                  : 'round-name:${round.name.trim().toLowerCase()}',
           title: round.name.trim().isEmpty ? 'Round' : round.name.trim(),
           // Derived from the schedule, not hardcoded to upcoming. A round whose
           // games are not loaded yet still has to land in the right half of the
