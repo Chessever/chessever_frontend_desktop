@@ -54,6 +54,25 @@ typedef _EventRoundExpansionKey = ({String id, bool initiallyExpanded});
 final _eventRoundExpandedProvider = StateProvider.autoDispose
     .family<bool, _EventRoundExpansionKey>((ref, key) => key.initiallyExpanded);
 
+/// The one expanded Event-rail round, per Board tab. `null` means "top-most";
+/// the empty string means the user collapsed everything.
+final _eventRailExpandedRoundProvider = StateProvider.autoDispose
+    .family<String?, String>((ref, scope) => null);
+
+/// Resolves the stored choice against the rounds on screen, so a stale id falls
+/// back to the top-most round rather than collapsing the rail.
+@visibleForTesting
+String? resolveExpandedEventRoundId({
+  required String? stored,
+  required List<String> orderedRoundIds,
+}) {
+  if (stored != null) {
+    if (stored.isEmpty) return null;
+    if (orderedRoundIds.contains(stored)) return stored;
+  }
+  return orderedRoundIds.isEmpty ? null : orderedRoundIds.first;
+}
+
 final _gameRailTabProvider = StateProvider.autoDispose
     .family<_GameRailTab?, String>((ref, tabId) => null);
 
@@ -240,7 +259,11 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
   bool _appLifecycleAllowsStreaming = true;
   String? _eventRailPageScope;
   String? _eventRailPageSelectionId;
-  int _eventRailPageIndex = 0;
+  int _eventRailVisibleLimit = _eventRailRenderPageSize;
+
+  /// Ordered-row count behind the current window, so growth stops at the end
+  /// of what is loaded instead of climbing forever.
+  int _eventRailWindowTotal = 0;
 
   @override
   void initState() {
@@ -278,7 +301,22 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
   void _onScroll() {
     unawaited(_maybeLoadMoreDatabaseGames());
     unawaited(_maybeLoadMoreContinuedGames());
+    // Revealing rows we already hold is a pure render concern, so it must not
+    // sit behind the streaming/foreground gates that guard network fetches.
+    _maybeGrowEventRailWindow();
     unawaited(_maybeLoadMoreEventRailGames());
+  }
+
+  void _maybeGrowEventRailWindow() {
+    if (!mounted || !_scrollController.hasClients) return;
+    if (_eventRailVisibleLimit >= _eventRailWindowTotal) return;
+    final position = _scrollController.position;
+    final nearBottom =
+        position.maxScrollExtent <= 0 ||
+        position.pixels >=
+            position.maxScrollExtent - _databaseScrollPrefetchExtent;
+    if (!nearBottom) return;
+    _growEventRailWindow();
   }
 
   Future<void> _maybeLoadMoreEventRailGames({bool force = false}) async {
@@ -364,45 +402,61 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     _scheduledEventRailForeground = null;
   }
 
-  _EventRailPage _eventRailPageFor({
+  /// Rows the rail is willing to build right now — a prefix of the ordered
+  /// games that grows as the user scrolls, never a page the user has to click
+  /// through. Every round above the limit is still reachable by scrolling, and
+  /// the window always stretches far enough to contain the selected game.
+  _EventRailWindow _eventRailWindowFor({
     required String scope,
     required List<TournamentGameSummary> games,
     required String? selectedGameId,
   }) {
-    final pageCount = math.max(
-      1,
-      (games.length / _eventRailRenderPageSize).ceil(),
-    );
     final normalizedSelectedId = selectedGameId?.trim();
-    if (_eventRailPageScope != scope ||
-        _eventRailPageSelectionId != normalizedSelectedId) {
+    if (_eventRailPageScope != scope) {
+      // New event (or new rail scope): start small again.
       _eventRailPageScope = scope;
       _eventRailPageSelectionId = normalizedSelectedId;
-      final selectedIndex =
-          normalizedSelectedId == null || normalizedSelectedId.isEmpty
-              ? -1
-              : games.indexWhere((game) => game.id == normalizedSelectedId);
-      _eventRailPageIndex =
-          selectedIndex < 0 ? 0 : selectedIndex ~/ _eventRailRenderPageSize;
+      _eventRailVisibleLimit = _eventRailRenderPageSize;
+    } else if (_eventRailPageSelectionId != normalizedSelectedId) {
+      _eventRailPageSelectionId = normalizedSelectedId;
     }
-    _eventRailPageIndex = _eventRailPageIndex.clamp(0, pageCount - 1);
-    final start = _eventRailPageIndex * _eventRailRenderPageSize;
-    final end = math.min(games.length, start + _eventRailRenderPageSize);
-    return _EventRailPage(
-      games: games.sublist(start, end),
-      pageIndex: _eventRailPageIndex,
-      pageCount: pageCount,
+
+    // Never hide the selected row behind the limit, however deep it sits.
+    if (normalizedSelectedId != null && normalizedSelectedId.isNotEmpty) {
+      final selectedIndex = games.indexWhere(
+        (game) => game.id == normalizedSelectedId,
+      );
+      if (selectedIndex >= _eventRailVisibleLimit) {
+        _eventRailVisibleLimit =
+            ((selectedIndex + 1) / _eventRailRenderPageSize).ceil() *
+            _eventRailRenderPageSize;
+      }
+    }
+
+    final limit = _eventRailVisibleLimit
+        .clamp(
+          _eventRailRenderPageSize,
+          math.max(_eventRailRenderPageSize, games.length),
+        )
+        .toInt();
+    _eventRailWindowTotal = games.length;
+    final end = math.min(games.length, limit);
+    return _EventRailWindow(
+      games: games.sublist(0, end),
+      hasMoreRows: end < games.length,
     );
   }
 
-  void _setEventRailPage(int pageIndex, int pageCount) {
-    final nextPageIndex = pageIndex.clamp(0, pageCount - 1);
-    if (_eventRailPageIndex == nextPageIndex) return;
-    setState(() => _eventRailPageIndex = nextPageIndex);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _scrollController.hasClients) {
-        _scrollController.jumpTo(0);
-      }
+  /// Reveals the next slice of already-loaded rows. Paired with
+  /// [_maybeLoadMoreEventRailGames], which fetches further rows from the
+  /// backend, so one scroll gesture both reveals and fetches.
+  void _growEventRailWindow() {
+    if (!mounted) return;
+    setState(() {
+      _eventRailVisibleLimit = math.min(
+        _eventRailVisibleLimit + _eventRailRenderPageSize,
+        math.max(_eventRailRenderPageSize, _eventRailWindowTotal),
+      );
     });
   }
 
@@ -1328,15 +1382,37 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
         resolved.kind == _GameListKind.event &&
         effectiveArgs?.viewSource == ChessboardView.playerProfile;
 
+    // The rail seeds from the games handed over when the board opened, then the
+    // provider resolves with the authoritative round catalog. Painting headings
+    // from the seed first made the round list visibly re-sort a second later, so
+    // the event rail waits for the catalog and paints its final order once.
+    final isEventRail = resolved.kind == _GameListKind.event;
+    final eventRoundCatalog =
+        eventRailValue?.roundCatalog ?? const <EventRailRoundMetadata>[];
+    // Only while the event-rail provider is genuinely in flight. Without the
+    // activation check a rail that never runs the provider (profile/route rails)
+    // would wait forever and render empty.
+    final awaitingEventRoundCatalog =
+        isEventRail &&
+        !preserveEventInputOrder &&
+        eventRailProviderKey != null &&
+        _eventRailWasActivated &&
+        eventRailValue == null;
     final allRoundGroups =
         resolved.kind == _GameListKind.database
             ? const <_EventRoundGroup>[]
             : resolved.kind == _GameListKind.favorites
             ? _buildDateGroups(resolved.games)
+            : awaitingEventRoundCatalog
+            ? const <_EventRoundGroup>[]
             : _buildRoundGroups(
               resolved.games,
-              groupByRound: resolved.kind == _GameListKind.event,
+              groupByRound: isEventRail,
               preserveInputOrder: preserveEventInputOrder,
+              roundCatalog:
+                  isEventRail
+                      ? eventRoundCatalog
+                      : const <EventRailRoundMetadata>[],
             );
     final allOrderedGames =
         resolved.kind == _GameListKind.database
@@ -1346,7 +1422,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                 .toList(growable: false);
     final eventPage =
         resolved.kind == _GameListKind.event
-            ? _eventRailPageFor(
+            ? _eventRailWindowFor(
               scope:
                   '$activeTabId:${eventRailProviderKey?.eventKey.tourId.trim() ?? eventTourId ?? resolved.title}',
               games: allOrderedGames,
@@ -1375,11 +1451,32 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
               resolved.kind == _GameListKind.event,
         ),
     };
+    // One round open at a time, defaulting to the top-most. Each expanded round
+    // builds all of its rows, so several at once multiplied the rail's build and
+    // paint cost.
+    final expandedRoundScope =
+        '$activeTabId:${eventRailProviderKey?.eventKey.tourId.trim() ?? eventTourId ?? resolved.title}';
+    final storedExpandedRoundId =
+        isEventRail
+            ? ref.watch(_eventRailExpandedRoundProvider(expandedRoundScope))
+            : null;
+    final expandedRoundId =
+        isEventRail
+            ? resolveExpandedEventRoundId(
+              stored: storedExpandedRoundId,
+              orderedRoundIds: <String>[
+                for (final group in roundGroups) group.id,
+              ],
+            )
+            : null;
     final expandedByGroup = <String, bool>{
       for (final group in roundGroups)
-        group.id: ref.watch(
-          _eventRoundExpandedProvider(expansionKeys[group.id]!),
-        ),
+        group.id:
+            isEventRail
+                ? group.id == expandedRoundId
+                : ref.watch(
+                  _eventRoundExpandedProvider(expansionKeys[group.id]!),
+                ),
     };
     final visibleRoundGroups = [
       for (final group in roundGroups)
@@ -1393,6 +1490,15 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                 .toList(growable: false);
     final selectedGameId = resolved.selectedGameId;
     final activeSelectionId = _highlightedGameId ?? selectedGameId;
+    String? selectedGroupIdForScroll;
+    if (activeSelectionId != null) {
+      for (final group in roundGroups) {
+        if (group.games.any((game) => game.id == activeSelectionId)) {
+          selectedGroupIdForScroll = group.id;
+          break;
+        }
+      }
+    }
     _pruneRowKeys(orderedGames);
     final liveBatchKeys =
         shouldStreamVisibleRail
@@ -1418,19 +1524,19 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
               orderedGames.isEmpty ? '' : orderedGames.first.id,
               orderedGames.isEmpty ? '' : orderedGames.last.id,
             ].join('|')
-            // Per round, not per game. Joining every game id of every round
-            // rebuilt an O(total games) string on every single build, and the
-            // rail rebuilds on each live tick — a large open paid that cost per
-            // frame. Round id, expansion, row count and the edge ids detect
-            // every change that can move the scroll target.
+            // Only the selection's own context. Two reasons:
+            //   * a signature over every game id rebuilt an O(total games)
+            //     string on every build, and the rail rebuilds each live tick;
+            //   * including row counts made the signature change whenever
+            //     scroll-to-fetch appended rows, which re-fired the
+            //     scroll-to-selection animation and yanked the rail back under
+            //     the user. Rows arriving below the selection must never move
+            //     the viewport.
             : [
+              resolved.kind.index,
               activeSelectionId ?? '',
-              for (final group in roundGroups)
-                '${resolved.kind.index}:${group.id}:'
-                    '${expandedByGroup[group.id] == true}:'
-                    '${group.games.length}:'
-                    '${group.games.isEmpty ? '' : group.games.first.id}:'
-                    '${group.games.isEmpty ? '' : group.games.last.id}',
+              selectedGroupIdForScroll ?? '',
+              expandedByGroup[selectedGroupIdForScroll] == true,
             ].join('|');
     if (resolved.kind == _GameListKind.database) {
       _scheduleDatabaseSelectedScroll(
@@ -1649,14 +1755,9 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                           effectiveArgs: effectiveArgs,
                           showBoardColumn: showBoardColumn,
                           activeContinuation: activeContinuation,
-                          eventPage: eventPage,
-                          onEventPageChanged:
-                              eventPage == null
-                                  ? null
-                                  : (pageIndex) => _setEventRailPage(
-                                    pageIndex,
-                                    eventPage.pageCount,
-                                  ),
+                          isEventRail: isEventRail,
+                          expandedRoundScope: expandedRoundScope,
+                          eventWindow: eventPage,
                           hasEventRailPagination:
                               resolved.kind == _GameListKind.event &&
                               eventRailSnapshot != null,
@@ -1692,8 +1793,9 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     required BoardTabGameArgs? effectiveArgs,
     required bool showBoardColumn,
     required BoardTabGamesContinuation? activeContinuation,
-    required _EventRailPage? eventPage,
-    required ValueChanged<int>? onEventPageChanged,
+    required bool isEventRail,
+    required String expandedRoundScope,
+    required _EventRailWindow? eventWindow,
     required bool hasEventRailPagination,
     required bool isLoadingMoreContinuation,
     required bool continuationHasMore,
@@ -1705,15 +1807,6 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
             : _rowKeyFor(_highlightedGameId ?? selectedGameId!);
     final items = <Widget>[];
     const rowChunkSize = 24;
-    if (eventPage != null && eventPage.pageCount > 1) {
-      items.add(
-        _EventRailPageControls(
-          pageIndex: eventPage.pageIndex,
-          pageCount: eventPage.pageCount,
-          onChanged: onEventPageChanged,
-        ),
-      );
-    }
     for (final group in roundGroups) {
       final expansionKey = expansionKeys[group.id]!;
       final expanded = expandedByGroup[group.id] == true;
@@ -1722,6 +1815,16 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
           group: group,
           expanded: expanded,
           onToggle: () {
+            if (isEventRail) {
+              ref
+                  .read(
+                    _eventRailExpandedRoundProvider(
+                      expandedRoundScope,
+                    ).notifier,
+                  )
+                  .state = expanded ? '' : group.id;
+              return;
+            }
             ref.read(_eventRoundExpandedProvider(expansionKey).notifier).state =
                 !expanded;
           },
@@ -2791,6 +2894,7 @@ class _EventRoundGroup {
     required this.startsAt,
     required this.games,
     this.pairingOnly = false,
+    this.catalogOnly = false,
     this.segments,
   });
 
@@ -2807,6 +2911,11 @@ class _EventRoundGroup {
   /// True for upcoming rounds whose rows are published pairings with no
   /// moves yet (mobile's pairing-only round cards).
   final bool pairingOnly;
+
+  /// True for a round the tournament's round metadata knows about but which has
+  /// no loaded rows yet. It renders as a collapsed heading, so the full round
+  /// list is stable from first paint and nothing appears later.
+  final bool catalogOnly;
 
   /// Matchup slices for team / knockout rounds; null for plain rounds.
   final List<_EventRoundSegment>? segments;
@@ -2831,6 +2940,7 @@ List<_EventRoundGroup> _buildRoundGroups(
   List<TournamentGameSummary> games, {
   required bool groupByRound,
   bool preserveInputOrder = false,
+  List<EventRailRoundMetadata> roundCatalog = const <EventRailRoundMetadata>[],
 }) {
   if (!groupByRound) {
     return [
@@ -2898,7 +3008,33 @@ List<_EventRoundGroup> _buildRoundGroups(
   // keeps the active/latest round first and prevents advance pairings from
   // displacing it. The shared sorter promotes only the next round when it is
   // inside the configured promotion window and all started rounds are done.
-  final groups = [...playedGroups, ...pairingGroups];
+  // Rounds the catalog knows about but that have no rows yet still get a
+  // heading. Without this the rail only showed rounds whose games happened to
+  // be loaded, so rounds appeared (and the list re-ordered) as rows streamed in.
+  final knownIds = <String>{
+    for (final group in playedGroups) group.id,
+    for (final group in pairingGroups) group.id,
+  };
+  final catalogGroups = <_EventRoundGroup>[
+    for (final round in roundCatalog)
+      if (round.id.trim().isNotEmpty && knownIds.add(round.id.trim()))
+        _EventRoundGroup(
+          id: round.id.trim(),
+          title: round.name.trim().isEmpty ? 'Round' : round.name.trim(),
+          // Derived from the schedule, not hardcoded to upcoming. A round whose
+          // games are not loaded yet still has to land in the right half of the
+          // sort, otherwise finished rounds sink below future ones.
+          status:
+              round.startsAt != null && round.startsAt!.isAfter(DateTime.now())
+                  ? RoundStatus.upcoming
+                  : RoundStatus.completed,
+          startsAt: round.startsAt,
+          games: const <TournamentGameSummary>[],
+          catalogOnly: true,
+        ),
+  ];
+
+  final groups = [...playedGroups, ...pairingGroups, ...catalogGroups];
   final groupsById = <String, _EventRoundGroup>{
     for (final group in groups) group.id: group,
   };
@@ -2942,6 +3078,7 @@ _EventRoundExpansionKey _eventRoundExpansionKey(
   return (
     id: group.id,
     initiallyExpanded:
+        !group.catalogOnly &&
         !(hasActiveRound && group.status == RoundStatus.upcoming),
   );
 }
@@ -4802,140 +4939,14 @@ class _GamesPaginationSection extends StatelessWidget {
 }
 
 @immutable
-class _EventRailPage {
-  const _EventRailPage({
-    required this.games,
-    required this.pageIndex,
-    required this.pageCount,
-  });
+class _EventRailWindow {
+  const _EventRailWindow({required this.games, required this.hasMoreRows});
 
   final List<TournamentGameSummary> games;
-  final int pageIndex;
-  final int pageCount;
-}
 
-class _EventRailPageControls extends StatelessWidget {
-  const _EventRailPageControls({
-    required this.pageIndex,
-    required this.pageCount,
-    required this.onChanged,
-  });
-
-  final int pageIndex;
-  final int pageCount;
-  final ValueChanged<int>? onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final canGoBack = pageIndex > 0;
-    final canGoForward = pageIndex + 1 < pageCount;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 2, 6, 8),
-      child: Row(
-        children: [
-          Text(
-            'Page ${pageIndex + 1} of $pageCount',
-            style: const TextStyle(
-              color: kWhiteColor70,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              fontFeatures: [FontFeature.tabularFigures()],
-            ),
-          ),
-          const Spacer(),
-          _EventRailPageButton(
-            key: const ValueKey<String>('event-rail-previous-page'),
-            icon: Icons.chevron_left_rounded,
-            tooltip: 'Previous games',
-            enabled: canGoBack,
-            onPressed: canGoBack ? () => onChanged?.call(pageIndex - 1) : null,
-          ),
-          const SizedBox(width: 5),
-          _EventRailPageButton(
-            key: const ValueKey<String>('event-rail-next-page'),
-            icon: Icons.chevron_right_rounded,
-            tooltip: 'Next games',
-            enabled: canGoForward,
-            onPressed:
-                canGoForward ? () => onChanged?.call(pageIndex + 1) : null,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _EventRailPageButton extends StatefulWidget {
-  const _EventRailPageButton({
-    super.key,
-    required this.icon,
-    required this.tooltip,
-    required this.enabled,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final bool enabled;
-  final VoidCallback? onPressed;
-
-  @override
-  State<_EventRailPageButton> createState() => _EventRailPageButtonState();
-}
-
-class _EventRailPageButtonState extends State<_EventRailPageButton> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = widget.enabled && widget.onPressed != null;
-    return DesktopTooltip(
-      message: widget.tooltip,
-      child: Semantics(
-        button: true,
-        enabled: enabled,
-        label: widget.tooltip,
-        child: ClickCursor(
-          child: MouseRegion(
-            cursor:
-                enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
-            onEnter: enabled ? (_) => setState(() => _hovered = true) : null,
-            onExit: enabled ? (_) => setState(() => _hovered = false) : null,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: enabled ? widget.onPressed : null,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 100),
-                width: 24,
-                height: 24,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: _hovered ? kBlack3Color : Colors.transparent,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color:
-                        enabled
-                            ? (_hovered
-                                ? kWhiteColor.withValues(alpha: 0.24)
-                                : kDividerColor.withValues(alpha: 0.62))
-                            : kDividerColor.withValues(alpha: 0.28),
-                  ),
-                ),
-                child: Icon(
-                  widget.icon,
-                  size: 16,
-                  color:
-                      enabled
-                          ? (_hovered ? kWhiteColor : kWhiteColor70)
-                          : kWhiteColor.withValues(alpha: 0.26),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  /// True when more already-loaded rows sit past the current window, so the
+  /// rail shows a scroll affordance instead of page arrows.
+  final bool hasMoreRows;
 }
 
 class _LoadingRoundHeader extends StatelessWidget {

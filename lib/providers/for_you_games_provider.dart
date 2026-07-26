@@ -159,8 +159,17 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
       next,
     ) {
       next.whenData((liveIds) {
-        _refreshLiveCategories(liveIds);
-        _refreshTopGameSnapshotsForLiveSignal();
+        // Deferred off the notification callstack. Publishing state from inside
+        // another provider's synchronous notification let Riverpod deliver it to
+        // a listener list captured before a just-unmounted pane was removed,
+        // which asserted `_lifecycleState != defunct` in markNeedsBuild. The
+        // live-ids poll then repeated that assert on every tick and left the For
+        // You feed stuck on its spinner.
+        Future<void>.microtask(() {
+          if (!mounted) return;
+          _refreshLiveCategories(liveIds);
+          _refreshTopGameSnapshotsForLiveSignal();
+        });
       });
     });
 

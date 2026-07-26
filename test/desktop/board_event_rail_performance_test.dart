@@ -484,7 +484,9 @@ void main() {
     },
   );
 
-  testWidgets('large event rails use explicit 64-game pages', (tester) async {
+  testWidgets('large event rails start at 64 rows and grow by scrolling', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues(const <String, Object>{});
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(1800, 1000);
@@ -536,24 +538,49 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('Page 1 of 18'), findsOneWidget);
+    int renderedStatusCells() =>
+        find
+            .byWidgetPredicate(
+              (widget) =>
+                  widget.runtimeType.toString() == '_EventGameStatusCell',
+            )
+            .evaluate()
+            .length;
+
+    // A 1092-game event opens with one bounded slice of rows, not all of them.
+    expect(renderedStatusCells(), lessThanOrEqualTo(64));
+
+    // No page controls: the rail is scroll-to-fetch only.
+    expect(find.text('Page 1 of 18'), findsNothing);
     expect(
-      find
-          .byWidgetPredicate(
-            (widget) => widget.runtimeType.toString() == '_EventGameStatusCell',
-          )
-          .evaluate()
-          .length,
-      lessThanOrEqualTo(64),
-    );
-
-    await tester.tap(
       find.byKey(const ValueKey<String>('event-rail-next-page')),
+      findsNothing,
     );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 150));
+    expect(
+      find.byKey(const ValueKey<String>('event-rail-previous-page')),
+      findsNothing,
+    );
 
-    expect(find.text('Page 2 of 18'), findsOneWidget);
+    // Row 65 lives past the opening window and appears once the user scrolls.
+    expect(find.text('White 65'), findsNothing);
+
+    final railScrollable = find
+        .descendant(
+          of: find.byType(EventGamesTable),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+
+    // Each time the user reaches the bottom the rail reveals another slice, so
+    // repeated scrolling walks deeper into the event.
+    for (var attempt = 0; attempt < 8; attempt++) {
+      if (find.text('White 65').evaluate().isNotEmpty) break;
+      await tester.drag(railScrollable, const Offset(0, -2000));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+
+    expect(renderedStatusCells(), greaterThan(0));
     expect(find.text('White 65'), findsOneWidget);
   });
 
