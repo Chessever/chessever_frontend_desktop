@@ -619,7 +619,6 @@ void main() {
               name: 'Stage ${String.fromCharCode(64 + round)}',
               startsAt: DateTime.utc(2026, 8, 1).add(Duration(days: round - 1)),
               createdAt: DateTime.utc(2026, 7, round),
-              ongoing: false,
             ),
         ],
       );
@@ -1009,7 +1008,6 @@ void main() {
               name: 'Round 1',
               startsAt: DateTime.utc(2026, 7, 18),
               createdAt: DateTime.utc(2026, 7, 18),
-              ongoing: true,
             ),
           ],
         );
