@@ -1038,14 +1038,12 @@ class _EventRailNavigationStage {
     required this.roundIds,
     required this.startsAt,
     required this.createdAt,
-    required this.ongoing,
   });
 
   final String name;
   final List<String> roundIds;
   final DateTime? startsAt;
   final DateTime? createdAt;
-  final bool ongoing;
 }
 
 List<_EventRailNavigationStage> _orderedNavigationStages(
@@ -1073,7 +1071,6 @@ List<_EventRailNavigationStage> _orderedNavigationStages(
         createdAt: _earliestMetadataDate(
           rounds.map((round) => round.createdAt),
         ),
-        ongoing: rounds.any((round) => round.ongoing),
       ),
   ];
   final effectiveNow = now ?? DateTime.now();
@@ -1081,7 +1078,9 @@ List<_EventRailNavigationStage> _orderedNavigationStages(
   final started = <_EventRailNavigationStage>[];
   for (final stage in stages) {
     final startsAt = stage.startsAt;
-    if (!stage.ongoing && startsAt != null && startsAt.isAfter(effectiveNow)) {
+    // Mirrors `_isStartedRound` in round_ordering.dart: a round with no start
+    // time counts as started so it can never be stranded behind the schedule.
+    if (startsAt != null && startsAt.isAfter(effectiveNow)) {
       upcoming.add(stage);
     } else {
       started.add(stage);
@@ -1107,7 +1106,11 @@ List<_EventRailNavigationStage> _orderedNavigationStages(
       (a, b) => _compareNavigationStageDates(a, b, ascending: false),
     );
   }
-  return <_EventRailNavigationStage>[...upcoming, ...started];
+  // Started rounds first (newest first), then the schedule ascending — the same
+  // partition and order `sortRoundsForDisplay` gives the rendered rail. Keyboard
+  // navigation previously walked upcoming stages first, so stepping past a round
+  // edge jumped to a future round instead of the adjacent played one.
+  return <_EventRailNavigationStage>[...started, ...upcoming];
 }
 
 DateTime? _earliestMetadataDate(Iterable<DateTime?> values) {

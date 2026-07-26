@@ -5,6 +5,8 @@ import 'package:chessever/repository/gamebase/search/gamebase_search_models_extr
 import 'package:chessever/repository/supabase/chess_player/chess_player_repository.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart' show Games;
+import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
+import 'package:chessever/repository/supabase/group_broadcast/group_tour_repository.dart';
 import 'package:chessever/screens/gamebase/models/models.dart'
     show GamebasePlayer;
 import 'package:dio/dio.dart';
@@ -14,7 +16,6 @@ import 'package:chessever/screens/player_profile/player_profile_data_source.dart
 import 'package:chessever/screens/player_profile/utils/twic_event_identity.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/utils/chess_title_utils.dart';
-import 'package:chessever/utils/time_utils.dart';
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -1412,18 +1413,45 @@ String? _preferredEventSite(String? a, String? b) {
   return null;
 }
 
-String _formatEventTimeControl(String? raw) {
-  final normalized = raw?.trim().toUpperCase();
-  switch (normalized) {
-    case 'CLASSICAL':
-      return 'Standard';
-    case 'RAPID':
-      return 'Rapid';
-    case 'BLITZ':
-      return 'Blitz';
-    default:
-      return 'Standard';
+
+/// Normalizes an event title so a TWIC/Gamebase event name can be matched
+/// against a `group_broadcasts.name` that differs only in spacing or case.
+String _normalizeEventTitleKey(String value) =>
+    value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+
+/// Maps TWIC/Gamebase player events onto the broadcast records that actually
+/// back them.
+///
+/// A TWIC event is only openable when a real `group_broadcast` exists for it:
+/// the Tournament Detail chain resolves tours from the broadcast id, so a
+/// synthetic `twic_event_<title>` id would find no tours and render an empty
+/// "No rounds yet" pane. Events without broadcast coverage are therefore
+/// deliberately omitted, which leaves their row non-openable instead of
+/// navigating into a dead end.
+@visibleForTesting
+Map<String, GroupEventCardModel> buildTwicEventCards({
+  required List<PlayerEventData> events,
+  required List<GroupBroadcast> broadcasts,
+  List<String> liveGroupIds = const <String>[],
+}) {
+  final broadcastsByTitle = <String, GroupBroadcast>{};
+  for (final broadcast in broadcasts) {
+    final key = _normalizeEventTitleKey(broadcast.name);
+    if (key.isNotEmpty) broadcastsByTitle.putIfAbsent(key, () => broadcast);
   }
+
+  final eventCards = <String, GroupEventCardModel>{};
+  for (final event in events) {
+    final broadcast =
+        broadcastsByTitle[_normalizeEventTitleKey(event.tourName)] ??
+        broadcastsByTitle[_normalizeEventTitleKey(event.tourId)];
+    if (broadcast == null) continue;
+    eventCards[event.tourId] = GroupEventCardModel.fromGroupBroadcast(
+      broadcast,
+      liveGroupIds,
+    );
+  }
+  return eventCards;
 }
 
 final playerTwicEventCardsProvider = FutureProvider.family
@@ -1432,33 +1460,19 @@ final playerTwicEventCardsProvider = FutureProvider.family
       playerKey,
     ) async {
       final events = await ref.watch(playerEventsKeyProvider(playerKey).future);
-      final eventCards = <String, GroupEventCardModel>{};
+      if (events.isEmpty) return const <String, GroupEventCardModel>{};
 
-      for (final event in events) {
-        final id = 'twic_event_${event.tourId}';
-        eventCards[event.tourId] = GroupEventCardModel(
-          id: id,
-          title: event.tourName,
-          dates: TimeUtils.formatDateRange(event.startDate, event.endDate),
-          maxAvgElo: event.avgElo ?? event.maxElo ?? 0,
-          timeUntilStart: TimeUtils.timeUntilStart(event.startDate),
-          tourEventCategory: GroupEventCardModel.getCategory(
-            groupId: id,
-            groupName: event.tourName,
-            startDate: event.startDate,
-            endDate: event.endDate,
-            liveGroupIds: const [],
-          ),
-          timeControl: _formatEventTimeControl(event.dominantTimeControl),
-          endDate: event.endDate,
-          startDate: event.startDate,
-          location: event.site,
-          searchTerms: [event.tourName],
-          eventSource: EventSource.communityEvent,
-        );
-      }
+      // One batched lookup for every title on the profile, rather than a
+      // per-event round trip.
+      final titles = <String>{
+        for (final event in events) ...<String>[event.tourName, event.tourId],
+      }.where((title) => title.trim().isNotEmpty).toList(growable: false);
 
-      return eventCards;
+      final broadcasts = await ref
+          .read(groupBroadcastRepositoryProvider)
+          .getGroupBroadcastsByIdsOrNames(titles);
+
+      return buildTwicEventCards(events: events, broadcasts: broadcasts);
     });
 
 final playerProfileDataKeyProvider = FutureProvider.family
