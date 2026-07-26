@@ -707,6 +707,11 @@ class EventRailGamesNotifier
           nextOffset: nextOffset,
           totalCount: current.totalCount,
           hasMore: hasMore,
+          // Carried forward. Dropping it here reset the round catalog to empty
+          // on every page load, which made the rail fall back to headings
+          // derived from loaded rows — rounds vanished and the order reshuffled
+          // mid-scroll.
+          roundCatalog: current.roundCatalog,
         ),
       );
       result = true;
@@ -859,6 +864,9 @@ class EventRailGamesNotifier
         games: refreshedGames,
         nextOffset: nextOffset,
         totalCount: totalCount,
+        // Same reason as in loadMore: the periodic refresh must not erase the
+        // round catalog, or the rail reshuffles on its own timer.
+        roundCatalog: current.roundCatalog,
         hasMore:
             gameSetChanged
                 ? resetHasMore

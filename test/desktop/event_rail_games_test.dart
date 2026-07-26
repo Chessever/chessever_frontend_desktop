@@ -340,6 +340,87 @@ void main() {
     expect(repository.legacyFullTourCalls, 0);
   });
 
+  testWidgets('the round catalog survives loading more pages', (tester) async {
+    // Regression: loadMore rebuilt the state without carrying roundCatalog, so
+    // it reset to empty on the first extra page. The rail then fell back to
+    // headings derived from loaded rows, which dropped rounds and reshuffled the
+    // order while the user was scrolling.
+    final allGames = <Games>[
+      for (var index = 0; index < kEventRailGamesPageSize * 2; index++)
+        _game(
+          id: 'game-$index',
+          roundId: 'round-1',
+          boardNumber: index + 1,
+        ),
+    ];
+    final repository = _FakeGameRepository(
+      firstTourPage: allGames.take(kEventRailGamesPageSize).toList(),
+      selectedRoundPage: const <Games>[],
+      selectedGame: allGames.first,
+      totalCount: allGames.length,
+      tourPagesByOffset: <int, List<Games>>{
+        kEventRailGamesPageSize: allGames.sublist(kEventRailGamesPageSize),
+      },
+      allRoundGames: allGames,
+      roundCatalog: <EventRailRoundMetadata>[
+        for (var round = 1; round <= 4; round++)
+          EventRailRoundMetadata(
+            id: 'round-$round',
+            name: 'Round $round',
+            startsAt: DateTime.utc(2026, 7, round),
+            createdAt: DateTime.utc(2026, 7, round),
+          ),
+      ],
+    );
+
+    BuildContext? capturedContext;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [gameRepositoryProvider.overrideWithValue(repository)],
+        child: MaterialApp(
+          home: Consumer(
+            builder: (context, ref, child) {
+              capturedContext = context;
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      ),
+    );
+
+    final container = ProviderScope.containerOf(capturedContext!);
+    final provider = eventRailGamesProvider(
+      EventRailGamesProviderKey(
+        ownerId: 'catalog-survives',
+        eventKey: const BoardTabEventGamesKey(
+          tourId: 'tour-1',
+          selectedGameId: 'game-0',
+          selectedRoundId: 'round-1',
+        ),
+      ),
+    );
+    final subscription = container.listen<AsyncValue<EventRailGamesState>>(
+      provider,
+      (_, __) {},
+      fireImmediately: true,
+    );
+    addTearDown(subscription.close);
+
+    final first = await container.read(provider.future);
+    expect(first.roundCatalog, hasLength(4));
+
+    await container.read(provider.notifier).loadMore();
+    await tester.pump();
+
+    final afterLoadMore = container.read(provider).requireValue;
+    expect(afterLoadMore.games.length, greaterThan(first.games.length));
+    expect(
+      afterLoadMore.roundCatalog,
+      hasLength(4),
+      reason: 'loadMore must not erase the authoritative round catalog',
+    );
+  });
+
   testWidgets('navigation waits for an in-flight continuation page', (
     tester,
   ) async {
