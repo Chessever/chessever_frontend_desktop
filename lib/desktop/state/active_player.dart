@@ -157,6 +157,7 @@ String openPlayerProfile(
   WidgetRef ref,
   PlayerProfileArgs args, {
   bool focus = true,
+  bool reuseExisting = true,
 }) {
   final tabsNotifier = ref.read(desktopTabsProvider.notifier);
   final tabsState = ref.read(desktopTabsProvider);
@@ -164,13 +165,15 @@ String openPlayerProfile(
   final tabTitle = _playerProfileTabTitle(args);
 
   String? existingTabId;
-  for (final entry in byTab.entries) {
-    final a = entry.value;
-    if (a.playerName == args.playerName &&
-        a.fideId == args.fideId &&
-        _tabStillHostsKind(tabsState, entry.key, TabKind.playerProfile)) {
-      existingTabId = entry.key;
-      break;
+  if (reuseExisting) {
+    for (final entry in byTab.entries) {
+      final a = entry.value;
+      if (a.playerName == args.playerName &&
+          a.fideId == args.fideId &&
+          _tabStillHostsKind(tabsState, entry.key, TabKind.playerProfile)) {
+        existingTabId = entry.key;
+        break;
+      }
     }
   }
 

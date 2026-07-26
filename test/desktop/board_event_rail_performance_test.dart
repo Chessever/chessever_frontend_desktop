@@ -316,7 +316,7 @@ void main() {
             'absolute leaf budget. Rebuilds: $rebuiltTypes',
       );
       expect(
-        rebuiltTypes['_PlayerHeader'] ?? 0,
+        rebuiltTypes['DesktopBoardPlayerHeader'] ?? 0,
         greaterThanOrEqualTo(2),
         reason:
             'Both compact player headers must receive the real legacy clock '

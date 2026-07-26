@@ -4,12 +4,14 @@ import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
+import 'package:chessever/services/lichess_move_annotations_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/gestures.dart'
     show PointerDeviceKind, kSecondaryMouseButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -164,6 +166,68 @@ void main() {
 
     expect(find.byType(MoveHoverPreview), findsNothing);
   });
+
+  testWidgets(
+    'generated report assessment replaces prior move quality evaluations',
+    (tester) async {
+      final game = _sampleGameWithMainlineNags(<int>[6, 16]);
+
+      await tester.pumpWidget(
+        _host(
+          game: game,
+          activePointer: const <int>[2],
+          onJump: (_) {},
+          lichessAnnotations: const <int, LichessMoveAnnotation>{
+            2: LichessMoveAnnotation(
+              type: LichessMoveAnnotationType.blunder,
+              comment: '',
+              useClassificationIcon: true,
+            ),
+          },
+          userNags: const <int, List<int>>{
+            2: <int>[2],
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('?!'), findsNothing);
+      expect(find.text('?'), findsNothing);
+      expect(find.text('±'), findsOneWidget);
+      expect(find.byType(SvgPicture), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'neutral generated report assessment clears prior quality evaluations',
+    (tester) async {
+      final game = _sampleGameWithMainlineNags(<int>[6, 16]);
+
+      await tester.pumpWidget(
+        _host(
+          game: game,
+          activePointer: const <int>[2],
+          onJump: (_) {},
+          lichessAnnotations: const <int, LichessMoveAnnotation>{
+            2: LichessMoveAnnotation(
+              type: LichessMoveAnnotationType.inaccuracy,
+              comment: 'Incoming commentary stays.',
+              reportOwnsMoveQuality: true,
+            ),
+          },
+          userNags: const <int, List<int>>{
+            2: <int>[16],
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('?!', findRichText: true), findsNothing);
+      expect(find.text('?'), findsNothing);
+      expect(find.text('±'), findsOneWidget);
+      expect(find.byType(SvgPicture), findsNothing);
+    },
+  );
 
   testWidgets(
     'inline notation exposes collapse and reopen controls for variations',
@@ -662,67 +726,63 @@ void main() {
     },
   );
 
-  testWidgets(
-    'clear move symbol reaches imported mainline quality NAGs',
-    (tester) async {
-      final clearedPointers = <ChessMovePointer>[];
+  testWidgets('clear move symbol reaches imported mainline quality NAGs', (
+    tester,
+  ) async {
+    final clearedPointers = <ChessMovePointer>[];
 
-      await tester.pumpWidget(
-        _host(
-          game: _sampleGameWithMainlineNag(),
-          onJump: (_) {},
-          width: 900,
-          onClearMoveQualityAnnotation: (pointer) {
-            clearedPointers.add(List<int>.from(pointer));
-          },
-        ),
-      );
+    await tester.pumpWidget(
+      _host(
+        game: _sampleGameWithMainlineNag(),
+        onJump: (_) {},
+        width: 900,
+        onClearMoveQualityAnnotation: (pointer) {
+          clearedPointers.add(List<int>.from(pointer));
+        },
+      ),
+    );
 
-      final move = find.text('Nf3', findRichText: true);
-      await tester.tapAt(
-        tester.getCenter(move),
-        buttons: kSecondaryMouseButton,
-      );
-      await tester.pumpAndSettle();
+    final move = find.text('Nf3', findRichText: true);
+    await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
 
-      expect(find.text('Clear move symbol'), findsOneWidget);
-      await tester.tap(find.text('Clear move symbol'));
-      await tester.pumpAndSettle();
+    expect(find.text('Clear move symbol'), findsOneWidget);
+    await tester.tap(find.text('Clear move symbol'));
+    await tester.pumpAndSettle();
 
-      expect(clearedPointers, [const <int>[2]]);
-    },
-  );
+    expect(clearedPointers, [
+      const <int>[2],
+    ]);
+  });
 
-  testWidgets(
-    'clear move symbol reaches imported variation quality NAGs',
-    (tester) async {
-      final clearedPointers = <ChessMovePointer>[];
+  testWidgets('clear move symbol reaches imported variation quality NAGs', (
+    tester,
+  ) async {
+    final clearedPointers = <ChessMovePointer>[];
 
-      await tester.pumpWidget(
-        _host(
-          game: _sampleGameWithSidelineNag(),
-          onJump: (_) {},
-          width: 900,
-          onClearMoveQualityAnnotation: (pointer) {
-            clearedPointers.add(List<int>.from(pointer));
-          },
-        ),
-      );
+    await tester.pumpWidget(
+      _host(
+        game: _sampleGameWithSidelineNag(),
+        onJump: (_) {},
+        width: 900,
+        onClearMoveQualityAnnotation: (pointer) {
+          clearedPointers.add(List<int>.from(pointer));
+        },
+      ),
+    );
 
-      final move = find.text('c5', findRichText: true);
-      await tester.tapAt(
-        tester.getCenter(move),
-        buttons: kSecondaryMouseButton,
-      );
-      await tester.pumpAndSettle();
+    final move = find.text('c5', findRichText: true);
+    await tester.tapAt(tester.getCenter(move), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
 
-      expect(find.text('Clear move symbol'), findsOneWidget);
-      await tester.tap(find.text('Clear move symbol'));
-      await tester.pumpAndSettle();
+    expect(find.text('Clear move symbol'), findsOneWidget);
+    await tester.tap(find.text('Clear move symbol'));
+    await tester.pumpAndSettle();
 
-      expect(clearedPointers, [const <int>[0, 0, 0]]);
-    },
-  );
+    expect(clearedPointers, [
+      const <int>[0, 0, 0],
+    ]);
+  });
 
   testWidgets('move menu toggles hide and show all annotations', (
     tester,
@@ -972,10 +1032,13 @@ ChessGame _sampleGameWithSidelineNag() {
   return game.copyWith(mainline: mainline);
 }
 
-ChessGame _sampleGameWithMainlineNag() {
+ChessGame _sampleGameWithMainlineNag() =>
+    _sampleGameWithMainlineNags(const <int>[2]);
+
+ChessGame _sampleGameWithMainlineNags(List<int> nags) {
   final game = _sampleGame();
   final mainline = List<ChessMove>.of(game.mainline);
-  mainline[2] = mainline[2].copyWith(nags: const <int>[2]);
+  mainline[2] = mainline[2].copyWith(nags: List<int>.unmodifiable(nags));
   return game.copyWith(mainline: mainline);
 }
 
@@ -988,6 +1051,8 @@ Widget _host({
   PieceAssets? pieceAssets,
   double width = 360,
   double height = 420,
+  Map<int, LichessMoveAnnotation> lichessAnnotations =
+      const <int, LichessMoveAnnotation>{},
   Map<int, List<int>> userNags = const <int, List<int>>{},
   void Function(int ply, int? nag)? onSetUserQualityNag,
   void Function(int ply, int nag)? onToggleUserNag,
@@ -1008,6 +1073,7 @@ Widget _host({
     activePointer: activePointer,
     onJump: onJump,
     scrollController: scrollController,
+    lichessAnnotations: lichessAnnotations,
     userNags: userNags,
     onSetUserQualityNag: onSetUserQualityNag,
     onToggleUserNag: onToggleUserNag,

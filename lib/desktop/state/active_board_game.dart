@@ -430,10 +430,10 @@ final boardTabGameArgsByTabIdProvider =
       (_) => const <String, BoardTabGameArgs>{},
     );
 
-/// Save identity attached after a scratch/detached Board tab appends one game
-/// to one local PGN. Keeping this separate from [BoardTabGameArgs] avoids
-/// converting the scratch tab into a source-bound game tab merely because it
-/// was saved once.
+/// Mutable save identity attached after a scratch/detached Board tab appends
+/// one game to one local PGN, or refreshed after an existing local game is
+/// updated. Keeping this separate from [BoardTabGameArgs] avoids rewriting the
+/// immutable open-time args after a durable save.
 final boardTabAttachedLibrarySaveOriginByTabIdProvider =
     StateProvider<Map<String, BoardTabLibrarySaveOrigin>>(
       (_) => const <String, BoardTabLibrarySaveOrigin>{},
@@ -444,6 +444,69 @@ bool shouldAttachLocalPgnIdentityAfterSave({
   required BoardTabLibrarySaveOrigin? attachedOrigin,
   required bool hasLocalUpdateTarget,
 }) => hasLocalUpdateTarget && sourceOrigin == null && attachedOrigin == null;
+
+bool shouldAttachLocalPgnIdentityAfterSaveCompletion({
+  required bool tabStillExists,
+  required bool gameStillMatches,
+  required BoardTabGameArgs? savingArgs,
+  required BoardTabGameArgs? currentArgs,
+  required BoardTabLibrarySaveOrigin? savingAttachedOrigin,
+  required BoardTabLibrarySaveOrigin? currentAttachedOrigin,
+  required bool hasLocalUpdateTarget,
+}) =>
+    tabStillExists &&
+    gameStillMatches &&
+    identical(currentArgs, savingArgs) &&
+    identical(currentAttachedOrigin, savingAttachedOrigin) &&
+    shouldAttachLocalPgnIdentityAfterSave(
+      sourceOrigin: savingArgs?.librarySaveOrigin,
+      attachedOrigin: savingAttachedOrigin,
+      hasLocalUpdateTarget: hasLocalUpdateTarget,
+    );
+
+BoardTabLibrarySaveOrigin? resolveBoardTabLibrarySaveOrigin({
+  required BoardTabLibrarySaveOrigin? sourceOrigin,
+  required BoardTabLibrarySaveOrigin? attachedOrigin,
+}) => attachedOrigin ?? sourceOrigin;
+
+bool shouldAcceptRefreshedLocalPgnOrigin({
+  required BoardTabLibrarySaveOrigin updatingOrigin,
+  required BoardTabLibrarySaveOrigin? currentSourceOrigin,
+  required BoardTabLibrarySaveOrigin? currentAttachedOrigin,
+}) {
+  final currentOrigin = resolveBoardTabLibrarySaveOrigin(
+    sourceOrigin: currentSourceOrigin,
+    attachedOrigin: currentAttachedOrigin,
+  );
+  if (updatingOrigin.kind != BoardTabLibrarySaveOriginKind.localPgnFile ||
+      currentOrigin?.kind != BoardTabLibrarySaveOriginKind.localPgnFile) {
+    return false;
+  }
+  return currentOrigin!.sourcePath?.trim() ==
+          updatingOrigin.sourcePath?.trim() &&
+      currentOrigin.sourceIndex == updatingOrigin.sourceIndex &&
+      currentOrigin.sourceFileGameCount == updatingOrigin.sourceFileGameCount &&
+      currentOrigin.sourcePgnFingerprint?.trim() ==
+          updatingOrigin.sourcePgnFingerprint?.trim();
+}
+
+/// [updatingArgs] is nullable so scratch/detached Board tabs — which legitimately
+/// carry no open-time args — can still adopt the post-write fingerprint. Both
+/// sides being null is a valid identity match.
+bool shouldAttachRefreshedLocalPgnOriginAfterUpdate({
+  required bool tabStillExists,
+  required BoardTabGameArgs? updatingArgs,
+  required BoardTabGameArgs? currentArgs,
+  required BoardTabLibrarySaveOrigin updatingOrigin,
+  required BoardTabLibrarySaveOrigin? currentAttachedOrigin,
+}) =>
+    tabStillExists &&
+    identical(currentArgs, updatingArgs) &&
+    shouldAcceptRefreshedLocalPgnOrigin(
+      updatingOrigin: updatingOrigin,
+      currentSourceOrigin: currentArgs?.librarySaveOrigin,
+      currentAttachedOrigin: currentAttachedOrigin,
+    );
 
 extension BoardTabAttachedLibrarySaveOriginWriter
     on StateController<Map<String, BoardTabLibrarySaveOrigin>> {

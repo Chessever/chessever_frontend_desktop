@@ -25,23 +25,6 @@ String? standardResultLabelForSide(GameStatus status, {required bool isWhite}) {
   return formatBroadcastScore(value);
 }
 
-String? customAwareResultLabelForSide(
-  GameStatus status, {
-  required bool isWhite,
-  double? customPoints,
-}) {
-  final standardValue = standardResultValueForSide(status, isWhite: isWhite);
-  if (standardValue == null) return null;
-
-  if (customPoints != null &&
-      customPoints != 0.0 &&
-      customPoints != standardValue) {
-    return formatBroadcastScore(customPoints);
-  }
-
-  return standardValue == 0.5 ? '½' : formatBroadcastScore(standardValue);
-}
-
 ({double? score, int played}) resolveBroadcastStandingScore({
   required double? sourceScore,
   required int sourcePlayed,
