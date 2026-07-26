@@ -1495,15 +1495,6 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                 .toList(growable: false);
     final selectedGameId = resolved.selectedGameId;
     final activeSelectionId = _highlightedGameId ?? selectedGameId;
-    String? selectedGroupIdForScroll;
-    if (activeSelectionId != null) {
-      for (final group in roundGroups) {
-        if (group.games.any((game) => game.id == activeSelectionId)) {
-          selectedGroupIdForScroll = group.id;
-          break;
-        }
-      }
-    }
     _pruneRowKeys(orderedGames);
     final liveBatchKeys =
         shouldStreamVisibleRail
@@ -1537,12 +1528,12 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
             //     scroll-to-selection animation and yanked the rail back under
             //     the user. Rows arriving below the selection must never move
             //     the viewport.
-            : [
-              resolved.kind.index,
-              activeSelectionId ?? '',
-              selectedGroupIdForScroll ?? '',
-              expandedByGroup[selectedGroupIdForScroll] == true,
-            ].join('|');
+            // Selection identity only. Anything that also varies with loaded
+            // rows (row counts, whether the selection's group has resolved yet,
+            // its expansion state) flipped this signature while the user was
+            // scrolling, which re-fired the scroll-to-selection animation and
+            // threw the viewport back to the selected game.
+            : [resolved.kind.index, activeSelectionId ?? ''].join('|');
     if (resolved.kind == _GameListKind.database) {
       _scheduleDatabaseSelectedScroll(
         orderedGames: orderedGames,
@@ -2967,6 +2958,19 @@ List<_EventRoundGroup> _buildRoundGroups(
         .add(game);
   }
 
+  // When the tournament's round metadata is available it owns the round list and
+  // its order, permanently. Deriving order from loaded rows meant a round flipped
+  // status the moment its games arrived, `sortRoundsForDisplay` re-partitioned,
+  // and the list reshuffled mid-scroll — which moved the top-most (expanded)
+  // round and made the user's scroll offset meaningless, so the rail appeared to
+  // jump back to the top. Rows now fill fixed slots instead of deciding them.
+  if (roundCatalog.isNotEmpty && !preserveInputOrder) {
+    return _catalogOrderedRoundGroups(
+      roundCatalog: roundCatalog,
+      gamesByRoundKey: byRound,
+    );
+  }
+
   if (preserveInputOrder) {
     // Player-profile event rails mirror the source list's own ordering.
     return [
@@ -3016,42 +3020,7 @@ List<_EventRoundGroup> _buildRoundGroups(
   // Rounds the catalog knows about but that have no rows yet still get a
   // heading. Without this the rail only showed rounds whose games happened to
   // be loaded, so rounds appeared (and the list re-ordered) as rows streamed in.
-  final knownIds = <String>{
-    ...byRound.keys,
-    for (final group in playedGroups) group.id,
-    for (final group in pairingGroups) group.id,
-  };
-  final catalogGroups = <_EventRoundGroup>[
-    for (final round in roundCatalog)
-      // Keyed exactly like a game-derived group (`_roundKeyResolverFor`), which
-      // groups by round *name*, not round id. Using the raw round id here made
-      // every catalog round look new and listed each round twice.
-      if (round.id.trim().isNotEmpty &&
-          knownIds.add(
-            round.name.trim().isEmpty
-                ? 'round-id:${round.id.trim()}'
-                : 'round-name:${round.name.trim().toLowerCase()}',
-          ))
-        _EventRoundGroup(
-          id:
-              round.name.trim().isEmpty
-                  ? 'round-id:${round.id.trim()}'
-                  : 'round-name:${round.name.trim().toLowerCase()}',
-          title: round.name.trim().isEmpty ? 'Round' : round.name.trim(),
-          // Derived from the schedule, not hardcoded to upcoming. A round whose
-          // games are not loaded yet still has to land in the right half of the
-          // sort, otherwise finished rounds sink below future ones.
-          status:
-              round.startsAt != null && round.startsAt!.isAfter(DateTime.now())
-                  ? RoundStatus.upcoming
-                  : RoundStatus.completed,
-          startsAt: round.startsAt,
-          games: const <TournamentGameSummary>[],
-          catalogOnly: true,
-        ),
-  ];
-
-  final groups = [...playedGroups, ...pairingGroups, ...catalogGroups];
+  final groups = [...playedGroups, ...pairingGroups];
   final groupsById = <String, _EventRoundGroup>{
     for (final group in groups) group.id: group,
   };
@@ -3128,6 +3097,104 @@ _EventRoundGroup _eventRoundGroupFor(
 /// as one section, mirroring the mobile Games tab's synthetic stage rounds.
 /// Games missing the name (fresh realtime rows) inherit it from siblings
 /// that share their `roundId`.
+/// Round key used for both catalog rounds and game-derived rounds, so the two
+/// sides always line up (see [_roundKeyResolverFor], which groups by name).
+String _catalogRoundKey(EventRailRoundMetadata round) =>
+    round.name.trim().isEmpty
+        ? 'round-id:${round.id.trim()}'
+        : 'round-name:${round.name.trim().toLowerCase()}';
+
+/// Builds one group per catalog round, in a fixed order taken from the schedule.
+///
+/// Started rounds first, newest first, then the remaining schedule ascending —
+/// the same shape `sortRoundsForDisplay` produces, but computed only from
+/// `startsAt`, which never changes as rows load. A round with no rows yet is
+/// marked [_EventRoundGroup.catalogOnly] and renders as a collapsed heading.
+List<_EventRoundGroup> _catalogOrderedRoundGroups({
+  required List<EventRailRoundMetadata> roundCatalog,
+  required Map<String, List<TournamentGameSummary>> gamesByRoundKey,
+}) {
+  final now = DateTime.now();
+  final seen = <String>{};
+  final started = <EventRailRoundMetadata>[];
+  final upcoming = <EventRailRoundMetadata>[];
+  for (final round in roundCatalog) {
+    if (round.id.trim().isEmpty) continue;
+    if (!seen.add(_catalogRoundKey(round))) continue;
+    final startsAt = round.startsAt;
+    if (startsAt != null && startsAt.isAfter(now)) {
+      upcoming.add(round);
+    } else {
+      started.add(round);
+    }
+  }
+
+  int byStart(EventRailRoundMetadata a, EventRailRoundMetadata b, bool asc) {
+    final aAt = a.startsAt ?? a.createdAt;
+    final bAt = b.startsAt ?? b.createdAt;
+    int result;
+    if (aAt == null && bAt == null) {
+      result = a.name.compareTo(b.name);
+    } else if (aAt == null) {
+      result = 1;
+    } else if (bAt == null) {
+      result = -1;
+    } else {
+      result = aAt.compareTo(bAt);
+      if (result == 0) result = a.name.compareTo(b.name);
+    }
+    return asc ? result : -result;
+  }
+
+  started.sort((a, b) => byStart(a, b, false));
+  upcoming.sort((a, b) => byStart(a, b, true));
+
+  final ordered = <_EventRoundGroup>[];
+  for (final round in <EventRailRoundMetadata>[...started, ...upcoming]) {
+    final key = _catalogRoundKey(round);
+    final rows = gamesByRoundKey[key] ?? const <TournamentGameSummary>[];
+    if (rows.isEmpty) {
+      ordered.add(
+        _EventRoundGroup(
+          id: key,
+          title: round.name.trim().isEmpty ? 'Round' : round.name.trim(),
+          status:
+              round.startsAt != null && round.startsAt!.isAfter(now)
+                  ? RoundStatus.upcoming
+                  : RoundStatus.completed,
+          startsAt: round.startsAt,
+          games: const <TournamentGameSummary>[],
+          catalogOnly: true,
+        ),
+      );
+      continue;
+    }
+    final visible =
+        rows.where(_isBoardVisibleEventGame).toList()
+          ..sort(_compareEventGamesInRound);
+    final pairings =
+        visible.isNotEmpty
+            ? visible
+            : (rows.where(_hasResolvedPlayers).toList()
+              ..sort(_comparePairingGames));
+    ordered.add(
+      _eventRoundGroupFor(
+        key,
+        pairings.isEmpty ? rows : pairings,
+        pairingOnly: visible.isEmpty && pairings.isNotEmpty,
+      ),
+    );
+  }
+
+  // Any round that produced rows but is absent from the catalog still belongs on
+  // screen; keep it after the catalog's own order so nothing disappears.
+  for (final entry in gamesByRoundKey.entries) {
+    if (seen.contains(entry.key)) continue;
+    ordered.add(_eventRoundGroupFor(entry.key, entry.value));
+  }
+  return ordered;
+}
+
 String Function(TournamentGameSummary game) _roundKeyResolverFor(
   List<TournamentGameSummary> games,
 ) {
