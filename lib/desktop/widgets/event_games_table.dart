@@ -1418,10 +1418,19 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
               orderedGames.isEmpty ? '' : orderedGames.first.id,
               orderedGames.isEmpty ? '' : orderedGames.last.id,
             ].join('|')
+            // Per round, not per game. Joining every game id of every round
+            // rebuilt an O(total games) string on every single build, and the
+            // rail rebuilds on each live tick — a large open paid that cost per
+            // frame. Round id, expansion, row count and the edge ids detect
+            // every change that can move the scroll target.
             : [
               activeSelectionId ?? '',
               for (final group in roundGroups)
-                '${resolved.kind.index}:${group.id}:${expandedByGroup[group.id] == true}:${group.games.map((game) => game.id).join(',')}',
+                '${resolved.kind.index}:${group.id}:'
+                    '${expandedByGroup[group.id] == true}:'
+                    '${group.games.length}:'
+                    '${group.games.isEmpty ? '' : group.games.first.id}:'
+                    '${group.games.isEmpty ? '' : group.games.last.id}',
             ].join('|');
     if (resolved.kind == _GameListKind.database) {
       _scheduleDatabaseSelectedScroll(
