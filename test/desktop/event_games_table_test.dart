@@ -1379,9 +1379,13 @@ void main() {
     await tester.pump();
     await tester.pump();
 
+    // One round is open at a time, so collapsing the open round leaves the rail
+    // fully collapsed rather than handing the expansion to a neighbour. Both
+    // headings stay listed so nothing becomes unreachable.
     expect(find.text('Round 2'), findsOneWidget);
+    expect(find.text('Round 1'), findsOneWidget);
     expect(find.text('Selected White'), findsNothing);
-    expect(find.text('Round One White'), findsOneWidget);
+    expect(find.text('Round One White'), findsNothing);
   });
 
   testWidgets('event games within a round sort by board number ascending', (
@@ -1491,7 +1495,7 @@ void main() {
     expect(find.text('Future White'), findsOneWidget);
   });
 
-  testWidgets('upcoming event rows expand when the latest round is finished', (
+  testWidgets('an upcoming round is listed and reveals pairings on expand', (
     tester,
   ) async {
     final now = DateTime.now();
@@ -1530,8 +1534,17 @@ void main() {
     );
     await tester.pump();
 
+    // Only the top-most round is open, so the upcoming round is listed but its
+    // published pairings stay behind its heading until the user asks for them.
     expect(find.text('Round 3'), findsOneWidget);
+    expect(find.text('Next White'), findsNothing);
+
+    await tester.tap(find.text('Round 3'));
+    await tester.pump();
+    await tester.pump();
+
     expect(find.text('Next White'), findsOneWidget);
+    expect(find.text('Finished White'), findsNothing);
   });
 
   testWidgets('event game rows are tappable in the fixed table rail', (
@@ -1661,7 +1674,7 @@ void main() {
     expect(args.gameListSelectedId, 'event-game-1');
   });
 
-  testWidgets('Shift click ranges from the active event game across rounds', (
+  testWidgets('Shift click ranges from the active event game in the open round', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -1708,52 +1721,40 @@ void main() {
     );
     await tester.pump();
 
-    var firstRoundTable = tester.widget<Table>(find.byType(Table).at(0));
-    var secondRoundTable = tester.widget<Table>(find.byType(Table).at(1));
+    // Round 2 is the open round; Round 1 is listed but collapsed, so a range can
+    // only span the rows the user can actually see.
+    expect(find.byType(Table), findsOneWidget);
+    var openRoundTable = tester.widget<Table>(find.byType(Table).at(0));
     expect(
-      (firstRoundTable.children[0].decoration as BoxDecoration).color,
+      (openRoundTable.children[0].decoration as BoxDecoration).color,
       isNot(Colors.transparent),
     );
     expect(
-      (firstRoundTable.children[1].decoration as BoxDecoration).color,
-      Colors.transparent,
-    );
-    expect(
-      (secondRoundTable.children[0].decoration as BoxDecoration).color,
+      (openRoundTable.children[1].decoration as BoxDecoration).color,
       Colors.transparent,
     );
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-    await tester.ensureVisible(find.text('Round One Black One'));
-    await tester.tap(find.text('Round One Black One'));
+    await tester.ensureVisible(find.text('Round Two Black Two'));
+    await tester.tap(find.text('Round Two Black Two'));
     await tester.pump(const Duration(milliseconds: 400));
     await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
 
-    secondRoundTable = tester.widget<Table>(
+    openRoundTable = tester.widget<Table>(
       find
           .ancestor(
-            of: find.text('Round One Black One'),
+            of: find.text('Round Two Black Two'),
             matching: find.byType(Table),
           )
           .first,
     );
+    // Both boards of the open round are now in the range.
     expect(
-      (secondRoundTable.children[0].decoration as BoxDecoration).color,
+      (openRoundTable.children[0].decoration as BoxDecoration).color,
       isNot(Colors.transparent),
     );
-
-    await tester.ensureVisible(find.text('Round Two White One'));
-    await tester.pump();
-    firstRoundTable = tester.widget<Table>(
-      find
-          .ancestor(
-            of: find.text('Round Two White One'),
-            matching: find.byType(Table),
-          )
-          .first,
-    );
     expect(
-      (firstRoundTable.children[0].decoration as BoxDecoration).color,
+      (openRoundTable.children[1].decoration as BoxDecoration).color,
       isNot(Colors.transparent),
     );
   });

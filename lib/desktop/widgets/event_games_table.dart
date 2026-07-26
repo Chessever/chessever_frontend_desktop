@@ -3021,7 +3021,13 @@ List<_EventRoundGroup> _buildRoundGroups(
         _EventRoundGroup(
           id: round.id.trim(),
           title: round.name.trim().isEmpty ? 'Round' : round.name.trim(),
-          status: RoundStatus.upcoming,
+          // Derived from the schedule, not hardcoded to upcoming. A round whose
+          // games are not loaded yet still has to land in the right half of the
+          // sort, otherwise finished rounds sink below future ones.
+          status:
+              round.startsAt != null && round.startsAt!.isAfter(DateTime.now())
+                  ? RoundStatus.upcoming
+                  : RoundStatus.completed,
           startsAt: round.startsAt,
           games: const <TournamentGameSummary>[],
           catalogOnly: true,
