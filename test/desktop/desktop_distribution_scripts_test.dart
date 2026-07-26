@@ -70,6 +70,7 @@ void main() {
       expect(codemagic, contains('chessever-desktop-release'));
       expect(codemagic, contains('CM_CERTIFICATE'));
       expect(codemagic, contains('SENTRY_FLUTTER'));
+      expect(codemagic, contains('CHESSEVER_CLOUDFLARE_API_BASE'));
       expect(codemagic, contains('GAMEBASE_PROXY_BASE'));
       expect(codemagic, isNot(contains('GAMEBASE_API_KEY')));
       expect(codemagic, contains('GOOGLE_WEB_CLIENT_ID'));
@@ -479,6 +480,7 @@ void main() {
       expect(desktopMain, contains('DesktopEnv.releasePresenceFor'));
       expect(desktopEnv, contains('requiredReleaseKeys'));
       expect(desktopEnv, contains('GAMEBASE_PROXY_BASE'));
+      expect(desktopEnv, contains('CHESSEVER_CLOUDFLARE_API_BASE'));
       expect(desktopEnv, isNot(contains('GAMEBASE_API_KEY')));
       expect(desktopEnv, contains('BILLING_API_BASE'));
       expect(nativeBridge, isNot(contains('chessever.desktop/updater')));

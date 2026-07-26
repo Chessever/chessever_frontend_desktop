@@ -50,7 +50,8 @@ function Get-ExpectedDartDefineKeys {
         'SUPABASE_ANON_KEY',
         'GOOGLE_DESKTOP_CLIENT_ID',
         'GOOGLE_DESKTOP_CLIENT_SECRET',
-        'SENTRY_FLUTTER'
+        'SENTRY_FLUTTER',
+        'CHESSEVER_CLOUDFLARE_API_BASE'
     )
     $optional = @('GOOGLE_WEB_CLIENT_ID', 'BILLING_API_BASE', 'GAMEBASE_PROXY_BASE')
     $keys = New-Object System.Collections.Generic.List[string]

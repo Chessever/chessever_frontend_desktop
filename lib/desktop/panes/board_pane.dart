@@ -3069,6 +3069,12 @@ class _BoardPaneContent extends HookConsumerWidget {
           showEvalBar: shouldShowDesktopBoardEvalBar(engineSettings),
           liveBoardPngBytes: liveBoardPngBytes,
           shareUrl: shareUrl,
+          whiteFideId:
+              boardArgs?.sourceGame?.whitePlayer.fideId ??
+              boardArgs?.whiteFideId,
+          blackFideId:
+              boardArgs?.sourceGame?.blackPlayer.fideId ??
+              boardArgs?.blackFideId,
         );
       } catch (_) {
         if (context.mounted) {

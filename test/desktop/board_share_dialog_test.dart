@@ -219,4 +219,57 @@ void main() {
 
     expect(dialog.showEvalBar, isFalse);
   });
+
+  test('share view accepts the board-resolved player identity', () {
+    final dialog = BoardShareDialog(
+      chessGame: ChessGame.fromPgn('share-player-identity', '1. e4 *'),
+      headers: const {},
+      position: Chess.initial,
+      lastMove: null,
+      pointer: const [],
+      flipped: false,
+      whiteFideId: 4168119,
+      blackFideId: 724342,
+      whitePhotoUrl: 'https://example.com/white.webp',
+      blackPhotoUrl: 'https://example.com/black.webp',
+    );
+
+    expect(dialog.whiteFideId, 4168119);
+    expect(dialog.blackFideId, 724342);
+    expect(dialog.whitePhotoUrl, endsWith('/white.webp'));
+    expect(dialog.blackPhotoUrl, endsWith('/black.webp'));
+  });
+
+  test('cloud GIF photo MIME detection uses image signatures', () {
+    expect(
+      cloudGifPhotoMimeType(
+        Uint8List.fromList([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10]),
+      ),
+      'image/png',
+    );
+    expect(
+      cloudGifPhotoMimeType(Uint8List.fromList([0xff, 0xd8, 0xff, 0xe0])),
+      'image/jpeg',
+    );
+    expect(
+      cloudGifPhotoMimeType(
+        Uint8List.fromList([
+          0x52,
+          0x49,
+          0x46,
+          0x46,
+          0,
+          0,
+          0,
+          0,
+          0x57,
+          0x45,
+          0x42,
+          0x50,
+        ]),
+      ),
+      'image/webp',
+    );
+    expect(cloudGifPhotoMimeType(Uint8List.fromList([1, 2, 3])), isNull);
+  });
 }
