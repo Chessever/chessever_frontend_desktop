@@ -334,7 +334,9 @@ void main() {
     expect(repository.tourPageCalls, <_PageCall>[
       const _PageCall(id: 'tour-1', limit: 64, offset: 0),
     ]);
-    expect(repository.roundCatalogCalls, isEmpty);
+    // The round catalog is lightweight metadata fetched once per event so the
+    // rail can list every round at first paint. Navigation must not re-fetch it.
+    expect(repository.roundCatalogCalls, <String>['tour-1']);
     expect(repository.legacyFullTourCalls, 0);
   });
 

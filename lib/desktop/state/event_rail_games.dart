@@ -24,9 +24,15 @@ class EventRailGamesState {
     this.hasMore = false,
     this.isLoadingMore = false,
     this.loadMoreError,
+    this.roundCatalog = const <EventRailRoundMetadata>[],
   });
 
   final List<TournamentGameSummary> games;
+
+  /// Every round the tournament has, independent of which rows are loaded.
+  /// Headings come from this, so the full round list is present at first paint
+  /// and its order never re-shuffles as rows stream in.
+  final List<EventRailRoundMetadata> roundCatalog;
 
   /// Offset into the canonical tour-wide query. The selected-round window is
   /// merged separately and therefore never advances this cursor.
@@ -44,6 +50,7 @@ class EventRailGamesState {
     bool? isLoadingMore,
     String? loadMoreError,
     bool clearLoadMoreError = false,
+    List<EventRailRoundMetadata>? roundCatalog,
   }) {
     return EventRailGamesState(
       games: games ?? this.games,
@@ -53,6 +60,7 @@ class EventRailGamesState {
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
       loadMoreError:
           clearLoadMoreError ? null : loadMoreError ?? this.loadMoreError,
+      roundCatalog: roundCatalog ?? this.roundCatalog,
     );
   }
 }
@@ -180,6 +188,7 @@ class EventRailGamesNotifier
     );
     final selectedGameFuture = _loadSelectedGameOrEmpty(repository, eventKey);
     final totalCountFuture = _loadTotalCount(repository, tourId);
+    final roundCatalogFuture = _loadRoundCatalogOrEmpty(repository, tourId);
 
     final auxiliaryPagesFuture = Future.wait(<Future<List<Games>>>[
       roundPageFuture,
@@ -191,6 +200,7 @@ class EventRailGamesNotifier
     final selectedRoundPage = auxiliaryPages[0];
     final selectedGamePage = auxiliaryPages[1];
     final totalCount = await totalCountFuture;
+    final roundCatalog = await roundCatalogFuture;
     final nextOffset = tourPage.length;
     final pageCanContinue = tourPage.length >= kEventRailGamesPageSize;
     _canonicalPageIdsByOffset[0] = _gameIds(tourPage);
@@ -212,6 +222,7 @@ class EventRailGamesNotifier
       ], tourPage),
       nextOffset: nextOffset,
       totalCount: totalCount,
+      roundCatalog: roundCatalog,
       hasMore:
           tourPageResult.error != null
               ? totalCount == null || totalCount > 0
@@ -404,6 +415,19 @@ class EventRailGamesNotifier
         continue;
       }
       return;
+    }
+  }
+
+  /// Headings are presentation-only, so a catalog failure degrades the rail to
+  /// row-derived headings instead of failing the whole load.
+  Future<List<EventRailRoundMetadata>> _loadRoundCatalogOrEmpty(
+    GameRepository repository,
+    String tourId,
+  ) async {
+    try {
+      return await repository.getEventRailRoundsByTourId(tourId);
+    } catch (_) {
+      return const <EventRailRoundMetadata>[];
     }
   }
 
