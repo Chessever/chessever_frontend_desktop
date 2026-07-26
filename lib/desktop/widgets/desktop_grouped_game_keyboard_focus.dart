@@ -143,11 +143,11 @@ class _DesktopGroupedGameKeyboardFocusState
         _sameGroups(oldWidget.groups, widget.groups)) {
       return;
     }
-    final hadFocus = _focusNode.hasFocus;
+    final ownedPrimaryFocus = _focusNode.hasPrimaryFocus;
     _syncSelection();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (oldWidget.scopeId != widget.scopeId || hadFocus) {
+      if (oldWidget.scopeId != widget.scopeId || ownedPrimaryFocus) {
         _focusNode.requestFocus();
       }
     });
