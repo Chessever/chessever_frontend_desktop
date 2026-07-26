@@ -54,6 +54,25 @@ typedef _EventRoundExpansionKey = ({String id, bool initiallyExpanded});
 final _eventRoundExpandedProvider = StateProvider.autoDispose
     .family<bool, _EventRoundExpansionKey>((ref, key) => key.initiallyExpanded);
 
+/// The one expanded Event-rail round, per Board tab. `null` means "top-most";
+/// the empty string means the user collapsed everything.
+final _eventRailExpandedRoundProvider = StateProvider.autoDispose
+    .family<String?, String>((ref, scope) => null);
+
+/// Resolves the stored choice against the rounds on screen, so a stale id falls
+/// back to the top-most round rather than collapsing the rail.
+@visibleForTesting
+String? resolveExpandedEventRoundId({
+  required String? stored,
+  required List<String> orderedRoundIds,
+}) {
+  if (stored != null) {
+    if (stored.isEmpty) return null;
+    if (orderedRoundIds.contains(stored)) return stored;
+  }
+  return orderedRoundIds.isEmpty ? null : orderedRoundIds.first;
+}
+
 final _gameRailTabProvider = StateProvider.autoDispose
     .family<_GameRailTab?, String>((ref, tabId) => null);
 
@@ -1363,19 +1382,36 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
         resolved.kind == _GameListKind.event &&
         effectiveArgs?.viewSource == ChessboardView.playerProfile;
 
+    // The rail seeds from the games handed over when the board opened, then the
+    // provider resolves with the authoritative round catalog. Painting headings
+    // from the seed first made the round list visibly re-sort a second later, so
+    // the event rail waits for the catalog and paints its final order once.
+    final isEventRail = resolved.kind == _GameListKind.event;
+    final eventRoundCatalog =
+        eventRailValue?.roundCatalog ?? const <EventRailRoundMetadata>[];
+    // Only while the event-rail provider is genuinely in flight. Without the
+    // activation check a rail that never runs the provider (profile/route rails)
+    // would wait forever and render empty.
+    final awaitingEventRoundCatalog =
+        isEventRail &&
+        !preserveEventInputOrder &&
+        eventRailProviderKey != null &&
+        _eventRailWasActivated &&
+        eventRailValue == null;
     final allRoundGroups =
         resolved.kind == _GameListKind.database
             ? const <_EventRoundGroup>[]
             : resolved.kind == _GameListKind.favorites
             ? _buildDateGroups(resolved.games)
+            : awaitingEventRoundCatalog
+            ? const <_EventRoundGroup>[]
             : _buildRoundGroups(
               resolved.games,
-              groupByRound: resolved.kind == _GameListKind.event,
+              groupByRound: isEventRail,
               preserveInputOrder: preserveEventInputOrder,
               roundCatalog:
-                  resolved.kind == _GameListKind.event
-                      ? (eventRailValue?.roundCatalog ??
-                          const <EventRailRoundMetadata>[])
+                  isEventRail
+                      ? eventRoundCatalog
                       : const <EventRailRoundMetadata>[],
             );
     final allOrderedGames =
@@ -1415,11 +1451,32 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
               resolved.kind == _GameListKind.event,
         ),
     };
+    // One round open at a time, defaulting to the top-most. Each expanded round
+    // builds all of its rows, so several at once multiplied the rail's build and
+    // paint cost.
+    final expandedRoundScope =
+        '$activeTabId:${eventRailProviderKey?.eventKey.tourId.trim() ?? eventTourId ?? resolved.title}';
+    final storedExpandedRoundId =
+        isEventRail
+            ? ref.watch(_eventRailExpandedRoundProvider(expandedRoundScope))
+            : null;
+    final expandedRoundId =
+        isEventRail
+            ? resolveExpandedEventRoundId(
+              stored: storedExpandedRoundId,
+              orderedRoundIds: <String>[
+                for (final group in roundGroups) group.id,
+              ],
+            )
+            : null;
     final expandedByGroup = <String, bool>{
       for (final group in roundGroups)
-        group.id: ref.watch(
-          _eventRoundExpandedProvider(expansionKeys[group.id]!),
-        ),
+        group.id:
+            isEventRail
+                ? group.id == expandedRoundId
+                : ref.watch(
+                  _eventRoundExpandedProvider(expansionKeys[group.id]!),
+                ),
     };
     final visibleRoundGroups = [
       for (final group in roundGroups)
@@ -1698,6 +1755,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                           effectiveArgs: effectiveArgs,
                           showBoardColumn: showBoardColumn,
                           activeContinuation: activeContinuation,
+                          isEventRail: isEventRail,
+                          expandedRoundScope: expandedRoundScope,
                           eventWindow: eventPage,
                           hasEventRailPagination:
                               resolved.kind == _GameListKind.event &&
@@ -1734,6 +1793,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     required BoardTabGameArgs? effectiveArgs,
     required bool showBoardColumn,
     required BoardTabGamesContinuation? activeContinuation,
+    required bool isEventRail,
+    required String expandedRoundScope,
     required _EventRailWindow? eventWindow,
     required bool hasEventRailPagination,
     required bool isLoadingMoreContinuation,
@@ -1754,6 +1815,16 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
           group: group,
           expanded: expanded,
           onToggle: () {
+            if (isEventRail) {
+              ref
+                  .read(
+                    _eventRailExpandedRoundProvider(
+                      expandedRoundScope,
+                    ).notifier,
+                  )
+                  .state = expanded ? '' : group.id;
+              return;
+            }
             ref.read(_eventRoundExpandedProvider(expansionKey).notifier).state =
                 !expanded;
           },
