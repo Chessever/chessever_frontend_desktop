@@ -515,7 +515,7 @@ class _GroupEventScreenController
 
     ref.invalidate(gamesAppBarProvider);
     ref.invalidate(gamesTourScreenProvider);
-    ref.invalidate(playerTourScreenProvider);
+    ref.invalidate(playerTourStandingsSnapshotProvider);
     ref.invalidate(tourDetailScreenProvider);
 
     if (ref.read(selectedBroadcastModelProvider) != null) {

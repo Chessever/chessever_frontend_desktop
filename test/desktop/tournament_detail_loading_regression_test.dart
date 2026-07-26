@@ -13,7 +13,10 @@ import 'package:chessever/repository/supabase/tour/tour_repository.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_app_bar_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_grouped_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
+
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -197,6 +200,83 @@ void main() {
       );
     },
   );
+
+  test(
+    'stalled optional selection lookup falls back and exits games spinner',
+    () async {
+      final now = DateTime.utc(2026, 7, 24, 12);
+      final tour = _tour(
+        id: 'stalled-selection-tour',
+        name: 'Dole Open',
+        startsAt: now.subtract(const Duration(hours: 4)),
+      );
+      final round = _round(
+        id: 'stalled-selection-round',
+        tourId: tour.id,
+        startsAt: tour.dates.first,
+      );
+      final roundRepository = _BlockingSiblingRoundRepository(
+        primaryTourId: tour.id,
+        roundsByTourId: <String, List<Round>>{
+          tour.id: <Round>[round],
+        },
+      );
+      final gameRepository = _StalledSelectionGameRepository();
+
+      final container = ProviderContainer(
+        overrides: <Override>[
+          tourRepositoryProvider.overrideWithValue(
+            _TournamentDetailTourRepository(<Tour>[tour]),
+          ),
+          roundRepositoryProvider.overrideWithValue(roundRepository),
+          gameRepositoryProvider.overrideWithValue(gameRepository),
+          settingsRepositoryProvider.overrideWithValue(
+            _SilentSettingsRepository(),
+          ),
+          gamesLocalStorage.overrideWith(
+            (ref) => _FixtureGamesLocalStorage(ref, <String, List<Games>>{
+              tour.id: <Games>[
+                _game(id: 'stalled-game', tourId: tour.id, roundId: round.id),
+              ],
+            }),
+          ),
+          shouldStreamProvider.overrideWith((ref) => false),
+          tourDetailSelectionLookupTimeoutProvider.overrideWith(
+            (ref) => const Duration(milliseconds: 20),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container
+          .read(selectedBroadcastModelProvider.notifier)
+          .state = GroupBroadcast(
+        id: 'titled-tuesday',
+        createdAt: now,
+        name: 'Dole Open',
+        search: const <String>[],
+      );
+      final subscription = container.listen(
+        gamesTourGroupedProvider,
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(subscription.close);
+
+      await _waitUntil(() {
+        final grouped = container.read(gamesTourGroupedProvider);
+        return !grouped.isLoading && grouped.allGames.isNotEmpty;
+      });
+
+      expect(gameRepository.selectionLookupStarted, isTrue);
+      final grouped = container.read(gamesTourGroupedProvider);
+      expect(grouped.isLoading, isFalse);
+      expect(
+        grouped.allGames.map((game) => game.gameId),
+        contains('stalled-game'),
+      );
+    },
+  );
 }
 
 Future<void> _pumpEventQueue() async {
@@ -306,6 +386,20 @@ class _TournamentDetailGameRepository implements GameRepository {
   @override
   Future<String?> getMostRelevantTourId({required List<String> tourIds}) async {
     return primaryTourId;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _StalledSelectionGameRepository implements GameRepository {
+  final Completer<String?> _selectionLookup = Completer<String?>();
+  bool selectionLookupStarted = false;
+
+  @override
+  Future<String?> getMostRelevantTourId({required List<String> tourIds}) {
+    selectionLookupStarted = true;
+    return _selectionLookup.future;
   }
 
   @override

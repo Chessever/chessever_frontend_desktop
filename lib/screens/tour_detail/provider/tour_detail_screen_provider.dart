@@ -30,6 +30,11 @@ final tourDetailScreenProvider = StateNotifierProvider<
   return _TourDetailScreenNotifier(ref: ref, groupBroadcast: groupBroadcast);
 });
 
+@visibleForTesting
+final tourDetailSelectionLookupTimeoutProvider = Provider<Duration>(
+  (ref) => const Duration(seconds: 3),
+);
+
 class _TourDetailScreenNotifier
     extends StateNotifier<AsyncValue<TourDetailViewModel>>
     implements
@@ -331,33 +336,37 @@ class _TourDetailScreenNotifier
     List<String> liveTourIds,
   ) async {
     final currentSelectedId = currentState?.aboutTourModel.id;
-
     String? savedTourId;
-    try {
-      savedTourId = await ref
-          .read(tourDetailRepoProvider)
-          .getSelectedTourId(groupBroadcast.id);
-    } catch (_) {
-      savedTourId = null;
-    }
-
     String? activityTourId;
-    try {
-      activityTourId = await ref
-          .read(gameRepositoryProvider)
-          .getMostRelevantTourId(
-            tourIds: tourModels.map((m) => m.tour.id).toList(),
-          );
-    } catch (_) {}
-
     Map<String, DateTime> latestPlayedRoundAtByTourId = const {};
-    try {
-      latestPlayedRoundAtByTourId = await ref
-          .read(roundRepositoryProvider)
-          .getLatestPlayedRoundTimesByTourIds(
-            tourModels.map((model) => model.tour.id).toList(),
-          );
-    } catch (_) {}
+    final tourIds = tourModels.map((model) => model.tour.id).toList();
+    final lookups = <Future<void>>[
+      () async {
+        try {
+          savedTourId = await ref
+              .read(tourDetailRepoProvider)
+              .getSelectedTourId(groupBroadcast.id);
+        } catch (_) {}
+      }(),
+      () async {
+        try {
+          activityTourId = await ref
+              .read(gameRepositoryProvider)
+              .getMostRelevantTourId(tourIds: tourIds);
+        } catch (_) {}
+      }(),
+      () async {
+        try {
+          latestPlayedRoundAtByTourId = await ref
+              .read(roundRepositoryProvider)
+              .getLatestPlayedRoundTimesByTourIds(tourIds);
+        } catch (_) {}
+      }(),
+    ];
+    await Future.wait<void>(lookups).timeout(
+      ref.read(tourDetailSelectionLookupTimeoutProvider),
+      onTimeout: () => <void>[],
+    );
 
     return selectDefaultTour(
       tourModels: tourModels,
@@ -424,7 +433,9 @@ class _TourDetailScreenNotifier
 
   @override
   void setDataState(TourDetailViewModel viewModel) {
-    state = AsyncValue.data(viewModel);
+    if (mounted) {
+      state = AsyncValue.data(viewModel);
+    }
   }
 
   @override
