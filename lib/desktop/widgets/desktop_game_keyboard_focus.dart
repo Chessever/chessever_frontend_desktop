@@ -211,14 +211,14 @@ class _DesktopGameKeyboardFocusState extends State<DesktopGameKeyboardFocus> {
     if (!scopeChanged && !gamesChanged) return;
 
     _syncSelectionWithGames();
-    final hadFocus = _focusNode.hasFocus;
+    final ownedPrimaryFocus = _focusNode.hasPrimaryFocus;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       // Only re-claim focus when we already owned it (the games list was
       // active when the rebuild happened). Filtering the list because the
       // user is typing into a search field above us must not yank focus
       // back into the games list mid-keystroke.
-      if (scopeChanged || hadFocus) {
+      if (scopeChanged || ownedPrimaryFocus) {
         _focusNode.requestFocus();
       }
       if (widget.ensureInitialSelectionVisible) {

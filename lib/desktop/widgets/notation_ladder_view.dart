@@ -3176,10 +3176,8 @@ class _PairRow extends StatelessWidget {
                         annotationComment: whiteAnnotation?.comment,
                         commentText: _firstPgnComment(whiteMove!.comments),
                         userHasQualityNag: whiteUserHasQuality,
-                        hasStoredQualityNag:
-                            (whiteMove!.nags ?? const <int>[]).any(
-                              (nag) => nag >= 1 && nag <= 7,
-                            ),
+                        hasStoredQualityNag: (whiteMove!.nags ?? const <int>[])
+                            .any((nag) => nag >= 1 && nag <= 7),
                         clockText: _formatClockChip(whiteMove!.clockTime),
                         clockSeconds: _clockSeconds(whiteMove!.clockTime),
                         onSetUserQualityNag:
@@ -3242,10 +3240,8 @@ class _PairRow extends StatelessWidget {
                         annotationComment: blackAnnotation?.comment,
                         commentText: _firstPgnComment(blackMove!.comments),
                         userHasQualityNag: blackUserHasQuality,
-                        hasStoredQualityNag:
-                            (blackMove!.nags ?? const <int>[]).any(
-                              (nag) => nag >= 1 && nag <= 7,
-                            ),
+                        hasStoredQualityNag: (blackMove!.nags ?? const <int>[])
+                            .any((nag) => nag >= 1 && nag <= 7),
                         clockText: _formatClockChip(blackMove!.clockTime),
                         clockSeconds: _clockSeconds(blackMove!.clockTime),
                         onSetUserQualityNag:
@@ -4406,8 +4402,11 @@ List<int> _mergedMainlineNagsFor({
   required Map<int, List<int>> userNags,
 }) {
   final lichess = lichessAnnotations[ply];
+  final reportOwnsMoveQuality =
+      lichess?.reportOwnsMoveQuality == true ||
+      lichess?.useClassificationIcon == true;
   final lichessNag =
-      lichess == null || lichess.useClassificationIcon
+      lichess == null || reportOwnsMoveQuality
           ? null
           : _nagForLichessAnnotation(lichess.type);
   final user = userNags[ply] ?? const <int>[];
@@ -4421,11 +4420,11 @@ List<int> _mergedMainlineNagsFor({
     }
   }
 
-  addAll(baseNags);
+  addAll(baseNags.where((nag) => !reportOwnsMoveQuality || nag < 1 || nag > 7));
   if (lichessNag != null && !userHasQuality) {
     addAll(<int>[lichessNag]);
   }
-  addAll(user);
+  addAll(user.where((nag) => !reportOwnsMoveQuality || nag < 1 || nag > 7));
   return out;
 }
 

@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -788,9 +789,22 @@ class PlayerWorkspaceRepository {
             'game history. Please try again.',
           );
         }
+        final preparedGameCount = preparing.preparedGameCount;
+        final expectedGameCount = preparing.expectedGameCount;
+        final expectedCountMessage =
+            expectedGameCount == null
+                ? ''
+                : ' · ${NumberFormat.decimalPattern('en_US').format(expectedGameCount)} '
+                    'currently listed by ${externalSource.label}';
+        final preparedCountMessage =
+            preparedGameCount == null
+                ? ''
+                : ' — ${NumberFormat.decimalPattern('en_US').format(preparedGameCount)} '
+                    'games received so far$expectedCountMessage';
         onProgress?.call(
           '${externalSource.label}: preparing the complete game history on '
-          'ChessEver. This one-time step can take a while for large accounts...',
+          'ChessEver$preparedCountMessage. This one-time step can take a while '
+          'for large accounts...',
           null,
         );
         await _waitForExternalCachePoll(

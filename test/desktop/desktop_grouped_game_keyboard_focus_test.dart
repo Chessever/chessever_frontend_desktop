@@ -393,4 +393,75 @@ void main() {
     expect(find.text('round-1:a1'), findsOneWidget);
     expect(parkedFocus.hasFocus, isFalse);
   });
+
+  testWidgets(
+    'filtered grouped games keep focus in a descendant search field',
+    (tester) async {
+      final searchFocusNode = FocusNode(debugLabel: 'grouped-search');
+      final searchController = TextEditingController();
+      addTearDown(searchFocusNode.dispose);
+      addTearDown(searchController.dispose);
+
+      late StateSetter updateHost;
+      var groups = <DesktopGameKeyboardGroup>[
+        DesktopGameKeyboardGroup(
+          id: 'round-1',
+          games: [_game('a1'), _game('a2')],
+        ),
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (context, setState) {
+                updateHost = setState;
+                return DesktopGroupedGameKeyboardFocus(
+                  scopeId: 'filtered-grouped-search',
+                  groups: groups,
+                  onActivateGame: (_) {},
+                  builder: (
+                    context,
+                    selection,
+                    selectGroup,
+                    selectGame,
+                    keyForGroup,
+                    keyForGame,
+                  ) {
+                    return TextField(
+                      key: const Key('grouped-search-field'),
+                      controller: searchController,
+                      focusNode: searchFocusNode,
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('grouped-search-field')));
+      await tester.pump();
+      expect(searchFocusNode.hasPrimaryFocus, isTrue);
+
+      updateHost(() {
+        groups = <DesktopGameKeyboardGroup>[
+          DesktopGameKeyboardGroup(id: 'round-1', games: [_game('a1')]),
+        ];
+      });
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        searchFocusNode.hasPrimaryFocus,
+        isTrue,
+        reason: 'filter refresh must not move focus into grouped navigation',
+      );
+      tester.testTextInput.enterText('martirosyan complete search');
+      await tester.pump();
+      expect(searchController.text, 'martirosyan complete search');
+    },
+  );
 }

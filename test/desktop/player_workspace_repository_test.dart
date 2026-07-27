@@ -4294,7 +4294,8 @@ $_mergeGameOne
             handler.resolve(
               Response<String>(
                 requestOptions: options,
-                data: '{"status":"preparing"}',
+                data:
+                    '{"status":"warming","progress":{"preparedGameCount":8420,"expectedGameCount":17751}}',
                 statusCode: 202,
                 headers: Headers.fromMap(<String, List<String>>{
                   'x-pgn-cache': <String>['warming'],
@@ -4316,11 +4317,22 @@ $_mergeGameOne
           username: 'msb2',
         ),
         throwsA(
-          isA<GamebaseExternalPlayerPgnPreparingException>().having(
-            (error) => error.retryAfter,
-            'retryAfter',
-            const Duration(seconds: 7),
-          ),
+          isA<GamebaseExternalPlayerPgnPreparingException>()
+              .having(
+                (error) => error.retryAfter,
+                'retryAfter',
+                const Duration(seconds: 7),
+              )
+              .having(
+                (error) => error.preparedGameCount,
+                'preparedGameCount',
+                8420,
+              )
+              .having(
+                (error) => error.expectedGameCount,
+                'expectedGameCount',
+                17751,
+              ),
         ),
       );
     });
@@ -4483,9 +4495,13 @@ $_mergeGameOne
           externalErrors: const <Object>[
             GamebaseExternalPlayerPgnPreparingException(
               retryAfter: Duration.zero,
+              preparedGameCount: 1200,
+              expectedGameCount: 17751,
             ),
             GamebaseExternalPlayerPgnPreparingException(
               retryAfter: Duration.zero,
+              preparedGameCount: 8420,
+              expectedGameCount: 17751,
             ),
           ],
           externalExports:
@@ -4519,6 +4535,12 @@ $_mergeGameOne
                 message.contains('preparing the complete game history'),
           ),
           hasLength(2),
+        );
+        expect(progressMessages, contains(contains('1,200 games received')));
+        expect(progressMessages, contains(contains('8,420 games received')));
+        expect(
+          progressMessages,
+          contains(contains('17,751 currently listed by Lichess')),
         );
       },
     );

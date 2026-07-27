@@ -2830,6 +2830,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
       event.title,
       eventGames: gameContext.boardGames,
       viewSource: ChessboardView.forYou,
+      eventBroadcastId: event.id,
     );
   }
 

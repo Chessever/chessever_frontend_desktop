@@ -22,6 +22,7 @@ void main() {
       initialFen: 'initial-fen',
       viewSource: ChessboardView.favScorecard,
       gameListSelectedId: 'selected-1',
+      eventBroadcastId: 'parent-event',
       eventGames: [_summary('game-1')],
       eventGamesKey: const BoardTabEventGamesKey(
         tourId: 'tour-1',
@@ -72,6 +73,7 @@ void main() {
     expect(decoded.args?.initialFen, 'initial-fen');
     expect(decoded.args?.viewSource, ChessboardView.favScorecard);
     expect(decoded.args?.gameListSelectedId, 'selected-1');
+    expect(decoded.args?.eventBroadcastId, 'parent-event');
     expect(decoded.args?.eventGames.single.id, 'game-1');
     expect(decoded.args?.eventGames.single.whitePlayer, 'Carlsen');
     expect(decoded.args?.eventGames.single.status, GameStatus.ongoing);
@@ -283,6 +285,7 @@ BoardTabGameArgs _args({
   String? initialFen,
   ChessboardView viewSource = ChessboardView.tour,
   String? gameListSelectedId,
+  String? eventBroadcastId,
   List<TournamentGameSummary> eventGames = const <TournamentGameSummary>[],
   BoardTabEventGamesKey? eventGamesKey,
   List<TournamentGameSummary> routeGames = const <TournamentGameSummary>[],
@@ -311,6 +314,7 @@ BoardTabGameArgs _args({
     initialFen: initialFen,
     viewSource: viewSource,
     gameListSelectedId: gameListSelectedId,
+    eventBroadcastId: eventBroadcastId,
     eventGames: eventGames,
     eventGamesKey: eventGamesKey,
     routeGames: routeGames,

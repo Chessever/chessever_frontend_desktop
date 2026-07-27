@@ -469,9 +469,7 @@ int playerProfileGameCountForTab(
   int? authoritativeTotal,
 }) {
   if (state.playerKey.source == PlayerProfileDataSource.twic) {
-    return authoritativeTotal ??
-        state.totalCount ??
-        state.filteredGames.length;
+    return authoritativeTotal ?? state.totalCount ?? state.filteredGames.length;
   }
   return state.filteredGames.length;
 }
@@ -1909,9 +1907,7 @@ class _TabStrip extends StatelessWidget {
               label: t.label,
               badge:
                   t == PlayerProfileSection.games
-                      ? (gameCountLoading
-                          ? '…'
-                          : formatCompactCount(gameCount))
+                      ? (gameCountLoading ? '…' : formatCompactCount(gameCount))
                       : null,
               emphasizeBadge:
                   t == PlayerProfileSection.games && hasActiveFilter,
@@ -1989,8 +1985,7 @@ class _TabUnderlineItemState extends State<_TabUnderlineItem> {
                     style: TextStyle(
                       color: fg,
                       fontSize: 13,
-                      fontWeight:
-                          selected ? FontWeight.w700 : FontWeight.w500,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                       letterSpacing: 0.1,
                     ),
                   ),
@@ -3184,7 +3179,8 @@ class _OpeningTable extends StatelessWidget {
         children: [
           const _SectionTitle(
             title: 'Opening results',
-            subtitle: 'Frequently played openings ranked relative to this player',
+            subtitle:
+                'Frequently played openings ranked relative to this player',
           ),
           const SizedBox(height: 10),
           LayoutBuilder(
@@ -3726,7 +3722,6 @@ class _GamesBodyState extends ConsumerState<_GamesBody> {
         await openBoardGameWindow(
           ref,
           buildTournamentBoardTabArgs(
-            ref,
             game,
             '',
             routeTitle: routeTitle,

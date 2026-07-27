@@ -9,7 +9,6 @@ import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
-import 'package:chessever/desktop/widgets/event_games_table.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
@@ -18,6 +17,66 @@ import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
 void main() {
+  test('scratch board keeps the local PGN identity after its first save', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    container
+        .read(boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier)
+        .attachLocalPgn(
+          tabId: 'scratch-board',
+          sourcePath: r'C:\Games\prep.pgn',
+          sourceIndex: 2,
+          sourceFileGameCount: 3,
+          sourcePgnFingerprint: 'fingerprint-3',
+          title: 'White vs Black',
+        );
+
+    final origin =
+        container.read(
+          boardTabAttachedLibrarySaveOriginByTabIdProvider,
+        )['scratch-board'];
+    expect(origin?.kind, BoardTabLibrarySaveOriginKind.localPgnFile);
+    expect(origin?.sourcePath, r'C:\Games\prep.pgn');
+    expect(origin?.sourceIndex, 2);
+    expect(origin?.sourceFileGameCount, 3);
+    expect(origin?.sourcePgnFingerprint, 'fingerprint-3');
+  });
+
+  test('saving a copy does not replace an existing update identity', () {
+    const existing = BoardTabLibrarySaveOrigin.localPgnFile(
+      sourcePath: r'C:\Games\original.pgn',
+      sourceIndex: 0,
+      sourceFileGameCount: 1,
+      title: 'Original',
+    );
+
+    expect(
+      shouldAttachLocalPgnIdentityAfterSave(
+        sourceOrigin: null,
+        attachedOrigin: null,
+        hasLocalUpdateTarget: true,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldAttachLocalPgnIdentityAfterSave(
+        sourceOrigin: existing,
+        attachedOrigin: null,
+        hasLocalUpdateTarget: true,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldAttachLocalPgnIdentityAfterSave(
+        sourceOrigin: null,
+        attachedOrigin: existing,
+        hasLocalUpdateTarget: true,
+      ),
+      isFalse,
+    );
+  });
+
   testWidgets('replaceActive opens the same game in the current tab', (
     tester,
   ) async {
@@ -334,8 +393,12 @@ void main() {
           home: Consumer(
             builder: (context, ref, _) {
               return TextButton(
-                onPressed: () {
-                  openTournamentGameTab(ref, _game(tourId: 'tour-1'), 'Event');
+                onPressed: () async {
+                  await openTournamentGameTab(
+                    ref,
+                    _game(tourId: 'tour-1'),
+                    'Event',
+                  );
                   tabsState = ref.read(desktopTabsProvider);
                   argsByTab = ref.read(boardTabGameArgsByTabIdProvider);
                 },
@@ -348,7 +411,7 @@ void main() {
     );
 
     await tester.tap(find.text('open'));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     final activeId = tabsState.activeId;
     expect(activeId, isNotNull);
@@ -382,8 +445,8 @@ void main() {
           home: Consumer(
             builder: (context, ref, _) {
               return TextButton(
-                onPressed: () {
-                  openTournamentGameTab(
+                onPressed: () async {
+                  await openTournamentGameTab(
                     ref,
                     routeGames[50],
                     'Event',
@@ -401,7 +464,7 @@ void main() {
     );
 
     await tester.tap(find.text('open'));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     final args = argsByTab.values.single;
     expect(args.routeTitle, 'Player games');
@@ -461,14 +524,10 @@ void main() {
     await tester.pumpAndSettle();
 
     final args = argsByTab.values.single;
-    expect(args.eventGames, hasLength(108));
-    expect(args.eventGames.map((game) => game.roundId).toSet(), {
-      for (var round = 1; round <= 9; round++) 'round-$round',
-    });
-    expect(
-      eventRailRoundGroupsForTesting(args.eventGames).map((group) => group.id),
-      [for (var round = 9; round >= 1; round--) 'round-$round'],
-    );
+    expect(args.eventGames, hasLength(31));
+    expect(args.eventGamesKey?.tourId, 'tour-1');
+    expect(args.eventGamesKey?.selectedGameId, 'round-9-game-12');
+    expect(args.eventGames.any((game) => game.id == 'round-9-game-12'), isTrue);
     expect(args.gameListSelectedId, 'round-9-game-12');
   });
 }
@@ -533,6 +592,11 @@ class _BlockingGameRepository implements GameRepository {
   }
 
   @override
+  Future<Games> getGameWithPGN(String gameId) async {
+    throw StateError('No canonical game available in this test.');
+  }
+
+  @override
   Future<List<Games>> getGamesByTourId(
     String tourId, {
     int? limit,
@@ -555,6 +619,11 @@ class _BlockingGameRepository implements GameRepository {
 class _EmptyGameRepository implements GameRepository {
   @override
   Future<String?> getGamePgn(String gameId) async => null;
+
+  @override
+  Future<Games> getGameWithPGN(String gameId) async {
+    throw StateError('No canonical game available in this test.');
+  }
 
   @override
   Future<List<Games>> getGamesByTourId(

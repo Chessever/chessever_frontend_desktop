@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/widgets/library/library_table_row_style.dart';
+import 'package:chessever/desktop/widgets/table_display_value.dart';
 import 'package:chessever/providers/player_backfill_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/chess_title_utils.dart';
@@ -52,7 +53,10 @@ class LocalGamePlayerCell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final rawName = metadata[side]?.toString().trim() ?? '';
-    final hasName = rawName.isNotEmpty && rawName != '?';
+    final displayName = desktopTablePlayerValue(rawName);
+    if (displayName.isEmpty) {
+      return Padding(padding: padding, child: const SizedBox.shrink());
+    }
     final fideId = localPgnFideId(metadata, side);
     final titleChip = _buildTitleChip(ref, fideId);
 
@@ -63,7 +67,7 @@ class LocalGamePlayerCell extends ConsumerWidget {
           BackfilledFederationFlag(
             federation: localPgnFederation(metadata, side),
             fideId: fideId,
-            playerName: hasName ? rawName : null,
+            playerName: displayName,
             width: 18,
             height: 13,
             borderRadius: BorderRadius.circular(2),
@@ -75,7 +79,7 @@ class LocalGamePlayerCell extends ConsumerWidget {
           ],
           Expanded(
             child: Text(
-              hasName ? libraryStandardTablePlayerName(rawName) : side,
+              libraryStandardTablePlayerName(displayName),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(

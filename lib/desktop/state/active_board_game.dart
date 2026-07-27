@@ -25,12 +25,14 @@ class BoardTabLibrarySaveOrigin {
   }) : kind = BoardTabLibrarySaveOriginKind.cloudSavedAnalysis,
        sourcePath = null,
        sourceIndex = null,
-       sourceFileGameCount = null;
+       sourceFileGameCount = null,
+       sourcePgnFingerprint = null;
 
   const BoardTabLibrarySaveOrigin.localPgnFile({
     required this.sourcePath,
     required this.sourceIndex,
     required this.sourceFileGameCount,
+    this.sourcePgnFingerprint = '',
     required this.title,
   }) : kind = BoardTabLibrarySaveOriginKind.localPgnFile,
        analysisId = null;
@@ -40,6 +42,7 @@ class BoardTabLibrarySaveOrigin {
   final String? sourcePath;
   final int? sourceIndex;
   final int? sourceFileGameCount;
+  final String? sourcePgnFingerprint;
   final String title;
 }
 
@@ -63,6 +66,7 @@ class BoardTabGameArgs {
     this.initialFen,
     this.sourceGame,
     this.viewSource = ChessboardView.tour,
+    this.eventBroadcastId,
     this.tournamentTitle = '',
     this.eventGames = const <TournamentGameSummary>[],
     this.eventGamesLoading = false,
@@ -129,6 +133,14 @@ class BoardTabGameArgs {
   /// Mobile board source this tab came from. Used when the desktop board
   /// needs to reproduce mobile's scorecard context rules.
   final ChessboardView viewSource;
+
+  /// Parent broadcast identity for event-derived Board tabs.
+  ///
+  /// Smart/For You rows may belong to a child tour while their standings and
+  /// sibling categories belong to a parent broadcast. Keeping that identity
+  /// on the tab avoids mutating the global Tournament Detail selection while
+  /// an asynchronous Board open is still hydrating.
+  final String? eventBroadcastId;
 
   /// Event context for Board tabs opened from a tournament game list.
   ///
@@ -210,6 +222,7 @@ class BoardTabGameArgs {
     String? initialFen,
     GamesTourModel? sourceGame,
     ChessboardView? viewSource,
+    String? eventBroadcastId,
     String? tournamentTitle,
     List<TournamentGameSummary>? eventGames,
     bool? eventGamesLoading,
@@ -249,6 +262,7 @@ class BoardTabGameArgs {
       initialFen: initialFen ?? this.initialFen,
       sourceGame: sourceGame ?? this.sourceGame,
       viewSource: viewSource ?? this.viewSource,
+      eventBroadcastId: eventBroadcastId ?? this.eventBroadcastId,
       tournamentTitle: tournamentTitle ?? this.tournamentTitle,
       eventGames: eventGames ?? this.eventGames,
       eventGamesLoading: eventGamesLoading ?? this.eventGamesLoading,
@@ -416,6 +430,112 @@ final boardTabGameArgsByTabIdProvider =
       (_) => const <String, BoardTabGameArgs>{},
     );
 
+/// Mutable save identity attached after a scratch/detached Board tab appends
+/// one game to one local PGN, or refreshed after an existing local game is
+/// updated. Keeping this separate from [BoardTabGameArgs] avoids rewriting the
+/// immutable open-time args after a durable save.
+final boardTabAttachedLibrarySaveOriginByTabIdProvider =
+    StateProvider<Map<String, BoardTabLibrarySaveOrigin>>(
+      (_) => const <String, BoardTabLibrarySaveOrigin>{},
+    );
+
+bool shouldAttachLocalPgnIdentityAfterSave({
+  required BoardTabLibrarySaveOrigin? sourceOrigin,
+  required BoardTabLibrarySaveOrigin? attachedOrigin,
+  required bool hasLocalUpdateTarget,
+}) => hasLocalUpdateTarget && sourceOrigin == null && attachedOrigin == null;
+
+bool shouldAttachLocalPgnIdentityAfterSaveCompletion({
+  required bool tabStillExists,
+  required bool gameStillMatches,
+  required BoardTabGameArgs? savingArgs,
+  required BoardTabGameArgs? currentArgs,
+  required BoardTabLibrarySaveOrigin? savingAttachedOrigin,
+  required BoardTabLibrarySaveOrigin? currentAttachedOrigin,
+  required bool hasLocalUpdateTarget,
+}) =>
+    tabStillExists &&
+    gameStillMatches &&
+    identical(currentArgs, savingArgs) &&
+    identical(currentAttachedOrigin, savingAttachedOrigin) &&
+    shouldAttachLocalPgnIdentityAfterSave(
+      sourceOrigin: savingArgs?.librarySaveOrigin,
+      attachedOrigin: savingAttachedOrigin,
+      hasLocalUpdateTarget: hasLocalUpdateTarget,
+    );
+
+BoardTabLibrarySaveOrigin? resolveBoardTabLibrarySaveOrigin({
+  required BoardTabLibrarySaveOrigin? sourceOrigin,
+  required BoardTabLibrarySaveOrigin? attachedOrigin,
+}) => attachedOrigin ?? sourceOrigin;
+
+bool shouldAcceptRefreshedLocalPgnOrigin({
+  required BoardTabLibrarySaveOrigin updatingOrigin,
+  required BoardTabLibrarySaveOrigin? currentSourceOrigin,
+  required BoardTabLibrarySaveOrigin? currentAttachedOrigin,
+}) {
+  final currentOrigin = resolveBoardTabLibrarySaveOrigin(
+    sourceOrigin: currentSourceOrigin,
+    attachedOrigin: currentAttachedOrigin,
+  );
+  if (updatingOrigin.kind != BoardTabLibrarySaveOriginKind.localPgnFile ||
+      currentOrigin?.kind != BoardTabLibrarySaveOriginKind.localPgnFile) {
+    return false;
+  }
+  return currentOrigin!.sourcePath?.trim() ==
+          updatingOrigin.sourcePath?.trim() &&
+      currentOrigin.sourceIndex == updatingOrigin.sourceIndex &&
+      currentOrigin.sourceFileGameCount == updatingOrigin.sourceFileGameCount &&
+      currentOrigin.sourcePgnFingerprint?.trim() ==
+          updatingOrigin.sourcePgnFingerprint?.trim();
+}
+
+/// [updatingArgs] is nullable so scratch/detached Board tabs — which legitimately
+/// carry no open-time args — can still adopt the post-write fingerprint. Both
+/// sides being null is a valid identity match.
+bool shouldAttachRefreshedLocalPgnOriginAfterUpdate({
+  required bool tabStillExists,
+  required BoardTabGameArgs? updatingArgs,
+  required BoardTabGameArgs? currentArgs,
+  required BoardTabLibrarySaveOrigin updatingOrigin,
+  required BoardTabLibrarySaveOrigin? currentAttachedOrigin,
+}) =>
+    tabStillExists &&
+    identical(currentArgs, updatingArgs) &&
+    shouldAcceptRefreshedLocalPgnOrigin(
+      updatingOrigin: updatingOrigin,
+      currentSourceOrigin: currentArgs?.librarySaveOrigin,
+      currentAttachedOrigin: currentAttachedOrigin,
+    );
+
+extension BoardTabAttachedLibrarySaveOriginWriter
+    on StateController<Map<String, BoardTabLibrarySaveOrigin>> {
+  void attachLocalPgn({
+    required String tabId,
+    required String sourcePath,
+    required int sourceIndex,
+    required int sourceFileGameCount,
+    required String sourcePgnFingerprint,
+    required String title,
+  }) {
+    state = <String, BoardTabLibrarySaveOrigin>{
+      ...state,
+      tabId: BoardTabLibrarySaveOrigin.localPgnFile(
+        sourcePath: sourcePath,
+        sourceIndex: sourceIndex,
+        sourceFileGameCount: sourceFileGameCount,
+        sourcePgnFingerprint: sourcePgnFingerprint,
+        title: title,
+      ),
+    };
+  }
+
+  void clear(String tabId) {
+    if (!state.containsKey(tabId)) return;
+    state = <String, BoardTabLibrarySaveOrigin>{...state}..remove(tabId);
+  }
+}
+
 /// Board player-name taps can show event score cards only when the tab still
 /// carries a tournament/live source game with a usable tour id.
 GamesTourModel? boardPlayerTapEventContextGame(GamesTourModel? sourceGame) {
@@ -546,6 +666,9 @@ void _putBoardGameArgs(
     final next = Map<String, BoardExplorerScope>.of(m)..remove(tabId);
     return next;
   });
+  container
+      .read(boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier)
+      .clear(tabId);
   container
       .read(boardTabGameArgsByTabIdProvider.notifier)
       .update((m) => <String, BoardTabGameArgs>{...m, tabId: args});

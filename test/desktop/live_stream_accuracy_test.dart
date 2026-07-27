@@ -6,11 +6,13 @@ import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/panes/board_pane.dart';
+import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
@@ -68,6 +70,106 @@ void main() {
       expect(finalized['Result'], '1-0');
       expect(finalized[ChessGame.metadataIsLiveKey], isFalse);
       expect(finalized[ChessGame.metadataAllowMainlineExtensionKey], isTrue);
+    });
+
+    test(
+      'unconfirmed database snapshots with an undecided result remain editable',
+      () {
+        final parsed = ChessGame.fromPgn(
+          'database-snapshot',
+          '[Result "*"]\n\n1. e4 *',
+        );
+        final metadata = finalizeBroadcastPgnMetadata(
+          parsedMetadata: parsed.metadata,
+          acceptedLiveStatus: null,
+        );
+        final navigator = ChessGameNavigator(
+          parsed.copyWith(metadata: metadata),
+        )..goToTail();
+
+        navigator.makeOrGoToMove('e7e5');
+
+        expect(metadata[ChessGame.metadataIsLiveKey], isFalse);
+        expect(metadata[ChessGame.metadataAllowMainlineExtensionKey], isTrue);
+        expect(navigator.state.game.mainline.map((move) => move.san), [
+          'e4',
+          'e5',
+        ]);
+        expect(navigator.state.game.mainline.first.variations, isNull);
+        expect(navigator.state.movePointer, [1]);
+      },
+    );
+
+    test('accepted live snapshots keep the broadcast mainline protected', () {
+      final parsed = ChessGame.fromPgn(
+        'live-snapshot',
+        '[Result "*"]\n\n1. e4 *',
+      );
+      final metadata = finalizeBroadcastPgnMetadata(
+        parsedMetadata: parsed.metadata,
+        acceptedLiveStatus: 'live',
+      );
+      final navigator = ChessGameNavigator(parsed.copyWith(metadata: metadata))
+        ..goToTail();
+
+      navigator.makeOrGoToMove('e7e5');
+
+      expect(metadata[ChessGame.metadataIsLiveKey], isTrue);
+      expect(metadata[ChessGame.metadataAllowMainlineExtensionKey], isFalse);
+      expect(navigator.state.game.mainline.map((move) => move.san), ['e4']);
+      expect(
+        navigator.state.game.mainline.first.variations!.single.single.san,
+        'e5',
+      );
+      expect(navigator.state.movePointer, [0, 0, 0]);
+    });
+
+    test('database context never inherits an ongoing source status', () {
+      expect(
+        resolveInitialBoardPgnLiveStatus(
+          acceptedLiveStatus: null,
+          isDatabaseSnapshot: true,
+          gameId: 'bound-game',
+          sourceGameStatus: GameStatus.ongoing,
+          parsedResult: '*',
+        ),
+        isNull,
+      );
+      expect(
+        isDatabaseBoardSnapshot(
+          const BoardTabGameArgs(
+            pgn: '',
+            label: 'database',
+            whiteName: '',
+            blackName: '',
+            databaseGamesContinuation: BoardTabGamesContinuation.twicDatabase(),
+          ),
+        ),
+        isTrue,
+      );
+    });
+
+    test('bound broadcasts stay protected before their first realtime row', () {
+      expect(
+        resolveInitialBoardPgnLiveStatus(
+          acceptedLiveStatus: null,
+          isDatabaseSnapshot: false,
+          gameId: 'bound-live-game',
+          sourceGameStatus: GameStatus.ongoing,
+          parsedResult: '*',
+        ),
+        '*',
+      );
+      expect(
+        resolveInitialBoardPgnLiveStatus(
+          acceptedLiveStatus: null,
+          isDatabaseSnapshot: false,
+          gameId: 'bound-live-game-without-row',
+          sourceGameStatus: null,
+          parsedResult: '*',
+        ),
+        '*',
+      );
     });
   });
 

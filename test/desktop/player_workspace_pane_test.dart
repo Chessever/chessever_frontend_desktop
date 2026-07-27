@@ -243,6 +243,79 @@ void main() {
     );
   });
 
+  test(
+    'Lichess server preparation explains why the game count stays at zero',
+    () {
+      const operation = PlayerWorkspaceOperation(
+        source: PlayerWorkspaceSource.lichess,
+        message:
+            'Lichess: preparing the complete game history on ChessEver. '
+            'This one-time step can take a while for large accounts...',
+      );
+      const account = PlayerWorkspaceAccount(
+        source: PlayerWorkspaceSource.lichess,
+        username: 'muisback',
+        availableGameCount: 17751,
+      );
+
+      expect(playerWorkspaceOperationStatus(operation), 'Preparing online');
+      expect(
+        playerWorkspaceLichessDownloadNotice(account, operation),
+        'ChessEver is preparing your Lichess history on its servers. The '
+        'imported count stays at 0 until all 17,751 games are ready. Large '
+        'accounts can take 20 minutes or longer; future syncs are faster.',
+      );
+    },
+  );
+
+  testWidgets('renders Lichess server preparation as visibly active', (
+    tester,
+  ) async {
+    const notice =
+        'ChessEver is preparing your Lichess history on its servers. The '
+        'imported count stays at 0 until all 42 games are ready. Large accounts '
+        'can take 20 minutes or longer; future syncs are faster.';
+    final repository = _PaneFakePlayerWorkspaceRepository(
+      lichessDownloadMessage:
+          'Lichess: preparing the complete game history on ChessEver — '
+          '8,420 games received so far · 17,751 currently listed by Lichess. '
+          'This one-time step can take a while for large accounts...',
+      lichessDownloadProgress: null,
+    )..holdNextOnlineDownload();
+    await _pumpAndConnectOnlineAccount(
+      tester,
+      repository: repository,
+      sourceButtonIndex: 1,
+      username: 'muisback',
+    );
+
+    await tester.tap(find.text('Download games').first);
+    await repository.onlineDownloadStarted.future.timeout(
+      const Duration(seconds: 5),
+    );
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('Preparing online'), findsOneWidget);
+    expect(find.textContaining('8,420 games received so far'), findsOneWidget);
+    expect(
+      find.textContaining('17,751 currently listed by Lichess'),
+      findsOneWidget,
+    );
+    expect(find.text(notice), findsOneWidget);
+    final noticeWidget = tester.widget<Text>(find.text(notice));
+    expect(noticeWidget.maxLines, isNull);
+    expect(noticeWidget.overflow, isNull);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    repository.finishOnlineDownload();
+    await repository.onlineImportFinished.future.timeout(
+      const Duration(seconds: 5),
+    );
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('keeps built tree actions when another player source is built', (
     tester,
   ) async {
@@ -1272,6 +1345,9 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     PlayerWorkspaceSnapshot? snapshot,
     this.chessEverSearchResults = const <GamebasePlayer>[],
     this.combinedRebuildPath = '/tmp/combined.pgn',
+    this.lichessDownloadMessage =
+        'Receiving Lichess games: 21 of about 42...',
+    this.lichessDownloadProgress = 0.5,
   }) : snapshot =
            snapshot ??
            const PlayerWorkspaceSnapshot(
@@ -1287,6 +1363,8 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
   PlayerWorkspaceSnapshot snapshot;
   final List<GamebasePlayer> chessEverSearchResults;
   final String combinedRebuildPath;
+  final String lichessDownloadMessage;
+  final double? lichessDownloadProgress;
   final fideLookupRequests = <String>[];
   Completer<void> onlineDownloadStarted = Completer<void>();
   Completer<void> onlineImportFinished = Completer<void>();
@@ -1378,7 +1456,8 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     expect(expectedGameCount, 42);
     return _downloadOnlineGames(
       source: PlayerWorkspaceSource.lichess,
-      message: 'Receiving Lichess games: 21 of about 42...',
+      message: lichessDownloadMessage,
+      progress: lichessDownloadProgress,
       username: username,
       onProgress: onProgress,
     );
@@ -1422,9 +1501,10 @@ class _PaneFakePlayerWorkspaceRepository extends PlayerWorkspaceRepository {
     required PlayerWorkspaceSource source,
     required String message,
     required String username,
+    double? progress = 0.5,
     PlayerWorkspaceProgress? onProgress,
   }) async {
-    onProgress?.call(message, 0.5);
+    onProgress?.call(message, progress);
     if (!onlineDownloadStarted.isCompleted) {
       onlineDownloadStarted.complete();
     }

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -45,10 +47,40 @@ class GamebasePlayerPgnExport {
   final String? snapshotStatus;
 }
 
+({int? preparedGameCount, int? expectedGameCount})
+_parseExternalPlayerPgnWarmProgress(String? body) {
+  try {
+    final decoded = jsonDecode(body ?? '');
+    if (decoded is! Map<String, dynamic>) {
+      return (preparedGameCount: null, expectedGameCount: null);
+    }
+    final progress = decoded['progress'];
+    if (progress is! Map<String, dynamic>) {
+      return (preparedGameCount: null, expectedGameCount: null);
+    }
+    int? nonNegativeInt(Object? value) {
+      return value is int && value >= 0 ? value : null;
+    }
+
+    return (
+      preparedGameCount: nonNegativeInt(progress['preparedGameCount']),
+      expectedGameCount: nonNegativeInt(progress['expectedGameCount']),
+    );
+  } on FormatException {
+    return (preparedGameCount: null, expectedGameCount: null);
+  }
+}
+
 class GamebaseExternalPlayerPgnPreparingException implements Exception {
-  const GamebaseExternalPlayerPgnPreparingException({required this.retryAfter});
+  const GamebaseExternalPlayerPgnPreparingException({
+    required this.retryAfter,
+    this.preparedGameCount,
+    this.expectedGameCount,
+  });
 
   final Duration retryAfter;
+  final int? preparedGameCount;
+  final int? expectedGameCount;
 
   @override
   String toString() => 'External player PGN cache is being prepared.';
@@ -1451,8 +1483,11 @@ class GamebaseRepository {
           response.headers.value('x-pgn-cache')?.toLowerCase() == 'warming') {
         final retryAfterSeconds =
             int.tryParse(response.headers.value('retry-after') ?? '') ?? 15;
+        final progress = _parseExternalPlayerPgnWarmProgress(response.data);
         throw GamebaseExternalPlayerPgnPreparingException(
           retryAfter: Duration(seconds: retryAfterSeconds.clamp(1, 60)),
+          preparedGameCount: progress.preparedGameCount,
+          expectedGameCount: progress.expectedGameCount,
         );
       }
 

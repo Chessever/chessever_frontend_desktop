@@ -154,6 +154,9 @@ class DesktopShell extends HookConsumerWidget {
           ref.read(boardTabFenProvider.notifier).clear(t.id);
           ref.read(boardTabSoundMuteProvider.notifier).clear(t.id);
           ref.read(boardPaneSessionByTabIdProvider.notifier).clear(t.id);
+          ref
+              .read(boardTabAttachedLibrarySaveOriginByTabIdProvider.notifier)
+              .clear(t.id);
           ref.read(tournamentByTabIdProvider.notifier).update((m) {
             if (!m.containsKey(t.id)) return m;
             final next = <String, dynamic>{...m}..remove(t.id);
@@ -270,10 +273,9 @@ class DesktopShell extends HookConsumerWidget {
       },
     );
 
-    /// Sidebar nav handler — `inNewTab` is `true` when the user
-    /// Cmd/Ctrl-clicks. Plain click usually navigates the *active* tab to the
-    /// selected pane (main-route semantics), while protected workspace tabs
-    /// such as an open game are preserved by the shared navigation helper.
+    /// Sidebar nav handler — plain clicks open or activate the destination's
+    /// category tab without rewriting the active tab. Cmd/Ctrl-click forces an
+    /// additional destination tab.
     void openPane(DesktopPane pane, {bool inNewTab = false}) {
       openDesktopPaneFromContainer(
         ProviderScope.containerOf(context, listen: false),

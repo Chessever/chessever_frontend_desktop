@@ -156,14 +156,16 @@ class EventRailRoundMetadata {
     required this.name,
     required this.startsAt,
     required this.createdAt,
-    required this.ongoing,
   });
 
   final String id;
   final String name;
+
+  /// Scheduled start. A round is treated as started once this is in the past;
+  /// `rounds` carries no live/ongoing flag, so live status is derived from game
+  /// rows and the live-round signal rather than from this catalog.
   final DateTime? startsAt;
   final DateTime? createdAt;
-  final bool ongoing;
 }
 
 const int _currentSmartGamesPageSize = 1000;
@@ -357,9 +359,12 @@ class GameRepository extends BaseRepository {
     String tourId,
   ) {
     return handleApiCall(() async {
+      // `rounds` has no `ongoing` column. Selecting it made PostgREST answer
+      // 400 (`column rounds.ongoing does not exist`), so this catalog always
+      // threw and the rail lost every authoritative round heading.
       final response = await supabase
           .from('rounds')
-          .select('id,name,starts_at,created_at,ongoing')
+          .select('id,name,starts_at,created_at')
           .eq('tour_id', tourId)
           .order('created_at', ascending: true);
       return <EventRailRoundMetadata>[
@@ -370,7 +375,6 @@ class GameRepository extends BaseRepository {
               name: raw['name']?.toString() ?? '',
               startsAt: _tryParseRepositoryDateTime(raw['starts_at']),
               createdAt: _tryParseRepositoryDateTime(raw['created_at']),
-              ongoing: raw['ongoing'] == true,
             ),
       ];
     });

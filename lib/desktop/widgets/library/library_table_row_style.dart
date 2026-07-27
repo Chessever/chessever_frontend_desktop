@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:chessever/desktop/widgets/table_display_value.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 
@@ -15,8 +16,8 @@ const double _kLibraryPlayerRatingGap = 5;
 
 /// Standard-table player name abbreviation: `Carlsen, Magnus` → `Carlsen, M.`.
 String libraryStandardTablePlayerName(String raw) {
-  final name = raw.trim();
-  if (name.isEmpty) return '—';
+  final name = desktopTablePlayerValue(raw);
+  if (name.isEmpty) return '';
 
   String initial(String value) {
     final trimmed = value.trim();
@@ -60,6 +61,8 @@ class LibraryTablePlayerCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final playerName = libraryStandardTablePlayerName(name);
+    if (playerName.isEmpty) return const SizedBox.shrink();
     return Row(
       children: [
         BackfilledFederationFlag(
@@ -83,7 +86,7 @@ class LibraryTablePlayerCell extends StatelessWidget {
         ],
         Expanded(
           child: Text(
-            libraryStandardTablePlayerName(name),
+            playerName,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
@@ -117,8 +120,9 @@ class LibraryTableRatingCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final value = desktopTableDisplayValue(rating);
     return Text(
-      rating.trim().isEmpty ? '—' : rating.trim(),
+      value,
       textAlign: TextAlign.right,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
@@ -139,13 +143,8 @@ class LibraryTableEcoCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final value = eco.trim();
-    if (value.isEmpty || value == '?') {
-      return const Text(
-        '—',
-        style: TextStyle(color: kLightGreyColor, fontSize: 11),
-      );
-    }
+    final value = desktopTableDisplayValue(eco);
+    if (value.isEmpty) return const SizedBox.shrink();
     return Container(
       alignment: Alignment.center,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -180,14 +179,15 @@ class LibraryTableResultPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final r = result.trim();
+    final r = desktopTableDisplayValue(result);
     final (label, color) = switch (r) {
       '1-0' => ('1 – 0', kPrimaryColor),
       '0-1' => ('0 – 1', kRedColor),
       '1/2-1/2' || '½-½' => ('½ – ½', _kDraw),
-      '*' => ('•', kPrimaryColor),
-      _ => ('—', kLightGreyColor),
+      '*' => ('', kLightGreyColor),
+      _ => ('', kLightGreyColor),
     };
+    if (label.isEmpty) return const SizedBox.shrink();
     return Center(
       child: Text(
         label,

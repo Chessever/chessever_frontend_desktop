@@ -24,9 +24,15 @@ class EventRailGamesState {
     this.hasMore = false,
     this.isLoadingMore = false,
     this.loadMoreError,
+    this.roundCatalog = const <EventRailRoundMetadata>[],
   });
 
   final List<TournamentGameSummary> games;
+
+  /// Every round the tournament has, independent of which rows are loaded.
+  /// Headings come from this, so the full round list is present at first paint
+  /// and its order never re-shuffles as rows stream in.
+  final List<EventRailRoundMetadata> roundCatalog;
 
   /// Offset into the canonical tour-wide query. The selected-round window is
   /// merged separately and therefore never advances this cursor.
@@ -44,6 +50,7 @@ class EventRailGamesState {
     bool? isLoadingMore,
     String? loadMoreError,
     bool clearLoadMoreError = false,
+    List<EventRailRoundMetadata>? roundCatalog,
   }) {
     return EventRailGamesState(
       games: games ?? this.games,
@@ -53,6 +60,7 @@ class EventRailGamesState {
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
       loadMoreError:
           clearLoadMoreError ? null : loadMoreError ?? this.loadMoreError,
+      roundCatalog: roundCatalog ?? this.roundCatalog,
     );
   }
 }
@@ -180,6 +188,7 @@ class EventRailGamesNotifier
     );
     final selectedGameFuture = _loadSelectedGameOrEmpty(repository, eventKey);
     final totalCountFuture = _loadTotalCount(repository, tourId);
+    final roundCatalogFuture = _loadRoundCatalogOrEmpty(repository, tourId);
 
     final auxiliaryPagesFuture = Future.wait(<Future<List<Games>>>[
       roundPageFuture,
@@ -191,6 +200,7 @@ class EventRailGamesNotifier
     final selectedRoundPage = auxiliaryPages[0];
     final selectedGamePage = auxiliaryPages[1];
     final totalCount = await totalCountFuture;
+    final roundCatalog = await roundCatalogFuture;
     final nextOffset = tourPage.length;
     final pageCanContinue = tourPage.length >= kEventRailGamesPageSize;
     _canonicalPageIdsByOffset[0] = _gameIds(tourPage);
@@ -212,6 +222,7 @@ class EventRailGamesNotifier
       ], tourPage),
       nextOffset: nextOffset,
       totalCount: totalCount,
+      roundCatalog: roundCatalog,
       hasMore:
           tourPageResult.error != null
               ? totalCount == null || totalCount > 0
@@ -404,6 +415,19 @@ class EventRailGamesNotifier
         continue;
       }
       return;
+    }
+  }
+
+  /// Headings are presentation-only, so a catalog failure degrades the rail to
+  /// row-derived headings instead of failing the whole load.
+  Future<List<EventRailRoundMetadata>> _loadRoundCatalogOrEmpty(
+    GameRepository repository,
+    String tourId,
+  ) async {
+    try {
+      return await repository.getEventRailRoundsByTourId(tourId);
+    } catch (_) {
+      return const <EventRailRoundMetadata>[];
     }
   }
 
@@ -683,6 +707,11 @@ class EventRailGamesNotifier
           nextOffset: nextOffset,
           totalCount: current.totalCount,
           hasMore: hasMore,
+          // Carried forward. Dropping it here reset the round catalog to empty
+          // on every page load, which made the rail fall back to headings
+          // derived from loaded rows — rounds vanished and the order reshuffled
+          // mid-scroll.
+          roundCatalog: current.roundCatalog,
         ),
       );
       result = true;
@@ -835,6 +864,9 @@ class EventRailGamesNotifier
         games: refreshedGames,
         nextOffset: nextOffset,
         totalCount: totalCount,
+        // Same reason as in loadMore: the periodic refresh must not erase the
+        // round catalog, or the rail reshuffles on its own timer.
+        roundCatalog: current.roundCatalog,
         hasMore:
             gameSetChanged
                 ? resetHasMore
@@ -1038,14 +1070,12 @@ class _EventRailNavigationStage {
     required this.roundIds,
     required this.startsAt,
     required this.createdAt,
-    required this.ongoing,
   });
 
   final String name;
   final List<String> roundIds;
   final DateTime? startsAt;
   final DateTime? createdAt;
-  final bool ongoing;
 }
 
 List<_EventRailNavigationStage> _orderedNavigationStages(
@@ -1073,7 +1103,6 @@ List<_EventRailNavigationStage> _orderedNavigationStages(
         createdAt: _earliestMetadataDate(
           rounds.map((round) => round.createdAt),
         ),
-        ongoing: rounds.any((round) => round.ongoing),
       ),
   ];
   final effectiveNow = now ?? DateTime.now();
@@ -1081,7 +1110,9 @@ List<_EventRailNavigationStage> _orderedNavigationStages(
   final started = <_EventRailNavigationStage>[];
   for (final stage in stages) {
     final startsAt = stage.startsAt;
-    if (!stage.ongoing && startsAt != null && startsAt.isAfter(effectiveNow)) {
+    // Mirrors `_isStartedRound` in round_ordering.dart: a round with no start
+    // time counts as started so it can never be stranded behind the schedule.
+    if (startsAt != null && startsAt.isAfter(effectiveNow)) {
       upcoming.add(stage);
     } else {
       started.add(stage);
@@ -1107,7 +1138,11 @@ List<_EventRailNavigationStage> _orderedNavigationStages(
       (a, b) => _compareNavigationStageDates(a, b, ascending: false),
     );
   }
-  return <_EventRailNavigationStage>[...upcoming, ...started];
+  // Started rounds first (newest first), then the schedule ascending — the same
+  // partition and order `sortRoundsForDisplay` gives the rendered rail. Keyboard
+  // navigation previously walked upcoming stages first, so stepping past a round
+  // edge jumped to a future round instead of the adjacent played one.
+  return <_EventRailNavigationStage>[...started, ...upcoming];
 }
 
 DateTime? _earliestMetadataDate(Iterable<DateTime?> values) {

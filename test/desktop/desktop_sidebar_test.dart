@@ -74,7 +74,7 @@ void main() {
 
   test('primary sidebar route shortcuts follow the visual route order', () {
     expect(
-      debugDesktopSidebarShortcutForLabel('Tournaments', isMacOS: false),
+      debugDesktopSidebarShortcutForLabel('Events', isMacOS: false),
       'Ctrl+1',
     );
     expect(
@@ -147,17 +147,19 @@ void main() {
     expect(labels[labels.indexOf('Play') + 1], 'Search');
   });
 
-  test('Feedback report entry appears directly under Search', () {
+  test('Feedback entry appears directly under Search', () {
     final labels = debugDesktopSidebarLabelsInOrder();
 
-    expect(labels[labels.indexOf('Search') + 1], 'Feedback / Report issue');
+    expect(labels[labels.indexOf('Search') + 1], 'Feedback');
+    expect(labels, isNot(contains('Feedback / Report issue')));
+    expect(labels, isNot(contains('Tournaments')));
   });
 
   test('Search entry is an action, not a pane route', () {
     expect(debugDesktopSidebarPaneForLabel('Search'), isNull);
   });
 
-  test('Feedback report entry is an action, not a pane route', () {
-    expect(debugDesktopSidebarPaneForLabel('Feedback / Report issue'), isNull);
+  test('Feedback entry is an action, not a pane route', () {
+    expect(debugDesktopSidebarPaneForLabel('Feedback'), isNull);
   });
 }

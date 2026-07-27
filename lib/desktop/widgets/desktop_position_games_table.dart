@@ -21,6 +21,7 @@ import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/adaptive_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/move_hover_preview.dart';
+import 'package:chessever/desktop/widgets/table_display_value.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
@@ -803,9 +804,7 @@ class _DesktopPositionGamesTableState
       orElse: () => const <String, dynamic>{},
     );
     if (row.isEmpty) return;
-    unawaited(
-      _openGame(row, focus: focus, continuationStep: continuationStep),
-    );
+    unawaited(_openGame(row, focus: focus, continuationStep: continuationStep));
   }
 
   void _clearPreview() {
@@ -1284,6 +1283,7 @@ class _DesktopPositionGamesTableState
       sourcePath: sourcePath,
       sourceIndex: sourceIndex,
       sourceFileGameCount: sourceFileGameCount,
+      sourcePgnFingerprint: (row['pgnHash']?.toString() ?? '').trim(),
       title: title,
     );
   }
@@ -1660,7 +1660,7 @@ class _DesktopPositionGamesTableState
           final raw = row['date']?.toString();
           final date = raw == null ? null : DateTime.tryParse(raw);
           return Text(
-            date == null ? '—' : _formatDate(date),
+            date == null ? '' : _formatDate(date),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
@@ -1813,8 +1813,8 @@ class _CompactPlayerName extends StatelessWidget {
   final double maxWidth;
 
   static String _compact(String raw) {
-    final trimmed = raw.trim();
-    if (trimmed.isEmpty) return '—';
+    final trimmed = desktopTablePlayerValue(raw);
+    if (trimmed.isEmpty) return '';
     if (trimmed.contains(',')) {
       final parts = trimmed.split(',');
       final surname = parts.first.trim();
@@ -1832,8 +1832,10 @@ class _CompactPlayerName extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compactName = _compact(name);
+    if (compactName.isEmpty) return const SizedBox.shrink();
     final label = Text(
-      _compact(name),
+      compactName,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: const TextStyle(
@@ -1888,14 +1890,15 @@ class _TextCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final displayValue = desktopTableDisplayValue(value);
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxWidth),
       child: Text(
-        value.trim().isEmpty ? '—' : value.trim(),
+        displayValue,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
-          color: value.trim().isEmpty ? kLightGreyColor : color,
+          color: displayValue.isEmpty ? kLightGreyColor : color,
           fontSize: 11,
           fontWeight: FontWeight.w500,
         ),
@@ -1911,11 +1914,12 @@ class _TimeControlCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = switch (value.trim().toUpperCase()) {
+    final normalized = desktopTableDisplayValue(value).toUpperCase();
+    final label = switch (normalized) {
       'CLASSICAL' => 'CLS',
       'RAPID' => 'RPD',
       'BLITZ' => 'BLZ',
-      '' => '—',
+      '' => '',
       final other => other.length <= 3 ? other : other.substring(0, 3),
     };
     return Text(
@@ -1923,7 +1927,7 @@ class _TimeControlCell extends StatelessWidget {
       maxLines: 1,
       overflow: TextOverflow.clip,
       style: TextStyle(
-        color: label == '—' ? kLightGreyColor : kWhiteColor70,
+        color: label.isEmpty ? kLightGreyColor : kWhiteColor70,
         fontSize: 10,
         fontWeight: FontWeight.w700,
         fontFeatures: const [FontFeature.tabularFigures()],
@@ -1942,7 +1946,7 @@ class _ModeCell extends StatelessWidget {
     final label = switch (value) {
       true => 'ONL',
       false => 'OTB',
-      null => '—',
+      null => '',
     };
     return Text(
       label,
@@ -1966,7 +1970,7 @@ class _Numeric extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(
-      value > 0 ? '$value' : '—',
+      value > 0 ? '$value' : '',
       maxLines: 1,
       overflow: TextOverflow.clip,
       style: const TextStyle(
@@ -2021,15 +2025,7 @@ class _NotationCell extends StatelessWidget {
       fontFeatures: [FontFeature.tabularFigures()],
     );
     if (sanTokens.isEmpty) {
-      return Text(
-        '—',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: style.copyWith(
-          color: kLightGreyColor,
-          fontWeight: FontWeight.w500,
-        ),
-      );
+      return const SizedBox.shrink();
     }
     final activeIndex = activePlyIndex?.clamp(0, sanTokens.length - 1).toInt();
     return SizedBox(
@@ -2358,10 +2354,7 @@ class _ResultCell extends StatelessWidget {
       _ => ('', '', _ResultOutcome.none),
     };
     if (outcome == _ResultOutcome.none) {
-      return const Text(
-        '—',
-        style: TextStyle(color: kLightGreyColor, fontSize: 11),
-      );
+      return const SizedBox.shrink();
     }
     const base = TextStyle(
       fontSize: 12,
@@ -2484,9 +2477,10 @@ List<Map<String, dynamic>> _hydrateLocalPgnRowsInBackground(
         final raf = file.openSync();
         try {
           raf.setPositionSync(start);
-          final pgn = utf8
-              .decode(raf.readSync(end - start), allowMalformed: true)
-              .trim();
+          final pgn =
+              utf8
+                  .decode(raf.readSync(end - start), allowMalformed: true)
+                  .trim();
           if (pgn.isNotEmpty) hydrated['pgn'] = pgn;
         } finally {
           raf.closeSync();

@@ -395,6 +395,7 @@ class _GamesAppBarNotifier
   }
 
   Future<void> _scrollToRound(String roundId) async {
+    if (!mounted) return;
     final scopeId = ref.read(gamesTourScrollScopeProvider);
     print('🔵 _scrollToRound - scopeId: $scopeId');
 
@@ -408,6 +409,7 @@ class _GamesAppBarNotifier
       if (attempt > 0) {
         await Future.delayed(Duration(milliseconds: retryDelays[attempt]));
       }
+      if (!mounted) return;
 
       final scrollProvider = ref.read(
         gamesTourScrollProvider(scopeId).notifier,
@@ -436,6 +438,7 @@ class _GamesAppBarNotifier
 
       // Small delay to ensure layout is stable
       await Future.delayed(const Duration(milliseconds: 50));
+      if (!mounted) return;
 
       if (controller.isAttached) {
         try {

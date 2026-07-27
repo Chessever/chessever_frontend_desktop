@@ -16,6 +16,7 @@ class GameTabDragPayload {
     required this.id,
     required this.label,
     required this.spawn,
+    this.eventBroadcastId,
   });
 
   /// Source-stable identifier for the game (Supabase game id, saved
@@ -26,6 +27,11 @@ class GameTabDragPayload {
   /// Short human label, e.g. "Carlsen vs Nepo". Currently used for hover
   /// affordances on the tab strip while a payload is in flight.
   final String label;
+
+  /// Parent event carried by tournament payloads. Other payload sources leave
+  /// this null. Exposing the identity here keeps modifier/middle-click and
+  /// drag/drop paths auditable instead of hiding context inside a closure.
+  final String? eventBroadcastId;
 
   /// Materializes this game as a tab. The drop target invokes it with
   /// `focus: true` (drag-drop UX always foregrounds the result) — but the

@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_endgame_board_overlay.dart';
@@ -12,7 +13,7 @@ import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
-import 'package:chessever/desktop/widgets/desktop_player_title_chip.dart';
+
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
@@ -91,7 +92,7 @@ class DesktopGameCard extends ConsumerWidget {
   });
 
   final GameCardData data;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final VoidCallback? onDoubleTap;
   final DesktopCardLayout layout;
   final bool selected;
@@ -157,36 +158,20 @@ class DesktopGameCard extends ConsumerWidget {
     void openInBackgroundTab() {
       final p = payload;
       if (p == null) {
-        onTap();
+        onTap?.call();
         return;
       }
       p.spawn(ref, focus: false);
     }
 
     final tappable = ClickCursor(
-      child: Listener(
-        behavior: HitTestBehavior.opaque,
-        onPointerDown: (event) {
-          if (event.buttons & kTertiaryButton != 0) {
-            openInBackgroundTab();
-          }
-        },
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onSecondaryTapDown:
-              onContextMenu == null
-                  ? null
-                  : (details) => onContextMenu!(details.globalPosition),
-          onTap: () {
-            if (payload != null && isNewTabModifierPressed()) {
-              openInBackgroundTab();
-              return;
-            }
-            onTap();
-          },
-          onDoubleTap: onDoubleTap,
-          child: card,
-        ),
+      child: _DesktopGameCardGestureRegion(
+        modifierOpensInBackground: payload != null,
+        onOpenInBackground: openInBackgroundTab,
+        onTap: onTap,
+        onDoubleTap: onDoubleTap,
+        onContextMenu: onContextMenu,
+        child: card,
       ),
     );
 
@@ -204,6 +189,91 @@ class DesktopGameCard extends ConsumerWidget {
       feedback: _GameDragFeedback(data: data),
       childWhenDragging: Opacity(opacity: 0.4, child: tappable),
       child: tappable,
+    );
+  }
+}
+
+class _DesktopGameCardGestureRegion extends StatefulWidget {
+  const _DesktopGameCardGestureRegion({
+    required this.modifierOpensInBackground,
+    required this.onOpenInBackground,
+    required this.onTap,
+    required this.onDoubleTap,
+    required this.onContextMenu,
+    required this.child,
+  });
+
+  final bool modifierOpensInBackground;
+  final VoidCallback onOpenInBackground;
+  final VoidCallback? onTap;
+  final VoidCallback? onDoubleTap;
+  final ValueChanged<Offset>? onContextMenu;
+  final Widget child;
+
+  @override
+  State<_DesktopGameCardGestureRegion> createState() =>
+      _DesktopGameCardGestureRegionState();
+}
+
+class _DesktopGameCardGestureRegionState
+    extends State<_DesktopGameCardGestureRegion> {
+  bool _tapDownInNewTab = false;
+
+  void _captureGestureModifier() {
+    _tapDownInNewTab =
+        widget.modifierOpensInBackground && isNewTabModifierPressed();
+  }
+
+  bool _consumeNewTabIntent() {
+    final openInNewTab =
+        _tapDownInNewTab ||
+        (widget.modifierOpensInBackground && isNewTabModifierPressed());
+    _tapDownInNewTab = false;
+    return openInNewTab;
+  }
+
+  void _clearGestureModifier() {
+    _tapDownInNewTab = false;
+  }
+
+  void _handleTap() {
+    if (_consumeNewTabIntent()) {
+      widget.onOpenInBackground();
+      return;
+    }
+    widget.onTap?.call();
+  }
+
+  void _handleDoubleTap() {
+    _clearGestureModifier();
+    widget.onDoubleTap?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final handlesSingleTap =
+        widget.onTap != null || widget.modifierOpensInBackground;
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: (event) {
+        if (event.buttons & kPrimaryButton != 0) {
+          _captureGestureModifier();
+        }
+        if (event.buttons & kTertiaryButton != 0) {
+          widget.onOpenInBackground();
+        }
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapCancel: _clearGestureModifier,
+        onSecondaryTapDown:
+            widget.onContextMenu == null
+                ? null
+                : (details) => widget.onContextMenu!(details.globalPosition),
+        onTap: handlesSingleTap ? _handleTap : null,
+        onDoubleTap: widget.onDoubleTap == null ? null : _handleDoubleTap,
+        child: widget.child,
+      ),
     );
   }
 }
@@ -455,7 +525,7 @@ class _TileHairline extends StatelessWidget {
 
 /// Editorial player row on list tiles. Three columns, generously
 /// spaced: player name (large, white), rating (small, muted, tabular),
-/// result digit (right-aligned, color-coded). No flag, no title chip,
+/// result digit (right-aligned, color-coded). No title chip,
 /// no clock — they cluttered the tile and the user already has the
 /// board to identify the position. Hairline divider between the two
 /// rows is handled by the caller via [_TileHairline].
@@ -487,15 +557,13 @@ class _CleanPlayerRow extends StatelessWidget {
           ),
           if (title.isNotEmpty) ...[
             const SizedBox(width: 6),
-            DesktopPlayerTitleChip(title: title, compact: true),
+            DesktopPlainPlayerTitle(title: title, compact: true),
           ],
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              name.isEmpty ? 'Unknown' : name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+            child: DesktopCompactPlayerNameText(
+              name: name,
+              style: const TextStyle(
                 color: nameColor,
                 fontSize: 13.5,
                 fontWeight: FontWeight.w700,
@@ -561,7 +629,7 @@ class _CleanFaceOffBlock extends StatelessWidget {
       ),
       if (title.isNotEmpty) ...[
         const SizedBox(width: 5),
-        DesktopPlayerTitleChip(title: title, compact: true),
+        DesktopPlainPlayerTitle(title: title, compact: true),
       ],
       if (rating > 0) ...[
         const SizedBox(width: 6),
@@ -583,12 +651,10 @@ class _CleanFaceOffBlock extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          name.isEmpty ? 'Unknown' : name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+        DesktopCompactPlayerNameText(
+          name: name,
           textAlign: textAlign,
-          style: TextStyle(
+          style: const TextStyle(
             color: nameColor,
             fontSize: 14,
             fontWeight: FontWeight.w700,
@@ -1302,14 +1368,12 @@ class _PlayerRow extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         if (title.isNotEmpty) ...[
-          DesktopPlayerTitleChip(title: title, compact: compact),
+          DesktopPlainPlayerTitle(title: title, compact: compact),
           const SizedBox(width: 6),
         ],
         Expanded(
-          child: Text(
-            name.isEmpty ? 'Unknown' : name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+          child: DesktopCompactPlayerNameText(
+            name: name,
             style: TextStyle(
               color: kWhiteColor,
               fontSize: compact ? 11.5 : 14,

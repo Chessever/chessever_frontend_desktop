@@ -15,12 +15,14 @@ class TournamentGameLocalPgnSource {
     required this.sourcePath,
     required this.sourceIndex,
     required this.sourceFileGameCount,
+    this.pgnFingerprint = '',
     required this.title,
   });
 
   final String sourcePath;
   final int sourceIndex;
   final int sourceFileGameCount;
+  final String pgnFingerprint;
   final String title;
 }
 

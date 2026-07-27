@@ -8,6 +8,7 @@ import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
 import 'package:chessever/utils/pgn_multi_parser.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_fingerprint.dart';
+import 'package:chessever/desktop/services/local_pgn_atomic_write.dart';
 
 List<String> appendableLocalPgnParts(String text) {
   final trimmed = text.trim();
@@ -56,13 +57,13 @@ Future<_AppendLocalPgnResult> _appendPgnPartsToLocalChessFile({
   if (!await file.exists()) {
     throw FileSystemException('Local PGN file does not exist', filePath);
   }
+  final existingText = await file.readAsString();
 
   final fingerprints = <String>{
     ...?existingFingerprints?.where((hash) => hash.trim().isNotEmpty),
   };
   if (existingFingerprints == null) {
-    final existingText = (await file.readAsString()).trim();
-    for (final part in splitPgnGames(existingText)) {
+    for (final part in splitPgnGames(existingText.trim())) {
       final pgn = part.trim();
       if (pgn.isNotEmpty) fingerprints.add(localChessPgnFingerprint(pgn));
     }
@@ -96,10 +97,10 @@ Future<_AppendLocalPgnResult> _appendPgnPartsToLocalChessFile({
     );
     cursor = end;
   }
-  await file.writeAsString(
-    '$prefix${uniqueParts.join('\n\n')}\n',
-    mode: FileMode.append,
-    flush: true,
+  await writeLocalPgnAtomically(
+    file: file,
+    expectedText: existingText,
+    nextText: '$existingText$prefix${uniqueParts.join('\n\n')}\n',
   );
   return _AppendLocalPgnResult(appended: appended);
 }
@@ -147,7 +148,8 @@ Future<int> removeLocalPgnGamesFromFile({
     throw FileSystemException('Local PGN file does not exist', filePath);
   }
 
-  final parts = splitPgnGames((await file.readAsString()).trim())
+  final existingText = await file.readAsString();
+  final parts = splitPgnGames(existingText.trim())
       .map((part) => part.trim())
       .where((part) => part.isNotEmpty)
       .toList(growable: false);
@@ -165,7 +167,11 @@ Future<int> removeLocalPgnGamesFromFile({
   if (removed == 0) return 0;
 
   final nextText = kept.isEmpty ? '' : '${kept.join('\n\n')}\n';
-  await file.writeAsString(nextText, flush: true);
+  await writeLocalPgnAtomically(
+    file: file,
+    expectedText: existingText,
+    nextText: nextText,
+  );
   return removed;
 }
 

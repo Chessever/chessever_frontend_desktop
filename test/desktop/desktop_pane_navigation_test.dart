@@ -53,23 +53,41 @@ void main() {
       expect(tabs.tabs.where((t) => t.kind == TabKind.favorites), hasLength(1));
     });
 
-    test('keeps normal in-place navigation for scratch Board tabs', () {
-      final container = ProviderContainer();
-      addTearDown(container.dispose);
+    test(
+      'opens top-level destinations in tabs without replacing the current tab',
+      () {
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
 
-      final tabsNotifier = container.read(desktopTabsProvider.notifier);
-      final scratchBoardId = tabsNotifier.open(
-        TabKind.board,
-        reuseExisting: false,
-      );
+        final tabsNotifier = container.read(desktopTabsProvider.notifier);
+        tabsNotifier.navigateActive(TabKind.players);
+        final playerTabId = container.read(desktopTabsProvider).activeId!;
 
-      openDesktopPaneFromContainer(container, DesktopPane.favorites);
+        openDesktopPaneFromContainer(container, DesktopPane.library);
 
-      final tabs = container.read(desktopTabsProvider);
+        var tabs = container.read(desktopTabsProvider);
+        expect(tabs.activeId, isNot(playerTabId));
+        expect(tabs.active?.kind, TabKind.library);
+        expect(
+          tabs.tabs.firstWhere((tab) => tab.id == playerTabId).kind,
+          TabKind.players,
+        );
 
-      expect(tabs.activeId, scratchBoardId);
-      expect(tabs.active?.kind, TabKind.favorites);
-    });
+        openDesktopPaneFromContainer(container, DesktopPane.tournaments);
+
+        tabs = container.read(desktopTabsProvider);
+        expect(tabs.active?.kind, TabKind.tournaments);
+        expect(
+          tabs.tabs.firstWhere((tab) => tab.id == playerTabId).kind,
+          TabKind.players,
+        );
+        expect(tabs.tabs.map((tab) => tab.kind), [
+          TabKind.players,
+          TabKind.library,
+          TabKind.tournaments,
+        ]);
+      },
+    );
   });
 }
 

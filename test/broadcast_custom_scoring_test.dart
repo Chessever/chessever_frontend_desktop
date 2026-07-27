@@ -4,37 +4,31 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 import 'package:chessever/utils/broadcast_custom_scoring.dart';
 
 void main() {
-  group('custom-aware broadcast game points', () {
-    test('shows custom win points when they differ from standard result', () {
+  group('standard broadcast game result labels', () {
+    test('labels a win for the winning side', () {
       expect(
-        customAwareResultLabelForSide(
-          GameStatus.whiteWins,
-          isWhite: true,
-          customPoints: 3.0,
-        ),
-        '3',
-      );
-    });
-
-    test('keeps standard win when custom points match standard result', () {
-      expect(
-        customAwareResultLabelForSide(
-          GameStatus.whiteWins,
-          isWhite: true,
-          customPoints: 1.0,
-        ),
+        standardResultLabelForSide(GameStatus.whiteWins, isWhite: true),
         '1',
       );
+      expect(
+        standardResultLabelForSide(GameStatus.whiteWins, isWhite: false),
+        '0',
+      );
     });
 
-    test('keeps draw label when custom points are zero', () {
+    test('labels a draw for both sides', () {
+      expect(standardResultLabelForSide(GameStatus.draw, isWhite: true), '½');
+      expect(standardResultLabelForSide(GameStatus.draw, isWhite: false), '½');
+    });
+
+    test('has no label while a game is unresolved', () {
       expect(
-        customAwareResultLabelForSide(
-          GameStatus.draw,
-          isWhite: true,
-          customPoints: 0.0,
-        ),
-        '½',
+        standardResultLabelForSide(GameStatus.ongoing, isWhite: true),
+        isNull,
+      );
+      expect(
+        standardResultLabelForSide(GameStatus.unknown, isWhite: true),
+        isNull,
       );
     });
   });

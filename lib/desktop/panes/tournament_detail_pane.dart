@@ -47,7 +47,9 @@ class TournamentDetailPane extends HookConsumerWidget {
         if (!context.mounted) return;
         final selected = ref.read(selectedBroadcastModelProvider);
         if (selected?.id == next.id) return;
-        ref.read(selectedBroadcastModelProvider.notifier).state = GroupBroadcast(
+        ref
+            .read(selectedBroadcastModelProvider.notifier)
+            .state = GroupBroadcast(
           id: next.id,
           createdAt: DateTime.now(),
           name: next.title,
@@ -195,6 +197,7 @@ class TournamentDetailPane extends HookConsumerWidget {
                       child: _segmentBody(
                         segment,
                         tournament.id,
+                        tournament.title,
                         gamesHeaderCollapsed,
                       ),
                     ),
@@ -211,6 +214,7 @@ class TournamentDetailPane extends HookConsumerWidget {
   Widget _segmentBody(
     TournamentDetailSegment segment,
     String tournamentId,
+    String tournamentTitle,
     ValueNotifier<bool> gamesHeaderCollapsed,
   ) {
     switch (segment) {
@@ -227,6 +231,7 @@ class TournamentDetailPane extends HookConsumerWidget {
         return TournamentStandingsView(
           tabId: tabId,
           tournamentId: tournamentId,
+          tournamentTitle: tournamentTitle,
         );
     }
   }
@@ -500,7 +505,7 @@ class _EmptyState extends StatelessWidget {
             ),
             SizedBox(height: 6),
             Text(
-              'Open a tournament from the Tournaments tab to see its '
+              'Open an event from the Events tab to see its '
               'about page, rounds, and standings here.',
               style: TextStyle(color: kLightGreyColor, fontSize: 12),
               textAlign: TextAlign.center,

@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:chessever/desktop/services/local_library_game_updater.dart';
+import 'package:chessever/desktop/services/local_library_writer.dart';
 import 'package:chessever/desktop/widgets/library/library_save_to_folder_dialog.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 
@@ -21,6 +23,30 @@ void main() {
       expect(outcome.didSave, isTrue);
       expect(outcome.toToastMessage(), 'Updated existing game');
     });
+
+    test('keeps update identity after one game is saved to one local PGN', () {
+      const target = LocalLibraryGameUpdateTarget(
+        sourcePath: r'C:\Games\prep.pgn',
+        indexInFile: 3,
+        fileGameCount: 4,
+      );
+      const writeOutcome = LocalLibraryWriteOutcome(
+        folderPath: r'C:\Games\prep.pgn',
+        writtenPaths: <String>[r'C:\Games\prep.pgn'],
+        skipped: 0,
+        updateTargets: <LocalLibraryGameUpdateTarget>[target],
+      );
+
+      expect(
+        libraryLocalUpdateTargetForCompletedSave(
+          gameCount: 1,
+          selectedCloudFolderCount: 0,
+          selectedLocalPathCount: 1,
+          outcomes: const <LocalLibraryWriteOutcome>[writeOutcome],
+        ),
+        same(target),
+      );
+    });
   });
 
   group('destination mode', () {
@@ -39,28 +65,35 @@ void main() {
       );
     });
 
-    test('cloud-only mode hides local destinations but keeps cloud folders', () {
-      final folders = [
-        _folder(id: 'my-database', name: 'My Database'),
-        _folder(id: 'shared', name: 'Shared', isSubscribed: true),
-      ];
+    test(
+      'cloud-only mode hides local destinations but keeps cloud folders',
+      () {
+        final folders = [
+          _folder(id: 'my-database', name: 'My Database'),
+          _folder(id: 'shared', name: 'Shared', isSubscribed: true),
+        ];
 
-      expect(
-        librarySaveAllowsCloudDestinations(LibrarySaveDestinationMode.cloudOnly),
-        isTrue,
-      );
-      expect(
-        librarySaveAllowsLocalDestinations(LibrarySaveDestinationMode.cloudOnly),
-        isFalse,
-      );
-      expect(
-        librarySaveWritableCloudFolders(
-          folders: folders,
-          destinationMode: LibrarySaveDestinationMode.cloudOnly,
-        ).map((folder) => folder.id),
-        ['my-database'],
-      );
-    });
+        expect(
+          librarySaveAllowsCloudDestinations(
+            LibrarySaveDestinationMode.cloudOnly,
+          ),
+          isTrue,
+        );
+        expect(
+          librarySaveAllowsLocalDestinations(
+            LibrarySaveDestinationMode.cloudOnly,
+          ),
+          isFalse,
+        );
+        expect(
+          librarySaveWritableCloudFolders(
+            folders: folders,
+            destinationMode: LibrarySaveDestinationMode.cloudOnly,
+          ).map((folder) => folder.id),
+          ['my-database'],
+        );
+      },
+    );
 
     test('local-only mode hides every cloud folder', () {
       final folders = [
@@ -90,6 +123,22 @@ void main() {
         ).map((folder) => folder.id),
         ['my-database'],
       );
+    });
+  });
+
+  group('libraryGameDetailInputValue', () {
+    test('hides PGN unknown placeholders from first-save inputs', () {
+      expect(libraryGameDetailInputValue(null), '');
+      expect(libraryGameDetailInputValue(''), '');
+      expect(libraryGameDetailInputValue(' ? '), '');
+      expect(libraryGameDetailInputValue('????'), '');
+      expect(libraryGameDetailInputValue('??'), '');
+    });
+
+    test('keeps meaningful metadata text', () {
+      expect(libraryGameDetailInputValue('Norway Chess'), 'Norway Chess');
+      expect(libraryGameDetailInputValue('C45'), 'C45');
+      expect(libraryGameDetailInputValue('1.2'), '1.2');
     });
   });
 

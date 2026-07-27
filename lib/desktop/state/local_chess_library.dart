@@ -1208,6 +1208,8 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
       message: file.message,
       openingTreeIndex: index,
       pgnOffsetIndex: file.pgnOffsetIndex,
+      contentFingerprint: file.contentFingerprint,
+      isWritableEmptyDatabase: file.isWritableEmptyDatabase,
     );
   }
 
@@ -1315,6 +1317,7 @@ String localChessOpenErrorMessage(Object error) {
 ) {
   final issues = <Object>[];
   final issueKeys = <String>{};
+  var openableDatabaseCount = 0;
 
   void addIssue(String key, Object issue) {
     if (issueKeys.add(key)) issues.add(issue);
@@ -1340,11 +1343,23 @@ String localChessOpenErrorMessage(Object error) {
           visit(child);
         }
       case LocalChessFileNode(:final status):
-        if (status == LocalChessFileStatus.parsed) return;
         final key = 'file:${localChessInputPathKey(node.path)}';
         switch (status) {
           case LocalChessFileStatus.parsed:
-            break;
+            openableDatabaseCount++;
+          case LocalChessFileStatus.noGames:
+            if (node.isOpenableDatabase) {
+              // A genuinely empty plain PGN is a valid writable destination.
+              openableDatabaseCount++;
+            } else {
+              addIssue(
+                key,
+                ArgumentError(
+                  node.message ??
+                      'No playable PGN games were found in this source.',
+                ),
+              );
+            }
           case LocalChessFileStatus.failed:
             final message = node.message ?? 'Could not read this PGN file.';
             final accessError = LocalChessFileAccessException.from(
@@ -1356,15 +1371,6 @@ String localChessOpenErrorMessage(Object error) {
               accessError.issue == LocalChessFileAccessIssue.unknown
                   ? ArgumentError(message)
                   : accessError,
-            );
-          case LocalChessFileStatus.noGames:
-            addIssue(
-              key,
-              ArgumentError(
-                'No playable PGN entries were found in "${node.name}". If '
-                'another app is still saving the file, finish saving or close '
-                'it, then try again.',
-              ),
             );
           case LocalChessFileStatus.unsupported:
             addIssue(
@@ -1388,8 +1394,7 @@ String localChessOpenErrorMessage(Object error) {
     );
   }
 
-  final playableCount = source.root.playableDatabaseCount;
-  if (playableCount == 0) {
+  if (openableDatabaseCount == 0) {
     if (issues.isEmpty) {
       return (
         failure: ArgumentError(
@@ -1417,7 +1422,7 @@ String localChessOpenErrorMessage(Object error) {
   return (
     failure: null,
     warning:
-        'Opened ${playableCount == 1 ? '1 PGN database' : '$playableCount PGN databases'}, '
+        'Opened ${openableDatabaseCount == 1 ? '1 PGN database' : '$openableDatabaseCount PGN databases'}, '
         'but $issueCount ${issueCount == 1 ? 'file or folder could not be opened' : 'files or folders could not be opened'}. '
         '$first',
   );

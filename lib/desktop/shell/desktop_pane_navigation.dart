@@ -7,10 +7,8 @@ import 'package:chessever/desktop/state/play_session.dart';
 
 /// Shared sidebar/command-palette pane navigation.
 ///
-/// Plain sidebar clicks usually navigate the foreground tab in-place, but
-/// game-hosting tabs are user workspaces. Leaving a live Board game for a
-/// category pane should preserve the game tab and open/activate the category
-/// tab instead.
+/// Plain sidebar clicks open or activate a destination tab without rewriting
+/// the route hosted by the currently active tab.
 void openDesktopPaneFromContainer(
   ProviderContainer container,
   DesktopPane pane, {
@@ -31,22 +29,8 @@ void openDesktopPaneFromContainer(
         return;
       }
     }
-  }
-
-  // Preserve active game tabs when jumping to a category pane. Without this,
-  // clicking Favorites/Library/etc. while reviewing a game rewrites the same
-  // tab route and the game disappears from the tab strip.
-  if (!inNewTab && pane != DesktopPane.board) {
-    final tabsState = container.read(desktopTabsProvider);
-    final active = tabsState.active;
-    final activeBoardGame =
-        active != null &&
-        active.kind == TabKind.board &&
-        container.read(boardTabGameArgsByTabIdProvider).containsKey(active.id);
-    if (activeBoardGame) {
-      tabsNotifier.open(kind);
-      return;
-    }
+    tabsNotifier.open(TabKind.board, reuseExisting: false);
+    return;
   }
 
   // Special-case Play - sidebar click should always land the user on a tab
@@ -78,8 +62,8 @@ void openDesktopPaneFromContainer(
     // Explicit "open in new tab" - bypass active-tab navigation.
     tabsNotifier.open(kind, reuseExisting: false);
   } else {
-    // Default: navigate the active tab in place. If there's no active tab,
-    // navigateActive falls back to opening one.
-    tabsNotifier.navigateActive(kind);
+    // Default: preserve the active tab's route and open or activate the
+    // destination's category tab.
+    tabsNotifier.open(kind);
   }
 }
