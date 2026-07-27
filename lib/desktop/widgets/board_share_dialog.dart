@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io' as io;
 import 'dart:typed_data';
 
 import 'package:chessground/chessground.dart' as cg;
@@ -7,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 
 import 'package:chessever/desktop/services/board_share_service.dart';
 import 'package:chessever/desktop/services/cloudflare_gif_service.dart';
@@ -76,6 +79,8 @@ class BoardShareDialog extends ConsumerStatefulWidget {
 class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
   bool _isCapturing = false;
   bool _isGeneratingGif = false;
+  bool _isSavingGif = false;
+  String? _generatedGifPath;
   String _gifProgressLabel = 'Submitting cloud job…';
   late final BoardShareRaster _staticImage;
 
@@ -86,6 +91,12 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       liveBoardPngBytes: widget.liveBoardPngBytes,
       fallbackCapture: _captureFallbackImageBytes,
     );
+  }
+
+  @override
+  void dispose() {
+    unawaited(_deleteTemporaryGif(_generatedGifPath));
+    super.dispose();
   }
 
   String get _whiteName => widget.headers['White']?.trim() ?? 'White';
@@ -220,7 +231,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
     }
   }
 
-  Future<void> _downloadGif() async {
+  Future<void> _generateGif() async {
     if (!_hasMoves) {
       _showToast('No moves to animate', isError: true);
       return;
@@ -271,15 +282,23 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
         },
       );
       if (!mounted) return;
-      final outputPath = await BoardShareService.chooseGifSavePath(
-        defaultName: _defaultExportName('gif'),
+      setState(() => _gifProgressLabel = 'Loading GIF preview…');
+      final temporaryDirectory = await getTemporaryDirectory();
+      final temporaryPath =
+          '${temporaryDirectory.path}${io.Platform.pathSeparator}'
+          'chessever_gif_preview_${DateTime.now().microsecondsSinceEpoch}.gif';
+      await service.downloadToFile(
+        jobId: completed.id,
+        outputPath: temporaryPath,
       );
-      if (outputPath == null) return;
-      if (mounted) {
-        setState(() => _gifProgressLabel = 'Downloading GIF…');
+      if (!mounted) {
+        await _deleteTemporaryGif(temporaryPath);
+        return;
       }
-      await service.downloadToFile(jobId: completed.id, outputPath: outputPath);
-      _showToast('GIF saved', isError: false);
+      final previousPath = _generatedGifPath;
+      setState(() => _generatedGifPath = temporaryPath);
+      unawaited(_deleteTemporaryGif(previousPath));
+      _showToast('GIF ready to preview', isError: false);
     } on CloudflareGifCancelled {
       // Closing the dialog only stops polling. The Workflow continues and the
       // deterministic request will resume when Share is opened again.
@@ -298,6 +317,37 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
     } finally {
       service?.close();
       if (mounted) setState(() => _isGeneratingGif = false);
+    }
+  }
+
+  Future<void> _saveGeneratedGif() async {
+    final generatedGifPath = _generatedGifPath;
+    if (generatedGifPath == null) return;
+
+    final outputPath = await BoardShareService.chooseGifSavePath(
+      defaultName: _defaultExportName('gif'),
+    );
+    if (outputPath == null || !mounted) return;
+
+    setState(() => _isSavingGif = true);
+    try {
+      await io.File(generatedGifPath).copy(outputPath);
+      _showToast('GIF saved', isError: false);
+    } catch (error, stackTrace) {
+      debugPrint('Failed to save generated GIF: $error\n$stackTrace');
+      _showToast('Failed to save GIF', isError: true);
+    } finally {
+      if (mounted) setState(() => _isSavingGif = false);
+    }
+  }
+
+  Future<void> _deleteTemporaryGif(String? path) async {
+    if (path == null) return;
+    try {
+      final file = io.File(path);
+      if (await file.exists()) await file.delete();
+    } catch (error) {
+      debugPrint('Failed to remove temporary GIF preview: $error');
     }
   }
 
@@ -619,7 +669,22 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child:
-                        widget.liveBoardPngBytes == null
+                        _generatedGifPath != null
+                            ? SizedBox(
+                              width: 360,
+                              height: 260,
+                              child: Image.file(
+                                io.File(_generatedGifPath!),
+                                key: ValueKey<String>(
+                                  'board-share-gif-preview:'
+                                  '$_generatedGifPath',
+                                ),
+                                fit: BoxFit.contain,
+                                gaplessPlayback: true,
+                                filterQuality: FilterQuality.high,
+                              ),
+                            )
+                            : widget.liveBoardPngBytes == null
                             ? cg.StaticChessboard(
                               size: 240,
                               settings: cg
@@ -689,7 +754,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
               if (hasLink) _buildShareLinkBar(),
               const SizedBox(height: 16),
               // Actions
-              if (_isCapturing || _isGeneratingGif)
+              if (_isCapturing || _isGeneratingGif || _isSavingGif)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 24),
                   child: Center(
@@ -708,6 +773,8 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                         Text(
                           _isGeneratingGif
                               ? _gifProgressLabel
+                              : _isSavingGif
+                              ? 'Saving GIF…'
                               : 'Preparing image…',
                           style: const TextStyle(
                             color: kWhiteColor70,
@@ -727,12 +794,16 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                     runSpacing: 8,
                     alignment: WrapAlignment.center,
                     children:
-                        boardShareActionDescriptors(
-                              copyImage: _copyImage,
-                              downloadGif: _downloadGif,
-                              downloadImage: _downloadImage,
-                              copyPgn: _copyPgn,
-                            )
+                        (_generatedGifPath == null
+                                ? boardShareActionDescriptors(
+                                  copyImage: _copyImage,
+                                  generateGif: _generateGif,
+                                  downloadImage: _downloadImage,
+                                  copyPgn: _copyPgn,
+                                )
+                                : boardShareGeneratedGifActionDescriptors(
+                                  downloadGif: _saveGeneratedGif,
+                                ))
                             .map(
                               (action) => _ActionChip(
                                 icon: action.icon,
@@ -795,7 +866,7 @@ class BoardShareActionDescriptor {
 @visibleForTesting
 List<BoardShareActionDescriptor> boardShareActionDescriptors({
   required VoidCallback copyImage,
-  required VoidCallback downloadGif,
+  required VoidCallback generateGif,
   required VoidCallback downloadImage,
   required VoidCallback copyPgn,
 }) {
@@ -807,8 +878,8 @@ List<BoardShareActionDescriptor> boardShareActionDescriptors({
     ),
     BoardShareActionDescriptor(
       icon: Icons.gif_box_outlined,
-      label: 'Download GIF',
-      onTap: downloadGif,
+      label: 'Generate GIF',
+      onTap: generateGif,
     ),
     BoardShareActionDescriptor(
       icon: Icons.download_rounded,
@@ -819,6 +890,19 @@ List<BoardShareActionDescriptor> boardShareActionDescriptors({
       icon: Icons.copy_rounded,
       label: 'Copy PGN',
       onTap: copyPgn,
+    ),
+  ];
+}
+
+@visibleForTesting
+List<BoardShareActionDescriptor> boardShareGeneratedGifActionDescriptors({
+  required VoidCallback downloadGif,
+}) {
+  return [
+    BoardShareActionDescriptor(
+      icon: Icons.download_rounded,
+      label: 'Download GIF',
+      onTap: downloadGif,
     ),
   ];
 }

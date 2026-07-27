@@ -113,14 +113,14 @@ void main() {
     test('uses copy-image/download actions for desktop sharing', () {
       final actions = boardShareActionDescriptors(
         copyImage: () {},
-        downloadGif: () {},
+        generateGif: () {},
         downloadImage: () {},
         copyPgn: () {},
       );
 
       expect(actions.map((action) => action.label), [
         'Copy Image',
-        'Download GIF',
+        'Generate GIF',
         'Download PNG',
         'Copy PGN',
       ]);
@@ -136,6 +136,14 @@ void main() {
         actions.map((action) => action.label),
         isNot(contains('Share GIF')),
       );
+    });
+
+    test('only offers download after the GIF has been generated', () {
+      final actions = boardShareGeneratedGifActionDescriptors(
+        downloadGif: () {},
+      );
+
+      expect(actions.map((action) => action.label), ['Download GIF']);
     });
   });
 
