@@ -3175,9 +3175,30 @@ class _BoardPaneContent extends HookConsumerWidget {
         final engineSettings =
             ref.read(engineSettingsProviderNew).valueOrNull ??
             const EngineSettings();
+        final baseShareGame = chessGame.value;
+        final completedShareReport = gameReport.value;
+        final reportVisibleForShare =
+            completedShareReport != null &&
+            completedShareReport.fingerprint ==
+                gameReportFingerprint(baseShareGame) &&
+            openedReportFingerprints.value.contains(
+              completedShareReport.fingerprint,
+            );
+        final evaluatedShareGame =
+            reportVisibleForShare
+                ? mergeGameReportAnnotationsForGif(
+                  baseShareGame,
+                  completedShareReport.moves,
+                )
+                : baseShareGame;
+        final shareGame = mergeUserMainlineNagsForGif(
+          evaluatedShareGame,
+          ref.read(userMoveNagsProvider)[editsTabId] ??
+              const <int, List<int>>{},
+        );
         await showBoardShareDialog(
           context,
-          chessGame: chessGame.value,
+          chessGame: shareGame,
           headers: pgnHeaders.value,
           position: position,
           lastMove: lastMove,
@@ -3189,6 +3210,12 @@ class _BoardPaneContent extends HookConsumerWidget {
           showEvalBar: shouldShowDesktopBoardEvalBar(engineSettings),
           liveBoardPngBytes: liveBoardPngBytes,
           shareUrl: shareUrl,
+          whiteFideId:
+              boardArgs?.sourceGame?.whitePlayer.fideId ??
+              boardArgs?.whiteFideId,
+          blackFideId:
+              boardArgs?.sourceGame?.blackPlayer.fideId ??
+              boardArgs?.blackFideId,
         );
       } catch (_) {
         if (context.mounted) {
@@ -4712,6 +4739,97 @@ ChessLine _stripCommentsAndNags(ChessLine line) {
 /// board-pane merge logic doesn't accidentally suppress a PGN `±` (eval)
 /// or `⟳` (observation) NAG just because the user added a quality glyph.
 bool _isQualityNag(int nag) => nag >= 1 && nag <= 7;
+
+@visibleForTesting
+ChessGame mergeGameReportAnnotationsForGif(
+  ChessGame game,
+  List<GameReportMove> reportMoves,
+) {
+  if (reportMoves.isEmpty) return game;
+  final byPly = <int, GameReportMove>{
+    for (final move in reportMoves) move.ply: move,
+  };
+  var changed = false;
+  final mainline = <ChessMove>[
+    for (var index = 0; index < game.mainline.length; index++)
+      (() {
+        final move = game.mainline[index];
+        final report = byPly[index + 1];
+        if (report == null) return move;
+        final line = report.evaluation;
+        final evaluation =
+            move.eval?.trim().isNotEmpty == true
+                ? move.eval
+                : line.mate != null
+                ? '#${line.mate}'
+                : line.centipawns != null
+                ? (line.centipawns! / 100).toStringAsFixed(2)
+                : null;
+        final classification = report.classification;
+        final directive =
+            classification == null
+                ? null
+                : '[%chessever_annotation '
+                    '${_gifClassificationName(classification)}]';
+        final existingComments = move.comments ?? const <String>[];
+        final hasClassificationDirective = existingComments.any(
+          (comment) => comment.contains('[%chessever_annotation '),
+        );
+        final comments =
+            directive == null || hasClassificationDirective
+                ? existingComments
+                : <String>[...existingComments, directive];
+        final evalChanged = evaluation != null && evaluation != move.eval;
+        final commentsChanged = comments.length != existingComments.length;
+        if (!evalChanged && !commentsChanged) return move;
+        changed = true;
+        return move.copyWith(eval: evaluation, comments: comments);
+      })(),
+  ];
+  return changed ? game.copyWith(mainline: mainline) : game;
+}
+
+String _gifClassificationName(GameMoveClassification classification) =>
+    switch (classification) {
+      GameMoveClassification.brilliant => 'brilliant',
+      GameMoveClassification.goodMove => 'good_move',
+      GameMoveClassification.bestMove => 'best_move',
+      GameMoveClassification.missedWin => 'missed_win',
+      GameMoveClassification.inaccuracy => 'inaccuracy',
+      GameMoveClassification.mistake => 'mistake',
+      GameMoveClassification.blunder => 'blunder',
+    };
+
+@visibleForTesting
+ChessGame mergeUserMainlineNagsForGif(
+  ChessGame game,
+  Map<int, List<int>> userNags,
+) {
+  if (userNags.isEmpty) return game;
+  var changed = false;
+  final mainline = <ChessMove>[
+    for (var index = 0; index < game.mainline.length; index++)
+      (() {
+        final overlay = userNags[index] ?? const <int>[];
+        if (overlay.isEmpty) return game.mainline[index];
+        final existing = game.mainline[index].nags ?? const <int>[];
+        final overlayHasQuality = overlay.any(_isQualityNag);
+        final merged = <int>[
+          ...overlay,
+          ...existing.where(
+            (nag) =>
+                !overlay.contains(nag) &&
+                !(overlayHasQuality && _isQualityNag(nag)),
+          ),
+        ];
+        changed = true;
+        return game.mainline[index].copyWith(
+          nags: List<int>.unmodifiable(merged),
+        );
+      })(),
+  ];
+  return changed ? game.copyWith(mainline: mainline) : game;
+}
 
 /// Applies generated report classifications without discarding incoming
 /// Lichess commentary attached to the same move.

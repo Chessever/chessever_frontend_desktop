@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io' as io;
 import 'dart:typed_data';
 
 import 'package:chessground/chessground.dart' as cg;
@@ -5,17 +8,18 @@ import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 
 import 'package:chessever/desktop/services/board_share_service.dart';
+import 'package:chessever/desktop/services/cloudflare_gif_service.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
-import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
     show exportGameToPgn;
-import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/services/fide_photo_service.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -41,6 +45,10 @@ class BoardShareDialog extends ConsumerStatefulWidget {
     this.showEvalBar = _defaultBoardShareShowEvalBar,
     this.liveBoardPngBytes,
     this.shareUrl,
+    this.whiteFideId,
+    this.blackFideId,
+    this.whitePhotoUrl,
+    this.blackPhotoUrl,
   });
 
   final ChessGame chessGame;
@@ -59,6 +67,10 @@ class BoardShareDialog extends ConsumerStatefulWidget {
   /// simplified share card.
   final Uint8List? liveBoardPngBytes;
   final String? shareUrl;
+  final int? whiteFideId;
+  final int? blackFideId;
+  final String? whitePhotoUrl;
+  final String? blackPhotoUrl;
 
   @override
   ConsumerState<BoardShareDialog> createState() => _BoardShareDialogState();
@@ -67,6 +79,9 @@ class BoardShareDialog extends ConsumerStatefulWidget {
 class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
   bool _isCapturing = false;
   bool _isGeneratingGif = false;
+  bool _isSavingGif = false;
+  String? _generatedGifPath;
+  String _gifProgressLabel = 'Submitting cloud job…';
   late final BoardShareRaster _staticImage;
 
   @override
@@ -76,6 +91,12 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       liveBoardPngBytes: widget.liveBoardPngBytes,
       fallbackCapture: _captureFallbackImageBytes,
     );
+  }
+
+  @override
+  void dispose() {
+    unawaited(_deleteTemporaryGif(_generatedGifPath));
+    super.dispose();
   }
 
   String get _whiteName => widget.headers['White']?.trim() ?? 'White';
@@ -96,8 +117,8 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       '';
   int? get _whiteRating => _headerInt('WhiteElo');
   int? get _blackRating => _headerInt('BlackElo');
-  int? get _whiteFideId => _headerInt('WhiteFideId');
-  int? get _blackFideId => _headerInt('BlackFideId');
+  int? get _whiteFideId => widget.whiteFideId ?? _headerInt('WhiteFideId');
+  int? get _blackFideId => widget.blackFideId ?? _headerInt('BlackFideId');
   String? get _whiteScore => _scoreFor(isWhite: true);
   String? get _blackScore => _scoreFor(isWhite: false);
   String? get _shareUrl => boardShareVisibleUrl(widget.shareUrl);
@@ -210,110 +231,212 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
     }
   }
 
-  Future<void> _downloadGif() async {
+  Future<void> _generateGif() async {
     if (!_hasMoves) {
       _showToast('No moves to animate', isError: true);
       return;
     }
-    setState(() => _isGeneratingGif = true);
+    setState(() {
+      _isGeneratingGif = true;
+      _gifProgressLabel = 'Submitting cloud job…';
+    });
+    CloudflareGifService? service;
     try {
-      final settings =
-          ref.read(boardSettingsProviderNew).valueOrNull ??
-          const BoardSettingsNew();
-      final boardSettings = cg.ChessboardSettings(
-        enableCoordinates: true,
-        animationDuration: Duration.zero,
-        colorScheme: settings.colorScheme,
-        pieceAssets: settings.pieceAssets,
-        borderRadius: BorderRadius.zero,
-        boxShadow: const [],
-      );
-      final photos = await _resolvePlayerPhotos();
-
-      // Replay the mainline into per-frame board/clock/eval data. Preserve PGN
-      // annotations when present; otherwise hydrate each position from the
-      // Gamebase eval cache so miniature exports get a moving, honest bar.
-      final gifData = buildBoardShareGifFrames(
-        startingFen: widget.chessGame.startingFen,
-        mainline: widget.chessGame.mainline,
-      );
-      final repository = ref.read(gamebaseRepositoryProvider);
-      final stockfish = StockfishSingleton();
-      final gifOwnerId = StockfishSingleton.generateOwnerId(
-        'boardShareGif',
-        identityHashCode(this),
-      );
-      late final List<BoardShareFrameEvaluation> gifEvaluations;
-      try {
-        gifEvaluations = await hydrateBoardShareGifEvaluations(
-          frames: gifData.frames,
-          evaluations: gifData.evaluations,
-          concurrency: 6,
-          fetchEvaluation: (fen) async {
-            final cloud = await repository
-                .getEvalByFen(fen)
-                .timeout(
-                  const Duration(milliseconds: 1500),
-                  onTimeout: () => null,
-                );
-            return boardShareEvaluationFromCloud(cloud, fen);
-          },
-          fallbackEvaluation: (fen) async {
-            final result = await stockfish.evaluatePosition(
-              fen,
-              searchDuration: const Duration(milliseconds: 120),
-              maxDepth: 12,
-              multiPV: 1,
-              isCurrentPosition: false,
-              allowCache: true,
-              ownerId: gifOwnerId,
-            );
-            if (result.isCancelled || result.pvs.isEmpty) return null;
-            return boardShareEvaluationFromPv(result.pvs.first, fen);
-          },
-        );
-      } finally {
-        await stockfish.cancelEvaluationsForOwner(gifOwnerId);
+      service = CloudflareGifService.fromDesktopEnvironment();
+      if (mounted) {
+        setState(() => _gifProgressLabel = 'Loading player photos…');
       }
-
-      final gifBytes = await BoardShareService.generateGif(
-        frames: gifData.frames,
-        durationsCs: gifData.durationsCs,
-        boardSettings: boardSettings,
-        whiteName: _whiteName,
-        blackName: _blackName,
-        event: _event,
-        result: _result,
-        whiteTitle: _whiteTitle,
-        blackTitle: _blackTitle,
-        whiteRating: _whiteRating,
-        blackRating: _blackRating,
-        whiteFederation: _whiteFederation,
-        blackFederation: _blackFederation,
-        whiteScore: _whiteScore,
-        blackScore: _blackScore,
-        whitePhotoUrl: photos.whitePhotoUrl,
-        blackPhotoUrl: photos.blackPhotoUrl,
-        // GIF exports own their presentation. Keep the evaluation rail even
-        // if the live board's engine gauge is currently hidden; positions
-        // without a resolved score remain neutral.
-        showEvalBar: shouldShowBoardShareGifEvalBar(gifEvaluations),
+      final photos = await _resolvePlayerPhotos();
+      final photoData = await Future.wait([
+        _cloudPhotoData(photos.whitePhotoUrl, playerLabel: 'white'),
+        _cloudPhotoData(photos.blackPhotoUrl, playerLabel: 'black'),
+      ]);
+      if (mounted) {
+        setState(() => _gifProgressLabel = 'Submitting cloud job…');
+      }
+      final job = await service.submitJob(
+        pgn: _pgn,
         flipped: widget.flipped,
-        clocks: gifData.clocks,
-        frameEvaluations: gifEvaluations,
+        metadata: <String, Object?>{
+          'white': _whiteName,
+          'black': _blackName,
+          if (_whiteTitle.isNotEmpty) 'whiteTitle': _whiteTitle,
+          if (_blackTitle.isNotEmpty) 'blackTitle': _blackTitle,
+          if (_whiteRating != null) 'whiteRating': _whiteRating,
+          if (_blackRating != null) 'blackRating': _blackRating,
+          if (_whiteFederation.isNotEmpty) 'whiteFederation': _whiteFederation,
+          if (_blackFederation.isNotEmpty) 'blackFederation': _blackFederation,
+          if (photoData[0] != null) 'whitePhotoData': photoData[0],
+          if (photoData[1] != null) 'blackPhotoData': photoData[1],
+          if (_event.isNotEmpty) 'event': _event,
+          if (_result.isNotEmpty) 'result': _result,
+        },
       );
-
-      if (gifBytes == null) throw Exception('GIF generation returned null');
-      await BoardShareService.saveGifBytesToDisk(
-        gifBytes,
-        defaultName: _defaultExportName('gif'),
+      debugPrint('Cloud GIF job submitted: ${job.id}');
+      final completed = await service.waitUntilComplete(
+        job.id,
+        isCancelled: () => !mounted,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() => _gifProgressLabel = _gifProgressText(progress));
+        },
       );
-      _showToast('GIF saved', isError: false);
-    } catch (e) {
-      _showToast('Failed to save GIF', isError: true);
+      if (!mounted) return;
+      setState(() => _gifProgressLabel = 'Loading GIF preview…');
+      final temporaryDirectory = await getTemporaryDirectory();
+      final temporaryPath =
+          '${temporaryDirectory.path}${io.Platform.pathSeparator}'
+          'chessever_gif_preview_${DateTime.now().microsecondsSinceEpoch}.gif';
+      await service.downloadToFile(
+        jobId: completed.id,
+        outputPath: temporaryPath,
+      );
+      if (!mounted) {
+        await _deleteTemporaryGif(temporaryPath);
+        return;
+      }
+      final previousPath = _generatedGifPath;
+      setState(() => _generatedGifPath = temporaryPath);
+      unawaited(_deleteTemporaryGif(previousPath));
+      _showToast('GIF ready to preview', isError: false);
+    } on CloudflareGifCancelled {
+      // Closing the dialog only stops polling. The Workflow continues and the
+      // deterministic request will resume when Share is opened again.
+    } on CloudflareGifException catch (error) {
+      debugPrint(
+        'Cloud GIF failed: code=${error.code}, '
+        'status=${error.statusCode ?? 'n/a'}, message=${error.message}',
+      );
+      _showToast('${error.message} [${error.code}]', isError: true);
+    } catch (error, stackTrace) {
+      debugPrint('Unexpected Cloud GIF failure: $error\n$stackTrace');
+      _showToast(
+        'Cloud GIF generation failed. [unexpected_client_error]',
+        isError: true,
+      );
     } finally {
+      service?.close();
       if (mounted) setState(() => _isGeneratingGif = false);
     }
+  }
+
+  Future<void> _saveGeneratedGif() async {
+    final generatedGifPath = _generatedGifPath;
+    if (generatedGifPath == null) return;
+
+    final outputPath = await BoardShareService.chooseGifSavePath(
+      defaultName: _defaultExportName('gif'),
+    );
+    if (outputPath == null || !mounted) return;
+
+    setState(() => _isSavingGif = true);
+    try {
+      await io.File(generatedGifPath).copy(outputPath);
+      _showToast('GIF saved', isError: false);
+    } catch (error, stackTrace) {
+      debugPrint('Failed to save generated GIF: $error\n$stackTrace');
+      _showToast('Failed to save GIF', isError: true);
+    } finally {
+      if (mounted) setState(() => _isSavingGif = false);
+    }
+  }
+
+  Future<void> _deleteTemporaryGif(String? path) async {
+    if (path == null) return;
+    try {
+      final file = io.File(path);
+      if (await file.exists()) await file.delete();
+    } catch (error) {
+      debugPrint('Failed to remove temporary GIF preview: $error');
+    }
+  }
+
+  Future<String?> _cloudPhotoData(
+    String? photoUrl, {
+    required String playerLabel,
+  }) async {
+    final uri = Uri.tryParse(photoUrl?.trim() ?? '');
+    if (uri == null || uri.scheme != 'https') {
+      debugPrint(
+        'Cloud GIF $playerLabel photo omitted: no valid HTTPS photo URL.',
+      );
+      return null;
+    }
+    for (var attempt = 1; attempt <= 2; attempt++) {
+      try {
+        final response = await http
+            .get(uri)
+            .timeout(const Duration(seconds: 5));
+        if (response.statusCode != 200) {
+          if (attempt == 1 && response.statusCode >= 500) {
+            debugPrint(
+              'Cloud GIF $playerLabel photo download returned '
+              'HTTP ${response.statusCode}; retrying once.',
+            );
+            continue;
+          }
+          debugPrint(
+            'Cloud GIF $playerLabel photo omitted: '
+            'download returned HTTP ${response.statusCode}.',
+          );
+          return null;
+        }
+        if (response.bodyBytes.isEmpty) {
+          debugPrint('Cloud GIF $playerLabel photo omitted: empty response.');
+          return null;
+        }
+        if (response.bodyBytes.length > 512 * 1024) {
+          debugPrint(
+            'Cloud GIF $playerLabel photo omitted: '
+            '${response.bodyBytes.length} bytes exceeds 512 KiB.',
+          );
+          return null;
+        }
+        final rawContentType =
+            response.headers['content-type']?.split(';').first.trim() ?? '';
+        final contentType = cloudGifPhotoMimeType(response.bodyBytes);
+        if (contentType == null) {
+          debugPrint(
+            'Cloud GIF $playerLabel photo omitted: '
+            'unsupported image bytes (response type: '
+            '${rawContentType.isEmpty ? 'missing' : rawContentType}).',
+          );
+          return null;
+        }
+        debugPrint(
+          'Cloud GIF $playerLabel photo attached: '
+          '${response.bodyBytes.length} bytes, $contentType.',
+        );
+        return 'data:$contentType;base64,${base64Encode(response.bodyBytes)}';
+      } catch (error) {
+        if (attempt == 1) {
+          debugPrint(
+            'Cloud GIF $playerLabel photo download failed; retrying once: '
+            '$error',
+          );
+          continue;
+        }
+        debugPrint('Cloud GIF $playerLabel photo unavailable: $error');
+        return null;
+      }
+    }
+    return null;
+  }
+
+  String _gifProgressText(CloudflareGifJob job) {
+    final frames =
+        job.totalFrames > 0
+            ? ' ${job.completedFrames.clamp(0, job.totalFrames)}/${job.totalFrames}'
+            : '';
+    return switch (job.stage) {
+      CloudflareGifJobStatus.queued => 'Queued in Cloudflare…',
+      CloudflareGifJobStatus.analyzing => 'Analyzing positions$frames…',
+      CloudflareGifJobStatus.rendering => 'Rendering frames$frames…',
+      CloudflareGifJobStatus.encoding => 'Encoding GIF…',
+      CloudflareGifJobStatus.storing => 'Finalizing GIF…',
+      CloudflareGifJobStatus.succeeded => 'GIF ready',
+      CloudflareGifJobStatus.failed => 'GIF generation failed',
+    };
   }
 
   String _defaultExportName(String extension) {
@@ -348,9 +471,13 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
 
   Future<({String? whitePhotoUrl, String? blackPhotoUrl})>
   _resolvePlayerPhotos() async {
-    Future<String?> photoFor(int? fideId) async {
-      if (fideId == null || fideId <= 0) return null;
-      final url = await FidePhotoService.getPhotoUrlOrNull('$fideId');
+    Future<String?> photoFor(String? preferredUrl, int? fideId) async {
+      final url =
+          preferredUrl?.trim().isNotEmpty == true
+              ? preferredUrl!.trim()
+              : fideId == null || fideId <= 0
+              ? null
+              : await FidePhotoService.getPhotoUrlOrNull('$fideId');
       final trimmed = url?.trim();
       if (trimmed == null || trimmed.isEmpty) return null;
       if (mounted) {
@@ -363,9 +490,11 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
       return trimmed;
     }
 
-    final whitePhotoUrl = await photoFor(_whiteFideId);
-    final blackPhotoUrl = await photoFor(_blackFideId);
-    return (whitePhotoUrl: whitePhotoUrl, blackPhotoUrl: blackPhotoUrl);
+    final urls = await Future.wait([
+      photoFor(widget.whitePhotoUrl, _whiteFideId),
+      photoFor(widget.blackPhotoUrl, _blackFideId),
+    ]);
+    return (whitePhotoUrl: urls[0], blackPhotoUrl: urls[1]);
   }
 
   List<ChessMove> _pathForCurrentPointer() {
@@ -540,7 +669,22 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child:
-                        widget.liveBoardPngBytes == null
+                        _generatedGifPath != null
+                            ? SizedBox(
+                              width: 360,
+                              height: 260,
+                              child: Image.file(
+                                io.File(_generatedGifPath!),
+                                key: ValueKey<String>(
+                                  'board-share-gif-preview:'
+                                  '$_generatedGifPath',
+                                ),
+                                fit: BoxFit.contain,
+                                gaplessPlayback: true,
+                                filterQuality: FilterQuality.high,
+                              ),
+                            )
+                            : widget.liveBoardPngBytes == null
                             ? cg.StaticChessboard(
                               size: 240,
                               settings: cg
@@ -610,7 +754,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
               if (hasLink) _buildShareLinkBar(),
               const SizedBox(height: 16),
               // Actions
-              if (_isCapturing || _isGeneratingGif)
+              if (_isCapturing || _isGeneratingGif || _isSavingGif)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 24),
                   child: Center(
@@ -628,7 +772,9 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                         const SizedBox(height: 10),
                         Text(
                           _isGeneratingGif
-                              ? 'Generating GIF…'
+                              ? _gifProgressLabel
+                              : _isSavingGif
+                              ? 'Saving GIF…'
                               : 'Preparing image…',
                           style: const TextStyle(
                             color: kWhiteColor70,
@@ -648,12 +794,16 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
                     runSpacing: 8,
                     alignment: WrapAlignment.center,
                     children:
-                        boardShareActionDescriptors(
-                              copyImage: _copyImage,
-                              downloadGif: _downloadGif,
-                              downloadImage: _downloadImage,
-                              copyPgn: _copyPgn,
-                            )
+                        (_generatedGifPath == null
+                                ? boardShareActionDescriptors(
+                                  copyImage: _copyImage,
+                                  generateGif: _generateGif,
+                                  downloadImage: _downloadImage,
+                                  copyPgn: _copyPgn,
+                                )
+                                : boardShareGeneratedGifActionDescriptors(
+                                  downloadGif: _saveGeneratedGif,
+                                ))
                             .map(
                               (action) => _ActionChip(
                                 icon: action.icon,
@@ -701,16 +851,6 @@ class BoardShareRaster {
 }
 
 @visibleForTesting
-bool shouldShowBoardShareGifEvalBar(
-  List<({double? evaluation, int? mate, bool isEvaluating})> evaluations,
-) {
-  // Keep GIF geometry stable and show the honest neutral 50/50 bar when a
-  // source PGN has no historical evaluations. Annotated games still animate
-  // their per-frame values; we never smear one live-board eval across replay.
-  return true;
-}
-
-@visibleForTesting
 class BoardShareActionDescriptor {
   const BoardShareActionDescriptor({
     required this.icon,
@@ -726,7 +866,7 @@ class BoardShareActionDescriptor {
 @visibleForTesting
 List<BoardShareActionDescriptor> boardShareActionDescriptors({
   required VoidCallback copyImage,
-  required VoidCallback downloadGif,
+  required VoidCallback generateGif,
   required VoidCallback downloadImage,
   required VoidCallback copyPgn,
 }) {
@@ -738,8 +878,8 @@ List<BoardShareActionDescriptor> boardShareActionDescriptors({
     ),
     BoardShareActionDescriptor(
       icon: Icons.gif_box_outlined,
-      label: 'Download GIF',
-      onTap: downloadGif,
+      label: 'Generate GIF',
+      onTap: generateGif,
     ),
     BoardShareActionDescriptor(
       icon: Icons.download_rounded,
@@ -750,6 +890,19 @@ List<BoardShareActionDescriptor> boardShareActionDescriptors({
       icon: Icons.copy_rounded,
       label: 'Copy PGN',
       onTap: copyPgn,
+    ),
+  ];
+}
+
+@visibleForTesting
+List<BoardShareActionDescriptor> boardShareGeneratedGifActionDescriptors({
+  required VoidCallback downloadGif,
+}) {
+  return [
+    BoardShareActionDescriptor(
+      icon: Icons.download_rounded,
+      label: 'Download GIF',
+      onTap: downloadGif,
     ),
   ];
 }
@@ -775,6 +928,39 @@ class _ActionChip extends StatelessWidget {
 String? boardShareVisibleUrl(String? shareUrl) {
   final url = shareUrl?.trim();
   return url == null || url.isEmpty ? null : url;
+}
+
+@visibleForTesting
+String? cloudGifPhotoMimeType(Uint8List bytes) {
+  if (bytes.length >= 8 &&
+      bytes[0] == 0x89 &&
+      bytes[1] == 0x50 &&
+      bytes[2] == 0x4e &&
+      bytes[3] == 0x47 &&
+      bytes[4] == 0x0d &&
+      bytes[5] == 0x0a &&
+      bytes[6] == 0x1a &&
+      bytes[7] == 0x0a) {
+    return 'image/png';
+  }
+  if (bytes.length >= 3 &&
+      bytes[0] == 0xff &&
+      bytes[1] == 0xd8 &&
+      bytes[2] == 0xff) {
+    return 'image/jpeg';
+  }
+  if (bytes.length >= 12 &&
+      bytes[0] == 0x52 &&
+      bytes[1] == 0x49 &&
+      bytes[2] == 0x46 &&
+      bytes[3] == 0x46 &&
+      bytes[8] == 0x57 &&
+      bytes[9] == 0x45 &&
+      bytes[10] == 0x42 &&
+      bytes[11] == 0x50) {
+    return 'image/webp';
+  }
+  return null;
 }
 
 String _sanitizeFilename(String input) {
@@ -814,6 +1000,10 @@ Future<void> showBoardShareDialog(
   bool showEvalBar = _defaultBoardShareShowEvalBar,
   Uint8List? liveBoardPngBytes,
   String? shareUrl,
+  int? whiteFideId,
+  int? blackFideId,
+  String? whitePhotoUrl,
+  String? blackPhotoUrl,
 }) {
   return showDesktopDialog<void>(
     context,
@@ -831,6 +1021,10 @@ Future<void> showBoardShareDialog(
           showEvalBar: showEvalBar,
           liveBoardPngBytes: liveBoardPngBytes,
           shareUrl: shareUrl,
+          whiteFideId: whiteFideId,
+          blackFideId: blackFideId,
+          whitePhotoUrl: whitePhotoUrl,
+          blackPhotoUrl: blackPhotoUrl,
         ),
   );
 }

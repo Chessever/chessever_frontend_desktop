@@ -19,6 +19,7 @@ class DesktopEnv {
     'GOOGLE_DESKTOP_CLIENT_ID',
     'GOOGLE_DESKTOP_CLIENT_SECRET',
     'SENTRY_FLUTTER',
+    'CHESSEVER_CLOUDFLARE_API_BASE',
   ];
 
   static const Map<String, String> _release = <String, String>{
@@ -49,6 +50,10 @@ class DesktopEnv {
     ),
     'GAMEBASE_PROXY_BASE': String.fromEnvironment(
       'GAMEBASE_PROXY_BASE',
+      defaultValue: '',
+    ),
+    'CHESSEVER_CLOUDFLARE_API_BASE': String.fromEnvironment(
+      'CHESSEVER_CLOUDFLARE_API_BASE',
       defaultValue: '',
     ),
   };

@@ -24,6 +24,7 @@ workflows:
             GOOGLE_DESKTOP_CLIENT_ID
             GOOGLE_DESKTOP_CLIENT_SECRET
             SENTRY_FLUTTER
+            CHESSEVER_CLOUDFLARE_API_BASE
           )
           missing=0
           for name in "${required[@]}"; do
@@ -54,6 +55,7 @@ workflows:
             --dart-define=GOOGLE_DESKTOP_CLIENT_ID="$GOOGLE_DESKTOP_CLIENT_ID"
             --dart-define=GOOGLE_DESKTOP_CLIENT_SECRET="$GOOGLE_DESKTOP_CLIENT_SECRET"
             --dart-define=SENTRY_FLUTTER="$SENTRY_FLUTTER"
+            --dart-define=CHESSEVER_CLOUDFLARE_API_BASE="$CHESSEVER_CLOUDFLARE_API_BASE"
           )
           if [ -n "${GOOGLE_WEB_CLIENT_ID:-}" ]; then
             DART_DEFINES+=(--dart-define=GOOGLE_WEB_CLIENT_ID="$GOOGLE_WEB_CLIENT_ID")
@@ -124,6 +126,7 @@ workflows:
             GOOGLE_DESKTOP_CLIENT_ID
             GOOGLE_DESKTOP_CLIENT_SECRET
             SENTRY_FLUTTER
+            CHESSEVER_CLOUDFLARE_API_BASE
             APP_STORE_CONNECT_KEY_IDENTIFIER
             APP_STORE_CONNECT_ISSUER_ID
             APP_STORE_CONNECT_PRIVATE_KEY
@@ -199,6 +202,7 @@ workflows:
             --dart-define=GOOGLE_DESKTOP_CLIENT_ID="$GOOGLE_DESKTOP_CLIENT_ID"
             --dart-define=GOOGLE_DESKTOP_CLIENT_SECRET="$GOOGLE_DESKTOP_CLIENT_SECRET"
             --dart-define=SENTRY_FLUTTER="$SENTRY_FLUTTER"
+            --dart-define=CHESSEVER_CLOUDFLARE_API_BASE="$CHESSEVER_CLOUDFLARE_API_BASE"
           )
           if [ -n "${GOOGLE_WEB_CLIENT_ID:-}" ]; then
             DART_DEFINES+=(--dart-define=GOOGLE_WEB_CLIENT_ID="$GOOGLE_WEB_CLIENT_ID")
@@ -255,6 +259,7 @@ workflows:
             'GOOGLE_DESKTOP_CLIENT_ID',
             'GOOGLE_DESKTOP_CLIENT_SECRET',
             'SENTRY_FLUTTER',
+            'CHESSEVER_CLOUDFLARE_API_BASE',
             'CODEMAGIC_PUBLISHER_KEY'
           )
           $missing = @()
@@ -329,6 +334,7 @@ workflows:
             GOOGLE_DESKTOP_CLIENT_ID
             GOOGLE_DESKTOP_CLIENT_SECRET
             SENTRY_FLUTTER
+            CHESSEVER_CLOUDFLARE_API_BASE
             CODEMAGIC_PUBLISHER_KEY
             CODEMAGIC_PUBLISH_REMOTE
           )
