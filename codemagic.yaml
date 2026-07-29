@@ -103,7 +103,8 @@ workflows:
     name: macOS Desktop Release (Apple Silicon + Intel)
     instance_type: mac_mini_m4
     # Dual package: two Stockfish fetches, two Flutter builds, two notarizations.
-    max_build_duration: 180
+    # Codemagic file-workflow cap is 120 minutes.
+    max_build_duration: 120
     environment:
       flutter: stable
       xcode: latest

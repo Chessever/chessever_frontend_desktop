@@ -80,7 +80,7 @@ void main() {
       expect(script, isNot(contains('sign_update')));
       expect(codemagic, contains('macos-desktop-release:'));
       expect(codemagic, contains('instance_type: mac_mini_m4'));
-      expect(codemagic, contains('max_build_duration: 180'));
+      expect(codemagic, contains('max_build_duration: 120'));
       expect(codemagic, contains('chessever-desktop-release'));
       expect(codemagic, contains('CM_CERTIFICATE'));
       expect(codemagic, contains('SENTRY_FLUTTER'));
