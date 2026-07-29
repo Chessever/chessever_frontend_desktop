@@ -29,6 +29,62 @@ void main() {
     expect(source, contains('key: gameItemKeyFor(games[i].gameId)'));
   });
 
+  test(
+    'For You event summary card paints selection chrome outside any clip',
+    () {
+      final source =
+          File('lib/desktop/panes/tournaments_pane.dart').readAsStringSync();
+
+      final classStart = source.indexOf(
+        'class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard>',
+      );
+      expect(classStart, greaterThanOrEqualTo(0));
+
+      // Next top-level class after the summary card state ends the region.
+      final nextClass = source.indexOf(
+        '\nclass _ForYouEventInfoPanel',
+        classStart,
+      );
+      expect(nextClass, greaterThan(classStart));
+      final cardSource = source.substring(classStart, nextClass);
+
+      // Fail mode: Container(clipBehavior: Clip.antiAlias, decoration: border/shadow)
+      // crops the selection ring and glow. Outer shell must not clip.
+      expect(cardSource, isNot(contains('clipBehavior: Clip.antiAlias')));
+      expect(cardSource, isNot(contains('clipBehavior: Clip.hardEdge')));
+      expect(cardSource, isNot(contains('clipBehavior: Clip.antiAliasWithSaveLayer')));
+
+      // Content rounding is a separate inner clip (desktop_game_card pattern).
+      expect(cardSource, contains('ClipRRect'));
+      expect(cardSource, contains('borderRadius: BorderRadius.circular(9)'));
+
+      // Selected decoration: primary-tinted border width ≥ 2 + soft glow.
+      expect(cardSource, contains('width: widget.selected ? 2 : 1'));
+      expect(
+        cardSource,
+        contains('kPrimaryColor.withValues(alpha: 0.96)'),
+      );
+      expect(
+        cardSource,
+        contains('kPrimaryColor.withValues(alpha: 0.16)'),
+      );
+      expect(cardSource, contains('blurRadius: 8'));
+
+      // Hover chrome shares the same non-clipped shell (white border at 0.12).
+      expect(
+        cardSource,
+        contains('kWhiteColor.withValues(alpha: 0.12)'),
+      );
+
+      // Decoration host is a Container with BoxDecoration — not also clipping.
+      expect(cardSource, contains('decoration: BoxDecoration('));
+      // ClipRRect must be a child of the decorated shell, not a sibling clip host.
+      final decorationIndex = cardSource.indexOf('decoration: BoxDecoration(');
+      final clipRRectIndex = cardSource.indexOf('ClipRRect(');
+      expect(clipRRectIndex, greaterThan(decorationIndex));
+    },
+  );
+
   group('DesktopForYouStripLayout', () {
     test('keeps four boards on ordinary wide rows', () {
       const availableForFour =

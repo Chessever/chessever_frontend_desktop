@@ -3295,8 +3295,12 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
             onTap: widget.onOpen,
             child: MotionCard(
               borderRadius: 10,
+              // Selection border + glow must NOT share a clip with content.
+              // Clip.antiAlias on the same Container crops the ring/shadow
+              // (especially corners). Outer shell paints chrome; inner
+              // ClipRRect keeps media/content rounded — same layering as
+              // desktop_game_card.dart.
               child: Container(
-                clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
                   color: highlighted ? kBlack3Color : kBlack2Color,
                   borderRadius: BorderRadius.circular(10),
@@ -3320,28 +3324,31 @@ class _ForYouEventSummaryCardState extends State<_ForYouEventSummaryCard> {
                           ]
                           : null,
                 ),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final mediaHeight =
-                        (constraints.maxHeight * 0.42)
-                            .clamp(104.0, 150.0)
-                            .toDouble();
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        SizedBox(
-                          height: mediaHeight,
-                          child: _EventCardMedia(
-                            event: event,
-                            padding: 8,
-                            imageFit: BoxFit.cover,
-                            showFavorite: false,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(9),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final mediaHeight =
+                          (constraints.maxHeight * 0.42)
+                              .clamp(104.0, 150.0)
+                              .toDouble();
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(
+                            height: mediaHeight,
+                            child: _EventCardMedia(
+                              event: event,
+                              padding: 8,
+                              imageFit: BoxFit.cover,
+                              showFavorite: false,
+                            ),
                           ),
-                        ),
-                        Expanded(child: _ForYouEventInfoPanel(event: event)),
-                      ],
-                    );
-                  },
+                          Expanded(child: _ForYouEventInfoPanel(event: event)),
+                        ],
+                      );
+                    },
+                  ),
                 ),
               ),
             ),
