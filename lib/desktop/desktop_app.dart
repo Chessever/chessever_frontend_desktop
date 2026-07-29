@@ -4,6 +4,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_auth_gate.dart';
 import 'package:chessever/desktop/services/desktop_build_identity.dart';
+import 'package:chessever/desktop/services/engine/macos_chip_guard.dart';
 import 'package:chessever/desktop/widgets/desktop_native_update_menu_bridge.dart';
 import 'package:chessever/desktop/widgets/desktop_window_frame.dart';
 import 'package:chessever/services/analytics/analytics_service.dart';
@@ -18,11 +19,24 @@ final _desktopNavigatorKey = GlobalKey<NavigatorState>();
 /// pieces: dark theme, no native splash, no upgrader dialog, no Material
 /// orientation lock. The shell handles navigation; we do not push routes for
 /// primary navigation on desktop.
-class DesktopApp extends ConsumerWidget {
+class DesktopApp extends ConsumerStatefulWidget {
   const DesktopApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<DesktopApp> createState() => _DesktopAppState();
+}
+
+class _DesktopAppState extends ConsumerState<DesktopApp> {
+  @override
+  void initState() {
+    super.initState();
+    // Silicon package on Intel (or the reverse) gets a recovery dialog with
+    // the correct download link — silent dead Stockfish is not acceptable.
+    scheduleMacOsWrongChipCheck(navigatorKey: _desktopNavigatorKey);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return MaterialApp(
       title: DesktopBuildIdentity.current.displayName,
       debugShowCheckedModeBanner: false,

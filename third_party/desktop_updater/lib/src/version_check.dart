@@ -6,7 +6,13 @@ import "package:desktop_updater/src/file_hash.dart";
 import "package:desktop_updater/src/remote_file.dart";
 import "package:path/path.dart" as path;
 
-Future<ItemModel?> versionCheckFunction({required String appArchiveUrl}) async {
+Future<ItemModel?> versionCheckFunction({
+  required String appArchiveUrl,
+  /// When set (e.g. `macos-arm64` / `macos-x64`), only items advertising that
+  /// exact platform key are considered. Falls back to [Platform.operatingSystem]
+  /// when null so Windows/Linux and legacy single-`macos` catalogs still work.
+  String? platform,
+}) async {
   final tempDir = await Directory.systemTemp.createTemp("desktop_updater_");
 
   try {
@@ -17,8 +23,11 @@ Future<ItemModel?> versionCheckFunction({required String appArchiveUrl}) async {
       jsonDecode(await appArchiveFile.readAsString()) as Map<String, dynamic>,
     );
 
+    final platformKey = (platform == null || platform.isEmpty)
+        ? Platform.operatingSystem
+        : platform;
     final versions = appArchiveDecoded.items
-        .where((element) => element.platform == Platform.operatingSystem)
+        .where((element) => element.platform == platformKey)
         .toList(growable: false);
 
     if (versions.isEmpty) {

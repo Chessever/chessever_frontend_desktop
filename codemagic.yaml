@@ -100,9 +100,10 @@ workflows:
       - /tmp/xcodebuild_logs/*.log
 
   macos-desktop-release:
-    name: macOS Desktop Release
+    name: macOS Desktop Release (Apple Silicon + Intel)
     instance_type: mac_mini_m4
-    max_build_duration: 120
+    # Dual package: two Stockfish fetches, two Flutter builds, two notarizations.
+    max_build_duration: 180
     environment:
       flutter: stable
       xcode: latest
@@ -193,7 +194,7 @@ workflows:
           app-store-connect profiles get SUW9J8GQ8V --save
           ls -la "$PROFILES_DIR"
           xcode-project use-profiles --warn-only
-      - name: Build macOS release
+      - name: Build and publish Apple Silicon + Intel packages
         script: |
           set -euo pipefail
           DART_DEFINES=(
@@ -215,18 +216,27 @@ workflows:
           fi
           flutter config --enable-macos-desktop
           export FLUTTER_ROOT="${FLUTTER_ROOT:-$(cd "$(dirname "$(command -v flutter)")/.." && pwd)}"
-          rm -rf dist
-          dart run desktop_updater:release macos --release "${DART_DEFINES[@]}"
-      - name: Publish macOS desktop archive
-        script: |
-          ./scripts/codemagic_publish_macos.sh
+
+          # Each package embeds only one Stockfish arch so install size stays
+          # lean. Platform keys: macos-arm64 (Silicon) and macos-x64 (Intel).
+          for ARCH in arm64 x64; do
+            echo "=== Building macOS package for $ARCH ==="
+            export MACOS_ENGINE_ARCH="$ARCH"
+            export MACOS_RELEASE_ARCH="$ARCH"
+            bash ./scripts/fetch_stockfish.sh
+            rm -rf dist
+            dart run desktop_updater:release "macos-${ARCH}" --release \
+              "${DART_DEFINES[@]}" \
+              --dart-define=MACOS_RELEASE_ARCH="$ARCH"
+            ./scripts/codemagic_publish_macos.sh --arch "$ARCH"
+          done
       - name: Mark macOS release succeeded
         script: |
           touch "${CM_BUILD_DIR:-$PWD}/.codemagic_release_success"
     artifacts:
       - dist/*.dmg
       - dist/**/*.json
-      - dist/**/*-macos/**
+      - dist/**/*-macos*/
       - /tmp/xcodebuild_logs/*.log
       - build/macos/Build/Products/Release/*.app
     publishing:

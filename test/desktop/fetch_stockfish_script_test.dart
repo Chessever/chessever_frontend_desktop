@@ -1,0 +1,41 @@
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  test('fetch_stockfish.sh documents dual single-arch packages', () {
+    final script = File('scripts/fetch_stockfish.sh').readAsStringSync();
+    expect(script, contains('MACOS_ENGINE_ARCH'));
+    expect(script, contains('stockfish-macos-m1-apple-silicon'));
+    expect(script, contains('stockfish-macos-x86-64-avx2'));
+    expect(script, contains('must not embed x86_64'));
+    expect(script, contains('must not embed arm64'));
+    // Explicitly rejects fat Stockfish.
+    expect(script, isNot(contains('lipo -create')));
+  });
+
+  test('publish script wires dual archive + dmg aliases', () {
+    final script = File('scripts/codemagic_publish_macos.sh').readAsStringSync();
+    expect(script, contains(r'UPDATE_PLATFORM="macos-${MACOS_RELEASE_ARCH}"'));
+    expect(script, contains('Chessever-arm64.dmg'));
+    expect(script, contains('Chessever-intel.dmg'));
+    expect(script, contains(r'dart run desktop_updater:archive "$UPDATE_PLATFORM"'));
+    expect(
+      script,
+      contains(r'ingest $UPDATE_PLATFORM $ARCHIVE_NAME $RELEASE_VERSION'),
+    );
+    expect(script, contains('must be a single-arch binary'));
+    expect(script, contains(r'--arch='));
+  });
+
+  test('codemagic builds both arm64 and x64 packages', () {
+    final codemagic = File('codemagic.yaml').readAsStringSync();
+    expect(codemagic, contains('macos-desktop-release:'));
+    expect(codemagic, contains('for ARCH in arm64 x64'));
+    expect(codemagic, contains('MACOS_ENGINE_ARCH'));
+    expect(codemagic, contains(r'macos-${ARCH}'));
+    expect(codemagic, contains('--dart-define=MACOS_RELEASE_ARCH'));
+    expect(codemagic, contains('codemagic_publish_macos.sh --arch'));
+    expect(codemagic, isNot(contains('lipo -create')));
+  });
+}

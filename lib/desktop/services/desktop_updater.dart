@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:chessever/desktop/services/desktop_shutdown_coordinator.dart';
 import 'package:chessever/desktop/services/desktop_update_recovery_marker.dart';
 import 'package:chessever/desktop/services/desktop_updater_state.dart';
+import 'package:chessever/desktop/services/engine/macos_release_arch.dart';
 
 export 'package:chessever/desktop/services/desktop_updater_state.dart';
 
@@ -28,6 +29,15 @@ class DesktopUpdaterService {
   static const String _archiveUrl =
       'https://chessever.com/updates/desktop/app-archive.json';
   static const String _downloadPageUrl = 'https://chessever.com/#download';
+
+  /// Prefer the arch-specific DMG when this is a dual-package macOS build so
+  /// "download latest" never hands Silicon users an Intel engine package.
+  static String get _manualDownloadUrl {
+    if (Platform.isMacOS) {
+      return macosReleaseArchFromDefine().downloadUri.toString();
+    }
+    return _downloadPageUrl;
+  }
 
   static const Duration _checkInterval = Duration(hours: 1);
 
@@ -120,7 +130,7 @@ class DesktopUpdaterService {
 
   Future<bool> openDownloadPage() {
     return launchUrl(
-      Uri.parse(_downloadPageUrl),
+      Uri.parse(_manualDownloadUrl),
       mode: LaunchMode.externalApplication,
     );
   }
@@ -156,7 +166,7 @@ class DesktopUpdaterService {
         message:
             'The updater could not hand the downloaded files to the native '
             'installer. Download the latest version from the website.',
-        manualDownloadUrl: _downloadPageUrl,
+        manualDownloadUrl: _manualDownloadUrl,
       );
     }
   }
@@ -171,7 +181,12 @@ class DesktopUpdaterService {
     }
 
     try {
-      final item = await _updater.versionCheck(appArchiveUrl: _archiveUrl);
+      final item = await _updater.versionCheck(
+        appArchiveUrl: _archiveUrl,
+        // Dual macOS packages advertise macos-arm64 / macos-x64 so Silicon
+        // builds never pull an Intel archive (and vice versa).
+        platform: desktopUpdatePlatformKey(),
+      );
       if (item == null) {
         await _clearPending(deleteStagedFiles: true);
         state.value = const DesktopUpdateState.idle();
@@ -275,7 +290,7 @@ class DesktopUpdaterService {
       retryAttempt: nextAttempt,
       maxRetryAttempts: _retrySchedule.length,
       nextRetryAt: nextRetryAt,
-      manualDownloadUrl: _downloadPageUrl,
+      manualDownloadUrl: _manualDownloadUrl,
     );
     _retryTimer = Timer(delay, () {
       _retryAttempt = nextAttempt;
@@ -314,7 +329,7 @@ class DesktopUpdaterService {
     _retryTimer?.cancel();
     state.value = _stateWithTargetFallback().copyManualDownloadRequired(
       message: message,
-      manualDownloadUrl: _downloadPageUrl,
+      manualDownloadUrl: _manualDownloadUrl,
     );
   }
 
@@ -327,7 +342,7 @@ class DesktopUpdaterService {
       return DesktopUpdateState(
         status: current.status,
         errorMessage: current.errorMessage,
-        manualDownloadUrl: _downloadPageUrl,
+        manualDownloadUrl: _manualDownloadUrl,
       );
     }
 
@@ -363,7 +378,7 @@ class DesktopUpdaterService {
       errorMessage:
           'The previous update started, but this launch is still running '
           'the old version. Download the latest version from the website.',
-      manualDownloadUrl: _downloadPageUrl,
+      manualDownloadUrl: _manualDownloadUrl,
     );
     return true;
   }

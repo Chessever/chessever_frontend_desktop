@@ -100,16 +100,43 @@ Future<String?> genFileHashes({
   }
 }
 
+bool _isSupportedArchivePlatform(String platform) {
+  return platform == "macos" ||
+      platform == "macos-arm64" ||
+      platform == "macos-x64" ||
+      platform == "windows" ||
+      platform == "linux";
+}
+
+bool _isMacOsArchivePlatform(String platform) {
+  return platform == "macos" ||
+      platform == "macos-arm64" ||
+      platform == "macos-x64";
+}
+
+/// Parse `name-1.2.3+4-macos-arm64` style directory basenames.
+///
+/// Dual macOS keys end with `-macos-arm64` / `-macos-x64`; a naive
+/// `split("-").last` would yield only `arm64` / `x64`.
+final _distFolderRe = RegExp(
+  r'^(?:.+-)?(?<version>\d+\.\d+\.\d+)\+(?<build>\d+)-'
+  r'(?<platform>macos(?:-arm64|-x64)?|windows|linux)$',
+);
+
 Future<void> main(List<String> args) async {
   if (args.isEmpty) {
-    stderr.writeln("PLATFORM must be specified: macos, windows, linux");
+    stderr.writeln(
+      "PLATFORM must be specified: macos, macos-arm64, macos-x64, windows, linux",
+    );
     exit(1);
   }
 
   final platform = args[0];
 
-  if (platform != "macos" && platform != "windows" && platform != "linux") {
-    stderr.writeln("PLATFORM must be specified: macos, windows, linux");
+  if (!_isSupportedArchivePlatform(platform)) {
+    stderr.writeln(
+      "PLATFORM must be specified: macos, macos-arm64, macos-x64, windows, linux",
+    );
     exit(1);
   }
 
@@ -139,12 +166,13 @@ Future<void> main(List<String> args) async {
   /// Check if there is a file in given platform
   for (final file in files) {
     if (file is Directory) {
-      // desktop_updater_example-0.1.1+2-macos.app
-      // version is 0.1.1, build number is 2, platform is macos, name is appNamePubspec variable
-      final version = file.path.split("-").elementAt(1).split("+").first;
-      final buildNumber =
-          file.path.split("-").elementAt(1).split("+").last.split("-").first;
-      final foundPlatform = file.path.split("-").last.split(".").first;
+      // chessever-20.25.1+264-macos-arm64
+      final base = p.basename(file.path);
+      final match = _distFolderRe.firstMatch(base);
+      if (match == null) continue;
+      final foundPlatform = match.namedGroup("platform")!;
+      final version = match.namedGroup("version")!;
+      final buildNumber = match.namedGroup("build")!;
 
       if (foundPlatform == platform) {
         platformFound = true;
@@ -162,12 +190,6 @@ Future<void> main(List<String> args) async {
     stdout.writeln("Using archive: $foundDirectory");
   }
 
-  /// Check if the file is a zip file
-  // if (!foundDirectory.endsWith(".app")) {
-  //   print("File is not a zip file");
-  //   exit(1);
-  // }
-
   // Get current build name and number from pubspec.yaml
   final pubspec = File("pubspec.yaml");
   final pubspecContent = await pubspec.readAsString();
@@ -182,7 +204,7 @@ Future<void> main(List<String> args) async {
         "${lastBuildNumberFolder.path}${Platform.pathSeparator}$foundVersion+$foundBuildNumber-$platform",
       ),
     );
-  } else if (platform == "macos") {
+  } else if (_isMacOsArchivePlatform(platform)) {
     await copyDirectory(
       Directory("$foundDirectory/$appNamePubspec.app/Contents"),
       Directory(

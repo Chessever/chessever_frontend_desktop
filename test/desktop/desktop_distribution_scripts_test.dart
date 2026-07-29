@@ -21,7 +21,11 @@ void main() {
           ).readAsStringSync();
 
       expect(script, contains(r'RELEASE_VERSION="${VERSION}+${BUILD}"'));
-      expect(script, contains(r'ARCHIVE_NAME="${RELEASE_VERSION}-macos"'));
+      expect(
+        script,
+        contains(r'ARCHIVE_NAME="${RELEASE_VERSION}-${UPDATE_PLATFORM}"'),
+      );
+      expect(script, contains(r'UPDATE_PLATFORM="macos-${MACOS_RELEASE_ARCH}"'));
       expect(script, contains('macos/Runner/Release.entitlements'));
       expect(script, contains(r'xcrun notarytool submit "$TMP_ZIP" --wait'));
       expect(script, contains(r'xcrun stapler staple "$APP"'));
@@ -30,7 +34,10 @@ void main() {
         contains(r'--verify-release-env=$EXPECTED_DART_DEFINE_KEYS'),
       );
       expect(script, contains(r'run_release_env_check "$APP"'));
-      expect(script, contains(r'dart run desktop_updater:archive macos'));
+      expect(
+        script,
+        contains(r'dart run desktop_updater:archive "$UPDATE_PLATFORM"'),
+      );
       expect(
         script,
         contains(r'remove_transport_only_framework_links "$ARCHIVE_DIR"'),
@@ -55,18 +62,25 @@ void main() {
       );
       expect(script, contains(r'entry.get("path") or entry.get("filePath")'));
       expect(script, contains(r'desktop/archive/$ARCHIVE_NAME/'));
-      expect(script, contains(r'ingest macos $ARCHIVE_NAME $RELEASE_VERSION'));
+      expect(
+        script,
+        contains(r'ingest $UPDATE_PLATFORM $ARCHIVE_NAME $RELEASE_VERSION'),
+      );
+      expect(script, contains('Chessever-arm64.dmg'));
+      expect(script, contains('Chessever-intel.dmg'));
+      expect(script, contains('must be a single-arch binary'));
       _expectInstallerUploadsBeforePrune(
         script: script,
-        platform: 'macos',
-        versionedUpload: r'desktop/downloads/Chessever-${RELEASE_VERSION}.dmg',
-        stableUpload: r'desktop/downloads/Chessever.dmg',
+        platform: r'$UPDATE_PLATFORM',
+        versionedUpload:
+            r'desktop/downloads/${VERSIONED_DMG_NAME}',
+        stableUpload: r'desktop/downloads/${STABLE_DMG_NAME}',
       );
       expect(script, isNot(contains('SUPARKLE')));
       expect(script, isNot(contains('sign_update')));
       expect(codemagic, contains('macos-desktop-release:'));
       expect(codemagic, contains('instance_type: mac_mini_m4'));
-      expect(codemagic, contains('max_build_duration: 120'));
+      expect(codemagic, contains('max_build_duration: 180'));
       expect(codemagic, contains('chessever-desktop-release'));
       expect(codemagic, contains('CM_CERTIFICATE'));
       expect(codemagic, contains('SENTRY_FLUTTER'));
@@ -83,10 +97,9 @@ void main() {
         contains('bash ./scripts/test_macos_updater_framework_repair.sh'),
       );
       expect(codemagic, isNot(contains('--dart-define-from-file')));
-      expect(
-        codemagic,
-        contains('dart run desktop_updater:release macos --release'),
-      );
+      expect(codemagic, contains('for ARCH in arm64 x64'));
+      expect(codemagic, contains(r'macos-${ARCH}'));
+      expect(codemagic, contains('--dart-define=MACOS_RELEASE_ARCH'));
       expect(codemagic, isNot(contains('sign_update')));
       expect(codemagic, isNot(contains('.zip.sig')));
 
@@ -630,10 +643,7 @@ void _expectInstallerUploadsBeforePrune({
   expect(versionedUploadIndex, greaterThanOrEqualTo(0));
   expect(stableUploadIndex, greaterThan(versionedUploadIndex));
   expect(pruneIndex, greaterThan(stableUploadIndex));
-  expect(
-    RegExp(
-      r'prune-downloads (macos|windows|linux)',
-    ).allMatches(script).map((match) => match.group(1)).toList(),
-    <String?>[platform],
-  );
+  // Dual macOS packages use `$UPDATE_PLATFORM` (macos-arm64 / macos-x64).
+  // Windows/Linux still use bare platform keys.
+  expect(script, contains(pruneCommand));
 }

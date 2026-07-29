@@ -6,17 +6,48 @@ import "package:pubspec_parse/pubspec_parse.dart";
 
 import "helper/copy.dart";
 
+/// Flutter build target for a release platform key.
+///
+/// Dual macOS packages use `macos-arm64` / `macos-x64` as archive identity
+/// while still invoking `flutter build macos`.
+String flutterBuildTarget(String platform) {
+  if (platform == "macos" ||
+      platform == "macos-arm64" ||
+      platform == "macos-x64") {
+    return "macos";
+  }
+  return platform;
+}
+
+bool isSupportedReleasePlatform(String platform) {
+  return platform == "macos" ||
+      platform == "macos-arm64" ||
+      platform == "macos-x64" ||
+      platform == "windows" ||
+      platform == "linux";
+}
+
+bool isMacOsReleasePlatform(String platform) {
+  return platform == "macos" ||
+      platform == "macos-arm64" ||
+      platform == "macos-x64";
+}
+
 Future<void> main(List<String> args) async {
   if (args.isEmpty) {
-    print("PLATFORM must be specified: macos, windows, linux");
+    print(
+      "PLATFORM must be specified: macos, macos-arm64, macos-x64, windows, linux",
+    );
     exit(1);
   }
 
   final platform = args[0];
   final extraArgs = args.length > 1 ? args.sublist(1) : [];
 
-  if (platform != "macos" && platform != "windows" && platform != "linux") {
-    print("PLATFORM must be specified: macos, windows, linux");
+  if (!isSupportedReleasePlatform(platform)) {
+    print(
+      "PLATFORM must be specified: macos, macos-arm64, macos-x64, windows, linux",
+    );
     exit(1);
   }
 
@@ -58,10 +89,12 @@ Future<void> main(List<String> args) async {
     exit(1);
   }
 
+  final flutterTarget = flutterBuildTarget(platform);
+
   final buildCommand = <String>[
     flutterBinPath,
     "build",
-    platform,
+    flutterTarget,
     "--dart-define",
     "FLUTTER_BUILD_NAME=$buildName",
     "--dart-define",
@@ -97,7 +130,7 @@ Future<void> main(List<String> args) async {
     buildDir = Directory(
       path.join("build", "windows", "x64", "runner", "Release"),
     );
-  } else if (platform == "macos") {
+  } else if (isMacOsReleasePlatform(platform)) {
     buildDir = Directory(
       path.join(
         "build",
@@ -125,7 +158,7 @@ Future<void> main(List<String> args) async {
           buildNumber,
           "$appNamePubspec-$buildName+$buildNumber-$platform",
         )
-      : platform == "macos"
+      : isMacOsReleasePlatform(platform)
       ? path.join(
           "dist",
           buildNumber,

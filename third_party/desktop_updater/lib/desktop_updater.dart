@@ -78,7 +78,13 @@ class DesktopUpdater {
     return DesktopUpdaterPlatform.instance.getCurrentVersion();
   }
 
-  Future<ItemModel?> versionCheck({required String appArchiveUrl}) {
-    return versionCheckFunction(appArchiveUrl: appArchiveUrl);
+  Future<ItemModel?> versionCheck({
+    required String appArchiveUrl,
+    String? platform,
+  }) {
+    return versionCheckFunction(
+      appArchiveUrl: appArchiveUrl,
+      platform: platform,
+    );
   }
 }

@@ -2,14 +2,27 @@
 set -euo pipefail
 
 SKIP_UPLOAD=0
+# arm64 | x64 — dual packages embed only one Stockfish slice each.
+MACOS_RELEASE_ARCH="${MACOS_RELEASE_ARCH:-arm64}"
 for arg in "$@"; do
   case "$arg" in
     --skip-upload)
       SKIP_UPLOAD=1
       ;;
+    --arch=*)
+      MACOS_RELEASE_ARCH="${arg#--arch=}"
+      ;;
+    --arch)
+      shift_next=1
+      ;;
     *)
-      echo "unknown argument: $arg" >&2
-      exit 2
+      if [ "${shift_next:-0}" = "1" ]; then
+        MACOS_RELEASE_ARCH="$arg"
+        shift_next=0
+      else
+        echo "unknown argument: $arg" >&2
+        exit 2
+      fi
       ;;
   esac
 done
@@ -18,6 +31,29 @@ die() {
   echo "error: $*" >&2
   exit 1
 }
+
+case "$MACOS_RELEASE_ARCH" in
+  arm64|aarch64|silicon) MACOS_RELEASE_ARCH=arm64 ;;
+  x64|x86_64|amd64|intel) MACOS_RELEASE_ARCH=x64 ;;
+  *)
+    die "MACOS_RELEASE_ARCH must be arm64 or x64 (got: $MACOS_RELEASE_ARCH)"
+    ;;
+esac
+
+# Platform key in app-archive.json / archive dir / ingest CLI.
+UPDATE_PLATFORM="macos-${MACOS_RELEASE_ARCH}"
+# Website aliases: Apple Silicon → Chessever-arm64.dmg, Intel → Chessever-intel.dmg
+if [ "$MACOS_RELEASE_ARCH" = "arm64" ]; then
+  DMG_ARCH_LABEL="arm64"
+  STABLE_DMG_NAME="Chessever-arm64.dmg"
+  EXPECTED_STOCKFISH_ARCH="arm64"
+  FORBIDDEN_STOCKFISH_ARCH="x86_64"
+else
+  DMG_ARCH_LABEL="intel"
+  STABLE_DMG_NAME="Chessever-intel.dmg"
+  EXPECTED_STOCKFISH_ARCH="x86_64"
+  FORBIDDEN_STOCKFISH_ARCH="arm64"
+fi
 
 require_env() {
   local name="$1"
@@ -275,16 +311,18 @@ if [ "$BUILD" = "$VERSION_RAW" ]; then
 fi
 [ -n "$VERSION" ] && [ -n "$BUILD" ] || die "pubspec.yaml version must include build metadata, got '$VERSION_RAW'"
 RELEASE_VERSION="${VERSION}+${BUILD}"
-ARCHIVE_NAME="${RELEASE_VERSION}-macos"
+ARCHIVE_NAME="${RELEASE_VERSION}-${UPDATE_PLATFORM}"
 PACKAGE_NAME="$(awk '/^name:/{print $2; exit}' pubspec.yaml)"
 [ -n "$PACKAGE_NAME" ] || die "unable to read pubspec package name"
+
+echo "Publishing macOS arch=$MACOS_RELEASE_ARCH platform=$UPDATE_PLATFORM archive=$ARCHIVE_NAME"
 
 for name in "${REQUIRED_DART_DEFINE_KEYS[@]}"; do
   require_env "$name"
 done
 EXPECTED_DART_DEFINE_KEYS="$(expected_dart_define_keys)"
 
-APP="dist/${BUILD}/${PACKAGE_NAME}-${RELEASE_VERSION}-macos/${PACKAGE_NAME}.app"
+APP="dist/${BUILD}/${PACKAGE_NAME}-${RELEASE_VERSION}-${UPDATE_PLATFORM}/${PACKAGE_NAME}.app"
 [ -d "$APP" ] || die "missing desktop_updater release app at $APP"
 validate_versioned_frameworks "$APP/Contents/Frameworks"
 
@@ -322,7 +360,18 @@ sign_one() {
 }
 
 STOCKFISH="$APP/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets/assets/engine/macos/stockfish"
-[ -e "$STOCKFISH" ] && sign_one "$STOCKFISH"
+[ -x "$STOCKFISH" ] || die "missing Stockfish binary at $STOCKFISH"
+STOCKFISH_INFO="$(lipo -info "$STOCKFISH" 2>/dev/null || file "$STOCKFISH")"
+echo "Stockfish binary: $STOCKFISH_INFO"
+echo "$STOCKFISH_INFO" | grep -E "$EXPECTED_STOCKFISH_ARCH" >/dev/null ||
+  die "Stockfish must be $EXPECTED_STOCKFISH_ARCH-only for $UPDATE_PLATFORM (got: $STOCKFISH_INFO)"
+if echo "$STOCKFISH_INFO" | grep -q "$FORBIDDEN_STOCKFISH_ARCH"; then
+  die "Stockfish must not embed $FORBIDDEN_STOCKFISH_ARCH in the $UPDATE_PLATFORM package"
+fi
+if echo "$STOCKFISH_INFO" | grep -qi 'Architectures in the fat file'; then
+  die "Stockfish must be a single-arch binary (no fat/universal engine) for $UPDATE_PLATFORM"
+fi
+sign_one "$STOCKFISH"
 if [ -d "$APP/Contents/Frameworks" ]; then
   find "$APP/Contents/Frameworks" -type d -name "*.framework" -prune -print |
     sort |
@@ -350,7 +399,7 @@ xcrun stapler staple "$APP"
 xcrun stapler validate "$APP"
 run_release_env_check "$APP"
 
-dart run desktop_updater:archive macos
+dart run desktop_updater:archive "$UPDATE_PLATFORM"
 
 ARCHIVE_DIR="dist/${BUILD}/${ARCHIVE_NAME}"
 
@@ -362,7 +411,7 @@ validate_desktop_updater_archive "$ARCHIVE_DIR"
 
 echo "Prepared desktop_updater macOS archive $ARCHIVE_DIR"
 
-DMG_PATH="dist/Chessever-${RELEASE_VERSION}.dmg"
+DMG_PATH="dist/Chessever-${RELEASE_VERSION}-${DMG_ARCH_LABEL}.dmg"
 DMG_STAGING="$WORKDIR/dmg-staging"
 mkdir -p "$DMG_STAGING"
 ditto "$APP" "$DMG_STAGING/Chessever.app"
@@ -396,18 +445,28 @@ SSH_OPTS=(-i "$KEY_PATH" -o StrictHostKeyChecking=accept-new)
 ssh "${SSH_OPTS[@]}" "$REMOTE" "prepare"
 rsync -az --delete -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
   "$ARCHIVE_DIR/" "$REMOTE:/var/www/updates/desktop/archive/$ARCHIVE_NAME/"
-ssh "${SSH_OPTS[@]}" "$REMOTE" "ingest macos $ARCHIVE_NAME $RELEASE_VERSION"
+ssh "${SSH_OPTS[@]}" "$REMOTE" "ingest $UPDATE_PLATFORM $ARCHIVE_NAME $RELEASE_VERSION"
 
-# Publish the latest DMG to a stable URL for the website "Download for macOS"
-# button. Versioned copies live next to it for reference.
+# Arch-specific stable aliases power the website chip-choice dialog.
+# Versioned copies live next to them for reference. Apple Silicon also
+# refreshes the legacy Chessever.dmg alias so old links keep working.
+VERSIONED_DMG_NAME="Chessever-${RELEASE_VERSION}-${DMG_ARCH_LABEL}.dmg"
 rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
-  "$DMG_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever-${RELEASE_VERSION}.dmg"
+  "$DMG_PATH" "$REMOTE:/var/www/updates/desktop/downloads/${VERSIONED_DMG_NAME}"
 rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
-  "$DMG_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever.dmg"
+  "$DMG_PATH" "$REMOTE:/var/www/updates/desktop/downloads/${STABLE_DMG_NAME}"
+if [ "$MACOS_RELEASE_ARCH" = "arm64" ]; then
+  rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
+    "$DMG_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever.dmg"
+fi
 
 # Prune only after both the immutable versioned download and stable website
 # alias are safely in place. The server owns version ordering and deletion.
-ssh "${SSH_OPTS[@]}" "$REMOTE" "prune-downloads macos"
+ssh "${SSH_OPTS[@]}" "$REMOTE" "prune-downloads $UPDATE_PLATFORM"
+if [ "$MACOS_RELEASE_ARCH" = "arm64" ]; then
+  # Legacy single-alias retention (still used by old bookmarks).
+  ssh "${SSH_OPTS[@]}" "$REMOTE" "prune-downloads macos" || true
+fi
 
-echo "Published macOS desktop_updater archive $RELEASE_VERSION"
-echo "Published macOS DMG: https://chessever.com/updates/desktop/downloads/Chessever.dmg"
+echo "Published macOS desktop_updater archive $RELEASE_VERSION ($UPDATE_PLATFORM)"
+echo "Published macOS DMG: https://chessever.com/updates/desktop/downloads/${STABLE_DMG_NAME}"
