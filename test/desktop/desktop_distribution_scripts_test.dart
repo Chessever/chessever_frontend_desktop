@@ -78,7 +78,8 @@ void main() {
       );
       expect(script, isNot(contains('SUPARKLE')));
       expect(script, isNot(contains('sign_update')));
-      expect(codemagic, contains('macos-desktop-release:'));
+      expect(codemagic, contains('macos-desktop-release-arm64:'));
+      expect(codemagic, contains('macos-desktop-release-x64:'));
       expect(codemagic, contains('instance_type: mac_mini_m4'));
       expect(codemagic, contains('max_build_duration: 120'));
       expect(codemagic, contains('chessever-desktop-release'));
@@ -97,11 +98,37 @@ void main() {
         contains('bash ./scripts/test_macos_updater_framework_repair.sh'),
       );
       expect(codemagic, isNot(contains('--dart-define-from-file')));
-      expect(codemagic, contains('for ARCH in arm64 x64'));
+      // Separate workflows: arm64 on Flutter beta, Intel on Flutter stable.
+      expect(codemagic, isNot(contains('for ARCH in arm64 x64')));
       expect(codemagic, contains(r'macos-${ARCH}'));
       expect(codemagic, contains('--dart-define=MACOS_RELEASE_ARCH'));
       expect(codemagic, isNot(contains('sign_update')));
       expect(codemagic, isNot(contains('.zip.sig')));
+      // No manual Impeller flags — default on Flutter beta; stable path omits too.
+      expect(codemagic, isNot(contains('--enable-impeller')));
+      expect(codemagic, isNot(contains('--no-enable-impeller')));
+      final armBlock = codemagic
+          .split('macos-desktop-release-arm64:')
+          .last
+          .split('macos-desktop-release-x64:')
+          .first;
+      final x64Block = codemagic
+          .split('macos-desktop-release-x64:')
+          .last
+          .split('windows-desktop-release:')
+          .first;
+      final windowsBlock = codemagic
+          .split('windows-desktop-release:')
+          .last
+          .split('linux-desktop-release:')
+          .first;
+      final linuxBlock = codemagic.split('linux-desktop-release:').last;
+      expect(armBlock, contains('flutter: beta'));
+      expect(armBlock, contains('ARCH=arm64'));
+      expect(x64Block, contains('flutter: stable'));
+      expect(x64Block, contains('ARCH=x64'));
+      expect(windowsBlock, contains('flutter: beta'));
+      expect(linuxBlock, contains('flutter: beta'));
 
       final repairCall = updaterPlugin.indexOf(
         'repairInstalledVersionedFrameworks()',

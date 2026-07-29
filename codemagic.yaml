@@ -99,14 +99,14 @@ workflows:
       - build/macos/Build/Products/Release/*.app
       - /tmp/xcodebuild_logs/*.log
 
-  macos-desktop-release:
-    name: macOS Desktop Release (Apple Silicon + Intel)
+  # Apple Silicon release on Flutter beta (3.47+ desktop Impeller/perf).
+  # Intel stays on a separate workflow pinned to stable (see below).
+  macos-desktop-release-arm64:
+    name: macOS Desktop Release (Apple Silicon)
     instance_type: mac_mini_m4
-    # Dual package: two Stockfish fetches, two Flutter builds, two notarizations.
-    # Codemagic file-workflow cap is 120 minutes.
     max_build_duration: 120
     environment:
-      flutter: stable
+      flutter: beta
       xcode: latest
       cocoapods: default
       groups:
@@ -114,11 +114,12 @@ workflows:
       vars:
         CHESSEVER_DEV_ID_IDENTITY: "Developer ID Application: ChessEver LLC (N8J7TUZMYR)"
         TELEGRAM_CHAT_ID: "-1003954728178"
+        MACOS_RELEASE_ARCH: arm64
     scripts:
       - name: Notify Telegram release started
         ignore_failure: true
         script: |
-          bash ./scripts/codemagic_notify_telegram.sh macOS started
+          bash ./scripts/codemagic_notify_telegram.sh "macOS arm64" started
       - name: Verify release environment
         script: |
           set -euo pipefail
@@ -195,9 +196,10 @@ workflows:
           app-store-connect profiles get SUW9J8GQ8V --save
           ls -la "$PROFILES_DIR"
           xcode-project use-profiles --warn-only
-      - name: Build and publish Apple Silicon + Intel packages
+      - name: Build and publish Apple Silicon package
         script: |
           set -euo pipefail
+          ARCH=arm64
           DART_DEFINES=(
             --dart-define=SUPABASE_URL="$SUPABASE_URL"
             --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
@@ -217,21 +219,17 @@ workflows:
           fi
           flutter config --enable-macos-desktop
           export FLUTTER_ROOT="${FLUTTER_ROOT:-$(cd "$(dirname "$(command -v flutter)")/.." && pwd)}"
-
-          # Each package embeds only one Stockfish arch so install size stays
-          # lean. Platform keys: macos-arm64 (Silicon) and macos-x64 (Intel).
-          for ARCH in arm64 x64; do
-            echo "=== Building macOS package for $ARCH ==="
-            export MACOS_ENGINE_ARCH="$ARCH"
-            export MACOS_RELEASE_ARCH="$ARCH"
-            bash ./scripts/fetch_stockfish.sh
-            rm -rf dist
-            dart run desktop_updater:release "macos-${ARCH}" --release \
-              "${DART_DEFINES[@]}" \
-              --dart-define=MACOS_RELEASE_ARCH="$ARCH"
-            ./scripts/codemagic_publish_macos.sh --arch "$ARCH"
-          done
-      - name: Mark macOS release succeeded
+          # Single-arch package: macos-arm64. Impeller is default on Flutter beta.
+          echo "=== Building macOS package for $ARCH (Flutter beta) ==="
+          export MACOS_ENGINE_ARCH="$ARCH"
+          export MACOS_RELEASE_ARCH="$ARCH"
+          bash ./scripts/fetch_stockfish.sh
+          rm -rf dist
+          dart run desktop_updater:release "macos-${ARCH}" --release \
+            "${DART_DEFINES[@]}" \
+            --dart-define=MACOS_RELEASE_ARCH="$ARCH"
+          ./scripts/codemagic_publish_macos.sh --arch "$ARCH"
+      - name: Mark macOS arm64 release succeeded
         script: |
           touch "${CM_BUILD_DIR:-$PWD}/.codemagic_release_success"
     artifacts:
@@ -245,14 +243,146 @@ workflows:
         - name: Notify Telegram release finished
           ignore_failure: true
           script: |
-            bash ./scripts/codemagic_notify_telegram.sh macOS finished
+            bash ./scripts/codemagic_notify_telegram.sh "macOS arm64" finished
+
+  # Intel macOS stays on Flutter stable (not beta). Separate download/package.
+  macos-desktop-release-x64:
+    name: macOS Desktop Release (Intel)
+    instance_type: mac_mini_m4
+    max_build_duration: 120
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      groups:
+        - chessever-desktop-release
+      vars:
+        CHESSEVER_DEV_ID_IDENTITY: "Developer ID Application: ChessEver LLC (N8J7TUZMYR)"
+        TELEGRAM_CHAT_ID: "-1003954728178"
+        MACOS_RELEASE_ARCH: x64
+    scripts:
+      - name: Notify Telegram release started
+        ignore_failure: true
+        script: |
+          bash ./scripts/codemagic_notify_telegram.sh "macOS intel" started
+      - name: Verify release environment
+        script: |
+          set -euo pipefail
+          required=(
+            SUPABASE_URL
+            SUPABASE_ANON_KEY
+            GOOGLE_DESKTOP_CLIENT_ID
+            GOOGLE_DESKTOP_CLIENT_SECRET
+            SENTRY_FLUTTER
+            CHESSEVER_CLOUDFLARE_API_BASE
+            APP_STORE_CONNECT_KEY_IDENTIFIER
+            APP_STORE_CONNECT_ISSUER_ID
+            APP_STORE_CONNECT_PRIVATE_KEY
+            CODEMAGIC_PUBLISHER_KEY
+          )
+          missing=0
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "$name is required"
+              missing=1
+            fi
+          done
+          if [ -z "${CM_CERTIFICATE:-${CHESSEVER_DEV_ID_P12_B64:-}}" ]; then
+            echo "CM_CERTIFICATE or CHESSEVER_DEV_ID_P12_B64 is required"
+            missing=1
+          fi
+          if [ -z "${CM_CERTIFICATE_PASSWORD:-${CHESSEVER_DEV_ID_P12_PASS:-}}" ]; then
+            echo "CM_CERTIFICATE_PASSWORD or CHESSEVER_DEV_ID_P12_PASS is required"
+            missing=1
+          fi
+          exit "$missing"
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+      - name: Test macOS updater framework repair
+        script: |
+          bash ./scripts/test_macos_updater_framework_repair.sh
+      - name: Install CocoaPods dependencies
+        script: |
+          find . -name "Podfile" -execdir pod install \;
+      - name: Initialize keychain and install Developer ID certificate
+        script: |
+          set -euo pipefail
+          CERT_B64="${CM_CERTIFICATE:-${CHESSEVER_DEV_ID_P12_B64:-}}"
+          CERT_PASSWORD="${CM_CERTIFICATE_PASSWORD:-${CHESSEVER_DEV_ID_P12_PASS:-}}"
+          CERT_PATH="/tmp/chessever_developer_id_application.p12"
+          printf '%s' "$CERT_B64" | base64 -D > "$CERT_PATH" 2>/dev/null || printf '%s' "$CERT_B64" | base64 -d > "$CERT_PATH"
+          keychain initialize
+          if [ -n "$CERT_PASSWORD" ]; then
+            keychain add-certificates --certificate "$CERT_PATH" --certificate-password "$CERT_PASSWORD"
+          else
+            keychain add-certificates --certificate "$CERT_PATH"
+          fi
+          security find-identity -v -p codesigning | grep -F "$CHESSEVER_DEV_ID_IDENTITY" >/dev/null
+      - name: Fetch macOS provisioning profile
+        script: |
+          set -euo pipefail
+          PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILES_DIR"
+          app-store-connect profiles get SUW9J8GQ8V --save
+          ls -la "$PROFILES_DIR"
+          xcode-project use-profiles --warn-only
+      - name: Build and publish Intel package
+        script: |
+          set -euo pipefail
+          ARCH=x64
+          DART_DEFINES=(
+            --dart-define=SUPABASE_URL="$SUPABASE_URL"
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+            --dart-define=GOOGLE_DESKTOP_CLIENT_ID="$GOOGLE_DESKTOP_CLIENT_ID"
+            --dart-define=GOOGLE_DESKTOP_CLIENT_SECRET="$GOOGLE_DESKTOP_CLIENT_SECRET"
+            --dart-define=SENTRY_FLUTTER="$SENTRY_FLUTTER"
+            --dart-define=CHESSEVER_CLOUDFLARE_API_BASE="$CHESSEVER_CLOUDFLARE_API_BASE"
+          )
+          if [ -n "${GOOGLE_WEB_CLIENT_ID:-}" ]; then
+            DART_DEFINES+=(--dart-define=GOOGLE_WEB_CLIENT_ID="$GOOGLE_WEB_CLIENT_ID")
+          fi
+          if [ -n "${BILLING_API_BASE:-}" ]; then
+            DART_DEFINES+=(--dart-define=BILLING_API_BASE="$BILLING_API_BASE")
+          fi
+          if [ -n "${GAMEBASE_PROXY_BASE:-}" ]; then
+            DART_DEFINES+=(--dart-define=GAMEBASE_PROXY_BASE="$GAMEBASE_PROXY_BASE")
+          fi
+          flutter config --enable-macos-desktop
+          export FLUTTER_ROOT="${FLUTTER_ROOT:-$(cd "$(dirname "$(command -v flutter)")/.." && pwd)}"
+          # Single-arch package: macos-x64. Kept on Flutter stable intentionally.
+          echo "=== Building macOS package for $ARCH (Flutter stable) ==="
+          export MACOS_ENGINE_ARCH="$ARCH"
+          export MACOS_RELEASE_ARCH="$ARCH"
+          bash ./scripts/fetch_stockfish.sh
+          rm -rf dist
+          dart run desktop_updater:release "macos-${ARCH}" --release \
+            "${DART_DEFINES[@]}" \
+            --dart-define=MACOS_RELEASE_ARCH="$ARCH"
+          ./scripts/codemagic_publish_macos.sh --arch "$ARCH"
+      - name: Mark macOS intel release succeeded
+        script: |
+          touch "${CM_BUILD_DIR:-$PWD}/.codemagic_release_success"
+    artifacts:
+      - dist/*.dmg
+      - dist/**/*.json
+      - dist/**/*-macos*/
+      - /tmp/xcodebuild_logs/*.log
+      - build/macos/Build/Products/Release/*.app
+    publishing:
+      scripts:
+        - name: Notify Telegram release finished
+          ignore_failure: true
+          script: |
+            bash ./scripts/codemagic_notify_telegram.sh "macOS intel" finished
 
   windows-desktop-release:
     name: Windows Desktop Release
     instance_type: windows_x2
+    # Flutter beta for 3.47+ desktop perf until it lands on stable.
     max_build_duration: 120
     environment:
-      flutter: stable
+      flutter: beta
       groups:
         - chessever-desktop-release
       vars:
@@ -324,9 +454,10 @@ workflows:
   linux-desktop-release:
     name: Linux Desktop Release
     instance_type: linux_x2
+    # Flutter beta for 3.47+ desktop perf until it lands on stable.
     max_build_duration: 120
     environment:
-      flutter: stable
+      flutter: beta
       groups:
         - chessever-desktop-release
       vars:

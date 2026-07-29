@@ -97,7 +97,8 @@ void main() {
       );
       expect(
         await DesktopFileOpenService.hasForwardableSingleInstancePayload(
-          <String>['--enable-impeller', 'chessever://billing/success'],
+          // Engine/runtime flags must not be treated as chess file handoffs.
+          <String>['--verbose', 'chessever://billing/success'],
         ),
         isFalse,
       );
