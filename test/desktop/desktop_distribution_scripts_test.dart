@@ -6,6 +6,18 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('desktop distribution scripts', () {
+    test('release CLI uses --build-name flags not reserved dart-defines', () {
+      // Flutter beta rejects FLUTTER_BUILD_NAME / FLUTTER_BUILD_NUMBER as
+      // --dart-define (reserved). desktop_updater:release must pass first-class
+      // --build-name / --build-number instead or Codemagic beta builds fail.
+      final release =
+          File('third_party/desktop_updater/bin/release.dart').readAsStringSync();
+      expect(release, contains('--build-name=\$buildName'));
+      expect(release, contains('--build-number=\$buildNumber'));
+      expect(release, isNot(contains('FLUTTER_BUILD_NAME=\$buildName')));
+      expect(release, isNot(contains('FLUTTER_BUILD_NUMBER=\$buildNumber')));
+    });
+
     test('macOS publish script archives signed app for desktop_updater', () {
       final script =
           File('scripts/codemagic_publish_macos.sh').readAsStringSync();

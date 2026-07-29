@@ -91,14 +91,15 @@ Future<void> main(List<String> args) async {
 
   final flutterTarget = flutterBuildTarget(platform);
 
+  // Flutter rejects FLUTTER_BUILD_NAME / FLUTTER_BUILD_NUMBER as --dart-define
+  // (reserved framework keys). Pass them as first-class CLI flags instead.
   final buildCommand = <String>[
     flutterBinPath,
     "build",
     flutterTarget,
-    "--dart-define",
-    "FLUTTER_BUILD_NAME=$buildName",
-    "--dart-define",
-    "FLUTTER_BUILD_NUMBER=$buildNumber",
+    "--build-name=$buildName",
+    if (buildNumber != null && buildNumber.isNotEmpty)
+      "--build-number=$buildNumber",
     ...extraArgs,
   ];
 
