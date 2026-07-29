@@ -20,8 +20,9 @@ case "$ORIG" in
     ;;
   "ingest "*)
     read -r _ platform archive version extra <<<"$ORIG"
+    # Dual macOS packages use macos-arm64 / macos-x64; bare macos is legacy.
     case "$platform" in
-      macos | windows | linux) ;;
+      macos | macos-arm64 | macos-x64 | windows | linux) ;;
       *)
         echo "bad platform" >&2
         exit 2
@@ -49,7 +50,7 @@ case "$ORIG" in
   "prune-downloads "*)
     read -r _ platform extra <<<"$ORIG"
     case "$platform" in
-      macos | windows | linux) ;;
+      macos | macos-arm64 | macos-x64 | windows | linux) ;;
       *)
         echo "bad platform" >&2
         exit 2

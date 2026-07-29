@@ -451,7 +451,14 @@ void main() {
       expect(wrapper, contains('KEEP_LAST_N=2'));
       expect(wrapper, isNot(contains('KEEP_LAST_N=3')));
       expect(wrapper, contains(r'--keep-last-n "$KEEP_LAST_N"'));
-      expect(wrapper, contains('macos | windows | linux'));
+      // Dual macOS packages must be accepted by the forced-command wrapper or
+      // remote ingest/prune exits with "bad platform" before publish completes.
+      expect(
+        wrapper,
+        contains('macos | macos-arm64 | macos-x64 | windows | linux'),
+      );
+      expect(wrapper, contains('macos-arm64'));
+      expect(wrapper, contains('macos-x64'));
       expect(wrapper, contains('bad archive'));
       expect(wrapper, contains('"prune-downloads "*'));
       expect(wrapper, contains('too many prune-downloads arguments'));
