@@ -575,31 +575,88 @@ class KeyChord {
   @override
   int get hashCode => Object.hash(keyId, ctrl, alt, shift, meta);
 
+  /// Resolved modifier flags for [isMacOS].
+  ///
+  /// For [crossPlatform]-flagged defaults: `meta` becomes Cmd on macOS and
+  /// Ctrl on Windows/Linux — the conventional primary-modifier idiom. For
+  /// user-recorded chords (`crossPlatform == false`) flags are literal.
+  ({bool ctrl, bool meta}) resolvedModifiers({required bool isMacOS}) {
+    if (!crossPlatform) {
+      return (ctrl: ctrl, meta: meta);
+    }
+    return (
+      ctrl: ctrl || (meta && !isMacOS),
+      meta: meta && isMacOS,
+    );
+  }
+
   /// Builds a Flutter [SingleActivator] so the chord can drop straight
   /// into a `Shortcuts` widget map.
   ///
   /// For [crossPlatform]-flagged defaults: meta becomes Cmd on macOS,
-  /// Ctrl on Windows — the conventional cross-platform shortcut idiom.
-  /// For user-recorded chords (crossPlatform == false): modifier flags
-  /// are honoured literally, so Win+S stays Win+S on Windows.
-  ShortcutActivator toActivator() {
-    final isMac = Platform.isMacOS;
-    final bool useCtrl;
-    final bool useMeta;
-    if (crossPlatform) {
-      useCtrl = ctrl || (meta && !isMac);
-      useMeta = meta && isMac;
-    } else {
-      useCtrl = ctrl;
-      useMeta = meta;
-    }
+  /// Ctrl on Windows/Linux — the conventional cross-platform shortcut
+  /// idiom. For user-recorded chords (crossPlatform == false): modifier
+  /// flags are honoured literally, so Win+S stays Win+S on Windows.
+  ///
+  /// Pass [isMacOS] to force a platform interpretation (tests / dual
+  /// registration). Defaults to the host [Platform.isMacOS].
+  ShortcutActivator toActivator({bool? isMacOS}) {
+    final isMac = isMacOS ?? Platform.isMacOS;
+    final resolved = resolvedModifiers(isMacOS: isMac);
     return SingleActivator(
       LogicalKeyboardKey(keyId),
-      control: useCtrl,
+      control: resolved.ctrl,
       alt: alt,
       shift: shift,
-      meta: useMeta,
+      meta: resolved.meta,
     );
+  }
+
+  /// Activators that must fire this chord on every desktop host.
+  ///
+  /// Cross-platform primary-modifier chords (Cmd on macOS / Ctrl on
+  /// Windows and Linux) expand to **both** interpretations so a single
+  /// default binding works whether the user presses ⌘ or Ctrl — matching
+  /// how the shell dual-registers meta+control for pane shortcuts. Literal
+  /// (non-crossPlatform) chords stay a single activator.
+  List<ShortcutActivator> toAllPlatformActivators() {
+    if (!crossPlatform) {
+      return <ShortcutActivator>[toActivator()];
+    }
+    final mac = resolvedModifiers(isMacOS: true);
+    final other = resolvedModifiers(isMacOS: false);
+    if (mac.ctrl == other.ctrl && mac.meta == other.meta) {
+      return <ShortcutActivator>[toActivator()];
+    }
+    return <ShortcutActivator>[
+      toActivator(isMacOS: true),
+      toActivator(isMacOS: false),
+    ];
+  }
+
+  /// True when [ctrl]/[meta]/[alt]/[shift] match this chord on [isMacOS],
+  /// or — for cross-platform primary-modifier chords — match either the
+  /// macOS (Cmd) or Windows/Linux (Ctrl) form. Used by manual key handlers
+  /// that sit outside Flutter's [Shortcuts] map.
+  bool matchesPressedModifiers({
+    required bool ctrl,
+    required bool meta,
+    required bool alt,
+    required bool shift,
+    bool? isMacOS,
+  }) {
+    if (alt != this.alt || shift != this.shift) return false;
+
+    if (crossPlatform && this.meta && !this.ctrl) {
+      // Primary-modifier chord: accept exclusive Cmd *or* exclusive Ctrl.
+      final primaryOnly = (ctrl || meta) && !(ctrl && meta);
+      return primaryOnly;
+    }
+
+    final resolved = resolvedModifiers(
+      isMacOS: isMacOS ?? Platform.isMacOS,
+    );
+    return ctrl == resolved.ctrl && meta == resolved.meta;
   }
 
   /// Display string shown in the settings UI and in tooltips.
@@ -611,52 +668,39 @@ class KeyChord {
   /// declared with `meta:true, crossPlatform:true` reads "Ctrl + S" on
   /// Windows and "⌘ S" on macOS rather than confusing the user with the
   /// other platform's glyph.
-  String get label {
+  String labelFor({bool? isMacOS}) {
     final parts = <String>[];
-    final isMac = Platform.isMacOS;
-    bool effectiveCtrl = ctrl;
-    bool effectiveMeta = meta;
-    if (crossPlatform) {
-      effectiveCtrl = ctrl || (meta && !isMac);
-      effectiveMeta = meta && isMac;
-    }
-    if (effectiveCtrl) parts.add(isMac ? '⌃' : 'Ctrl');
+    final isMac = isMacOS ?? Platform.isMacOS;
+    final resolved = resolvedModifiers(isMacOS: isMac);
+    if (resolved.ctrl) parts.add(isMac ? '⌃' : 'Ctrl');
     if (alt) parts.add(isMac ? '⌥' : 'Alt');
     if (shift) parts.add(isMac ? '⇧' : 'Shift');
-    if (effectiveMeta) parts.add(isMac ? '⌘' : 'Win');
+    if (resolved.meta) parts.add(isMac ? '⌘' : 'Win');
     parts.add(_keyLabel(LogicalKeyboardKey(keyId)));
     return parts.join(isMac ? '' : ' + ');
   }
+
+  String get label => labelFor();
 }
 
 String _keyLabel(LogicalKeyboardKey key) {
   // Special-case symbols and arrows so the rendered chord reads like a
   // OS-native shortcut even when the key's debugName is something like
-  // "Arrow Left". Falls through to a best-effort title-cased debugName.
-  switch (key.keyId) {
-    case 0x100070050: // arrowLeft
-      return '←';
-    case 0x10007004F: // arrowRight
-      return '→';
-    case 0x100070052: // arrowUp
-      return '↑';
-    case 0x100070051: // arrowDown
-      return '↓';
-    case 0x10007004A: // home
-      return 'Home';
-    case 0x10007004D: // end
-      return 'End';
-    case 0x10007002C: // space
-      return 'Space';
-    case 0x100070028: // enter
-      return '↵';
-    case 0x100070029: // escape
-      return 'Esc';
-    case 0x10007002A: // backspace
-      return 'Backspace';
-    case 0x10007002B: // tab
-      return '⇥';
+  // "Arrow Left". Compare against [LogicalKeyboardKey] instances rather
+  // than hardcoded HID usages — those values drift across Flutter versions.
+  if (key == LogicalKeyboardKey.arrowLeft) return '←';
+  if (key == LogicalKeyboardKey.arrowRight) return '→';
+  if (key == LogicalKeyboardKey.arrowUp) return '↑';
+  if (key == LogicalKeyboardKey.arrowDown) return '↓';
+  if (key == LogicalKeyboardKey.home) return 'Home';
+  if (key == LogicalKeyboardKey.end) return 'End';
+  if (key == LogicalKeyboardKey.space) return 'Space';
+  if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+    return '↵';
   }
+  if (key == LogicalKeyboardKey.escape) return 'Esc';
+  if (key == LogicalKeyboardKey.backspace) return 'Backspace';
+  if (key == LogicalKeyboardKey.tab) return '⇥';
   final name = key.keyLabel.isNotEmpty ? key.keyLabel : (key.debugName ?? '');
   if (name.isEmpty) return 'Key 0x${key.keyId.toRadixString(16)}';
   // Single letters → uppercase so "a" reads "A".
@@ -739,6 +783,12 @@ Map<BoardActionKey, List<KeyChord>> defaultBoardShortcuts() {
     ],
     BoardActionKey.openPositionSetup: [_key(LogicalKeyboardKey.keyS)],
     BoardActionKey.openBoardSettings: const [],
+    // Game jump: primary-modifier + arrows is the cross-platform default
+    // (⌘↑/↓ on macOS, Ctrl+↑/↓ on Windows/Linux via [crossPlatform]). F10
+    // variants are platform-literal alternates used by reference UIs.
+    // [toAllPlatformActivators] dual-registers Cmd *and* Ctrl forms so both
+    // host keymaps fire from the board Shortcuts layer and the shell
+    // dispatcher on every desktop OS.
     BoardActionKey.prevGame: [
       _primary(LogicalKeyboardKey.arrowUp),
       _ctrl(LogicalKeyboardKey.f10),

@@ -515,9 +515,12 @@ class DesktopShell extends HookConsumerWidget {
         if (dispatcher != null && boardBindings != null) {
           for (final action in BoardActionKey.values) {
             for (final chord in boardBindings.chordsFor(action)) {
-              shellShortcuts[chord.toActivator()] = _BoardShortcutIntent(
-                action,
-              );
+              // Match the shell's dual meta/control registration for pane
+              // shortcuts: cross-platform board chords (prev/next game, …)
+              // must fire for both Cmd and Ctrl on every desktop host.
+              for (final activator in chord.toAllPlatformActivators()) {
+                shellShortcuts[activator] = _BoardShortcutIntent(action);
+              }
             }
           }
         }

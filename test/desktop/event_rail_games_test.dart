@@ -340,6 +340,255 @@ void main() {
     expect(repository.legacyFullTourCalls, 0);
   });
 
+  testWidgets(
+    'prev/next board game buttons advance when rail hydration is inactive',
+    (tester) async {
+      // Regression: ensureNavigationAdjacency hard-failed when the rail was
+      // backgrounded / lifecycle-paused, so Board << >> and prev/next game
+      // shortcuts no-op'd even though the multi-game list was already in
+      // memory. Soft-fail adjacency + in-memory neighbor detection must still
+      // switch the active board game id in both directions.
+      final games = List<Games>.generate(
+        3,
+        (index) => _game(
+          id: 'nav-game-${index + 1}',
+          roundId: 'round-1',
+          boardNumber: index + 1,
+        ),
+        growable: false,
+      );
+      final repository = _FakeGameRepository(
+        firstTourPage: games,
+        selectedRoundPage: games,
+        selectedGame: games.first,
+        totalCount: games.length,
+      );
+      final summaries = games
+          .map(TournamentGameSummary.fromGame)
+          .toList(growable: false);
+      final selected = summaries.first;
+      final args = BoardTabGameArgs(
+        gameId: selected.id,
+        pgn: '',
+        label: selected.name,
+        whiteName: selected.whitePlayer,
+        blackName: selected.blackPlayer,
+        tournamentTitle: 'Inactive rail navigation',
+        eventGames: summaries,
+        eventGamesKey: BoardTabEventGamesKey(
+          tourId: 'tour-1',
+          selectedGameId: selected.id,
+          selectedRoundId: selected.roundId,
+          selectedBoardNumber: selected.boardNumber,
+        ),
+        gameListSelectedId: selected.id,
+      );
+      WidgetRef? capturedRef;
+      BuildContext? capturedContext;
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            gameRepositoryProvider.overrideWithValue(repository),
+            boardTabGameArgsByTabIdProvider.overrideWith(
+              (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+            ),
+          ],
+          child: MaterialApp(
+            home: Consumer(
+              builder: (context, ref, child) {
+                capturedRef = ref;
+                capturedContext = context;
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        ),
+      );
+
+      final container = ProviderScope.containerOf(capturedContext!);
+      final provider = eventRailGamesProvider(
+        EventRailGamesProviderKey(
+          ownerId: 'tournaments-default',
+          eventKey: args.eventGamesKey!,
+        ),
+      );
+      final subscription = container.listen<AsyncValue<EventRailGamesState>>(
+        provider,
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(subscription.close);
+      await container.read(provider.future);
+
+      // Simulate the EventGamesTable background / lifecycle-paused path that
+      // previously made ensureNavigationAdjacency return false.
+      container.read(provider.notifier).setForeground(false);
+      expect(
+        await container.read(provider.notifier).ensureNavigationAdjacency(1),
+        isTrue,
+      );
+
+      await navigateActiveEventGame(
+        capturedRef!,
+        context: capturedContext!,
+        delta: 1,
+      );
+      await tester.pump();
+
+      var opened =
+          container.read(
+            boardTabGameArgsByTabIdProvider,
+          )['tournaments-default'];
+      expect(opened?.gameId, 'nav-game-2');
+      expect(opened?.gameListSelectedId, 'nav-game-2');
+
+      await navigateActiveEventGame(
+        capturedRef!,
+        context: capturedContext!,
+        delta: 1,
+      );
+      await tester.pump();
+      opened =
+          container.read(
+            boardTabGameArgsByTabIdProvider,
+          )['tournaments-default'];
+      expect(opened?.gameId, 'nav-game-3');
+
+      await navigateActiveEventGame(
+        capturedRef!,
+        context: capturedContext!,
+        delta: -1,
+      );
+      await tester.pump();
+      opened =
+          container.read(
+            boardTabGameArgsByTabIdProvider,
+          )['tournaments-default'];
+      expect(opened?.gameId, 'nav-game-2');
+      expect(opened?.gameListSelectedId, 'nav-game-2');
+
+      // Edge no-op: already at the last game after advancing again.
+      await navigateActiveEventGame(
+        capturedRef!,
+        context: capturedContext!,
+        delta: 1,
+      );
+      await tester.pump();
+      opened =
+          container.read(
+            boardTabGameArgsByTabIdProvider,
+          )['tournaments-default'];
+      expect(opened?.gameId, 'nav-game-3');
+      await navigateActiveEventGame(
+        capturedRef!,
+        context: capturedContext!,
+        delta: 1,
+      );
+      await tester.pump();
+      opened =
+          container.read(
+            boardTabGameArgsByTabIdProvider,
+          )['tournaments-default'];
+      expect(opened?.gameId, 'nav-game-3');
+    },
+  );
+
+  testWidgets(
+    'prev/next board game advances from multi-game args without rail listen',
+    (tester) async {
+      // Board << >> must work from the board-tab args map alone when the
+      // event-rail provider was never kept alive (autoDispose / no rail
+      // listener). This is the real click/keyboard entry: navigateActiveEventGame.
+      final games = List<Games>.generate(
+        2,
+        (index) => _game(
+          id: 'seed-game-${index + 1}',
+          roundId: 'round-1',
+          boardNumber: index + 1,
+        ),
+        growable: false,
+      );
+      final repository = _FakeGameRepository(
+        firstTourPage: games,
+        selectedRoundPage: games,
+        selectedGame: games.first,
+        totalCount: games.length,
+      );
+      final summaries = games
+          .map(TournamentGameSummary.fromGame)
+          .toList(growable: false);
+      final selected = summaries.first;
+      final args = BoardTabGameArgs(
+        gameId: selected.id,
+        pgn: '',
+        label: selected.name,
+        whiteName: selected.whitePlayer,
+        blackName: selected.blackPlayer,
+        tournamentTitle: 'Seed-only navigation',
+        eventGames: summaries,
+        eventGamesKey: BoardTabEventGamesKey(
+          tourId: 'tour-1',
+          selectedGameId: selected.id,
+          selectedRoundId: selected.roundId,
+          selectedBoardNumber: selected.boardNumber,
+        ),
+        gameListSelectedId: selected.id,
+      );
+      WidgetRef? capturedRef;
+      BuildContext? capturedContext;
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            gameRepositoryProvider.overrideWithValue(repository),
+            boardTabGameArgsByTabIdProvider.overrideWith(
+              (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+            ),
+          ],
+          child: MaterialApp(
+            home: Consumer(
+              builder: (context, ref, child) {
+                capturedRef = ref;
+                capturedContext = context;
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        ),
+      );
+
+      final container = ProviderScope.containerOf(capturedContext!);
+
+      await navigateActiveEventGame(
+        capturedRef!,
+        context: capturedContext!,
+        delta: 1,
+      );
+      await tester.pump();
+
+      final opened =
+          container.read(
+            boardTabGameArgsByTabIdProvider,
+          )['tournaments-default'];
+      expect(opened?.gameId, 'seed-game-2');
+      expect(opened?.gameListSelectedId, 'seed-game-2');
+
+      await navigateActiveEventGame(
+        capturedRef!,
+        context: capturedContext!,
+        delta: -1,
+      );
+      await tester.pump();
+      final retreated =
+          container.read(
+            boardTabGameArgsByTabIdProvider,
+          )['tournaments-default'];
+      expect(retreated?.gameId, 'seed-game-1');
+      expect(retreated?.gameListSelectedId, 'seed-game-1');
+    },
+  );
+
   testWidgets('the round catalog survives loading more pages', (tester) async {
     // Regression: loadMore rebuilt the state without carrying roundCatalog, so
     // it reset to empty on the first extra page. The rail then fell back to
@@ -782,7 +1031,10 @@ void main() {
       expect(repository.tourPageCalls, <_PageCall>[
         const _PageCall(id: 'tour-1', limit: 64, offset: 0),
       ]);
-      expect(repository.roundCatalogCalls, <String>['tour-1']);
+      // Initial rail seed + cross-round adjacency hydration each load the
+      // lightweight round catalog once. Navigation must not fall back to a
+      // full tour fetch.
+      expect(repository.roundCatalogCalls, <String>['tour-1', 'tour-1']);
       expect(repository.roundIdsPageCalls, <_RoundIdsPageCall>[
         const _RoundIdsPageCall(ids: <String>['round-5'], limit: 64, offset: 0),
         const _RoundIdsPageCall(ids: <String>['round-4'], limit: 64, offset: 0),
@@ -819,7 +1071,12 @@ void main() {
           )['tournaments-default'];
       expect(opened?.gameId, 'round-6-board-1');
       expect(repository.tourPageCalls, hasLength(1));
-      expect(repository.roundCatalogCalls, <String>['tour-1', 'tour-1']);
+      // Seed load + one catalog refresh per cross-round adjacency hydrate.
+      expect(repository.roundCatalogCalls, <String>[
+        'tour-1',
+        'tour-1',
+        'tour-1',
+      ]);
       expect(
         repository.roundIdsPageCalls.last,
         const _RoundIdsPageCall(ids: <String>['round-6'], limit: 64, offset: 0),

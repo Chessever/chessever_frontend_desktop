@@ -2358,20 +2358,12 @@ bool _matchesAction(
 
 bool _matchesChord(KeyEvent event, KeyChord chord) {
   if (event.logicalKey.keyId != chord.keyId) return false;
-  final ctrl = _isControlPressed();
-  final alt = _isAltPressed();
-  final shift = HardwareKeyboard.instance.isShiftPressed;
-  final meta = _isMetaPressed();
-  final effectiveCtrl =
-      chord.crossPlatform
-          ? chord.ctrl || (chord.meta && !Platform.isMacOS)
-          : chord.ctrl;
-  final effectiveMeta =
-      chord.crossPlatform ? chord.meta && Platform.isMacOS : chord.meta;
-  return ctrl == effectiveCtrl &&
-      alt == chord.alt &&
-      shift == chord.shift &&
-      meta == effectiveMeta;
+  return chord.matchesPressedModifiers(
+    ctrl: _isControlPressed(),
+    meta: _isMetaPressed(),
+    alt: _isAltPressed(),
+    shift: HardwareKeyboard.instance.isShiftPressed,
+  );
 }
 
 bool _isControlPressed() {

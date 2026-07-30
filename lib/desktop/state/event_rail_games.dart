@@ -357,27 +357,48 @@ class EventRailGamesNotifier
   /// fallback still walks canonical metadata if the round catalog is missing,
   /// preserving navigation rather than guessing.
   Future<bool> ensureNavigationAdjacency(int delta) async {
-    if (_disposed || !_isActive || delta == 0) return false;
+    if (_disposed || delta == 0) return false;
     final selectedId = _eventKey.selectedGameId.trim();
     if (selectedId.isEmpty) return false;
+
+    // When the rail cannot hydrate (background tab, paused lifecycle), still
+    // report success if a neighbor is already present in memory so keyboard /
+    // button prev-next can advance without waiting on network work.
+    if (!_isActive) {
+      return _hasInMemoryDirectionalNeighbor(delta, selectedId: selectedId);
+    }
 
     final pendingNavigation = _navigationHydrationCompletion;
     if (pendingNavigation != null) return pendingNavigation.future;
 
     await _awaitPendingRailMutation();
-    if (_disposed || !_isActive) return false;
+    if (_disposed) return false;
+    if (!_isActive) {
+      return _hasInMemoryDirectionalNeighbor(delta, selectedId: selectedId);
+    }
 
     if (_eventKey.selectedRoundId.trim().isNotEmpty) {
       await ensureSelectionWindow();
-      if (_disposed || !_isActive) return false;
+      if (_disposed) return false;
+      if (!_isActive) {
+        return _hasInMemoryDirectionalNeighbor(delta, selectedId: selectedId);
+      }
 
-      final roundIndex = _selectedRoundPageIds.indexOf(selectedId);
-      final hasSameRoundNeighbor =
-          delta < 0
-              ? roundIndex > 0
-              : roundIndex >= 0 &&
-                  roundIndex < _selectedRoundPageIds.length - 1;
-      if (hasSameRoundNeighbor) return true;
+      if (_hasSelectedRoundPageNeighbor(delta, selectedId: selectedId)) {
+        return true;
+      }
+      // The merged rail can already hold a same-round neighbor even when the
+      // selected-round page id list is incomplete (e.g. only the tour page
+      // seed loaded). Treat that as adjacency so navigation does not demand
+      // a network hop for a jump that is already safe in memory.
+      if (_hasInMemoryDirectionalNeighbor(delta, selectedId: selectedId)) {
+        return true;
+      }
+    } else if (_hasInMemoryDirectionalNeighbor(
+      delta,
+      selectedId: selectedId,
+    )) {
+      return true;
     }
 
     _navigationHydrationInFlight = true;
@@ -395,6 +416,72 @@ class EventRailGamesNotifier
         scheduleMicrotask(_runRequestedRefresh);
       }
     }
+  }
+
+  bool _hasSelectedRoundPageNeighbor(
+    int delta, {
+    required String selectedId,
+  }) {
+    final roundIndex = _selectedRoundPageIds.indexOf(selectedId);
+    if (delta < 0) return roundIndex > 0;
+    return roundIndex >= 0 && roundIndex < _selectedRoundPageIds.length - 1;
+  }
+
+  /// True when the retained rail metadata already contains a neighbor in
+  /// [delta]'s direction for [selectedId], without starting network work.
+  bool _hasInMemoryDirectionalNeighbor(
+    int delta, {
+    required String selectedId,
+  }) {
+    if (_hasSelectedRoundPageNeighbor(delta, selectedId: selectedId)) {
+      return true;
+    }
+    final games = state.valueOrNull?.games ?? const <TournamentGameSummary>[];
+    if (games.isEmpty) return false;
+
+    final selectedRoundId = _eventKey.selectedRoundId.trim();
+    final scoped =
+        selectedRoundId.isEmpty
+            ? games
+            : [
+              for (final game in games)
+                if (game.roundId.trim() == selectedRoundId) game,
+            ];
+    if (scoped.isEmpty) return false;
+
+    // Prefer board-number order within the round so sparse merge order does
+    // not invent a false neighbor across an unloaded gap of board numbers.
+    final ordered = List<TournamentGameSummary>.of(scoped)
+      ..sort((a, b) {
+        final boardA = a.boardNumber ?? 1 << 30;
+        final boardB = b.boardNumber ?? 1 << 30;
+        final byBoard = boardA.compareTo(boardB);
+        if (byBoard != 0) return byBoard;
+        return a.id.compareTo(b.id);
+      });
+    final selectedIndex = ordered.indexWhere(
+      (game) => game.id.trim() == selectedId,
+    );
+    if (selectedIndex < 0) return false;
+    if (delta < 0) {
+      if (selectedIndex <= 0) return false;
+      return _areAdjacentBoards(ordered[selectedIndex - 1], ordered[selectedIndex]);
+    }
+    if (selectedIndex >= ordered.length - 1) return false;
+    return _areAdjacentBoards(ordered[selectedIndex], ordered[selectedIndex + 1]);
+  }
+
+  bool _areAdjacentBoards(
+    TournamentGameSummary left,
+    TournamentGameSummary right,
+  ) {
+    final leftBoard = left.boardNumber;
+    final rightBoard = right.boardNumber;
+    if (leftBoard == null || rightBoard == null) {
+      // Without board numbers, list adjacency is the best available signal.
+      return true;
+    }
+    return rightBoard - leftBoard == 1;
   }
 
   Future<void> _awaitPendingRailMutation() async {

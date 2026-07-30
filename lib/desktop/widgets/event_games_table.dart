@@ -2131,13 +2131,15 @@ Future<void> _navigateActiveEventGameNow(
     }
 
     // The provider seed is a union of canonical page zero and a bounded window
-    // around the selected board. Prove adjacency before treating list indices
-    // as neighbors: re-center within a round, or demand-hydrate lightweight
-    // metadata at a cross-round edge. Otherwise a sparse union could skip
-    // boards or whole rounds.
+    // around the selected board. Best-effort: re-center within a round or
+    // demand-hydrate lightweight metadata at a cross-round edge so a sparse
+    // union does not skip boards. Do not hard-abort when hydration cannot run
+    // (inactive / disposed rail, network failure, true event edge): the
+    // already-resolved ordered list still supports prev/next when a neighbor
+    // is already in memory. Index navigation below is a no-op at list edges.
     final notifier = ref.read(provider.notifier);
     notifier.updateSelection(initialEventKey);
-    if (!await notifier.ensureNavigationAdjacency(delta)) return;
+    await notifier.ensureNavigationAdjacency(delta);
     activeArgs = _readNavigationBoardArgs(ref, activeTabId);
     legacy = activeArgs == null ? ref.read(tournamentGamesProvider) : null;
     rail = _resolveGameRail(activeArgs, legacy);
@@ -2327,18 +2329,90 @@ _navigationOrdering(
   final preserveEventInputOrder =
       resolved.kind == _GameListKind.event &&
       activeArgs?.viewSource == ChessboardView.playerProfile;
-  final groups =
-      resolved.kind == _GameListKind.favorites
-          ? _buildDateGroups(resolved.games)
-          : _buildRoundGroups(
-            resolved.games,
-            groupByRound: resolved.kind == _GameListKind.event,
-            preserveInputOrder: preserveEventInputOrder,
-          );
+  final groups = switch (resolved.kind) {
+    _GameListKind.favorites => _buildDateGroups(resolved.games),
+    // Player-profile event rails mirror the source list's own ordering.
+    _GameListKind.event when preserveEventInputOrder => _buildRoundGroups(
+      resolved.games,
+      groupByRound: true,
+      preserveInputOrder: true,
+    ),
+    // Event prev/next must walk chronological board order, not the rail's
+    // display order (which promotes the active/latest round to the top).
+    // Otherwise << on board 1 of the active round is a no-op even when
+    // earlier rounds are already loaded in memory.
+    _GameListKind.event => _buildNavigationRoundGroups(resolved.games),
+    _GameListKind.source || _GameListKind.database => _buildRoundGroups(
+      resolved.games,
+      groupByRound: false,
+    ),
+  };
   return (
     groups: groups,
     orderedGames: groups.expand((round) => round.games).toList(growable: false),
   );
+}
+
+/// Chronological round groups for Board prev/next game navigation.
+///
+/// Display helpers promote the live/latest round to the front of the rail.
+/// Game-stepping must ignore that promotion and walk startsAt / board order
+/// so << / >> match the tournament sequence users expect.
+List<_EventRoundGroup> _buildNavigationRoundGroups(
+  List<TournamentGameSummary> games,
+) {
+  if (games.isEmpty) return const <_EventRoundGroup>[];
+
+  final keyFor = _roundKeyResolverFor(games);
+  final byRound = <String, List<TournamentGameSummary>>{};
+  for (final game in games) {
+    byRound
+        .putIfAbsent(keyFor(game), () => <TournamentGameSummary>[])
+        .add(game);
+  }
+
+  final groups = <_EventRoundGroup>[];
+  for (final entry in byRound.entries) {
+    final visible =
+        entry.value.where(_isBoardVisibleEventGame).toList()
+          ..sort(_compareEventGamesInRound);
+    final rows =
+        visible.isNotEmpty
+            ? visible
+            : (entry.value.where(_hasResolvedPlayers).toList()
+              ..sort(_comparePairingGames));
+    if (rows.isEmpty) {
+      // Keep unfiltered rows so navigation still works for pairings that
+      // fail the board-visible heuristics but are openable from the rail.
+      final fallback = List<TournamentGameSummary>.of(entry.value)
+        ..sort(_compareEventGamesInRound);
+      if (fallback.isEmpty) continue;
+      groups.add(_eventRoundGroupFor(entry.key, fallback));
+      continue;
+    }
+    groups.add(
+      _eventRoundGroupFor(
+        entry.key,
+        rows,
+        pairingOnly: visible.isEmpty,
+      ),
+    );
+  }
+
+  groups.sort((a, b) {
+    final aAt = a.startsAt;
+    final bAt = b.startsAt;
+    if (aAt != null && bAt != null) {
+      final byTime = aAt.compareTo(bAt);
+      if (byTime != 0) return byTime;
+    } else if (aAt != null) {
+      return -1;
+    } else if (bAt != null) {
+      return 1;
+    }
+    return a.id.compareTo(b.id);
+  });
+  return groups;
 }
 
 int _navigationSelectedIndex(
@@ -5523,7 +5597,7 @@ class _LiveBadge extends StatelessWidget {
           width: 6,
           height: 6,
           decoration: const BoxDecoration(
-            color: kGreenColor,
+            color: kPrimaryColor,
             shape: BoxShape.circle,
           ),
         ),
@@ -5531,7 +5605,7 @@ class _LiveBadge extends StatelessWidget {
         const Text(
           'LIVE',
           style: TextStyle(
-            color: kGreenColor,
+            color: kPrimaryColor,
             fontSize: 10,
             fontWeight: FontWeight.w700,
             letterSpacing: 0.6,

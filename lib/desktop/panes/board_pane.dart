@@ -3671,7 +3671,11 @@ class _BoardPaneContent extends HookConsumerWidget {
       final intent = _intentFor(action);
       if (intent == null) continue;
       for (final chord in shortcutMap.chordsFor(action)) {
-        shortcuts[chord.toActivator()] = intent;
+        // Dual-register cross-platform primary-modifier chords (Cmd + Ctrl)
+        // so prev/next game and siblings fire on every desktop host keymap.
+        for (final activator in chord.toAllPlatformActivators()) {
+          shortcuts[activator] = intent;
+        }
       }
     }
     shortcuts[const SingleActivator(
