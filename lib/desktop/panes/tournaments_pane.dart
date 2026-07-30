@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:country_flags/country_flags.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -265,117 +266,15 @@ class TournamentsPane extends HookConsumerWidget {
                   )
                   : asyncTournaments.when(
                     data:
-                        (tournaments) => Focus(
+                        (tournaments) => _TournamentEventGridKeyboardHost(
                           focusNode: listFocusNode,
-                          autofocus: true,
-                          canRequestFocus: true,
-                          onKeyEvent: (node, event) {
-                            if (tournaments.isEmpty) {
-                              return KeyEventResult.ignored;
-                            }
-                            if (event is! KeyDownEvent &&
-                                event is! KeyRepeatEvent) {
-                              return KeyEventResult.ignored;
-                            }
-                            final key = event.logicalKey;
-                            final isDown = key == LogicalKeyboardKey.arrowDown;
-                            final isUp = key == LogicalKeyboardKey.arrowUp;
-                            final isRight =
-                                key == LogicalKeyboardKey.arrowRight;
-                            final isLeft = key == LogicalKeyboardKey.arrowLeft;
-                            final isPageDown =
-                                key == LogicalKeyboardKey.pageDown;
-                            final isPageUp = key == LogicalKeyboardKey.pageUp;
-                            final isHome = key == LogicalKeyboardKey.home;
-                            final isEnd = key == LogicalKeyboardKey.end;
-                            final isEnter =
-                                key == LogicalKeyboardKey.enter ||
-                                key == LogicalKeyboardKey.numpadEnter;
-                            if (!isDown &&
-                                !isUp &&
-                                !isRight &&
-                                !isLeft &&
-                                !isPageDown &&
-                                !isPageUp &&
-                                !isHome &&
-                                !isEnd &&
-                                !isEnter) {
-                              return KeyEventResult.ignored;
-                            }
-                            final tournamentIds = [
-                              for (final tournament in tournaments)
-                                tournament.id,
-                            ];
-                            final base =
-                                resolveTournamentEventGridSelectionIndex(
-                                  ids: tournamentIds,
-                                  selectedId: selectedTournamentId.value,
-                                );
-                            final currentTournament = tournaments[base];
-
-                            void scrollEventIntoView(String id) {
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                final ctx = tileKeys.value[id]?.currentContext;
-                                if (ctx != null) {
-                                  Scrollable.ensureVisible(
-                                    ctx,
-                                    alignment: 0.5,
-                                    duration: const Duration(milliseconds: 160),
-                                    curve: Curves.easeOut,
-                                  );
-                                }
-                              });
-                            }
-
-                            if (isEnter) {
-                              openTournament(currentTournament);
-                              return KeyEventResult.handled;
-                            }
-
-                            final paneWidth =
-                                context.size?.width ??
-                                MediaQuery.sizeOf(context).width;
-                            final columns = calculateTournamentEventGridColumns(
-                              paneWidth,
-                            );
-                            final intent = switch (key) {
-                              LogicalKeyboardKey.arrowRight =>
-                                TournamentEventGridNavigationIntent.right,
-                              LogicalKeyboardKey.arrowLeft =>
-                                TournamentEventGridNavigationIntent.left,
-                              LogicalKeyboardKey.arrowDown =>
-                                TournamentEventGridNavigationIntent.down,
-                              LogicalKeyboardKey.arrowUp =>
-                                TournamentEventGridNavigationIntent.up,
-                              LogicalKeyboardKey.pageDown =>
-                                TournamentEventGridNavigationIntent.pageDown,
-                              LogicalKeyboardKey.pageUp =>
-                                TournamentEventGridNavigationIntent.pageUp,
-                              LogicalKeyboardKey.home =>
-                                TournamentEventGridNavigationIntent.home,
-                              LogicalKeyboardKey.end =>
-                                TournamentEventGridNavigationIntent.end,
-                              _ => null,
-                            };
-                            if (intent == null) {
-                              return KeyEventResult.ignored;
-                            }
-                            final newIdx =
-                                moveTournamentEventGridSelectionIndex(
-                                  currentIndex: base,
-                                  itemCount: tournaments.length,
-                                  columns: columns,
-                                  intent: intent,
-                                  pageRows: kDesktopListPageStep,
-                                );
-                            if (newIdx == base) {
-                              return KeyEventResult.handled;
-                            }
-                            final newTournament = tournaments[newIdx];
-                            selectedTournamentId.value = newTournament.id;
-                            scrollEventIntoView(newTournament.id);
-                            return KeyEventResult.handled;
+                          tournaments: tournaments,
+                          selectedId: selectedTournamentId.value,
+                          onSelectedIdChanged: (id) {
+                            selectedTournamentId.value = id;
                           },
+                          onActivate: openTournament,
+                          tileKeys: tileKeys.value,
                           child: _TournamentBrowser(
                             tournaments: tournaments,
                             storageKey: PageStorageKey<String>(
@@ -1740,6 +1639,235 @@ class _TournamentBrowser extends StatelessWidget {
   }
 }
 
+/// Owns arrow/Page/Home/End/Enter for the Current/Past event grid the same
+/// way For You owns its selection host: local [Focus] first, with a
+/// [HardwareKeyboard] fallback when shell chrome (or [PaneKeyboardScroll])
+/// holds primary focus so selection still moves instead of bare scrolling.
+class _TournamentEventGridKeyboardHost extends StatefulWidget {
+  const _TournamentEventGridKeyboardHost({
+    required this.focusNode,
+    required this.tournaments,
+    required this.selectedId,
+    required this.onSelectedIdChanged,
+    required this.onActivate,
+    required this.tileKeys,
+    required this.child,
+  });
+
+  final FocusNode focusNode;
+  final List<GroupEventCardModel> tournaments;
+  final String? selectedId;
+  final ValueChanged<String> onSelectedIdChanged;
+  final ValueChanged<GroupEventCardModel> onActivate;
+  final Map<String, GlobalKey> tileKeys;
+  final Widget child;
+
+  @override
+  State<_TournamentEventGridKeyboardHost> createState() =>
+      _TournamentEventGridKeyboardHostState();
+}
+
+class _TournamentEventGridKeyboardHostState
+    extends State<_TournamentEventGridKeyboardHost> {
+  ValueListenable<TickerModeData>? _tickerMode;
+
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_handleGlobalKeyboard);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (TickerMode.valuesOf(context).enabled) {
+        widget.focusNode.requestFocus();
+      }
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // PersistentIndexedStack wraps inactive tabs in TickerMode+ExcludeFocus.
+    // Reclaim focus when this pane becomes the live tab again.
+    final notifier = TickerMode.getValuesNotifier(context);
+    if (!identical(notifier, _tickerMode)) {
+      _tickerMode?.removeListener(_handleTickerModeChanged);
+      _tickerMode = notifier..addListener(_handleTickerModeChanged);
+    }
+  }
+
+  void _handleTickerModeChanged() {
+    if (_tickerMode?.value.enabled != true) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && TickerMode.valuesOf(context).enabled) {
+        widget.focusNode.requestFocus();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _tickerMode?.removeListener(_handleTickerModeChanged);
+    HardwareKeyboard.instance.removeHandler(_handleGlobalKeyboard);
+    super.dispose();
+  }
+
+  bool _hasNavigationModifier() {
+    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+    return pressed.contains(LogicalKeyboardKey.altLeft) ||
+        pressed.contains(LogicalKeyboardKey.altRight) ||
+        pressed.contains(LogicalKeyboardKey.controlLeft) ||
+        pressed.contains(LogicalKeyboardKey.controlRight) ||
+        pressed.contains(LogicalKeyboardKey.metaLeft) ||
+        pressed.contains(LogicalKeyboardKey.metaRight);
+  }
+
+  bool _hasEditableTextFocus() {
+    final focusContext = FocusManager.instance.primaryFocus?.context;
+    if (focusContext == null) return false;
+    return focusContext.widget is EditableText ||
+        focusContext.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
+  bool _handleGlobalKeyboard(KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
+    final key = event.logicalKey;
+    final isRelevant =
+        _isGridNavigationKey(key) || _isActivationKey(key);
+    // Inactive tabs stay mounted under TickerMode(false). Must not steal
+    // arrow/Page/Home/End from the active pane (For You activeId /
+    // PaneKeyboardScroll TickerMode contract).
+    if (!shouldTournamentEventGridHandleGlobalKey(
+      mounted: mounted,
+      tickerModeEnabled: TickerMode.valuesOf(context).enabled,
+      hostHasFocus: widget.focusNode.hasFocus,
+      hasNavigationModifier: _hasNavigationModifier(),
+      hasEditableTextFocus: _hasEditableTextFocus(),
+      isRelevantKey: isRelevant,
+    )) {
+      return false;
+    }
+    final result = _handleKeyEvent(event);
+    if (result == KeyEventResult.handled) return true;
+    // Active host only: never fall back to PaneKeyboardScroll pixel-scroll.
+    return _isGridNavigationKey(key);
+  }
+
+  bool _isGridNavigationKey(LogicalKeyboardKey key) {
+    return key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.arrowDown ||
+        key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.pageDown ||
+        key == LogicalKeyboardKey.pageUp ||
+        key == LogicalKeyboardKey.home ||
+        key == LogicalKeyboardKey.end;
+  }
+
+  bool _isActivationKey(LogicalKeyboardKey key) {
+    return key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter;
+  }
+
+  KeyEventResult _handleKeyEvent(KeyEvent event) {
+    final tournaments = widget.tournaments;
+    if (tournaments.isEmpty) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    final isEnter = _isActivationKey(key);
+    if (!_isGridNavigationKey(key) && !isEnter) {
+      return KeyEventResult.ignored;
+    }
+
+    final tournamentIds = [
+      for (final tournament in tournaments) tournament.id,
+    ];
+    final base = resolveTournamentEventGridSelectionIndex(
+      ids: tournamentIds,
+      selectedId: widget.selectedId,
+    );
+    final currentTournament = tournaments[base];
+
+    void scrollEventIntoView(String id) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final ctx = widget.tileKeys[id]?.currentContext;
+        if (ctx != null) {
+          Scrollable.ensureVisible(
+            ctx,
+            alignment: 0.5,
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    }
+
+    if (isEnter) {
+      if (!widget.focusNode.hasFocus) widget.focusNode.requestFocus();
+      widget.onActivate(currentTournament);
+      return KeyEventResult.handled;
+    }
+
+    final paneWidth =
+        context.size?.width ?? MediaQuery.sizeOf(context).width;
+    final columns = calculateTournamentEventGridColumns(paneWidth);
+    final intent = switch (key) {
+      LogicalKeyboardKey.arrowRight =>
+        TournamentEventGridNavigationIntent.right,
+      LogicalKeyboardKey.arrowLeft => TournamentEventGridNavigationIntent.left,
+      LogicalKeyboardKey.arrowDown => TournamentEventGridNavigationIntent.down,
+      LogicalKeyboardKey.arrowUp => TournamentEventGridNavigationIntent.up,
+      LogicalKeyboardKey.pageDown =>
+        TournamentEventGridNavigationIntent.pageDown,
+      LogicalKeyboardKey.pageUp => TournamentEventGridNavigationIntent.pageUp,
+      LogicalKeyboardKey.home => TournamentEventGridNavigationIntent.home,
+      LogicalKeyboardKey.end => TournamentEventGridNavigationIntent.end,
+      _ => null,
+    };
+    if (intent == null) return KeyEventResult.ignored;
+
+    final newId = nextTournamentEventGridSelectedId(
+      ids: tournamentIds,
+      selectedId: widget.selectedId,
+      columns: columns,
+      intent: intent,
+      pageRows: kDesktopListPageStep,
+    );
+    if (newId == null) return KeyEventResult.handled;
+    if (!widget.focusNode.hasFocus) widget.focusNode.requestFocus();
+    // Edge clamp: resolved target is the same card already highlighted.
+    if (newId == currentTournament.id) {
+      // Persist the visual default (index 0) so subsequent moves have a
+      // concrete selectedId even if the user never clicked a card.
+      if (widget.selectedId == null) {
+        widget.onSelectedIdChanged(newId);
+      }
+      return KeyEventResult.handled;
+    }
+    widget.onSelectedIdChanged(newId);
+    scrollEventIntoView(newId);
+    return KeyEventResult.handled;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      focusNode: widget.focusNode,
+      autofocus: true,
+      canRequestFocus: true,
+      onKeyEvent: (node, event) => _handleKeyEvent(event),
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTapDown: (_) {
+          if (!widget.focusNode.hasFocus) widget.focusNode.requestFocus();
+        },
+        child: widget.child,
+      ),
+    );
+  }
+}
+
 class _TournamentEventGrid extends StatelessWidget {
   const _TournamentEventGrid({
     required this.tournaments,
@@ -1771,6 +1899,9 @@ class _TournamentEventGrid extends StatelessWidget {
         return GridView.builder(
           key: storageKey,
           controller: scrollController,
+          // Selection border + glow paint outside the card bounds; do not
+          // hard-clip each grid cell or the primary ring is shaved at edges.
+          clipBehavior: Clip.none,
           physics: const DesktopScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
           itemCount: tournaments.length,
@@ -1845,8 +1976,12 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
             onTap: widget.onTap,
             child: MotionCard(
               borderRadius: 10,
+              // Selection border + glow must NOT share a clip with content.
+              // Clip.antiAlias on the same Container crops the ring/shadow
+              // (especially corners). Outer shell paints chrome; inner
+              // ClipRRect keeps media/content rounded — same layering as
+              // For You / desktop_game_card.dart.
               child: Container(
-                clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
                   color: highlight ? kBlack3Color : kBlack2Color,
                   borderRadius: BorderRadius.circular(10),
@@ -1870,100 +2005,103 @@ class _TournamentRowTileState extends State<_TournamentRowTile> {
                           ]
                           : null,
                 ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _TournamentTileMedia(
-                      event: t,
-                      statusColor: categoryColor,
-                      selected: widget.selected,
-                    ),
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(14, 11, 12, 11),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // Category badge, moved off the photo onto the
-                                // solid body where its colours read.
-                                _StatusBadge(category: t.tourEventCategory),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    t.title,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: kWhiteColor,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w800,
-                                      height: 1.17,
-                                      letterSpacing: 0,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                DesktopEventFavoriteIconButton(
-                                  event: t,
-                                  compact: true,
-                                ),
-                              ],
-                            ),
-                            const Spacer(),
-                            Text(
-                              _eventMetaLine(t),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: kLightGreyColor,
-                                fontSize: 11,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
-                              children: [
-                                if (t.timeControl.isNotEmpty)
-                                  Flexible(
-                                    child: _TournamentTilePill(
-                                      label: t.timeControl,
-                                      icon: Icons.schedule_rounded,
-                                    ),
-                                  ),
-                                if (t.maxAvgElo > 0) ...[
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(9),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _TournamentTileMedia(
+                        event: t,
+                        statusColor: categoryColor,
+                        selected: widget.selected,
+                      ),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(14, 11, 12, 11),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // Category badge, moved off the photo onto the
+                                  // solid body where its colours read.
+                                  _StatusBadge(category: t.tourEventCategory),
                                   const SizedBox(width: 8),
-                                  _TournamentTilePill(
-                                    label: 'Avg ${t.maxAvgElo}',
-                                    icon: Icons.leaderboard_rounded,
-                                  ),
-                                ],
-                                const Spacer(),
-                                if (widget.loading)
-                                  const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 1.6,
-                                      valueColor: AlwaysStoppedAnimation(
-                                        kPrimaryColor,
+                                  Expanded(
+                                    child: Text(
+                                      t.title,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: kWhiteColor,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w800,
+                                        height: 1.17,
+                                        letterSpacing: 0,
                                       ),
                                     ),
-                                  )
-                                else
-                                  Icon(
-                                    Icons.open_in_new_rounded,
-                                    size: 14,
-                                    color: categoryColor,
                                   ),
-                              ],
-                            ),
-                          ],
+                                  const SizedBox(width: 8),
+                                  DesktopEventFavoriteIconButton(
+                                    event: t,
+                                    compact: true,
+                                  ),
+                                ],
+                              ),
+                              const Spacer(),
+                              Text(
+                                _eventMetaLine(t),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: kLightGreyColor,
+                                  fontSize: 11,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  if (t.timeControl.isNotEmpty)
+                                    Flexible(
+                                      child: _TournamentTilePill(
+                                        label: t.timeControl,
+                                        icon: Icons.schedule_rounded,
+                                      ),
+                                    ),
+                                  if (t.maxAvgElo > 0) ...[
+                                    const SizedBox(width: 8),
+                                    _TournamentTilePill(
+                                      label: 'Avg ${t.maxAvgElo}',
+                                      icon: Icons.leaderboard_rounded,
+                                    ),
+                                  ],
+                                  const Spacer(),
+                                  if (widget.loading)
+                                    const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 1.6,
+                                        valueColor: AlwaysStoppedAnimation(
+                                          kPrimaryColor,
+                                        ),
+                                      ),
+                                    )
+                                  else
+                                    Icon(
+                                      Icons.open_in_new_rounded,
+                                      size: 14,
+                                      color: categoryColor,
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),

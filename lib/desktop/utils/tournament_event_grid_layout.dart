@@ -71,3 +71,52 @@ int moveTournamentEventGridSelectionIndex({
   };
   return target.clamp(0, itemCount - 1).toInt();
 }
+
+/// Resolves the next selected tournament id for a Current/Past grid intent.
+///
+/// Returns `null` when the grid is empty. When the selection does not move
+/// (already at an edge), returns the same id that is currently resolved so
+/// callers can keep the highlighter stable and still treat the key as handled.
+String? nextTournamentEventGridSelectedId({
+  required List<String> ids,
+  required String? selectedId,
+  required int columns,
+  required TournamentEventGridNavigationIntent intent,
+  required int pageRows,
+}) {
+  if (ids.isEmpty) return null;
+  final base = resolveTournamentEventGridSelectionIndex(
+    ids: ids,
+    selectedId: selectedId,
+  );
+  final next = moveTournamentEventGridSelectionIndex(
+    currentIndex: base,
+    itemCount: ids.length,
+    columns: columns,
+    intent: intent,
+    pageRows: pageRows,
+  );
+  return ids[next];
+}
+
+/// Whether a Current/Past grid [HardwareKeyboard] host may intercept a key.
+///
+/// Persistent tab stacks keep inactive panes mounted under [TickerMode]
+/// disabled. Those hosts must return false so the active pane owns arrows /
+/// Page / Home / End (same contract as For You `activeId` gating and
+/// [PaneKeyboardScroll] / grouped game keyboard TickerMode checks).
+bool shouldTournamentEventGridHandleGlobalKey({
+  required bool mounted,
+  required bool tickerModeEnabled,
+  required bool hostHasFocus,
+  required bool hasNavigationModifier,
+  required bool hasEditableTextFocus,
+  required bool isRelevantKey,
+}) {
+  if (!mounted || !tickerModeEnabled) return false;
+  // When the host Focus already owns the event, leave it to onKeyEvent so we
+  // do not advance selection twice.
+  if (hostHasFocus) return false;
+  if (hasNavigationModifier || hasEditableTextFocus) return false;
+  return isRelevantKey;
+}

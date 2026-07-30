@@ -154,5 +154,117 @@ void main() {
         9,
       );
     });
+
+    test('arrow navigation leaves the initial card when more cards exist', () {
+      // Production path: null selectedId resolves to 0, then Right moves to 1.
+      final base = resolveTournamentEventGridSelectionIndex(
+        ids: const ['a', 'b', 'c', 'd'],
+        selectedId: null,
+      );
+      expect(base, 0);
+      expect(
+        moveTournamentEventGridSelectionIndex(
+          currentIndex: base,
+          itemCount: 4,
+          columns: 2,
+          intent: TournamentEventGridNavigationIntent.right,
+          pageRows: 5,
+        ),
+        1,
+      );
+      expect(
+        moveTournamentEventGridSelectionIndex(
+          currentIndex: 0,
+          itemCount: 4,
+          columns: 2,
+          intent: TournamentEventGridNavigationIntent.down,
+          pageRows: 5,
+        ),
+        2,
+      );
+    });
+  });
+
+  group('shouldTournamentEventGridHandleGlobalKey', () {
+    test('inactive ticker mode never claims keys (mounted host must yield)', () {
+      expect(
+        shouldTournamentEventGridHandleGlobalKey(
+          mounted: true,
+          tickerModeEnabled: false,
+          hostHasFocus: false,
+          hasNavigationModifier: false,
+          hasEditableTextFocus: false,
+          isRelevantKey: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('active host without focus claims relevant navigation keys', () {
+      expect(
+        shouldTournamentEventGridHandleGlobalKey(
+          mounted: true,
+          tickerModeEnabled: true,
+          hostHasFocus: false,
+          hasNavigationModifier: false,
+          hasEditableTextFocus: false,
+          isRelevantKey: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('when host Focus already owns the key, hardware path yields', () {
+      expect(
+        shouldTournamentEventGridHandleGlobalKey(
+          mounted: true,
+          tickerModeEnabled: true,
+          hostHasFocus: true,
+          hasNavigationModifier: false,
+          hasEditableTextFocus: false,
+          isRelevantKey: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('does not claim keys for text fields or modifier combos', () {
+      expect(
+        shouldTournamentEventGridHandleGlobalKey(
+          mounted: true,
+          tickerModeEnabled: true,
+          hostHasFocus: false,
+          hasNavigationModifier: false,
+          hasEditableTextFocus: true,
+          isRelevantKey: true,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldTournamentEventGridHandleGlobalKey(
+          mounted: true,
+          tickerModeEnabled: true,
+          hostHasFocus: false,
+          hasNavigationModifier: true,
+          hasEditableTextFocus: false,
+          isRelevantKey: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('unmounted host never claims keys', () {
+      expect(
+        shouldTournamentEventGridHandleGlobalKey(
+          mounted: false,
+          tickerModeEnabled: true,
+          hostHasFocus: false,
+          hasNavigationModifier: false,
+          hasEditableTextFocus: false,
+          isRelevantKey: true,
+        ),
+        isFalse,
+      );
+    });
   });
 }
