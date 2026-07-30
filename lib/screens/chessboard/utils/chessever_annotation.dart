@@ -25,6 +25,7 @@ String? classicGlyphForClassification(GameMoveClassification? classification) =>
       GameMoveClassification.inaccuracy => '?!',
       GameMoveClassification.mistake => '?',
       GameMoveClassification.blunder => '??',
+      GameMoveClassification.bookMove => null,
       null => null,
     };
 

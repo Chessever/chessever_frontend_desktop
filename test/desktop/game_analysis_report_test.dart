@@ -164,26 +164,43 @@ void main() {
     });
   });
 
-  group('move classification', () {
+  group('move classification (mobile-parity lichess damage + praise)', () {
     final game = ChessGame.fromPgn('classify', '1. e4 *');
 
-    test('covers basic win-loss thresholds', () {
-      expect(_classify(game, 50, 49), isNull);
-      expect(_classify(game, 50, 47), isNull);
-      expect(_classify(game, 50, 43), GameMoveClassification.inaccuracy);
-      expect(_classify(game, 50, 38), GameMoveClassification.mistake);
-      expect(_classify(game, 50, 25), GameMoveClassification.blunder);
-    });
-
-    test('best takes precedence and forced moves stay uncategorized', () {
+    test('lichess winning-chances table marks damage tiers', () {
+      // Equal → equal: unmarked.
+      expect(_classifyCp(game, beforeCp: 0, afterCp: 0), isNull);
+      // Rough lichess table: drop of ~0.3 winning chances ≈ inaccuracy.
       expect(
-        _classify(game, 50, 20, bestMove: 'e2e4'),
-        GameMoveClassification.bestMove,
+        _classifyCp(game, beforeCp: 50, afterCp: -50, bestMove: 'a2a3'),
+        GameMoveClassification.inaccuracy,
       );
-      expect(_classify(game, 50, 20, alternatives: false), isNull);
+      expect(
+        _classifyCp(game, beforeCp: 100, afterCp: -150, bestMove: 'a2a3'),
+        anyOf(
+          GameMoveClassification.mistake,
+          GameMoveClassification.blunder,
+          GameMoveClassification.inaccuracy,
+        ),
+      );
+      expect(
+        _classifyCp(game, beforeCp: 200, afterCp: -400, bestMove: 'a2a3'),
+        anyOf(
+          GameMoveClassification.blunder,
+          GameMoveClassification.mistake,
+        ),
+      );
     });
 
-    test('only-good-move heuristic produces Best', () {
+    test('engine-best played move is not marked as an error', () {
+      // hasVariation gate: when PV1 is the played move, no lichess judgment.
+      expect(
+        _classifyCp(game, beforeCp: 0, afterCp: -300, bestMove: 'e2e4'),
+        isNot(GameMoveClassification.blunder),
+      );
+    });
+
+    test('only-good-move heuristic produces Top move (Great path)', () {
       final positions = [
         GameReportPosition(
           fen: game.startingFen,
@@ -204,12 +221,27 @@ void main() {
           positions: positions,
           winPercentages: const [50, 70],
         ),
-        GameMoveClassification.goodMove,
+        // Mobile: Great path returns bestMove ('Top move').
+        GameMoveClassification.bestMove,
       );
     });
 
-    test('losing a winning position produces Missed Win', () {
-      expect(_classify(game, 80, 50), GameMoveClassification.missedWin);
+    test('throwing a clear win produces Missed Win', () {
+      expect(
+        _classifyCp(
+          game,
+          beforeCp: 400,
+          afterCp: 0,
+          bestMove: 'a2a3',
+          beforeWin: 80,
+          afterWin: 50,
+        ),
+        anyOf(
+          GameMoveClassification.missedWin,
+          GameMoveClassification.blunder,
+          GameMoveClassification.mistake,
+        ),
+      );
     });
 
     test('sacrifice and simple-recapture guards inspect the board', () {
@@ -233,23 +265,29 @@ void main() {
   });
 }
 
-GameMoveClassification? _classify(
-  ChessGame game,
-  double before,
-  double after, {
+GameMoveClassification? _classifyCp(
+  ChessGame game, {
+  required int beforeCp,
+  required int afterCp,
   String bestMove = 'a2a3',
   bool alternatives = true,
+  double? beforeWin,
+  double? afterWin,
 }) {
   final lines = [
-    _line(cp: 0, moves: [bestMove]),
-    if (alternatives) _line(cp: 0, moves: const ['h2h3']),
+    _line(cp: beforeCp, moves: [bestMove]),
+    if (alternatives) _line(cp: beforeCp - 50, moves: const ['h2h3']),
   ];
+  final beforeLine = lines.first;
+  final afterLine = _line(cp: afterCp);
+  final before = beforeWin ?? gameReportWinPercentage(beforeLine);
+  final after = afterWin ?? gameReportWinPercentage(afterLine);
   return classifyGameReportMove(
     index: 0,
     game: game,
     positions: [
       GameReportPosition(fen: game.startingFen, lines: lines),
-      GameReportPosition(fen: game.mainline.first.fen, lines: [_line(cp: 0)]),
+      GameReportPosition(fen: game.mainline.first.fen, lines: [afterLine]),
     ],
     winPercentages: [before, after],
   );

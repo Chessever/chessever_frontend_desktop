@@ -17,6 +17,7 @@ const _reportClassifications = <GameMoveClassification>[
   GameMoveClassification.inaccuracy,
   GameMoveClassification.goodMove,
   GameMoveClassification.bestMove,
+  GameMoveClassification.bookMove,
 ];
 
 /// First `stop-color` in the SVG is the badge gradient top (source of truth).
@@ -67,6 +68,7 @@ void main() {
         GameMoveClassification.inaccuracy: 'assets/svgs/inaccuracy.svg',
         GameMoveClassification.goodMove: 'assets/svgs/good.svg',
         GameMoveClassification.bestMove: 'assets/svgs/best.svg',
+        GameMoveClassification.bookMove: 'assets/svgs/book.svg',
       };
 
       for (final classification in _reportClassifications) {

@@ -49,6 +49,7 @@ LichessMoveAnnotationType annotationTypeForClassification(
   GameMoveClassification.inaccuracy => LichessMoveAnnotationType.inaccuracy,
   GameMoveClassification.mistake => LichessMoveAnnotationType.mistake,
   GameMoveClassification.blunder => LichessMoveAnnotationType.blunder,
+  GameMoveClassification.bookMove => LichessMoveAnnotationType.bookMove,
 };
 
 String classificationIconAsset(GameMoveClassification classification) =>

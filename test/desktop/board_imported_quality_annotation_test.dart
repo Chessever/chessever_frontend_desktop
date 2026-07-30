@@ -45,6 +45,66 @@ void main() {
   });
 
   test(
+    'share/GIF PGN is hydrated from a completed report even when source PGN was bare',
+    () {
+      // Mirrors mobile: once Game Analysis finishes, exported PGN for share/GIF
+      // always carries classic-glyph directives from the report.
+      final bare = ChessGame.fromPgn('bare-share', r'1. e4 e5 2. Nf3 *');
+      final reportMoves = const [
+        GameReportMove(
+          ply: 1,
+          san: 'e4',
+          uci: 'e2e4',
+          isWhite: true,
+          classification: GameMoveClassification.brilliant,
+          evaluation: GameReportLine(
+            moves: <String>['e2e4'],
+            depth: 18,
+            centipawns: 35,
+          ),
+        ),
+        GameReportMove(
+          ply: 2,
+          san: 'e5',
+          uci: 'e7e5',
+          isWhite: false,
+          classification: GameMoveClassification.mistake,
+          evaluation: GameReportLine(
+            moves: <String>['e7e5'],
+            depth: 18,
+            centipawns: -80,
+          ),
+        ),
+        GameReportMove(
+          ply: 3,
+          san: 'Nf3',
+          uci: 'g1f3',
+          isWhite: true,
+          classification: GameMoveClassification.bestMove,
+          evaluation: GameReportLine(
+            moves: <String>['g1f3'],
+            depth: 18,
+            centipawns: 40,
+          ),
+        ),
+      ];
+
+      final pgn = exportGamePgnWithReport(bare, reportMoves);
+      expect(pgn, contains('[%chessever_annotation !!]'));
+      expect(pgn, contains('[%chessever_annotation ?]'));
+      expect(pgn, contains('[%chessever_annotation !]'));
+      expect(pgn, contains(RegExp(r'e4\s*\$3|e4!!')));
+      expect(pgn, contains(RegExp(r'e5\s*\$2|e5\?')));
+      // GIF path is the same merge.
+      final gifGame = mergeGameReportAnnotationsForGif(bare, reportMoves);
+      expect(
+        gifGame.mainline[0].comments,
+        contains('[%chessever_annotation !!]'),
+      );
+    },
+  );
+
+  test(
     'GIF/share export uses classic-glyph ChessEver annotations and quality NAGs',
     () {
       final game = ChessGame.fromPgn(

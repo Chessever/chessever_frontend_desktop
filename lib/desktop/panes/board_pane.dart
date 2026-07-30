@@ -2453,17 +2453,49 @@ class _BoardPaneContent extends HookConsumerWidget {
       return _gameHasUserVariations(chessGame.value);
     }
 
+    /// Completed report for the current mainline (if any). Used to hydrate
+    /// Copy PGN / Share / GIF with ChessEver classifications, matching mobile.
+    GameAnalysisReport? completedReportForCurrentGame() {
+      final report = gameReport.value;
+      if (report == null || report.moves.isEmpty) return null;
+      if (report.fingerprint != gameReportFingerprint(chessGame.value)) {
+        return null;
+      }
+      return report;
+    }
+
+    ChessGame hydrateGameWithReport(ChessGame game) {
+      final report = completedReportForCurrentGame();
+      if (report == null) return game;
+      return mergeGameReportAnnotationsForGif(game, report.moves);
+    }
+
     Future<void> copyPgnAction() async {
       if (!gameHasMainline()) {
         showToast('No PGN to copy yet — load a game first.');
         return;
       }
       try {
-        final pgn = boardClipboardPgn(
-          game: chessGame.value,
-          dirtySinceLoad: dirtySinceLoad.value,
-          lastAppliedPgn: lastAppliedPgn.value,
-        );
+        // Prefer a pristine source PGN only when there is no report to bake in
+        // and the tree has not grown variations. Once Game Analysis finishes,
+        // export must carry classic-glyph classifications (mobile parity).
+        final report = completedReportForCurrentGame();
+        final String pgn;
+        if (report != null) {
+          final hydrated = hydrateGameWithReport(chessGame.value);
+          final withUserNags = mergeUserMainlineNagsForGif(
+            hydrated,
+            ref.read(userMoveNagsProvider)[editsTabId] ??
+                const <int, List<int>>{},
+          );
+          pgn = exportGameToPgn(withUserNags);
+        } else {
+          pgn = boardClipboardPgn(
+            game: chessGame.value,
+            dirtySinceLoad: dirtySinceLoad.value,
+            lastAppliedPgn: lastAppliedPgn.value,
+          );
+        }
         await Clipboard.setData(ClipboardData(text: pgn));
         showToast('PGN copied to clipboard');
       } catch (e) {
@@ -3187,22 +3219,10 @@ class _BoardPaneContent extends HookConsumerWidget {
         final engineSettings =
             ref.read(engineSettingsProviderNew).valueOrNull ??
             const EngineSettings();
+        // Always bake a completed report into share/GIF PGN (not only when the
+        // Report panel is open) — same as mobile Copy/Share/GIF hydration.
         final baseShareGame = chessGame.value;
-        final completedShareReport = gameReport.value;
-        final reportVisibleForShare =
-            completedShareReport != null &&
-            completedShareReport.fingerprint ==
-                gameReportFingerprint(baseShareGame) &&
-            openedReportFingerprints.value.contains(
-              completedShareReport.fingerprint,
-            );
-        final evaluatedShareGame =
-            reportVisibleForShare
-                ? mergeGameReportAnnotationsForGif(
-                  baseShareGame,
-                  completedShareReport.moves,
-                )
-                : baseShareGame;
+        final evaluatedShareGame = hydrateGameWithReport(baseShareGame);
         final shareGame = mergeUserMainlineNagsForGif(
           evaluatedShareGame,
           ref.read(userMoveNagsProvider)[editsTabId] ??

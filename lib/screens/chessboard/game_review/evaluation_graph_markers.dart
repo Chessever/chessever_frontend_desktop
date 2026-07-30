@@ -41,6 +41,8 @@ buildEvaluationGraphClassificationMarkers({
     final move = moves[i];
     final classification = move.classification;
     if (classification == null) continue;
+    // Book is theory, not a quality call — keep it off the curve.
+    if (classification == GameMoveClassification.bookMove) continue;
 
     final ply = move.ply;
     if (ply < 0 || ply >= positions.length) continue;
