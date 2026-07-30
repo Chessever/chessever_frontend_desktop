@@ -99,8 +99,7 @@ workflows:
       - build/macos/Build/Products/Release/*.app
       - /tmp/xcodebuild_logs/*.log
 
-  # Apple Silicon release on Flutter beta (3.47+ desktop Impeller/perf).
-  # Intel stays on a separate workflow pinned to stable (see below).
+  # Apple Silicon on beta; Intel is a separate workflow on stable.
   macos-desktop-release-arm64:
     name: macOS Desktop Release (Apple Silicon)
     instance_type: mac_mini_m4
@@ -219,13 +218,13 @@ workflows:
           fi
           flutter config --enable-macos-desktop
           export FLUTTER_ROOT="${FLUTTER_ROOT:-$(cd "$(dirname "$(command -v flutter)")/.." && pwd)}"
-          # Single-arch package: macos-arm64. Impeller is default on Flutter beta.
-          echo "=== Building macOS package for $ARCH (Flutter beta) ==="
+          echo "=== Building macOS package for $ARCH ==="
           export MACOS_ENGINE_ARCH="$ARCH"
           export MACOS_RELEASE_ARCH="$ARCH"
           bash ./scripts/fetch_stockfish.sh
           rm -rf dist
-          dart run desktop_updater:release "macos-${ARCH}" --release \
+          # Continuous Silicon slug is bare `macos` (not macos-arm64).
+          dart run desktop_updater:release macos --release \
             "${DART_DEFINES[@]}" \
             --dart-define=MACOS_RELEASE_ARCH="$ARCH"
           ./scripts/codemagic_publish_macos.sh --arch "$ARCH"
@@ -245,7 +244,7 @@ workflows:
           script: |
             bash ./scripts/codemagic_notify_telegram.sh "macOS arm64" finished
 
-  # Intel macOS stays on Flutter stable (not beta). Separate download/package.
+  # Intel macOS on stable. Separate download/package.
   macos-desktop-release-x64:
     name: macOS Desktop Release (Intel)
     instance_type: mac_mini_m4
@@ -350,13 +349,13 @@ workflows:
           fi
           flutter config --enable-macos-desktop
           export FLUTTER_ROOT="${FLUTTER_ROOT:-$(cd "$(dirname "$(command -v flutter)")/.." && pwd)}"
-          # Single-arch package: macos-x64. Kept on Flutter stable intentionally.
-          echo "=== Building macOS package for $ARCH (Flutter stable) ==="
+          echo "=== Building macOS package for $ARCH ==="
           export MACOS_ENGINE_ARCH="$ARCH"
           export MACOS_RELEASE_ARCH="$ARCH"
           bash ./scripts/fetch_stockfish.sh
           rm -rf dist
-          dart run desktop_updater:release "macos-${ARCH}" --release \
+          # Intel is additive only under macos-x64.
+          dart run desktop_updater:release macos-x64 --release \
             "${DART_DEFINES[@]}" \
             --dart-define=MACOS_RELEASE_ARCH="$ARCH"
           ./scripts/codemagic_publish_macos.sh --arch "$ARCH"
@@ -379,7 +378,6 @@ workflows:
   windows-desktop-release:
     name: Windows Desktop Release
     instance_type: windows_x2
-    # Flutter beta for 3.47+ desktop perf until it lands on stable.
     max_build_duration: 120
     environment:
       flutter: beta
@@ -454,7 +452,6 @@ workflows:
   linux-desktop-release:
     name: Linux Desktop Release
     instance_type: linux_x2
-    # Flutter beta for 3.47+ desktop perf until it lands on stable.
     max_build_duration: 120
     environment:
       flutter: beta

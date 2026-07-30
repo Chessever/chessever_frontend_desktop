@@ -8,9 +8,9 @@ import "package:path/path.dart" as path;
 
 Future<ItemModel?> versionCheckFunction({
   required String appArchiveUrl,
-  /// When set (e.g. `macos-arm64` / `macos-x64`), only items advertising that
-  /// exact platform key are considered. Falls back to [Platform.operatingSystem]
-  /// when null so Windows/Linux and legacy single-`macos` catalogs still work.
+  /// When set (e.g. `macos` / `macos-x64`), only items advertising that exact
+  /// platform key are considered. Falls back to [Platform.operatingSystem]
+  /// when null so Windows/Linux and continuous Silicon `macos` catalogs work.
   String? platform,
 }) async {
   final tempDir = await Directory.systemTemp.createTemp("desktop_updater_");

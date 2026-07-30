@@ -41,14 +41,15 @@ case "$MACOS_RELEASE_ARCH" in
 esac
 
 # Platform key in app-archive.json / archive dir / ingest CLI.
-UPDATE_PLATFORM="macos-${MACOS_RELEASE_ARCH}"
-# Website aliases: Apple Silicon → Chessever-arm64.dmg, Intel → Chessever-intel.dmg
+# Silicon continues the original `macos` slug; Intel is additive `macos-x64`.
 if [ "$MACOS_RELEASE_ARCH" = "arm64" ]; then
-  DMG_ARCH_LABEL="arm64"
-  STABLE_DMG_NAME="Chessever-arm64.dmg"
+  UPDATE_PLATFORM="macos"
+  DMG_ARCH_LABEL=""
+  STABLE_DMG_NAME="Chessever.dmg"
   EXPECTED_STOCKFISH_ARCH="arm64"
   FORBIDDEN_STOCKFISH_ARCH="x86_64"
 else
+  UPDATE_PLATFORM="macos-x64"
   DMG_ARCH_LABEL="intel"
   STABLE_DMG_NAME="Chessever-intel.dmg"
   EXPECTED_STOCKFISH_ARCH="x86_64"
@@ -447,26 +448,21 @@ rsync -az --delete -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
   "$ARCHIVE_DIR/" "$REMOTE:/var/www/updates/desktop/archive/$ARCHIVE_NAME/"
 ssh "${SSH_OPTS[@]}" "$REMOTE" "ingest $UPDATE_PLATFORM $ARCHIVE_NAME $RELEASE_VERSION"
 
-# Arch-specific stable aliases power the website chip-choice dialog.
-# Versioned copies live next to them for reference. Apple Silicon also
-# refreshes the legacy Chessever.dmg alias so old links keep working.
-VERSIONED_DMG_NAME="Chessever-${RELEASE_VERSION}-${DMG_ARCH_LABEL}.dmg"
+# Silicon continues Chessever.dmg + Chessever-<version>.dmg (original pattern).
+# Intel is additive: Chessever-intel.dmg + Chessever-<version>-intel.dmg.
+if [ -n "$DMG_ARCH_LABEL" ]; then
+  VERSIONED_DMG_NAME="Chessever-${RELEASE_VERSION}-${DMG_ARCH_LABEL}.dmg"
+else
+  VERSIONED_DMG_NAME="Chessever-${RELEASE_VERSION}.dmg"
+fi
 rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
   "$DMG_PATH" "$REMOTE:/var/www/updates/desktop/downloads/${VERSIONED_DMG_NAME}"
 rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
   "$DMG_PATH" "$REMOTE:/var/www/updates/desktop/downloads/${STABLE_DMG_NAME}"
-if [ "$MACOS_RELEASE_ARCH" = "arm64" ]; then
-  rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
-    "$DMG_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever.dmg"
-fi
 
 # Prune only after both the immutable versioned download and stable website
 # alias are safely in place. The server owns version ordering and deletion.
 ssh "${SSH_OPTS[@]}" "$REMOTE" "prune-downloads $UPDATE_PLATFORM"
-if [ "$MACOS_RELEASE_ARCH" = "arm64" ]; then
-  # Legacy single-alias retention (still used by old bookmarks).
-  ssh "${SSH_OPTS[@]}" "$REMOTE" "prune-downloads macos" || true
-fi
 
 echo "Published macOS desktop_updater archive $RELEASE_VERSION ($UPDATE_PLATFORM)"
 echo "Published macOS DMG: https://chessever.com/updates/desktop/downloads/${STABLE_DMG_NAME}"

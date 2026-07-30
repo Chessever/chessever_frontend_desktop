@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('MacOsReleaseArch', () {
     test('update platform keys stay dual and distinct', () {
-      expect(MacOsReleaseArch.arm64.updatePlatformKey, 'macos-arm64');
+      expect(MacOsReleaseArch.arm64.updatePlatformKey, 'macos');
       expect(MacOsReleaseArch.x64.updatePlatformKey, 'macos-x64');
       expect(
         MacOsReleaseArch.arm64.stableDmgFileName,
@@ -13,7 +13,7 @@ void main() {
       );
       expect(
         MacOsReleaseArch.arm64.downloadUri.toString(),
-        contains('Chessever-arm64.dmg'),
+        contains('Chessever.dmg'),
       );
       expect(
         MacOsReleaseArch.x64.downloadUri.toString(),
@@ -63,7 +63,11 @@ void main() {
       );
       expect(mismatch, isNotNull);
       expect(mismatch!.hostArch, MacOsReleaseArch.arm64);
-      expect(mismatch.recoveryDownloadUri.toString(), contains('arm64'));
+      // Silicon recovery uses the continuous Chessever.dmg alias.
+      expect(
+        mismatch.recoveryDownloadUri.toString(),
+        endsWith('/Chessever.dmg'),
+      );
     });
 
     test('matching flavors are fine', () {
@@ -102,7 +106,7 @@ void main() {
           operatingSystem: 'macos',
           macOsFlavor: MacOsReleaseArch.arm64,
         ),
-        'macos-arm64',
+        'macos',
       );
       expect(
         desktopUpdatePlatformKey(

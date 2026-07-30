@@ -183,8 +183,7 @@ class DesktopUpdaterService {
     try {
       final item = await _updater.versionCheck(
         appArchiveUrl: _archiveUrl,
-        // Dual macOS packages advertise macos-arm64 / macos-x64 so Silicon
-        // builds never pull an Intel archive (and vice versa).
+        // Silicon continues on `macos`; Intel-only builds filter `macos-x64`.
         platform: desktopUpdatePlatformKey(),
       );
       if (item == null) {

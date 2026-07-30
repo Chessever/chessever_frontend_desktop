@@ -37,7 +37,8 @@ void main() {
         script,
         contains(r'ARCHIVE_NAME="${RELEASE_VERSION}-${UPDATE_PLATFORM}"'),
       );
-      expect(script, contains(r'UPDATE_PLATFORM="macos-${MACOS_RELEASE_ARCH}"'));
+      expect(script, contains('UPDATE_PLATFORM="macos"'));
+      expect(script, contains('UPDATE_PLATFORM="macos-x64"'));
       expect(script, contains('macos/Runner/Release.entitlements'));
       expect(script, contains(r'xcrun notarytool submit "$TMP_ZIP" --wait'));
       expect(script, contains(r'xcrun stapler staple "$APP"'));
@@ -78,7 +79,7 @@ void main() {
         script,
         contains(r'ingest $UPDATE_PLATFORM $ARCHIVE_NAME $RELEASE_VERSION'),
       );
-      expect(script, contains('Chessever-arm64.dmg'));
+      expect(script, contains('Chessever.dmg'));
       expect(script, contains('Chessever-intel.dmg'));
       expect(script, contains('must be a single-arch binary'));
       _expectInstallerUploadsBeforePrune(
@@ -112,7 +113,6 @@ void main() {
       expect(codemagic, isNot(contains('--dart-define-from-file')));
       // Separate workflows: arm64 on Flutter beta, Intel on Flutter stable.
       expect(codemagic, isNot(contains('for ARCH in arm64 x64')));
-      expect(codemagic, contains(r'macos-${ARCH}'));
       expect(codemagic, contains('--dart-define=MACOS_RELEASE_ARCH'));
       expect(codemagic, isNot(contains('sign_update')));
       expect(codemagic, isNot(contains('.zip.sig')));
@@ -137,8 +137,10 @@ void main() {
       final linuxBlock = codemagic.split('linux-desktop-release:').last;
       expect(armBlock, contains('flutter: beta'));
       expect(armBlock, contains('ARCH=arm64'));
+      expect(armBlock, contains('desktop_updater:release macos --release'));
       expect(x64Block, contains('flutter: stable'));
       expect(x64Block, contains('ARCH=x64'));
+      expect(x64Block, contains('desktop_updater:release macos-x64 --release'));
       expect(windowsBlock, contains('flutter: beta'));
       expect(linuxBlock, contains('flutter: beta'));
 
@@ -490,13 +492,12 @@ void main() {
       expect(wrapper, contains('KEEP_LAST_N=2'));
       expect(wrapper, isNot(contains('KEEP_LAST_N=3')));
       expect(wrapper, contains(r'--keep-last-n "$KEEP_LAST_N"'));
-      // Dual macOS packages must be accepted by the forced-command wrapper or
-      // remote ingest/prune exits with "bad platform" before publish completes.
+      // Continuous macos + additive intel (and historical macos-arm64) must be
+      // accepted by the forced-command wrapper or remote ingest/prune fails.
       expect(
         wrapper,
         contains('macos | macos-arm64 | macos-x64 | windows | linux'),
       );
-      expect(wrapper, contains('macos-arm64'));
       expect(wrapper, contains('macos-x64'));
       expect(wrapper, contains('bad archive'));
       expect(wrapper, contains('"prune-downloads "*'));

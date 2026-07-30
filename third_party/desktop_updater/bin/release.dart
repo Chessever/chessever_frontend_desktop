@@ -8,8 +8,10 @@ import "helper/copy.dart";
 
 /// Flutter build target for a release platform key.
 ///
-/// Dual macOS packages use `macos-arm64` / `macos-x64` as archive identity
-/// while still invoking `flutter build macos`.
+/// Silicon keeps continuous archive identity `macos`; Intel is additive
+/// `macos-x64`. Both still invoke `flutter build macos`.
+/// Historical `macos-arm64` is still accepted for local rebuilds of old
+/// packages.
 String flutterBuildTarget(String platform) {
   if (platform == "macos" ||
       platform == "macos-arm64" ||

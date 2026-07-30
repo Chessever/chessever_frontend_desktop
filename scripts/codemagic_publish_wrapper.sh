@@ -20,7 +20,8 @@ case "$ORIG" in
     ;;
   "ingest "*)
     read -r _ platform archive version extra <<<"$ORIG"
-    # Dual macOS packages use macos-arm64 / macos-x64; bare macos is legacy.
+    # Silicon continues bare macos; Intel is additive macos-x64.
+    # macos-arm64 remains accepted for historical archives.
     case "$platform" in
       macos | macos-arm64 | macos-x64 | windows | linux) ;;
       *)

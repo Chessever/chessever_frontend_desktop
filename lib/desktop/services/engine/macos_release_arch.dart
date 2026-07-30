@@ -12,11 +12,18 @@ enum MacOsReleaseArch {
   final String wireName;
 
   /// Platform key stored in `app-archive.json` / archive directory names.
-  String get updatePlatformKey => 'macos-$wireName';
+  ///
+  /// Apple Silicon keeps the original continuous slug `macos` so existing
+  /// installs and update history stay on one line. Intel is additive only
+  /// (`macos-x64`).
+  String get updatePlatformKey => switch (this) {
+    MacOsReleaseArch.arm64 => 'macos',
+    MacOsReleaseArch.x64 => 'macos-x64',
+  };
 
   /// Stable website DMG alias for this flavor.
   String get stableDmgFileName => switch (this) {
-    MacOsReleaseArch.arm64 => 'Chessever-arm64.dmg',
+    MacOsReleaseArch.arm64 => 'Chessever.dmg',
     MacOsReleaseArch.x64 => 'Chessever-intel.dmg',
   };
 

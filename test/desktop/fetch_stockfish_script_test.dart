@@ -16,8 +16,9 @@ void main() {
 
   test('publish script wires dual archive + dmg aliases', () {
     final script = File('scripts/codemagic_publish_macos.sh').readAsStringSync();
-    expect(script, contains(r'UPDATE_PLATFORM="macos-${MACOS_RELEASE_ARCH}"'));
-    expect(script, contains('Chessever-arm64.dmg'));
+    expect(script, contains('UPDATE_PLATFORM="macos"'));
+    expect(script, contains('UPDATE_PLATFORM="macos-x64"'));
+    expect(script, contains('Chessever.dmg'));
     expect(script, contains('Chessever-intel.dmg'));
     expect(script, contains(r'dart run desktop_updater:archive "$UPDATE_PLATFORM"'));
     expect(
@@ -35,7 +36,6 @@ void main() {
     // Split so Apple Silicon can track Flutter beta while Intel stays on stable.
     expect(codemagic, isNot(contains('for ARCH in arm64 x64')));
     expect(codemagic, contains('MACOS_ENGINE_ARCH'));
-    expect(codemagic, contains(r'macos-${ARCH}'));
     expect(codemagic, contains('--dart-define=MACOS_RELEASE_ARCH'));
     expect(codemagic, contains('codemagic_publish_macos.sh --arch'));
     expect(codemagic, isNot(contains('lipo -create')));
@@ -48,7 +48,11 @@ void main() {
     ).first;
     expect(armBlock, contains('flutter: beta'));
     expect(armBlock, contains('ARCH=arm64'));
+    // Continuous Silicon slug is bare macos, not macos-arm64.
+    expect(armBlock, contains('desktop_updater:release macos --release'));
+    expect(armBlock, isNot(contains('desktop_updater:release "macos-arm64"')));
     expect(x64Block, contains('flutter: stable'));
     expect(x64Block, contains('ARCH=x64'));
+    expect(x64Block, contains('desktop_updater:release macos-x64 --release'));
   });
 }
