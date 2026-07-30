@@ -354,6 +354,19 @@ bool shouldShowDesktopBoardEvalBar(EngineSettings settings) {
   return settings.showEngineAnalysis && settings.showEngineGauge;
 }
 
+/// Whether the board notation ladder should paint the active-move highlight.
+///
+/// Notation stays mounted in the right-rail stack when Explorer or Games is
+/// open (`rightRailActivePage` 1 or 2). Coupling highlight to "notation page
+/// only" (`page == 0`) blanked the cursor as soon as the user tapped Open
+/// Explorer even though the board move pointer was still intact.
+@visibleForTesting
+bool shouldShowNotationActiveHighlight({required int rightRailActivePage}) {
+  // Intentionally ignore [rightRailActivePage]: keep the selection visible
+  // for every right-rail page while the notation ladder remains on screen.
+  return true;
+}
+
 /// The single engine target for the visible board position.
 ///
 /// Threat analysis is a null-move probe, so every engine surface must query
@@ -867,10 +880,6 @@ class _BoardPaneContent extends HookConsumerWidget {
             const BoardSettingsNew().showMoveNavigation,
       ),
     );
-    final rightRailActivePage = ref.watch(
-      rightRailActivePageProvider(activeTabId ?? '__none__'),
-    );
-
     final latestPgnImport = ref.watch(pgnIntakeProvider);
     final legacyActiveGameId =
         boardArgs == null
@@ -4167,7 +4176,12 @@ class _BoardPaneContent extends HookConsumerWidget {
       return NotationLadderView(
         game: chessGame.value,
         activePointer: activePointer,
-        showActiveHighlight: rightRailActivePage == 0,
+        // Notation stays mounted under Explorer; keep the cursor highlight.
+        showActiveHighlight: shouldShowNotationActiveHighlight(
+          rightRailActivePage: ref.read(
+            rightRailActivePageProvider(activeTabId ?? '__none__'),
+          ),
+        ),
         onJump: onJump,
         scrollController: scrollController,
         visibleMoveOrderController: visibleNotationMoveOrderController,
