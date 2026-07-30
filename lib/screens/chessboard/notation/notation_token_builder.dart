@@ -2,6 +2,7 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/screens/chessboard/notation/notation_pointer.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
+import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
 
 // ---------------------------------------------------------------------------
@@ -196,17 +197,9 @@ List<NotationDisplayToken> buildNotationTokens(
     // Add PGN comments
     if (node.move.comments != null) {
       for (final comment in node.move.comments!) {
-        // Strip out Lichess extension tags from the comment text
-        String cleanText =
-            comment
-                .replaceAll(RegExp(r'\[%clk\s+[^\]]+\]'), '')
-                .replaceAll(RegExp(r'\[%eval\s+[^\]]+\]'), '')
-                .replaceAll(RegExp(r'\[%cal\s+[^\]]+\]'), '')
-                .replaceAll(RegExp(r'\[%csl\s+[^\]]+\]'), '')
-                .replaceAll(RegExp(r'\[%emt\s+[^\]]+\]'), '')
-                .replaceAll(RegExp(r'\[%tag\s+[^\]]+\]'), '')
-                .trim();
-
+        // Strip machine tags (clk/eval/arrows/chessever_annotation) — tags-only
+        // comments must not render as prose under the SAN.
+        final cleanText = cleanPgnCommentText(comment);
         if (cleanText.isEmpty) {
           continue;
         }

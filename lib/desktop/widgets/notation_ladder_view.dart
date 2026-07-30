@@ -18,6 +18,7 @@ import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart'
 import 'package:chessever/screens/chessboard/notation/notation_pointer.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
+import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart';
 import 'package:chessever/screens/chessboard/widgets/nag_display.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -4568,22 +4569,9 @@ Set<String> _allCollapsibleVariationIds(ChessLine mainline) {
 }
 
 List<String> _cleanPgnComments(List<String>? comments) {
-  if (comments == null || comments.isEmpty) return const <String>[];
-  final out = <String>[];
-  for (final comment in comments) {
-    final clean =
-        comment
-            .replaceAll(_sourceDirectiveRegex, '')
-            .replaceAll(RegExp(r'\[%clk\s+[^\]]+\]'), '')
-            .replaceAll(RegExp(r'\[%eval\s+[^\]]+\]'), '')
-            .replaceAll(RegExp(r'\[%cal\s+[^\]]+\]'), '')
-            .replaceAll(RegExp(r'\[%csl\s+[^\]]+\]'), '')
-            .replaceAll(RegExp(r'\[%emt\s+[^\]]+\]'), '')
-            .replaceAll(RegExp(r'\[%tag\s+[^\]]+\]'), '')
-            .trim();
-    if (clean.isNotEmpty) out.add(clean);
-  }
-  return out;
+  // Shared cleaner strips clk/eval/arrows and [%chessever_annotation …] so
+  // machine tags never appear as free-text comments under the SAN.
+  return cleanPgnComments(comments);
 }
 
 String? _sourceLabelFromComments(List<String>? comments) {
@@ -4606,10 +4594,7 @@ String _sourceMetadataDisplay(String sourceLabel) {
   return parts.join(' · ');
 }
 
-String? _firstPgnComment(List<String>? comments) {
-  final cleaned = _cleanPgnComments(comments);
-  return cleaned.isEmpty ? null : cleaned.first;
-}
+String? _firstPgnComment(List<String>? comments) => firstPgnComment(comments);
 
 final _sourceDirectiveRegex = RegExp(r'\[%src\s+([^\]]+)\]');
 

@@ -12,6 +12,54 @@ final _chesseverAnnotationDirective = RegExp(
   caseSensitive: false,
 );
 
+/// Machine tags that must never surface as free-text notation comments.
+///
+/// Includes clocks/evals/arrows plus ChessEver's private classification
+/// directive. Tags-only comments become empty after cleaning and are omitted.
+final _pgnMachineTagDirective = RegExp(
+  r'\[%\s*(?:clk|eval|cal|csl|emt|tag|src|chessever_annotation)\s*[^\]]*\]',
+  caseSensitive: false,
+);
+
+/// Residual bare form some parsers leave after stripping brackets/percent.
+/// Matches e.g. `chessever_annotation !` / `chessever_annotation ??`.
+/// Glyphs (`!`, `??`, …) are non-word chars so trailing `\b` is unreliable;
+/// match the keyword + glyph/token alone.
+final _bareChesseverAnnotationResidue = RegExp(
+  r'\bchessever_annotation\s+(?:!!|\?\?|!\?|\?!|[!?]|[A-Za-z_]+)',
+  caseSensitive: false,
+);
+
+/// Strip Lichess / ChessEver machine tags from a single PGN comment and trim.
+///
+/// Empty result means the comment was tags-only and must not render as prose.
+/// Parse helpers such as [parseChesseverAnnotationType] still read **raw**
+/// move comments — this is display-only.
+String cleanPgnCommentText(String comment) {
+  return comment
+      .replaceAll(_pgnMachineTagDirective, '')
+      .replaceAll(_bareChesseverAnnotationResidue, '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
+/// Cleaned prose comments for notation display (tags-only entries dropped).
+List<String> cleanPgnComments(Iterable<String>? comments) {
+  if (comments == null) return const <String>[];
+  final out = <String>[];
+  for (final comment in comments) {
+    final clean = cleanPgnCommentText(comment);
+    if (clean.isNotEmpty) out.add(clean);
+  }
+  return out;
+}
+
+/// First non-empty cleaned prose comment, or null when none remain.
+String? firstPgnComment(Iterable<String>? comments) {
+  final cleaned = cleanPgnComments(comments);
+  return cleaned.isEmpty ? null : cleaned.first;
+}
+
 /// Classic portable glyph for a report classification (best-effort for other apps).
 ///
 /// ChessEver’s richer labels collapse onto the five standard quality marks
