@@ -1,6 +1,8 @@
 import 'package:chessever/desktop/panes/board_pane.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart'
+    hide mergeGameReportAnnotationsForGif;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -42,60 +44,86 @@ void main() {
     expect(merged.mainline[2].nags, const <int>[10]);
   });
 
-  test('GIF export includes scores and classifications from Game Analysis', () {
-    final game = ChessGame.fromPgn(
-      'gif-evals',
-      r'1. e4 {[%eval 0.15]} e5 2. Nf3 *',
-    );
-    final evaluated = mergeGameReportAnnotationsForGif(game, const [
-      GameReportMove(
-        ply: 1,
-        san: 'e4',
-        uci: 'e2e4',
-        isWhite: true,
-        classification: GameMoveClassification.brilliant,
-        evaluation: GameReportLine(
-          moves: <String>['e2e4'],
-          depth: 18,
-          centipawns: 42,
+  test(
+    'GIF/share export uses classic-glyph ChessEver annotations and quality NAGs',
+    () {
+      final game = ChessGame.fromPgn(
+        'gif-evals',
+        r'1. e4 {[%eval 0.15]} e5 2. Nf3 *',
+      );
+      final reportMoves = const [
+        GameReportMove(
+          ply: 1,
+          san: 'e4',
+          uci: 'e2e4',
+          isWhite: true,
+          classification: GameMoveClassification.brilliant,
+          evaluation: GameReportLine(
+            moves: <String>['e2e4'],
+            depth: 18,
+            centipawns: 42,
+          ),
         ),
-      ),
-      GameReportMove(
-        ply: 2,
-        san: 'e5',
-        uci: 'e7e5',
-        isWhite: false,
-        classification: GameMoveClassification.inaccuracy,
-        evaluation: GameReportLine(
-          moves: <String>['e7e5'],
-          depth: 18,
-          centipawns: -31,
+        GameReportMove(
+          ply: 2,
+          san: 'e5',
+          uci: 'e7e5',
+          isWhite: false,
+          classification: GameMoveClassification.inaccuracy,
+          evaluation: GameReportLine(
+            moves: <String>['e7e5'],
+            depth: 18,
+            centipawns: -31,
+          ),
         ),
-      ),
-      GameReportMove(
-        ply: 3,
-        san: 'Nf3',
-        uci: 'g1f3',
-        isWhite: true,
-        classification: GameMoveClassification.missedWin,
-        evaluation: GameReportLine(moves: <String>['g1f3'], depth: 18, mate: 3),
-      ),
-    ]);
+        GameReportMove(
+          ply: 3,
+          san: 'Nf3',
+          uci: 'g1f3',
+          isWhite: true,
+          classification: GameMoveClassification.missedWin,
+          evaluation: GameReportLine(
+            moves: <String>['g1f3'],
+            depth: 18,
+            mate: 3,
+          ),
+        ),
+      ];
 
-    expect(evaluated.mainline[0].eval, '0.15');
-    expect(evaluated.mainline[1].eval, '-0.31');
-    expect(evaluated.mainline[2].eval, '#3');
-    expect(
-      evaluated.mainline[0].comments,
-      contains('[%chessever_annotation brilliant]'),
-    );
-    expect(
-      evaluated.mainline[1].comments,
-      contains('[%chessever_annotation inaccuracy]'),
-    );
-    expect(
-      evaluated.mainline[2].comments,
-      contains('[%chessever_annotation missed_win]'),
-    );
-  });
+      final evaluated = mergeGameReportAnnotationsForGif(game, reportMoves);
+      final pgn = exportGamePgnWithReport(game, reportMoves);
+
+      // Report evals replace older/default PGN values (mobile parity).
+      expect(evaluated.mainline[0].eval, '0.42');
+      expect(evaluated.mainline[1].eval, '-0.31');
+      expect(evaluated.mainline[2].eval, '#3');
+
+      // Classic portable glyphs — not product names.
+      expect(
+        evaluated.mainline[0].comments,
+        contains('[%chessever_annotation !!]'),
+      );
+      expect(
+        evaluated.mainline[1].comments,
+        contains('[%chessever_annotation ?!]'),
+      );
+      expect(
+        evaluated.mainline[2].comments,
+        contains('[%chessever_annotation ??]'),
+      );
+      expect(evaluated.mainline[0].nags, contains(3)); // !!
+      expect(evaluated.mainline[1].nags, contains(6)); // ?!
+      expect(evaluated.mainline[2].nags, contains(4)); // ??
+
+      expect(pgn, contains('[%chessever_annotation !!]'));
+      expect(pgn, contains('[%chessever_annotation ?!]'));
+      expect(pgn, contains('[%chessever_annotation ??]'));
+      expect(pgn, isNot(contains('[%chessever_annotation brilliant]')));
+      expect(pgn, isNot(contains('[%chessever_annotation good_move]')));
+      expect(pgn, isNot(contains('[%chessever_annotation missed_win]')));
+      expect(pgn, isNot(contains('[%chessever_annotation inaccuracy]')));
+      expect(pgn, contains(RegExp(r'e4\s*\$3|e4!!')));
+      expect(pgn, contains(RegExp(r'e5\s*\$6|e5\?!')));
+    },
+  );
 }

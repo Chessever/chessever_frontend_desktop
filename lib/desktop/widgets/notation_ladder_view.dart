@@ -17,6 +17,7 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/screens/chessboard/notation/notation_pointer.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
+import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/widgets/nag_display.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -3799,18 +3800,14 @@ class _NotationClassificationIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final type = annotation.type;
+    // Badge SVG already carries its own coloured disc — render bare, no circle.
     return DesktopTooltip(
       message: _annotationLabel(type),
-      child: Container(
+      child: SizedBox(
         width: 17,
         height: 17,
-        padding: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          color: _annotationBadgeColor(type),
-          shape: BoxShape.circle,
-        ),
         child: SvgPicture.asset(
-          _annotationBadgeAsset(type),
+          moveAnnotationIconAsset(type),
           fit: BoxFit.contain,
         ),
       ),
@@ -3828,30 +3825,6 @@ String _annotationLabel(LichessMoveAnnotationType type) => switch (type) {
   LichessMoveAnnotationType.blunder => 'Blunder',
   LichessMoveAnnotationType.missedWin => 'Missed Win',
   LichessMoveAnnotationType.bookMove => 'Book move',
-};
-
-String _annotationBadgeAsset(LichessMoveAnnotationType type) => switch (type) {
-  LichessMoveAnnotationType.brilliant => 'assets/svgs/brilliant.svg',
-  LichessMoveAnnotationType.goodMove => 'assets/svgs/good_move.svg',
-  LichessMoveAnnotationType.bestMove => 'assets/svgs/best_move.svg',
-  LichessMoveAnnotationType.forced => 'assets/svgs/forced_move.svg',
-  LichessMoveAnnotationType.inaccuracy => 'assets/svgs/inaccuracy.svg',
-  LichessMoveAnnotationType.mistake => 'assets/svgs/mistake.svg',
-  LichessMoveAnnotationType.blunder => 'assets/svgs/blunder.svg',
-  LichessMoveAnnotationType.missedWin => 'assets/svgs/missed_win.svg',
-  LichessMoveAnnotationType.bookMove => 'assets/svgs/book_move.svg',
-};
-
-Color _annotationBadgeColor(LichessMoveAnnotationType type) => switch (type) {
-  LichessMoveAnnotationType.brilliant => const Color(0xFF177A68),
-  LichessMoveAnnotationType.goodMove => const Color(0xFF177A68),
-  LichessMoveAnnotationType.bestMove => const Color(0xFF28833A),
-  LichessMoveAnnotationType.forced => const Color(0xFF6B7A8A),
-  LichessMoveAnnotationType.inaccuracy => const Color(0xFFFABE46),
-  LichessMoveAnnotationType.mistake => const Color(0xFFC55A1E),
-  LichessMoveAnnotationType.blunder => const Color(0xFFC9342E),
-  LichessMoveAnnotationType.missedWin => const Color(0xFF8F1E1E),
-  LichessMoveAnnotationType.bookMove => const Color(0xFF4E5B4F),
 };
 
 class _BoardMarksBadge extends StatelessWidget {

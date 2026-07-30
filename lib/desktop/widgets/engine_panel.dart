@@ -10,6 +10,8 @@ import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
+import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
+import 'package:chessever/screens/chessboard/game_review/evaluation_graph_markers.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
@@ -960,8 +962,10 @@ class _ReportEvaluationGraphState extends State<_ReportEvaluationGraph> {
                 children: [
                   Positioned.fill(
                     child: CustomPaint(
+                      key: const ValueKey('game-report-evaluation-graph'),
                       painter: _ReportGraphPainter(
                         positions: widget.report.positions,
+                        moves: widget.report.moves,
                         activePly: widget.activePly,
                         hoveredPly: hoveredPly,
                       ),
@@ -987,13 +991,17 @@ class _ReportEvaluationGraphState extends State<_ReportEvaluationGraph> {
 class _ReportGraphPainter extends CustomPainter {
   const _ReportGraphPainter({
     required this.positions,
+    required this.moves,
     required this.activePly,
     required this.hoveredPly,
   });
 
   final List<GameReportPosition> positions;
+  final List<GameReportMove> moves;
   final int activePly;
   final int? hoveredPly;
+
+  static const double _classificationDotRadius = 3.5;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1011,10 +1019,10 @@ class _ReportGraphPainter extends CustomPainter {
         ..strokeWidth = 1,
     );
     if (positions.isEmpty) return;
+    final maxIndex = positions.length - 1;
     final path = Path();
     for (var i = 0; i < positions.length; i++) {
-      final x =
-          positions.length == 1 ? 0.0 : size.width * i / (positions.length - 1);
+      final x = maxIndex <= 0 ? 0.0 : size.width * i / maxIndex;
       final win = gameReportWinPercentage(positions[i].bestLine);
       final y = size.height - (win / 100 * size.height);
       if (i == 0) {
@@ -1036,11 +1044,32 @@ class _ReportGraphPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5,
     );
-    final safePly = activePly.clamp(0, positions.length - 1);
-    final markerX =
-        positions.length == 1
-            ? 0.0
-            : size.width * safePly / (positions.length - 1);
+
+    // Classification markers sit on the curve (chess.com-style). Paint before
+    // the active scrubber so the white active point stays readable on top.
+    final classificationMarkers = buildEvaluationGraphClassificationMarkers(
+      moves: moves,
+      positions: positions,
+    );
+    final outline =
+        Paint()
+          ..color = kBlack3Color.withValues(alpha: 0.55)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1;
+    for (final marker in classificationMarkers) {
+      final x = maxIndex <= 0 ? 0.0 : size.width * marker.ply / maxIndex;
+      final y = size.height - marker.winPercentage / 100 * size.height;
+      final center = Offset(x, y);
+      canvas.drawCircle(
+        center,
+        _classificationDotRadius,
+        Paint()..color = marker.color,
+      );
+      canvas.drawCircle(center, _classificationDotRadius, outline);
+    }
+
+    final safePly = activePly.clamp(0, maxIndex);
+    final markerX = maxIndex <= 0 ? 0.0 : size.width * safePly / maxIndex;
     canvas.drawLine(
       Offset(markerX, 0),
       Offset(markerX, size.height),
@@ -1050,10 +1079,7 @@ class _ReportGraphPainter extends CustomPainter {
     );
     final hover = hoveredPly;
     if (hover != null && hover >= 0 && hover < positions.length) {
-      final hoverX =
-          positions.length == 1
-              ? 0.0
-              : size.width * hover / (positions.length - 1);
+      final hoverX = maxIndex <= 0 ? 0.0 : size.width * hover / maxIndex;
       final hoverY =
           size.height -
           (gameReportWinPercentage(positions[hover].bestLine) /
@@ -1083,7 +1109,8 @@ class _ReportGraphPainter extends CustomPainter {
   bool shouldRepaint(covariant _ReportGraphPainter oldDelegate) =>
       oldDelegate.activePly != activePly ||
       oldDelegate.hoveredPly != hoveredPly ||
-      oldDelegate.positions != positions;
+      oldDelegate.positions != positions ||
+      oldDelegate.moves != moves;
 }
 
 class _ReportGraphHoverLabel extends StatelessWidget {
@@ -1244,18 +1271,14 @@ class _GameReportClassificationIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Badge SVG already carries its own coloured disc — render bare, no circle.
     return DesktopTooltip(
       message: classification.label,
-      child: Container(
+      child: SizedBox(
         width: size,
         height: size,
-        padding: EdgeInsets.all(size * 0.23),
-        decoration: BoxDecoration(
-          color: _classificationColor(classification),
-          shape: BoxShape.circle,
-        ),
         child: SvgPicture.asset(
-          _classificationIconAsset(classification),
+          classificationIconAsset(classification),
           fit: BoxFit.contain,
         ),
       ),
@@ -1264,26 +1287,10 @@ class _GameReportClassificationIcon extends StatelessWidget {
 }
 
 String _classificationIconAsset(GameMoveClassification classification) =>
-    switch (classification) {
-      GameMoveClassification.brilliant => 'assets/svgs/brilliant.svg',
-      GameMoveClassification.goodMove => 'assets/svgs/good_move.svg',
-      GameMoveClassification.bestMove => 'assets/svgs/best_move.svg',
-      GameMoveClassification.missedWin => 'assets/svgs/missed_win.svg',
-      GameMoveClassification.inaccuracy => 'assets/svgs/inaccuracy.svg',
-      GameMoveClassification.mistake => 'assets/svgs/mistake.svg',
-      GameMoveClassification.blunder => 'assets/svgs/blunder.svg',
-    };
+    classificationIconAsset(classification);
 
 Color _classificationColor(GameMoveClassification classification) =>
-    switch (classification) {
-      GameMoveClassification.brilliant => const Color(0xFF177A68),
-      GameMoveClassification.goodMove => const Color(0xFF177A68),
-      GameMoveClassification.bestMove => const Color(0xFF28833A),
-      GameMoveClassification.missedWin => const Color(0xFF8F1E1E),
-      GameMoveClassification.inaccuracy => const Color(0xFFFABE46),
-      GameMoveClassification.mistake => const Color(0xFFC55A1E),
-      GameMoveClassification.blunder => const Color(0xFFC9342E),
-    };
+    classificationColor(classification);
 
 class _PvLine extends StatefulWidget {
   const _PvLine({

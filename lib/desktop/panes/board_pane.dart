@@ -28,6 +28,9 @@ import 'package:chessever/desktop/services/desktop_game_library_saver.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
+import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
+import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart'
+    hide mergeGameReportAnnotationsForGif;
 import 'package:chessever/desktop/services/local_library_game_updater.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_board_shortcuts.dart';
@@ -3599,8 +3602,16 @@ class _BoardPaneContent extends HookConsumerWidget {
               reportOwnsMoveQuality: true,
             ),
     };
+    // PGN-baked ChessEver directives (classic glyphs or legacy product names)
+    // override Lichess annotations for that ply; a live report still wins.
+    final pgnChesseverAnnotations = chesseverAnnotationsFromMainline(
+      chessGame.value,
+    );
     final moveAnnotations = mergeReportMoveAnnotations(
-      lichessAnnotations: lichessAnnotations,
+      lichessAnnotations: {
+        ...lichessAnnotations,
+        ...pgnChesseverAnnotations,
+      },
       reportAnnotations: reportAnnotations,
       reportAnalyzedPlies: reportAnalyzedPlies,
     );
@@ -4758,65 +4769,13 @@ ChessLine _stripCommentsAndNags(ChessLine line) {
 /// or `⟳` (observation) NAG just because the user added a quality glyph.
 bool _isQualityNag(int nag) => nag >= 1 && nag <= 7;
 
+/// Classic-glyph export merge (mobile-identical). Re-exported for existing
+/// call sites and tests; implementation lives in [chessever_annotation.dart].
 @visibleForTesting
 ChessGame mergeGameReportAnnotationsForGif(
   ChessGame game,
   List<GameReportMove> reportMoves,
-) {
-  if (reportMoves.isEmpty) return game;
-  final byPly = <int, GameReportMove>{
-    for (final move in reportMoves) move.ply: move,
-  };
-  var changed = false;
-  final mainline = <ChessMove>[
-    for (var index = 0; index < game.mainline.length; index++)
-      (() {
-        final move = game.mainline[index];
-        final report = byPly[index + 1];
-        if (report == null) return move;
-        final line = report.evaluation;
-        final evaluation =
-            move.eval?.trim().isNotEmpty == true
-                ? move.eval
-                : line.mate != null
-                ? '#${line.mate}'
-                : line.centipawns != null
-                ? (line.centipawns! / 100).toStringAsFixed(2)
-                : null;
-        final classification = report.classification;
-        final directive =
-            classification == null
-                ? null
-                : '[%chessever_annotation '
-                    '${_gifClassificationName(classification)}]';
-        final existingComments = move.comments ?? const <String>[];
-        final hasClassificationDirective = existingComments.any(
-          (comment) => comment.contains('[%chessever_annotation '),
-        );
-        final comments =
-            directive == null || hasClassificationDirective
-                ? existingComments
-                : <String>[...existingComments, directive];
-        final evalChanged = evaluation != null && evaluation != move.eval;
-        final commentsChanged = comments.length != existingComments.length;
-        if (!evalChanged && !commentsChanged) return move;
-        changed = true;
-        return move.copyWith(eval: evaluation, comments: comments);
-      })(),
-  ];
-  return changed ? game.copyWith(mainline: mainline) : game;
-}
-
-String _gifClassificationName(GameMoveClassification classification) =>
-    switch (classification) {
-      GameMoveClassification.brilliant => 'brilliant',
-      GameMoveClassification.goodMove => 'good_move',
-      GameMoveClassification.bestMove => 'best_move',
-      GameMoveClassification.missedWin => 'missed_win',
-      GameMoveClassification.inaccuracy => 'inaccuracy',
-      GameMoveClassification.mistake => 'mistake',
-      GameMoveClassification.blunder => 'blunder',
-    };
+) => mergeGameReportAnnotationsForExport(game, reportMoves);
 
 @visibleForTesting
 ChessGame mergeUserMainlineNagsForGif(
@@ -7554,6 +7513,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
           flipped: flipped,
           color: _annotationColor(boardAnnotation!.type),
           sizeFactor: 0.40,
+          selfContainedChild: true,
           child: SvgPicture.asset(
             _annotationIconAssetPath(boardAnnotation!.type),
             fit: BoxFit.contain,
@@ -9138,81 +9098,22 @@ Square? _normaliseLastMoveSquare(Move? move) {
   return squares.isEmpty ? null : squares.last;
 }
 
-/// Map the four primary quality NAGs to a Lichess annotation type so we
-/// can render the same SVG badge whether the glyph came from PGN-baked
-/// `$1`/`$2`/`$3`/`$4` or from a Lichess analysis classification.
+/// Map quality NAGs to a Lichess annotation type so we can render the same
+/// SVG badge whether the glyph came from PGN-baked `$1`–`$6` or from a
+/// Lichess / ChessEver analysis classification.
 LichessMoveAnnotationType? _mapNagToAnnotationType(int nag) {
-  switch (nag) {
-    case 1:
-      return LichessMoveAnnotationType.goodMove;
-    case 2:
-      return LichessMoveAnnotationType.mistake;
-    case 3:
-      return LichessMoveAnnotationType.brilliant;
-    case 4:
-      return LichessMoveAnnotationType.blunder;
-    default:
-      return null;
-  }
+  return annotationTypeFromQualityNags(<int>[nag]);
 }
 
 LichessMoveAnnotationType _annotationTypeForReportClassification(
   GameMoveClassification classification,
-) => switch (classification) {
-  GameMoveClassification.brilliant => LichessMoveAnnotationType.brilliant,
-  GameMoveClassification.goodMove => LichessMoveAnnotationType.goodMove,
-  GameMoveClassification.bestMove => LichessMoveAnnotationType.bestMove,
-  GameMoveClassification.missedWin => LichessMoveAnnotationType.missedWin,
-  GameMoveClassification.inaccuracy => LichessMoveAnnotationType.inaccuracy,
-  GameMoveClassification.mistake => LichessMoveAnnotationType.mistake,
-  GameMoveClassification.blunder => LichessMoveAnnotationType.blunder,
-};
+) => annotationTypeForClassification(classification);
 
-String _annotationIconAssetPath(LichessMoveAnnotationType type) {
-  switch (type) {
-    case LichessMoveAnnotationType.brilliant:
-      return 'assets/svgs/brilliant.svg';
-    case LichessMoveAnnotationType.missedWin:
-      return 'assets/svgs/missed_win.svg';
-    case LichessMoveAnnotationType.mistake:
-      return 'assets/svgs/mistake.svg';
-    case LichessMoveAnnotationType.blunder:
-      return 'assets/svgs/blunder.svg';
-    case LichessMoveAnnotationType.inaccuracy:
-      return 'assets/svgs/inaccuracy.svg';
-    case LichessMoveAnnotationType.goodMove:
-      return 'assets/svgs/good_move.svg';
-    case LichessMoveAnnotationType.bestMove:
-      return 'assets/svgs/best_move.svg';
-    case LichessMoveAnnotationType.forced:
-      return 'assets/svgs/forced_move.svg';
-    case LichessMoveAnnotationType.bookMove:
-      return 'assets/svgs/book_move.svg';
-  }
-}
+String _annotationIconAssetPath(LichessMoveAnnotationType type) =>
+    moveAnnotationIconAsset(type);
 
-Color _annotationColor(LichessMoveAnnotationType type) {
-  switch (type) {
-    case LichessMoveAnnotationType.brilliant:
-      return const Color(0xFF177A68);
-    case LichessMoveAnnotationType.missedWin:
-      return const Color(0xFFF70400);
-    case LichessMoveAnnotationType.goodMove:
-      return const Color(0xFF177A68);
-    case LichessMoveAnnotationType.bestMove:
-      return const Color(0xFF28833A);
-    case LichessMoveAnnotationType.forced:
-      return const Color(0xFF6B7A8A);
-    case LichessMoveAnnotationType.bookMove:
-      return const Color(0xFF4E5B4F);
-    case LichessMoveAnnotationType.inaccuracy:
-      return const Color(0xFFFABE46);
-    case LichessMoveAnnotationType.mistake:
-      return const Color(0xFFEB9518);
-    case LichessMoveAnnotationType.blunder:
-      return const Color(0xFFC9342E);
-  }
-}
+Color _annotationColor(LichessMoveAnnotationType type) =>
+    moveAnnotationColor(type);
 
 /// Map a single-letter Lichess colour code (G/Y/B/R/O) to the colour used
 /// for both `[%cal …]` arrows and `[%csl …]` square highlights. Mirrors
@@ -9376,6 +9277,7 @@ class _BoardBadge extends StatelessWidget {
     required this.color,
     required this.child,
     this.sizeFactor = 0.42,
+    this.selfContainedChild = false,
   });
 
   final double boardSize;
@@ -9384,6 +9286,10 @@ class _BoardBadge extends StatelessWidget {
   final Color color;
   final Widget child;
   final double sizeFactor;
+
+  /// True when [child] already paints its own filled disc edge-to-edge
+  /// (classification badge SVGs). Those must not get a second coloured circle.
+  final bool selfContainedChild;
 
   @override
   Widget build(BuildContext context) {
@@ -9420,7 +9326,7 @@ class _BoardBadge extends StatelessWidget {
             width: badgeSize,
             height: badgeSize,
             decoration: BoxDecoration(
-              color: color,
+              color: selfContainedChild ? Colors.transparent : color,
               shape: BoxShape.circle,
               boxShadow: const [
                 BoxShadow(
@@ -9431,7 +9337,10 @@ class _BoardBadge extends StatelessWidget {
               ],
               border: Border.all(color: const Color(0x2EFFFFFF), width: 0.5),
             ),
-            padding: EdgeInsets.all(badgeSize * 0.16),
+            padding:
+                selfContainedChild
+                    ? EdgeInsets.zero
+                    : EdgeInsets.all(badgeSize * 0.16),
             child: RepaintBoundary(child: child),
           ),
         ),

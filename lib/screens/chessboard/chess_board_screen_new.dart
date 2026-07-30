@@ -34,6 +34,7 @@ import 'package:chessever/screens/chessboard/chess_board_settings_page.dart';
 import 'package:chessever/screens/chessboard/widgets/smooth_sheet_config.dart';
 import 'package:chessever/screens/chessboard/widgets/save_analysis_sheet.dart';
 import 'package:chessever/screens/chessboard/widgets/nag_display.dart';
+import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/group_event/providers/countryman_games_tour_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
@@ -221,51 +222,11 @@ extension LichessMoveAnnotationTypeX on LichessMoveAnnotationType {
     }
   }
 
-  String get iconAssetPath {
-    switch (this) {
-      case LichessMoveAnnotationType.brilliant:
-        return 'assets/svgs/brilliant.svg';
-      case LichessMoveAnnotationType.missedWin:
-        return 'assets/svgs/missed_win.svg';
-      case LichessMoveAnnotationType.mistake:
-        return 'assets/svgs/mistake.svg';
-      case LichessMoveAnnotationType.blunder:
-        return 'assets/svgs/blunder.svg';
-      case LichessMoveAnnotationType.inaccuracy:
-        return 'assets/svgs/inaccuracy.svg';
-      case LichessMoveAnnotationType.goodMove:
-        return 'assets/svgs/good_move.svg';
-      case LichessMoveAnnotationType.bestMove:
-        return 'assets/svgs/best_move.svg';
-      case LichessMoveAnnotationType.forced:
-        return 'assets/svgs/forced_move.svg';
-      case LichessMoveAnnotationType.bookMove:
-        return 'assets/svgs/book_move.svg';
-    }
-  }
+  /// Both resolve through the shared palette in `classification_style.dart` so
+  /// the board, the notation list and the Game Analysis recap stay in step.
+  String get iconAssetPath => moveAnnotationIconAsset(this);
 
-  Color get color {
-    switch (this) {
-      case LichessMoveAnnotationType.brilliant:
-        return const Color(0xFF177A68);
-      case LichessMoveAnnotationType.missedWin:
-        return const Color(0xFFF70400);
-      case LichessMoveAnnotationType.goodMove:
-        return const Color(0xFF177A68);
-      case LichessMoveAnnotationType.bestMove:
-        return const Color(0xFF28833A);
-      case LichessMoveAnnotationType.forced:
-        return const Color(0xFF6B7A8A);
-      case LichessMoveAnnotationType.bookMove:
-        return const Color(0xFF4E5B4F);
-      case LichessMoveAnnotationType.inaccuracy:
-        return const Color(0xFFFABE46);
-      case LichessMoveAnnotationType.mistake:
-        return const Color(0xFFEB9518);
-      case LichessMoveAnnotationType.blunder:
-        return const Color(0xFFC9342E);
-    }
-  }
+  Color get color => moveAnnotationColor(this);
 }
 
 /// Merge NAGs baked into the PGN with NAGs the user has applied locally.
@@ -6792,11 +6753,15 @@ class _AnalysisBoardState extends ConsumerState<_AnalysisBoard> {
     return shapes;
   }
 
+  /// [selfContainedChild] is true when [child] already paints its own filled
+  /// disc edge-to-edge (the classification badge SVGs do). Those must not get a
+  /// second coloured circle behind them, nor inset padding.
   Positioned _buildBoardBadge({
     required Square square,
     required Color color,
     required Widget child,
     double sizeFactor = 0.42,
+    bool selfContainedChild = false,
   }) {
     final squareSize = widget.size / 8;
     final effectiveFile = widget.isFlipped ? 7 - square.file : square.file;
@@ -6823,7 +6788,7 @@ class _AnalysisBoardState extends ConsumerState<_AnalysisBoard> {
             width: badgeSize,
             height: badgeSize,
             decoration: BoxDecoration(
-              color: color,
+              color: selfContainedChild ? Colors.transparent : color,
               shape: BoxShape.circle,
               boxShadow: [
                 BoxShadow(
@@ -6837,7 +6802,10 @@ class _AnalysisBoardState extends ConsumerState<_AnalysisBoard> {
                 width: 0.5,
               ),
             ),
-            padding: EdgeInsets.all(badgeSize * 0.16),
+            padding:
+                selfContainedChild
+                    ? EdgeInsets.zero
+                    : EdgeInsets.all(badgeSize * 0.16),
             child: RepaintBoundary(child: child),
           ),
         ),
@@ -6853,6 +6821,7 @@ class _AnalysisBoardState extends ConsumerState<_AnalysisBoard> {
       square: square,
       color: annotation.type.color,
       sizeFactor: 0.40,
+      selfContainedChild: true,
       child: SvgPicture.asset(
         annotation.type.iconAssetPath,
         fit: BoxFit.contain,

@@ -166,7 +166,9 @@ void main() {
     expect(find.byType(SvgPicture), findsWidgets);
     expect(find.text('1.e4'), findsNothing);
     expect(find.text('Moves'), findsNothing);
-    await tester.tapAt(tester.getCenter(find.byType(CustomPaint).first));
+    await tester.tap(
+      find.byKey(const ValueKey('game-report-evaluation-graph')),
+    );
     expect(jumpedPly, isNotNull);
   });
 }
