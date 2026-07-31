@@ -4883,6 +4883,12 @@ resolveBoardMoveAssessment({
   required Iterable<int> pgnNags,
   required LichessMoveAnnotation? moveAnnotation,
 }) {
+  // NOTE (cross-app divergence, deliberate on both sides): when the reader has
+  // applied their own quality NAG to a ply our report also judged, desktop
+  // shows the report's badge (see "generated report assessment owns the
+  // on-board move badge") while mobile shows the reader's mark. Local state
+  // only — a pasted PGN renders identically on both — but the two apps answer
+  // the same question differently. Changing it is a product call, not a fix.
   final reportOwnsMoveQuality =
       moveAnnotation?.reportOwnsMoveQuality == true ||
       moveAnnotation?.useClassificationIcon == true;

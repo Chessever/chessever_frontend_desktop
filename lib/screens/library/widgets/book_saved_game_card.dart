@@ -49,7 +49,12 @@ class BookSavedGameCard extends StatelessWidget {
     final event =
         md['Event']?.toString() ?? md['Site']?.toString() ?? 'library';
     final round = md['Round']?.toString() ?? 'saved_analysis';
-    final timeControl = md['TimeControl']?.toString();
+    // Speed word first: `TimeControl` is the PGN machine field.
+    final tcCategory = md['TcCategory']?.toString();
+    final timeControl =
+        (tcCategory != null && tcCategory.isNotEmpty)
+            ? tcCategory
+            : md['TimeControl']?.toString();
     final dateStr = md['Date']?.toString();
 
     DateTime? parsedDate;

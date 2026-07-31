@@ -205,7 +205,13 @@ GamesTourModel convertSavedAnalysisToGame(SavedAnalysis analysis) {
   final event = md['Event']?.toString() ?? 'library';
   final round = md['Round']?.toString() ?? 'saved_analysis';
   final date = md['Date']?.toString();
-  final timeControl = md['TimeControl']?.toString();
+  // `TimeControl` is the PGN machine field (`40/5400+30:1800+30`); the speed
+  // word lives on `TcCategory`.
+  final tcCategory = md['TcCategory']?.toString();
+  final timeControl =
+      (tcCategory != null && tcCategory.isNotEmpty)
+          ? tcCategory
+          : md['TimeControl']?.toString();
 
   DateTime? parsedDate;
   if (date != null && date.isNotEmpty) {

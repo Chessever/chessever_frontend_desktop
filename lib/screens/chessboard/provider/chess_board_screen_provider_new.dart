@@ -3921,6 +3921,17 @@ class ChessBoardScreenNotifierNew
     if (!isValidPgnTimeControl(metadata['TimeControl']?.toString())) {
       final field = pgnTimeControlField(game.timeControlText);
       if (field != null) {
+        // Keep the speed word on the key the app displays from, so library
+        // cards and the info row still read "Standard" rather than the machine
+        // field. Mirrors mobile.
+        final category = game.timeControl ?? metadata['TimeControl']?.toString();
+        if (category != null &&
+            category.isNotEmpty &&
+            category != '?' &&
+            (metadata['TcCategory'] == null ||
+                metadata['TcCategory'].toString().isEmpty)) {
+          metadata['TcCategory'] = category;
+        }
         metadata['TimeControl'] = field;
       } else if (metadata['TimeControl'] == null ||
           metadata['TimeControl'] == '?') {
