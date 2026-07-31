@@ -26,6 +26,7 @@ The Ralph loop will keep waking you. Make every iteration land a verifiable, con
 - Stay on `main` unless the user gave you a branch.
 - Push commits and open a pull request only when the user explicitly asks.
 - One commit per coherent chunk. Imperative subject, focused body.
+- **Every commit that changes shipped code bumps `version:` in `pubspec.yaml`** — patch segment and build number together, both by one (`20.27.6+276` → `20.27.7+277`). The bump rides with the change that earned it; never leave it for a separate `chore: bump` commit. Put the resulting version at the end of the subject: `Suppress Game Report errors in retained decisive wins (20.27.7).` Docs-only, test-only, CI-only and tooling-only commits are exempt. The phone repo (`chessever-frontend`) follows the same rule, so shared logic ported to both — the Game Report classifier above all — bumps both.
 - Do **not** commit unless the chunk leaves the tree in a buildable state (or the chunk *is* the buildable state).
 - Never commit `.env`, `.env.e2e`, `.flutter-plugins-dependencies` (regenerated), `build/`, `.dart_tool/`, `flutter_*.png` debug screenshots.
 

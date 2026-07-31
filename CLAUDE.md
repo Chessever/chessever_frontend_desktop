@@ -136,6 +136,7 @@ We are at **Phase 1**. Do not skip ahead.
 - Never delete a mobile-only feature without first writing the desktop equivalent or putting it behind a `Platform` guard. Hot paths (auth, engine, persistence) get equivalents; cosmetic ones (in-app review prompts, ATT) get dropped.
 - When introducing a new desktop file, place it under `lib/desktop/`. Don't pollute `lib/screens/` with desktop-only widgets.
 - Tests live under `test/`. Add desktop-relevant tests next to the unit they cover.
+- **Every commit that changes shipped code bumps `version:` in `pubspec.yaml`**, patch segment and build number together (`20.27.6+276` → `20.27.7+277`), with the new version at the end of the commit subject. The bump rides with the change, never as a follow-up `chore: bump`. Docs/test/CI-only commits are exempt. See `AGENTS.md` §2 — and note the phone repo now carries the same rule, so shared logic ported to both bumps both.
 - `flutter analyze` clean is table stakes. `flutter run -d macos` and `flutter run -d windows` succeeding is the actual signal.
 
 ## 9. Definition of done (release-ready)
