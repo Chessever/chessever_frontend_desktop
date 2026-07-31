@@ -8,12 +8,61 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/board_share_service.dart';
+import 'package:chessever/desktop/services/cloudflare_gif_service.dart';
 import 'package:chessever/desktop/widgets/board_share_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
 void main() {
+  group('boardShareGifProgressText', () {
+    CloudflareGifJob job({
+      CloudflareGifJobStatus stage = CloudflareGifJobStatus.queued,
+      int completedFrames = 0,
+      int totalFrames = 0,
+    }) {
+      return CloudflareGifJob(
+        id: 'job-1',
+        status: stage,
+        stage: stage,
+        completedFrames: completedFrames,
+        totalFrames: totalFrames,
+        expiresAt: DateTime.utc(2030),
+      );
+    }
+
+    test('queued label is product-neutral and omits vendor names', () {
+      final label = boardShareGifProgressText(job());
+      expect(label, 'Queued…');
+      expect(label.toLowerCase(), isNot(contains('cloudflare')));
+      expect(label.toLowerCase(), isNot(contains('cloud')));
+    });
+
+    test('maps every stage without vendor branding', () {
+      final labels = CloudflareGifJobStatus.values
+          .map((stage) => boardShareGifProgressText(job(stage: stage)))
+          .toList();
+      for (final label in labels) {
+        expect(label.toLowerCase(), isNot(contains('cloudflare')));
+        expect(label, isNot(contains('Cloudflare')));
+      }
+      expect(
+        boardShareGifProgressText(
+          job(
+            stage: CloudflareGifJobStatus.rendering,
+            completedFrames: 3,
+            totalFrames: 10,
+          ),
+        ),
+        'Rendering frames 3/10…',
+      );
+      expect(
+        boardShareGifProgressText(job(stage: CloudflareGifJobStatus.queued)),
+        isNot(contains('Cloudflare')),
+      );
+    });
+  });
+
   group('boardShareDisplayEvent', () {
     test('returns broadcast name when available', () {
       expect(

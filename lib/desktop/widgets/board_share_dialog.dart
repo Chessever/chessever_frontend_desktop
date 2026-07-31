@@ -81,7 +81,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
   bool _isGeneratingGif = false;
   bool _isSavingGif = false;
   String? _generatedGifPath;
-  String _gifProgressLabel = 'Submitting cloud job…';
+  String _gifProgressLabel = 'Submitting…';
   late final BoardShareRaster _staticImage;
 
   @override
@@ -238,7 +238,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
     }
     setState(() {
       _isGeneratingGif = true;
-      _gifProgressLabel = 'Submitting cloud job…';
+      _gifProgressLabel = 'Submitting…';
     });
     CloudflareGifService? service;
     try {
@@ -252,7 +252,7 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
         _cloudPhotoData(photos.blackPhotoUrl, playerLabel: 'black'),
       ]);
       if (mounted) {
-        setState(() => _gifProgressLabel = 'Submitting cloud job…');
+        setState(() => _gifProgressLabel = 'Submitting…');
       }
       final job = await service.submitJob(
         pgn: _pgn,
@@ -423,21 +423,8 @@ class _BoardShareDialogState extends ConsumerState<BoardShareDialog> {
     return null;
   }
 
-  String _gifProgressText(CloudflareGifJob job) {
-    final frames =
-        job.totalFrames > 0
-            ? ' ${job.completedFrames.clamp(0, job.totalFrames)}/${job.totalFrames}'
-            : '';
-    return switch (job.stage) {
-      CloudflareGifJobStatus.queued => 'Queued in Cloudflare…',
-      CloudflareGifJobStatus.analyzing => 'Analyzing positions$frames…',
-      CloudflareGifJobStatus.rendering => 'Rendering frames$frames…',
-      CloudflareGifJobStatus.encoding => 'Encoding GIF…',
-      CloudflareGifJobStatus.storing => 'Finalizing GIF…',
-      CloudflareGifJobStatus.succeeded => 'GIF ready',
-      CloudflareGifJobStatus.failed => 'GIF generation failed',
-    };
-  }
+  String _gifProgressText(CloudflareGifJob job) =>
+      boardShareGifProgressText(job);
 
   String _defaultExportName(String extension) {
     final date = _header('Date')?.replaceAll('.', '-');
@@ -983,6 +970,24 @@ String? boardShareDisplayEvent(Map<String, String> headers) {
       header('GroupBroadcastName') ??
       header('Group Broadcast Name') ??
       header('Event');
+}
+
+/// User-visible GIF job progress label. Must stay product-neutral (no vendor names).
+@visibleForTesting
+String boardShareGifProgressText(CloudflareGifJob job) {
+  final frames =
+      job.totalFrames > 0
+          ? ' ${job.completedFrames.clamp(0, job.totalFrames)}/${job.totalFrames}'
+          : '';
+  return switch (job.stage) {
+    CloudflareGifJobStatus.queued => 'Queued…',
+    CloudflareGifJobStatus.analyzing => 'Analyzing positions$frames…',
+    CloudflareGifJobStatus.rendering => 'Rendering frames$frames…',
+    CloudflareGifJobStatus.encoding => 'Encoding GIF…',
+    CloudflareGifJobStatus.storing => 'Finalizing GIF…',
+    CloudflareGifJobStatus.succeeded => 'GIF ready',
+    CloudflareGifJobStatus.failed => 'GIF generation failed',
+  };
 }
 
 /// Show the desktop share dialog.
