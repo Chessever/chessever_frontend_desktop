@@ -160,17 +160,19 @@ class GameAnalysisReportController extends ChangeNotifier {
   }) : _stockfish = stockfish ?? StockfishSingleton(),
        _evaluator = evaluator;
 
-  /// Desktop can afford a deeper principal search than mobile (12).
-  static const int reportDepth = 18;
+  /// Principal search depth. Slightly above mobile (12) — desktops are faster
+  /// per node, but full MultiPV-3-at-18 on every ply was slower than mobile's
+  /// multipass design. Depth alone is not the win; **when** we spend MultiPV is.
+  static const int reportDepth = 14;
   static const int reportMultiPv = 3;
-  /// High-precision !! verification pass (deeper than primary).
-  static const int brilliantDepth = 22;
+  /// High-precision !! verification only (same depth family as mobile 16).
+  static const int brilliantDepth = 16;
   static const int brilliantMultiPv = 3;
 
   /// Node count (in thousands) at which one position's search is treated as
   /// ~63% complete. Stockfish reports cumulative `nodes` on nearly every info
   /// line, so a node-driven fraction advances the bar on every engine tick —
-  /// far smoother than the 16 discrete depth steps, which leave the bar flat
+  /// far smoother than the discrete depth steps, which leave the bar flat
   /// through the long final-depth tail. The exact value only shapes the curve;
   /// the per-position completion always snaps to the full slice regardless.
   static const double reportKnodeReference = 500;
@@ -216,91 +218,120 @@ class GameAnalysisReportController extends ChangeNotifier {
     final generation = ++_generation;
     final fingerprint = gameReportFingerprint(game);
     final fens = gameReportFens(game);
+    final totalMoves = game.mainline.length;
+    // Primary (one line each FEN) + refinement (one unit per mainline move,
+    // whether or not MultiPV actually runs). Brilliant is a small tail on top.
+    final primaryAndRefineUnits = fens.length + totalMoves;
     _setState(
       GameReportState(
         status: GameReportStatus.running,
-        totalPositions: fens.length,
+        totalPositions: primaryAndRefineUnits,
         message: 'Preparing Stockfish…',
       ),
     );
 
     final positions = <GameReportPosition>[];
+    final evaluatedPositions = <String, GameReportPosition>{};
     try {
+      // Pass 1: single PV for every position. Graph, accuracy, and loss labels
+      // only need PV1. MultiPV-3-everywhere was the main desktop slowdown vs
+      // mobile (mobile does MultiPV 1 first, then MultiPV only where praise
+      // labels need an alternative).
       for (var i = 0; i < fens.length; i++) {
         if (_disposed || generation != _generation) return;
         final fen = fens[i];
         final terminal = terminalGameReportPosition(fen);
-        GameReportPosition position;
+        late final GameReportPosition position;
         if (terminal != null) {
           position = terminal;
         } else {
-          while (true) {
-            if (_disposed || generation != _generation) return;
-            try {
-              position = await _evaluate(
-                fen,
-                depth: reportDepth,
-                multiPv: reportMultiPv,
-                ownerId: _ownerId,
-                // Advance the bar on every engine tick using the cumulative
-                // node count, so a single slow position (e.g. the cold-hash
-                // first search) keeps creeping continuously instead of sitting
-                // frozen until depth 16 finally reports. Node count grows on
-                // nearly every info line, giving the highest-frequency signal
-                // the engine offers.
-                onProgress: (reached, knodes) {
-                  if (knodes <= 0) return;
-                  final within = 1 - 1 / (1 + knodes / reportKnodeReference);
-                  _reportProgress(
-                    generation: generation,
-                    progress: (i + within) / fens.length,
-                    completedPositions: i,
-                    totalPositions: fens.length,
-                    message: 'Analyzing position ${i + 1} of ${fens.length}',
-                  );
-                },
-              );
-              break;
-            } on _ReportPositionPreempted {
-              if (_disposed || generation != _generation) return;
-              // Hold the bar where it is (never regress) while the live board
-              // search borrows the engine.
-              _reportProgress(
-                generation: generation,
-                progress: _state.progress,
-                completedPositions: i,
-                totalPositions: fens.length,
-                message: 'Waiting for live position analysis…',
-              );
-              await Future<void>.delayed(const Duration(milliseconds: 100));
-            }
+          final reused = evaluatedPositions[fen];
+          if (reused != null) {
+            position = reused;
+          } else {
+            position = await _evaluateWithPreemptRetry(
+              fen,
+              generation: generation,
+              depth: reportDepth,
+              multiPv: 1,
+              completedPositions: i,
+              totalPositions: primaryAndRefineUnits,
+              progress: (i + 0.5) / primaryAndRefineUnits,
+              message: 'Analyzing position ${i + 1} of ${fens.length}',
+            );
+            evaluatedPositions[fen] = position;
           }
         }
         if (_disposed || generation != _generation) return;
         positions.add(position);
         final done = i + 1;
-        // Primary pass is ~85% of the bar; brilliant verify uses the rest.
         _reportProgress(
           generation: generation,
-          progress: 0.85 * done / fens.length,
+          progress: done / primaryAndRefineUnits,
           completedPositions: done,
-          totalPositions: fens.length,
+          totalPositions: primaryAndRefineUnits,
           message: 'Analyzing position $done of ${fens.length}',
         );
       }
 
-      // High-precision !! verification: deeper MultiPV only for candidates.
-      // Desktop has no mobile-style time budgets — depth-only search.
-      final winPct = positions
+      // Pass 2: MultiPV only where Best / Great / Brilliant need an alternative
+      // line. Bad moves keep their cheap PV1 eval.
+      final winPercentages = positions
+          .map((position) => gameReportWinPercentage(position.bestLine))
+          .toList(growable: false);
+      final refinedPositions = <String, GameReportPosition>{};
+      for (var moveIndex = 0; moveIndex < totalMoves; moveIndex++) {
+        if (_disposed || generation != _generation) return;
+        final completedBefore = fens.length + moveIndex;
+        final needsRefinement = gameReportMoveNeedsMultiPv(
+          index: moveIndex,
+          game: game,
+          positions: positions,
+          winPercentages: winPercentages,
+        );
+        if (needsRefinement) {
+          final fen = fens[moveIndex];
+          final reused = refinedPositions[fen];
+          late final GameReportPosition refined;
+          if (reused != null) {
+            refined = reused;
+          } else {
+            refined = await _evaluateWithPreemptRetry(
+              fen,
+              generation: generation,
+              depth: reportDepth,
+              multiPv: reportMultiPv,
+              completedPositions: completedBefore,
+              totalPositions: primaryAndRefineUnits,
+              progress: (completedBefore + 0.5) / primaryAndRefineUnits,
+              message:
+                  'Refining move ${moveIndex + 1} of $totalMoves',
+            );
+            refinedPositions[fen] = refined;
+          }
+          positions[moveIndex] = refined;
+        }
+        final done = completedBefore + 1;
+        _reportProgress(
+          generation: generation,
+          progress: done / primaryAndRefineUnits,
+          completedPositions: done,
+          totalPositions: primaryAndRefineUnits,
+          message: 'Refining move ${moveIndex + 1} of $totalMoves',
+        );
+      }
+
+      // Pass 3: deeper !! verify only for candidates (usually few or none).
+      final refinedWinPct = positions
           .map((position) => gameReportWinPercentage(position.bestLine))
           .toList(growable: false);
       final brilliantCandidates = <int>[];
-      for (var moveIndex = 0; moveIndex < game.mainline.length; moveIndex++) {
+      for (var moveIndex = 0; moveIndex < totalMoves; moveIndex++) {
         if (isBrilliantCandidate(
           index: moveIndex,
           game: game,
           positions: positions,
-          winPercentages: winPct,
+          winPercentages: refinedWinPct,
         )) {
           brilliantCandidates.add(moveIndex);
         }
@@ -314,16 +345,18 @@ class GameAnalysisReportController extends ChangeNotifier {
           generation: generation,
           depth: brilliantDepth,
           multiPv: brilliantMultiPv,
-          completedPositions: fens.length,
-          totalPositions: fens.length,
+          completedPositions: primaryAndRefineUnits,
+          totalPositions: primaryAndRefineUnits,
           progress:
-              0.85 +
-              0.15 * (c + 0.5) / math.max(1, brilliantCandidates.length),
+              0.92 +
+              0.08 * (c + 0.5) / math.max(1, brilliantCandidates.length),
           message:
               'Verifying brilliant candidate ${c + 1} of ${brilliantCandidates.length}',
         );
         if (_disposed || generation != _generation) return;
         positions[moveIndex] = deep;
+        // Keep MultiPV on the after-position so the next move's alternatives
+        // are not clobbered by a multiPv:1 overwrite.
         final afterFen = fens[moveIndex + 1];
         if (terminalGameReportPosition(afterFen) == null) {
           final deepAfter = await _evaluateWithPreemptRetry(
@@ -331,11 +364,11 @@ class GameAnalysisReportController extends ChangeNotifier {
             generation: generation,
             depth: brilliantDepth,
             multiPv: brilliantMultiPv,
-            completedPositions: fens.length,
-            totalPositions: fens.length,
+            completedPositions: primaryAndRefineUnits,
+            totalPositions: primaryAndRefineUnits,
             progress:
-                0.85 +
-                0.15 * (c + 1) / math.max(1, brilliantCandidates.length),
+                0.92 +
+                0.08 * (c + 1) / math.max(1, brilliantCandidates.length),
             message:
                 'Verifying brilliant candidate ${c + 1} of ${brilliantCandidates.length}',
           );
@@ -356,8 +389,8 @@ class GameAnalysisReportController extends ChangeNotifier {
         GameReportState(
           status: GameReportStatus.completed,
           progress: 1,
-          completedPositions: fens.length,
-          totalPositions: fens.length,
+          completedPositions: primaryAndRefineUnits,
+          totalPositions: primaryAndRefineUnits,
           report: report,
         ),
       );

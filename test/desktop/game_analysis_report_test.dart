@@ -162,6 +162,66 @@ void main() {
       expect(progresses.length, greaterThan(positionCount * 2));
       expect(progresses.toSet().length, greaterThan(positionCount));
     });
+
+    test('primary pass is MultiPV 1; MultiPV 3 only on refinement', () async {
+      // Regression: full MultiPV-3 on every ply at depth 18 was slower than
+      // mobile multipass. The shipped controller must spend MultiPV selectively.
+      final game = ChessGame.fromPgn('multipass', '1. e4 e5 2. Nf3 Nc6 *');
+      final multiPvByCall = <int>[];
+      final depths = <int>[];
+
+      Future<EnhancedCloudEval> recordingEvaluator(
+        String fen, {
+        required int depth,
+        required int multiPv,
+        required String ownerId,
+        void Function(int reachedDepth, int knodes)? onProgress,
+      }) async {
+        multiPvByCall.add(multiPv);
+        depths.add(depth);
+        onProgress?.call(depth, 100);
+        // Distinct first moves so MultiPV refinement can see alternatives.
+        final pvs = <Pv>[
+          Pv(moves: 'e2e4', cp: 20),
+          if (multiPv > 1) Pv(moves: 'd2d4', cp: -30),
+          if (multiPv > 2) Pv(moves: 'c2c4', cp: -40),
+        ];
+        return EnhancedCloudEval(
+          fen: fen,
+          knodes: 100,
+          depth: depth,
+          pvs: pvs,
+          requestedMultiPv: multiPv,
+        );
+      }
+
+      final controller = GameAnalysisReportController(
+        evaluator: recordingEvaluator,
+      );
+      addTearDown(controller.dispose);
+      await controller.analyze(game);
+
+      expect(controller.state.status, GameReportStatus.completed);
+      // First N calls are the primary single-PV sweep over positions.
+      final positionCount = gameReportFens(game).length;
+      expect(multiPvByCall.length, greaterThanOrEqualTo(positionCount));
+      final primary = multiPvByCall.take(positionCount).toList();
+      expect(
+        primary.every((mpv) => mpv == 1),
+        isTrue,
+        reason: 'primary pass must be MultiPV 1, got $primary',
+      );
+      // Depth stays in the efficient band (not 18/22 everywhere).
+      expect(
+        depths.every((d) => d <= GameAnalysisReportController.brilliantDepth),
+        isTrue,
+      );
+      expect(
+        GameAnalysisReportController.reportDepth,
+        lessThan(18),
+        reason: 'primary depth should stay leaner than the over-spent 18',
+      );
+    });
   });
 
   group('move classification (mobile-parity lichess damage + praise)', () {

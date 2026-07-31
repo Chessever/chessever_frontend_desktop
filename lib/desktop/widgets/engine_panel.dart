@@ -664,8 +664,8 @@ class _ReportStart extends StatelessWidget {
       icon: Icons.query_stats_rounded,
       title: 'Analyze this game',
       body:
-          'Stockfish will evaluate ${moveCount + 1} positions at depth 18 with '
-          'three candidate lines, then verify brilliant candidates deeper. '
+          'Stockfish will evaluate ${moveCount + 1} positions (fast single-line '
+          'pass, then MultiPV only where praise labels need it). '
           'Live move analysis pauses while it runs.',
       actionLabel: 'Analyze Game',
       onAction: onAnalyze,
