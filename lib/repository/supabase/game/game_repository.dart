@@ -80,6 +80,7 @@ const String _gameSummarySelectColumns = '''
           tours!games_tour_id_fkey(
             name,
             avg_elo,
+            tc:info->>tc,
             group_broadcasts!tours_group_broadcast_id_fkey(
               name,
               max_avg_elo,

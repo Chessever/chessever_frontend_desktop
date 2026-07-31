@@ -1,6 +1,8 @@
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/screens/chessboard/notation/notation_pointer.dart';
+import 'package:chessever/screens/chessboard/notation/pgn_move_number_repair.dart';
+import 'package:chessever/utils/pgn_time_control.dart';
 import 'package:dartchess/dartchess.dart'
     show PgnChildNode, PgnGame, PgnNode, PgnNodeData;
 
@@ -179,11 +181,22 @@ String exportGameToPgn(ChessGame game) {
   _appendLineToPgnNode(root, game.mainline);
 
   final headers = _buildPgnHeaders(game);
-  return PgnGame<PgnNodeData>(
-    headers: headers,
-    moves: root,
-    comments: const [],
-  ).makePgn();
+  final pgn =
+      PgnGame<PgnNodeData>(
+        headers: headers,
+        moves: root,
+        comments: const [],
+      ).makePgn();
+  return _withRepairedMoveNumbers(pgn);
+}
+
+/// dartchess omits the `N...` indicator on a black move that follows a comment.
+/// Repair the movetext only — headers are already canonical.
+String _withRepairedMoveNumbers(String pgn) {
+  final separator = pgn.indexOf('\n\n');
+  if (separator == -1) return restoreBlackMoveNumbers(pgn);
+  final headers = pgn.substring(0, separator + 2);
+  return headers + restoreBlackMoveNumbers(pgn.substring(separator + 2));
 }
 
 const _standardStartingFen =
@@ -230,6 +243,15 @@ Map<String, String> _buildPgnHeaders(ChessGame game) {
   for (final entry in game.metadata.entries) {
     final key = entry.key.trim();
     if (key.isEmpty || _internalMetadataKeys.contains(key)) continue;
+    if (key == 'TimeControl') {
+      // TimeControl is a machine field, and readers act on it: ChessBase
+      // converts `[%clk]` to elapsed time through it and drops every clock in
+      // the game when it cannot. Games saved before we knew that carry a
+      // category word ("standard"); rewrite what we can, drop the rest.
+      final field = pgnTimeControlField(entry.value?.toString());
+      if (field != null) headers[key] = field;
+      continue;
+    }
     headers[key] = entry.value?.toString() ?? '';
   }
 
@@ -298,13 +320,16 @@ void _appendChildrenToPgnNode(
 PgnNodeData _toPgnNodeData(ChessMove move) {
   final comments = <String>[];
 
-  if (move.clockTime?.isNotEmpty ?? false) {
-    comments.add('[%clk ${move.clockTime}]');
-  }
-
-  if (move.eval?.isNotEmpty ?? false) {
-    comments.add('[%eval ${move.eval}]');
-  }
+  // One comment carries both machine tags, `[%eval]` first, exactly as Lichess
+  // and chess.com write them. Splitting them across two `{}` blocks is legal
+  // but not what any producer emits, and readers that keep a single comment
+  // per move then drop whichever one lost the race — that is how our clocks
+  // went missing in ChessBase.
+  final tags = <String>[
+    if (move.eval?.isNotEmpty ?? false) '[%eval ${move.eval}]',
+    if (move.clockTime?.isNotEmpty ?? false) '[%clk ${move.clockTime}]',
+  ];
+  if (tags.isNotEmpty) comments.add(tags.join(' '));
 
   for (final comment in move.comments ?? const <String>[]) {
     if (comment.startsWith('[%clk') || comment.startsWith('[%eval')) {

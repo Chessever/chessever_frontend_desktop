@@ -28,6 +28,10 @@ class Games {
   final String? openingName;
   final String?
   timeControl; // From group_broadcasts: 'standard', 'rapid', 'blitz'
+  /// Raw tournament time control text (`tours.info->>'tc'`), e.g.
+  /// `90 min / 40 moves + 30 min + 30 sec / move`. The only source we have for
+  /// a spec-legal PGN `TimeControl` tag; [timeControl] is a speed category.
+  final String? timeControlText;
   final int? avgElo; // From tours: average ELO of the tournament
 
   Games({
@@ -57,6 +61,7 @@ class Games {
     this.eco,
     this.openingName,
     this.timeControl,
+    this.timeControlText,
     this.avgElo,
   });
 
@@ -87,6 +92,7 @@ class Games {
     String? eco,
     String? openingName,
     String? timeControl,
+    String? timeControlText,
     int? avgElo,
   }) {
     return Games(
@@ -116,6 +122,7 @@ class Games {
       eco: eco ?? this.eco,
       openingName: openingName ?? this.openingName,
       timeControl: timeControl ?? this.timeControl,
+      timeControlText: timeControlText ?? this.timeControlText,
       avgElo: avgElo ?? this.avgElo,
     );
   }
@@ -124,6 +131,7 @@ class Games {
     try {
       // Extract data from nested tours.group_broadcasts join
       String? timeControl;
+      String? timeControlText;
       int? avgElo;
       int? eventMaxAvgElo;
       String? tourName;
@@ -131,6 +139,7 @@ class Games {
       final tours = json['tours'];
       if (tours is Map<String, dynamic>) {
         tourName = tours['name'] as String?;
+        timeControlText = tours['tc'] as String?;
         avgElo =
             tours['avg_elo'] != null ? (tours['avg_elo'] as num).toInt() : null;
         final groupBroadcasts = tours['group_broadcasts'];
@@ -145,6 +154,7 @@ class Games {
       }
       // Also check direct fields (for backwards compatibility)
       timeControl ??= json['time_control'] as String?;
+      timeControlText ??= json['time_control_text'] as String?;
       tourName ??= json['tour_name'] as String?;
       eventName ??= json['event_name'] as String?;
       avgElo ??=
@@ -221,6 +231,7 @@ class Games {
         eco: json['eco'] as String?,
         openingName: json['opening_name'] as String?,
         timeControl: timeControl,
+        timeControlText: timeControlText,
         avgElo: avgElo,
       );
     } catch (e) {
@@ -263,6 +274,7 @@ class Games {
       if (eco != null) 'eco': eco,
       if (openingName != null) 'opening_name': openingName,
       if (timeControl != null) 'time_control': timeControl,
+      if (timeControlText != null) 'time_control_text': timeControlText,
       if (avgElo != null) 'avg_elo': avgElo,
     };
   }

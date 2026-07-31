@@ -94,6 +94,10 @@ class GamesTourModel {
   final String? openingName;
   final String?
   timeControl; // From group_broadcasts: 'standard', 'rapid', 'blitz'
+  /// Raw tournament time control text (`tours.info->>'tc'`), e.g.
+  /// `90 min / 40 moves + 30 min + 30 sec / move`. Source for the PGN
+  /// `TimeControl` tag, which must be a machine field and not a category.
+  final String? timeControlText;
   final int? avgElo; // New: average ELO of the tournament
   final bool isOnline;
 
@@ -126,6 +130,7 @@ class GamesTourModel {
     this.eco,
     this.openingName,
     this.timeControl,
+    this.timeControlText,
     this.avgElo,
     this.isOnline = false,
   });
@@ -175,6 +180,7 @@ class GamesTourModel {
     String? eco,
     String? openingName,
     String? timeControl,
+    String? timeControlText,
     int? avgElo,
     bool? isOnline,
   }) {
@@ -216,6 +222,7 @@ class GamesTourModel {
       eco: eco ?? this.eco,
       openingName: openingName ?? this.openingName,
       timeControl: timeControl ?? this.timeControl,
+      timeControlText: timeControlText ?? this.timeControlText,
       avgElo: avgElo ?? this.avgElo,
       isOnline: isOnline ?? this.isOnline,
     );
@@ -353,6 +360,7 @@ class GamesTourModel {
         eco: resolvedEco,
         openingName: resolvedOpening,
         timeControl: game.timeControl,
+        timeControlText: game.timeControlText,
         avgElo: game.avgElo,
       );
     } catch (e) {
