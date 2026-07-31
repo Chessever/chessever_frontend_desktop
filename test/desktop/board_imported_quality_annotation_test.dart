@@ -45,10 +45,9 @@ void main() {
   });
 
   test(
-    'share/GIF PGN is hydrated from a completed report even when source PGN was bare',
+    'share/GIF PGN is hydrated with product-name ChessEver annotations',
     () {
-      // Mirrors mobile: once Game Analysis finishes, exported PGN for share/GIF
-      // always carries classic-glyph directives from the report.
+      // Cloudflare maps product slugs 1:1 onto badge PNGs (brilliant.png, …).
       final bare = ChessGame.fromPgn('bare-share', r'1. e4 e5 2. Nf3 *');
       final reportMoves = const [
         GameReportMove(
@@ -90,22 +89,22 @@ void main() {
       ];
 
       final pgn = exportGamePgnWithReport(bare, reportMoves);
-      expect(pgn, contains('[%chessever_annotation !!]'));
-      expect(pgn, contains('[%chessever_annotation ?]'));
-      expect(pgn, contains('[%chessever_annotation !]'));
-      expect(pgn, contains(RegExp(r'e4\s*\$3|e4!!')));
-      expect(pgn, contains(RegExp(r'e5\s*\$2|e5\?')));
-      // GIF path is the same merge.
+      expect(pgn, contains('[%chessever_annotation brilliant]'));
+      expect(pgn, contains('[%chessever_annotation mistake]'));
+      expect(pgn, contains('[%chessever_annotation best_move]'));
+      expect(pgn, isNot(contains('[%chessever_annotation !!]')));
+      expect(pgn, isNot(contains('[%chessever_annotation !]')));
+      // GIF path is the same product-name merge.
       final gifGame = mergeGameReportAnnotationsForGif(bare, reportMoves);
       expect(
         gifGame.mainline[0].comments,
-        contains('[%chessever_annotation !!]'),
+        contains('[%chessever_annotation brilliant]'),
       );
     },
   );
 
   test(
-    'GIF/share export uses classic-glyph ChessEver annotations and quality NAGs',
+    'GIF/share export uses product-name ChessEver annotations and quality NAGs',
     () {
       final game = ChessGame.fromPgn(
         'gif-evals',
@@ -153,35 +152,33 @@ void main() {
       final evaluated = mergeGameReportAnnotationsForGif(game, reportMoves);
       final pgn = exportGamePgnWithReport(game, reportMoves);
 
-      // Report evals replace older/default PGN values (mobile parity).
       expect(evaluated.mainline[0].eval, '0.42');
       expect(evaluated.mainline[1].eval, '-0.31');
       expect(evaluated.mainline[2].eval, '#3');
 
-      // Classic portable glyphs — not product names.
+      // Product names for Cloudflare asset keys — not classic glyphs.
       expect(
         evaluated.mainline[0].comments,
-        contains('[%chessever_annotation !!]'),
+        contains('[%chessever_annotation brilliant]'),
       );
       expect(
         evaluated.mainline[1].comments,
-        contains('[%chessever_annotation ?!]'),
+        contains('[%chessever_annotation inaccuracy]'),
       );
       expect(
         evaluated.mainline[2].comments,
-        contains('[%chessever_annotation ??]'),
+        contains('[%chessever_annotation missed_win]'),
       );
       expect(evaluated.mainline[0].nags, contains(3)); // !!
       expect(evaluated.mainline[1].nags, contains(6)); // ?!
       expect(evaluated.mainline[2].nags, contains(4)); // ??
 
-      expect(pgn, contains('[%chessever_annotation !!]'));
-      expect(pgn, contains('[%chessever_annotation ?!]'));
-      expect(pgn, contains('[%chessever_annotation ??]'));
-      expect(pgn, isNot(contains('[%chessever_annotation brilliant]')));
-      expect(pgn, isNot(contains('[%chessever_annotation good_move]')));
-      expect(pgn, isNot(contains('[%chessever_annotation missed_win]')));
-      expect(pgn, isNot(contains('[%chessever_annotation inaccuracy]')));
+      expect(pgn, contains('[%chessever_annotation brilliant]'));
+      expect(pgn, contains('[%chessever_annotation inaccuracy]'));
+      expect(pgn, contains('[%chessever_annotation missed_win]'));
+      expect(pgn, isNot(contains('[%chessever_annotation !!]')));
+      expect(pgn, isNot(contains('[%chessever_annotation ?!]')));
+      expect(pgn, isNot(contains('[%chessever_annotation ??]')));
       expect(pgn, contains(RegExp(r'e4\s*\$3|e4!!')));
       expect(pgn, contains(RegExp(r'e5\s*\$6|e5\?!')));
     },

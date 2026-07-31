@@ -213,15 +213,33 @@ Map<int, LichessMoveAnnotation> chesseverAnnotationsFromMainline(
   return Map<int, LichessMoveAnnotation>.unmodifiable(out);
 }
 
+/// ChessEver product slug for a report classification (Cloudflare GIF asset key).
+///
+/// The cloud renderer expects `[%chessever_annotation brilliant]` /
+/// `good_move` / … and maps those 1:1 onto badge PNGs. Classic glyphs (`!`,
+/// `!!`) are **not** used when we own the report hydrate.
+String? chesseverClassificationName(GameMoveClassification? classification) =>
+    switch (classification) {
+      GameMoveClassification.brilliant => 'brilliant',
+      GameMoveClassification.goodMove => 'good_move',
+      GameMoveClassification.bestMove => 'best_move',
+      GameMoveClassification.missedWin => 'missed_win',
+      GameMoveClassification.inaccuracy => 'inaccuracy',
+      GameMoveClassification.mistake => 'mistake',
+      GameMoveClassification.blunder => 'blunder',
+      GameMoveClassification.bookMove => 'book_move',
+      null => null,
+    };
+
 /// Adds completed Game Analysis scores and classifications onto a [ChessGame]
 /// before export (Copy PGN, Share PGN, and GIF).
 ///
-/// Classifications are exported with the **classic portable glyphs** every
-/// chess app already understands (`!`, `?`, `!!`, `??`, `?!`), not ChessEver
-/// product names:
-/// - standard PGN NAGs `$1`–`$6` (rendered as those glyphs), and
-/// - `[%chessever_annotation !!]` (same glyph slug for consumers that read the
-///   comment).
+/// When **we** generated the report, hydrate with ChessEver product-name
+/// directives Cloudflare and the apps expect:
+/// `[%chessever_annotation brilliant]` / `good_move` / `best_move` / …
+/// plus quality NAGs `$1`–`$6` as a portable best-effort companion.
+/// Classic glyph tokens (`!!`, `?!`) are for import/best-effort only — never
+/// the report-export format.
 ChessGame mergeGameReportAnnotationsForExport(
   ChessGame game,
   List<GameReportMove> reportMoves,
@@ -246,20 +264,26 @@ ChessGame mergeGameReportAnnotationsForExport(
                 : reportLine.centipawns != null
                 ? (reportLine.centipawns! / 100).toStringAsFixed(2)
                 : move.eval;
-        final classic = classicGlyphForClassification(
+        final product = chesseverClassificationName(
           reportMove.classification,
         );
         final directive =
-            classic == null ? null : '[%chessever_annotation $classic]';
+            product == null ? null : '[%chessever_annotation $product]';
         final existingComments = move.comments ?? const <String>[];
-        final hasClassificationDirective = existingComments.any(
-          (comment) => comment.contains('[%chessever_annotation '),
-        );
+        // Replace any prior chessever directive (classic glyph or product)
+        // so export always carries product names for this report.
+        final withoutChessever =
+            existingComments
+                .where((c) => !c.contains('[%chessever_annotation '))
+                .toList(growable: true);
         final comments =
-            directive == null || hasClassificationDirective
-                ? existingComments
-                : <String>[...existingComments, directive];
+            directive == null
+                ? withoutChessever
+                : <String>[...withoutChessever, directive];
 
+        final classic = classicGlyphForClassification(
+          reportMove.classification,
+        );
         final reportNag = nagForClassicGlyph(classic);
         final existingNags = move.nags ?? const <int>[];
         final nonVerdictNags =
@@ -272,7 +296,9 @@ ChessGame mergeGameReportAnnotationsForExport(
         final nags = nonVerdictNags;
 
         final evalChanged = evaluation != null && evaluation != move.eval;
-        final commentsChanged = comments.length != existingComments.length;
+        final commentsChanged =
+            comments.length != existingComments.length ||
+            !comments.every(existingComments.contains);
         final nagsChanged =
             nags.length != existingNags.length ||
             !nags.every(existingNags.contains);
@@ -285,11 +311,15 @@ ChessGame mergeGameReportAnnotationsForExport(
   return changed ? game.copyWith(mainline: mainline) : game;
 }
 
-/// Backward-compatible alias — GIF was the first consumer of this merge.
+/// Alias — GIF was the first consumer; same product-name hydrate as export.
 ChessGame mergeGameReportAnnotationsForGif(
   ChessGame game,
   List<GameReportMove> reportMoves,
 ) => mergeGameReportAnnotationsForExport(game, reportMoves);
+
+/// @Deprecated Use [chesseverClassificationName].
+String? gifClassificationName(GameMoveClassification? classification) =>
+    chesseverClassificationName(classification);
 
 /// Merge + [exportGameToPgn] in one step (Copy PGN / Share PGN / tests).
 String exportGamePgnWithReport(
