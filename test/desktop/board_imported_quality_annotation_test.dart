@@ -3,6 +3,7 @@ import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart'
     hide mergeGameReportAnnotationsForGif;
+import 'package:chessever/services/lichess_move_annotations_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -45,9 +46,9 @@ void main() {
   });
 
   test(
-    'share/GIF PGN is hydrated with product-name ChessEver annotations',
+    'share/GIF PGN is hydrated with standard + ChessEver classification NAGs',
     () {
-      // Cloudflare maps product slugs 1:1 onto badge PNGs (brilliant.png, …).
+      // Cloudflare maps the classification code 1:1 onto badge PNGs.
       final bare = ChessGame.fromPgn('bare-share', r'1. e4 e5 2. Nf3 *');
       final reportMoves = const [
         GameReportMove(
@@ -89,22 +90,112 @@ void main() {
       ];
 
       final pgn = exportGamePgnWithReport(bare, reportMoves);
-      expect(pgn, contains('[%chessever_annotation brilliant]'));
-      expect(pgn, contains('[%chessever_annotation mistake]'));
-      expect(pgn, contains('[%chessever_annotation best_move]'));
-      expect(pgn, isNot(contains('[%chessever_annotation !!]')));
-      expect(pgn, isNot(contains('[%chessever_annotation !]')));
-      // GIF path is the same product-name merge.
+      // Standard quality NAG + ChessEver classification code, no directive.
+      expect(pgn, isNot(contains('chessever_annotation')));
+      expect(pgn, contains(RegExp(r'e4 \$3 \$240\b')));
+      expect(pgn, contains(RegExp(r'e5 \$2 \$245\b')));
+      expect(pgn, contains(RegExp(r'Nf3 \$1 \$242\b')));
+      // GIF path is the same merge.
       final gifGame = mergeGameReportAnnotationsForGif(bare, reportMoves);
-      expect(
-        gifGame.mainline[0].comments,
-        contains('[%chessever_annotation brilliant]'),
-      );
+      expect(gifGame.mainline[0].nags, [3, 240]);
+      expect(gifGame.mainline[0].comments ?? const <String>[], isEmpty);
     },
   );
 
+  test('classification NAG block matches mobile and round-trips', () {
+    // The block is a cross-app wire format: these numbers must not drift from
+    // mobile's `game_share_utils.dart` or a synced game opens with the wrong
+    // badges.
+    expect(kChesseverClassificationNags, {
+      GameMoveClassification.brilliant: 240,
+      GameMoveClassification.goodMove: 241,
+      GameMoveClassification.bestMove: 242,
+      GameMoveClassification.missedWin: 243,
+      GameMoveClassification.inaccuracy: 244,
+      GameMoveClassification.mistake: 245,
+      GameMoveClassification.blunder: 246,
+      GameMoveClassification.bookMove: 247,
+    });
+    for (final entry in kChesseverClassificationNags.entries) {
+      expect(classificationForChesseverNag(entry.value), entry.key);
+      expect(isChesseverClassificationNag(entry.value), isTrue);
+      expect(classificationFromNags([16, entry.value]), entry.key);
+    }
+    expect(classificationFromNags(const [1, 2, 3, 4, 5, 6]), isNull);
+  });
+
+  test('a PGN from mobile reads back 1:1 on desktop', () {
+    // Exactly what mobile writes for brilliant / inaccuracy / missed win /
+    // book — the middle two share `??` and `!` with other classes, and book
+    // has no standard glyph at all, so only the block can tell them apart.
+    final synced = ChessGame.fromPgn(
+      'from-mobile',
+      r'1. e4 $3 $240 e5 $6 $244 2. Nf3 $4 $243 Nc6 $247 *',
+    );
+
+    final annotations = chesseverAnnotationsFromMainline(synced);
+    expect(annotations[0]?.type, LichessMoveAnnotationType.brilliant);
+    expect(annotations[1]?.type, LichessMoveAnnotationType.inaccuracy);
+    expect(annotations[2]?.type, LichessMoveAnnotationType.missedWin);
+    expect(annotations[3]?.type, LichessMoveAnnotationType.bookMove);
+    for (final annotation in annotations.values) {
+      expect(annotation.useClassificationIcon, isTrue);
+      expect(annotation.reportOwnsMoveQuality, isTrue);
+    }
+    // The block outranks whatever the standard glyph alone would have said.
+    expect(
+      resolveDisplayAnnotationType(comments: null, nags: const [4, 243]),
+      LichessMoveAnnotationType.missedWin,
+    );
+    expect(
+      resolveDisplayAnnotationType(comments: null, nags: const [1, 242]),
+      LichessMoveAnnotationType.bestMove,
+    );
+    // A foreign PGN with no block still gets the best-effort read.
+    expect(
+      resolveDisplayAnnotationType(comments: null, nags: const [4]),
+      LichessMoveAnnotationType.blunder,
+    );
+  });
+
+  test('legacy directive still resolves, and a re-export drops it', () {
+    final legacy = ChessGame.fromPgn(
+      'legacy',
+      '1. e4 {[%chessever_annotation best_move]} '
+      'e5 {Sharp [%chessever_annotation blunder]} *',
+    );
+    expect(
+      chesseverAnnotationsFromMainline(legacy)[0]?.type,
+      LichessMoveAnnotationType.bestMove,
+    );
+
+    final reExported = exportGamePgnWithReport(legacy, const [
+      GameReportMove(
+        ply: 1,
+        san: 'e4',
+        uci: 'e2e4',
+        isWhite: true,
+        classification: GameMoveClassification.bestMove,
+        evaluation: GameReportLine(moves: <String>['e2e4'], depth: 18),
+      ),
+      GameReportMove(
+        ply: 2,
+        san: 'e5',
+        uci: 'e7e5',
+        isWhite: false,
+        classification: GameMoveClassification.blunder,
+        evaluation: GameReportLine(moves: <String>['e7e5'], depth: 18),
+      ),
+    ]);
+    expect(reExported, isNot(contains('chessever_annotation')));
+    expect(reExported, contains(RegExp(r'e4 \$1 \$242\b')));
+    expect(reExported, contains(RegExp(r'e5 \$4 \$246\b')));
+    // Prose beside the directive survives the strip.
+    expect(reExported, contains('Sharp'));
+  });
+
   test(
-    'GIF/share export uses product-name ChessEver annotations and quality NAGs',
+    'GIF/share export uses report evals plus the classification NAG pair',
     () {
       final game = ChessGame.fromPgn(
         'gif-evals',
@@ -156,31 +247,23 @@ void main() {
       expect(evaluated.mainline[1].eval, '-0.31');
       expect(evaluated.mainline[2].eval, '#3');
 
-      // Product names for Cloudflare asset keys — not classic glyphs.
+      // Standard quality NAG first, ChessEver classification code beside it.
+      expect(evaluated.mainline[0].nags, [3, 240]); // !! brilliant
+      expect(evaluated.mainline[1].nags, [6, 244]); // ?! inaccuracy
+      expect(evaluated.mainline[2].nags, [4, 243]); // ?? missed win
+      // No classification directive is written; the PGN's eval comes from the
+      // report's own value, not the stale `[%eval 0.15]` the game arrived with.
       expect(
-        evaluated.mainline[0].comments,
-        contains('[%chessever_annotation brilliant]'),
+        evaluated.mainline[0].comments ?? const <String>[],
+        isNot(contains(contains('chessever_annotation'))),
       );
-      expect(
-        evaluated.mainline[1].comments,
-        contains('[%chessever_annotation inaccuracy]'),
-      );
-      expect(
-        evaluated.mainline[2].comments,
-        contains('[%chessever_annotation missed_win]'),
-      );
-      expect(evaluated.mainline[0].nags, contains(3)); // !!
-      expect(evaluated.mainline[1].nags, contains(6)); // ?!
-      expect(evaluated.mainline[2].nags, contains(4)); // ??
+      expect(pgn, contains('[%eval 0.42]'));
+      expect(pgn, isNot(contains('[%eval 0.15]')));
 
-      expect(pgn, contains('[%chessever_annotation brilliant]'));
-      expect(pgn, contains('[%chessever_annotation inaccuracy]'));
-      expect(pgn, contains('[%chessever_annotation missed_win]'));
-      expect(pgn, isNot(contains('[%chessever_annotation !!]')));
-      expect(pgn, isNot(contains('[%chessever_annotation ?!]')));
-      expect(pgn, isNot(contains('[%chessever_annotation ??]')));
-      expect(pgn, contains(RegExp(r'e4\s*\$3|e4!!')));
-      expect(pgn, contains(RegExp(r'e5\s*\$6|e5\?!')));
+      expect(pgn, isNot(contains('chessever_annotation')));
+      expect(pgn, contains(RegExp(r'e4 \$3 \$240\b')));
+      expect(pgn, contains(RegExp(r'e5 \$6 \$244\b')));
+      expect(pgn, contains(RegExp(r'Nf3 \$4 \$243\b')));
     },
   );
 }

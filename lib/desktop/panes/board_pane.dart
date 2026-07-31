@@ -2574,7 +2574,10 @@ class _BoardPaneContent extends HookConsumerWidget {
       // live game still in progress. Build a snapshot from the current
       // analysis tree and hand it straight to the save dialog.
       try {
-        final pgn = exportGameToPgn(chessGame.value);
+        // Bake a finished report into the saved moves, exactly as Copy PGN
+        // does. The library row is what syncs to mobile, so without this the
+        // classifications would stay on this machine only.
+        final pgn = exportGameToPgn(hydrateGameWithReport(chessGame.value));
         final headers = pgnHeaders.value;
         final snapshot = ChessGame.fromPgn(
           activeGameId ??
@@ -2670,7 +2673,8 @@ class _BoardPaneContent extends HookConsumerWidget {
         return;
       }
       try {
-        final pgn = exportGameToPgn(chessGame.value);
+        // Same hydrate as Copy PGN: a .pgn written to disk carries the report.
+        final pgn = exportGameToPgn(hydrateGameWithReport(chessGame.value));
         final headers = pgnHeaders.value;
         final defaultName = _suggestPgnFileName(headers);
         final path = await FilePicker.platform.saveFile(
