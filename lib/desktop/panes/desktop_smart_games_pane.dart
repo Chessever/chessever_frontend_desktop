@@ -329,8 +329,12 @@ class _DesktopSmartGamesPaneState extends ConsumerState<DesktopSmartGamesPane> {
                   routeTitle: copy.title,
                   hasMore: state.hasMore,
                   isLoading: state.isLoadingMore,
+                  // A day-paginated collection only ever holds whole days, so
+                  // its counts are final the moment a day lands.
                   showCounts:
-                      type == PremiumGamesType.miniatures || !state.hasMore,
+                      type == PremiumGamesType.miniatures ||
+                      isDayPaginatedSmartGamesType(type) ||
+                      !state.hasMore,
                   onLoadMore: () {
                     ref.read(premiumGamesProvider(type).notifier).loadMore();
                   },

@@ -481,6 +481,30 @@ void main() {
       },
     );
 
+    test('smart collections paginate by day, other collections do not', () {
+      expect(isDayPaginatedSmartGamesType(PremiumGamesType.gm), isTrue);
+      expect(isDayPaginatedSmartGamesType(PremiumGamesType.live), isTrue);
+      expect(isDayPaginatedSmartGamesType(PremiumGamesType.classical), isTrue);
+      expect(
+        isDayPaginatedSmartGamesType(PremiumGamesType.miniatures),
+        isFalse,
+      );
+      expect(isDayPaginatedSmartGamesType(PremiumGamesType.favorites), isFalse);
+      expect(
+        isDayPaginatedSmartGamesType(PremiumGamesType.countrymen),
+        isFalse,
+      );
+    });
+
+    test('day cursor is formatted the way a date column compares', () {
+      // `game_day` is a Postgres `date`, so the cursor must be a bare,
+      // zero-padded calendar day with no time or zone attached.
+      expect(formatSmartEventDay(DateTime(2026, 8, 2)), '2026-08-02');
+      expect(formatSmartEventDay(DateTime(2026, 8, 2, 23, 59)), '2026-08-02');
+      expect(formatSmartEventDay(DateTime(2026, 12, 31)), '2026-12-31');
+      expect(formatSmartEventDay(DateTime(2026, 1, 5)), '2026-01-05');
+    });
+
     test('a smart feed too short to scroll keeps requesting older days', () {
       // A single "Today" section that does not overflow the viewport leaves
       // maxScrollExtent at 0, so the scroll listener can never fire.

@@ -34,6 +34,18 @@ enum PremiumGamesType {
   miniatures,
 }
 
+/// Whether [type] paginates one whole day at a time.
+///
+/// These collections are scoped to currently-running events, so the reader
+/// walks backwards a day at a time: a day loads whole, then the next older day
+/// appends beneath it. Every loaded day is therefore complete, which is why
+/// their game counts are trustworthy before the feed is fully drained.
+bool isDayPaginatedSmartGamesType(PremiumGamesType type) {
+  return type == PremiumGamesType.live ||
+      type == PremiumGamesType.gm ||
+      type == PremiumGamesType.classical;
+}
+
 /// Date range filter for premium games.
 enum PremiumGamesDateRange { last7Days, last30Days, last90Days, allTime }
 
@@ -252,14 +264,14 @@ class PremiumGamesNotifier
   int _offset = 0;
   static const int _pageSize = 30;
 
-  /// Rows requested per smart-event round trip.
-  ///
-  /// Deliberately much larger than [_pageSize]: the smart collections re-filter
-  /// every row on the client (GM keeps only games whose *average* rating clears
-  /// the bar, not just the top board), and in practice only ~1 row in 6
-  /// survives. Asking for 30 rows returned a single day's worth of games and
-  /// left the feed stuck on "Today".
-  static const int _smartEventRowPageSize = 150;
+  /// Smart collections paginate one whole day per page, so these track the day
+  /// cursor rather than a row offset.
+  DateTime? _nextSmartEventDay;
+  bool _smartEventDayCursorReady = false;
+
+  /// Upper bound on days skipped in one fetch when a day survives the backend
+  /// predicates but is emptied by the client-side narrowing.
+  static const int _maxSkippedSmartEventDays = 5;
   static const Duration _smartEventRefreshInterval = Duration(minutes: 1);
   Timer? _smartEventRefreshTimer;
 
@@ -268,17 +280,98 @@ class PremiumGamesNotifier
     _startSmartEventRefreshTimer();
   }
 
-  bool get _isCurrentSmartEventType {
-    return _type == PremiumGamesType.live ||
-        _type == PremiumGamesType.gm ||
-        _type == PremiumGamesType.classical;
-  }
+  bool get _isCurrentSmartEventType => isDayPaginatedSmartGamesType(_type);
 
   void _startSmartEventRefreshTimer() {
     if (!_isCurrentSmartEventType || _smartEventRefreshTimer != null) return;
     _smartEventRefreshTimer = Timer.periodic(_smartEventRefreshInterval, (_) {
-      unawaited(loadGames(showLoading: false));
+      // Refresh only the newest day. Reloading the whole collection would
+      // throw away every older day the reader had already scrolled into.
+      unawaited(_refreshNewestSmartEventDay());
     });
+  }
+
+  /// Scope of the smart collection this notifier serves.
+  ///
+  /// Shared by the day probe, the day fetch and the periodic refresh so all
+  /// three agree on which games belong to the collection.
+  ({
+    bool liveOnly,
+    int? minEventAverageElo,
+    int? minGameAverageElo,
+    List<String>? eventTimeControls,
+  })
+  get _smartEventScope {
+    return switch (_type) {
+      PremiumGamesType.live => (
+        liveOnly: true,
+        minEventAverageElo: null,
+        minGameAverageElo: null,
+        eventTimeControls: null,
+      ),
+      PremiumGamesType.gm => (
+        liveOnly: false,
+        minEventAverageElo: 2500,
+        minGameAverageElo: 2500,
+        eventTimeControls: null,
+      ),
+      _ => (
+        liveOnly: false,
+        minEventAverageElo: null,
+        minGameAverageElo: null,
+        eventTimeControls: const ['standard', 'classical', 'Standard', 'Classical'],
+      ),
+    };
+  }
+
+  /// Reloads the newest day in place, leaving already-loaded older days alone.
+  ///
+  /// Older broadcast days are finished and never change; only the newest day
+  /// carries live clocks and results worth re-reading.
+  Future<void> _refreshNewestSmartEventDay() async {
+    if (_isFetching) return;
+    final currentState = state.valueOrNull;
+    if (currentState == null) return;
+
+    _isFetching = true;
+    try {
+      final repository = _ref.read(gameRepositoryProvider);
+      final scope = _smartEventScope;
+      final newestDay = await repository.getCurrentSmartEventDay(
+        liveOnly: scope.liveOnly,
+        minEventAverageElo: scope.minEventAverageElo,
+        minGameAverageElo: scope.minGameAverageElo,
+        eventTimeControls: scope.eventTimeControls,
+      );
+      if (newestDay == null) return;
+
+      final page = await repository.getCurrentSmartEventGamesOnDay(
+        day: newestDay,
+        liveOnly: scope.liveOnly,
+        minEventAverageElo: scope.minEventAverageElo,
+        minGameAverageElo: scope.minGameAverageElo,
+        eventTimeControls: scope.eventTimeControls,
+      );
+
+      // Swap that day's games wholesale. A day that has since rolled over is
+      // simply a day nothing matches yet, and sorting floats it to the top.
+      _allGames.removeWhere((game) => _smartGameDay(game) == newestDay);
+      _allGames.addAll(page.games.map((game) => GamesTourModel.fromGame(game)));
+      _sortGames();
+
+      state = AsyncValue.data(
+        PremiumGamesState(
+          games: _getFilteredGames(),
+          filter: _ref.read(premiumGamesFilterProvider(_type)),
+          isLoadingMore: false,
+          hasMore: _hasMore,
+        ),
+      );
+    } catch (e) {
+      debugPrint('[PremiumGames] Error refreshing newest smart day: $e');
+    } finally {
+      _isFetching = false;
+    }
   }
 
   @override
@@ -300,6 +393,8 @@ class PremiumGamesNotifier
       _allGames.clear();
       _offset = 0;
       _hasMore = true;
+      _nextSmartEventDay = null;
+      _smartEventDayCursorReady = false;
 
       await _fetchGames();
 
@@ -472,76 +567,91 @@ class PremiumGamesNotifier
 
   /// Fetch all live games globally.
   Future<_PremiumGamesFetch> _fetchLiveGames(GameRepository repository) async {
-    return _fetchCurrentSmartEventGames(repository, liveOnly: true);
+    return _fetchCurrentSmartEventGames(repository);
   }
 
   /// Fetch games with average rating >= 2500, matching the phone smart
   /// collection intent instead of the older "one player over 2500" fallback.
   Future<_PremiumGamesFetch> _fetchGmGames(GameRepository repository) async {
-    return _fetchCurrentSmartEventGames(
-      repository,
-      minEventAverageElo: 2500,
-      minGameAverageElo: 2500,
-    );
+    return _fetchCurrentSmartEventGames(repository);
   }
 
   /// Fetch classical/standard games globally.
   Future<_PremiumGamesFetch> _fetchClassicalGames(
     GameRepository repository,
   ) async {
-    return _fetchCurrentSmartEventGames(
-      repository,
-      eventTimeControls: const [
-        'standard',
-        'classical',
-        'Standard',
-        'Classical',
-      ],
-    );
+    return _fetchCurrentSmartEventGames(repository);
   }
 
+  /// Load exactly one more day of the smart collection.
+  ///
+  /// The day is the unit of pagination: a fetch returns every game of a single
+  /// day, never part of one, and never mixes two days. Scrolling to the bottom
+  /// appends the next older day the same way.
   Future<_PremiumGamesFetch> _fetchCurrentSmartEventGames(
-    GameRepository repository, {
-    bool liveOnly = false,
-    int? minEventAverageElo,
-    int? minGameAverageElo,
-    List<String>? eventTimeControls,
-  }) async {
-    // Even at [_smartEventRowPageSize] a single round trip can land short once
-    // the client filter runs, so keep pulling until the fetch carries a real
-    // page of games. Without this the feed never walks back past today.
-    const maxPagesPerFetch = 3;
-    final games = <GamesTourModel>[];
-    var hasMore = false;
-    var nextOffset = _offset;
-    var pageCount = 0;
+    GameRepository repository,
+  ) async {
+    final scope = _smartEventScope;
 
     try {
-      do {
-        final page = await repository.getCurrentSmartEventGamesPage(
-          liveOnly: liveOnly,
-          minEventAverageElo: minEventAverageElo,
-          minGameAverageElo: minGameAverageElo,
-          eventTimeControls: eventTimeControls,
-          limit: _smartEventRowPageSize,
-          offset: nextOffset,
-        );
+      var targetDay =
+          _smartEventDayCursorReady
+              ? _nextSmartEventDay
+              : await repository.getCurrentSmartEventDay(
+                liveOnly: scope.liveOnly,
+                minEventAverageElo: scope.minEventAverageElo,
+                minGameAverageElo: scope.minGameAverageElo,
+                eventTimeControls: scope.eventTimeControls,
+              );
+      _smartEventDayCursorReady = true;
 
-        games.addAll(page.games.map((game) => GamesTourModel.fromGame(game)));
-        hasMore = page.hasMore;
-        nextOffset = page.nextOffset;
-        pageCount++;
-      } while (games.length < _pageSize &&
-          hasMore &&
-          pageCount < maxPagesPerFetch);
+      if (targetDay == null) {
+        _nextSmartEventDay = null;
+        return _emptyFetch();
+      }
+
+      for (var skipped = 0; skipped <= _maxSkippedSmartEventDays; skipped++) {
+        final page = await repository.getCurrentSmartEventGamesOnDay(
+          day: targetDay!,
+          liveOnly: scope.liveOnly,
+          minEventAverageElo: scope.minEventAverageElo,
+          minGameAverageElo: scope.minGameAverageElo,
+          eventTimeControls: scope.eventTimeControls,
+        );
+        _nextSmartEventDay = page.nextDay;
+
+        final games =
+            page.games
+                .map((game) => GamesTourModel.fromGame(game))
+                .toList(growable: false);
+
+        if (games.isNotEmpty) {
+          return _PremiumGamesFetch(
+            games: games,
+            hasMore: page.hasMore,
+            nextOffset: _offset,
+          );
+        }
+
+        // The backend said this day had rows, but the client-side narrowing
+        // emptied it. Walk on rather than showing an empty section.
+        if (page.nextDay == null) {
+          return const _PremiumGamesFetch(
+            games: <GamesTourModel>[],
+            hasMore: false,
+            nextOffset: 0,
+          );
+        }
+        targetDay = page.nextDay;
+      }
 
       return _PremiumGamesFetch(
-        games: games,
-        hasMore: hasMore,
-        nextOffset: nextOffset,
+        games: const <GamesTourModel>[],
+        hasMore: _nextSmartEventDay != null,
+        nextOffset: _offset,
       );
     } catch (e) {
-      debugPrint('[PremiumGames] Error fetching smart event games: $e');
+      debugPrint('[PremiumGames] Error fetching smart event day: $e');
       return _emptyFetch();
     }
   }
@@ -846,8 +956,10 @@ class PremiumGamesNotifier
     return (white + black) ~/ 2;
   }
 
+  /// Day a game belongs to, keyed exactly the way the feed groups its sections
+  /// so a day-page and its rendered section can never disagree.
   DateTime _smartGameDay(GamesTourModel game) {
-    final raw = game.lastMoveTime ?? game.bucketDate ?? DateTime(0);
+    final raw = game.bucketDate ?? DateTime(0);
     final local = raw.toLocal();
     return DateTime(local.year, local.month, local.day);
   }
