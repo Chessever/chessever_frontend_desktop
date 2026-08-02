@@ -987,7 +987,6 @@ class GameRepository extends BaseRepository {
   }
 
   Future<List<String>> _getCurrentSmartEventTourIds({
-    int? minEventAverageElo,
     List<String>? eventTimeControls,
   }) async {
     final normalizedTimeControls =
@@ -996,9 +995,7 @@ class GameRepository extends BaseRepository {
             .where((value) => value.isNotEmpty)
             .toList()
           ..sort();
-    final cacheKey =
-        '${minEventAverageElo ?? ''}|'
-        '${normalizedTimeControls.join(',')}';
+    final cacheKey = normalizedTimeControls.join(',');
     final now = DateTime.now().toUtc();
     final cached = _currentSmartEventScopeCache[cacheKey];
 
@@ -1008,19 +1005,15 @@ class GameRepository extends BaseRepository {
 
     dynamic eventQuery = supabase
         .from('group_broadcasts_current')
-        .select('id,max_avg_elo,time_control,date_closest_round,date_start');
-
-    if (minEventAverageElo != null) {
-      eventQuery = eventQuery.gte('max_avg_elo', minEventAverageElo);
-    }
+        .select('id,time_control,date_closest_round,date_start');
 
     if (eventTimeControls != null && eventTimeControls.isNotEmpty) {
       eventQuery = eventQuery.inFilter('time_control', eventTimeControls);
     }
 
     final eventResponse = await eventQuery
-        .order('max_avg_elo', ascending: false, nullsFirst: false)
         .order('date_closest_round', ascending: true, nullsFirst: false)
+        .order('date_start', ascending: false, nullsFirst: false)
         .limit(500);
 
     final eventIds = (eventResponse as List)
@@ -1066,7 +1059,6 @@ class GameRepository extends BaseRepository {
   /// first, then loads started games from the matching tours.
   Future<List<Games>> getCurrentSmartEventGames({
     bool liveOnly = false,
-    int? minEventAverageElo,
     int? minGameAverageElo,
     List<String>? eventTimeControls,
     int limit = _currentSmartGamesPageSize,
@@ -1074,7 +1066,6 @@ class GameRepository extends BaseRepository {
   }) async {
     final page = await getCurrentSmartEventGamesPage(
       liveOnly: liveOnly,
-      minEventAverageElo: minEventAverageElo,
       minGameAverageElo: minGameAverageElo,
       eventTimeControls: eventTimeControls,
       limit: limit,
@@ -1085,7 +1076,6 @@ class GameRepository extends BaseRepository {
 
   Future<CurrentSmartEventGamesPage> getCurrentSmartEventGamesPage({
     bool liveOnly = false,
-    int? minEventAverageElo,
     int? minGameAverageElo,
     List<String>? eventTimeControls,
     int limit = _currentSmartGamesPageSize,
@@ -1096,7 +1086,6 @@ class GameRepository extends BaseRepository {
       final safeOffset = offset < 0 ? 0 : offset;
 
       final tourIds = await _getCurrentSmartEventTourIds(
-        minEventAverageElo: minEventAverageElo,
         eventTimeControls: eventTimeControls,
       );
       if (tourIds.isEmpty) {

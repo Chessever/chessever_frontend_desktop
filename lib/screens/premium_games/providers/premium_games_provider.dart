@@ -471,7 +471,6 @@ class PremiumGamesNotifier
   Future<_PremiumGamesFetch> _fetchGmGames(GameRepository repository) async {
     return _fetchCurrentSmartEventGames(
       repository,
-      minEventAverageElo: 2500,
       minGameAverageElo: 2500,
     );
   }
@@ -494,7 +493,6 @@ class PremiumGamesNotifier
   Future<_PremiumGamesFetch> _fetchCurrentSmartEventGames(
     GameRepository repository, {
     bool liveOnly = false,
-    int? minEventAverageElo,
     int? minGameAverageElo,
     List<String>? eventTimeControls,
   }) async {
@@ -508,7 +506,6 @@ class PremiumGamesNotifier
       do {
         final page = await repository.getCurrentSmartEventGamesPage(
           liveOnly: liveOnly,
-          minEventAverageElo: minEventAverageElo,
           minGameAverageElo: minGameAverageElo,
           eventTimeControls: eventTimeControls,
           limit: _pageSize,

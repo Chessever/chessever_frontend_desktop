@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:chessever/desktop/panes/desktop_smart_games_pane.dart'
     show shouldLoadMoreForCollapsedMiniatures, visibleDesktopSmartGames;
 import 'package:chessever/desktop/utils/desktop_smart_game_sections.dart';
@@ -7,6 +9,7 @@ import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 Games _buildGame({
   required String id,
@@ -47,6 +50,37 @@ Games _buildGame({
 
 void main() {
   group('desktop smart games GM average rating', () {
+    test('does not filter candidate events by event average', () async {
+      final repository = _RecordingSmartGamesRepository();
+      final container = ProviderContainer(
+        overrides: [gameRepositoryProvider.overrideWithValue(repository)],
+      );
+      addTearDown(container.dispose);
+
+      container.read(premiumGamesProvider(PremiumGamesType.gm));
+      await repository.called.future;
+
+      expect(repository.minGameAverageElo, 2500);
+    });
+
+    test('applies the GM threshold to each game average', () {
+      final below = _buildGame(
+        id: 'below',
+        whiteRating: 2591,
+        blackRating: 2371,
+      );
+      final exact = _buildGame(
+        id: 'exact',
+        whiteRating: 2600,
+        blackRating: 2400,
+      );
+
+      expect(gameStructuredAverageRating(below), 2481);
+      expect(gameStructuredAverageRating(below) >= 2500, isFalse);
+      expect(gameStructuredAverageRating(exact), 2500);
+      expect(gameStructuredAverageRating(exact) >= 2500, isTrue);
+    });
+
     test('uses structured player ratings when PGN rating tags are missing', () {
       final game = _buildGame(
         id: 'g1',
@@ -476,6 +510,31 @@ void main() {
       },
     );
   });
+}
+
+class _RecordingSmartGamesRepository implements GameRepository {
+  final called = Completer<void>();
+  int? minGameAverageElo;
+
+  @override
+  Future<CurrentSmartEventGamesPage> getCurrentSmartEventGamesPage({
+    bool liveOnly = false,
+    int? minGameAverageElo,
+    List<String>? eventTimeControls,
+    int limit = 30,
+    int offset = 0,
+  }) async {
+    this.minGameAverageElo = minGameAverageElo;
+    if (!called.isCompleted) called.complete();
+    return const CurrentSmartEventGamesPage(
+      games: <Games>[],
+      hasMore: false,
+      nextOffset: 0,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 GamesTourModel _tourGame({
