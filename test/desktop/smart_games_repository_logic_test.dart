@@ -1,5 +1,10 @@
 import 'package:chessever/desktop/panes/desktop_smart_games_pane.dart'
-    show shouldLoadMoreForCollapsedMiniatures, visibleDesktopSmartGames;
+    show
+        kSmartGamesLoadMoreThreshold,
+        kSmartGamesMaxViewportFillLoads,
+        shouldAutoFillSmartGamesViewport,
+        shouldLoadMoreForCollapsedMiniatures,
+        visibleDesktopSmartGames;
 import 'package:chessever/desktop/utils/desktop_smart_game_sections.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
@@ -475,6 +480,62 @@ void main() {
         );
       },
     );
+
+    test('a smart feed too short to scroll keeps requesting older days', () {
+      // A single "Today" section that does not overflow the viewport leaves
+      // maxScrollExtent at 0, so the scroll listener can never fire.
+      expect(
+        shouldAutoFillSmartGamesViewport(
+          hasMore: true,
+          isLoading: false,
+          remainingScrollExtent: 0,
+          autoFillLoads: 0,
+        ),
+        isTrue,
+      );
+    });
+
+    test('viewport auto-fill stops once the feed is scrollable', () {
+      expect(
+        shouldAutoFillSmartGamesViewport(
+          hasMore: true,
+          isLoading: false,
+          remainingScrollExtent: kSmartGamesLoadMoreThreshold + 1,
+          autoFillLoads: 0,
+        ),
+        isFalse,
+      );
+    });
+
+    test('viewport auto-fill never stacks requests or outruns its budget', () {
+      expect(
+        shouldAutoFillSmartGamesViewport(
+          hasMore: true,
+          isLoading: true,
+          remainingScrollExtent: 0,
+          autoFillLoads: 0,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldAutoFillSmartGamesViewport(
+          hasMore: false,
+          isLoading: false,
+          remainingScrollExtent: 0,
+          autoFillLoads: 0,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldAutoFillSmartGamesViewport(
+          hasMore: true,
+          isLoading: false,
+          remainingScrollExtent: 0,
+          autoFillLoads: kSmartGamesMaxViewportFillLoads,
+        ),
+        isFalse,
+      );
+    });
   });
 }
 

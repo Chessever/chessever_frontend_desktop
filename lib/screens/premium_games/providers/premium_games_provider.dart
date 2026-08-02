@@ -251,6 +251,15 @@ class PremiumGamesNotifier
   bool _isFetching = false;
   int _offset = 0;
   static const int _pageSize = 30;
+
+  /// Rows requested per smart-event round trip.
+  ///
+  /// Deliberately much larger than [_pageSize]: the smart collections re-filter
+  /// every row on the client (GM keeps only games whose *average* rating clears
+  /// the bar, not just the top board), and in practice only ~1 row in 6
+  /// survives. Asking for 30 rows returned a single day's worth of games and
+  /// left the feed stuck on "Today".
+  static const int _smartEventRowPageSize = 150;
   static const Duration _smartEventRefreshInterval = Duration(minutes: 1);
   Timer? _smartEventRefreshTimer;
 
@@ -498,7 +507,10 @@ class PremiumGamesNotifier
     int? minGameAverageElo,
     List<String>? eventTimeControls,
   }) async {
-    const maxEmptyPages = 2;
+    // Even at [_smartEventRowPageSize] a single round trip can land short once
+    // the client filter runs, so keep pulling until the fetch carries a real
+    // page of games. Without this the feed never walks back past today.
+    const maxPagesPerFetch = 3;
     final games = <GamesTourModel>[];
     var hasMore = false;
     var nextOffset = _offset;
@@ -511,7 +523,7 @@ class PremiumGamesNotifier
           minEventAverageElo: minEventAverageElo,
           minGameAverageElo: minGameAverageElo,
           eventTimeControls: eventTimeControls,
-          limit: _pageSize,
+          limit: _smartEventRowPageSize,
           offset: nextOffset,
         );
 
@@ -519,7 +531,9 @@ class PremiumGamesNotifier
         hasMore = page.hasMore;
         nextOffset = page.nextOffset;
         pageCount++;
-      } while (games.isEmpty && hasMore && pageCount < maxEmptyPages);
+      } while (games.length < _pageSize &&
+          hasMore &&
+          pageCount < maxPagesPerFetch);
 
       return _PremiumGamesFetch(
         games: games,

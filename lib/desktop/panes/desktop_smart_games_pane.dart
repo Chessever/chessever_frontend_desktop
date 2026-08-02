@@ -377,6 +377,11 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
   Timer? _scrollIdleTimer;
   bool _liveCardsPausedForScroll = false;
   bool _emptyMiniaturesPageLoadQueued = false;
+  bool _viewportFillCheckQueued = false;
+  // Guards the viewport auto-fill loop: pages that arrive fully filtered out
+  // would otherwise keep `hasMore` true forever with nothing new to render.
+  int _viewportFillLoads = 0;
+  int _viewportFillGameCount = -1;
   // On-screen column count of the compact flow, stashed from its layout pass
   // so ArrowUp/ArrowDown travel whole rows instead of single cards.
   int _keyboardColumns = 1;
@@ -409,9 +414,51 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
       return;
     }
     final position = _scrollController.position;
-    if (position.pixels >= position.maxScrollExtent - 420) {
+    if (position.pixels >=
+        position.maxScrollExtent - kSmartGamesLoadMoreThreshold) {
       widget.onLoadMore();
     }
+  }
+
+  /// Keeps pulling pages until the feed is actually scrollable.
+  ///
+  /// Smart collections filter hard on the client (GM keeps only games whose
+  /// *average* rating clears 2500, Live keeps only games with running clocks),
+  /// so a 30-row page routinely renders as a single day that does not overflow
+  /// the viewport. Without this the scroll listener never fires and the feed
+  /// stops at "Today" forever.
+  void _scheduleViewportFillCheck() {
+    if (_viewportFillCheckQueued) return;
+    if (!widget.hasMore || widget.isLoading) return;
+    _viewportFillCheckQueued = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _viewportFillCheckQueued = false;
+      if (!mounted) return;
+      if (!_scrollController.hasClients) return;
+
+      final position = _scrollController.position;
+      if (!position.hasContentDimensions) return;
+
+      // Any change in what is rendered means the last request made progress,
+      // so the no-progress budget starts over.
+      if (widget.games.length != _viewportFillGameCount) {
+        _viewportFillGameCount = widget.games.length;
+        _viewportFillLoads = 0;
+      }
+
+      if (!shouldAutoFillSmartGamesViewport(
+        hasMore: widget.hasMore,
+        isLoading: widget.isLoading,
+        remainingScrollExtent: position.maxScrollExtent - position.pixels,
+        autoFillLoads: _viewportFillLoads,
+      )) {
+        return;
+      }
+
+      _viewportFillLoads += 1;
+      widget.onLoadMore();
+    });
   }
 
   void _markLiveCardsScrolling() {
@@ -547,6 +594,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
         ),
     ];
     _maybeLoadMoreForCollapsedMiniatures(sections);
+    _scheduleViewportFillCheck();
     final scopeId = 'smart-games-${widget.type.name}';
 
     if (sections.isEmpty) {
@@ -1109,6 +1157,27 @@ List<GamesTourModel> visibleDesktopSmartGames({
 }) {
   if (type == PremiumGamesType.miniatures) return games;
   return filterDesktopSmartGames(games, query);
+}
+
+/// Distance from the bottom of the feed that requests the next page.
+const double kSmartGamesLoadMoreThreshold = 420;
+
+/// Upper bound on back-to-back auto-fill pages that add no new games, so a
+/// collection whose remaining rows all fail the client filter cannot spin.
+const int kSmartGamesMaxViewportFillLoads = 24;
+
+@visibleForTesting
+bool shouldAutoFillSmartGamesViewport({
+  required bool hasMore,
+  required bool isLoading,
+  required double remainingScrollExtent,
+  required int autoFillLoads,
+  int maxAutoFillLoads = kSmartGamesMaxViewportFillLoads,
+}) {
+  return hasMore &&
+      !isLoading &&
+      remainingScrollExtent <= kSmartGamesLoadMoreThreshold &&
+      autoFillLoads < maxAutoFillLoads;
 }
 
 @visibleForTesting
