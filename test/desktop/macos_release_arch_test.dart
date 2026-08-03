@@ -4,9 +4,17 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('MacOsReleaseArch', () {
-    test('update platform keys stay dual and distinct', () {
+    // Renaming any Silicon identifier strands every installed Silicon client:
+    // desktop_updater filters app-archive.json on an exact platform string, so
+    // a client asking for a key the server no longer publishes matches zero
+    // items, gets a null version check, and silently never offers an update
+    // again. That is exactly what builds 264/265 shipped with `macos-arm64`.
+    // These are frozen values, not preferences — see CLAUDE.md §2.10.
+    test('Silicon identifiers stay frozen; Intel is additive', () {
       expect(MacOsReleaseArch.arm64.updatePlatformKey, 'macos');
+      expect(MacOsReleaseArch.arm64.stableDmgFileName, 'Chessever.dmg');
       expect(MacOsReleaseArch.x64.updatePlatformKey, 'macos-x64');
+      expect(MacOsReleaseArch.x64.stableDmgFileName, 'Chessever-intel.dmg');
       expect(
         MacOsReleaseArch.arm64.stableDmgFileName,
         isNot(MacOsReleaseArch.x64.stableDmgFileName),

@@ -3,7 +3,11 @@
 set -euo pipefail
 
 ORIG="${SSH_ORIGINAL_COMMAND:-}"
-KEEP_LAST_N=2
+# Retention: exactly one release per platform on the server. `desktop_updater`
+# only ever targets the highest shortVersion and rollback is defined as a new
+# forward build, so an older archive is dead weight the moment its successor is
+# ingested. Do not raise this to keep "a spare" — see CLAUDE.md §2.11.
+KEEP_LAST_N=1
 
 case "$ORIG" in
   "rsync --server"*)

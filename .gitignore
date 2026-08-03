@@ -83,6 +83,8 @@ analysis_benchmark.json
 build/
 build_codex*/
 flutter_*.png
+# Golden-test diff artifacts written next to a failing golden test.
+**/test/**/failures/
 linked_*.ds
 unlinked.ds
 unlinked_spec.ds

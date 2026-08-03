@@ -489,7 +489,9 @@ void main() {
         contains('/usr/local/bin/codemagic-finalize clear-legacy'),
       );
       expect(wrapper, contains('/usr/local/bin/codemagic-finalize ingest'));
-      expect(wrapper, contains('KEEP_LAST_N=2'));
+      // Exactly one release per platform stays on the server.
+      expect(wrapper, contains('KEEP_LAST_N=1'));
+      expect(wrapper, isNot(contains('KEEP_LAST_N=2')));
       expect(wrapper, isNot(contains('KEEP_LAST_N=3')));
       expect(wrapper, contains(r'--keep-last-n "$KEEP_LAST_N"'));
       // Continuous macos + additive intel (and historical macos-arm64) must be
