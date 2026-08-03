@@ -152,13 +152,24 @@ typedef GameReportEvaluator =
       void Function(int reachedDepth, int knodes)? onProgress,
     });
 
+/// How many database games reached [fen] and then played [uci], having arrived
+/// through [path].
+///
+/// Identical to mobile's typedef of the same name: book detection has to agree
+/// across the apps, so both drive it through the same shape and the same
+/// gamebase query.
+typedef GameReportBookLookup =
+    Future<int?> Function(String fen, String uci, List<String> path);
+
 /// Owns one board tab's session-only whole-game analysis.
 class GameAnalysisReportController extends ChangeNotifier {
   GameAnalysisReportController({
     StockfishSingleton? stockfish,
     GameReportEvaluator? evaluator,
+    GameReportBookLookup? bookLookup,
   }) : _stockfish = stockfish ?? StockfishSingleton(),
-       _evaluator = evaluator;
+       _evaluator = evaluator,
+       _bookLookup = bookLookup;
 
   /// Principal search depth. Slightly above mobile (12) — desktops are faster
   /// per node, but full MultiPV-3-at-18 on every ply was slower than mobile's
@@ -179,6 +190,7 @@ class GameAnalysisReportController extends ChangeNotifier {
 
   final StockfishSingleton _stockfish;
   final GameReportEvaluator? _evaluator;
+  final GameReportBookLookup? _bookLookup;
   late final String _ownerId = StockfishSingleton.generateOwnerId(
     'gameReport',
     identityHashCode(this),
@@ -228,6 +240,16 @@ class GameAnalysisReportController extends ChangeNotifier {
         totalPositions: primaryAndRefineUnits,
         message: 'Preparing Stockfish…',
       ),
+    );
+
+    // Network-bound and independent of the engine, so it runs alongside the
+    // Stockfish passes and is collected just before the report is assembled —
+    // the opening lookups cost no extra wall-clock. [_probeBookMoves] swallows
+    // its own failures, so this future never needs a catch of its own.
+    final bookGameCountsFuture = _probeBookMoves(
+      game,
+      fens,
+      generation: generation,
     );
 
     final positions = <GameReportPosition>[];
@@ -383,6 +405,7 @@ class GameAnalysisReportController extends ChangeNotifier {
         positions: positions,
         whiteRating: whiteRating,
         blackRating: blackRating,
+        bookGameCounts: await bookGameCountsFuture,
       );
       if (_disposed || generation != _generation) return;
       _setState(
@@ -400,6 +423,91 @@ class GameAnalysisReportController extends ChangeNotifier {
     } catch (error) {
       if (generation != _generation) return;
       _fail('Game analysis failed: $error');
+    }
+  }
+
+  /// Walks the game from move one asking how many database games played each
+  /// move, and keeps every answer it gets.
+  ///
+  /// Copied from mobile so both apps call the same moves theory. Each ply is
+  /// judged on its own count — a move with [kBookMoveMinGames] or more games is
+  /// theory, whatever the ply before it did. Move orders dip out of the
+  /// database and transpose straight back into a main line, and the board's own
+  /// opening explorer counts those transpositions, so a single quiet ply must
+  /// not close the book on everything after it. The walk stops only once theory
+  /// is properly gone: [kBookProbeDryStreak] plies in a row below the
+  /// threshold, or the [kBookProbeMaxPlies] runaway guard.
+  ///
+  /// Lookups go out [kBookProbeConcurrency] at a time. The walk is collected
+  /// after the Stockfish passes, which take minutes, so this is about not
+  /// opening a burst of connections rather than about latency.
+  ///
+  /// The tree is an enhancement, never a dependency: a failed lookup leaves
+  /// that ply unknown rather than failing the report.
+  Future<List<int?>> _probeBookMoves(
+    ChessGame game,
+    List<String> fens, {
+    required int generation,
+  }) async {
+    final counts = List<int?>.filled(game.mainline.length, null);
+    final lookup = _bookLookup;
+    if (lookup == null) return counts;
+
+    // The gamebase infers a position's ply from the FEN's side-to-move and
+    // fullmove number. A game set up from a custom position carries counters
+    // that describe that position, not a real opening, so every lookup would be
+    // answering a question about the wrong ply. Such a game has no book by
+    // definition — skip the walk rather than spend requests misaddressing it.
+    if (game.startingFen != kInitialFEN) return counts;
+
+    final limit = math.min(game.mainline.length, kBookProbeMaxPlies);
+    final line = game.mainline
+        .map((move) => move.uci)
+        .toList(growable: false);
+    // The engine passes normally outlast this walk, but a stalled database must
+    // not be what holds a finished report open. Whatever theory was resolved
+    // before the budget ran out is kept.
+    final elapsed = Stopwatch()..start();
+    var dryStreak = 0;
+
+    for (var start = 0; start < limit; start += kBookProbeConcurrency) {
+      if (_disposed || generation != _generation) return counts;
+      if (elapsed.elapsed > kBookProbeBudget) return counts;
+      final end = math.min(start + kBookProbeConcurrency, limit);
+      final wave = await Future.wait<int?>([
+        for (var i = start; i < end; i++)
+          _bookGameCount(lookup, fens[i], line[i], line.sublist(0, i)),
+      ]);
+      if (_disposed || generation != _generation) return counts;
+      for (var offset = 0; offset < wave.length; offset++) {
+        final total = wave[offset];
+        counts[start + offset] = total;
+        // An unknown answer counts as dry: it is not evidence of theory, and a
+        // database that has stopped answering should end the walk, not spend
+        // the whole budget timing out ply after ply.
+        if (total == null || total < kBookMoveMinGames) {
+          dryStreak++;
+        } else {
+          dryStreak = 0;
+        }
+      }
+      if (dryStreak >= kBookProbeDryStreak) return counts;
+    }
+    return counts;
+  }
+
+  /// One opening lookup, resolving to null on timeout or failure so a flaky
+  /// database costs one unknown ply instead of the whole report.
+  Future<int?> _bookGameCount(
+    GameReportBookLookup lookup,
+    String fen,
+    String uci,
+    List<String> path,
+  ) async {
+    try {
+      return await lookup(fen, uci, path).timeout(kBookLookupTimeout);
+    } catch (_) {
+      return null;
     }
   }
 

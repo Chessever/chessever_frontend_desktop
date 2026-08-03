@@ -531,6 +531,18 @@ class GamebaseRepository {
   GamebaseRepository(this._dio, {String? baseUrl})
     : _baseUrl = baseUrl ?? _resolveBaseUrl();
 
+  /// Sentinel base URL used when nothing is configured. Requests against it
+  /// fail rather than reaching a baked-in upstream key.
+  static const String unconfiguredBaseUrl =
+      'https://invalid.local/gamebase-proxy-not-configured';
+
+  /// Whether this build can actually reach the gamebase.
+  ///
+  /// Callers that walk a position tree (opening-book detection in Game
+  /// Analysis) ask first, so an unconfigured build skips the walk instead of
+  /// spending a request per opening move to learn nothing.
+  bool get isConfigured => _baseUrl != unconfiguredBaseUrl;
+
   static const Map<String, String> _releaseEnvValues = <String, String>{
     'SUPABASE_URL': String.fromEnvironment('SUPABASE_URL', defaultValue: ''),
     'SUPABASE_ANON_KEY': String.fromEnvironment(
@@ -556,7 +568,27 @@ class GamebaseRepository {
 
     // Keep the failure explicit: requests will fail with a configuration
     // error instead of silently falling back to a baked-in upstream key.
-    return 'https://invalid.local/gamebase-proxy-not-configured';
+    return unconfiguredBaseUrl;
+  }
+
+  /// The other spelling of a castling UCI, or null when [uci] is not one.
+  ///
+  /// dartchess emits the Chess960 king-to-rook form (`e1h1`) while the backend
+  /// answers in the classical king-to-g/c form (`e1g1`), so anything comparing
+  /// a board move against a gamebase `uci` has to bridge the two — otherwise a
+  /// castle silently reads as "a move the database has never seen".
+  static String? alternateCastlingUci(String uci) {
+    const pairs = <String, String>{
+      'e1h1': 'e1g1',
+      'e1g1': 'e1h1',
+      'e1a1': 'e1c1',
+      'e1c1': 'e1a1',
+      'e8h8': 'e8g8',
+      'e8g8': 'e8h8',
+      'e8a8': 'e8c8',
+      'e8c8': 'e8a8',
+    };
+    return pairs[uci];
   }
 
   static String? _env(String key) {

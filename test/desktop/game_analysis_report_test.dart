@@ -1,4 +1,5 @@
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
+import 'package:chessever/desktop/services/engine/game_report_book_lookup.dart';
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
@@ -221,6 +222,132 @@ void main() {
         lessThan(18),
         reason: 'primary depth should stay leaner than the over-spent 18',
       );
+    });
+  });
+
+  group('opening book (mobile parity)', () {
+    // Same fake engine every book test uses: a flat, unremarkable evaluation,
+    // so any label that appears comes from the book walk and not from damage
+    // or praise.
+    Future<EnhancedCloudEval> flatEvaluator(
+      String fen, {
+      required int depth,
+      required int multiPv,
+      required String ownerId,
+      void Function(int reachedDepth, int knodes)? onProgress,
+    }) async => EnhancedCloudEval(
+      fen: fen,
+      knodes: 100,
+      depth: depth,
+      pvs: [
+        Pv(moves: 'e2e4', cp: 20),
+        if (multiPv > 1) Pv(moves: 'd2d4', cp: 15),
+      ],
+      requestedMultiPv: multiPv,
+    );
+
+    test('theory moves are labelled Book, and the walk stops when it dries '
+        'up', () async {
+      final game = ChessGame.fromPgn('book', '1. e4 e5 2. Nf3 Nc6 3. Na3 *');
+      final probed = <String>[];
+      final controller = GameAnalysisReportController(
+        evaluator: flatEvaluator,
+        // The first three plies are theory; 3. Na3 is not.
+        bookLookup: (fen, uci, path) async {
+          probed.add(uci);
+          return path.length < 3 ? kBookMoveMinGames * 10 : 0;
+        },
+      );
+      addTearDown(controller.dispose);
+
+      await controller.analyze(game);
+
+      final report = controller.state.report;
+      expect(controller.state.status, GameReportStatus.completed);
+      expect(report, isNotNull);
+      expect(
+        report!.moves.take(3).map((move) => move.classification),
+        everyElement(GameMoveClassification.bookMove),
+      );
+      expect(report.moves.last.classification,
+          isNot(GameMoveClassification.bookMove));
+      expect(report.count(GameMoveClassification.bookMove, white: true), 2);
+      expect(report.count(GameMoveClassification.bookMove, white: false), 1);
+      // Every mainline ply is asked about — the dry streak is longer than this
+      // game, so nothing is cut short.
+      expect(probed, hasLength(game.mainline.length));
+    });
+
+    test('a report with no lookup is unchanged', () async {
+      final game = ChessGame.fromPgn('nobook', '1. e4 e5 2. Nf3 *');
+      final controller = GameAnalysisReportController(evaluator: flatEvaluator);
+      addTearDown(controller.dispose);
+
+      await controller.analyze(game);
+
+      expect(
+        controller.state.report!.count(
+          GameMoveClassification.bookMove,
+          white: true,
+        ),
+        0,
+      );
+    });
+
+    test('a game from a custom position is never book', () async {
+      // The gamebase reads a position's ply from the FEN, so a set-up game
+      // would have every lookup answering about the wrong ply.
+      final game = ChessGame.fromPgn(
+        'setup',
+        '[FEN "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"]\n'
+        '[SetUp "1"]\n\n2. Nf3 *',
+      );
+      var probes = 0;
+      final controller = GameAnalysisReportController(
+        evaluator: flatEvaluator,
+        bookLookup: (fen, uci, path) async {
+          probes++;
+          return kBookMoveMinGames * 10;
+        },
+      );
+      addTearDown(controller.dispose);
+
+      await controller.analyze(game);
+
+      expect(probes, 0);
+      expect(
+        controller.state.report!.moves.first.classification,
+        isNot(GameMoveClassification.bookMove),
+      );
+    });
+
+    test('a failing database costs plies, not the report', () async {
+      final game = ChessGame.fromPgn('flaky', '1. e4 e5 2. Nf3 *');
+      final controller = GameAnalysisReportController(
+        evaluator: flatEvaluator,
+        bookLookup: (fen, uci, path) async => throw StateError('gamebase down'),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.analyze(game);
+
+      expect(controller.state.status, GameReportStatus.completed);
+      expect(
+        controller.state.report!.count(
+          GameMoveClassification.bookMove,
+          white: true,
+        ),
+        0,
+      );
+    });
+
+    test('castling is matched across both UCI spellings', () {
+      // dartchess gives the board e1h1; the backend answers e1g1. Compared
+      // raw, every castle read as a move the database had never seen.
+      expect(gamebaseAggregateMatchesMove('e1g1', 'e1h1'), isTrue);
+      expect(gamebaseAggregateMatchesMove('e8c8', 'e8a8'), isTrue);
+      expect(gamebaseAggregateMatchesMove('e2e4', 'e2e4'), isTrue);
+      expect(gamebaseAggregateMatchesMove('e2e4', 'd2d4'), isFalse);
     });
   });
 

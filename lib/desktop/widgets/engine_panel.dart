@@ -9,6 +9,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
+import 'package:chessever/desktop/services/engine/game_report_book_lookup.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/game_review/evaluation_graph_markers.dart';
@@ -21,6 +22,7 @@ import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
+import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -117,7 +119,10 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     super.initState();
     _ownsReportController = widget.reportController == null;
     _reportController =
-        widget.reportController ?? GameAnalysisReportController();
+        widget.reportController ??
+        GameAnalysisReportController(
+          bookLookup: gamebaseBookLookup(ref.read(gamebaseRepositoryProvider)),
+        );
     _reportController.addListener(_onReport);
     _gameFingerprint = _fingerprint(widget.game);
   }
