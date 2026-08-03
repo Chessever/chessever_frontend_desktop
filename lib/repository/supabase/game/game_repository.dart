@@ -169,9 +169,20 @@ class EventRailRoundMetadata {
   final DateTime? createdAt;
 }
 
+/// PostgREST answers at most 1000 rows per request whatever `limit` asks for,
+/// so a day wider than this is read in successive ranges. A single `.limit()`
+/// here would silently hand back a partial day.
 const int _currentSmartGamesPageSize = 1000;
+
+/// Runaway guard on one day's read, far above any real broadcast day. A day
+/// that reaches it is logged rather than passed off as complete.
+const int _currentSmartGamesDayReadCap = 8000;
+
 const Duration _currentSmartLiveMaxAge = Duration(hours: 8);
-const Duration _currentSmartEventScopeCacheTtl = Duration(minutes: 1);
+
+/// A day's event roster only changes when a broadcast is added or rescheduled,
+/// so it is worth holding across the several fetches one scroll session makes.
+const Duration _currentSmartEventScopeCacheTtl = Duration(minutes: 5);
 
 /// One whole day of a smart collection.
 ///
@@ -1002,77 +1013,188 @@ class GameRepository extends BaseRepository {
     });
   }
 
-  Future<List<String>> _getCurrentSmartEventTourIds({
-    int? minEventAverageElo,
+  /// Reads every row a query matches, one PostgREST page at a time.
+  ///
+  /// PostgREST caps a response at [_currentSmartGamesPageSize] rows no matter
+  /// what `limit` asks for, so any read that can exceed that has to walk
+  /// ranges. [build] is handed an inclusive row range and returns the query for
+  /// it; the walk stops on the first short page, or at [cap], which is logged
+  /// rather than returned as if it were the whole set.
+  ///
+  /// The query [build] returns must carry a total order (a unique tiebreaker on
+  /// the last `order`), otherwise successive ranges can repeat and skip rows.
+  Future<List<dynamic>> _readAllRows(
+    Future<dynamic> Function(int from, int to) build, {
+    required String label,
+    int cap = _currentSmartGamesDayReadCap,
+  }) async {
+    final rows = <dynamic>[];
+    var offset = 0;
+
+    while (true) {
+      final range = smartEventReadRange(offset, cap: cap);
+      if (range == null) break;
+      final page = await build(range.from, range.to) as List;
+      rows.addAll(page);
+      if (page.length < range.to - range.from + 1) return rows;
+      offset += page.length;
+    }
+
+    debugPrint(
+      '[GameRepository] $label reached the $cap-row read cap; '
+      'the result is partial',
+    );
+    return rows;
+  }
+
+  /// Inclusive row range to request once [offset] rows have been read, or null
+  /// once [cap] is reached.
+  ///
+  /// Split out so the walk's arithmetic — full pages until the cap, a short
+  /// final page rather than an overshoot, and a definite stop — is checkable
+  /// without a backend.
+  @visibleForTesting
+  static ({int from, int to})? smartEventReadRange(
+    int offset, {
+    int cap = _currentSmartGamesDayReadCap,
+  }) {
+    if (offset >= cap) return null;
+    final remaining = cap - offset;
+    final size =
+        remaining < _currentSmartGamesPageSize
+            ? remaining
+            : _currentSmartGamesPageSize;
+    return (from: offset, to: offset + size - 1);
+  }
+
+  /// UTC half-open window that a `game_day` corresponds to.
+  ///
+  /// `rounds.starts_at` is an instant while `game_day` is a plain date, so the
+  /// two are bridged by the round's UTC calendar day. Verified against
+  /// production: the events holding a round inside this window are exactly the
+  /// events whose games carry that `game_day`.
+  @visibleForTesting
+  static ({String startIso, String endIso}) smartEventDayUtcBounds(
+    DateTime day,
+  ) {
+    final start = DateTime.utc(day.year, day.month, day.day);
+    return (
+      startIso: start.toIso8601String(),
+      endIso: start.add(const Duration(days: 1)).toIso8601String(),
+    );
+  }
+
+  /// Tours a smart-collection day is scoped to, or null when the collection
+  /// needs no event-level scoping at all.
+  ///
+  /// Only the time-control collections carry a predicate that lives on the
+  /// event rather than on the game row, and it cannot be pushed into the games
+  /// query: filtering games through an inner join on `group_broadcasts` makes
+  /// the planner drive from the thousands of matching events down into `games`
+  /// — measured at 23s against a 3s statement timeout. Resolving the day's
+  /// tours first and filtering `tour_id in (...)` returns the same rows in
+  /// ~140ms.
+  ///
+  /// A day's events are the ones holding a round that day. The broadcast's own
+  /// `date_start`/`date_end` cannot stand in for that: broadcast windows
+  /// routinely disagree with the PGN dates their games carry, and on a spot
+  /// check one day lost 1114 of its 2163 in-scope games to an event whose
+  /// `date_start` fell after the day its own games are dated.
+  Future<List<String>?> _smartEventTourIdsForDay({
+    required DateTime day,
     List<String>? eventTimeControls,
   }) async {
-    final normalizedTimeControls =
+    final timeControls =
         (eventTimeControls ?? const <String>[])
-            .map((value) => value.trim().toLowerCase())
+            .map((value) => value.trim())
             .where((value) => value.isNotEmpty)
-            .toList()
-          ..sort();
+            .toList(growable: false);
+    if (timeControls.isEmpty) return null;
+
     final cacheKey =
-        '${minEventAverageElo ?? ''}|'
-        '${normalizedTimeControls.join(',')}';
+        '${formatSmartEventDay(day)}|'
+        '${(timeControls.map((value) => value.toLowerCase()).toSet().toList()..sort()).join(',')}';
     final now = DateTime.now().toUtc();
     final cached = _currentSmartEventScopeCache[cacheKey];
-
     if (cached != null && now.isBefore(cached.expiresAt)) {
       return cached.tourIds;
     }
 
-    dynamic eventQuery = supabase
-        .from('group_broadcasts_current')
-        .select('id,max_avg_elo,time_control,date_closest_round,date_start');
+    final bounds = smartEventDayUtcBounds(day);
+    final roundRows = await _readAllRows(
+      (from, to) =>
+          supabase
+              .from('rounds')
+              .select('tour_id')
+              .gte('starts_at', bounds.startIso)
+              .lt('starts_at', bounds.endIso)
+              .order('id', ascending: true)
+              .range(from, to),
+      label: 'smart-event rounds on ${formatSmartEventDay(day)}',
+    );
 
-    if (minEventAverageElo != null) {
-      eventQuery = eventQuery.gte('max_avg_elo', minEventAverageElo);
-    }
-
-    if (eventTimeControls != null && eventTimeControls.isNotEmpty) {
-      eventQuery = eventQuery.inFilter('time_control', eventTimeControls);
-    }
-
-    final eventResponse = await eventQuery
-        .order('max_avg_elo', ascending: false, nullsFirst: false)
-        .order('date_closest_round', ascending: true, nullsFirst: false)
-        .limit(500);
-
-    final eventIds = (eventResponse as List)
-        .map((row) => row['id'] as String?)
-        .whereType<String>()
-        .where((id) => id.isNotEmpty)
-        .toList(growable: false);
-
-    if (eventIds.isEmpty) {
-      _currentSmartEventScopeCache[cacheKey] = _CurrentSmartEventScopeCache(
-        tourIds: const <String>[],
-        expiresAt: now.add(_currentSmartEventScopeCacheTtl),
-      );
-      return const <String>[];
-    }
-
-    final tourIds = <String>[];
-    for (final chunk in _chunks(eventIds, 40)) {
-      final tourResponse = await supabase
-          .from('tours')
-          .select('id')
-          .inFilter('group_broadcast_id', chunk);
-      tourIds.addAll(
-        (tourResponse as List)
-            .map((row) => row['id'] as String?)
+    final dayTourIds =
+        roundRows
+            .map((row) => row['tour_id'] as String?)
             .whereType<String>()
-            .where((id) => id.isNotEmpty),
+            .where((id) => id.isNotEmpty)
+            .toSet()
+            .toList(growable: false);
+
+    if (dayTourIds.isEmpty) {
+      return _cacheSmartEventTourIds(cacheKey, const <String>[], now);
+    }
+
+    final broadcastByTour = <String, String>{};
+    for (final chunk in _chunks(dayTourIds, 40)) {
+      final response = await supabase
+          .from('tours')
+          .select('id,group_broadcast_id')
+          .inFilter('id', chunk);
+      for (final row in response as List) {
+        final tourId = row['id'] as String?;
+        final broadcastId = row['group_broadcast_id'] as String?;
+        if (tourId == null || broadcastId == null) continue;
+        broadcastByTour[tourId] = broadcastId;
+      }
+    }
+
+    final matchingBroadcasts = <String>{};
+    for (final chunk in _chunks(
+      broadcastByTour.values.toSet().toList(growable: false),
+      40,
+    )) {
+      final response = await supabase
+          .from('group_broadcasts')
+          .select('id')
+          .inFilter('id', chunk)
+          .inFilter('time_control', timeControls);
+      matchingBroadcasts.addAll(
+        (response as List).map((row) => row['id'] as String?).whereType<String>(),
       );
     }
 
-    final scopedTourIds = List<String>.unmodifiable(tourIds);
+    return _cacheSmartEventTourIds(
+      cacheKey,
+      broadcastByTour.entries
+          .where((entry) => matchingBroadcasts.contains(entry.value))
+          .map((entry) => entry.key)
+          .toList(growable: false),
+      now,
+    );
+  }
+
+  List<String> _cacheSmartEventTourIds(
+    String cacheKey,
+    List<String> tourIds,
+    DateTime now,
+  ) {
+    final scoped = List<String>.unmodifiable(tourIds);
     _currentSmartEventScopeCache[cacheKey] = _CurrentSmartEventScopeCache(
-      tourIds: scopedTourIds,
+      tourIds: scoped,
       expiresAt: now.add(_currentSmartEventScopeCacheTtl),
     );
-    return scopedTourIds;
+    return scoped;
   }
 
   /// Applies the shared smart-collection row predicates to [query].
@@ -1112,30 +1234,26 @@ class GameRepository extends BaseRepository {
     return scoped;
   }
 
-  /// Newest smart-collection day that holds in-scope games.
+  /// Newest smart-collection day that holds candidate games.
   ///
   /// Never returns a future day, and returns the newest day strictly older than
   /// [before] when given, which is how the feed walks backwards one day at a
   /// time. Null means there is nothing left to load.
+  ///
+  /// Answers on row predicates alone — no event scoping and none of the
+  /// narrowing that only the fetched rows can decide — so it is a superset
+  /// probe, not a promise. [getCurrentSmartEventGamesOnDay] is authoritative,
+  /// and a caller that gets an empty day from it walks on to [nextDay].
   Future<DateTime?> getCurrentSmartEventDay({
     bool liveOnly = false,
-    int? minEventAverageElo,
     int? minGameAverageElo,
-    List<String>? eventTimeControls,
     DateTime? before,
   }) async {
     return handleApiCall(() async {
-      final tourIds = await _getCurrentSmartEventTourIds(
-        minEventAverageElo: minEventAverageElo,
-        eventTimeControls: eventTimeControls,
-      );
-      if (tourIds.isEmpty) return null;
-
       final today = DateTime.now();
       dynamic dayQuery = supabase
           .from('games')
           .select('game_day,\nrounds!games_round_id_fkey!inner(starts_at)')
-          .inFilter('tour_id', tourIds)
           .not('game_day', 'is', null)
           .lte('game_day', formatSmartEventDay(today));
 
@@ -1166,51 +1284,66 @@ class GameRepository extends BaseRepository {
 
   /// Every in-scope smart-collection game on [day], plus the next older day.
   ///
-  /// Deliberately unpaged: the day is the unit of pagination, so a day arrives
-  /// whole. Time-control and average-rating narrowing that the backend cannot
+  /// The day is the unit of pagination, so a day arrives whole: the rows are
+  /// read in successive PostgREST ranges until the day is exhausted rather than
+  /// under one `limit`, which would leave a busy day showing only its first
+  /// slice. Time-control and average-rating narrowing that the backend cannot
   /// express still runs here, so the caller receives the final day contents.
   Future<CurrentSmartEventDayPage> getCurrentSmartEventGamesOnDay({
     required DateTime day,
     bool liveOnly = false,
-    int? minEventAverageElo,
     int? minGameAverageElo,
     List<String>? eventTimeControls,
   }) async {
     return handleApiCall(() async {
       final normalizedDay = DateTime(day.year, day.month, day.day);
-      final tourIds = await _getCurrentSmartEventTourIds(
-        minEventAverageElo: minEventAverageElo,
+      final tourIds = await _smartEventTourIdsForDay(
+        day: normalizedDay,
         eventTimeControls: eventTimeControls,
       );
-      if (tourIds.isEmpty) {
+
+      // Null means the collection has no event predicate; an empty list means
+      // it has one and no event on this day satisfies it.
+      if (tourIds != null && tourIds.isEmpty) {
         return CurrentSmartEventDayPage(
           day: normalizedDay,
           games: const <Games>[],
-          nextDay: null,
+          nextDay: await getCurrentSmartEventDay(
+            liveOnly: liveOnly,
+            minGameAverageElo: minGameAverageElo,
+            before: normalizedDay,
+          ),
         );
       }
 
-      dynamic gamesQuery = supabase
-          .from('games')
-          .select(
-            '$_gameListSelectColumns,\nrounds!games_round_id_fkey!inner(starts_at)',
-          )
-          .inFilter('tour_id', tourIds)
-          .eq('game_day', formatSmartEventDay(normalizedDay));
+      final response = await _readAllRows((from, to) {
+        dynamic gamesQuery = supabase
+            .from('games')
+            .select(
+              '$_gameListSelectColumns,\nrounds!games_round_id_fkey!inner(starts_at)',
+            )
+            .eq('game_day', formatSmartEventDay(normalizedDay));
 
-      gamesQuery = _applyCurrentSmartEventPredicates(
-        gamesQuery,
-        liveOnly: liveOnly,
-        minGameAverageElo: minGameAverageElo,
-      );
+        if (tourIds != null) {
+          gamesQuery = gamesQuery.inFilter('tour_id', tourIds);
+        }
 
-      final response = await gamesQuery
-          .order('last_move_time', ascending: false, nullsFirst: false)
-          .order('player_max_rating', ascending: false, nullsFirst: false)
-          .limit(_currentSmartGamesPageSize);
+        gamesQuery = _applyCurrentSmartEventPredicates(
+          gamesQuery,
+          liveOnly: liveOnly,
+          minGameAverageElo: minGameAverageElo,
+        );
 
-      final jsonList =
-          (response as List).map((item) => json.encode(item)).toList();
+        return gamesQuery
+            .order('last_move_time', ascending: false, nullsFirst: false)
+            .order('player_max_rating', ascending: false, nullsFirst: false)
+            // Unique tiebreaker: without it the two sort keys above leave ties
+            // in an unspecified order and successive ranges repeat and skip.
+            .order('id', ascending: true)
+            .range(from, to);
+      }, label: 'smart-event games on ${formatSmartEventDay(normalizedDay)}');
+
+      final jsonList = response.map((item) => json.encode(item)).toList();
       var games = await compute(_decodeGamesInIsolate, jsonList);
 
       if (eventTimeControls != null && eventTimeControls.isNotEmpty) {
@@ -1244,9 +1377,7 @@ class GameRepository extends BaseRepository {
 
       final nextDay = await getCurrentSmartEventDay(
         liveOnly: liveOnly,
-        minEventAverageElo: minEventAverageElo,
         minGameAverageElo: minGameAverageElo,
-        eventTimeControls: eventTimeControls,
         before: normalizedDay,
       );
 

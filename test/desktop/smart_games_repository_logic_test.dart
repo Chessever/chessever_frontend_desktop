@@ -561,6 +561,73 @@ void main() {
       );
     });
   });
+
+  group('smart collection day is read whole', () {
+    test('a day wider than one response is read in successive ranges', () {
+      // PostgREST answers at most 1000 rows however large `limit` is, so a busy
+      // day read under a single request comes back as its first slice only —
+      // which is what left older sections showing a handful of boards.
+      final first = GameRepository.smartEventReadRange(0);
+      expect(first, isNotNull);
+      expect(first!.from, 0);
+      expect(first.to, 999);
+
+      final second = GameRepository.smartEventReadRange(1000);
+      expect(second!.from, 1000);
+      expect(second.to, 1999);
+    });
+
+    test('the last page is short rather than overshooting the cap', () {
+      final range = GameRepository.smartEventReadRange(900, cap: 1200);
+      expect(range!.from, 900);
+      expect(range.to, 1199);
+    });
+
+    test('the walk stops at the cap instead of paging forever', () {
+      expect(GameRepository.smartEventReadRange(1200, cap: 1200), isNull);
+      expect(GameRepository.smartEventReadRange(5000, cap: 1200), isNull);
+    });
+
+    test('a day maps to its own UTC window, not the reader\'s', () {
+      // `game_day` is a bare date and `rounds.starts_at` is an instant, so the
+      // day's events are resolved through the round's UTC calendar day. A local
+      // interpretation would shift the window and pull in a neighbouring day's
+      // events for anyone east or west of UTC.
+      final bounds = GameRepository.smartEventDayUtcBounds(
+        DateTime(2026, 8, 2, 22, 30),
+      );
+      expect(bounds.startIso, '2026-08-02T00:00:00.000Z');
+      expect(bounds.endIso, '2026-08-03T00:00:00.000Z');
+    });
+  });
+
+  group('smart collection scope', () {
+    test('GM is decided per game, with no event-level rating floor', () {
+      // Scoping GM to events whose own average clears 2500 drops qualifying
+      // games played inside opens: on one checked day it cut the collection
+      // from 46 games to 3, which is how a day of GM chess rendered as a
+      // single board.
+      final gm = smartEventScopeFor(PremiumGamesType.gm);
+      expect(gm.minGameAverageElo, 2500);
+      expect(gm.eventTimeControls, isNull);
+      expect(gm.liveOnly, isFalse);
+    });
+
+    test('Live is the only collection restricted to running games', () {
+      expect(smartEventScopeFor(PremiumGamesType.live).liveOnly, isTrue);
+      expect(smartEventScopeFor(PremiumGamesType.gm).liveOnly, isFalse);
+      expect(smartEventScopeFor(PremiumGamesType.classical).liveOnly, isFalse);
+    });
+
+    test('Classical carries the event time controls in both spellings', () {
+      final classical = smartEventScopeFor(PremiumGamesType.classical);
+      expect(classical.minGameAverageElo, isNull);
+      expect(
+        classical.eventTimeControls,
+        containsAll(<String>['standard', 'classical', 'Standard', 'Classical']),
+      );
+    });
+  });
 }
 
 GamesTourModel _tourGame({

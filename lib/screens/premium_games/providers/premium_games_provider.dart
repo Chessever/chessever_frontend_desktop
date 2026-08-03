@@ -46,6 +46,46 @@ bool isDayPaginatedSmartGamesType(PremiumGamesType type) {
       type == PremiumGamesType.classical;
 }
 
+/// What a day-paginated smart collection counts as one of its games.
+typedef SmartEventScope =
+    ({bool liveOnly, int? minGameAverageElo, List<String>? eventTimeControls});
+
+/// Scope of the smart collection [type] serves.
+///
+/// Shared by the day probe, the day fetch and the periodic refresh so all three
+/// agree on which games belong to the collection.
+///
+/// Each collection is exactly the rule its card states, applied to the day
+/// being read — Live is "in progress right now", GM is "average player rating
+/// 2500 or higher", Classical is "classical and standard time controls".
+/// Notably GM carries no event-level rating floor: a floor on the event's own
+/// average silently drops qualifying games played inside opens, which is what
+/// used to leave older days showing one or two boards.
+SmartEventScope smartEventScopeFor(PremiumGamesType type) {
+  return switch (type) {
+    PremiumGamesType.live => (
+      liveOnly: true,
+      minGameAverageElo: null,
+      eventTimeControls: null,
+    ),
+    PremiumGamesType.gm => (
+      liveOnly: false,
+      minGameAverageElo: 2500,
+      eventTimeControls: null,
+    ),
+    _ => (
+      liveOnly: false,
+      minGameAverageElo: null,
+      eventTimeControls: const [
+        'standard',
+        'classical',
+        'Standard',
+        'Classical',
+      ],
+    ),
+  };
+}
+
 /// Date range filter for premium games.
 enum PremiumGamesDateRange { last7Days, last30Days, last90Days, allTime }
 
@@ -271,7 +311,12 @@ class PremiumGamesNotifier
 
   /// Upper bound on days skipped in one fetch when a day survives the backend
   /// predicates but is emptied by the client-side narrowing.
-  static const int _maxSkippedSmartEventDays = 5;
+  ///
+  /// The day probe answers on row predicates alone, so a day it offers can
+  /// still narrow to nothing — a day whose only 2500+ players never faced each
+  /// other, or one carrying no standard-time-control event. Those days are
+  /// walked past inside one fetch rather than rendered as an empty section.
+  static const int _maxSkippedSmartEventDays = 12;
   static const Duration _smartEventRefreshInterval = Duration(minutes: 1);
   Timer? _smartEventRefreshTimer;
 
@@ -291,38 +336,7 @@ class PremiumGamesNotifier
     });
   }
 
-  /// Scope of the smart collection this notifier serves.
-  ///
-  /// Shared by the day probe, the day fetch and the periodic refresh so all
-  /// three agree on which games belong to the collection.
-  ({
-    bool liveOnly,
-    int? minEventAverageElo,
-    int? minGameAverageElo,
-    List<String>? eventTimeControls,
-  })
-  get _smartEventScope {
-    return switch (_type) {
-      PremiumGamesType.live => (
-        liveOnly: true,
-        minEventAverageElo: null,
-        minGameAverageElo: null,
-        eventTimeControls: null,
-      ),
-      PremiumGamesType.gm => (
-        liveOnly: false,
-        minEventAverageElo: 2500,
-        minGameAverageElo: 2500,
-        eventTimeControls: null,
-      ),
-      _ => (
-        liveOnly: false,
-        minEventAverageElo: null,
-        minGameAverageElo: null,
-        eventTimeControls: const ['standard', 'classical', 'Standard', 'Classical'],
-      ),
-    };
-  }
+  SmartEventScope get _smartEventScope => smartEventScopeFor(_type);
 
   /// Reloads the newest day in place, leaving already-loaded older days alone.
   ///
@@ -339,19 +353,27 @@ class PremiumGamesNotifier
       final scope = _smartEventScope;
       final newestDay = await repository.getCurrentSmartEventDay(
         liveOnly: scope.liveOnly,
-        minEventAverageElo: scope.minEventAverageElo,
         minGameAverageElo: scope.minGameAverageElo,
-        eventTimeControls: scope.eventTimeControls,
       );
       if (newestDay == null) return;
 
       final page = await repository.getCurrentSmartEventGamesOnDay(
         day: newestDay,
         liveOnly: scope.liveOnly,
-        minEventAverageElo: scope.minEventAverageElo,
         minGameAverageElo: scope.minGameAverageElo,
         eventTimeControls: scope.eventTimeControls,
       );
+
+      // The day probe answers on row predicates alone, so it can point at a day
+      // this collection has nothing on — a day whose games are all rapid, say,
+      // when the reader is on Classical. Emptying an already-populated day on
+      // the strength of that would delete a section the reader is looking at,
+      // so an empty answer is only trusted for Live, where a day going quiet is
+      // the real news.
+      final holdsGames = _allGames.any(
+        (game) => _smartGameDay(game) == newestDay,
+      );
+      if (page.games.isEmpty && holdsGames && !scope.liveOnly) return;
 
       // Swap that day's games wholesale. A day that has since rolled over is
       // simply a day nothing matches yet, and sorting floats it to the top.
@@ -599,9 +621,7 @@ class PremiumGamesNotifier
               ? _nextSmartEventDay
               : await repository.getCurrentSmartEventDay(
                 liveOnly: scope.liveOnly,
-                minEventAverageElo: scope.minEventAverageElo,
                 minGameAverageElo: scope.minGameAverageElo,
-                eventTimeControls: scope.eventTimeControls,
               );
       _smartEventDayCursorReady = true;
 
@@ -614,7 +634,6 @@ class PremiumGamesNotifier
         final page = await repository.getCurrentSmartEventGamesOnDay(
           day: targetDay!,
           liveOnly: scope.liveOnly,
-          minEventAverageElo: scope.minEventAverageElo,
           minGameAverageElo: scope.minGameAverageElo,
           eventTimeControls: scope.eventTimeControls,
         );
