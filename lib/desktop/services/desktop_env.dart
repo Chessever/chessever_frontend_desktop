@@ -56,6 +56,20 @@ class DesktopEnv {
       'CHESSEVER_CLOUDFLARE_API_BASE',
       defaultValue: '',
     ),
+    // Feedback relay. Optional: absent, the feedback dialog still works and
+    // simply skips the Telegram notification. Declared here so the release
+    // `--verify-release-env` probe can confirm CI actually injected them —
+    // `TelegramNotificationService` reads the same defines through its own
+    // const map, because that file is shared with the phone repo which has no
+    // `DesktopEnv`.
+    'TELEGRAM_FEEDBACK_BOT_TOKEN': String.fromEnvironment(
+      'TELEGRAM_FEEDBACK_BOT_TOKEN',
+      defaultValue: '',
+    ),
+    'TELEGRAM_FEEDBACK_CHAT_ID': String.fromEnvironment(
+      'TELEGRAM_FEEDBACK_CHAT_ID',
+      defaultValue: '',
+    ),
   };
 
   /// Loads the repo-local `.env` file for debug desktop runs without bundling

@@ -43,6 +43,17 @@ This file is the orientation Claude reads on every Ralph-loop iteration. It is t
 
     This is safe because `desktop_updater` always targets the highest `shortVersion` and rollback is defined as a new forward build (`docs/AUTO_UPDATER_SETUP.md`), so a superseded archive is never fetched again. Do not raise the value to "keep a spare" — four platforms × ~1.3 GB of archives per retained release is what fills the droplet. The one real cost: a client mid-download of the previous archive when the next release is ingested loses its staged diff and re-checks against the new build on the next cycle, which is correct behavior, not a regression to defend against with extra retention.
 
+12. **This repo is PUBLIC open source, and so is the phone repo. No secret may enter the source tree — or the shipped binary.** `github.com/Chessever/chessever_frontend_desktop` and `github.com/Chessever/chessever-frontend` are both public. Write every line as if a stranger reads it the minute it is pushed, because automated scrapers do exactly that. There are **two** exposure channels, and the second is the one that keeps getting missed:
+
+    - **Channel 1 — git.** Anything committed to any branch of either repo is public the moment it is pushed. Deleting it later does not help: it was already scraped, and it stays in forks, PR refs, and the GitHub events API. A leaked credential is burned permanently; the only remedy is rotation at the issuer.
+    - **Channel 2 — the app binary.** A Flutter client cannot keep a secret from its own user. A Dart `const`, a `--dart-define`, a value read from a bundled `.env` asset — all of them are compiled into the AOT snapshot as plaintext and come back out with `strings App | grep`. Every DMG, `.exe`, AppImage, APK and IPA we publish is a public artifact. **Making the repo private would not have prevented this.** "Move it to `.env`" is not a fix, it is the same leak with an extra step.
+
+    Therefore: **any credential that grants write, admin, send, or impersonation rights lives server-side only.** The client calls an endpoint we control (Supabase edge function, Cloudflare worker, release droplet); that endpoint holds the key and enforces rate limits and abuse rules. The client never sees it.
+
+    Values that *are* safe to ship in the client are the ones designed to be public and defended on the server: the Supabase **anon** key (RLS is the actual boundary), Firebase `apiKey` (a project identifier, not a credential), public API base URLs. If leaking a value lets someone act *as us*, it is not in this category. Never put a real credential in `.env.example`, and never uncomment the `.env` entry in `pubspec.yaml`'s asset list (it is commented out on purpose — bundling `.env` puts every key in it straight into channel 2).
+
+    **Precedent, 2026-08-03:** `TelegramNotificationService` carried the feedback bot token as a hardcoded `const` next to the private group's chat ID. It went public with the OSS release on 2026-06-01, shipped in every release binary, and was harvested; the attacker used the Bot API to rename `@chesseverfeedbackbot` into a casino advert and gained send access to the internal feedback group. The token had to be revoked at BotFather — no code change could undo the leak. Assume the same fate for anything you hardcode.
+
 ## 3. UI direction
 
 - **Primary UI library for desktop chrome: [forui](https://pub.dev/packages/forui).** Declared in `pubspec.yaml`; this is the chrome library — not optional. Use forui (NOT Material) for: sidebar items, dialogs, dropdowns, popovers, **tooltips**, command palette host, menus, sheets, command items, switches, sliders. If forui has a component for it, use forui.
@@ -192,3 +203,6 @@ Open work to flip the remaining boxes:
 - ❌ Deleting a feature because the desktop equivalent is hard. File a tracked TODO and move on.
 - ❌ Output the loop's completion promise when it isn't true. The promise text is in the loop config; only emit it when §9 is fully satisfied.
 - ❌ Run `flutter build <target>` (macos/windows/ios/android/web) as your own validation step. Builds belong to the user and the release flow. `flutter analyze` is the signal; stop there.
+- ❌ Hardcode a token, API key, bot token, webhook URL, private chat/channel ID, admin endpoint, or internal hostname anywhere under `lib/`. The repo is public and the binary is shippable — see §2.12. Route it through a server endpoint instead.
+- ❌ "Fix" a leaked secret by moving it to `--dart-define`, a bundled `.env`, base64, or string-splitting. All of those still ship the value to the user; obfuscation is not secrecy. The only fix is that the client never holds it.
+- ❌ Write a code comment, TODO, log line, error message, or test fixture that names internal infrastructure (droplet IPs, admin paths, private group IDs, staff usernames). It is published with everything else.

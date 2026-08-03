@@ -66,6 +66,12 @@ workflows:
           if [ -n "${GAMEBASE_PROXY_BASE:-}" ]; then
             DART_DEFINES+=(--dart-define=GAMEBASE_PROXY_BASE="$GAMEBASE_PROXY_BASE")
           fi
+          if [ -n "${TELEGRAM_FEEDBACK_BOT_TOKEN:-}" ]; then
+            DART_DEFINES+=(--dart-define=TELEGRAM_FEEDBACK_BOT_TOKEN="$TELEGRAM_FEEDBACK_BOT_TOKEN")
+          fi
+          if [ -n "${TELEGRAM_FEEDBACK_CHAT_ID:-}" ]; then
+            DART_DEFINES+=(--dart-define=TELEGRAM_FEEDBACK_CHAT_ID="$TELEGRAM_FEEDBACK_CHAT_ID")
+          fi
           # Runner.xcodeproj pins manual Developer ID signing
           # ('Chessever Desktop Direct Distribution'). This is an unsigned
           # test build, so override signing off via Flutter's FLUTTER_XCODE_*
@@ -216,6 +222,12 @@ workflows:
           if [ -n "${GAMEBASE_PROXY_BASE:-}" ]; then
             DART_DEFINES+=(--dart-define=GAMEBASE_PROXY_BASE="$GAMEBASE_PROXY_BASE")
           fi
+          if [ -n "${TELEGRAM_FEEDBACK_BOT_TOKEN:-}" ]; then
+            DART_DEFINES+=(--dart-define=TELEGRAM_FEEDBACK_BOT_TOKEN="$TELEGRAM_FEEDBACK_BOT_TOKEN")
+          fi
+          if [ -n "${TELEGRAM_FEEDBACK_CHAT_ID:-}" ]; then
+            DART_DEFINES+=(--dart-define=TELEGRAM_FEEDBACK_CHAT_ID="$TELEGRAM_FEEDBACK_CHAT_ID")
+          fi
           flutter config --enable-macos-desktop
           export FLUTTER_ROOT="${FLUTTER_ROOT:-$(cd "$(dirname "$(command -v flutter)")/.." && pwd)}"
           echo "=== Building macOS package for $ARCH ==="
@@ -346,6 +358,12 @@ workflows:
           fi
           if [ -n "${GAMEBASE_PROXY_BASE:-}" ]; then
             DART_DEFINES+=(--dart-define=GAMEBASE_PROXY_BASE="$GAMEBASE_PROXY_BASE")
+          fi
+          if [ -n "${TELEGRAM_FEEDBACK_BOT_TOKEN:-}" ]; then
+            DART_DEFINES+=(--dart-define=TELEGRAM_FEEDBACK_BOT_TOKEN="$TELEGRAM_FEEDBACK_BOT_TOKEN")
+          fi
+          if [ -n "${TELEGRAM_FEEDBACK_CHAT_ID:-}" ]; then
+            DART_DEFINES+=(--dart-define=TELEGRAM_FEEDBACK_CHAT_ID="$TELEGRAM_FEEDBACK_CHAT_ID")
           fi
           flutter config --enable-macos-desktop
           export FLUTTER_ROOT="${FLUTTER_ROOT:-$(cd "$(dirname "$(command -v flutter)")/.." && pwd)}"

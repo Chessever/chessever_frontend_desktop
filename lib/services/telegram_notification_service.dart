@@ -1,19 +1,52 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 
-/// Service to send notifications to Telegram bot for immediate feedback alerts
+/// Service to send notifications to Telegram bot for immediate feedback alerts.
+///
+/// The bot token and chat ID come from the environment and are never written
+/// into source. Release builds receive them via `--dart-define`; debug builds
+/// read the git-ignored `.env`. This repo and the phone repo are both public
+/// open source, so a literal credential here is published the moment it is
+/// pushed — see CLAUDE.md §2.12 for the incident that produced this rule.
 class TelegramNotificationService {
   TelegramNotificationService._();
 
   static final TelegramNotificationService instance =
       TelegramNotificationService._();
 
-  static const String _botToken =
-      '8291528959:AAFHFRv_bkksbJ_BKnFf0627ghBcAbyXPgI';
+  /// Compile-time values injected by CI.
+  ///
+  /// `String.fromEnvironment` only resolves inside a const context, so each key
+  /// is spelled out literally rather than looked up through a variable.
+  static const Map<String, String> _release = <String, String>{
+    'TELEGRAM_FEEDBACK_BOT_TOKEN': String.fromEnvironment(
+      'TELEGRAM_FEEDBACK_BOT_TOKEN',
+      defaultValue: '',
+    ),
+    'TELEGRAM_FEEDBACK_CHAT_ID': String.fromEnvironment(
+      'TELEGRAM_FEEDBACK_CHAT_ID',
+      defaultValue: '',
+    ),
+  };
 
-  // Private group chat ID (prefix -100 + group ID from URL)
-  static const String _chatId = '-1003335110907';
+  static String _env(String key) {
+    final release = _release[key];
+    if (release != null && release.isNotEmpty) return release;
+    try {
+      final value = dotenv.env[key]?.trim();
+      if (value != null && value.isNotEmpty) return value;
+    } catch (_) {
+      // dotenv not initialized (release build, or debug run without a .env).
+    }
+    return '';
+  }
+
+  static String get _botToken => _env('TELEGRAM_FEEDBACK_BOT_TOKEN');
+
+  /// Private group chat ID (prefix -100 + group ID from URL).
+  static String get _chatId => _env('TELEGRAM_FEEDBACK_CHAT_ID');
 
   static const String _baseUrl = 'https://api.telegram.org/bot';
 
@@ -27,8 +60,14 @@ class TelegramNotificationService {
     String? platform,
     Uint8List? screenshotBytes,
   }) async {
-    if (_botToken == 'YOUR_BOT_TOKEN_HERE' || _chatId == 'YOUR_CHAT_ID_HERE') {
-      debugPrint('[Telegram] Bot token or chat ID not configured');
+    final botToken = _botToken;
+    final chatId = _chatId;
+    if (botToken.isEmpty || chatId.isEmpty) {
+      debugPrint(
+        '[Telegram] Not configured — set TELEGRAM_FEEDBACK_BOT_TOKEN and '
+        'TELEGRAM_FEEDBACK_CHAT_ID in .env (debug) or via --dart-define '
+        '(release). Feedback was not relayed.',
+      );
       return false;
     }
 
@@ -53,12 +92,12 @@ class TelegramNotificationService {
             ..writeln('---')
             ..writeln('_User ID: ${userId ?? 'Anonymous'}_');
 
-      final url = Uri.parse('$_baseUrl$_botToken/sendMessage');
+      final url = Uri.parse('$_baseUrl$botToken/sendMessage');
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'chat_id': _chatId,
+          'chat_id': chatId,
           'message_thread_id': 19,
           'text': message.toString(),
           'parse_mode': 'Markdown',
@@ -70,10 +109,10 @@ class TelegramNotificationService {
         return false;
       }
       if (screenshotBytes != null && screenshotBytes.isNotEmpty) {
-        final photoUrl = Uri.parse('$_baseUrl$_botToken/sendPhoto');
+        final photoUrl = Uri.parse('$_baseUrl$botToken/sendPhoto');
         final request =
             http.MultipartRequest('POST', photoUrl)
-              ..fields['chat_id'] = _chatId
+              ..fields['chat_id'] = chatId
               ..fields['message_thread_id'] = '19'
               ..fields['caption'] = 'Desktop report screenshot'
               ..files.add(

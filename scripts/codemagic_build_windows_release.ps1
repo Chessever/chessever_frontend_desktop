@@ -182,7 +182,7 @@ $required = @(
     'SENTRY_FLUTTER',
     'CHESSEVER_CLOUDFLARE_API_BASE'
 )
-$optional = @('GOOGLE_WEB_CLIENT_ID', 'BILLING_API_BASE', 'GAMEBASE_PROXY_BASE')
+$optional = @('GOOGLE_WEB_CLIENT_ID', 'BILLING_API_BASE', 'GAMEBASE_PROXY_BASE', 'TELEGRAM_FEEDBACK_BOT_TOKEN', 'TELEGRAM_FEEDBACK_CHAT_ID')
 
 foreach ($name in $required) {
     Add-DartDefine -Defines $dartDefines -Name $name -Required $true
