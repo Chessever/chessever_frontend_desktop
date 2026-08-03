@@ -105,13 +105,13 @@ workflows:
       - build/macos/Build/Products/Release/*.app
       - /tmp/xcodebuild_logs/*.log
 
-  # Apple Silicon on beta; Intel is a separate workflow on stable.
+  # Apple Silicon; Intel is a separate workflow. Both release on stable.
   macos-desktop-release-arm64:
     name: macOS Desktop Release (Apple Silicon)
     instance_type: mac_mini_m4
     max_build_duration: 120
     environment:
-      flutter: beta
+      flutter: stable
       xcode: latest
       cocoapods: default
       groups:
@@ -398,7 +398,7 @@ workflows:
     instance_type: windows_x2
     max_build_duration: 120
     environment:
-      flutter: beta
+      flutter: stable
       groups:
         - chessever-desktop-release
       vars:
@@ -472,7 +472,7 @@ workflows:
     instance_type: linux_x2
     max_build_duration: 120
     environment:
-      flutter: beta
+      flutter: stable
       groups:
         - chessever-desktop-release
       vars:
