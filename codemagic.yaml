@@ -138,7 +138,9 @@ workflows:
             APP_STORE_CONNECT_KEY_IDENTIFIER
             APP_STORE_CONNECT_ISSUER_ID
             APP_STORE_CONNECT_PRIVATE_KEY
-            CODEMAGIC_PUBLISHER_KEY
+            R2_ACCOUNT_ID
+            R2_ACCESS_KEY_ID
+            R2_SECRET_ACCESS_KEY
           )
           missing=0
           for name in "${required[@]}"; do
@@ -159,6 +161,9 @@ workflows:
       - name: Get Flutter packages
         script: |
           flutter pub get
+      - name: Install R2 publisher dependencies
+        script: |
+          python3 -m pip install --user -r scripts/requirements-release.txt
       - name: Test macOS updater framework repair
         script: |
           bash ./scripts/test_macos_updater_framework_repair.sh
@@ -289,7 +294,9 @@ workflows:
             APP_STORE_CONNECT_KEY_IDENTIFIER
             APP_STORE_CONNECT_ISSUER_ID
             APP_STORE_CONNECT_PRIVATE_KEY
-            CODEMAGIC_PUBLISHER_KEY
+            R2_ACCOUNT_ID
+            R2_ACCESS_KEY_ID
+            R2_SECRET_ACCESS_KEY
           )
           missing=0
           for name in "${required[@]}"; do
@@ -310,6 +317,9 @@ workflows:
       - name: Get Flutter packages
         script: |
           flutter pub get
+      - name: Install R2 publisher dependencies
+        script: |
+          python3 -m pip install --user -r scripts/requirements-release.txt
       - name: Test macOS updater framework repair
         script: |
           bash ./scripts/test_macos_updater_framework_repair.sh
@@ -417,7 +427,9 @@ workflows:
             'GOOGLE_DESKTOP_CLIENT_SECRET',
             'SENTRY_FLUTTER',
             'CHESSEVER_CLOUDFLARE_API_BASE',
-            'CODEMAGIC_PUBLISHER_KEY'
+            'R2_ACCOUNT_ID',
+            'R2_ACCESS_KEY_ID',
+            'R2_SECRET_ACCESS_KEY'
           )
           $missing = @()
           foreach ($name in $required) {
@@ -432,6 +444,9 @@ workflows:
       - name: Get Flutter packages
         script: |
           flutter pub get
+      - name: Install R2 publisher dependencies
+        script: |
+          python -m pip install --user -r scripts\requirements-release.txt
       - name: Test Windows native bundle verifier
         script: |
           flutter test --no-pub test/desktop/windows_release_bundle_verifier_test.dart
@@ -492,8 +507,9 @@ workflows:
             GOOGLE_DESKTOP_CLIENT_SECRET
             SENTRY_FLUTTER
             CHESSEVER_CLOUDFLARE_API_BASE
-            CODEMAGIC_PUBLISHER_KEY
-            CODEMAGIC_PUBLISH_REMOTE
+            R2_ACCOUNT_ID
+            R2_ACCESS_KEY_ID
+            R2_SECRET_ACCESS_KEY
           )
           missing=0
           for name in "${required[@]}"; do
@@ -506,6 +522,9 @@ workflows:
       - name: Get Flutter packages
         script: |
           flutter pub get
+      - name: Install R2 publisher dependencies
+        script: |
+          python3 -m pip install --user -r scripts/requirements-release.txt
       - name: Test Linux updater archive aliases
         script: |
           flutter test --no-pub test/desktop/desktop_updater_archive_symlink_test.dart
