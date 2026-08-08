@@ -308,7 +308,7 @@ def publish(args: argparse.Namespace) -> None:
             int(version_match.group("build")),
         ],
         "date": dt.date.today().isoformat(),
-        "publishedAt": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+        "publishedAt": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "mandatory": False,
         "changes": [
             {
