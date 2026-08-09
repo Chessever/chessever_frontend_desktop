@@ -80,8 +80,6 @@ require_command nm
 require_command otool
 require_command python3
 require_command readlink
-require_command rsync
-require_command ssh
 require_command xcrun
 
 REQUIRED_DART_DEFINE_KEYS=(
@@ -438,18 +436,6 @@ if [ "$SKIP_UPLOAD" -eq 1 ]; then
   exit 0
 fi
 
-require_env CODEMAGIC_PUBLISHER_KEY
-KEY_PATH="$WORKDIR/codemagic_publisher_ed25519"
-printf '%s\n' "$CODEMAGIC_PUBLISHER_KEY" > "$KEY_PATH"
-chmod 600 "$KEY_PATH"
-
-REMOTE="codemagic-publisher@157.245.243.138"
-SSH_OPTS=(-i "$KEY_PATH" -o StrictHostKeyChecking=accept-new)
-ssh "${SSH_OPTS[@]}" "$REMOTE" "prepare"
-rsync -az --delete -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
-  "$ARCHIVE_DIR/" "$REMOTE:/var/www/updates/desktop/archive/$ARCHIVE_NAME/"
-ssh "${SSH_OPTS[@]}" "$REMOTE" "ingest $UPDATE_PLATFORM $ARCHIVE_NAME $RELEASE_VERSION"
-
 # Silicon continues Chessever.dmg + Chessever-<version>.dmg (original pattern).
 # Intel is additive: Chessever-intel.dmg + Chessever-<version>-intel.dmg.
 if [ -n "$DMG_ARCH_LABEL" ]; then
@@ -457,14 +443,18 @@ if [ -n "$DMG_ARCH_LABEL" ]; then
 else
   VERSIONED_DMG_NAME="Chessever-${RELEASE_VERSION}.dmg"
 fi
-rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
-  "$DMG_PATH" "$REMOTE:/var/www/updates/desktop/downloads/${VERSIONED_DMG_NAME}"
-rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
-  "$DMG_PATH" "$REMOTE:/var/www/updates/desktop/downloads/${STABLE_DMG_NAME}"
 
-# Prune only after both the immutable versioned download and stable website
-# alias are safely in place. The server owns version ordering and deletion.
-ssh "${SSH_OPTS[@]}" "$REMOTE" "prune-downloads $UPDATE_PLATFORM"
+require_env R2_ACCOUNT_ID
+require_env R2_ACCESS_KEY_ID
+require_env R2_SECRET_ACCESS_KEY
+python3 "$REPO_ROOT/scripts/r2_publish_release.py" \
+  --platform "$UPDATE_PLATFORM" \
+  --release-version "$RELEASE_VERSION" \
+  --archive-dir "$ARCHIVE_DIR" \
+  --installer "$DMG_PATH" \
+  --versioned-installer-name "$VERSIONED_DMG_NAME" \
+  --stable-installer-name "$STABLE_DMG_NAME" \
+  --scratch-dir "$WORKDIR/r2"
 
 echo "Published macOS desktop_updater archive $RELEASE_VERSION ($UPDATE_PLATFORM)"
 echo "Published macOS DMG: https://chessever.com/updates/desktop/downloads/${STABLE_DMG_NAME}"

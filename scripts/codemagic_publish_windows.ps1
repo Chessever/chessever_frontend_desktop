@@ -297,48 +297,26 @@ if ($SkipUpload) {
     exit 0
 }
 
-if (-not $env:CODEMAGIC_PUBLISHER_KEY) {
-    throw 'CODEMAGIC_PUBLISHER_KEY is required to publish the Windows archive'
-}
-
-$keyPath = Join-Path $env:TEMP 'codemagic_publisher_ed25519'
-$keyContent = ($env:CODEMAGIC_PUBLISHER_KEY -replace "`r`n", "`n") + "`n"
-[IO.File]::WriteAllText($keyPath, $keyContent, [Text.UTF8Encoding]::new($false))
-icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
-
-$remote = 'codemagic-publisher@157.245.243.138'
-& ssh -i $keyPath -o StrictHostKeyChecking=accept-new $remote 'prepare'
-if ($LASTEXITCODE -ne 0) {
-    throw "remote prepare failed with exit code $LASTEXITCODE"
-}
-
-& scp -O -r -i $keyPath -o StrictHostKeyChecking=accept-new $archiveDir "${remote}:/var/www/updates/desktop/archive/"
-if ($LASTEXITCODE -ne 0) {
-    throw "archive upload failed with exit code $LASTEXITCODE"
-}
-
-& ssh -i $keyPath -o StrictHostKeyChecking=accept-new $remote "ingest windows $($release.ArchiveName) $($release.ReleaseVersion)"
-if ($LASTEXITCODE -ne 0) {
-    throw "app archive ingest failed with exit code $LASTEXITCODE"
-}
-
 # Publish a downloadable installer to a stable URL for the website
 # "Download for Windows" button. Versioned copy lives next to it.
 $versionedInstallerName = "Chessever-$($release.ReleaseVersion)-Setup.exe"
-& scp -O -i $keyPath -o StrictHostKeyChecking=accept-new $installerPath "${remote}:/var/www/updates/desktop/downloads/$versionedInstallerName"
-if ($LASTEXITCODE -ne 0) {
-    throw "windows installer upload (versioned) failed with exit code $LASTEXITCODE"
+foreach ($name in @('R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY')) {
+    if (-not [Environment]::GetEnvironmentVariable($name)) {
+        throw "$name is required to publish the Windows archive"
+    }
 }
-& scp -O -i $keyPath -o StrictHostKeyChecking=accept-new $installerPath "${remote}:/var/www/updates/desktop/downloads/Chessever-Setup.exe"
+$scratchDir = Join-Path $env:TEMP 'chessever-r2-publish'
+New-Item -ItemType Directory -Force -Path $scratchDir | Out-Null
+python .\scripts\r2_publish_release.py `
+    --platform windows `
+    --release-version $release.ReleaseVersion `
+    --archive-dir $archiveDir `
+    --installer $installerPath `
+    --versioned-installer-name $versionedInstallerName `
+    --stable-installer-name 'Chessever-Setup.exe' `
+    --scratch-dir $scratchDir
 if ($LASTEXITCODE -ne 0) {
-    throw "windows installer upload (latest) failed with exit code $LASTEXITCODE"
-}
-
-# Prune only after both the immutable versioned download and stable website
-# alias are safely in place. The server owns version ordering and deletion.
-& ssh -i $keyPath -o StrictHostKeyChecking=accept-new $remote 'prune-downloads windows'
-if ($LASTEXITCODE -ne 0) {
-    throw "windows installer prune failed with exit code $LASTEXITCODE"
+    throw "R2 publish failed with exit code $LASTEXITCODE"
 }
 
 Write-Host "Published Windows desktop_updater archive $($release.ReleaseVersion)"

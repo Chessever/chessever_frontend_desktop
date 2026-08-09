@@ -3,16 +3,12 @@
 #   1. validates the desktop_updater archive contract,
 #   2. runs the release-env dart-define check against the built binary,
 #   3. packages the bundle into a Debian package,
-#   4. uploads the archive + ingests it on the update server (auto-update channel),
-#   5. publishes the .deb to the stable website download URL.
+#   4. uploads immutable archive/versioned package objects to private R2,
+#   5. publishes the stable alias and updater manifests after verification.
 #
 # Linux has no Developer ID / notarization step — Debian packages are
 # distributed unsigned, the same way the Windows installer is. Everything else matches the
-# macOS publish contract, including the server `prepare`/`ingest` commands.
-#
-# Additive: Linux-only. The macOS/Windows publish scripts are untouched and
-# share no files with this one. The server `ingest linux ...` call is a no-op
-# for the macOS/Windows channels.
+# macOS publish contract.
 set -euo pipefail
 
 SKIP_UPLOAD=0
@@ -55,8 +51,6 @@ require_command file
 require_command nm
 require_command python3
 require_command readelf
-require_command rsync
-require_command ssh
 
 # Must match codemagic_build_linux_release.sh and the app's compiled defines
 # (lib/desktop/services/desktop_env.dart) so --verify-release-env passes.
@@ -366,31 +360,17 @@ if [ "$SKIP_UPLOAD" -eq 1 ]; then
   exit 0
 fi
 
-require_env CODEMAGIC_PUBLISHER_KEY
-require_env CODEMAGIC_PUBLISH_REMOTE
-KEY_PATH="$WORKDIR/codemagic_publisher_ed25519"
-printf '%s\n' "$CODEMAGIC_PUBLISHER_KEY" > "$KEY_PATH"
-chmod 600 "$KEY_PATH"
-
-# Publish target (user@host) comes from the Codemagic env group, never
-# hardcoded — keeps the update-server address out of the public repo.
-REMOTE="$CODEMAGIC_PUBLISH_REMOTE"
-SSH_OPTS=(-i "$KEY_PATH" -o StrictHostKeyChecking=accept-new)
-ssh "${SSH_OPTS[@]}" "$REMOTE" "prepare"
-rsync -az --delete -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
-  "$ARCHIVE_DIR/" "$REMOTE:/var/www/updates/desktop/archive/$ARCHIVE_NAME/"
-ssh "${SSH_OPTS[@]}" "$REMOTE" "ingest linux $ARCHIVE_NAME $RELEASE_VERSION"
-
-# Publish the latest Debian package to a stable URL for the website "Download
-# for Linux" button. A versioned copy lives next to it for reference.
-rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
-  "$DEB_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever-${RELEASE_VERSION}-amd64.deb"
-rsync -az -e "ssh -i '$KEY_PATH' -o StrictHostKeyChecking=accept-new" \
-  "$DEB_PATH" "$REMOTE:/var/www/updates/desktop/downloads/Chessever.deb"
-
-# Prune only after both the immutable versioned download and stable website
-# alias are safely in place. The server owns version ordering and deletion.
-ssh "${SSH_OPTS[@]}" "$REMOTE" "prune-downloads linux"
+require_env R2_ACCOUNT_ID
+require_env R2_ACCESS_KEY_ID
+require_env R2_SECRET_ACCESS_KEY
+python3 "$REPO_ROOT/scripts/r2_publish_release.py" \
+  --platform linux \
+  --release-version "$RELEASE_VERSION" \
+  --archive-dir "$ARCHIVE_DIR" \
+  --installer "$DEB_PATH" \
+  --versioned-installer-name "Chessever-${RELEASE_VERSION}-amd64.deb" \
+  --stable-installer-name "Chessever.deb" \
+  --scratch-dir "$WORKDIR/r2"
 
 echo "Published Linux desktop_updater archive $RELEASE_VERSION"
 echo "Published Linux Debian package: https://chessever.com/updates/desktop/downloads/Chessever.deb"
