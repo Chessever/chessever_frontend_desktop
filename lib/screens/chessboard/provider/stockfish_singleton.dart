@@ -194,6 +194,16 @@ class StockfishSingleton {
     }
   }
 
+  /// Desktop drives a separate engine process; readiness is gated on process
+  /// spawn + UCI handshake rather than an in-process FFI init.
+  bool get _isDesktop {
+    try {
+      return Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<EnhancedCloudEval> evaluatePosition(
     String fen, {
     int depth = 15,
@@ -1127,10 +1137,15 @@ class StockfishSingleton {
 
     _engine!.state.addListener(listener);
 
-    // Use longer timeout on Android
+    // Use longer timeout on Android. Desktop cold starts spawn an external
+    // process (first-run binary copy, AV scans on Windows) and routinely
+    // overrun the 3s FFI-tuned default on slow machines (CHESSEVER-158).
+    const desktopMinimumTimeout = Duration(seconds: 10);
     final effectiveTimeout =
         _isAndroid
             ? Duration(milliseconds: timeout.inMilliseconds + 1000)
+            : _isDesktop && timeout < desktopMinimumTimeout
+            ? desktopMinimumTimeout
             : timeout;
 
     timer = Timer(effectiveTimeout, () {
