@@ -2,9 +2,10 @@
 ///
 /// The service runs the *same* classifier this app runs — its
 /// `container/dart/lib/vendor/` is a checksummed copy of this repo's own files,
-/// on the same Stockfish 17.1, at the same depth, with the same book lookups —
-/// so a server report is the report this app would have produced, without
-/// spending minutes of the user's CPU and battery on it.
+/// on Stockfish 18 at the same depth, with the same book lookups. The desktop
+/// fallback remains on its bundled Stockfish 17.1, so server reports use the
+/// same classifier and search configuration but can have different numerical
+/// evaluations than an offline run.
 ///
 /// The engine path stays in place and is what runs if this is unavailable. That
 /// is deliberate: a review that cannot run offline is a worse app than one that
