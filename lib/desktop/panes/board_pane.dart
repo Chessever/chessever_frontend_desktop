@@ -9600,6 +9600,8 @@ class _FallenKingOverlayState extends State<_FallenKingOverlay> {
                           .round(),
                       widget.pieceImage,
                     ),
+                    width: widget.squareSize,
+                    height: widget.squareSize,
                     fit: BoxFit.contain,
                   ),
                 ),

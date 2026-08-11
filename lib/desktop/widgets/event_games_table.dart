@@ -5326,7 +5326,7 @@ class _EventRoundStatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (label, color) = switch (status) {
-      RoundStatus.live => ('LIVE', kRedColor),
+      RoundStatus.live => ('LIVE', kPrimaryColor),
       RoundStatus.ongoing => ('', kGreenColor),
       RoundStatus.completed => ('DONE', kLightGreyColor),
       RoundStatus.upcoming => ('SOON', kPrimaryColor),

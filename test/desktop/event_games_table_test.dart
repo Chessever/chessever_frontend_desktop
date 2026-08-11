@@ -237,6 +237,60 @@ void main() {
     },
   );
 
+  testWidgets('event rail uses the primary color for every LIVE indicator', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'live-game-1',
+          pgn: '1. e4 e5 *',
+          label: 'Live game',
+          whiteName: 'White',
+          blackName: 'Black',
+          tournamentTitle: 'Brasov Grand Prix Classic 2026',
+          eventGames: [
+            _summary(
+              id: 'live-game-1',
+              roundLabel: 'Round 5',
+              roundStartsAt: DateTime.now().subtract(const Duration(hours: 2)),
+              lastMoveTime: DateTime.now().subtract(const Duration(minutes: 1)),
+              status: GameStatus.ongoing,
+            ),
+          ],
+          gameListSelectedId: 'live-game-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final liveLabels = tester.widgetList<Text>(find.text('LIVE')).toList();
+    expect(liveLabels, hasLength(2));
+    expect(
+      liveLabels.map((label) => label.style?.color),
+      everyElement(kPrimaryColor),
+    );
+
+    final liveDotColors =
+        tester
+            .widgetList<Container>(find.byType(Container))
+            .where((container) {
+              final decoration = container.decoration;
+              final constraints = container.constraints;
+              if (decoration is! BoxDecoration || constraints == null) {
+                return false;
+              }
+              final size = constraints.biggest;
+              return decoration.shape == BoxShape.circle &&
+                  size.width == size.height &&
+                  (size.width == 5 || size.width == 6);
+            })
+            .map((container) => (container.decoration! as BoxDecoration).color)
+            .toList();
+    expect(liveDotColors, hasLength(2));
+    expect(liveDotColors, everyElement(kPrimaryColor));
+  });
+
   testWidgets('event rail omits ongoing status chip text', (tester) async {
     await tester.pumpWidget(
       _wrap(
