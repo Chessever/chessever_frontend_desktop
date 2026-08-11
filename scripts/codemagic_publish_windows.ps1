@@ -53,6 +53,7 @@ function Get-ExpectedDartDefineKeys {
         'SENTRY_FLUTTER',
         'CHESSEVER_CLOUDFLARE_API_BASE'
     )
+    $fixed = @('ANALYSIS_API_BASE')
     $optional = @('GOOGLE_WEB_CLIENT_ID', 'BILLING_API_BASE', 'GAMEBASE_PROXY_BASE', 'TELEGRAM_FEEDBACK_BOT_TOKEN', 'TELEGRAM_FEEDBACK_CHAT_ID')
     $keys = New-Object System.Collections.Generic.List[string]
 
@@ -60,6 +61,10 @@ function Get-ExpectedDartDefineKeys {
         if (-not [Environment]::GetEnvironmentVariable($name)) {
             throw "$name is required for release dart-define verification"
         }
+        $keys.Add($name)
+    }
+
+    foreach ($name in $fixed) {
         $keys.Add($name)
     }
 

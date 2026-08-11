@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/engine/game_report_book_lookup.dart';
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
@@ -448,6 +450,125 @@ void main() {
         ),
         isTrue,
       );
+    });
+  });
+
+  // The analysis Worker queues the job, cold-starts a container, and only then
+  // sends its first fraction. Nothing arrives for that whole stretch, so these
+  // cover the one thing the user sees: the bar must never stand still.
+  group('server-backed report progress', () {
+    final game = ChessGame.fromPgn('remote', '1. e4 e5 2. Nf3 Nc6 *');
+
+    GameAnalysisReport finishedReport() => GameAnalysisReport(
+      fingerprint: gameReportFingerprint(game),
+      positions: const [],
+      moves: const [],
+      whiteAccuracy: 90,
+      blackAccuracy: 88,
+      generatedAt: DateTime.utc(2026),
+    );
+
+    test('the bar creeps while the server has said nothing', () async {
+      final pending = Completer<GameAnalysisReport>();
+      Future<GameAnalysisReport> silentRunner(
+        ChessGame game, {
+        int? whiteRating,
+        int? blackRating,
+        required void Function(double progress, String message) onProgress,
+        required bool Function() isCancelled,
+      }) => pending.future;
+
+      final controller = GameAnalysisReportController(
+        remoteRunner: silentRunner,
+      );
+      addTearDown(controller.dispose);
+
+      final analysing = controller.analyze(game);
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      final crept = controller.state.progress;
+
+      expect(controller.state.status, GameReportStatus.running);
+      expect(crept, greaterThan(0));
+      expect(
+        crept,
+        lessThan(GameAnalysisReportController.remoteProgressCeiling),
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      expect(controller.state.progress, greaterThan(crept));
+
+      pending.complete(finishedReport());
+      await analysing;
+      expect(controller.state.status, GameReportStatus.completed);
+      expect(controller.state.progress, 1.0);
+    });
+
+    test('a real fraction below the creep never rewinds the bar', () async {
+      final pending = Completer<GameAnalysisReport>();
+      late void Function(double progress, String message) publish;
+      Future<GameAnalysisReport> capturingRunner(
+        ChessGame game, {
+        int? whiteRating,
+        int? blackRating,
+        required void Function(double progress, String message) onProgress,
+        required bool Function() isCancelled,
+      }) {
+        publish = onProgress;
+        return pending.future;
+      }
+
+      final controller = GameAnalysisReportController(
+        remoteRunner: capturingRunner,
+      );
+      addTearDown(controller.dispose);
+
+      final analysing = controller.analyze(game);
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      final crept = controller.state.progress;
+      expect(crept, greaterThan(0));
+
+      // The Worker's first spoken fraction is 0.02 — below where the creep has
+      // already reached. The bar holds rather than jumping back.
+      publish(0.02, 'Waiting for an analysis slot…');
+      expect(controller.state.progress, greaterThanOrEqualTo(crept));
+      expect(controller.state.message, 'Waiting for an analysis slot…');
+
+      // A fraction above the creep takes over immediately.
+      publish(0.6, 'Analyzing on the server…');
+      expect(controller.state.progress, closeTo(0.6, 0.01));
+
+      pending.complete(finishedReport());
+      await analysing;
+      expect(controller.state.progress, 1.0);
+    });
+
+    test('cancelling stops the creep instead of leaving a timer running',
+        () async {
+      final pending = Completer<GameAnalysisReport>();
+      Future<GameAnalysisReport> silentRunner(
+        ChessGame game, {
+        int? whiteRating,
+        int? blackRating,
+        required void Function(double progress, String message) onProgress,
+        required bool Function() isCancelled,
+      }) => pending.future;
+
+      final controller = GameAnalysisReportController(
+        remoteRunner: silentRunner,
+      );
+      addTearDown(controller.dispose);
+
+      unawaited(controller.analyze(game));
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      expect(controller.state.progress, greaterThan(0));
+
+      await controller.cancel();
+      expect(controller.state.status, GameReportStatus.cancelled);
+
+      final settled = controller.state.progress;
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      expect(controller.state.status, GameReportStatus.cancelled);
+      expect(controller.state.progress, settled);
     });
   });
 }

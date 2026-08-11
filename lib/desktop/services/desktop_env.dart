@@ -20,6 +20,7 @@ class DesktopEnv {
     'GOOGLE_DESKTOP_CLIENT_SECRET',
     'SENTRY_FLUTTER',
     'CHESSEVER_CLOUDFLARE_API_BASE',
+    'ANALYSIS_API_BASE',
   ];
 
   static const Map<String, String> _release = <String, String>{
@@ -54,6 +55,19 @@ class DesktopEnv {
     ),
     'CHESSEVER_CLOUDFLARE_API_BASE': String.fromEnvironment(
       'CHESSEVER_CLOUDFLARE_API_BASE',
+      defaultValue: '',
+    ),
+    // Whole-game reports. A *different* Worker from the GIF one above — only
+    // this one serves `/v1/reports` — so the two bases are configured
+    // separately and must never be collapsed into a single key.
+    //
+    // Optional: `ServerGameReportClient` carries the production URL as its own
+    // default, so an absent define still reaches the live service. It is
+    // declared here because the release build scripts pass the define and list
+    // it in the `--verify-release-env` probe; a key the probe checks but this
+    // map does not declare reads as missing and exits the publish with 78.
+    'ANALYSIS_API_BASE': String.fromEnvironment(
+      'ANALYSIS_API_BASE',
       defaultValue: '',
     ),
     // Feedback relay. Optional: absent, the feedback dialog still works and

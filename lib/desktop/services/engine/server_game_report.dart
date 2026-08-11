@@ -15,6 +15,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:chessever/desktop/services/desktop_env.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/notation/notation_tree.dart';
@@ -22,14 +23,28 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// Where the analysis Worker lives.
+/// Where the analysis Worker lives when nothing overrides it.
+///
+/// This is a different Worker from the one behind
+/// `CHESSEVER_CLOUDFLARE_API_BASE`, which serves GIF export and has no
+/// `/v1/reports` route. Pointing one at the other reaches a live service that
+/// 404s every report, so the two bases stay separate keys.
+const String kAnalysisApiBaseDefault =
+    'https://chessever-analysis.young-sun-69a8.workers.dev';
+
+/// The analysis Worker this build talks to.
 ///
 /// Overridable so a build can point at a preview deployment without a code
-/// change: `--dart-define=ANALYSIS_API_BASE=http://127.0.0.1:8787`.
-const String kAnalysisApiBase = String.fromEnvironment(
-  'ANALYSIS_API_BASE',
-  defaultValue: 'https://chessever-analysis.young-sun-69a8.workers.dev',
-);
+/// change: `--dart-define=ANALYSIS_API_BASE=http://127.0.0.1:8787` for a
+/// release, or an `ANALYSIS_API_BASE=` line in the repo-local `.env` for a
+/// debug run. Going through [DesktopEnv] rather than a bare
+/// `String.fromEnvironment` is what makes the debug override work at all, and
+/// it is the same map the release `--verify-release-env` probe reads.
+String resolveAnalysisApiBase() {
+  final configured = DesktopEnv.maybeGet('ANALYSIS_API_BASE')?.trim();
+  if (configured == null || configured.isEmpty) return kAnalysisApiBaseDefault;
+  return configured;
+}
 
 /// A server report could not be produced.
 ///
@@ -51,7 +66,7 @@ class ServerGameReportException implements Exception {
 class ServerGameReportClient {
   ServerGameReportClient({http.Client? httpClient, String? baseUrl})
     : _http = httpClient ?? http.Client(),
-      _baseUrl = _trimSlash(baseUrl ?? kAnalysisApiBase);
+      _baseUrl = _trimSlash(baseUrl ?? resolveAnalysisApiBase());
 
   final http.Client _http;
   final String _baseUrl;
@@ -284,7 +299,7 @@ class ServerGameReportClient {
 GameReportRemoteRunner? serverGameReportRunner({
   ServerGameReportClient Function()? clientFactory,
 }) {
-  if (kAnalysisApiBase.isEmpty) return null;
+  if (resolveAnalysisApiBase().isEmpty) return null;
   final create = clientFactory ?? ServerGameReportClient.new;
   return (
     ChessGame game, {

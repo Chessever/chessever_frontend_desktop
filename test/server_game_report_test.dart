@@ -27,6 +27,18 @@ void main() {
     game = ChessGame.fromPgn('test', pgn);
   });
 
+  test('the report base resolves to the analysis Worker, not the GIF one', () {
+    // Two different Workers: only `chessever-analysis` serves /v1/reports, and
+    // `chessever-cloudflare` (GIF export) 404s every one of them. Collapsing
+    // the two keys reaches a live service that can never answer.
+    final base = resolveAnalysisApiBase();
+    expect(base, isNotEmpty);
+    expect(base, contains('chessever-analysis'));
+    expect(base, isNot(contains('chessever-cloudflare')));
+    expect(kAnalysisApiBaseDefault, contains('chessever-analysis'));
+    expect(serverGameReportRunner(), isNotNull);
+  });
+
   test('a real server response rebuilds into a report', () {
     final report = gameAnalysisReportFromServerJson(payload, game: game);
 

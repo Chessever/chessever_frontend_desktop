@@ -60,6 +60,7 @@ for name in "${REQUIRED_DART_DEFINE_KEYS[@]}"; do
   [ -n "${!name:-}" ] || die "$name is required"
   DART_DEFINES+=(--dart-define="$name=${!name}")
 done
+DART_DEFINES+=(--dart-define=ANALYSIS_API_BASE=https://chessever-analysis.young-sun-69a8.workers.dev)
 for name in "${OPTIONAL_DART_DEFINE_KEYS[@]}"; do
   if [ -n "${!name:-}" ]; then
     DART_DEFINES+=(--dart-define="$name=${!name}")

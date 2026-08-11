@@ -3122,8 +3122,19 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     final showTrailingSpinner = state.hasMore && !state.isLoading;
     _eventColumns = 1;
     final visibleEvents = _visibleEvents(events);
+    // Every event keeps a row in the list, including the ones currently
+    // collapsed to zero height by an empty snapshot. Dropping a collapsed
+    // event from `itemCount` would unmount the only widget that can ever
+    // report it visible again, so a single transient empty fetch would hide
+    // the event for the rest of the session — surviving pull-to-refresh and
+    // provider invalidation. `_eventVisibility` still drives selection and
+    // keyboard navigation through `visibleEvents`.
     // +1 for the collection cards header, +1 for the trailing spinner.
-    final itemCount = 1 + visibleEvents.length + (showTrailingSpinner ? 1 : 0);
+    final itemCount = 1 + events.length + (showTrailingSpinner ? 1 : 0);
+    final firstVisibleEventId =
+        visibleEvents.isNotEmpty
+            ? visibleEvents.first.id
+            : (events.isNotEmpty ? events.first.id : null);
 
     return Focus(
       focusNode: _focusNode,
@@ -3197,7 +3208,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                     );
                   }
                   final eventIndex = index - 1;
-                  if (eventIndex >= visibleEvents.length) {
+                  if (eventIndex >= events.length) {
                     return const Padding(
                       padding: EdgeInsets.symmetric(vertical: 16),
                       child: Center(
@@ -3212,7 +3223,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                       ),
                     );
                   }
-                  final event = visibleEvents[eventIndex];
+                  final event = events[eventIndex];
                   // RepaintBoundary isolates each row's repaints from the scrolling
                   // list so live clock ticks and PV/board updates don't repaint the
                   // whole viewport. Cheap to add — Flutter inserts these for grid
@@ -3220,7 +3231,9 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                   return _buildEventRow(
                     event,
                     streamingEnabled,
-                    isFirst: eventIndex == 0,
+                    // Collapsed rows render nothing at all, so the top gap has
+                    // to belong to the first row that actually paints.
+                    isFirst: event.id == firstVisibleEventId,
                   );
                 },
               ),

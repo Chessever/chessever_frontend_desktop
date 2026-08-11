@@ -543,6 +543,11 @@ void main() {
       expect(desktopEnv, contains('requiredReleaseKeys'));
       expect(desktopEnv, contains('GAMEBASE_PROXY_BASE'));
       expect(desktopEnv, contains('CHESSEVER_CLOUDFLARE_API_BASE'));
+      // The release scripts pass --dart-define=ANALYSIS_API_BASE and list it in
+      // the --verify-release-env probe. The probe reads this map, so a key the
+      // scripts check but the map does not declare reads as missing and exits
+      // every desktop publish with 78.
+      expect(desktopEnv, contains('ANALYSIS_API_BASE'));
       expect(desktopEnv, isNot(contains('GAMEBASE_API_KEY')));
       expect(desktopEnv, contains('BILLING_API_BASE'));
       expect(nativeBridge, isNot(contains('chessever.desktop/updater')));

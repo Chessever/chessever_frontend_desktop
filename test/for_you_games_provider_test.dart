@@ -353,6 +353,66 @@ void main() {
     expect(merged['event-2']?.visibleGames.single.gameId, 'game-3');
   });
 
+  test('a boardless fetch never erases an event that already has boards', () {
+    // A live event whose top-game fetch comes back empty (timed-out batch,
+    // failed RPC catch path, live refresh racing a round rollover) must keep
+    // its last good preview. An empty snapshot collapses the whole For You
+    // row, so blanking it here made a live event vanish from the desktop feed.
+    final live = _snapshot('event-live', visibleGames: [_game('game-1')]);
+    final current = <String, ForYouEventGamesSnapshot>{'event-live': live};
+    final incoming = <String, ForYouEventGamesSnapshot>{
+      'event-live': _snapshot('event-live', hasGames: false),
+    };
+
+    for (final replace in [false, true]) {
+      final merged = mergeForYouTopGameSnapshots(
+        current: current,
+        incoming: incoming,
+        replace: replace,
+      );
+
+      expect(
+        identical(merged['event-live'], live),
+        isTrue,
+        reason: 'replace: $replace kept no boards for a live event',
+      );
+      expect(merged['event-live']!.hasGames, isTrue);
+    }
+  });
+
+  test('an event that never had boards still resolves to an empty snapshot',
+      () {
+    // The preserve rule above must not stop a genuinely boardless event from
+    // resolving — otherwise its row would sit on skeletons forever.
+    final merged = mergeForYouTopGameSnapshots(
+      current: const <String, ForYouEventGamesSnapshot>{},
+      incoming: {'event-empty': _snapshot('event-empty', hasGames: false)},
+      replace: true,
+    );
+
+    expect(merged.containsKey('event-empty'), isTrue);
+    expect(merged['event-empty']!.hasGames, isFalse);
+  });
+
+  test('the For You feed keeps a row for every event, hidden or not', () {
+    // `_eventVisibility` is a one-way latch: the only code that can mark an
+    // event visible again lives inside the section widget. If the ListView
+    // sizes itself to the visible subset, a collapsed event unmounts and can
+    // never come back — it stays hidden for the whole session, surviving
+    // pull-to-refresh and provider invalidation.
+    final paneSource =
+        File('lib/desktop/panes/tournaments_pane.dart').readAsStringSync();
+
+    expect(
+      paneSource,
+      contains('1 + events.length + (showTrailingSpinner ? 1 : 0)'),
+    );
+    expect(
+      paneSource,
+      isNot(contains('1 + visibleEvents.length + (showTrailingSpinner')),
+    );
+  });
+
   test('For You has no per-event client hydration fallback', () {
     final providerSource =
         File('lib/providers/for_you_games_provider.dart').readAsStringSync();

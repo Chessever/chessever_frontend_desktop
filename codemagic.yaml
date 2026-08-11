@@ -56,6 +56,7 @@ workflows:
             --dart-define=GOOGLE_DESKTOP_CLIENT_SECRET="$GOOGLE_DESKTOP_CLIENT_SECRET"
             --dart-define=SENTRY_FLUTTER="$SENTRY_FLUTTER"
             --dart-define=CHESSEVER_CLOUDFLARE_API_BASE="$CHESSEVER_CLOUDFLARE_API_BASE"
+            --dart-define=ANALYSIS_API_BASE=https://chessever-analysis.young-sun-69a8.workers.dev
           )
           if [ -n "${GOOGLE_WEB_CLIENT_ID:-}" ]; then
             DART_DEFINES+=(--dart-define=GOOGLE_WEB_CLIENT_ID="$GOOGLE_WEB_CLIENT_ID")
@@ -217,6 +218,7 @@ workflows:
             --dart-define=GOOGLE_DESKTOP_CLIENT_SECRET="$GOOGLE_DESKTOP_CLIENT_SECRET"
             --dart-define=SENTRY_FLUTTER="$SENTRY_FLUTTER"
             --dart-define=CHESSEVER_CLOUDFLARE_API_BASE="$CHESSEVER_CLOUDFLARE_API_BASE"
+            --dart-define=ANALYSIS_API_BASE=https://chessever-analysis.young-sun-69a8.workers.dev
           )
           if [ -n "${GOOGLE_WEB_CLIENT_ID:-}" ]; then
             DART_DEFINES+=(--dart-define=GOOGLE_WEB_CLIENT_ID="$GOOGLE_WEB_CLIENT_ID")
@@ -359,6 +361,7 @@ workflows:
             --dart-define=GOOGLE_DESKTOP_CLIENT_SECRET="$GOOGLE_DESKTOP_CLIENT_SECRET"
             --dart-define=SENTRY_FLUTTER="$SENTRY_FLUTTER"
             --dart-define=CHESSEVER_CLOUDFLARE_API_BASE="$CHESSEVER_CLOUDFLARE_API_BASE"
+            --dart-define=ANALYSIS_API_BASE=https://chessever-analysis.young-sun-69a8.workers.dev
           )
           if [ -n "${GOOGLE_WEB_CLIENT_ID:-}" ]; then
             DART_DEFINES+=(--dart-define=GOOGLE_WEB_CLIENT_ID="$GOOGLE_WEB_CLIENT_ID")

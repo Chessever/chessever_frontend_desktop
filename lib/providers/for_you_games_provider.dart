@@ -89,6 +89,16 @@ Map<String, ForYouEventGamesSnapshot> mergeForYouTopGameSnapshots({
 
   for (final entry in incoming.entries) {
     final existing = current[entry.key];
+    // A fetch that comes back with no boards for an event we already have a
+    // preview for is a transient — a timed-out batch, a failed RPC whose catch
+    // path writes empty snapshots, or a live refresh that raced a round
+    // rollover. It is not the server saying the event lost its games. Since an
+    // empty snapshot hides the entire row, keep the last good preview until a
+    // fetch actually answers with boards.
+    if (existing != null && existing.hasGames && !entry.value.hasGames) {
+      if (replace) merged[entry.key] = existing;
+      continue;
+    }
     if (existing != null &&
         areEquivalentForYouSnapshots(existing, entry.value)) {
       if (replace) merged[entry.key] = existing;

@@ -207,6 +207,27 @@ class GameAnalysisReportController extends ChangeNotifier {
   /// the per-position completion always snaps to the full slice regardless.
   static const double reportKnodeReference = 500;
 
+  /// How often the bar is redrawn while a server report is in flight. Shorter
+  /// than the progress widget's 220ms ease on purpose: a tick that lands before
+  /// the previous one has finished easing reads as one continuous slide, where
+  /// a slower tick reads as step-pause-step. Only the bar's own subtree
+  /// rebuilds, so five frames a second costs nothing.
+  static const Duration remoteProgressTick = Duration(milliseconds: 200);
+
+  /// How quickly the creep spends its allowance. One time constant in, it has
+  /// covered ~63% of what it is allowed to cover, and it keeps slowing after —
+  /// so a long silence still moves the bar, just less and less.
+  static const Duration remoteProgressTimeConstant = Duration(seconds: 45);
+
+  /// The fraction of the remaining distance the creep may cover on its own.
+  /// Deliberately under half: this is a sign of life, not a claim about how
+  /// much of the report is done.
+  static const double remoteProgressCreepShare = 0.35;
+
+  /// The creep's asymptote. Only a real server fraction may take the bar above
+  /// this, and only the finished report takes it to 1.
+  static const double remoteProgressCeiling = 0.97;
+
   final StockfishSingleton _stockfish;
   final GameReportEvaluator? _evaluator;
   final GameReportBookLookup? _bookLookup;
@@ -218,11 +239,16 @@ class GameAnalysisReportController extends ChangeNotifier {
   GameReportState _state = const GameReportState();
   int _generation = 0;
   bool _disposed = false;
+  Timer? _remoteProgressTimer;
+  final Stopwatch _remoteProgressSilence = Stopwatch();
+  double _remoteProgressAnchor = 0;
+  String _remoteProgressMessage = '';
 
   GameReportState get state => _state;
 
   void invalidate() {
     _generation++;
+    _stopRemoteProgress();
     if (_state.isRunning) {
       unawaited(_stockfish.cancelEvaluationsForOwner(_ownerId));
     }
@@ -232,6 +258,7 @@ class GameAnalysisReportController extends ChangeNotifier {
   Future<void> cancel() async {
     if (!_state.isRunning) return;
     _generation++;
+    _stopRemoteProgress();
     await _stockfish.cancelEvaluationsForOwner(_ownerId);
     _setState(
       const GameReportState(
@@ -489,24 +516,23 @@ class GameAnalysisReportController extends ChangeNotifier {
         message: 'Sending game for analysis…',
       ),
     );
+    _startRemoteProgress(
+      generation: generation,
+      totalUnits: totalUnits,
+      message: 'Sending game for analysis…',
+    );
 
     try {
       final report = await remote(
         game,
         whiteRating: whiteRating,
         blackRating: blackRating,
-        onProgress: (progress, message) {
-          if (_disposed || generation != _generation) return;
-          _setState(
-            GameReportState(
-              status: GameReportStatus.running,
-              progress: progress.clamp(0.0, 0.99),
-              completedPositions: (totalUnits * progress).round(),
-              totalPositions: totalUnits,
-              message: message,
-            ),
-          );
-        },
+        onProgress: (progress, message) => _anchorRemoteProgress(
+          generation: generation,
+          totalUnits: totalUnits,
+          serverProgress: progress,
+          message: message,
+        ),
         isCancelled: () => _disposed || generation != _generation,
       );
 
@@ -538,7 +564,100 @@ class GameAnalysisReportController extends ChangeNotifier {
         '[GameReport] server analysis unavailable ($error); analysing locally',
       );
       return false;
+    } finally {
+      _stopRemoteProgress();
     }
+  }
+
+  /// Keeps the progress bar moving while the server is quiet.
+  ///
+  /// A server report only speaks on its poll interval, and its first spoken
+  /// fraction can be a minute away: the job queues, then a container cold
+  /// starts, and only then does the first callback land. A determinate bar
+  /// parked at 0% through that reads as a hang, and the user cancels a report
+  /// that was working fine. So between server updates the bar creeps — it eases
+  /// toward, but never reaches, [remoteProgressCeiling], covering at most
+  /// [remoteProgressCreepShare] of the distance still to run, on a
+  /// [remoteProgressTimeConstant] curve that slows the longer the silence
+  /// lasts. Every real fraction re-anchors the curve, so the creep is always a
+  /// floor under the truth and never races ahead of it.
+  void _startRemoteProgress({
+    required int generation,
+    required int totalUnits,
+    required String message,
+  }) {
+    _stopRemoteProgress();
+    _remoteProgressAnchor = 0;
+    _remoteProgressMessage = message;
+    _remoteProgressSilence
+      ..reset()
+      ..start();
+    _remoteProgressTimer = Timer.periodic(
+      remoteProgressTick,
+      (_) =>
+          _emitRemoteProgress(generation: generation, totalUnits: totalUnits),
+    );
+  }
+
+  void _stopRemoteProgress() {
+    _remoteProgressTimer?.cancel();
+    _remoteProgressTimer = null;
+    _remoteProgressSilence.stop();
+  }
+
+  /// Takes a real fraction from the server and restarts the creep from it.
+  ///
+  /// The anchor never drops below what is already on screen: the Worker's own
+  /// fraction is monotonic, but a value that lands below the creep would
+  /// otherwise freeze the bar until the curve climbed back to where it already
+  /// was — the exact stall this is here to prevent.
+  void _anchorRemoteProgress({
+    required int generation,
+    required int totalUnits,
+    required double serverProgress,
+    required String message,
+  }) {
+    if (_disposed || generation != _generation) return;
+    // Capped at 0.99 even for a server that says 1: a bar reaching full while
+    // the report is still being fetched is its own kind of stall.
+    _remoteProgressAnchor = math.max(
+      serverProgress.clamp(0.0, 0.99),
+      _state.progress,
+    );
+    _remoteProgressMessage = message;
+    _remoteProgressSilence
+      ..reset()
+      ..start();
+    _emitRemoteProgress(generation: generation, totalUnits: totalUnits);
+  }
+
+  void _emitRemoteProgress({
+    required int generation,
+    required int totalUnits,
+  }) {
+    if (_disposed || generation != _generation) {
+      _stopRemoteProgress();
+      return;
+    }
+    final anchor = _remoteProgressAnchor;
+    final headroom = remoteProgressCeiling - anchor;
+    final creep = headroom <= 0
+        ? 0.0
+        : headroom *
+            remoteProgressCreepShare *
+            (1 -
+                math.exp(
+                  -_remoteProgressSilence.elapsedMilliseconds /
+                      remoteProgressTimeConstant.inMilliseconds,
+                ));
+    final displayed = math.min(0.99, anchor + creep);
+    _reportProgress(
+      generation: generation,
+      progress: displayed,
+      completedPositions: (totalUnits * displayed).round(),
+      totalPositions: totalUnits,
+      message: _remoteProgressMessage,
+    );
   }
 
   /// Walks the game from move one asking how many database games played each
@@ -770,6 +889,7 @@ class GameAnalysisReportController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _generation++;
+    _stopRemoteProgress();
     unawaited(_stockfish.cancelEvaluationsForOwner(_ownerId));
     super.dispose();
   }

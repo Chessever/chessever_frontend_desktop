@@ -90,6 +90,9 @@ REQUIRED_DART_DEFINE_KEYS=(
   SENTRY_FLUTTER
   CHESSEVER_CLOUDFLARE_API_BASE
 )
+FIXED_DART_DEFINE_KEYS=(
+  ANALYSIS_API_BASE
+)
 OPTIONAL_DART_DEFINE_KEYS=(
   GOOGLE_WEB_CLIENT_ID
   BILLING_API_BASE
@@ -104,7 +107,7 @@ join_by_comma() {
 }
 
 expected_dart_define_keys() {
-  local keys=("${REQUIRED_DART_DEFINE_KEYS[@]}")
+  local keys=("${REQUIRED_DART_DEFINE_KEYS[@]}" "${FIXED_DART_DEFINE_KEYS[@]}")
   local name
   for name in "${OPTIONAL_DART_DEFINE_KEYS[@]}"; do
     if [ -n "${!name:-}" ]; then

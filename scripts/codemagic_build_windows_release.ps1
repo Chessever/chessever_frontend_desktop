@@ -187,6 +187,7 @@ $optional = @('GOOGLE_WEB_CLIENT_ID', 'BILLING_API_BASE', 'GAMEBASE_PROXY_BASE',
 foreach ($name in $required) {
     Add-DartDefine -Defines $dartDefines -Name $name -Required $true
 }
+$dartDefines.Add('--dart-define=ANALYSIS_API_BASE=https://chessever-analysis.young-sun-69a8.workers.dev')
 foreach ($name in $optional) {
     Add-DartDefine -Defines $dartDefines -Name $name -Required $false
 }
