@@ -142,6 +142,7 @@ class GroupBroadcastRepository extends BaseRepository {
   Future<List<GroupBroadcast>> getCurrentGroupBroadcasts({
     int? limit,
     int? offset,
+    String? afterId,
     String orderBy = 'max_avg_elo',
     bool ascending = false,
     List<String>? timeControlFilters,
@@ -164,9 +165,15 @@ class GroupBroadcastRepository extends BaseRepository {
       if (maxElo != null) {
         filterQuery = filterQuery.lte('max_avg_elo', maxElo);
       }
+      if (afterId != null) {
+        filterQuery = filterQuery.gt('id', afterId);
+      }
 
       PostgrestTransformBuilder<PostgrestList> query = filterQuery;
       query = query.order(orderBy, ascending: ascending);
+      if (orderBy != 'id') {
+        query = query.order('id', ascending: true);
+      }
 
       if (limit != null) {
         query = query.limit(limit);
@@ -181,6 +188,25 @@ class GroupBroadcastRepository extends BaseRepository {
       return (response as List)
           .map((json) => GroupBroadcast.fromJson(json))
           .toList();
+    });
+  }
+
+  /// Validate current-broadcast cursor advancement in database collation.
+  Future<bool> areCurrentGroupBroadcastIdsAfter({
+    required String afterId,
+    required Set<String> candidateIds,
+  }) async {
+    if (candidateIds.isEmpty) return true;
+    return handleApiCall(() async {
+      final response = await supabase
+          .from('group_broadcasts_current')
+          .select('id')
+          .inFilter('id', candidateIds.toList(growable: false))
+          .gt('id', afterId);
+      final acceptedIds = {
+        for (final json in response as List) json['id'] as String,
+      };
+      return acceptedIds.containsAll(candidateIds);
     });
   }
 
