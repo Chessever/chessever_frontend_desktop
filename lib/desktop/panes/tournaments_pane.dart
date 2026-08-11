@@ -2455,12 +2455,21 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   int _visibilityRequestSerial = 0;
   bool _restoreSelectionPending = false;
   int _eventColumns = 2;
+  late final StateController<_ForYouNavigationBookmark>
+  _navigationBookmarkController;
+  late final StateController<Set<String>> _liveCardsPauseReasonsController;
 
   String get _liveCardsPauseReason => 'desktop_for_you_scroll_${widget.tabId}';
 
   @override
   void initState() {
     super.initState();
+    _navigationBookmarkController = ref.read(
+      _forYouNavigationBookmarkProvider(widget.tabId).notifier,
+    );
+    _liveCardsPauseReasonsController = ref.read(
+      liveGameCardsPauseReasonsProvider.notifier,
+    );
     final bookmark = ref.read(_forYouNavigationBookmarkProvider(widget.tabId));
     _selection = bookmark.selection;
     _lastScrollOffset = bookmark.scrollOffset;
@@ -2491,7 +2500,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   }
 
   void _onScroll() {
-    if (!_scroll.hasClients) return;
+    if (!mounted || !_scroll.hasClients) return;
     _lastScrollOffset = _scroll.position.pixels;
     _markScrolling();
     final max = _scroll.position.maxScrollExtent;
@@ -2502,9 +2511,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   }
 
   void _persistNavigationBookmark() {
-    ref
-        .read(_forYouNavigationBookmarkProvider(widget.tabId).notifier)
-        .state = _ForYouNavigationBookmark(
+    _navigationBookmarkController.state = _ForYouNavigationBookmark(
       selection: _selection,
       scrollOffset: _lastScrollOffset,
     );
@@ -2532,7 +2539,11 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   void _setLiveCardsPausedForScroll(bool paused) {
     if (_liveCardsPausedForScroll == paused) return;
     _liveCardsPausedForScroll = paused;
-    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
+    setLiveGameCardsPausedWithNotifier(
+      _liveCardsPauseReasonsController,
+      reason: _liveCardsPauseReason,
+      paused: paused,
+    );
   }
 
   double _cacheExtentFor(GamesListViewMode mode) {
@@ -2724,7 +2735,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
   }
 
   bool _handleGlobalKeyboardScroll(KeyEvent event) {
-    if (!_keyboardScrollingActive || _hasNavigationModifier()) {
+    if (!mounted || !_keyboardScrollingActive || _hasNavigationModifier()) {
       return false;
     }
     // When the For You focus host (or one of its descendants) owns focus,

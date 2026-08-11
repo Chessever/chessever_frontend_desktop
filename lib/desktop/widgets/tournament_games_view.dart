@@ -111,6 +111,7 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   bool? _registeredPollingActive;
   bool _pendingPollingActive = false;
   bool _pollingSyncScheduled = false;
+  late final StateController<Set<String>> _liveCardsPauseReasonsController;
 
   // Captured once. liveGameCardsPaused is global, so a reason recomputed from a
   // changing widget.tabId could strand a stale reason in the pause set and
@@ -122,6 +123,9 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   @override
   void initState() {
     super.initState();
+    _liveCardsPauseReasonsController = ref.read(
+      liveGameCardsPauseReasonsProvider.notifier,
+    );
     // Seed from the per-tab provider so search text restores after the tab
     // has been flipped to a Board route and back (which disposes this
     // state). The provider survives because it's owned by the
@@ -264,7 +268,11 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
   void _setLiveCardsPausedForScroll(bool paused) {
     if (_liveCardsPausedForScroll == paused) return;
     _liveCardsPausedForScroll = paused;
-    setLiveGameCardsPaused(ref, reason: _liveCardsPauseReason, paused: paused);
+    setLiveGameCardsPausedWithNotifier(
+      _liveCardsPauseReasonsController,
+      reason: _liveCardsPauseReason,
+      paused: paused,
+    );
   }
 
   Future<void> _retryTournamentGames() async {
