@@ -161,15 +161,34 @@ typedef GameReportEvaluator =
 typedef GameReportBookLookup =
     Future<int?> Function(String fen, String uci, List<String> path);
 
+/// Produces a whole report off-device.
+///
+/// The server runs a checksummed copy of the algorithm below on the same
+/// engine, so what comes back is what the three passes would have produced —
+/// which is the only reason it is allowed to stand in for them.
+///
+/// [onProgress] drives the same progress UI the engine passes drive.
+/// [isCancelled] is polled so leaving the tab stops the wait.
+typedef GameReportRemoteRunner =
+    Future<GameAnalysisReport> Function(
+      ChessGame game, {
+      int? whiteRating,
+      int? blackRating,
+      required void Function(double progress, String message) onProgress,
+      required bool Function() isCancelled,
+    });
+
 /// Owns one board tab's session-only whole-game analysis.
 class GameAnalysisReportController extends ChangeNotifier {
   GameAnalysisReportController({
     StockfishSingleton? stockfish,
     GameReportEvaluator? evaluator,
     GameReportBookLookup? bookLookup,
+    GameReportRemoteRunner? remoteRunner,
   }) : _stockfish = stockfish ?? StockfishSingleton(),
        _evaluator = evaluator,
-       _bookLookup = bookLookup;
+       _bookLookup = bookLookup,
+       _remoteRunner = remoteRunner;
 
   /// Principal search depth. Slightly above mobile (12) — desktops are faster
   /// per node, but full MultiPV-3-at-18 on every ply was slower than mobile's
@@ -191,6 +210,7 @@ class GameAnalysisReportController extends ChangeNotifier {
   final StockfishSingleton _stockfish;
   final GameReportEvaluator? _evaluator;
   final GameReportBookLookup? _bookLookup;
+  final GameReportRemoteRunner? _remoteRunner;
   late final String _ownerId = StockfishSingleton.generateOwnerId(
     'gameReport',
     identityHashCode(this),
@@ -227,6 +247,23 @@ class GameAnalysisReportController extends ChangeNotifier {
     int? blackRating,
   }) async {
     if (_state.isRunning || game.mainline.isEmpty) return;
+
+    // The server runs this same algorithm on the same engine, so when it is
+    // reachable it produces this report without spending the user's CPU on it.
+    // A refusal that is about the caller rather than the game (not signed in,
+    // over quota, offline) falls through to the passes below — the review still
+    // works, it just costs battery.
+    final remote = _remoteRunner;
+    if (remote != null &&
+        await _analyzeRemotely(
+          remote,
+          game,
+          whiteRating: whiteRating,
+          blackRating: blackRating,
+        )) {
+      return;
+    }
+
     final generation = ++_generation;
     final fingerprint = gameReportFingerprint(game);
     final fens = gameReportFens(game);
@@ -423,6 +460,84 @@ class GameAnalysisReportController extends ChangeNotifier {
     } catch (error) {
       if (generation != _generation) return;
       _fail('Game analysis failed: $error');
+    }
+  }
+
+  /// Runs the report on the server, driving the same state machine the engine
+  /// passes drive.
+  ///
+  /// Returns true when the outcome is final — the report arrived, the user
+  /// cancelled, or the game itself was rejected. Returns false when the failure
+  /// was about reaching the service rather than about this game, which is the
+  /// signal to analyse locally instead.
+  Future<bool> _analyzeRemotely(
+    GameReportRemoteRunner remote,
+    ChessGame game, {
+    int? whiteRating,
+    int? blackRating,
+  }) async {
+    final generation = ++_generation;
+    final fingerprint = gameReportFingerprint(game);
+    // The server reports one fraction for the whole job rather than a position
+    // count, so the progress UI is driven by that fraction alone. Totals are
+    // set to the move count purely so the existing widgets have a scale.
+    final totalUnits = game.mainline.length;
+    _setState(
+      GameReportState(
+        status: GameReportStatus.running,
+        totalPositions: totalUnits,
+        message: 'Sending game for analysis…',
+      ),
+    );
+
+    try {
+      final report = await remote(
+        game,
+        whiteRating: whiteRating,
+        blackRating: blackRating,
+        onProgress: (progress, message) {
+          if (_disposed || generation != _generation) return;
+          _setState(
+            GameReportState(
+              status: GameReportStatus.running,
+              progress: progress.clamp(0.0, 0.99),
+              completedPositions: (totalUnits * progress).round(),
+              totalPositions: totalUnits,
+              message: message,
+            ),
+          );
+        },
+        isCancelled: () => _disposed || generation != _generation,
+      );
+
+      if (_disposed || generation != _generation) return true;
+      if (report.fingerprint != fingerprint) {
+        // Belt and braces: the client checks this too, and everything
+        // downstream is keyed on the fingerprint.
+        _fail('The server analysed a different game.');
+        return true;
+      }
+      _setState(
+        GameReportState(
+          status: GameReportStatus.completed,
+          progress: 1,
+          completedPositions: totalUnits,
+          totalPositions: totalUnits,
+          report: report,
+        ),
+      );
+      return true;
+    } catch (error) {
+      // A cancelled or superseded run has already had its state set by whoever
+      // cancelled it; anything else means the server did not answer, and the
+      // engine below can analyse any game the server declined to. So every
+      // remaining failure falls back rather than surfacing: the user gets their
+      // report, it just costs battery.
+      if (_disposed || generation != _generation) return true;
+      debugPrint(
+        '[GameReport] server analysis unavailable ($error); analysing locally',
+      );
+      return false;
     }
   }
 

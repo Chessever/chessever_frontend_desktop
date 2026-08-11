@@ -10,6 +10,7 @@ import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/engine/game_report_book_lookup.dart';
+import 'package:chessever/desktop/services/engine/server_game_report.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/game_review/evaluation_graph_markers.dart';
@@ -122,6 +123,11 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
         widget.reportController ??
         GameAnalysisReportController(
           bookLookup: gamebaseBookLookup(ref.read(gamebaseRepositoryProvider)),
+          // Analysis runs on the server when it can. The service runs a
+          // checksummed copy of this app's own classifier on the same engine,
+          // so the report is unchanged — it just does not cost the user minutes
+          // of CPU. The local passes stay as the fallback.
+          remoteRunner: serverGameReportRunner(),
         );
     _reportController.addListener(_onReport);
     _gameFingerprint = _fingerprint(widget.game);
