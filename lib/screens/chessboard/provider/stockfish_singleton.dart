@@ -118,6 +118,33 @@ bool shouldUseStockfishEvaluationCache({
   return allowCache && !isCurrentPosition;
 }
 
+@visibleForTesting
+Duration stockfishReadyTimeout({
+  required Duration requested,
+  required bool isAndroid,
+  required bool isDesktop,
+}) {
+  if (isAndroid) {
+    return Duration(milliseconds: requested.inMilliseconds + 1000);
+  }
+  if (isDesktop && requested < desktopStockfishColdStartTimeout) {
+    return desktopStockfishColdStartTimeout;
+  }
+  return requested;
+}
+
+/// Creates the shared initialization signal with an error observer attached.
+///
+/// The owner still throws failures to its caller and concurrent callers can
+/// still await this future. The observer only prevents a sole caller's mirrored
+/// coordination error from becoming an unhandled asynchronous exception.
+@visibleForTesting
+Completer<void> guardedStockfishInitializationCompleter() {
+  final completer = Completer<void>();
+  completer.future.ignore();
+  return completer;
+}
+
 class StockfishSingleton {
   StockfishSingleton._();
   static final StockfishSingleton _i = StockfishSingleton._();
@@ -436,7 +463,10 @@ class StockfishSingleton {
 
     // Start processing queue if not already processing
     if (!_isProcessing) {
-      _processQueue();
+      // _processQueue contains the recovery/error boundary for this detached
+      // task. Marking it explicitly unawaited documents that no error is
+      // allowed to escape into the root Flutter zone.
+      unawaited(_processQueue());
     }
 
     final result = await completer.future;
@@ -675,6 +705,20 @@ class StockfishSingleton {
           _currentJob = null;
         }
       }
+    } catch (e, st) {
+      // This is the final boundary for the detached queue processor. Cleanup
+      // can itself fail on a heavily loaded machine or a dying child process;
+      // settle every caller with the existing degraded result instead of
+      // leaking an unhandled asynchronous exception into Flutter's root zone.
+      debugPrint('❌ QUEUE PROCESSOR: Recovery failed: $e');
+      debugPrint('$st');
+      final currentJob = _currentJob;
+      if (currentJob != null && !currentJob.completer.isCompleted) {
+        currentJob.completer.complete(
+          _cancelledEval(currentJob.fen, requestedMultiPv: currentJob.multiPV),
+        );
+      }
+      _completeQueuedJobsAsCancelled();
     } finally {
       _isProcessing = false;
       if (_jobQueue.isNotEmpty) {
@@ -1072,7 +1116,11 @@ class StockfishSingleton {
       debugPrint('❌ STOCKFISH: Failed to process job for $fen: $e');
       debugPrint('$st');
       if (!completer.isCompleted) {
-        completer.completeError(e, st);
+        // Local analysis is optional. A failed engine must degrade to the
+        // existing cancelled result, not turn a slow machine into an app-level
+        // asynchronous error. The queue still receives the rethrow below and
+        // performs its normal reset/retry bookkeeping.
+        completer.complete(_cancelledEval(fen, requestedMultiPv: job.multiPV));
       }
       rethrow;
     }
@@ -1090,9 +1138,10 @@ class StockfishSingleton {
     if (_engine == null) {
       throw StateError('Stockfish engine is not initialized');
     }
+    final engine = _engine!;
 
     // Check for error or disposed state immediately
-    final currentState = _engine!.state.value;
+    final currentState = engine.state.value;
     if (currentState == StockfishState.error) {
       if (Stockfish.desktopEngineUnavailable) {
         throw StockfishUnavailableException(
@@ -1115,7 +1164,7 @@ class StockfishSingleton {
     late final Timer timer;
 
     listener = () {
-      final state = _engine?.state.value;
+      final state = engine.state.value;
       if (completer.isCompleted) return;
 
       if (state == StockfishState.ready) {
@@ -1135,22 +1184,18 @@ class StockfishSingleton {
       }
     };
 
-    _engine!.state.addListener(listener);
-
-    // Use longer timeout on Android. Desktop cold starts spawn an external
-    // process (first-run binary copy, AV scans on Windows) and routinely
-    // overrun the 3s FFI-tuned default on slow machines (CHESSEVER-158).
-    const desktopMinimumTimeout = Duration(seconds: 10);
-    final effectiveTimeout =
-        _isAndroid
-            ? Duration(milliseconds: timeout.inMilliseconds + 1000)
-            : _isDesktop && timeout < desktopMinimumTimeout
-            ? desktopMinimumTimeout
-            : timeout;
+    // Mobile keeps its existing FFI-tuned policy. Desktop cold starts spawn
+    // an external process and may need to extract an 80 MB binary before a
+    // Windows antivirus scan and UCI handshake (CHESSEVER-158).
+    final effectiveTimeout = stockfishReadyTimeout(
+      requested: timeout,
+      isAndroid: _isAndroid,
+      isDesktop: _isDesktop,
+    );
 
     timer = Timer(effectiveTimeout, () {
       if (!completer.isCompleted) {
-        final state = _engine?.state.value;
+        final state = engine.state.value;
         completer.completeError(
           TimeoutException(
             'Stockfish did not become ready within ${effectiveTimeout.inMilliseconds}ms (current state: $state)',
@@ -1159,13 +1204,18 @@ class StockfishSingleton {
       }
     });
 
+    engine.state.addListener(listener);
+    // Close the check-then-listen race: the engine may have become ready after
+    // the initial state read but before listener registration.
+    listener();
+
     try {
       await completer.future;
       await _configureEngineForAnalysis();
     } finally {
       timer.cancel();
       try {
-        _engine?.state.removeListener(listener);
+        engine.state.removeListener(listener);
       } catch (_) {}
     }
   }
@@ -1177,7 +1227,13 @@ class StockfishSingleton {
     while (_instanceLock != null && !_instanceLock!.isCompleted) {
       debugPrint('🔒 STOCKFISH: Waiting for instance lock...');
       try {
-        await _instanceLock!.future.timeout(const Duration(seconds: 10));
+        if (_isDesktop) {
+          // A desktop cold start is bounded by _waitUntilReady. Do not steal
+          // its lock while process extraction/spawn is legitimately pending.
+          await _instanceLock!.future;
+        } else {
+          await _instanceLock!.future.timeout(const Duration(seconds: 10));
+        }
       } catch (e) {
         debugPrint('⚠️ STOCKFISH: Instance lock wait timeout: $e');
         // Force release stale lock
@@ -1340,7 +1396,13 @@ class StockfishSingleton {
     if (_isInitializing && _initCompleter != null) {
       debugPrint('🔒 STOCKFISH: Waiting for ongoing initialization...');
       try {
-        await _initCompleter!.future.timeout(const Duration(seconds: 10));
+        if (_isDesktop) {
+          // Share the in-flight desktop startup instead of racing it with a
+          // second engine instance after the old 10-second coordination cap.
+          await _initCompleter!.future;
+        } else {
+          await _initCompleter!.future.timeout(const Duration(seconds: 10));
+        }
         _throwIfEngineInitializationWasSuperseded(lifecycleGeneration);
         if (_engine != null && _engine!.state.value == StockfishState.ready) {
           return;
@@ -1358,7 +1420,8 @@ class StockfishSingleton {
 
     // Acquire initialization lock
     _isInitializing = true;
-    _initCompleter = Completer<void>();
+    final initialization = guardedStockfishInitializationCompleter();
+    _initCompleter = initialization;
 
     // Acquire global instance lock for thread-safety
     final releaseLock = await _acquireInstanceLock();
@@ -1405,7 +1468,7 @@ class StockfishSingleton {
 
           await _waitUntilReady();
           _throwIfEngineInitializationWasSuperseded(lifecycleGeneration);
-          _initCompleter?.complete();
+          if (!initialization.isCompleted) initialization.complete();
           return;
         } catch (e, st) {
           if (e is _StockfishInitializationSuperseded) rethrow;
@@ -1417,7 +1480,9 @@ class StockfishSingleton {
           if (e is StockfishUnavailableException ||
               Stockfish.desktopEngineUnavailable) {
             _markLocalEngineUnavailable(e);
-            _initCompleter?.completeError(e, st);
+            if (!initialization.isCompleted) {
+              initialization.completeError(e, st);
+            }
             rethrow;
           }
 
@@ -1462,7 +1527,9 @@ class StockfishSingleton {
             debugPrint(
               '❌ STOCKFISH: Max attempts ($maxAttempts) reached, giving up',
             );
-            _initCompleter?.completeError(e, st);
+            if (!initialization.isCompleted) {
+              initialization.completeError(e, st);
+            }
             rethrow;
           }
         }
@@ -1756,8 +1823,8 @@ class StockfishSingleton {
       // Clear initialization state
       _isInitializing = false;
       if (_initCompleter != null && !_initCompleter!.isCompleted) {
-        _initCompleter!.completeError(StateError('Force recovery'));
         _initCompleter!.future.ignore();
+        _initCompleter!.completeError(StateError('Force recovery'));
       }
       _initCompleter = null;
 

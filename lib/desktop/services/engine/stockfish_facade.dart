@@ -10,6 +10,16 @@ import 'package:chessever/desktop/services/engine/uci_engine.dart';
 // regardless of which backend is active. The values match across mobile/desktop.
 export 'package:stockfish/stockfish.dart' show StockfishState;
 
+/// Maximum time for the spawned process to finish the UCI handshake.
+const desktopStockfishUciHandshakeTimeout = Duration(seconds: 5);
+
+/// Readiness ceiling for a desktop cold start.
+///
+/// This covers first-run extraction and Windows antivirus inspection before
+/// the UCI handshake begins. It does not delay a healthy start: callers return
+/// as soon as the state changes to [upstream.StockfishState.ready].
+const desktopStockfishColdStartTimeout = Duration(seconds: 30);
+
 /// Drop-in replacement for `package:stockfish`'s `Stockfish` class.
 ///
 /// On Android/iOS this delegates to the upstream FFI-based engine. On macOS,
@@ -136,7 +146,7 @@ class Stockfish {
     });
     engine.send('uci');
     final ok = await ready.future.timeout(
-      const Duration(seconds: 5),
+      desktopStockfishUciHandshakeTimeout,
       onTimeout: () => false,
     );
     await sub.cancel();
