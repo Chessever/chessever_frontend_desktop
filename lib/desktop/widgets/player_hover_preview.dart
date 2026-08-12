@@ -884,17 +884,17 @@ String _roundLabel(TournamentGameSummary game) {
     GameStatus.ongoing => '•',
     GameStatus.unknown => '–',
   };
-  if (score == '1') {
+  if (playerIsWhite) {
     return (
       glyph: score,
       background: kWhiteColor,
       border: kWhiteColor,
-      foreground: Colors.black,
+      foreground: kBlackColor,
     );
   }
   return (
     glyph: score,
-    background: kBlack3Color,
+    background: kBlackColor,
     border: kWhiteColor.withValues(alpha: 0.28),
     foreground: kWhiteColor,
   );
