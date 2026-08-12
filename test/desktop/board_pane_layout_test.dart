@@ -271,6 +271,14 @@ PlayerHoverPreviewIdentity _previewPlayer(
     .singleWhere((player) => player.name == playerName);
 
 void main() {
+  test('context board starts with a board-first three-pane layout', () {
+    expect(boardPaneContextInitialWeights, const [0.25, 0.50, 0.25]);
+    expect(
+      boardPaneContextInitialWeights.reduce((a, b) => a + b),
+      closeTo(1, 0.0001),
+    );
+  });
+
   test('generated report assessment preserves incoming Lichess commentary', () {
     final merged = mergeReportMoveAnnotations(
       lichessAnnotations: const <int, LichessMoveAnnotation>{

@@ -16,6 +16,8 @@ import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/time_utils.dart';
+import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:dio/dio.dart';
 
 void main() {
@@ -237,7 +239,7 @@ void main() {
     },
   );
 
-  testWidgets('event rail uses the primary color for every LIVE indicator', (
+  testWidgets('event rail shows one plain result-sized LIVE label', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -265,30 +267,203 @@ void main() {
     await tester.pump();
 
     final liveLabels = tester.widgetList<Text>(find.text('LIVE')).toList();
-    expect(liveLabels, hasLength(2));
-    expect(
-      liveLabels.map((label) => label.style?.color),
-      everyElement(kPrimaryColor),
-    );
+    expect(liveLabels, hasLength(1));
+    expect(liveLabels.single.style?.color, kPrimaryColor);
+    expect(liveLabels.single.style?.fontSize, 12);
 
-    final liveDotColors =
+    final liveDots =
+        tester.widgetList<Container>(find.byType(Container)).where((container) {
+          final decoration = container.decoration;
+          final constraints = container.constraints;
+          if (decoration is! BoxDecoration || constraints == null) {
+            return false;
+          }
+          final size = constraints.biggest;
+          return decoration.shape == BoxShape.circle &&
+              size.width == size.height &&
+              (size.width == 5 || size.width == 6);
+        }).toList();
+    expect(liveDots, isEmpty);
+  });
+
+  testWidgets('event rail title has no decorative primary bar', (tester) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'event-game-1',
+          pgn: '1. e4 e5 ½-½',
+          label: 'Event game',
+          whiteName: 'White',
+          blackName: 'Black',
+          tournamentTitle: 'Esports World Cup 2026',
+          eventGames: [_summary(id: 'event-game-1', roundLabel: 'Round 1')],
+          gameListSelectedId: 'event-game-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final accentBars = tester
+        .widgetList<Container>(find.byType(Container))
+        .where((container) {
+          final decoration = container.decoration;
+          final constraints = container.constraints;
+          if (decoration is! BoxDecoration || constraints == null) return false;
+          return constraints.biggest == const Size(4, 20) &&
+              decoration.color == kPrimaryColor;
+        });
+    expect(accentBars, isEmpty);
+  });
+
+  testWidgets('event rail player identity uses readable compact sizing', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'event-game-1',
+          pgn: '1. e4 e5 ½-½',
+          label: 'Event game',
+          whiteName: 'Abdusattorov, Nodirbek',
+          blackName: 'Praggnanandhaa, R',
+          tournamentTitle: 'Event',
+          eventGames: [
+            _summary(
+              id: 'event-game-1',
+              roundLabel: 'Round 1',
+              whitePlayer: 'Abdusattorov, Nodirbek',
+              blackPlayer: 'Praggnanandhaa, R',
+              whiteFederation: 'UZB',
+              blackFederation: 'IND',
+              whiteTitle: 'GM',
+              blackTitle: 'GM',
+              whiteRating: 2762,
+              blackRating: 2673,
+            ),
+          ],
+          gameListSelectedId: 'event-game-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final flags =
         tester
-            .widgetList<Container>(find.byType(Container))
-            .where((container) {
-              final decoration = container.decoration;
-              final constraints = container.constraints;
-              if (decoration is! BoxDecoration || constraints == null) {
-                return false;
-              }
-              final size = constraints.biggest;
-              return decoration.shape == BoxShape.circle &&
-                  size.width == size.height &&
-                  (size.width == 5 || size.width == 6);
-            })
-            .map((container) => (container.decoration! as BoxDecoration).color)
+            .widgetList<BackfilledFederationFlag>(
+              find.byType(BackfilledFederationFlag),
+            )
             .toList();
-    expect(liveDotColors, hasLength(2));
-    expect(liveDotColors, everyElement(kPrimaryColor));
+    expect(flags, hasLength(2));
+    expect(flags.map((flag) => flag.width), everyElement(16));
+    expect(flags.map((flag) => flag.height), everyElement(11));
+    expect(
+      tester.widget<Text>(find.text('Abdusattorov,N')).style?.fontSize,
+      12.5,
+    );
+    expect(tester.widget<Text>(find.text('2762')).style?.fontSize, 11);
+    expect(
+      tester
+          .widgetList<Text>(find.text('GM'))
+          .map((text) => text.style?.fontSize),
+      everyElement(10.5),
+    );
+  });
+
+  testWidgets('event rail decisive result colors winner and loser', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'event-game-1',
+          pgn: '1. e4 e5 1-0',
+          label: 'Event game',
+          whiteName: 'White',
+          blackName: 'Black',
+          tournamentTitle: 'Event',
+          eventGames: [
+            _summary(
+              id: 'event-game-1',
+              roundLabel: 'Round 1',
+              status: GameStatus.whiteWins,
+            ),
+          ],
+          gameListSelectedId: 'event-game-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final result = tester.widget<Text>(find.text('1–0'));
+    final spans = (result.textSpan! as TextSpan).children!.cast<TextSpan>();
+    expect(spans[0].style?.color, kPrimaryColor);
+    expect(spans[1].style?.color, kWhiteColor.withValues(alpha: 0.28));
+    expect(spans[2].style?.color, kRedColor);
+  });
+
+  testWidgets('live round hides redundant round status and start time', (
+    tester,
+  ) async {
+    final startsAt = DateTime.now().subtract(const Duration(hours: 2));
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'live-game-1',
+          pgn: '1. e4 e5 *',
+          label: 'Live game',
+          whiteName: 'White',
+          blackName: 'Black',
+          tournamentTitle: 'Event',
+          eventGames: [
+            _summary(
+              id: 'live-game-1',
+              roundLabel: 'Round 1',
+              roundStartsAt: startsAt,
+              lastMoveTime: DateTime.now().subtract(const Duration(minutes: 1)),
+              status: GameStatus.ongoing,
+            ),
+          ],
+          gameListSelectedId: 'live-game-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('LIVE'), findsOneWidget);
+    expect(find.text(TimeUtils.formatRoundDateTime(startsAt)), findsNothing);
+  });
+
+  testWidgets('upcoming round uses one compact neutral start time', (
+    tester,
+  ) async {
+    final startsAt = DateTime(2030, 8, 12, 9, 40);
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'upcoming-game-1',
+          pgn: '*',
+          label: 'Upcoming game',
+          whiteName: 'White',
+          blackName: 'Black',
+          tournamentTitle: 'Event',
+          eventGames: [
+            _summary(
+              id: 'upcoming-game-1',
+              roundLabel: 'Round 2',
+              pgn: '*',
+              status: GameStatus.unknown,
+              hasStarted: false,
+              roundStartsAt: startsAt,
+            ),
+          ],
+          gameListSelectedId: 'upcoming-game-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('SOON'), findsNothing);
+    expect(find.text('Aug 12 · 09:40'), findsOneWidget);
   });
 
   testWidgets('event rail omits ongoing status chip text', (tester) async {
@@ -1362,14 +1537,14 @@ void main() {
     expect(round2Top, lessThan(round1Top));
   });
 
-  testWidgets('event round header prefers canonical round start time', (
+  testWidgets('upcoming round header prefers canonical round start time', (
     tester,
   ) async {
     await tester.pumpWidget(
       _wrap(
         BoardTabGameArgs(
           gameId: 'round-1-game',
-          pgn: '1. e4 e5 *',
+          pgn: '*',
           label: 'Event game',
           whiteName: 'White',
           blackName: 'Black',
@@ -1378,8 +1553,11 @@ void main() {
             _summary(
               id: 'round-1-game',
               roundLabel: 'R1',
-              startsAt: DateTime(2026, 5, 22),
-              roundStartsAt: DateTime(2026, 5, 25, 11),
+              pgn: '*',
+              status: GameStatus.unknown,
+              hasStarted: false,
+              startsAt: DateTime(2030, 5, 22),
+              roundStartsAt: DateTime(2030, 5, 25, 11),
             ),
           ],
           gameListSelectedId: 'round-1-game',
@@ -1388,8 +1566,8 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('25 May 2026 11:00'), findsOneWidget);
-    expect(find.text('22 May 2026 00:00'), findsNothing);
+    expect(find.text('May 25 · 11:00'), findsOneWidget);
+    expect(find.text('May 22 · 00:00'), findsNothing);
   });
 
   testWidgets('selected top event round stays collapsed after header tap', (
@@ -2141,8 +2319,12 @@ TournamentGameSummary _summary({
   String roundSlug = '',
   String roundName = '',
   int? boardNumber,
+  String whiteFederation = '',
+  String blackFederation = '',
   String whiteTitle = '',
   String blackTitle = '',
+  int whiteRating = 0,
+  int blackRating = 0,
   String whiteTeam = '',
   String blackTeam = '',
   String tourId = '',
@@ -2153,9 +2335,13 @@ TournamentGameSummary _summary({
     name: '$whitePlayer vs $blackPlayer',
     whitePlayer: whitePlayer,
     blackPlayer: blackPlayer,
+    whiteFederation: whiteFederation,
+    blackFederation: blackFederation,
     tourId: tourId,
     whiteTitle: whiteTitle,
     blackTitle: blackTitle,
+    whiteRating: whiteRating,
+    blackRating: blackRating,
     hasPgn: true,
     pgn: pgn,
     fen: fen,

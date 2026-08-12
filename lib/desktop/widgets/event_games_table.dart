@@ -44,7 +44,6 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/round_orderin
 import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
-import 'package:chessever/utils/time_utils.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 
 const Duration _kSidebarLiveActivityWindow = Duration(minutes: 120);
@@ -1623,16 +1622,6 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          width: 4,
-                          height: 20,
-                          margin: const EdgeInsets.only(top: 1),
-                          decoration: BoxDecoration(
-                            color: kPrimaryColor,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
                         Expanded(
                           child: DesktopTooltip(
                             message:
@@ -4854,7 +4843,7 @@ class _EventRoundTable extends StatelessWidget {
             horizontalScrollController: horizontalController,
             showHeader: false,
             padding: const EdgeInsets.symmetric(horizontal: 6),
-            rowMinHeight: 34,
+            rowMinHeight: 38,
             rowKeyBuilder:
                 (game) => game.id == _activeSelectionId ? selectedRowKey : null,
             onRowTap: (
@@ -5222,9 +5211,9 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
   Widget build(BuildContext context) {
     final group = widget.group;
     final subtitle =
-        group.startsAt == null
+        group.status != RoundStatus.upcoming || group.startsAt == null
             ? ''
-            : TimeUtils.formatRoundDateTime(group.startsAt);
+            : DateFormat('MMM d · HH:mm').format(group.startsAt!.toLocal());
 
     return ClickCursor(
       child: MouseRegion(
@@ -5264,11 +5253,6 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
               ),
               child: Row(
                 children: [
-                  if (group.status == RoundStatus.live ||
-                      group.status == RoundStatus.upcoming) ...[
-                    _EventRoundStatusChip(status: group.status),
-                    const SizedBox(width: 7),
-                  ],
                   Expanded(
                     child: Text(
                       group.title,
@@ -5313,55 +5297,6 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _EventRoundStatusChip extends StatelessWidget {
-  const _EventRoundStatusChip({required this.status});
-
-  final RoundStatus status;
-
-  @override
-  Widget build(BuildContext context) {
-    final (label, color) = switch (status) {
-      RoundStatus.live => ('LIVE', kPrimaryColor),
-      RoundStatus.ongoing => ('', kGreenColor),
-      RoundStatus.completed => ('DONE', kLightGreyColor),
-      RoundStatus.upcoming => ('SOON', kPrimaryColor),
-    };
-
-    if (label.isEmpty) return const SizedBox.shrink();
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(3),
-        border: Border.all(color: color.withValues(alpha: 0.42)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (status == RoundStatus.live) ...[
-            Container(
-              width: 5,
-              height: 5,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 4),
-          ],
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 8.5,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.4,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -5490,8 +5425,8 @@ class _PlayerCell extends StatelessWidget {
         BackfilledFederationFlag(
           federation: federation,
           fideId: fideId,
-          width: 13,
-          height: 9,
+          width: 16,
+          height: 11,
           borderRadius: BorderRadius.circular(2),
         ),
         const SizedBox(width: 4),
@@ -5503,7 +5438,7 @@ class _PlayerCell extends StatelessWidget {
             softWrap: false,
             style: const TextStyle(
               color: kPrimaryColor,
-              fontSize: 9.5,
+              fontSize: 10.5,
               fontWeight: FontWeight.w800,
               letterSpacing: 0.2,
             ),
@@ -5517,7 +5452,7 @@ class _PlayerCell extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: selected ? kWhiteColor : kWhiteColor70,
-              fontSize: 11.5,
+              fontSize: 12.5,
               fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
             ),
           ),
@@ -5531,7 +5466,7 @@ class _PlayerCell extends StatelessWidget {
             softWrap: false,
             style: const TextStyle(
               color: kLightGreyColor,
-              fontSize: 10.5,
+              fontSize: 11,
               fontWeight: FontWeight.w600,
               fontFeatures: [FontFeature.tabularFigures()],
             ),
@@ -5589,29 +5524,15 @@ class _LiveBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Container(
-          width: 6,
-          height: 6,
-          decoration: const BoxDecoration(
-            color: kPrimaryColor,
-            shape: BoxShape.circle,
-          ),
-        ),
-        const SizedBox(width: 5),
-        const Text(
-          'LIVE',
-          style: TextStyle(
-            color: kPrimaryColor,
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.6,
-          ),
-        ),
-      ],
+    return const Text(
+      'LIVE',
+      style: TextStyle(
+        color: kPrimaryColor,
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.35,
+        height: 1,
+      ),
     );
   }
 }
@@ -5638,13 +5559,10 @@ class _ResultText extends StatelessWidget {
       height: 1.0,
     );
     final strong = base.copyWith(
-      color: kWhiteColor,
+      color: kPrimaryColor,
       fontWeight: FontWeight.w700,
     );
-    final weak = base.copyWith(
-      color: kWhiteColor.withValues(alpha: 0.32),
-      fontWeight: FontWeight.w500,
-    );
+    final weak = base.copyWith(color: kRedColor, fontWeight: FontWeight.w700);
     final neutral = base.copyWith(
       color: kWhiteColor.withValues(alpha: 0.62),
       fontWeight: FontWeight.w600,
