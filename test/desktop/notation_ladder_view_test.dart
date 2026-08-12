@@ -1,4 +1,5 @@
 import 'package:chessground/chessground.dart' show PieceAssets;
+import 'package:chessever/desktop/panes/board_pane.dart';
 import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
@@ -15,6 +16,30 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('canonical correction renders no displaced feed variation', (
+    tester,
+  ) async {
+    final stale = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 e5 2. Nf3 *',
+    );
+    final canonical = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 c5 2. Nf3 *',
+    );
+    final corrected = mergeBroadcastUpdateForTesting(stale, canonical);
+    final layoutMode = ValueNotifier(NotationLayoutMode.inline);
+    addTearDown(layoutMode.dispose);
+
+    await tester.pumpWidget(
+      _host(game: corrected, onJump: (_) {}, layoutModeController: layoutMode),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('c5', findRichText: true), findsOneWidget);
+    expect(find.text('e5', findRichText: true), findsNothing);
+  });
+
   testWidgets('can render notation moves without mini-board hover previews', (
     tester,
   ) async {
