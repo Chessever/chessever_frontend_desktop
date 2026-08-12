@@ -24,8 +24,8 @@ void main() {
     expect(select, contains('name,starts_at'));
     expect(select, isNot(contains('\n          pgn,')));
     expect(select, isNot(contains('\n          search,')));
-    expect(select, isNot(contains('last_clock_white')));
-    expect(select, isNot(contains('last_clock_black')));
+    expect(select, contains('last_clock_white'));
+    expect(select, contains('last_clock_black'));
     expect(eventRailTourOrderColumnsForTesting, <String>[
       'round_id',
       'board_nr',
@@ -596,11 +596,7 @@ void main() {
     // order while the user was scrolling.
     final allGames = <Games>[
       for (var index = 0; index < kEventRailGamesPageSize * 2; index++)
-        _game(
-          id: 'game-$index',
-          roundId: 'round-1',
-          boardNumber: index + 1,
-        ),
+        _game(id: 'game-$index', roundId: 'round-1', boardNumber: index + 1),
     ];
     final repository = _FakeGameRepository(
       firstTourPage: allGames.take(kEventRailGamesPageSize).toList(),
@@ -906,8 +902,11 @@ void main() {
   });
 
   testWidgets(
-    'cross-round navigation hydrates lightweight gaps before moving',
+    'cross-round navigation follows visible rail order and hydrates gaps',
     (tester) async {
+      final roundOrderAnchor = DateTime.now().subtract(
+        const Duration(minutes: 1),
+      );
       final allGames = <Games>[
         for (var round = 1; round <= 6; round++)
           for (var board = 1; board <= 40; board++)
@@ -915,16 +914,14 @@ void main() {
               id: 'round-$round-board-$board',
               roundId: 'round-$round',
               roundName: 'Stage ${String.fromCharCode(64 + round)}',
-              roundStartsAt: DateTime.utc(
-                2026,
-                8,
-                1,
-              ).add(Duration(days: round - 1)),
+              // Rounds 3, 2 and 1 have started and render newest-first.
+              // Rounds 4+ are upcoming and render oldest-first afterward.
+              roundStartsAt: roundOrderAnchor.add(Duration(days: round - 3)),
               boardNumber: board,
             ),
       ];
-      final roundFive = allGames
-          .where((game) => game.roundId == 'round-5')
+      final roundTwo = allGames
+          .where((game) => game.roundId == 'round-2')
           .toList(growable: false);
       final pages = <int, List<Games>>{
         for (
@@ -939,8 +936,8 @@ void main() {
       };
       final repository = _FakeGameRepository(
         firstTourPage: allGames.take(kEventRailGamesPageSize).toList(),
-        selectedRoundPage: roundFive,
-        selectedGame: roundFive.first,
+        selectedRoundPage: roundTwo,
+        selectedGame: roundTwo.first,
         totalCount: allGames.length,
         tourPagesByOffset: pages,
         allRoundGames: allGames,
@@ -949,12 +946,12 @@ void main() {
             EventRailRoundMetadata(
               id: 'round-$round',
               name: 'Stage ${String.fromCharCode(64 + round)}',
-              startsAt: DateTime.utc(2026, 8, 1).add(Duration(days: round - 1)),
+              startsAt: roundOrderAnchor.add(Duration(days: round - 3)),
               createdAt: DateTime.utc(2026, 7, round),
             ),
         ],
       );
-      final selected = TournamentGameSummary.fromGame(roundFive.first);
+      final selected = TournamentGameSummary.fromGame(roundTwo.first);
       final args = BoardTabGameArgs(
         gameId: selected.id,
         pgn: '',
@@ -965,7 +962,7 @@ void main() {
         eventGames: <TournamentGameSummary>[
           for (final game in <Games>[
             ...allGames.take(kEventRailGamesPageSize),
-            ...roundFive,
+            ...roundTwo,
           ])
             TournamentGameSummary.fromGame(game),
         ],
@@ -1026,7 +1023,8 @@ void main() {
           container.read(
             boardTabGameArgsByTabIdProvider,
           )['tournaments-default'];
-      expect(opened?.gameId, 'round-4-board-40');
+      // The visible rail is Round 3, Round 2, Round 1, then future rounds.
+      expect(opened?.gameId, 'round-3-board-40');
       expect(repository.legacyFullTourCalls, 0);
       expect(repository.tourPageCalls, <_PageCall>[
         const _PageCall(id: 'tour-1', limit: 64, offset: 0),
@@ -1036,24 +1034,24 @@ void main() {
       // full tour fetch.
       expect(repository.roundCatalogCalls, <String>['tour-1', 'tour-1']);
       expect(repository.roundIdsPageCalls, <_RoundIdsPageCall>[
-        const _RoundIdsPageCall(ids: <String>['round-5'], limit: 64, offset: 0),
-        const _RoundIdsPageCall(ids: <String>['round-4'], limit: 64, offset: 0),
+        const _RoundIdsPageCall(ids: <String>['round-2'], limit: 64, offset: 0),
+        const _RoundIdsPageCall(ids: <String>['round-3'], limit: 64, offset: 0),
       ]);
 
-      final lastRoundFive = TournamentGameSummary.fromGame(roundFive.last);
-      final lastRoundFiveKey = BoardTabEventGamesKey(
+      final lastRoundTwo = TournamentGameSummary.fromGame(roundTwo.last);
+      final lastRoundTwoKey = BoardTabEventGamesKey(
         tourId: 'tour-1',
-        selectedGameId: lastRoundFive.id,
-        selectedRoundId: lastRoundFive.roundId,
-        selectedBoardNumber: lastRoundFive.boardNumber,
+        selectedGameId: lastRoundTwo.id,
+        selectedRoundId: lastRoundTwo.roundId,
+        selectedBoardNumber: lastRoundTwo.boardNumber,
       );
       container.read(boardTabGameArgsByTabIdProvider.notifier).update((tabs) {
         return <String, BoardTabGameArgs>{
           ...tabs,
           'tournaments-default': args.copyWith(
-            gameId: lastRoundFive.id,
-            gameListSelectedId: lastRoundFive.id,
-            eventGamesKey: lastRoundFiveKey,
+            gameId: lastRoundTwo.id,
+            gameListSelectedId: lastRoundTwo.id,
+            eventGamesKey: lastRoundTwoKey,
           ),
         };
       });
@@ -1069,7 +1067,8 @@ void main() {
           container.read(
             boardTabGameArgsByTabIdProvider,
           )['tournaments-default'];
-      expect(opened?.gameId, 'round-6-board-1');
+      // The next visible heading after Round 2 is Round 1, not future Round 4.
+      expect(opened?.gameId, 'round-1-board-1');
       expect(repository.tourPageCalls, hasLength(1));
       // Seed load + one catalog refresh per cross-round adjacency hydrate.
       expect(repository.roundCatalogCalls, <String>[
@@ -1079,7 +1078,7 @@ void main() {
       ]);
       expect(
         repository.roundIdsPageCalls.last,
-        const _RoundIdsPageCall(ids: <String>['round-6'], limit: 64, offset: 0),
+        const _RoundIdsPageCall(ids: <String>['round-1'], limit: 64, offset: 0),
       );
     },
   );
@@ -1816,6 +1815,57 @@ void main() {
         _PageCall(id: 'tour-1', limit: 64, offset: 0),
         _PageCall(id: 'tour-1', limit: 64, offset: 0),
       ]);
+    });
+
+    test('clock-only metadata refresh publishes the trusted pair', () async {
+      final initialMoveTime = DateTime.utc(2026, 8, 12, 12);
+      final repository = _FakeGameRepository(
+        firstTourPage: <Games>[
+          _game(
+            id: 'clock-game',
+            roundId: 'round-12',
+            boardNumber: 2,
+            lastMoveTime: initialMoveTime,
+            lastClockWhite: 1600,
+            lastClockBlack: 2100,
+          ),
+        ],
+        selectedRoundPage: const <Games>[],
+        totalCount: 1,
+      );
+      final container = _container(repository);
+      addTearDown(container.dispose);
+      const key = BoardTabEventGamesKey(tourId: 'tour-1');
+      final provider = eventRailGamesProvider(_providerKey(key));
+      final subscription = container.listen<AsyncValue<EventRailGamesState>>(
+        provider,
+        (_, __) {},
+        fireImmediately: true,
+      );
+      addTearDown(subscription.close);
+
+      final initial = await container.read(provider.future);
+      expect(initial.games.single.whiteClockSeconds, 1600);
+      expect(initial.games.single.blackClockSeconds, 2100);
+
+      repository.firstTourPage = <Games>[
+        _game(
+          id: 'clock-game',
+          roundId: 'round-12',
+          boardNumber: 2,
+          lastMoveTime: initialMoveTime,
+          lastClockWhite: 1570,
+          lastClockBlack: 2066,
+        ),
+      ];
+
+      expect(
+        await container.read(provider.notifier).refreshLoadedMetadata(),
+        isTrue,
+      );
+      final refreshed = container.read(provider).requireValue.games.single;
+      expect(refreshed.whiteClockSeconds, 1570);
+      expect(refreshed.blackClockSeconds, 2066);
     });
 
     test('metadata refresh cannot regress a known terminal result', () async {
@@ -3024,6 +3074,9 @@ Games _game({
   required int? boardNumber,
   String? roundName,
   DateTime? roundStartsAt,
+  DateTime? lastMoveTime,
+  int? lastClockWhite,
+  int? lastClockBlack,
   String status = 'started',
 }) {
   return Games(
@@ -3055,6 +3108,9 @@ Games _game({
       ),
     ],
     status: status,
+    lastMoveTime: lastMoveTime,
+    lastClockWhite: lastClockWhite,
+    lastClockBlack: lastClockBlack,
     pgn: null,
     boardNr: boardNumber,
     roundName: roundName,

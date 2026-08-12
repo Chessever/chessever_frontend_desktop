@@ -394,8 +394,10 @@ TournamentGameSummary tournamentSummaryWithArbitratedLiveGame({
     blackTitle: liveGame.blackPlayer.title,
     whiteRating: liveGame.whitePlayer.rating,
     blackRating: liveGame.blackPlayer.rating,
-    whiteClockSeconds: liveGame.whiteClockSeconds,
-    blackClockSeconds: liveGame.blackClockSeconds,
+    whiteClockSeconds:
+        liveGame.whiteClockSeconds ?? structuralSummary.whiteClockSeconds,
+    blackClockSeconds:
+        liveGame.blackClockSeconds ?? structuralSummary.blackClockSeconds,
     whiteFideId: liveGame.whitePlayer.fideId,
     blackFideId: liveGame.blackPlayer.fideId,
     fen: fen == null || fen.isEmpty ? null : fen,

@@ -29,6 +29,17 @@ void main() {
     expect(gamebaseStatusFromResult('½–½'), GameStatus.draw);
   });
 
+  test('keyboard navigation expands its round without collapsing others', () {
+    expect(
+      eventRailExpandedRoundIdsAfterNavigation(
+        stored: const <String>{'round-3', 'round-2'},
+        orderedRoundIds: const <String>['round-3', 'round-2', 'round-1'],
+        destinationRoundId: 'round-1',
+      ),
+      const <String>{'round-3', 'round-2', 'round-1'},
+    );
+  });
+
   test('event rail summaries prefer canonical round start from game rows', () {
     final game = Games.fromJson({
       'id': 'game-1',
@@ -126,6 +137,62 @@ void main() {
     expect(summary.blackClockSeconds, 417);
     expect(roundTrip.whiteClockSeconds, 459);
     expect(roundTrip.blackClockSeconds, 417);
+  });
+
+  test('event summaries preserve an explicit zero recorded clock', () {
+    final game = Games.fromJson({
+      'id': 'zero-clock-game',
+      'round_id': 'round-12',
+      'round_slug': 'round-12',
+      'tour_id': 'tour-1',
+      'tour_slug': 'turkish-league-2026',
+      'players': [
+        {'name': 'White', 'clock': 0},
+        {'name': 'Black', 'clock': 0},
+      ],
+      'last_move': 'e5',
+      'last_clock_white': 0,
+      'last_clock_black': 41,
+      'status': 'ONGOING',
+    });
+
+    final summary = TournamentGameSummary.fromGame(game);
+
+    expect(summary.whiteClockSeconds, 0);
+    expect(summary.blackClockSeconds, 41);
+  });
+
+  test('partial live overlay preserves the structural clock pair', () {
+    final structural = _summary(
+      id: 'clock-game',
+      roundLabel: 'Round 12',
+      status: GameStatus.ongoing,
+      whiteClockSeconds: 99,
+      blackClockSeconds: 43,
+    );
+    final partialLive = GamesTourModel.fromGame(
+      Games.fromJson({
+        'id': 'clock-game',
+        'round_id': 'round-12',
+        'round_slug': 'round-12',
+        'tour_id': 'tour-1',
+        'tour_slug': 'tour-1',
+        'players': [
+          {'name': 'White'},
+          {'name': 'Black'},
+        ],
+        'last_move': 'e5',
+        'status': 'ONGOING',
+      }),
+    );
+
+    final overlaid = tournamentSummaryWithArbitratedLiveGame(
+      structuralSummary: structural,
+      liveGame: partialLive,
+    );
+
+    expect(overlaid.whiteClockSeconds, 99);
+    expect(overlaid.blackClockSeconds, 43);
   });
 
   test(
@@ -351,6 +418,94 @@ void main() {
     expect(liveDots, isEmpty);
   });
 
+  testWidgets(
+    'event rail keeps trusted clocks visible outside the live activity window',
+    (tester) async {
+      await tester.pumpWidget(
+        _wrap(
+          BoardTabGameArgs(
+            gameId: 'quiet-live-game',
+            pgn: '1. e4 e5 *',
+            label: 'Quiet live game',
+            whiteName: 'Cieslak, P',
+            blackName: 'Sanal, V',
+            tournamentTitle: 'Turkish League 2026',
+            eventGames: [
+              _summary(
+                id: 'quiet-live-game',
+                roundLabel: 'Round 12',
+                whitePlayer: 'Cieslak, P',
+                blackPlayer: 'Sanal, V',
+                lastMoveTime: DateTime.now().subtract(const Duration(hours: 3)),
+                status: GameStatus.ongoing,
+                fen:
+                    'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+                whiteClockSeconds: 591,
+                blackClockSeconds: 1353,
+              ),
+            ],
+            gameListSelectedId: 'quiet-live-game',
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('09:51'), findsOneWidget);
+      expect(find.text('22:33'), findsOneWidget);
+      final clocks =
+          tester
+              .widgetList<AtomicCountdownText>(find.byType(AtomicCountdownText))
+              .toList();
+      expect(clocks, hasLength(2));
+      expect(clocks.map((clock) => clock.clockSeconds), [591, 1353]);
+      expect(clocks.where((clock) => clock.isActive), isEmpty);
+    },
+  );
+
+  testWidgets(
+    'event rail shows trusted clocks when list-row live metadata is incomplete',
+    (tester) async {
+      await tester.pumpWidget(
+        _wrap(
+          BoardTabGameArgs(
+            gameId: 'incomplete-live-metadata',
+            pgn: '1. e4 e5 *',
+            label: 'Hydrated board game',
+            whiteName: 'Cieslak, P',
+            blackName: 'Sanal, V',
+            tournamentTitle: 'Turkish League 2026',
+            eventGames: [
+              _summary(
+                id: 'incomplete-live-metadata',
+                roundLabel: 'Round 12',
+                whitePlayer: 'Cieslak, P',
+                blackPlayer: 'Sanal, V',
+                status: GameStatus.unknown,
+                hasStarted: false,
+                lastMoveTime: null,
+                pgn: '1. e4 e5 *',
+                fen:
+                    'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+                whiteClockSeconds: 591,
+                blackClockSeconds: 1353,
+              ),
+            ],
+            gameListSelectedId: 'incomplete-live-metadata',
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('09:51'), findsOneWidget);
+      expect(find.text('22:33'), findsOneWidget);
+      final clocks = tester.widgetList<AtomicCountdownText>(
+        find.byType(AtomicCountdownText),
+      );
+      expect(clocks, hasLength(2));
+      expect(clocks.where((clock) => clock.isActive), isEmpty);
+    },
+  );
+
   testWidgets('event rail title has no decorative primary bar', (tester) async {
     await tester.pumpWidget(
       _wrap(
@@ -434,34 +589,121 @@ void main() {
     );
   });
 
-  testWidgets('event rail decisive result colors winner and loser', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      _wrap(
-        BoardTabGameArgs(
-          gameId: 'event-game-1',
-          pgn: '1. e4 e5 1-0',
-          label: 'Event game',
-          whiteName: 'White',
-          blackName: 'Black',
-          tournamentTitle: 'Event',
-          eventGames: [
-            _summary(
-              id: 'event-game-1',
-              roundLabel: 'Round 1',
-              status: GameStatus.whiteWins,
-            ),
-          ],
-          gameListSelectedId: 'event-game-1',
+  testWidgets(
+    'event rail uses neutral placeholders when clocks are unavailable',
+    (tester) async {
+      await tester.pumpWidget(
+        _wrap(
+          BoardTabGameArgs(
+            gameId: 'event-game-1',
+            pgn: '1. e4 e5 *',
+            label: 'Event game',
+            whiteName: 'White',
+            blackName: 'Black',
+            tournamentTitle: 'Event',
+            eventGames: [
+              _summary(
+                id: 'event-game-1',
+                roundLabel: 'Round 1',
+                status: GameStatus.ongoing,
+              ),
+            ],
+            gameListSelectedId: 'event-game-1',
+          ),
         ),
-      ),
-    );
-    await tester.pump();
+      );
+      await tester.pump();
 
-    expect(tester.widget<Text>(find.text('1')).style?.color, kPrimaryColor);
-    expect(tester.widget<Text>(find.text('0')).style?.color, kRedColor);
-  });
+      expect(find.text('--:--'), findsNWidgets(2));
+      expect(find.text('1'), findsNothing);
+      expect(find.text('0'), findsNothing);
+      final clocks =
+          tester
+              .widgetList<AtomicCountdownText>(find.byType(AtomicCountdownText))
+              .toList();
+      expect(clocks, hasLength(2));
+      expect(clocks.map((clock) => clock.clockSeconds), everyElement(isNull));
+      expect(clocks.where((clock) => clock.isActive), isEmpty);
+    },
+  );
+
+  testWidgets(
+    'event rail shows results instead of clocks after the game finishes',
+    (tester) async {
+      await tester.pumpWidget(
+        _wrap(
+          BoardTabGameArgs(
+            gameId: 'finished-clock-game',
+            pgn: '1. e4 e5 1-0',
+            label: 'Finished clock game',
+            whiteName: 'White',
+            blackName: 'Black',
+            tournamentTitle: 'Event',
+            eventGames: [
+              _summary(
+                id: 'finished-clock-game-white',
+                roundLabel: 'Round 1',
+                status: GameStatus.whiteWins,
+                whiteClockSeconds: 99,
+                blackClockSeconds: 43,
+              ),
+              _summary(
+                id: 'finished-clock-game-black',
+                roundLabel: 'Round 1',
+                status: GameStatus.blackWins,
+                whiteClockSeconds: 88,
+                blackClockSeconds: 32,
+              ),
+              _summary(
+                id: 'finished-clock-game-draw',
+                roundLabel: 'Round 1',
+                status: GameStatus.draw,
+                whiteClockSeconds: 77,
+                blackClockSeconds: 21,
+              ),
+            ],
+            gameListSelectedId: 'finished-clock-game-white',
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('01:39'), findsNothing);
+      expect(find.text('00:43'), findsNothing);
+      expect(find.text('1'), findsNWidgets(2));
+      expect(find.text('0'), findsNWidgets(2));
+      expect(find.text('½'), findsNWidgets(2));
+      expect(find.byType(AtomicCountdownText), findsNothing);
+
+      Color resultColor(String gameId, String side, String result) {
+        final resultText = find.descendant(
+          of: find.byKey(Key('event-game-$gameId-$side-line')),
+          matching: find.text(result),
+        );
+        expect(resultText, findsOneWidget);
+        return tester.widget<Text>(resultText).style!.color!;
+      }
+
+      expect(
+        resultColor('finished-clock-game-white', 'white', '1'),
+        kPrimaryColor,
+      );
+      expect(resultColor('finished-clock-game-white', 'black', '0'), kRedColor);
+      expect(resultColor('finished-clock-game-black', 'white', '0'), kRedColor);
+      expect(
+        resultColor('finished-clock-game-black', 'black', '1'),
+        kPrimaryColor,
+      );
+      expect(
+        resultColor('finished-clock-game-draw', 'white', '½'),
+        kLightGreyColor,
+      );
+      expect(
+        resultColor('finished-clock-game-draw', 'black', '½'),
+        kLightGreyColor,
+      );
+    },
+  );
 
   testWidgets('live round hides redundant round status and start time', (
     tester,
@@ -912,6 +1154,8 @@ void main() {
           roundLabel: 'R4',
           status: GameStatus.ongoing,
           hasStarted: true,
+          whiteClockSeconds: 1570,
+          blackClockSeconds: 2066,
         ),
         _summary(
           id: 'round-4-game-2',
@@ -933,6 +1177,8 @@ void main() {
       );
       expect(updatedRound4.status, GameStatus.ongoing);
       expect(updatedRound4.hasStarted, isTrue);
+      expect(updatedRound4.whiteClockSeconds, 1570);
+      expect(updatedRound4.blackClockSeconds, 2066);
       expect(updatedRound4.roundName, 'Round 4');
       expect(
         updatedRound4.roundStartsAt,
@@ -1476,6 +1722,75 @@ void main() {
     },
   );
 
+  testWidgets(
+    'event rail highlight follows an externally selected active game',
+    (tester) async {
+      final eventGames = [
+        _summary(
+          id: 'event-game-1',
+          roundLabel: 'R5',
+          whitePlayer: 'White One',
+          blackPlayer: 'Black One',
+        ),
+        _summary(
+          id: 'event-game-2',
+          roundLabel: 'R5',
+          whitePlayer: 'White Two',
+          blackPlayer: 'Black Two',
+        ),
+      ];
+      final initialArgs = BoardTabGameArgs(
+        gameId: 'event-game-1',
+        pgn: '1. e4 e5 *',
+        label: 'Event game',
+        whiteName: 'White One',
+        blackName: 'Black One',
+        tournamentTitle: 'Event',
+        eventGames: eventGames,
+        gameListSelectedId: 'event-game-1',
+      );
+
+      await tester.pumpWidget(_wrap(initialArgs));
+      await tester.pump();
+
+      // Give the rail its own click highlight, then simulate Cmd/Ctrl+Down
+      // changing the canonical Board selection outside the rail.
+      await tester.tap(find.text('White One'));
+      await tester.pump(const Duration(milliseconds: 400));
+      var table = tester.widget<Table>(find.byType(Table));
+      expect(
+        (table.children[0].decoration as BoxDecoration).color,
+        isNot(Colors.transparent),
+      );
+      expect(
+        (table.children[1].decoration as BoxDecoration).color,
+        Colors.transparent,
+      );
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(EventGamesTable)),
+      );
+      container.read(boardTabGameArgsByTabIdProvider.notifier).state = {
+        'tournaments-default': initialArgs.copyWith(
+          gameId: 'event-game-2',
+          gameListSelectedId: 'event-game-2',
+        ),
+      };
+      await tester.pump();
+      await tester.pump();
+
+      table = tester.widget<Table>(find.byType(Table));
+      expect(
+        (table.children[0].decoration as BoxDecoration).color,
+        Colors.transparent,
+      );
+      expect(
+        (table.children[1].decoration as BoxDecoration).color,
+        isNot(Colors.transparent),
+      );
+    },
+  );
+
   testWidgets('event games keep the board and round column', (tester) async {
     await tester.pumpWidget(
       _wrap(
@@ -1734,9 +2049,7 @@ void main() {
     expect(board2Top, lessThan(board10Top));
   });
 
-  testWidgets('active event headers lead and future rounds stay collapsed', (
-    tester,
-  ) async {
+  testWidgets('event rounds expand and collapse independently', (tester) async {
     final now = DateTime.now();
     await tester.pumpWidget(
       _wrap(
@@ -1786,6 +2099,13 @@ void main() {
     await tester.tap(find.text('Round 4'));
     await tester.pump();
 
+    expect(find.text('Live White'), findsOneWidget);
+    expect(find.text('Future White'), findsOneWidget);
+
+    await tester.tap(find.text('Round 2'));
+    await tester.pump();
+
+    expect(find.text('Live White'), findsNothing);
     expect(find.text('Future White'), findsOneWidget);
   });
 
@@ -1838,7 +2158,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('Next White'), findsOneWidget);
-    expect(find.text('Finished White'), findsNothing);
+    expect(find.text('Finished White'), findsOneWidget);
   });
 
   testWidgets('event game rows are tappable in the fixed table rail', (
