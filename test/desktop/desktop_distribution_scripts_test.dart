@@ -510,6 +510,28 @@ void main() {
       );
       expect(wrapper, contains(r'"$platform" --keep-last-n "$KEEP_LAST_N"'));
     });
+
+    test('R2 retains only the latest release for each desktop platform', () {
+      final publisher =
+          File('scripts/r2_publish_release.py').readAsStringSync();
+
+      expect(publisher, contains('KEEP_RELEASES_PER_PLATFORM = 1'));
+      expect(
+        publisher,
+        contains('candidates[:KEEP_RELEASES_PER_PLATFORM]'),
+      );
+      expect(
+        publisher,
+        contains('candidates[KEEP_RELEASES_PER_PLATFORM:]'),
+      );
+      expect(publisher, contains('publisher.list_keys(archive_root)'));
+      expect(publisher, isNot(contains('candidates[:2]')));
+      expect(publisher, isNot(contains('candidates[2:]')));
+      expect(
+        publisher.indexOf('"desktop/latest.json"'),
+        lessThan(publisher.indexOf('publisher.list_keys(archive_root)')),
+      );
+    });
   });
 
   group('desktop updater runtime contract', () {
