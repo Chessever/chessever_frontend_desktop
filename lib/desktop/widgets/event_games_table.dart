@@ -45,6 +45,7 @@ import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_positio
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
+import 'package:chessever/widgets/atomic_countdown_text.dart';
 
 const Duration _kSidebarLiveActivityWindow = Duration(minutes: 120);
 
@@ -209,7 +210,7 @@ List<TournamentGameSummary> eventRailWindowContinuationGamesForTesting({
 class EventGamesTable extends ConsumerStatefulWidget {
   const EventGamesTable({super.key, required this.tabId, this.onClose});
 
-  static const double width = 360;
+  static const double width = 320;
 
   final String tabId;
 
@@ -3599,55 +3600,157 @@ TournamentGameSummary _watchArbitratedEventSummary(
   );
 }
 
-/// Realtime is deliberately consumed at the status cell, not at the rail or
-/// round level. One clock/status push therefore dirties one tiny leaf instead
-/// of rebuilding every board in a large event.
-class _EventGameStatusCell extends ConsumerWidget {
-  const _EventGameStatusCell({required this.game, this.liveBatchKey});
-
-  final TournamentGameSummary game;
-  final LiveGamesBatchKey? liveBatchKey;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final displayed = _watchArbitratedEventSummary(ref, game, liveBatchKey);
-    final status = displayed.status;
-    final hasStarted = displayed.hasStarted;
-    final isLive = _isActualLiveGame(
-      status: status,
-      hasStarted: hasStarted,
-      lastMoveTime: displayed.lastMoveTime,
-    );
-    return _StatusPill(status: status, isLive: isLive, hasStarted: hasStarted);
-  }
-}
-
-class _EventGamePlayerCell extends ConsumerWidget {
-  const _EventGamePlayerCell({
+/// Realtime is deliberately consumed once per visible matchup, not at the rail
+/// or round level. One clock/status push therefore dirties one compact row leaf
+/// instead of rebuilding every board in a large event.
+class _EventGameMatchupCell extends ConsumerWidget {
+  const _EventGameMatchupCell({
     required this.game,
-    required this.isWhite,
     required this.selected,
     this.liveBatchKey,
   });
 
   final TournamentGameSummary game;
-  final bool isWhite;
   final bool selected;
   final LiveGamesBatchKey? liveBatchKey;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final displayed = _watchArbitratedEventSummary(ref, game, liveBatchKey);
-    return _PlayerCell(
-      name: isWhite ? displayed.whitePlayer : displayed.blackPlayer,
-      federation:
-          isWhite ? displayed.whiteFederation : displayed.blackFederation,
-      fideId: isWhite ? displayed.whiteFideId : displayed.blackFideId,
-      title: isWhite ? displayed.whiteTitle : displayed.blackTitle,
-      rating: isWhite ? displayed.whiteRating : displayed.blackRating,
-      selected: selected,
+    final isLive = _isActualLiveGame(
+      status: displayed.status,
+      hasStarted: displayed.hasStarted,
+      lastMoveTime: displayed.lastMoveTime,
+    );
+    final fenParts = displayed.fen?.trim().split(RegExp(r'\s+'));
+    final bool? whiteToMove =
+        fenParts != null && fenParts.length > 1
+            ? switch (fenParts[1]) {
+              'w' => true,
+              'b' => false,
+              _ => null,
+            }
+            : null;
+
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _EventGamePlayerLine(
+                game: displayed,
+                isWhite: true,
+                selected: selected,
+                showClock: isLive,
+                clockActive: isLive && whiteToMove == true,
+              ),
+              const SizedBox(height: 2),
+              _EventGamePlayerLine(
+                game: displayed,
+                isWhite: false,
+                selected: selected,
+                showClock: isLive,
+                clockActive: isLive && whiteToMove == false,
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
+}
+
+class _EventGamePlayerLine extends StatelessWidget {
+  const _EventGamePlayerLine({
+    required this.game,
+    required this.isWhite,
+    required this.selected,
+    required this.showClock,
+    required this.clockActive,
+  });
+
+  final TournamentGameSummary game;
+  final bool isWhite;
+  final bool selected;
+  final bool showClock;
+  final bool clockActive;
+
+  @override
+  Widget build(BuildContext context) {
+    final clockSeconds =
+        isWhite ? game.whiteClockSeconds : game.blackClockSeconds;
+    return Row(
+      key: Key('event-game-${game.id}-${isWhite ? 'white' : 'black'}-line'),
+      children: [
+        Expanded(
+          child: _PlayerCell(
+            name: isWhite ? game.whitePlayer : game.blackPlayer,
+            federation: isWhite ? game.whiteFederation : game.blackFederation,
+            fideId: isWhite ? game.whiteFideId : game.blackFideId,
+            title: isWhite ? game.whiteTitle : game.blackTitle,
+            rating: isWhite ? game.whiteRating : game.blackRating,
+            selected: selected,
+          ),
+        ),
+        if (showClock && clockSeconds != null) ...[
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 48,
+            child: AtomicCountdownText(
+              clockSeconds: clockSeconds,
+              clockCentiseconds: 0,
+              lastMoveTime: game.lastMoveTime,
+              isActive: clockActive,
+              style: TextStyle(
+                color: clockActive ? kPrimaryColor : kWhiteColor70,
+                fontSize: 11.5,
+                fontWeight: clockActive ? FontWeight.w700 : FontWeight.w600,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ] else if (game.status.isFinished) ...[
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 20,
+            child: Text(
+              _eventGamePlayerResult(game.status, isWhite: isWhite),
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color: _eventGamePlayerResultColor(
+                  game.status,
+                  isWhite: isWhite,
+                ),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+String _eventGamePlayerResult(GameStatus status, {required bool isWhite}) {
+  return switch (status) {
+    GameStatus.whiteWins => isWhite ? '1' : '0',
+    GameStatus.blackWins => isWhite ? '0' : '1',
+    GameStatus.draw => '½',
+    _ => '',
+  };
+}
+
+Color _eventGamePlayerResultColor(GameStatus status, {required bool isWhite}) {
+  if (status == GameStatus.draw) {
+    return kWhiteColor.withValues(alpha: 0.62);
+  }
+  final playerWon =
+      (status == GameStatus.whiteWins && isWhite) ||
+      (status == GameStatus.blackWins && !isWhite);
+  return playerWon ? kPrimaryColor : kRedColor;
 }
 
 String _formatDayHeader(String dateKey) {
@@ -4719,11 +4822,8 @@ class _DatabaseGameRowState extends State<_DatabaseGameRow> {
   }
 }
 
-/// Per-round table block. Wraps [AdaptiveGamesTable] in `useFixedRowAlignment`
-/// mode so the round's games render inside one [Table] (no inner scroll —
-/// the outer ListView in [EventGamesTable] owns vertical scrolling). Lets
-/// the framework compute column widths from the actual flag chips, name
-/// strings, and Elo digits per round.
+/// Per-round compact matchup block. Each game is one stacked White/Black row;
+/// the outer ListView in [EventGamesTable] owns vertical scrolling.
 class _EventRoundTable extends StatelessWidget {
   const _EventRoundTable({
     required this.games,
@@ -4787,38 +4887,14 @@ class _EventRoundTable extends StatelessWidget {
               (_, game) => _BoardBadge(game: game, selected: _isSelected(game)),
         ),
       AdaptiveColumn<TournamentGameSummary>(
-        id: 'white',
-        label: 'WHITE',
+        id: 'matchup',
+        label: 'GAME',
         flex: 1,
+        minWidth: 210,
         cellBuilder:
-            (_, game) => _EventGamePlayerCell(
+            (_, game) => _EventGameMatchupCell(
               game: game,
-              isWhite: true,
               selected: _isSelected(game),
-              liveBatchKey: liveBatchKeyByGameId[game.id],
-            ),
-      ),
-      AdaptiveColumn<TournamentGameSummary>(
-        id: 'black',
-        label: 'BLACK',
-        flex: 1,
-        cellBuilder:
-            (_, game) => _EventGamePlayerCell(
-              game: game,
-              isWhite: false,
-              selected: _isSelected(game),
-              liveBatchKey: liveBatchKeyByGameId[game.id],
-            ),
-      ),
-      AdaptiveColumn<TournamentGameSummary>(
-        id: 'status',
-        label: 'RES',
-        minWidth: 38,
-        headerAlignment: Alignment.center,
-        cellAlignment: Alignment.center,
-        cellBuilder:
-            (_, game) => _EventGameStatusCell(
-              game: game,
               liveBatchKey: liveBatchKeyByGameId[game.id],
             ),
       ),
@@ -4838,12 +4914,12 @@ class _EventRoundTable extends StatelessWidget {
             // align *across* rows too, which is what the user expects within a
             // round.
             useFixedRowAlignment: true,
-            minTableWidth: EventGamesTable.width,
+            minTableWidth: 280,
             scrollController: verticalController,
             horizontalScrollController: horizontalController,
             showHeader: false,
             padding: const EdgeInsets.symmetric(horizontal: 6),
-            rowMinHeight: 38,
+            rowMinHeight: 48,
             rowKeyBuilder:
                 (game) => game.id == _activeSelectionId ? selectedRowKey : null,
             onRowTap: (
@@ -4923,25 +4999,14 @@ class _EventRoundTable extends StatelessWidget {
               return BoxDecoration(
                 color:
                     selected
-                        ? kPrimaryColor.withValues(alpha: 0.18)
+                        ? kPrimaryColor.withValues(alpha: 0.11)
                         : (hovered ? kBlack3Color : Colors.transparent),
                 borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color:
-                      selected
-                          ? kPrimaryColor.withValues(alpha: 0.72)
-                          : Colors.transparent,
-                  width: selected ? 1.2 : 1,
-                ),
-                boxShadow:
+                border:
                     selected
-                        ? [
-                          BoxShadow(
-                            color: kPrimaryColor.withValues(alpha: 0.18),
-                            blurRadius: 14,
-                            offset: const Offset(0, 3),
-                          ),
-                        ]
+                        ? const Border(
+                          left: BorderSide(color: kPrimaryColor, width: 2),
+                        )
                         : null,
               );
             },

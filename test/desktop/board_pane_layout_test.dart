@@ -272,7 +272,7 @@ PlayerHoverPreviewIdentity _previewPlayer(
 
 void main() {
   test('context board starts with a board-first three-pane layout', () {
-    expect(boardPaneContextInitialWeights, const [0.25, 0.50, 0.25]);
+    expect(boardPaneContextInitialWeights, const [0.22, 0.53, 0.25]);
     expect(
       boardPaneContextInitialWeights.reduce((a, b) => a + b),
       closeTo(1, 0.0001),

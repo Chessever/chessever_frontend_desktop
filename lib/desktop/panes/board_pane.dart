@@ -131,7 +131,7 @@ import 'package:chessever/widgets/player_initials_avatar.dart';
 /// [ResizableSplitView] restores the unchanged persisted context key over
 /// these values once the user has customized the workspace.
 @visibleForTesting
-const List<double> boardPaneContextInitialWeights = <double>[0.25, 0.50, 0.25];
+const List<double> boardPaneContextInitialWeights = <double>[0.22, 0.53, 0.25];
 
 /// Applies a recognized broadcast status to PGN metadata.
 ///

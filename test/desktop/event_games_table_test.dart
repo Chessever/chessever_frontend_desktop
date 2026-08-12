@@ -16,7 +16,9 @@ import 'package:chessever/screens/gamebase/models/models.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/utils/date_time_provider.dart';
 import 'package:chessever/utils/time_utils.dart';
+import 'package:chessever/widgets/atomic_countdown_text.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:dio/dio.dart';
 
@@ -85,6 +87,46 @@ void main() {
       expect(summary.roundStartsAt!.toUtc().hour, 12);
     },
   );
+
+  test('event summaries preserve both live clock values', () {
+    final live = GamesTourModel(
+      gameId: 'clock-game-1',
+      whitePlayer: PlayerCard(
+        name: 'White',
+        federation: 'USA',
+        title: 'GM',
+        rating: 2600,
+        countryCode: 'USA',
+        team: null,
+      ),
+      blackPlayer: PlayerCard(
+        name: 'Black',
+        federation: 'IND',
+        title: 'GM',
+        rating: 2590,
+        countryCode: 'IND',
+        team: null,
+      ),
+      whiteTimeDisplay: '07:39',
+      blackTimeDisplay: '06:57',
+      whiteClockCentiseconds: 45900,
+      blackClockCentiseconds: 41700,
+      whiteClockSeconds: 459,
+      blackClockSeconds: 417,
+      gameStatus: GameStatus.ongoing,
+      fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+      roundId: 'round-1',
+      tourId: 'tour-1',
+    );
+
+    final summary = TournamentGameSummary.fromGamesTourModel(live);
+    final roundTrip = gamesTourModelFromTournamentSummary(summary);
+
+    expect(summary.whiteClockSeconds, 459);
+    expect(summary.blackClockSeconds, 417);
+    expect(roundTrip.whiteClockSeconds, 459);
+    expect(roundTrip.blackClockSeconds, 417);
+  });
 
   test(
     'event rail board opens keep newer live summaries over stale fetches',
@@ -239,7 +281,7 @@ void main() {
     },
   );
 
-  testWidgets('event rail shows one plain result-sized LIVE label', (
+  testWidgets('event rail stacks players and replaces LIVE with both clocks', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -255,9 +297,15 @@ void main() {
             _summary(
               id: 'live-game-1',
               roundLabel: 'Round 5',
+              whitePlayer: 'White',
+              blackPlayer: 'Black',
               roundStartsAt: DateTime.now().subtract(const Duration(hours: 2)),
               lastMoveTime: DateTime.now().subtract(const Duration(minutes: 1)),
               status: GameStatus.ongoing,
+              fen:
+                  'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+              whiteClockSeconds: 459,
+              blackClockSeconds: 417,
             ),
           ],
           gameListSelectedId: 'live-game-1',
@@ -266,10 +314,27 @@ void main() {
     );
     await tester.pump();
 
-    final liveLabels = tester.widgetList<Text>(find.text('LIVE')).toList();
-    expect(liveLabels, hasLength(1));
-    expect(liveLabels.single.style?.color, kPrimaryColor);
-    expect(liveLabels.single.style?.fontSize, 12);
+    expect(find.text('LIVE'), findsNothing);
+    expect(find.text('06:57'), findsOneWidget);
+    final clocks =
+        tester
+            .widgetList<AtomicCountdownText>(find.byType(AtomicCountdownText))
+            .toList();
+    expect(clocks, hasLength(2));
+    expect(clocks.map((clock) => clock.clockSeconds), [459, 417]);
+    expect(clocks.where((clock) => clock.isActive), hasLength(1));
+    expect(
+      tester
+          .getCenter(find.byKey(const Key('event-game-live-game-1-white-line')))
+          .dy,
+      lessThan(
+        tester
+            .getCenter(
+              find.byKey(const Key('event-game-live-game-1-black-line')),
+            )
+            .dy,
+      ),
+    );
 
     final liveDots =
         tester.widgetList<Container>(find.byType(Container)).where((container) {
@@ -394,11 +459,8 @@ void main() {
     );
     await tester.pump();
 
-    final result = tester.widget<Text>(find.text('1–0'));
-    final spans = (result.textSpan! as TextSpan).children!.cast<TextSpan>();
-    expect(spans[0].style?.color, kPrimaryColor);
-    expect(spans[1].style?.color, kWhiteColor.withValues(alpha: 0.28));
-    expect(spans[2].style?.color, kRedColor);
+    expect(tester.widget<Text>(find.text('1')).style?.color, kPrimaryColor);
+    expect(tester.widget<Text>(find.text('0')).style?.color, kRedColor);
   });
 
   testWidgets('live round hides redundant round status and start time', (
@@ -429,7 +491,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('LIVE'), findsOneWidget);
+    expect(find.text('LIVE'), findsNothing);
     expect(find.text(TimeUtils.formatRoundDateTime(startsAt)), findsNothing);
   });
 
@@ -1825,7 +1887,7 @@ void main() {
     expect(args.pgn, '1. e4 e5 *');
   });
 
-  testWidgets('selected event game gets a full-row container treatment', (
+  testWidgets('selected event game gets a quiet tint and primary edge', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -1846,9 +1908,11 @@ void main() {
 
     final table = tester.widget<Table>(find.byType(Table));
     final selectedDecoration = table.children[0].decoration as BoxDecoration;
-    expect(selectedDecoration.color, isNotNull);
-    expect(selectedDecoration.border, isNotNull);
-    expect(selectedDecoration.boxShadow, isNotEmpty);
+    expect(selectedDecoration.color, kPrimaryColor.withValues(alpha: 0.11));
+    final border = selectedDecoration.border! as Border;
+    expect(border.left.color, kPrimaryColor);
+    expect(border.left.width, 2);
+    expect(selectedDecoration.boxShadow, isNull);
   });
 
   testWidgets('single click moves the only highlighted game row', (
@@ -2235,6 +2299,7 @@ Widget _wrap(
       gameUpdatesBatchStreamProvider.overrideWith(
         (ref, key) => const Stream<Map<String, LiveGameUpdate>>.empty(),
       ),
+      dateTimeProvider.overrideWith((ref) => Stream.value(DateTime.now())),
     ],
     child: const MaterialApp(
       home: Scaffold(
@@ -2325,6 +2390,8 @@ TournamentGameSummary _summary({
   String blackTitle = '',
   int whiteRating = 0,
   int blackRating = 0,
+  int? whiteClockSeconds,
+  int? blackClockSeconds,
   String whiteTeam = '',
   String blackTeam = '',
   String tourId = '',
@@ -2342,6 +2409,8 @@ TournamentGameSummary _summary({
     blackTitle: blackTitle,
     whiteRating: whiteRating,
     blackRating: blackRating,
+    whiteClockSeconds: whiteClockSeconds,
+    blackClockSeconds: blackClockSeconds,
     hasPgn: true,
     pgn: pgn,
     fen: fen,
