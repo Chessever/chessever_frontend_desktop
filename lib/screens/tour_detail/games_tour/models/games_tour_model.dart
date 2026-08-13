@@ -395,7 +395,7 @@ class GamesTourModel {
     required int? clockSeconds,
     required int? clockCentiseconds,
   }) {
-    if (clockSeconds != null && clockSeconds > 0) {
+    if (clockSeconds != null && clockSeconds >= 0) {
       return clockSeconds;
     }
     return _centisecondsToSeconds(clockCentiseconds);

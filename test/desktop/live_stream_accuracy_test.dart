@@ -7,6 +7,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/panes/board_pane.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
@@ -275,7 +276,7 @@ void main() {
   });
 
   test(
-    'confirmed takeback truncates live mainline but preserves old analysis',
+    'confirmed takeback truncates live mainline without retaining feed history',
     () {
       final oldGame = ChessGame.fromPgn(
         'game-1',
@@ -289,14 +290,12 @@ void main() {
       final merged = mergeBroadcastUpdateForTesting(oldGame, freshGame);
 
       expect(merged.mainline.map((move) => move.uci), ['e2e4', 'e7e5']);
-      final retainedBranches = merged.mainline.last.variations;
-      expect(retainedBranches, isNotNull);
-      expect(retainedBranches!.last.map((move) => move.uci), ['g1f3', 'b8c6']);
+      expect(merged.mainline.last.variations, isNull);
     },
   );
 
   test(
-    'root takeback survives empty echoes and restores the complete analysis',
+    'root takeback and session round trip retain only the canonical reset',
     () {
       final oldGame = ChessGame.fromPgn(
         'game-1',
@@ -310,13 +309,10 @@ void main() {
 
       final rootReset = mergeBroadcastUpdateForTesting(oldGame, emptyLiveGame);
       expect(rootReset.mainline, isEmpty);
-      expect(rootReset.detachedRootAnalysis, isNotEmpty);
+      expect(rootReset.detachedRootAnalysis, isNull);
       expect(
         shouldMergeBroadcastTree(gameId: 'game-1', currentGame: rootReset),
-        isTrue,
-        reason:
-            'Board PGN intake must not bypass detached analysis just because '
-            'the canonical mainline is empty.',
+        isFalse,
       );
 
       final serialized = jsonEncode(rootReset.toJson());
@@ -328,7 +324,7 @@ void main() {
         emptyLiveGame,
       );
       expect(repeatedEmpty.mainline, isEmpty);
-      expect(repeatedEmpty.detachedRootAnalysis, isNotEmpty);
+      expect(repeatedEmpty.detachedRootAnalysis, isNull);
 
       final resumedLiveGame = ChessGame.fromPgn(
         'game-1',
@@ -342,36 +338,10 @@ void main() {
       expect(resumed.mainline.map((move) => move.uci), ['e2e4']);
       expect(resumed.mainline.first.fen, resumedLiveGame.mainline.first.fen);
       expect(resumed.detachedRootAnalysis, isNull);
-      expect(resumed.mainline.first.eval, '0.25');
-      expect(resumed.mainline.first.nags, contains(1));
-      expect(
-        resumed.mainline.first.comments,
-        contains('root note [%eval 0.25]'),
-      );
-
-      final branches = resumed.mainline.first.variations!;
-      final oldContinuation = branches.firstWhere(
-        (line) => line.first.uci == 'e7e5',
-      );
-      expect(oldContinuation.map((move) => move.uci), ['e7e5', 'g1f3']);
-      expect(oldContinuation.first.eval, '0.10');
-      expect(oldContinuation.first.nags, contains(2));
-      expect(
-        oldContinuation.first.comments,
-        contains('reply note [%eval 0.10]'),
-      );
-      expect(oldContinuation.last.eval, '0.30');
-      expect(oldContinuation.last.nags, contains(3));
-
-      final oldAlternative = branches.firstWhere(
-        (line) => line.first.uci == 'c7c5',
-      );
-      expect(oldAlternative.first.eval, '0.15');
-      expect(oldAlternative.first.nags, contains(5));
-      expect(
-        oldAlternative.first.comments,
-        contains('sicilian note [%eval 0.15]'),
-      );
+      expect(resumed.mainline.first.eval, isNull);
+      expect(resumed.mainline.first.nags, isNull);
+      expect(resumed.mainline.first.comments, isNull);
+      expect(resumed.mainline.first.variations, isNull);
     },
   );
 
@@ -391,48 +361,203 @@ void main() {
 
     expect(resumed.mainline.map((move) => move.uci), ['d2d4']);
     expect(resumed.mainline.first.fen, resumedLiveGame.mainline.first.fen);
-    expect(resumed.mainline.first.variations!.single.map((move) => move.uci), [
+    expect(resumed.mainline.first.variations, isNull);
+  });
+
+  test('accepted correction replaces a divergent earlier feed snapshot', () {
+    final oldGame = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 e5 2. Nf3 *',
+    );
+    final correctedGame = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 c5 2. Nf3 *',
+    );
+
+    final merged = mergeBroadcastUpdateForTesting(oldGame, correctedGame);
+
+    expect(merged.mainline.map((move) => move.uci), ['e2e4', 'c7c5', 'g1f3']);
+    expect(
+      merged.mainline.expand((move) => move.variations ?? const []),
+      isEmpty,
+    );
+  });
+
+  test('stale intermediate snapshot cannot survive a canonical correction', () {
+    final first = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 e5 2. Nf3 *',
+    );
+    final staleIntermediate = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 e5 2. Bc4 *',
+    );
+    final canonical = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 c5 2. Nf3 *',
+    );
+
+    final afterIntermediate = mergeBroadcastUpdateForTesting(
+      first,
+      staleIntermediate,
+    );
+    final merged = mergeBroadcastUpdateForTesting(afterIntermediate, canonical);
+
+    expect(merged.mainline.map((move) => move.uci), ['e2e4', 'c7c5', 'g1f3']);
+    expect(
+      merged.mainline.expand((move) => move.variations ?? const []),
+      isEmpty,
+    );
+  });
+
+  test('restored live Board session re-applies the canonical tab PGN', () {
+    const canonicalPgn = '[Result "*"]\n\n1. e4 c5 2. Nf3 *';
+    final restoredWithLocalBranch = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 c5 (1... e5 2. Nf3) 2. Nf3 *',
+    );
+    final restored = restoredWithLocalBranch.copyWith(
+      metadata: <String, dynamic>{
+        ...restoredWithLocalBranch.metadata,
+        ChessGame.metadataIsLiveKey: true,
+      },
+    );
+    final roundTripped = ChessGame.fromJson(
+      (jsonDecode(jsonEncode(restored.toJson())) as Map)
+          .cast<String, dynamic>(),
+    );
+    final canonical = ChessGame.fromPgn('game-1', canonicalPgn);
+
+    expect(
+      shouldCanonicalizeBoardArgsPgn(
+        isDatabaseSnapshot: false,
+        restoredGameIsLive:
+            roundTripped.metadata[ChessGame.metadataIsLiveKey] == true,
+        sourceGameStatus: GameStatus.ongoing,
+      ),
+      isTrue,
+    );
+    expect(
+      doesGameTreeMatchBroadcastPgn(
+        game: roundTripped,
+        broadcastPgn: canonicalPgn,
+      ),
+      isFalse,
+      reason:
+          'An identical saved PGN must not short-circuit a polluted live '
+          'session tree.',
+    );
+
+    final stayedOnGame = mergeBroadcastUpdateForTesting(
+      roundTripped,
+      canonical,
+    );
+
+    expect(stayedOnGame.mainline.map((move) => move.uci), [
       'e2e4',
-      'e7e5',
+      'c7c5',
+      'g1f3',
+    ]);
+    expect(
+      stayedOnGame.mainline.expand(
+        (move) => move.variations ?? const <ChessLine>[],
+      ),
+      isEmpty,
+    );
+  });
+
+  test('finished and database Board args are not canonicalized as live', () {
+    expect(
+      shouldCanonicalizeBoardArgsPgn(
+        isDatabaseSnapshot: false,
+        restoredGameIsLive: false,
+        sourceGameStatus: GameStatus.whiteWins,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldCanonicalizeBoardArgsPgn(
+        isDatabaseSnapshot: true,
+        restoredGameIsLive: true,
+        sourceGameStatus: GameStatus.ongoing,
+      ),
+      isFalse,
+    );
+  });
+
+  test('source-supplied variation remains part of the accepted PGN', () {
+    final oldGame = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 e5 2. Nf3 *',
+    );
+    final freshGame = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 e5 (1... c5 2. Nf3) 2. Nf3 *',
+    );
+
+    final merged = mergeBroadcastUpdateForTesting(oldGame, freshGame);
+
+    expect(merged.mainline.map((move) => move.uci), ['e2e4', 'e7e5', 'g1f3']);
+    expect(merged.mainline.first.variations, isNotNull);
+    expect(merged.mainline.first.variations!.single.map((move) => move.uci), [
+      'c7c5',
+      'g1f3',
     ]);
   });
 
-  test(
-    'matching broadcast moves take fresh clocks without losing comments',
-    () {
-      final oldGame = ChessGame.fromPgn(
-        'game-1',
-        '[Result "*"]\n\n1. e4 {local note [%clk 0:05:00]} e5 *',
-      );
-      final freshGame = ChessGame.fromPgn(
-        'game-1',
-        '[Result "*"]\n\n1. e4 {broadcast correction [%clk 0:04:58]} e5 *',
-      );
+  test('non-live same-game reload retains explicit analysis variations', () {
+    final analyzedGame = ChessGame.fromPgn(
+      'game-1',
+      '[Result "1-0"]\n\n1. e4 e5 (1... c5 2. Nf3) 2. Nf3 1-0',
+    );
+    final reloadedGame = ChessGame.fromPgn(
+      'game-1',
+      '[Result "1-0"]\n\n1. e4 e5 2. Nf3 1-0',
+    );
 
-      final merged = mergeBroadcastUpdateForTesting(oldGame, freshGame);
+    final merged = mergeBroadcastUpdateForTesting(
+      analyzedGame,
+      reloadedGame,
+      preserveExistingAnalysis: true,
+    );
 
-      expect(
-        merged.mainline.first.clockTime,
-        freshGame.mainline.first.clockTime,
-      );
-      expect(
-        merged.mainline.first.clockTime,
-        isNot(oldGame.mainline.first.clockTime),
-      );
-      expect(
-        (merged.mainline.first.comments ?? const <String>[]).any(
-          (comment) => comment.contains('broadcast correction'),
-        ),
-        isTrue,
-      );
-      expect(
-        (merged.mainline.first.comments ?? const <String>[]).any(
-          (comment) => comment.contains('local note'),
-        ),
-        isTrue,
-      );
-    },
-  );
+    expect(merged.mainline.first.variations, isNotNull);
+    expect(merged.mainline.first.variations!.single.map((move) => move.uci), [
+      'c7c5',
+      'g1f3',
+    ]);
+  });
+
+  test('matching broadcast moves take only fresh canonical annotations', () {
+    final oldGame = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 {local note [%clk 0:05:00]} e5 *',
+    );
+    final freshGame = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 {broadcast correction [%clk 0:04:58]} e5 *',
+    );
+
+    final merged = mergeBroadcastUpdateForTesting(oldGame, freshGame);
+
+    expect(merged.mainline.first.clockTime, freshGame.mainline.first.clockTime);
+    expect(
+      merged.mainline.first.clockTime,
+      isNot(oldGame.mainline.first.clockTime),
+    );
+    expect(
+      (merged.mainline.first.comments ?? const <String>[]).any(
+        (comment) => comment.contains('broadcast correction'),
+      ),
+      isTrue,
+    );
+    expect(
+      (merged.mainline.first.comments ?? const <String>[]).any(
+        (comment) => comment.contains('local note'),
+      ),
+      isFalse,
+    );
+  });
 
   test('incremental Board path accepts only a byte-prefix PGN append', () {
     const previous = '[Event "Live"]\n[Result "*"]\n\n1. e4 {[%clk 0:05:00]} *';
@@ -442,6 +567,9 @@ void main() {
         '[Event "Live"]\n[Result "*"]\n\n1. e4 {[%clk 0:04:58]} e5 {[%clk 0:04:59]} *';
     const correctedHeader =
         '[Event "Corrected"]\n[Result "*"]\n\n1. e4 {[%clk 0:05:00]} e5 *';
+    const appendedSourceVariation =
+        '[Event "Live"]\n[Result "*"]\n\n'
+        '1. e4 {[%clk 0:05:00]} e5 (1... c5) *';
 
     expect(
       isStrictAppendOnlyBroadcastPgn(
@@ -463,6 +591,109 @@ void main() {
         incomingPgn: correctedHeader,
       ),
       isFalse,
+    );
+    expect(
+      isStrictAppendOnlyBroadcastPgn(
+        previousPgn: previous,
+        incomingPgn: appendedSourceVariation,
+      ),
+      isFalse,
+      reason: 'Source variations must use the full canonical PGN parser.',
+    );
+  });
+
+  test('incremental Board path rejects unexplained in-memory variations', () {
+    const canonicalPgn = '[Result "*"]\n\n1. e4 e5 *';
+    final canonical = ChessGame.fromPgn('game-1', canonicalPgn);
+    final withLocalBranch = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 e5 (1... c5) *',
+    );
+
+    expect(
+      doesGameTreeMatchBroadcastPgn(
+        game: canonical,
+        broadcastPgn: canonicalPgn,
+      ),
+      isTrue,
+    );
+    expect(
+      doesGameTreeMatchBroadcastPgn(
+        game: withLocalBranch,
+        broadcastPgn: canonicalPgn,
+      ),
+      isFalse,
+      reason: 'The full parser must remove an unproven local live branch.',
+    );
+    expect(
+      doesGameTreeMatchBroadcastPgn(
+        game: withLocalBranch,
+        broadcastPgn: '[Result "*"]\n\n1. e4 e5 (1... c5) *',
+      ),
+      isTrue,
+      reason: 'A source-supplied branch remains eligible for safe appends.',
+    );
+  });
+
+  test('incremental Board path rejects unexplained local annotations', () {
+    const canonicalPgn = '[Result "*"]\n\n1. e4 e5 *';
+    final canonical = ChessGame.fromPgn('game-1', canonicalPgn);
+    final firstMove = canonical.mainline.first;
+    final withLocalComment = canonical.copyWith(
+      mainline: <ChessMove>[
+        firstMove.copyWith(comments: const <String>['local analysis']),
+        ...canonical.mainline.skip(1),
+      ],
+    );
+
+    expect(
+      doesGameTreeMatchBroadcastPgn(
+        game: withLocalComment,
+        broadcastPgn: canonicalPgn,
+      ),
+      isFalse,
+      reason: 'Unproven live annotations must route through canonical replace.',
+    );
+  });
+
+  test('canonical live updates invalidate stale notation undo state', () {
+    final staleGame = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 e5 (1... c5) *',
+    );
+    final staleUndo = BoardUndoSnapshot(
+      game: staleGame,
+      pointer: const <int>[0, 0, 0],
+      dirtySinceLoad: true,
+      userNags: const <int, List<int>>{
+        1: <int>[2],
+      },
+    );
+
+    expect(
+      hasUnprovenLiveNotationState(
+        userNags: const <int, List<int>>{},
+        undoStack: const <BoardUndoSnapshot>[],
+      ),
+      isFalse,
+    );
+    expect(
+      hasUnprovenLiveNotationState(
+        userNags: const <int, List<int>>{
+          1: <int>[2],
+        },
+        undoStack: const <BoardUndoSnapshot>[],
+      ),
+      isTrue,
+      reason: 'A corrected ply must not inherit a user NAG by index.',
+    );
+    expect(
+      hasUnprovenLiveNotationState(
+        userNags: const <int, List<int>>{},
+        undoStack: <BoardUndoSnapshot>[staleUndo],
+      ),
+      isTrue,
+      reason: 'Undo must not restore a displaced pre-correction feed tree.',
     );
   });
 

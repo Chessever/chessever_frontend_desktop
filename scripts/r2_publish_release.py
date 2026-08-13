@@ -28,6 +28,7 @@ from botocore.exceptions import ClientError
 IMMUTABLE_CACHE = "public, max-age=31536000, s-maxage=31536000, immutable"
 MUTABLE_CACHE = "public, max-age=300, s-maxage=300, stale-while-revalidate=60"
 MAX_SINGLE_PUT_BYTES = 5 * 1024**3
+KEEP_RELEASES_PER_PLATFORM = 1
 PLATFORM_PATTERN = re.compile(r"^(macos|macos-x64|windows|linux)$")
 VERSION_PATTERN = re.compile(
     r"^(?P<version>\d+\.\d+\.\d+)\+(?P<build>[1-9]\d*)$"
@@ -381,8 +382,8 @@ def publish(args: argparse.Namespace) -> None:
                 key=version_order,
                 reverse=True,
             )
-            kept.extend(candidates[:2])
-            for stale in candidates[2:]:
+            kept.extend(candidates[:KEEP_RELEASES_PER_PLATFORM])
+            for stale in candidates[KEEP_RELEASES_PER_PLATFORM:]:
                 url = str(stale.get("url") or "")
                 marker = "/desktop/archive/"
                 if marker in url:
@@ -434,14 +435,26 @@ def publish(args: argparse.Namespace) -> None:
         scratch / "latest.json",
     )
 
-    # Prune only objects no longer referenced by the successfully committed
-    # manifest. Never remove the archive just published.
+    # Prune only after both manifests have been successfully committed. Keep
+    # one current release for each desktop platform and never remove an archive
+    # still referenced by another manifest alias (notably macos-arm64).
     referenced = {
         str(entry["url"]).split("/desktop/archive/", 1)[1]
         for entry in app_archive["items"]
         if "/desktop/archive/" in str(entry.get("url"))
     }
-    for stale in sorted(removed_archive_dirs - referenced - {archive_dir.name}):
+    archive_root = "desktop/archive/"
+    platform_archive_pattern = re.compile(
+        rf"^\d+\.\d+\.\d+\+[1-9]\d*-{re.escape(args.platform)}$"
+    )
+    stored_archive_dirs = {
+        remainder.split("/", 1)[0]
+        for key in publisher.list_keys(archive_root)
+        if "/" in (remainder := key.removeprefix(archive_root))
+        and platform_archive_pattern.fullmatch(remainder.split("/", 1)[0])
+    }
+    stale_archive_dirs = removed_archive_dirs | stored_archive_dirs
+    for stale in sorted(stale_archive_dirs - referenced - {archive_dir.name}):
         publisher.delete_prefix(f"desktop/archive/{stale}/")
         publisher.client.delete_object(
             Bucket=publisher.bucket,
@@ -470,7 +483,9 @@ def publish(args: argparse.Namespace) -> None:
             continue
         major, minor, patch = (int(part) for part in match.group(1).split("."))
         candidates.append(((major, minor, patch, int(match.group(2))), key))
-    for _, stale_key in sorted(candidates, reverse=True)[2:]:
+    for _, stale_key in sorted(candidates, reverse=True)[
+        KEEP_RELEASES_PER_PLATFORM:
+    ]:
         publisher.client.delete_object(Bucket=publisher.bucket, Key=stale_key)
 
     print(f"published {args.platform} {args.release_version} to R2")

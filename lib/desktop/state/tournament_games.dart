@@ -43,6 +43,8 @@ class TournamentGameSummary {
     this.blackTitle = '',
     this.whiteRating = 0,
     this.blackRating = 0,
+    this.whiteClockSeconds,
+    this.blackClockSeconds,
     this.whiteFideId,
     this.blackFideId,
     this.fen,
@@ -92,6 +94,14 @@ class TournamentGameSummary {
       blackTitle: game.blackPlayer.title,
       whiteRating: game.whitePlayer.rating,
       blackRating: game.blackPlayer.rating,
+      whiteClockSeconds: GamesTourModel.normalizeClockSeconds(
+        clockSeconds: game.whiteClockSeconds,
+        clockCentiseconds: game.whiteClockCentiseconds,
+      ),
+      blackClockSeconds: GamesTourModel.normalizeClockSeconds(
+        clockSeconds: game.blackClockSeconds,
+        clockCentiseconds: game.blackClockCentiseconds,
+      ),
       whiteFideId: game.whitePlayer.fideId,
       blackFideId: game.blackPlayer.fideId,
       hasPgn: (game.pgn ?? '').trim().isNotEmpty,
@@ -146,6 +156,14 @@ class TournamentGameSummary {
       blackTitle: black?.title ?? '',
       whiteRating: white?.rating ?? 0,
       blackRating: black?.rating ?? 0,
+      whiteClockSeconds: GamesTourModel.normalizeClockSeconds(
+        clockSeconds: game.lastClockWhite,
+        clockCentiseconds: white?.clock,
+      ),
+      blackClockSeconds: GamesTourModel.normalizeClockSeconds(
+        clockSeconds: game.lastClockBlack,
+        clockCentiseconds: black?.clock,
+      ),
       whiteFideId: white?.fideId,
       blackFideId: black?.fideId,
       hasPgn: (game.pgn ?? '').trim().isNotEmpty,
@@ -180,6 +198,8 @@ class TournamentGameSummary {
   final String blackTitle;
   final int whiteRating; // 0 if unknown
   final int blackRating;
+  final int? whiteClockSeconds;
+  final int? blackClockSeconds;
   final int? whiteFideId;
   final int? blackFideId;
 
@@ -237,6 +257,8 @@ class TournamentGameSummary {
     String? blackTitle,
     int? whiteRating,
     int? blackRating,
+    int? whiteClockSeconds,
+    int? blackClockSeconds,
     int? whiteFideId,
     int? blackFideId,
     String? whiteTeam,
@@ -262,6 +284,8 @@ class TournamentGameSummary {
       blackTitle: blackTitle ?? this.blackTitle,
       whiteRating: whiteRating ?? this.whiteRating,
       blackRating: blackRating ?? this.blackRating,
+      whiteClockSeconds: whiteClockSeconds ?? this.whiteClockSeconds,
+      blackClockSeconds: blackClockSeconds ?? this.blackClockSeconds,
       whiteFideId: whiteFideId ?? this.whiteFideId,
       blackFideId: blackFideId ?? this.blackFideId,
       fen: fen ?? this.fen,
@@ -314,10 +338,12 @@ GamesTourModel gamesTourModelFromTournamentSummary(
       fideId: summary.blackFideId,
       team: summary.blackTeam.trim().isEmpty ? null : summary.blackTeam.trim(),
     ),
-    whiteTimeDisplay: '--:--',
-    blackTimeDisplay: '--:--',
-    whiteClockCentiseconds: 0,
-    blackClockCentiseconds: 0,
+    whiteTimeDisplay: _formatClockSeconds(summary.whiteClockSeconds),
+    blackTimeDisplay: _formatClockSeconds(summary.blackClockSeconds),
+    whiteClockCentiseconds: (summary.whiteClockSeconds ?? 0) * 100,
+    blackClockCentiseconds: (summary.blackClockSeconds ?? 0) * 100,
+    whiteClockSeconds: summary.whiteClockSeconds,
+    blackClockSeconds: summary.blackClockSeconds,
     gameStatus: summary.status,
     fen: summary.fen,
     pgn: summary.pgn,
@@ -368,6 +394,10 @@ TournamentGameSummary tournamentSummaryWithArbitratedLiveGame({
     blackTitle: liveGame.blackPlayer.title,
     whiteRating: liveGame.whitePlayer.rating,
     blackRating: liveGame.blackPlayer.rating,
+    whiteClockSeconds:
+        liveGame.whiteClockSeconds ?? structuralSummary.whiteClockSeconds,
+    blackClockSeconds:
+        liveGame.blackClockSeconds ?? structuralSummary.blackClockSeconds,
     whiteFideId: liveGame.whitePlayer.fideId,
     blackFideId: liveGame.blackPlayer.fideId,
     fen: fen == null || fen.isEmpty ? null : fen,
@@ -412,6 +442,17 @@ String _summaryFederation(PlayerCard player) {
   final federation = player.federation.trim();
   if (federation.isNotEmpty) return federation;
   return player.countryCode.trim();
+}
+
+String _formatClockSeconds(int? seconds) {
+  if (seconds == null || seconds < 0) return '--:--';
+  final hours = seconds ~/ 3600;
+  final minutes = (seconds % 3600) ~/ 60;
+  final remainder = seconds % 60;
+  if (hours > 0) {
+    return '$hours:${minutes.toString().padLeft(2, '0')}:${remainder.toString().padLeft(2, '0')}';
+  }
+  return '${minutes.toString().padLeft(2, '0')}:${remainder.toString().padLeft(2, '0')}';
 }
 
 String _gameName({

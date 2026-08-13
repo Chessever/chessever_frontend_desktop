@@ -394,10 +394,7 @@ class EventRailGamesNotifier
       if (_hasInMemoryDirectionalNeighbor(delta, selectedId: selectedId)) {
         return true;
       }
-    } else if (_hasInMemoryDirectionalNeighbor(
-      delta,
-      selectedId: selectedId,
-    )) {
+    } else if (_hasInMemoryDirectionalNeighbor(delta, selectedId: selectedId)) {
       return true;
     }
 
@@ -418,10 +415,7 @@ class EventRailGamesNotifier
     }
   }
 
-  bool _hasSelectedRoundPageNeighbor(
-    int delta, {
-    required String selectedId,
-  }) {
+  bool _hasSelectedRoundPageNeighbor(int delta, {required String selectedId}) {
     final roundIndex = _selectedRoundPageIds.indexOf(selectedId);
     if (delta < 0) return roundIndex > 0;
     return roundIndex >= 0 && roundIndex < _selectedRoundPageIds.length - 1;
@@ -451,24 +445,29 @@ class EventRailGamesNotifier
 
     // Prefer board-number order within the round so sparse merge order does
     // not invent a false neighbor across an unloaded gap of board numbers.
-    final ordered = List<TournamentGameSummary>.of(scoped)
-      ..sort((a, b) {
-        final boardA = a.boardNumber ?? 1 << 30;
-        final boardB = b.boardNumber ?? 1 << 30;
-        final byBoard = boardA.compareTo(boardB);
-        if (byBoard != 0) return byBoard;
-        return a.id.compareTo(b.id);
-      });
+    final ordered = List<TournamentGameSummary>.of(scoped)..sort((a, b) {
+      final boardA = a.boardNumber ?? 1 << 30;
+      final boardB = b.boardNumber ?? 1 << 30;
+      final byBoard = boardA.compareTo(boardB);
+      if (byBoard != 0) return byBoard;
+      return a.id.compareTo(b.id);
+    });
     final selectedIndex = ordered.indexWhere(
       (game) => game.id.trim() == selectedId,
     );
     if (selectedIndex < 0) return false;
     if (delta < 0) {
       if (selectedIndex <= 0) return false;
-      return _areAdjacentBoards(ordered[selectedIndex - 1], ordered[selectedIndex]);
+      return _areAdjacentBoards(
+        ordered[selectedIndex - 1],
+        ordered[selectedIndex],
+      );
     }
     if (selectedIndex >= ordered.length - 1) return false;
-    return _areAdjacentBoards(ordered[selectedIndex], ordered[selectedIndex + 1]);
+    return _areAdjacentBoards(
+      ordered[selectedIndex],
+      ordered[selectedIndex + 1],
+    );
   }
 
   bool _areAdjacentBoards(
@@ -1166,9 +1165,8 @@ class _EventRailNavigationStage {
 }
 
 List<_EventRailNavigationStage> _orderedNavigationStages(
-  List<EventRailRoundMetadata> catalog, {
-  DateTime? now,
-}) {
+  List<EventRailRoundMetadata> catalog,
+) {
   final grouped = <String, List<EventRailRoundMetadata>>{};
   for (final round in catalog) {
     final id = round.id.trim();
@@ -1192,43 +1190,21 @@ List<_EventRailNavigationStage> _orderedNavigationStages(
         ),
       ),
   ];
-  final effectiveNow = now ?? DateTime.now();
-  final upcoming = <_EventRailNavigationStage>[];
+  final now = DateTime.now();
   final started = <_EventRailNavigationStage>[];
+  final upcoming = <_EventRailNavigationStage>[];
   for (final stage in stages) {
     final startsAt = stage.startsAt;
-    // Mirrors `_isStartedRound` in round_ordering.dart: a round with no start
-    // time counts as started so it can never be stranded behind the schedule.
-    if (startsAt != null && startsAt.isAfter(effectiveNow)) {
+    if (startsAt != null && startsAt.isAfter(now)) {
       upcoming.add(stage);
     } else {
       started.add(stage);
     }
   }
+  started.sort((a, b) => _compareNavigationStageDates(a, b, ascending: false));
   upcoming.sort((a, b) => _compareNavigationStageDates(a, b, ascending: true));
-
-  final genericRoundNumbers = <_EventRailNavigationStage, int>{};
-  for (final stage in started) {
-    final match = RegExp(
-      r'^round\s+(\d+)$',
-      caseSensitive: false,
-    ).firstMatch(stage.name);
-    final number = match == null ? null : int.tryParse(match.group(1)!);
-    if (number != null) genericRoundNumbers[stage] = number;
-  }
-  if (started.isNotEmpty && genericRoundNumbers.length == started.length) {
-    started.sort(
-      (a, b) => genericRoundNumbers[b]!.compareTo(genericRoundNumbers[a]!),
-    );
-  } else {
-    started.sort(
-      (a, b) => _compareNavigationStageDates(a, b, ascending: false),
-    );
-  }
-  // Started rounds first (newest first), then the schedule ascending — the same
-  // partition and order `sortRoundsForDisplay` gives the rendered rail. Keyboard
-  // navigation previously walked upcoming stages first, so stepping past a round
-  // edge jumped to a future round instead of the adjacent played one.
+  // Match the catalog-backed rendered rail exactly: started rounds newest
+  // first, followed by upcoming rounds oldest first.
   return <_EventRailNavigationStage>[...started, ...upcoming];
 }
 
@@ -1337,6 +1313,8 @@ bool _eventRailSummariesEqual(
       current.blackTitle == incoming.blackTitle &&
       current.whiteRating == incoming.whiteRating &&
       current.blackRating == incoming.blackRating &&
+      current.whiteClockSeconds == incoming.whiteClockSeconds &&
+      current.blackClockSeconds == incoming.blackClockSeconds &&
       current.whiteFideId == incoming.whiteFideId &&
       current.blackFideId == incoming.blackFideId &&
       current.fen == incoming.fen &&
@@ -1502,6 +1480,14 @@ TournamentGameSummary _preserveRicherEventRailSnapshot(
           existing.lastMoveTime!.isAfter(fresh.lastMoveTime!));
   return fresh.copyWith(
     pgn: (fresh.pgn ?? '').trim().isNotEmpty ? fresh.pgn : existing.pgn,
+    whiteClockSeconds:
+        existingIsNewer
+            ? existing.whiteClockSeconds
+            : fresh.whiteClockSeconds ?? existing.whiteClockSeconds,
+    blackClockSeconds:
+        existingIsNewer
+            ? existing.blackClockSeconds
+            : fresh.blackClockSeconds ?? existing.blackClockSeconds,
     fen:
         existingIsNewer || (fresh.fen ?? '').trim().isEmpty
             ? existing.fen

@@ -127,6 +127,12 @@ import 'package:chessever/utils/chess_title_utils.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 
+/// First-use proportions for contextual games: games, board, analysis.
+/// [ResizableSplitView] restores the unchanged persisted context key over
+/// these values once the user has customized the workspace.
+@visibleForTesting
+const List<double> boardPaneContextInitialWeights = <double>[0.22, 0.53, 0.25];
+
 /// Applies a recognized broadcast status to PGN metadata.
 ///
 /// Missing or future server status values are intentionally ignored. A
@@ -226,6 +232,16 @@ String? resolveInitialBoardPgnLiveStatus({
   // A bound non-database game is broadcast-owned even if its initial row failed
   // to hydrate. Protect its tail until realtime delivers an authoritative row.
   return GameStatus.ongoing.displayText;
+}
+
+@visibleForTesting
+bool shouldCanonicalizeBoardArgsPgn({
+  required bool isDatabaseSnapshot,
+  required bool restoredGameIsLive,
+  required GameStatus? sourceGameStatus,
+}) {
+  if (isDatabaseSnapshot) return false;
+  return restoredGameIsLive || sourceGameStatus == GameStatus.ongoing;
 }
 
 /// Chooses the monotonic base snapshot for a focused Board live packet.
@@ -717,6 +733,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         restoredSession?.undoStack ?? const <BoardUndoSnapshot>[],
       ),
     );
+    final suppressUserNagUndoSnapshot = useRef<bool>(false);
     final latestBoardActionInvoker =
         useRef<bool Function(BoardActionKey action)?>(null);
     // Live-game "new move arrived" indicator. Set to true inside [applyPgn]
@@ -976,13 +993,32 @@ class _BoardPaneContent extends HookConsumerWidget {
       required String origin,
       String? gameId,
       String? acceptedLiveStatus,
+      bool canonicalBroadcastUpdate = false,
     }) {
       final trimmed = pgn.trim();
       if (trimmed.isEmpty) return;
       final initialFenKey = _nullableFenPositionKey(boardArgs?.initialFen);
       final previousInitialFenKey = lastAppliedInitialFenKey.value;
+      final notationStateTabId = activeTabId ?? 'board-default';
+      final currentUserNags =
+          ref.read(userMoveNagsProvider)[notationStateTabId] ??
+          const <int, List<int>>{};
+      final canonicalTreeAlreadyMatches =
+          !canonicalBroadcastUpdate ||
+          doesGameTreeMatchBroadcastPgn(
+            game: chessGame.value,
+            broadcastPgn: trimmed,
+          );
+      final canonicalLocalStateAlreadyClean =
+          !canonicalBroadcastUpdate ||
+          !hasUnprovenLiveNotationState(
+            userNags: currentUserNags,
+            undoStack: undoStack.value,
+          );
       if (trimmed == lastAppliedPgn.value &&
-          initialFenKey == previousInitialFenKey) {
+          initialFenKey == previousInitialFenKey &&
+          canonicalTreeAlreadyMatches &&
+          canonicalLocalStateAlreadyClean) {
         return;
       }
       final ChessGame parsed;
@@ -1057,6 +1093,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         acceptedLiveStatus: initialSourceStatus,
       );
       final isLive = finalizedMetadata[ChessGame.metadataIsLiveKey] == true;
+      final isCanonicalBroadcastSource = canonicalBroadcastUpdate || isLive;
       final freshGame = parsed
           .copyWith(metadata: finalizedMetadata)
           .rememberGameEndingPlyIndex(parsed.mainline.length - 1);
@@ -1069,20 +1106,37 @@ class _BoardPaneContent extends HookConsumerWidget {
           oldMainlineLen > 0 &&
           oldPointer.first == oldMainlineLen - 1;
 
-      // Merge user-grown variations into broadcast updates so the same
-      // game's PGN tick can't wipe out sub-lines the user just added.
-      // Detached drops (drag-drop a `.pgn` file, no `gameId`) are
-      // genuinely new games — those replace the tree wholesale.
+      // Accepted live rows own the complete canonical tree. Never turn an
+      // earlier feed snapshot into local-looking variations. Other same-game
+      // reloads (finished/imported/local analysis) retain their existing merge
+      // behavior; live analysis needs branch-level provenance before it can be
+      // carried safely across canonical feed corrections.
       final hasRetainedTree =
           oldMainlineLen > 0 ||
           (oldGame.detachedRootAnalysis?.isNotEmpty ?? false);
       final game =
           shouldMergeBroadcastTree(gameId: gameId, currentGame: oldGame)
-              ? _mergeBroadcastUpdate(oldGame, freshGame)
+              ? _mergeBroadcastUpdate(
+                oldGame,
+                freshGame,
+                preserveExistingAnalysis: !isCanonicalBroadcastSource,
+              )
               : freshGame;
 
       final keepLocalEdits =
-          gameId != null && hasRetainedTree && dirtySinceLoad.value;
+          !isCanonicalBroadcastSource &&
+          gameId != null &&
+          hasRetainedTree &&
+          dirtySinceLoad.value;
+      if (isCanonicalBroadcastSource) {
+        suppressUserNagUndoSnapshot.value = true;
+        try {
+          ref.read(userMoveNagsProvider.notifier).clearTab(notationStateTabId);
+        } finally {
+          suppressUserNagUndoSnapshot.value = false;
+        }
+        undoStack.value.clear();
+      }
       dirtySinceLoad.value = keepLocalEdits;
       lastAppliedPgn.value = trimmed;
       lastAppliedInitialFenKey.value = initialFenKey;
@@ -1214,6 +1268,12 @@ class _BoardPaneContent extends HookConsumerWidget {
       final oldGame = chessGame.value;
       final oldMainlineLen = oldGame.mainline.length;
       if (oldMainlineLen == 0) return false;
+      if (!doesGameTreeMatchBroadcastPgn(
+        game: oldGame,
+        broadcastPgn: previousPgn,
+      )) {
+        return false;
+      }
 
       final plies = _pliesFromPath(oldGame.startingFen, oldGame.mainline);
       if (plies.length != oldMainlineLen + 1) return false;
@@ -1271,7 +1331,15 @@ class _BoardPaneContent extends HookConsumerWidget {
           )
           .rememberGameEndingPlyIndex(oldGame.mainline.length);
       final initialFenKey = _nullableFenPositionKey(boardArgs?.initialFen);
-      dirtySinceLoad.value = gameId.isNotEmpty && dirtySinceLoad.value;
+      final notationStateTabId = activeTabId ?? 'board-default';
+      suppressUserNagUndoSnapshot.value = true;
+      try {
+        ref.read(userMoveNagsProvider.notifier).clearTab(notationStateTabId);
+      } finally {
+        suppressUserNagUndoSnapshot.value = false;
+      }
+      undoStack.value.clear();
+      dirtySinceLoad.value = false;
       lastAppliedPgn.value = pgn;
       lastAppliedInitialFenKey.value = initialFenKey;
       lastAppliedGameId.value = gameId;
@@ -1588,6 +1656,14 @@ class _BoardPaneContent extends HookConsumerWidget {
                 args.pgn,
                 origin: 'tab:${args.label}',
                 gameId: args.gameId,
+                canonicalBroadcastUpdate: shouldCanonicalizeBoardArgsPgn(
+                  isDatabaseSnapshot: isDatabaseBoardSnapshot(args),
+                  restoredGameIsLive:
+                      restoredSession?.game.metadata[ChessGame
+                          .metadataIsLiveKey] ==
+                      true,
+                  sourceGameStatus: args.sourceGame?.gameStatus,
+                ),
               );
               return;
             }
@@ -1738,6 +1814,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           origin: origin,
           gameId: gameId,
           acceptedLiveStatus: data['status'] as String?,
+          canonicalBroadcastUpdate: true,
         );
       }
       // Keep the accepted row status last. `applyPgn` can no-op for an
@@ -2846,6 +2923,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       prev,
       next,
     ) {
+      if (suppressUserNagUndoSnapshot.value) return;
       if (prev == null) return;
       final prevTabNags = prev[editsTabId] ?? const <int, List<int>>{};
       final nextTabNags = next[editsTabId] ?? const <int, List<int>>{};
@@ -3632,10 +3710,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       chessGame.value,
     );
     final moveAnnotations = mergeReportMoveAnnotations(
-      lichessAnnotations: {
-        ...lichessAnnotations,
-        ...pgnChesseverAnnotations,
-      },
+      lichessAnnotations: {...lichessAnnotations, ...pgnChesseverAnnotations},
       reportAnnotations: reportAnnotations,
       reportAnalyzedPlies: reportAnalyzedPlies,
     );
@@ -4376,7 +4451,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                 SplitChild(
                   minSize: 220,
                   maxSize: 520,
-                  initialWeight: 0.29,
+                  initialWeight: boardPaneContextInitialWeights[0],
                   label: 'Games',
                   collapsedIcon: Icons.view_list_rounded,
                   dismissible: true,
@@ -4388,7 +4463,12 @@ class _BoardPaneContent extends HookConsumerWidget {
                 ),
               SplitChild(
                 minSize: 380,
-                initialWeight: boardFocusMode ? _boardFocusBoardWeight : 0.41,
+                initialWeight:
+                    boardFocusMode
+                        ? _boardFocusBoardWeight
+                        : showGameRail
+                        ? boardPaneContextInitialWeights[1]
+                        : 0.41,
                 label: 'Board',
                 collapsedIcon: Icons.grid_on_rounded,
                 dismissible: false,
@@ -4547,7 +4627,11 @@ class _BoardPaneContent extends HookConsumerWidget {
               SplitChild(
                 minSize: 280,
                 initialWeight:
-                    boardFocusMode ? _boardFocusRightPaneWeight : 0.30,
+                    boardFocusMode
+                        ? _boardFocusRightPaneWeight
+                        : showGameRail
+                        ? boardPaneContextInitialWeights[2]
+                        : 0.30,
                 label: 'Analysis',
                 collapsedIcon: Icons.analytics_outlined,
                 child: KeyedSubtree(
@@ -5306,10 +5390,16 @@ ChessMovePointer? _variationHeadForPointer(ChessMovePointer p) {
   return <int>[...p.sublist(0, lastVarIdxSlot + 1), 0];
 }
 
-/// Merge a freshly-parsed broadcast PGN into the in-memory tree without
-/// dropping user-added variations.
+/// Resolve a freshly parsed same-game PGN against the in-memory tree.
 ///
-/// Walks both mainlines move-by-move:
+/// Accepted live rows pass [preserveExistingAnalysis] as false because the old
+/// tree contains no branch-level provenance. In that mode [freshGame] is the
+/// complete canonical source: stale, corrected, shortened, or divergent feed
+/// history must not become a visible variation merely because it was already
+/// in memory.
+///
+/// Non-live reloads retain the established merge behavior. That path walks
+/// both mainlines move-by-move:
 /// - matching moves take fresh broadcast fields while merging all old and
 ///   fresh annotations/variations,
 /// - the first divergence converts old's continuation into a sub-variation
@@ -5318,9 +5408,14 @@ ChessMovePointer? _variationHeadForPointer(ChessMovePointer p) {
 /// - an accepted shorter live line truncates the mainline while preserving the
 ///   removed continuation as an analysis variation on the last retained move.
 ///
-/// The metadata map (Result/IsLive/etc) and starting FEN come from
-/// [freshGame] so live status flags stay accurate.
-ChessGame _mergeBroadcastUpdate(ChessGame oldGame, ChessGame freshGame) {
+/// The metadata map and starting FEN come from [freshGame].
+ChessGame _mergeBroadcastUpdate(
+  ChessGame oldGame,
+  ChessGame freshGame, {
+  required bool preserveExistingAnalysis,
+}) {
+  if (!preserveExistingAnalysis) return freshGame;
+
   // The tree model hangs variations from moves. An authoritative reset to the
   // root therefore has no node on which to keep the displaced analysis. Store
   // it as detached, serializable lines until a later live move provides an
@@ -5549,14 +5644,85 @@ bool isStrictAppendOnlyBroadcastPgn({
   final incoming = withoutTrailingResult(incomingPgn);
   if (previous.isEmpty || incoming.length <= previous.length) return false;
   if (!incoming.startsWith(previous)) return false;
-  return RegExp(r'\s').hasMatch(incoming[previous.length]);
+  if (!RegExp(r'\s').hasMatch(incoming[previous.length])) return false;
+  final appended = incoming.substring(previous.length);
+  return !appended.contains('(') && !appended.contains(')');
 }
+
+@visibleForTesting
+bool doesGameTreeMatchBroadcastPgn({
+  required ChessGame game,
+  required String broadcastPgn,
+}) {
+  if (game.detachedRootAnalysis?.isNotEmpty ?? false) return false;
+  final ChessGame canonical;
+  try {
+    canonical = ChessGame.fromPgn(game.gameId, broadcastPgn);
+  } catch (_) {
+    return false;
+  }
+  return _broadcastLinesMatch(game.mainline, canonical.mainline);
+}
+
+bool _broadcastLinesMatch(ChessLine current, ChessLine canonical) {
+  if (current.length != canonical.length) return false;
+  for (var i = 0; i < current.length; i++) {
+    final currentMove = current[i];
+    final canonicalMove = canonical[i];
+    if (currentMove.uci != canonicalMove.uci ||
+        currentMove.san != canonicalMove.san ||
+        currentMove.fen != canonicalMove.fen ||
+        currentMove.clockTime != canonicalMove.clockTime ||
+        currentMove.eval != canonicalMove.eval ||
+        !_broadcastValuesMatch(currentMove.comments, canonicalMove.comments) ||
+        !_broadcastValuesMatch(currentMove.nags, canonicalMove.nags)) {
+      return false;
+    }
+    final currentVariations = currentMove.variations ?? const <ChessLine>[];
+    final canonicalVariations = canonicalMove.variations ?? const <ChessLine>[];
+    if (currentVariations.length != canonicalVariations.length) return false;
+    for (
+      var variationIndex = 0;
+      variationIndex < currentVariations.length;
+      variationIndex++
+    ) {
+      if (!_broadcastLinesMatch(
+        currentVariations[variationIndex],
+        canonicalVariations[variationIndex],
+      )) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool _broadcastValuesMatch<T>(List<T>? current, List<T>? canonical) {
+  final currentValues = current ?? const [];
+  final canonicalValues = canonical ?? const [];
+  if (currentValues.length != canonicalValues.length) return false;
+  for (var i = 0; i < currentValues.length; i++) {
+    if (currentValues[i] != canonicalValues[i]) return false;
+  }
+  return true;
+}
+
+@visibleForTesting
+bool hasUnprovenLiveNotationState({
+  required Map<int, List<int>> userNags,
+  required List<BoardUndoSnapshot> undoStack,
+}) => userNags.isNotEmpty || undoStack.isNotEmpty;
 
 @visibleForTesting
 ChessGame mergeBroadcastUpdateForTesting(
   ChessGame oldGame,
-  ChessGame freshGame,
-) => _mergeBroadcastUpdate(oldGame, freshGame);
+  ChessGame freshGame, {
+  bool preserveExistingAnalysis = false,
+}) => _mergeBroadcastUpdate(
+  oldGame,
+  freshGame,
+  preserveExistingAnalysis: preserveExistingAnalysis,
+);
 
 /// Walk [pointer] against [game]'s tree and return the longest prefix
 /// that resolves. Used as a recovery path when a broadcast update has
@@ -9449,6 +9615,8 @@ class _FallenKingOverlayState extends State<_FallenKingOverlay> {
                           .round(),
                       widget.pieceImage,
                     ),
+                    width: widget.squareSize,
+                    height: widget.squareSize,
                     fit: BoxFit.contain,
                   ),
                 ),

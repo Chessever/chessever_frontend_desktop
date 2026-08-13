@@ -10,6 +10,7 @@ import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/providers/country_dropdown_provider.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/countrymen/provider/countrymen_mode_provider.dart';
+import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
 void main() {
@@ -107,6 +108,25 @@ void main() {
       decoded.args?.databaseGamesContinuation?.kind,
       BoardTabGamesContinuationKind.twicDatabase,
     );
+  });
+
+  test('board window payload preserves Smart GM Source continuation', () {
+    final decoded = DesktopBoardWindowPayload.decode(
+      DesktopBoardWindowPayload.fromArgs(
+        _args(
+          gameId: 'gm-game',
+          routeGamesContinuation: const BoardTabGamesContinuation.smartGames(
+            PremiumGamesType.gm,
+          ),
+        ),
+      ).encode(),
+    );
+
+    expect(
+      decoded.args?.routeGamesContinuation?.kind,
+      BoardTabGamesContinuationKind.smartGames,
+    );
+    expect(decoded.args?.routeGamesContinuation?.argument, PremiumGamesType.gm);
   });
 
   test('tab window payload round-trips non-board route identity', () {

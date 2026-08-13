@@ -48,7 +48,12 @@ bool isDayPaginatedSmartGamesType(PremiumGamesType type) {
 
 /// What a day-paginated smart collection counts as one of its games.
 typedef SmartEventScope =
-    ({bool liveOnly, int? minGameAverageElo, List<String>? eventTimeControls});
+    ({
+      bool liveOnly,
+      bool requiresMove,
+      int? minGameAverageElo,
+      List<String>? eventTimeControls,
+    });
 
 /// Scope of the smart collection [type] serves.
 ///
@@ -65,16 +70,19 @@ SmartEventScope smartEventScopeFor(PremiumGamesType type) {
   return switch (type) {
     PremiumGamesType.live => (
       liveOnly: true,
+      requiresMove: true,
       minGameAverageElo: null,
       eventTimeControls: null,
     ),
     PremiumGamesType.gm => (
       liveOnly: false,
+      requiresMove: true,
       minGameAverageElo: 2500,
       eventTimeControls: null,
     ),
     _ => (
       liveOnly: false,
+      requiresMove: false,
       minGameAverageElo: null,
       eventTimeControls: const [
         'standard',
@@ -353,6 +361,7 @@ class PremiumGamesNotifier
       final scope = _smartEventScope;
       final newestDay = await repository.getCurrentSmartEventDay(
         liveOnly: scope.liveOnly,
+        requiresMove: scope.requiresMove,
         minGameAverageElo: scope.minGameAverageElo,
       );
       if (newestDay == null) return;
@@ -360,6 +369,7 @@ class PremiumGamesNotifier
       final page = await repository.getCurrentSmartEventGamesOnDay(
         day: newestDay,
         liveOnly: scope.liveOnly,
+        requiresMove: scope.requiresMove,
         minGameAverageElo: scope.minGameAverageElo,
         eventTimeControls: scope.eventTimeControls,
       );
@@ -621,6 +631,7 @@ class PremiumGamesNotifier
               ? _nextSmartEventDay
               : await repository.getCurrentSmartEventDay(
                 liveOnly: scope.liveOnly,
+                requiresMove: scope.requiresMove,
                 minGameAverageElo: scope.minGameAverageElo,
               );
       _smartEventDayCursorReady = true;
@@ -634,15 +645,15 @@ class PremiumGamesNotifier
         final page = await repository.getCurrentSmartEventGamesOnDay(
           day: targetDay!,
           liveOnly: scope.liveOnly,
+          requiresMove: scope.requiresMove,
           minGameAverageElo: scope.minGameAverageElo,
           eventTimeControls: scope.eventTimeControls,
         );
         _nextSmartEventDay = page.nextDay;
 
-        final games =
-            page.games
-                .map((game) => GamesTourModel.fromGame(game))
-                .toList(growable: false);
+        final games = page.games
+            .map((game) => GamesTourModel.fromGame(game))
+            .toList(growable: false);
 
         if (games.isNotEmpty) {
           return _PremiumGamesFetch(

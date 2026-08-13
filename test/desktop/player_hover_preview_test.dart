@@ -253,6 +253,63 @@ void main() {
     expect(round.style?.fontWeight, FontWeight.w600);
   });
 
+  testWidgets('result circles show the profiled player piece color', (
+    tester,
+  ) async {
+    final games = <TournamentGameSummary>[
+      TournamentGameSummary(
+        id: 'draw-as-white',
+        name: 'Draw as White',
+        whitePlayer: player.name,
+        blackPlayer: 'Black Opponent',
+        whiteFideId: player.fideId,
+        blackFideId: 2001,
+        roundLabel: '2',
+        status: GameStatus.draw,
+        hasPgn: true,
+      ),
+      TournamentGameSummary(
+        id: 'draw-as-black',
+        name: 'Draw as Black',
+        whitePlayer: 'White Opponent',
+        blackPlayer: player.name,
+        whiteFideId: 2002,
+        blackFideId: player.fideId,
+        roundLabel: '1',
+        status: GameStatus.draw,
+        hasPgn: true,
+      ),
+    ];
+    await tester.pumpWidget(_wrap(player: player, games: games));
+    final pointer = TestPointer(20, PointerDeviceKind.mouse);
+    await _open(
+      tester,
+      pointer,
+      find.byKey(const ValueKey<String>('player-hover-preview-trigger')),
+    );
+
+    BoxDecoration circleDecoration(String gameId) {
+      final circle = find.descendant(
+        of: find.byKey(ValueKey<String>('game-result-$gameId')),
+        matching: find.byType(Container),
+      );
+      return tester.widget<Container>(circle).decoration! as BoxDecoration;
+    }
+
+    TextStyle glyphStyle(String gameId) {
+      final glyph = find.descendant(
+        of: find.byKey(ValueKey<String>('game-result-$gameId')),
+        matching: find.text('½'),
+      );
+      return tester.widget<Text>(glyph).style!;
+    }
+
+    expect(circleDecoration('draw-as-white').color, kWhiteColor);
+    expect(glyphStyle('draw-as-white').color, kBlackColor);
+    expect(circleDecoration('draw-as-black').color, kBlackColor);
+    expect(glyphStyle('draw-as-black').color, kWhiteColor);
+  });
+
   testWidgets('opponent ratings sit beside the opponent name', (tester) async {
     await tester.pumpWidget(_wrap(player: player, games: _games(6)));
     final pointer = TestPointer(17, PointerDeviceKind.mouse);
