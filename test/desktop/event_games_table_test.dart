@@ -584,6 +584,8 @@ void main() {
     final firstDecoration =
         gameTable.children.first.decoration! as BoxDecoration;
     final firstBorder = firstDecoration.border! as Border;
+    expect(firstDecoration.gradient, isA<LinearGradient>());
+    expect(firstBorder.left, BorderSide.none);
     expect(firstBorder.bottom.color, kDividerColor);
     expect(firstBorder.bottom.width, 0.5);
 

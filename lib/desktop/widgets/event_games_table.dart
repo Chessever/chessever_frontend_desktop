@@ -4984,14 +4984,24 @@ class _EventRoundTable extends StatelessWidget {
               return BoxDecoration(
                 color:
                     selected
-                        ? kPrimaryColor.withValues(alpha: 0.11)
+                        ? null
                         : (hovered ? kBlack3Color : Colors.transparent),
+                gradient:
+                    selected
+                        ? LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: <Color>[
+                            kPrimaryColor,
+                            kPrimaryColor,
+                            kPrimaryColor.withValues(alpha: 0.11),
+                            kPrimaryColor.withValues(alpha: 0.11),
+                          ],
+                          stops: const <double>[0, 0.007, 0.007, 1],
+                        )
+                        : null,
                 borderRadius: BorderRadius.circular(6),
                 border: Border(
-                  left:
-                      selected
-                          ? const BorderSide(color: kPrimaryColor, width: 2)
-                          : BorderSide.none,
                   bottom:
                       hasFollowingGame
                           ? const BorderSide(color: kDividerColor, width: 0.5)
