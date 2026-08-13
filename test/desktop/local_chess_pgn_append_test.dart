@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dartchess/dartchess.dart' show Chess;
@@ -287,6 +288,70 @@ void main() {
       },
     );
 
+    test('serializes overlapping identical database pastes', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'chessever-local-paste-overlap-',
+      );
+      addTearDown(() => dir.delete(recursive: true));
+      final file = File('${dir.path}/local.pgn');
+      await file.writeAsString('${_existingPgn.trim()}\n');
+      final repo = _BlockingPersistRepository();
+      final fallback = {localChessPgnFingerprint(_existingPgn)};
+
+      final first = appendPgnTextToLocalChessDatabaseFile(
+        repository: repo,
+        filePath: file.path,
+        text: _secondPgn,
+        fallbackFingerprints: fallback,
+      );
+      await repo.firstPersistStarted.future;
+      final second = appendPgnTextToLocalChessDatabaseFile(
+        repository: repo,
+        filePath: file.path,
+        text: _secondPgn,
+        fallbackFingerprints: fallback,
+      );
+      repo.releaseFirstPersist.complete();
+
+      expect(await Future.wait(<Future<int>>[first, second]), [1, 0]);
+      final contents = await file.readAsString();
+      expect(RegExp(r'\[Event "Second"\]').allMatches(contents), hasLength(1));
+    });
+
+    test('rolls back the file when cache persistence fails', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'chessever-local-paste-cache-failure-',
+      );
+      addTearDown(() => dir.delete(recursive: true));
+      final file = File('${dir.path}/local.pgn');
+      final original = '${_existingPgn.trim()}\n';
+      await file.writeAsString(original);
+      final repo = _FailingThenPersistRepository();
+
+      await expectLater(
+        appendPgnTextToLocalChessDatabaseFile(
+          repository: repo,
+          filePath: file.path,
+          text: _secondPgn,
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(await file.readAsString(), original);
+
+      final retryCount = await appendPgnTextToLocalChessDatabaseFile(
+        repository: repo,
+        filePath: file.path,
+        text: _secondPgn,
+      );
+
+      expect(retryCount, 1);
+      expect(repo.persistCalls, 2);
+      expect(
+        RegExp(r'\[Event "Second"\]').allMatches(await file.readAsString()),
+        hasLength(1),
+      );
+    });
+
     test(
       'incrementally persists appended PGNs into the resqlite cache',
       () async {
@@ -554,7 +619,10 @@ void main() {
         final initialNode = initialSource.root.singlePlayableDatabaseInSubtree!;
         final expectedFingerprint = initialNode.games.last.pgnFingerprint;
         final repo = LocalChessDatabaseRepository(database: () async => db);
-        await repo.persistFileNode(initialNode, sourceLabel: initialSource.label);
+        await repo.persistFileNode(
+          initialNode,
+          sourceLabel: initialSource.label,
+        );
 
         await file.writeAsString(
           '${_secondPgn.trim()}\n\n${_existingPgn.trim()}\n',
@@ -661,6 +729,59 @@ class _CandidateFingerprintRepository extends LocalChessDatabaseRepository {
     required List<LocalChessAppendedPgn> appendedPgns,
   }) async {
     persistedAppends.addAll(appendedPgns);
+    return true;
+  }
+}
+
+class _BlockingPersistRepository extends LocalChessDatabaseRepository {
+  _BlockingPersistRepository() : super(database: _unusedDatabase);
+
+  final firstPersistStarted = Completer<void>();
+  final releaseFirstPersist = Completer<void>();
+  var persistCalls = 0;
+
+  @override
+  Future<Set<String>?> localDatabaseMatchingPgnFingerprints({
+    required String databasePath,
+    required Iterable<String> fingerprints,
+    bool preferDirectDatabase = false,
+  }) async => <String>{};
+
+  @override
+  Future<bool> persistAppendedPgnGames({
+    required String databasePath,
+    required List<LocalChessAppendedPgn> appendedPgns,
+  }) async {
+    persistCalls++;
+    if (persistCalls == 1) {
+      firstPersistStarted.complete();
+      await releaseFirstPersist.future;
+    }
+    return true;
+  }
+}
+
+class _FailingThenPersistRepository extends LocalChessDatabaseRepository {
+  _FailingThenPersistRepository() : super(database: _unusedDatabase);
+
+  var persistCalls = 0;
+
+  @override
+  Future<Set<String>?> localDatabaseMatchingPgnFingerprints({
+    required String databasePath,
+    required Iterable<String> fingerprints,
+    bool preferDirectDatabase = false,
+  }) async => <String>{};
+
+  @override
+  Future<bool> persistAppendedPgnGames({
+    required String databasePath,
+    required List<LocalChessAppendedPgn> appendedPgns,
+  }) async {
+    persistCalls++;
+    if (persistCalls == 1) {
+      throw StateError('simulated cache persistence failure');
+    }
     return true;
   }
 }

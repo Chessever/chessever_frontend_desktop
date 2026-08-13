@@ -1,11 +1,18 @@
 import 'dart:math' as math;
 
+import 'package:flutter/services.dart';
+
 /// Pure helper for reference-style row selection in desktop game lists.
 ///
 /// It intentionally has no Ctrl/Cmd-click toggle path because that modifier is
 /// reserved elsewhere for opening games/items in a new tab/window.
 class LibraryMultiSelect {
   const LibraryMultiSelect._();
+
+  static bool rangeModifierPressed(Set<LogicalKeyboardKey> pressedKeys) =>
+      pressedKeys.contains(LogicalKeyboardKey.shift) ||
+      pressedKeys.contains(LogicalKeyboardKey.shiftLeft) ||
+      pressedKeys.contains(LogicalKeyboardKey.shiftRight);
 
   static Set<String> clampToRows(Set<String> selected, List<String> rowIds) {
     final visible = rowIds.toSet();

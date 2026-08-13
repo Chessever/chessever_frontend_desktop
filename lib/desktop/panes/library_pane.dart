@@ -33,6 +33,7 @@ import 'package:chessever/desktop/services/local_source_deletion.dart';
 import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/state/active_database_workspace_paste.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/cloud_library_refresh.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -9214,8 +9215,9 @@ class DatabaseWorkspacePane extends HookConsumerWidget {
       child: Container(
         color: kBackgroundColor,
         child: switch (args.source) {
-          DatabaseWorkspaceSource.twic => const _TwicDatabaseWorkspace(),
+          DatabaseWorkspaceSource.twic => _TwicDatabaseWorkspace(tabId: tabId),
           DatabaseWorkspaceSource.folder => _FolderDatabaseWorkspace(
+            tabId: tabId,
             args: args,
           ),
           DatabaseWorkspaceSource.local => _LocalDatabaseWorkspace(
@@ -9752,6 +9754,7 @@ class _LocalDatabaseWorkspace extends HookConsumerWidget {
                       },
             ),
             onRefreshOverride: refreshLocalSource,
+            databaseWorkspaceTabId: tabId,
           ),
     );
   }
@@ -9777,8 +9780,9 @@ String localDatabaseWorkspacePath(LocalChessSource? source, String path) {
 }
 
 class _FolderDatabaseWorkspace extends HookConsumerWidget {
-  const _FolderDatabaseWorkspace({required this.args});
+  const _FolderDatabaseWorkspace({required this.tabId, required this.args});
 
+  final String tabId;
   final DatabaseWorkspaceArgs args;
 
   @override
@@ -9977,6 +9981,13 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
       );
     }
 
+    useActiveDatabaseWorkspacePasteDispatcher(
+      context: context,
+      ref: ref,
+      tabId: tabId,
+      onPaste: pasteIntoWorkspaceFolder,
+    );
+
     return _databaseWorkspaceClipboardShortcuts(
       onCopy: copySelectedSaved,
       onPaste: args.isSubscribed ? null : pasteIntoWorkspaceFolder,
@@ -10076,7 +10087,9 @@ class _FolderDatabaseWorkspace extends HookConsumerWidget {
 }
 
 class _TwicDatabaseWorkspace extends HookConsumerWidget {
-  const _TwicDatabaseWorkspace();
+  const _TwicDatabaseWorkspace({required this.tabId});
+
+  final String tabId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -10101,6 +10114,18 @@ class _TwicDatabaseWorkspace extends HookConsumerWidget {
     final paginationState = ref.watch(_twicWorkspaceGamesProvider(gamesQuery));
     final filterCount = filter.value.activeFilterCount;
     final rootTotalAsync = ref.watch(twicDatabaseTotalGamesProvider);
+
+    useActiveDatabaseWorkspacePasteDispatcher(
+      context: context,
+      ref: ref,
+      tabId: tabId,
+      onPaste:
+          () => showDesktopToast(
+            context,
+            'ChessEver is read-only.',
+            error: true,
+          ),
+    );
 
     useEffect(() {
       return () => debounce.value?.cancel();

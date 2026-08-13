@@ -13,6 +13,8 @@ import 'package:chessever/desktop/services/local_chess_game_filter.dart';
 import 'package:chessever/desktop/services/local_chess_pgn_append.dart';
 import 'package:chessever/desktop/services/local_player_enrichment_service.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
+import 'package:chessever/desktop/state/active_database_workspace_paste.dart';
+import 'package:chessever/desktop/utils/library_multi_select.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
@@ -67,6 +69,7 @@ class LocalChessFilesView extends HookConsumerWidget {
     this.openingTreeIndexOverride,
     this.onOpenTreeOverride,
     this.onBuildTreeOverride,
+    this.databaseWorkspaceTabId,
   });
 
   final String selectedPath;
@@ -114,6 +117,9 @@ class LocalChessFilesView extends HookConsumerWidget {
   /// Lets an embedded owner prepare its source before rebuilding a tree.
   final VoidCallback? onBuildTreeOverride;
 
+  /// Routes Ctrl/Cmd+V to an opened database even when focus is in shell chrome.
+  final String? databaseWorkspaceTabId;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final watchedState = ref.watch(localChessLibraryProvider);
@@ -129,6 +135,14 @@ class LocalChessFilesView extends HookConsumerWidget {
     useEffect(() => fallbackController.dispose, [fallbackController]);
     final saveRequest = useValueListenable(controller ?? fallbackController);
     final handledSaveRequest = useRef(0);
+    final latestPasteIntoLocalDatabase = useRef<VoidCallback?>(null);
+    latestPasteIntoLocalDatabase.value = null;
+    useActiveDatabaseWorkspacePasteDispatcher(
+      context: context,
+      ref: ref,
+      tabId: databaseWorkspaceTabId,
+      onPaste: () => latestPasteIntoLocalDatabase.value?.call(),
+    );
     final sort = useState(
       showLatestGamesFirst
           ? const _LocalGamesSortConfig(
@@ -228,27 +242,31 @@ class LocalChessFilesView extends HookConsumerWidget {
         gameFilter.value.hasActiveFilters ||
         sort.value.key != _LocalGamesSortKey.originalOrder ||
         sort.value.dir != _LocalGamesSortDir.asc;
-    useEffect(() {
-      final path = selectedDatabase?.path;
-      if (stateOverride != null ||
-          path == null ||
-          !needsSearchIndex ||
-          hasSearchIndex ||
-          isBackgroundImporting) {
+    useEffect(
+      () {
+        final path = selectedDatabase?.path;
+        if (stateOverride != null ||
+            path == null ||
+            !needsSearchIndex ||
+            hasSearchIndex ||
+            isBackgroundImporting) {
+          return null;
+        }
+        Future<void>.microtask(
+          () => ref
+              .read(localChessLibraryProvider.notifier)
+              .ensureSearchIndex(path),
+        );
         return null;
-      }
-      Future<void>.microtask(
-        () =>
-            ref.read(localChessLibraryProvider.notifier).ensureSearchIndex(path),
-      );
-      return null;
-    }, [
-      selectedDatabase?.path,
-      needsSearchIndex,
-      hasSearchIndex,
-      isBackgroundImporting,
-      stateOverride,
-    ]);
+      },
+      [
+        selectedDatabase?.path,
+        needsSearchIndex,
+        hasSearchIndex,
+        isBackgroundImporting,
+        stateOverride,
+      ],
+    );
     final enrichmentEpoch = ref.watch(localPlayerEnrichmentEpochProvider);
     final databaseQueryKey =
         Object.hash(
@@ -282,47 +300,54 @@ class LocalChessFilesView extends HookConsumerWidget {
       }
       return null;
     }, [databaseQueryKey]);
-    useEffect(() {
-      final path = selectedDatabase?.path;
-      if (path == null ||
-          databaseEntryCount <= 0 ||
-          !hasSearchIndex ||
-          isBackgroundImporting) {
-        return null;
-      }
-      Future<void>.microtask(
-        () => ref
-            .read(localPlayerEnrichmentServiceProvider)
-            .ensureDatabaseEnriched(path),
-      );
-      return null;
-    }, [
-      selectedDatabase?.path,
-      databaseEntryCount,
-      hasSearchIndex,
-      isBackgroundImporting,
-    ]);
-    final fallbackFiltered = useMemoized(() {
-      final q = query.value.trim().toLowerCase();
-      final base = allGames.where((game) {
-        if (q.isNotEmpty && !_matches(game, q)) return false;
-        return localChessGameMatchesFilter(
-          game,
-          gameFilter.value,
-          playerFideId: playerFideId,
-          playerAliases: playerAliases,
+    useEffect(
+      () {
+        final path = selectedDatabase?.path;
+        if (path == null ||
+            databaseEntryCount <= 0 ||
+            !hasSearchIndex ||
+            isBackgroundImporting) {
+          return null;
+        }
+        Future<void>.microtask(
+          () => ref
+              .read(localPlayerEnrichmentServiceProvider)
+              .ensureDatabaseEnriched(path),
         );
-      }).toList();
-      _sortLocalGames(base, sort.value);
-      return base;
-    }, [
-      allGames,
-      query.value,
-      sort.value,
-      gameFilter.value,
-      playerFideId,
-      Object.hashAll(playerAliases),
-    ]);
+        return null;
+      },
+      [
+        selectedDatabase?.path,
+        databaseEntryCount,
+        hasSearchIndex,
+        isBackgroundImporting,
+      ],
+    );
+    final fallbackFiltered = useMemoized(
+      () {
+        final q = query.value.trim().toLowerCase();
+        final base =
+            allGames.where((game) {
+              if (q.isNotEmpty && !_matches(game, q)) return false;
+              return localChessGameMatchesFilter(
+                game,
+                gameFilter.value,
+                playerFideId: playerFideId,
+                playerAliases: playerAliases,
+              );
+            }).toList();
+        _sortLocalGames(base, sort.value);
+        return base;
+      },
+      [
+        allGames,
+        query.value,
+        sort.value,
+        gameFilter.value,
+        playerFideId,
+        Object.hashAll(playerAliases),
+      ],
+    );
     final databaseGamesPageFuture =
         useMemoized<Future<LocalChessGameQueryPage?>?>(
           () {
@@ -497,6 +522,9 @@ class LocalChessFilesView extends HookConsumerWidget {
         );
       }
     }
+
+    latestPasteIntoLocalDatabase.value =
+        () => unawaited(pasteIntoLocalDatabase());
 
     void openDatabaseTree() {
       final database = selectedDatabase;
@@ -1368,7 +1396,7 @@ class _LocalGamesTable extends HookConsumerWidget {
         selectedId.value = id;
         selectionExtent.value = next;
       } else if (toggle) {
-        final updated = Set<String>.of(clampedSelectedIds);
+        final updated = Set<String>.of(effectiveSelectedIds);
         if (!updated.add(id)) updated.remove(id);
         selectedIds.value = updated;
         selectedId.value = id;
@@ -1694,11 +1722,8 @@ class _LocalGamesTable extends HookConsumerWidget {
                                           LogicalKeyboardKey.metaRight,
                                         ),
                                     range:
-                                        keys.contains(
-                                          LogicalKeyboardKey.shiftLeft,
-                                        ) ||
-                                        keys.contains(
-                                          LogicalKeyboardKey.shiftRight,
+                                        LibraryMultiSelect.rangeModifierPressed(
+                                          keys,
                                         ),
                                   );
                                 },
@@ -2194,60 +2219,59 @@ class _LocalGamesHeaderRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const cells = <
-      ({String label, _LocalGamesSortKey key, Alignment alignment})
-    >[
-      (
-        label: '#',
-        key: _LocalGamesSortKey.originalOrder,
-        alignment: Alignment.centerRight,
-      ),
-      (
-        label: 'WHITE',
-        key: _LocalGamesSortKey.white,
-        alignment: Alignment.centerLeft,
-      ),
-      (
-        label: 'ELO W',
-        key: _LocalGamesSortKey.whiteElo,
-        alignment: Alignment.centerRight,
-      ),
-      (
-        label: 'RESULT',
-        key: _LocalGamesSortKey.result,
-        alignment: Alignment.center,
-      ),
-      (
-        label: 'BLACK',
-        key: _LocalGamesSortKey.black,
-        alignment: Alignment.centerLeft,
-      ),
-      (
-        label: 'ELO B',
-        key: _LocalGamesSortKey.blackElo,
-        alignment: Alignment.centerRight,
-      ),
-      (
-        label: 'EVENT',
-        key: _LocalGamesSortKey.event,
-        alignment: Alignment.centerLeft,
-      ),
-      (
-        label: 'ECO',
-        key: _LocalGamesSortKey.eco,
-        alignment: Alignment.centerLeft,
-      ),
-      (
-        label: 'OPENING',
-        key: _LocalGamesSortKey.opening,
-        alignment: Alignment.centerLeft,
-      ),
-      (
-        label: 'DATE',
-        key: _LocalGamesSortKey.date,
-        alignment: Alignment.centerRight,
-      ),
-    ];
+    const cells =
+        <({String label, _LocalGamesSortKey key, Alignment alignment})>[
+          (
+            label: '#',
+            key: _LocalGamesSortKey.originalOrder,
+            alignment: Alignment.centerRight,
+          ),
+          (
+            label: 'WHITE',
+            key: _LocalGamesSortKey.white,
+            alignment: Alignment.centerLeft,
+          ),
+          (
+            label: 'ELO W',
+            key: _LocalGamesSortKey.whiteElo,
+            alignment: Alignment.centerRight,
+          ),
+          (
+            label: 'RESULT',
+            key: _LocalGamesSortKey.result,
+            alignment: Alignment.center,
+          ),
+          (
+            label: 'BLACK',
+            key: _LocalGamesSortKey.black,
+            alignment: Alignment.centerLeft,
+          ),
+          (
+            label: 'ELO B',
+            key: _LocalGamesSortKey.blackElo,
+            alignment: Alignment.centerRight,
+          ),
+          (
+            label: 'EVENT',
+            key: _LocalGamesSortKey.event,
+            alignment: Alignment.centerLeft,
+          ),
+          (
+            label: 'ECO',
+            key: _LocalGamesSortKey.eco,
+            alignment: Alignment.centerLeft,
+          ),
+          (
+            label: 'OPENING',
+            key: _LocalGamesSortKey.opening,
+            alignment: Alignment.centerLeft,
+          ),
+          (
+            label: 'DATE',
+            key: _LocalGamesSortKey.date,
+            alignment: Alignment.centerRight,
+          ),
+        ];
 
     return Container(
       color: kBlack3Color.withValues(alpha: 0.4),

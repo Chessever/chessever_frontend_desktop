@@ -62,11 +62,12 @@ Future<_AppendLocalPgnResult> _appendPgnPartsToLocalChessFile({
   final fingerprints = <String>{
     ...?existingFingerprints?.where((hash) => hash.trim().isNotEmpty),
   };
-  if (existingFingerprints == null) {
-    for (final part in splitPgnGames(existingText.trim())) {
-      final pgn = part.trim();
-      if (pgn.isNotEmpty) fingerprints.add(localChessPgnFingerprint(pgn));
-    }
+  // Cache/preview fingerprints are only hints. Always inspect the source file
+  // inside the serialized write lifetime so a just-finished append cannot be
+  // admitted again while its cache view is still catching up.
+  for (final part in splitPgnGames(existingText.trim())) {
+    final pgn = part.trim();
+    if (pgn.isNotEmpty) fingerprints.add(localChessPgnFingerprint(pgn));
   }
 
   final uniqueParts = <String>[];
@@ -97,12 +98,17 @@ Future<_AppendLocalPgnResult> _appendPgnPartsToLocalChessFile({
     );
     cursor = end;
   }
+  final nextText = '$existingText$prefix${uniqueParts.join('\n\n')}\n';
   await writeLocalPgnAtomically(
     file: file,
     expectedText: existingText,
-    nextText: '$existingText$prefix${uniqueParts.join('\n\n')}\n',
+    nextText: nextText,
   );
-  return _AppendLocalPgnResult(appended: appended);
+  return _AppendLocalPgnResult(
+    appended: appended,
+    previousText: existingText,
+    writtenText: nextText,
+  );
 }
 
 Future<int> appendPgnTextToLocalChessDatabaseFile({
@@ -114,26 +120,40 @@ Future<int> appendPgnTextToLocalChessDatabaseFile({
   final parts = appendableLocalPgnParts(text);
   if (parts.isEmpty) return 0;
 
-  final candidateFingerprints = <String>{
-    for (final part in parts) localChessPgnFingerprint(part),
-  };
-  final cachedFingerprints = await repository
-      .localDatabaseMatchingPgnFingerprints(
-        databasePath: filePath,
-        fingerprints: candidateFingerprints,
-      );
-  final result = await _appendPgnPartsToLocalChessFile(
-    filePath: filePath,
-    parts: parts,
-    existingFingerprints: cachedFingerprints ?? fallbackFingerprints,
-  );
-  if (result.appended.isNotEmpty && cachedFingerprints != null) {
-    await repository.persistAppendedPgnGames(
-      databasePath: filePath,
-      appendedPgns: result.appended,
+  return repository.runLocalPgnWriteQueued(() async {
+    final candidateFingerprints = <String>{
+      for (final part in parts) localChessPgnFingerprint(part),
+    };
+    final cachedFingerprints = await repository
+        .localDatabaseMatchingPgnFingerprints(
+          databasePath: filePath,
+          fingerprints: candidateFingerprints,
+        );
+    final result = await _appendPgnPartsToLocalChessFile(
+      filePath: filePath,
+      parts: parts,
+      existingFingerprints: cachedFingerprints ?? fallbackFingerprints,
     );
-  }
-  return result.count;
+    if (result.appended.isNotEmpty && cachedFingerprints != null) {
+      try {
+        final persisted = await repository.persistAppendedPgnGames(
+          databasePath: filePath,
+          appendedPgns: result.appended,
+        );
+        if (!persisted) {
+          throw StateError('Local PGN append was not persisted to the cache.');
+        }
+      } catch (_) {
+        await writeLocalPgnAtomically(
+          file: File(filePath),
+          expectedText: result.writtenText!,
+          nextText: result.previousText!,
+        );
+        rethrow;
+      }
+    }
+    return result.count;
+  });
 }
 
 Future<int> removeLocalPgnGamesFromFile({
@@ -201,9 +221,13 @@ void _assertLocalPgnPath(String filePath, {required String action}) {
 class _AppendLocalPgnResult {
   const _AppendLocalPgnResult({
     this.appended = const <LocalChessAppendedPgn>[],
+    this.previousText,
+    this.writtenText,
   });
 
   final List<LocalChessAppendedPgn> appended;
+  final String? previousText;
+  final String? writtenText;
 
   int get count => appended.length;
 }

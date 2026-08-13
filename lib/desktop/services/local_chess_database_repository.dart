@@ -3075,6 +3075,13 @@ class LocalChessDatabaseRepository {
     return _runLocalCacheWriteQueued(() => db.execute(statement, parameters));
   }
 
+  /// Serializes a local PGN file mutation with every write to the shared local
+  /// chess cache. The action must cover its complete read, file replacement,
+  /// and cache-persistence lifetime so overlapping commands cannot derive
+  /// decisions from the same stale source snapshot.
+  Future<T> runLocalPgnWriteQueued<T>(Future<T> Function() action) =>
+      _runLocalCacheWriteQueued(action);
+
   /// Test-only access to the global write lock so serialization can be asserted
   /// without spinning up isolates.
   @visibleForTesting
