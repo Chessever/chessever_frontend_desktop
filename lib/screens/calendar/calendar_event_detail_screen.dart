@@ -11,9 +11,14 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class CalendarEventDetailScreen extends StatelessWidget {
-  const CalendarEventDetailScreen({super.key, required this.event});
+  const CalendarEventDetailScreen({
+    super.key,
+    required this.event,
+    this.heroOverlay,
+  });
 
   final CalendarEvent event;
+  final Widget? heroOverlay;
 
   String _formatDateRange() {
     final dateFormat = DateFormat('MMM d, yyyy');
@@ -119,6 +124,7 @@ class CalendarEventDetailScreen extends StatelessWidget {
                       location.isEmpty ? event.location ?? 'TBA' : location,
                   onOpenSource:
                       _sourceUrl.isEmpty ? null : () => _launch(_sourceUrl),
+                  heroOverlay: heroOverlay,
                 ),
                 const SizedBox(height: 18),
                 LayoutBuilder(
@@ -184,12 +190,14 @@ class _HeroHeader extends StatelessWidget {
     required this.dateRange,
     required this.location,
     required this.onOpenSource,
+    required this.heroOverlay,
   });
 
   final CalendarEvent event;
   final String dateRange;
   final String location;
   final VoidCallback? onOpenSource;
+  final Widget? heroOverlay;
 
   @override
   Widget build(BuildContext context) {
@@ -203,7 +211,16 @@ class _HeroHeader extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(height: 230, child: _buildHeroImage(context)),
+          SizedBox(
+            height: 230,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                _buildHeroImage(context),
+                if (heroOverlay != null) Positioned.fill(child: heroOverlay!),
+              ],
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
             child: Column(

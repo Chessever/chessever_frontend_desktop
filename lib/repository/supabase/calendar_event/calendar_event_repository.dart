@@ -15,6 +15,7 @@ class CalendarEventRepository extends BaseRepository {
     required int selectedMonth,
     int limit = 100,
     int? offset,
+    String? afterName,
     String orderBy = 'start_date',
     bool ascending = true,
   }) async {
@@ -41,16 +42,27 @@ class CalendarEventRepository extends BaseRepository {
       // - Events with both dates that overlap the month
       // - Events with only a start_date inside the month
       // - Events with only an end_date inside the month
-      PostgrestTransformBuilder<PostgrestList> query = supabaseClient
+      PostgrestFilterBuilder<PostgrestList> filterQuery = supabaseClient
           .from('calendar_events')
           .select()
           .or(
             'and(start_date.lte.$endDateStr,end_date.gte.$startDateStr),'
             'and(end_date.is.null,start_date.gte.$startDateStr,start_date.lte.$endDateStr),'
             'and(start_date.is.null,end_date.gte.$startDateStr,end_date.lte.$endDateStr)',
-          )
-          .order(orderBy, ascending: ascending)
-          .limit(limit);
+          );
+      if (afterName != null) {
+        filterQuery = filterQuery.gt('name', afterName);
+      }
+      PostgrestTransformBuilder<PostgrestList> query = filterQuery.order(
+        orderBy,
+        ascending: ascending,
+      );
+      // Name is the legacy calendar-event primary identity. Use it as a
+      // deterministic tie-breaker so equal dates cannot reshuffle across pages.
+      if (orderBy != 'name') {
+        query = query.order('name', ascending: true);
+      }
+      query = query.limit(limit);
 
       if (offset != null) {
         query = query.range(offset, offset + limit - 1);
@@ -61,6 +73,66 @@ class CalendarEventRepository extends BaseRepository {
       return (response as List)
           .map((json) => CalendarEvent.fromJson(json))
           .toList();
+    });
+  }
+
+  /// Fetch every row in one exact-name boundary group for a selected month.
+  ///
+  /// Calendar pagination advances by name, but legacy payloads can contain
+  /// multiple authoritative FIDE rows with the same name. Fetching the whole
+  /// terminal name group prevents a page boundary from dropping those rows.
+  Future<List<CalendarEvent>> getCalendarEventsForMonthByName({
+    required int selectedYear,
+    required int selectedMonth,
+    required String name,
+    required int limit,
+  }) async {
+    return handleApiCall(() async {
+      final startOfMonth = DateTime(selectedYear, selectedMonth, 1);
+      final endOfMonth = DateTime(
+        selectedYear,
+        selectedMonth + 1,
+        0,
+        23,
+        59,
+        59,
+      );
+      final startDateStr = startOfMonth.toIso8601String().split('T')[0];
+      final endDateStr = endOfMonth.toIso8601String().split('T')[0];
+
+      final response = await supabase
+          .from('calendar_events')
+          .select()
+          .eq('name', name)
+          .or(
+            'and(start_date.lte.$endDateStr,end_date.gte.$startDateStr),'
+            'and(end_date.is.null,start_date.gte.$startDateStr,start_date.lte.$endDateStr),'
+            'and(start_date.is.null,end_date.gte.$startDateStr,end_date.lte.$endDateStr)',
+          )
+          .limit(limit);
+
+      return (response as List)
+          .map((json) => CalendarEvent.fromJson(json))
+          .toList();
+    });
+  }
+
+  /// Validate cursor advancement using the database's own name collation.
+  Future<bool> areCalendarEventNamesAfter({
+    required String afterName,
+    required Set<String> candidateNames,
+  }) async {
+    if (candidateNames.isEmpty) return true;
+    return handleApiCall(() async {
+      final response = await supabase
+          .from('calendar_events')
+          .select('name')
+          .inFilter('name', candidateNames.toList(growable: false))
+          .gt('name', afterName);
+      final acceptedNames = {
+        for (final json in response as List) json['name'] as String,
+      };
+      return acceptedNames.containsAll(candidateNames);
     });
   }
 

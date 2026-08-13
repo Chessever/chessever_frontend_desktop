@@ -25,6 +25,8 @@ class CalendarEvent {
   final String? address;
   final List<dynamic>? documents;
   final List<dynamic>? arbiters;
+  final bool isMajorEvent;
+  final bool isMajorUpcomingEvent;
 
   CalendarEvent({
     required this.name,
@@ -53,16 +55,20 @@ class CalendarEvent {
     this.address,
     this.documents,
     this.arbiters,
+    this.isMajorEvent = false,
+    this.isMajorUpcomingEvent = false,
   });
 
   factory CalendarEvent.fromJson(Map<String, dynamic> json) => CalendarEvent(
     name: json['name'] as String,
-    startDate: json['start_date'] == null
-        ? null
-        : DateTime.parse(json['start_date'] as String),
-    endDate: json['end_date'] == null
-        ? null
-        : DateTime.parse(json['end_date'] as String),
+    startDate:
+        json['start_date'] == null
+            ? null
+            : DateTime.parse(json['start_date'] as String),
+    endDate:
+        json['end_date'] == null
+            ? null
+            : DateTime.parse(json['end_date'] as String),
     location: json['location'] as String?,
     timeControl: json['time_control'] as String?,
     createdAt: DateTime.parse(json['created_at'] as String),
@@ -92,6 +98,8 @@ class CalendarEvent {
     address: json['address'] as String?,
     documents: json['documents'] as List<dynamic>?,
     arbiters: json['arbiters'] as List<dynamic>?,
+    isMajorEvent: _parseBool(json['is_major_event']),
+    isMajorUpcomingEvent: _parseBool(json['is_major_upcoming_event']),
   );
 
   Map<String, dynamic> toJson() => {
@@ -121,6 +129,8 @@ class CalendarEvent {
     'address': address,
     'documents': documents,
     'arbiters': arbiters,
+    'is_major_event': isMajorEvent,
+    'is_major_upcoming_event': isMajorUpcomingEvent,
   };
 
   @override
@@ -132,4 +142,14 @@ int? _parseInt(dynamic value) {
   if (value == null) return null;
   if (value is int) return value;
   return int.tryParse(value.toString());
+}
+
+bool _parseBool(dynamic value) {
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  if (value is String) {
+    final normalized = value.trim().toLowerCase();
+    return normalized == 'true' || normalized == '1' || normalized == 'yes';
+  }
+  return false;
 }
