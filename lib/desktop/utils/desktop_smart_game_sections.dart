@@ -73,6 +73,20 @@ List<DesktopSmartGameSection> buildDesktopSmartGameSections(
   return sections;
 }
 
+/// The single rendered/navigation order for a Smart collection.
+List<GamesTourModel> orderedDesktopSmartGames(
+  List<GamesTourModel> games, {
+  required PremiumGamesType type,
+  DateTime? now,
+}) => <GamesTourModel>[
+  for (final section in buildDesktopSmartGameSections(
+    games,
+    type: type,
+    now: now,
+  ))
+    ...section.games,
+];
+
 class _MutableSmartGameSection {
   _MutableSmartGameSection({
     required this.key,

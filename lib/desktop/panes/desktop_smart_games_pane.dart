@@ -7,6 +7,7 @@ import 'package:skeletonizer/skeletonizer.dart';
 
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
+import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/utils/desktop_smart_game_sections.dart';
 import 'package:chessever/desktop/utils/game_date_groups.dart';
 import 'package:chessever/desktop/widgets/desktop_date_group_card.dart';
@@ -586,9 +587,10 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
               ref.watch(miniatureGamesFilterProvider),
             )
             : buildDesktopSmartGameSections(widget.games, type: widget.type);
-    final groupedGames = <GamesTourModel>[
-      for (final section in sections) ...section.games,
-    ];
+    final groupedGames =
+        widget.type == PremiumGamesType.miniatures
+            ? <GamesTourModel>[for (final section in sections) ...section.games]
+            : orderedDesktopSmartGames(widget.games, type: widget.type);
     final keyboardGroups = <DesktopGameKeyboardGroup>[
       for (final section in sections)
         DesktopGameKeyboardGroup(
@@ -625,8 +627,13 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
             ensureInitialSelectionVisible: false,
             onActivateGroup: _toggleGroup,
             onActivateGame:
-                (game) =>
-                    _openSmartGame(ref, game, widget.routeTitle, groupedGames),
+                (game) => _openSmartGame(
+                  ref,
+                  game,
+                  widget.type,
+                  widget.routeTitle,
+                  groupedGames,
+                ),
             builder: (
               context,
               selection,
@@ -682,6 +689,8 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                                 ),
                                 routeTitle: widget.routeTitle,
                                 routeGames: groupedGames,
+                                routeGamesContinuation:
+                                    smartGamesBoardContinuationFor(widget.type),
                                 layout: DesktopCardLayout.grid,
                                 selected:
                                     selection?.groupId ==
@@ -713,8 +722,13 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
         scrollController: _scrollController,
         onActivateGroup: _toggleGroup,
         onActivateGame:
-            (game) =>
-                _openSmartGame(ref, game, widget.routeTitle, groupedGames),
+            (game) => _openSmartGame(
+              ref,
+              game,
+              widget.type,
+              widget.routeTitle,
+              groupedGames,
+            ),
         builder: (
           context,
           selection,
@@ -746,6 +760,7 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                     padding: const EdgeInsets.symmetric(horizontal: 24),
                     sliver: SliverToBoxAdapter(
                       child: _SmartGamesTable(
+                        type: widget.type,
                         games: sections[sectionIndex].games,
                         routeTitle: widget.routeTitle,
                         routeGames: groupedGames,
@@ -755,15 +770,11 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                                 ? selection?.gameId
                                 : null,
                         onSelectGame:
-                            (gameId) => selectGame(
-                              sections[sectionIndex].key,
-                              gameId,
-                            ),
+                            (gameId) =>
+                                selectGame(sections[sectionIndex].key, gameId),
                         keyForGame:
-                            (gameId) => keyForGame(
-                              sections[sectionIndex].key,
-                              gameId,
-                            ),
+                            (gameId) =>
+                                keyForGame(sections[sectionIndex].key, gameId),
                       ),
                     ),
                   ),
@@ -785,7 +796,13 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
       ensureInitialSelectionVisible: false,
       onActivateGroup: _toggleGroup,
       onActivateGame:
-          (game) => _openSmartGame(ref, game, widget.routeTitle, groupedGames),
+          (game) => _openSmartGame(
+            ref,
+            game,
+            widget.type,
+            widget.routeTitle,
+            groupedGames,
+          ),
       builder: (
         context,
         selection,
@@ -839,6 +856,8 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
                             ),
                             routeTitle: widget.routeTitle,
                             routeGames: groupedGames,
+                            routeGamesContinuation:
+                                smartGamesBoardContinuationFor(widget.type),
                             layout: layout,
                             selected:
                                 selection?.groupId ==
@@ -873,13 +892,11 @@ class _SmartGamesListState extends ConsumerState<_SmartGamesList> {
 
   SliverPadding _sectionHeader(
     DesktopSmartGameSection section,
-    int sectionIndex,
-    {
+    int sectionIndex, {
     required bool selected,
     required ValueChanged<String> onSelect,
     required Key itemKey,
-    }
-  ) {
+  }) {
     final collapsed = _collapsedGroups.contains(section.key);
     void toggleCollapsed() => _toggleGroup(section.key);
 
@@ -1098,6 +1115,7 @@ class _SmartHeaderBadge extends StatelessWidget {
 void _openSmartGame(
   WidgetRef ref,
   GamesTourModel game,
+  PremiumGamesType type,
   String routeTitle,
   List<GamesTourModel> routeGames,
 ) {
@@ -1107,9 +1125,18 @@ void _openSmartGame(
     game.tourSlug ?? routeTitle,
     routeTitle: routeTitle,
     routeGames: routeGames,
+    routeGamesContinuation: smartGamesBoardContinuationFor(type),
     viewSource: ChessboardView.tour,
   );
 }
+
+@visibleForTesting
+BoardTabGamesContinuation? smartGamesBoardContinuationFor(
+  PremiumGamesType type,
+) =>
+    type == PremiumGamesType.gm
+        ? const BoardTabGamesContinuation.smartGames(PremiumGamesType.gm)
+        : null;
 
 String _smartGameTournamentTitle(GamesTourModel game, String fallback) {
   for (final value in [
@@ -1201,6 +1228,7 @@ bool shouldLoadMoreForCollapsedMiniatures({
 
 class _SmartGamesTable extends ConsumerWidget {
   const _SmartGamesTable({
+    required this.type,
     required this.games,
     required this.routeTitle,
     required this.routeGames,
@@ -1210,6 +1238,7 @@ class _SmartGamesTable extends ConsumerWidget {
     required this.keyForGame,
   });
 
+  final PremiumGamesType type;
   final List<GamesTourModel> games;
   final String routeTitle;
   final List<GamesTourModel> routeGames;
@@ -1278,6 +1307,7 @@ class _SmartGamesTable extends ConsumerWidget {
                     () => _openSmartGame(
                       ref,
                       effectiveGames[i],
+                      type,
                       routeTitle,
                       effectiveRouteGames,
                     ),

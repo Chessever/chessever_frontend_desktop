@@ -8,6 +8,7 @@ import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
 import 'package:chessever/screens/player_profile/player_profile_data_source.dart';
 import 'package:chessever/screens/player_profile/provider/player_profile_provider.dart';
+import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
 const String desktopBoardWindowPayloadType = 'board';
@@ -358,6 +359,8 @@ Map<String, Object?>? _continuationToJson(
   if (continuation == null) return null;
   return <String, Object?>{
     'kind': continuation.kind.name,
+    if (continuation.argument is PremiumGamesType)
+      'premiumGamesType': (continuation.argument! as PremiumGamesType).name,
     if (continuation.argument is PlayerProfileKey)
       'playerProfileKey': _playerProfileKeyToJson(
         continuation.argument! as PlayerProfileKey,
@@ -384,6 +387,13 @@ BoardTabGamesContinuation? _continuationFromJson(Object? value) {
           .firstOrNull;
   if (kind == null) return null;
   switch (kind) {
+    case BoardTabGamesContinuationKind.smartGames:
+      final typeName = json['premiumGamesType']?.toString();
+      final type =
+          PremiumGamesType.values
+              .where((type) => type.name == typeName)
+              .firstOrNull;
+      return type == null ? null : BoardTabGamesContinuation.smartGames(type);
     case BoardTabGamesContinuationKind.favorites:
       return const BoardTabGamesContinuation.favorites();
     case BoardTabGamesContinuationKind.countrymen:

@@ -4,6 +4,7 @@ import 'package:chessever/desktop/panes/desktop_smart_games_pane.dart'
         kSmartGamesMaxViewportFillLoads,
         shouldAutoFillSmartGamesViewport,
         shouldLoadMoreForCollapsedMiniatures,
+        smartGamesBoardContinuationFor,
         visibleDesktopSmartGames;
 import 'package:chessever/desktop/utils/desktop_smart_game_sections.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
@@ -18,6 +19,7 @@ Games _buildGame({
   required int whiteRating,
   required int blackRating,
   String? pgn,
+  String? lastMove,
 }) {
   return Games(
     id: id,
@@ -47,6 +49,7 @@ Games _buildGame({
       ),
     ],
     pgn: pgn,
+    lastMove: lastMove,
   );
 }
 
@@ -74,6 +77,19 @@ void main() {
 
       expect(gameStructuredAverageRating(game), 0);
       expect(gameStructuredAverageRating(game) >= 2500, isFalse);
+    });
+
+    test('requires one authoritative move before publishing a GM game', () {
+      Games gameWithMove(String? lastMove) => _buildGame(
+        id: 'gm-move',
+        whiteRating: 2550,
+        blackRating: 2500,
+        lastMove: lastMove,
+      );
+
+      expect(gameHasAuthoritativeMove(gameWithMove(null)), isFalse);
+      expect(gameHasAuthoritativeMove(gameWithMove('   ')), isFalse);
+      expect(gameHasAuthoritativeMove(gameWithMove('e2e4')), isTrue);
     });
   });
 
@@ -188,6 +204,53 @@ void main() {
         'alpha-1',
         'alpha-2',
         'beta-1',
+      ]);
+    });
+
+    test('Board Source uses the same flattened order as the GM pane', () {
+      final now = DateTime(2026, 6, 22, 12);
+      final games = <GamesTourModel>[
+        _tourGame(
+          id: 'finished-board-1',
+          status: GameStatus.whiteWins,
+          gameDay: now,
+          boardNr: 1,
+        ),
+        _tourGame(
+          id: 'live-board-2',
+          status: GameStatus.ongoing,
+          gameDay: now,
+          boardNr: 2,
+        ),
+        _tourGame(
+          id: 'live-board-1',
+          status: GameStatus.ongoing,
+          gameDay: now,
+          boardNr: 1,
+        ),
+      ];
+
+      final paneOrder = <GamesTourModel>[
+        for (final section in buildDesktopSmartGameSections(
+          games,
+          type: PremiumGamesType.gm,
+          now: now,
+        ))
+          ...section.games,
+      ];
+
+      expect(
+        orderedDesktopSmartGames(
+          games,
+          type: PremiumGamesType.gm,
+          now: now,
+        ).map((game) => game.gameId),
+        <String>['live-board-1', 'live-board-2', 'finished-board-1'],
+      );
+      expect(paneOrder.map((game) => game.gameId), <String>[
+        'live-board-1',
+        'live-board-2',
+        'finished-board-1',
       ]);
     });
 
@@ -602,6 +665,17 @@ void main() {
   });
 
   group('smart collection scope', () {
+    test('GM Board opens retain the GM collection as their Source', () {
+      final continuation = smartGamesBoardContinuationFor(PremiumGamesType.gm);
+
+      expect(continuation?.kind.name, 'smartGames');
+      expect(continuation?.argument, PremiumGamesType.gm);
+      expect(
+        smartGamesBoardContinuationFor(PremiumGamesType.classical),
+        isNull,
+      );
+    });
+
     test('GM is decided per game, with no event-level rating floor', () {
       // Scoping GM to events whose own average clears 2500 drops qualifying
       // games played inside opens: on one checked day it cut the collection
@@ -611,12 +685,18 @@ void main() {
       expect(gm.minGameAverageElo, 2500);
       expect(gm.eventTimeControls, isNull);
       expect(gm.liveOnly, isFalse);
+      expect(gm.requiresMove, isTrue);
     });
 
     test('Live is the only collection restricted to running games', () {
       expect(smartEventScopeFor(PremiumGamesType.live).liveOnly, isTrue);
       expect(smartEventScopeFor(PremiumGamesType.gm).liveOnly, isFalse);
       expect(smartEventScopeFor(PremiumGamesType.classical).liveOnly, isFalse);
+      expect(smartEventScopeFor(PremiumGamesType.live).requiresMove, isTrue);
+      expect(
+        smartEventScopeFor(PremiumGamesType.classical).requiresMove,
+        isFalse,
+      );
     });
 
     test('Classical carries the event time controls in both spellings', () {

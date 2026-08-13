@@ -234,6 +234,14 @@ int gameStructuredAverageRating(Games game) {
   return (whiteElo + blackElo) ~/ 2;
 }
 
+/// Whether the backend has published an authoritative move for [game].
+///
+/// Clocks, schedule state, FEN hydration, and timestamps are deliberately not
+/// accepted here: Smart GM games stay hidden until `games.last_move` carries
+/// the first actual move.
+bool gameHasAuthoritativeMove(Games game) =>
+    game.lastMove?.trim().isNotEmpty ?? false;
+
 class GameRepository extends BaseRepository {
   final Map<String, _CurrentSmartEventScopeCache> _currentSmartEventScopeCache =
       <String, _CurrentSmartEventScopeCache>{};
@@ -1106,11 +1114,10 @@ class GameRepository extends BaseRepository {
     required DateTime day,
     List<String>? eventTimeControls,
   }) async {
-    final timeControls =
-        (eventTimeControls ?? const <String>[])
-            .map((value) => value.trim())
-            .where((value) => value.isNotEmpty)
-            .toList(growable: false);
+    final timeControls = (eventTimeControls ?? const <String>[])
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toList(growable: false);
     if (timeControls.isEmpty) return null;
 
     final cacheKey =
@@ -1124,24 +1131,22 @@ class GameRepository extends BaseRepository {
 
     final bounds = smartEventDayUtcBounds(day);
     final roundRows = await _readAllRows(
-      (from, to) =>
-          supabase
-              .from('rounds')
-              .select('tour_id')
-              .gte('starts_at', bounds.startIso)
-              .lt('starts_at', bounds.endIso)
-              .order('id', ascending: true)
-              .range(from, to),
+      (from, to) => supabase
+          .from('rounds')
+          .select('tour_id')
+          .gte('starts_at', bounds.startIso)
+          .lt('starts_at', bounds.endIso)
+          .order('id', ascending: true)
+          .range(from, to),
       label: 'smart-event rounds on ${formatSmartEventDay(day)}',
     );
 
-    final dayTourIds =
-        roundRows
-            .map((row) => row['tour_id'] as String?)
-            .whereType<String>()
-            .where((id) => id.isNotEmpty)
-            .toSet()
-            .toList(growable: false);
+    final dayTourIds = roundRows
+        .map((row) => row['tour_id'] as String?)
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
 
     if (dayTourIds.isEmpty) {
       return _cacheSmartEventTourIds(cacheKey, const <String>[], now);
@@ -1172,7 +1177,9 @@ class GameRepository extends BaseRepository {
           .inFilter('id', chunk)
           .inFilter('time_control', timeControls);
       matchingBroadcasts.addAll(
-        (response as List).map((row) => row['id'] as String?).whereType<String>(),
+        (response as List)
+            .map((row) => row['id'] as String?)
+            .whereType<String>(),
       );
     }
 
@@ -1207,6 +1214,7 @@ class GameRepository extends BaseRepository {
   dynamic _applyCurrentSmartEventPredicates(
     dynamic query, {
     required bool liveOnly,
+    required bool requiresMove,
     int? minGameAverageElo,
   }) {
     final now = DateTime.now().toUtc();
@@ -1215,12 +1223,15 @@ class GameRepository extends BaseRepository {
       referencedTable: 'rounds',
     );
 
+    if (requiresMove) {
+      scoped = scoped.not('last_move', 'is', null).neq('last_move', '');
+    }
+
     if (liveOnly) {
       final liveCutoffIso =
           now.subtract(_currentSmartLiveMaxAge).toIso8601String();
       scoped = scoped
           .inFilter('status', ['*', 'ongoing', 'live'])
-          .not('last_move', 'is', null)
           .not('last_move_time', 'is', null)
           .not('last_clock_white', 'is', null)
           .not('last_clock_black', 'is', null)
@@ -1248,6 +1259,7 @@ class GameRepository extends BaseRepository {
   /// and a caller that gets an empty day from it walks on to [nextDay].
   Future<DateTime?> getCurrentSmartEventDay({
     bool liveOnly = false,
+    bool requiresMove = false,
     int? minGameAverageElo,
     DateTime? before,
   }) async {
@@ -1266,6 +1278,7 @@ class GameRepository extends BaseRepository {
       dayQuery = _applyCurrentSmartEventPredicates(
         dayQuery,
         liveOnly: liveOnly,
+        requiresMove: requiresMove,
         minGameAverageElo: minGameAverageElo,
       );
 
@@ -1294,6 +1307,7 @@ class GameRepository extends BaseRepository {
   Future<CurrentSmartEventDayPage> getCurrentSmartEventGamesOnDay({
     required DateTime day,
     bool liveOnly = false,
+    bool requiresMove = false,
     int? minGameAverageElo,
     List<String>? eventTimeControls,
   }) async {
@@ -1312,6 +1326,7 @@ class GameRepository extends BaseRepository {
           games: const <Games>[],
           nextDay: await getCurrentSmartEventDay(
             liveOnly: liveOnly,
+            requiresMove: requiresMove,
             minGameAverageElo: minGameAverageElo,
             before: normalizedDay,
           ),
@@ -1333,6 +1348,7 @@ class GameRepository extends BaseRepository {
         gamesQuery = _applyCurrentSmartEventPredicates(
           gamesQuery,
           liveOnly: liveOnly,
+          requiresMove: requiresMove,
           minGameAverageElo: minGameAverageElo,
         );
 
@@ -1347,6 +1363,10 @@ class GameRepository extends BaseRepository {
 
       final jsonList = response.map((item) => json.encode(item)).toList();
       var games = await compute(_decodeGamesInIsolate, jsonList);
+
+      if (requiresMove) {
+        games = games.where(gameHasAuthoritativeMove).toList();
+      }
 
       if (eventTimeControls != null && eventTimeControls.isNotEmpty) {
         final normalizedEventTimeControls =
@@ -1379,6 +1399,7 @@ class GameRepository extends BaseRepository {
 
       final nextDay = await getCurrentSmartEventDay(
         liveOnly: liveOnly,
+        requiresMove: requiresMove,
         minGameAverageElo: minGameAverageElo,
         before: normalizedDay,
       );

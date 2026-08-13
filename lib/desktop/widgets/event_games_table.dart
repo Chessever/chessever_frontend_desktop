@@ -16,6 +16,7 @@ import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/event_rail_games.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
+import 'package:chessever/desktop/utils/desktop_smart_game_sections.dart';
 import 'package:chessever/desktop/widgets/adaptive_games_table.dart';
 import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -37,6 +38,7 @@ import 'package:chessever/screens/library/providers/gamebase_database_games_prov
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
     show buildPgnFromGamebaseData, pgnHasMoves;
 import 'package:chessever/screens/player_profile/provider/player_profile_provider.dart';
+import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
@@ -1132,6 +1134,22 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     }
 
     switch (continuation.kind) {
+      case BoardTabGamesContinuationKind.smartGames:
+        final argument = continuation.argument;
+        if (argument is! PremiumGamesType) return null;
+        final async = ref.watch(premiumGamesProvider(argument));
+        final state = async.valueOrNull;
+        return snapshot(
+          providerGames: _summariesFromGameModels(
+            orderedDesktopSmartGames(
+              state?.games ?? const <GamesTourModel>[],
+              type: argument,
+            ),
+          ),
+          isLoading: async.isLoading || (state?.isLoadingMore ?? false),
+          providerHasMore: state?.hasMore ?? false,
+          error: async.hasError ? async.error.toString() : null,
+        );
       case BoardTabGamesContinuationKind.favorites:
         final state = ref.watch(favoritesCombinedGamesProvider);
         return snapshot(
@@ -1193,6 +1211,15 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
 
   bool _canLoadMoreContinuation(BoardTabGamesContinuation continuation) {
     switch (continuation.kind) {
+      case BoardTabGamesContinuationKind.smartGames:
+        final argument = continuation.argument;
+        if (argument is! PremiumGamesType) return false;
+        final async = ref.read(premiumGamesProvider(argument));
+        final state = async.valueOrNull;
+        return state != null &&
+            state.hasMore &&
+            !state.isLoadingMore &&
+            !async.isLoading;
       case BoardTabGamesContinuationKind.favorites:
         final state = ref.read(favoritesCombinedGamesProvider);
         return state.hasMore && !state.isLoading;
@@ -1223,6 +1250,10 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     BoardTabGamesContinuation continuation,
   ) async {
     switch (continuation.kind) {
+      case BoardTabGamesContinuationKind.smartGames:
+        final argument = continuation.argument;
+        if (argument is! PremiumGamesType) return;
+        await ref.read(premiumGamesProvider(argument).notifier).loadMore();
       case BoardTabGamesContinuationKind.favorites:
         final state = ref.read(favoritesCombinedGamesProvider);
         final notifier = ref.read(favoritesCombinedGamesProvider.notifier);
@@ -2604,6 +2635,18 @@ List<TournamentGameSummary> _readContinuationProviderGames(
   BoardTabGamesContinuation continuation,
 ) {
   return switch (continuation.kind) {
+    BoardTabGamesContinuationKind.smartGames => () {
+      final argument = continuation.argument;
+      if (argument is! PremiumGamesType) {
+        return const <TournamentGameSummary>[];
+      }
+      final state = ref.read(premiumGamesProvider(argument)).valueOrNull;
+      final orderedGames = orderedDesktopSmartGames(
+        state?.games ?? const <GamesTourModel>[],
+        type: argument,
+      );
+      return _summariesFromGameModels(orderedGames);
+    }(),
     BoardTabGamesContinuationKind.favorites => _summariesFromGameModels(
       ref.read(favoritesCombinedGamesProvider).filteredGames,
     ),
@@ -4370,7 +4413,13 @@ BoardTabEventGamesKey? _eventGamesKeyForSummary(
   TournamentGameSummary game,
   BoardTabGameArgs? activeArgs,
 ) {
-  if (activeArgs?.viewSource == ChessboardView.favScorecard) return null;
+  final sourceOwnsSmartCollection =
+      activeArgs?.routeGamesContinuation?.kind ==
+      BoardTabGamesContinuationKind.smartGames;
+  if (sourceOwnsSmartCollection ||
+      activeArgs?.viewSource == ChessboardView.favScorecard) {
+    return null;
+  }
   final tourId = game.tourId.trim();
   // A local/database/source row without a canonical tournament id must not
   // inherit the previously selected event. That would keep polling and
