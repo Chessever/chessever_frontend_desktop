@@ -391,6 +391,16 @@ void main() {
     expect(clocks.map((clock) => clock.clockSeconds), [459, 417]);
     expect(clocks.where((clock) => clock.isActive), hasLength(1));
     expect(
+      find.ancestor(
+        of: find.byType(AtomicCountdownText),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is Align && widget.alignment == Alignment.centerRight,
+        ),
+      ),
+      findsNWidgets(2),
+    );
+    expect(
       tester
           .getCenter(find.byKey(const Key('event-game-live-game-1-white-line')))
           .dy,
@@ -533,6 +543,53 @@ void main() {
               decoration.color == kPrimaryColor;
         });
     expect(accentBars, isEmpty);
+  });
+
+  testWidgets('event rail draws a thin divider between games', (tester) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'divider-game-1',
+          pgn: '1. e4 e5 *',
+          label: 'Event game',
+          whiteName: 'White 1',
+          blackName: 'Black 1',
+          tournamentTitle: 'Event',
+          eventGames: [
+            _summary(
+              id: 'divider-game-1',
+              roundLabel: 'Round 1',
+              whitePlayer: 'White 1',
+              blackPlayer: 'Black 1',
+            ),
+            _summary(
+              id: 'divider-game-2',
+              roundLabel: 'Round 1',
+              whitePlayer: 'White 2',
+              blackPlayer: 'Black 2',
+            ),
+          ],
+          gameListSelectedId: 'divider-game-1',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final gameTable = tester.widget<Table>(
+      find.ancestor(
+        of: find.byKey(const Key('event-game-divider-game-1-white-line')),
+        matching: find.byType(Table),
+      ),
+    );
+    final firstDecoration =
+        gameTable.children.first.decoration! as BoxDecoration;
+    final firstBorder = firstDecoration.border! as Border;
+    expect(firstBorder.bottom.color, kDividerColor);
+    expect(firstBorder.bottom.width, 0.5);
+
+    final lastDecoration = gameTable.children.last.decoration! as BoxDecoration;
+    final lastBorder = lastDecoration.border! as Border;
+    expect(lastBorder.bottom, BorderSide.none);
   });
 
   testWidgets('event rail player identity uses readable compact sizing', (

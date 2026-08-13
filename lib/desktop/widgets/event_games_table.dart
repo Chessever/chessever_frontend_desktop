@@ -3703,12 +3703,15 @@ class _EventGamePlayerLine extends StatelessWidget {
                     textAlign: TextAlign.right,
                     style: trailingStyle,
                   )
-                  : AtomicCountdownText(
-                    clockSeconds: clockSeconds,
-                    clockCentiseconds: 0,
-                    lastMoveTime: game.lastMoveTime,
-                    isActive: clockSeconds != null && clockActive,
-                    style: trailingStyle,
+                  : Align(
+                    alignment: Alignment.centerRight,
+                    child: AtomicCountdownText(
+                      clockSeconds: clockSeconds,
+                      clockCentiseconds: 0,
+                      lastMoveTime: game.lastMoveTime,
+                      isActive: clockSeconds != null && clockActive,
+                      style: trailingStyle,
+                    ),
                   ),
         ),
       ],
@@ -4977,18 +4980,23 @@ class _EventRoundTable extends StatelessWidget {
             },
             rowDecorationBuilder: (game, hovered) {
               final selected = _isSelected(game);
+              final hasFollowingGame = game.id != games.last.id;
               return BoxDecoration(
                 color:
                     selected
                         ? kPrimaryColor.withValues(alpha: 0.11)
                         : (hovered ? kBlack3Color : Colors.transparent),
                 borderRadius: BorderRadius.circular(6),
-                border:
-                    selected
-                        ? const Border(
-                          left: BorderSide(color: kPrimaryColor, width: 2),
-                        )
-                        : null,
+                border: Border(
+                  left:
+                      selected
+                          ? const BorderSide(color: kPrimaryColor, width: 2)
+                          : BorderSide.none,
+                  bottom:
+                      hasFollowingGame
+                          ? const BorderSide(color: kDividerColor, width: 0.5)
+                          : BorderSide.none,
+                ),
               );
             },
           ),
