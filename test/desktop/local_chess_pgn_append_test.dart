@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dartchess/dartchess.dart' show Chess;
@@ -287,6 +288,303 @@ void main() {
       },
     );
 
+    test('serializes overlapping identical database pastes', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'chessever-local-paste-overlap-',
+      );
+      addTearDown(() => dir.delete(recursive: true));
+      final file = File('${dir.path}/local.pgn');
+      await file.writeAsString('${_existingPgn.trim()}\n');
+      final repo = _BlockingPersistRepository();
+      final fallback = {localChessPgnFingerprint(_existingPgn)};
+
+      final first = appendPgnTextToLocalChessDatabaseFile(
+        repository: repo,
+        filePath: file.path,
+        text: _secondPgn,
+        fallbackFingerprints: fallback,
+      );
+      await repo.firstPersistStarted.future;
+      final second = appendPgnTextToLocalChessDatabaseFile(
+        repository: repo,
+        filePath: file.path,
+        text: _secondPgn,
+        fallbackFingerprints: fallback,
+      );
+      repo.releaseFirstPersist.complete();
+
+      expect(await Future.wait(<Future<int>>[first, second]), [1, 0]);
+      final contents = await file.readAsString();
+      expect(RegExp(r'\[Event "Second"\]').allMatches(contents), hasLength(1));
+    });
+
+    test(
+      'ownership expiry before file replacement leaves the PGN unchanged',
+      () async {
+        final dir = await Directory.systemTemp.createTemp(
+          'chessever-local-paste-stale-owner-',
+        );
+        addTearDown(() => dir.delete(recursive: true));
+        final file = File('${dir.path}/local.pgn');
+        final original = '${_existingPgn.trim()}\n';
+        await file.writeAsString(original);
+        final repo = _BlockingFingerprintRepository();
+        var isCurrentOwner = true;
+
+        final paste = appendPgnTextToLocalChessDatabaseFile(
+          repository: repo,
+          filePath: file.path,
+          text: _secondPgn,
+          isCurrentOwner: () => isCurrentOwner,
+        );
+        await repo.lookupStarted.future;
+        isCurrentOwner = false;
+        repo.releaseLookup.complete();
+
+        expect(await paste, 0);
+        expect(await file.readAsString(), original);
+        expect(repo.persistCalls, 0);
+      },
+    );
+
+    test('rolls back the file when cache persistence fails', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'chessever-local-paste-cache-failure-',
+      );
+      addTearDown(() => dir.delete(recursive: true));
+      final file = File('${dir.path}/local.pgn');
+      final original = '${_existingPgn.trim()}\n';
+      await file.writeAsString(original);
+      final repo = _FailingThenPersistRepository();
+
+      await expectLater(
+        appendPgnTextToLocalChessDatabaseFile(
+          repository: repo,
+          filePath: file.path,
+          text: _secondPgn,
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(await file.readAsString(), original);
+
+      final retryCount = await appendPgnTextToLocalChessDatabaseFile(
+        repository: repo,
+        filePath: file.path,
+        text: _secondPgn,
+      );
+
+      expect(retryCount, 1);
+      expect(repo.persistCalls, 2);
+      expect(
+        RegExp(r'\[Event "Second"\]').allMatches(await file.readAsString()),
+        hasLength(1),
+      );
+    });
+
+    test(
+      'reconciles the cache when an external edit prevents rollback',
+      () async {
+        final dir = await Directory.systemTemp.createTemp(
+          'chessever-local-paste-rollback-conflict-',
+        );
+        addTearDown(() => dir.delete(recursive: true));
+        final file = File('${dir.path}/local.pgn');
+        await file.writeAsString('${_existingPgn.trim()}\n');
+        final db = await resqlite.Database.open('${dir.path}/local_chess.db');
+        addTearDown(db.close);
+        await db.execute('PRAGMA foreign_keys=ON');
+        await createLocalChessResqliteDatabaseSchema(db);
+        final source = await scanLocalChessPaths(<String>[file.path]);
+        final repo = _RollbackConflictRepository(
+          file: file,
+          database: () async => db,
+        );
+        await repo.persistFileNode(
+          source.root.singlePlayableDatabaseInSubtree!,
+          sourceLabel: source.label,
+        );
+
+        final count = await appendPgnTextToLocalChessDatabaseFile(
+          repository: repo,
+          filePath: file.path,
+          text: _secondPgn,
+        );
+
+        expect(count, 1);
+        final contents = await file.readAsString();
+        expect(
+          RegExp(r'\[Event "Second"\]').allMatches(contents),
+          hasLength(1),
+        );
+        expect(RegExp(r'\[Event "Third"\]').allMatches(contents), hasLength(1));
+        final restored = await repo.loadFreshFileNode(
+          file.path,
+          rootPath: dir.path,
+        );
+        expect(restored, isNotNull);
+        expect(restored!.gameCount, 3);
+
+        expect(
+          await appendPgnTextToLocalChessDatabaseFile(
+            repository: repo,
+            filePath: file.path,
+            text: _secondPgn,
+          ),
+          0,
+        );
+        expect(
+          RegExp(r'\[Event "Second"\]').allMatches(await file.readAsString()),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'reconciles an external edit during successful cache persistence',
+      () async {
+        final dir = await Directory.systemTemp.createTemp(
+          'chessever-local-paste-successful-external-edit-',
+        );
+        addTearDown(() => dir.delete(recursive: true));
+        final file = File('${dir.path}/local.pgn');
+        await file.writeAsString('${_existingPgn.trim()}\n');
+        final db = await resqlite.Database.open('${dir.path}/local_chess.db');
+        addTearDown(db.close);
+        await db.execute('PRAGMA foreign_keys=ON');
+        await createLocalChessResqliteDatabaseSchema(db);
+        final source = await scanLocalChessPaths(<String>[file.path]);
+        final repo = _SuccessfulExternalEditRepository(
+          file: file,
+          database: () async => db,
+        );
+        await repo.persistFileNode(
+          source.root.singlePlayableDatabaseInSubtree!,
+          sourceLabel: source.label,
+        );
+
+        final count = await appendPgnTextToLocalChessDatabaseFile(
+          repository: repo,
+          filePath: file.path,
+          text: _secondPgn,
+        );
+
+        expect(count, 1);
+        final contents = await file.readAsString();
+        expect(
+          RegExp(r'\[Event "Second"\]').allMatches(contents),
+          hasLength(1),
+        );
+        expect(RegExp(r'\[Event "Third"\]').allMatches(contents), hasLength(1));
+        final restored = await repo.loadFreshFileNode(
+          file.path,
+          rootPath: dir.path,
+        );
+        expect(restored, isNotNull);
+        expect(restored!.gameCount, 3);
+        expect(
+          restored.games.map((game) => game.game.metadata['Event']),
+          containsAll(<String>['Existing', 'Second', 'Third']),
+        );
+      },
+    );
+
+    test(
+      'reconciles a pre-existing external edit before incremental persistence',
+      () async {
+        final dir = await Directory.systemTemp.createTemp(
+          'chessever-local-paste-preexisting-external-edit-',
+        );
+        addTearDown(() => dir.delete(recursive: true));
+        final file = File('${dir.path}/local.pgn');
+        await file.writeAsString('${_existingPgn.trim()}\n');
+        final db = await resqlite.Database.open('${dir.path}/local_chess.db');
+        addTearDown(db.close);
+        await db.execute('PRAGMA foreign_keys=ON');
+        await createLocalChessResqliteDatabaseSchema(db);
+        final source = await scanLocalChessPaths(<String>[file.path]);
+        final repo = LocalChessDatabaseRepository(database: () async => db);
+        await repo.persistFileNode(
+          source.root.singlePlayableDatabaseInSubtree!,
+          sourceLabel: source.label,
+        );
+        await file.writeAsString(
+          '${(await file.readAsString()).trim()}\n\n${_thirdPgn.trim()}\n',
+          flush: true,
+        );
+
+        final count = await appendPgnTextToLocalChessDatabaseFile(
+          repository: repo,
+          filePath: file.path,
+          text: _secondPgn,
+        );
+
+        expect(count, 1);
+        final contents = await file.readAsString();
+        expect(
+          RegExp(r'\[Event "Second"\]').allMatches(contents),
+          hasLength(1),
+        );
+        expect(RegExp(r'\[Event "Third"\]').allMatches(contents), hasLength(1));
+        final restored = await repo.loadFreshFileNode(
+          file.path,
+          rootPath: dir.path,
+        );
+        expect(restored, isNotNull);
+        expect(restored!.gameCount, 3);
+        expect(
+          restored.games.map((game) => game.game.metadata['Event']),
+          containsAll(<String>['Existing', 'Second', 'Third']),
+        );
+      },
+    );
+
+    test('identical retry reconciles an already-stale cache', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'chessever-local-paste-stale-cache-retry-',
+      );
+      addTearDown(() => dir.delete(recursive: true));
+      final file = File('${dir.path}/local.pgn');
+      await file.writeAsString('${_existingPgn.trim()}\n');
+      final db = await resqlite.Database.open('${dir.path}/local_chess.db');
+      addTearDown(db.close);
+      await db.execute('PRAGMA foreign_keys=ON');
+      await createLocalChessResqliteDatabaseSchema(db);
+      final originalSource = await scanLocalChessPaths(<String>[file.path]);
+      final repo = LocalChessDatabaseRepository(database: () async => db);
+      await repo.persistFileNode(
+        originalSource.root.singlePlayableDatabaseInSubtree!,
+        sourceLabel: originalSource.label,
+      );
+      await file.writeAsString(
+        '${_existingPgn.trim()}\n\n${_secondPgn.trim()}\n\n${_thirdPgn.trim()}\n',
+        flush: true,
+      );
+      expect(
+        await repo.loadFreshFileNode(file.path, rootPath: dir.path),
+        isNull,
+      );
+
+      final count = await appendPgnTextToLocalChessDatabaseFile(
+        repository: repo,
+        filePath: file.path,
+        text: _secondPgn,
+      );
+
+      expect(count, 0);
+      final contents = await file.readAsString();
+      expect(RegExp(r'\[Event "Second"\]').allMatches(contents), hasLength(1));
+      final restored = await repo.loadFreshFileNode(
+        file.path,
+        rootPath: dir.path,
+      );
+      expect(restored, isNotNull);
+      expect(restored!.gameCount, 3);
+      expect(
+        restored.games.map((game) => game.game.metadata['Event']),
+        containsAll(<String>['Existing', 'Second', 'Third']),
+      );
+    });
+
     test(
       'incrementally persists appended PGNs into the resqlite cache',
       () async {
@@ -554,7 +852,10 @@ void main() {
         final initialNode = initialSource.root.singlePlayableDatabaseInSubtree!;
         final expectedFingerprint = initialNode.games.last.pgnFingerprint;
         final repo = LocalChessDatabaseRepository(database: () async => db);
-        await repo.persistFileNode(initialNode, sourceLabel: initialSource.label);
+        await repo.persistFileNode(
+          initialNode,
+          sourceLabel: initialSource.label,
+        );
 
         await file.writeAsString(
           '${_secondPgn.trim()}\n\n${_existingPgn.trim()}\n',
@@ -659,9 +960,166 @@ class _CandidateFingerprintRepository extends LocalChessDatabaseRepository {
   Future<bool> persistAppendedPgnGames({
     required String databasePath,
     required List<LocalChessAppendedPgn> appendedPgns,
+    required String expectedPreviousFileText,
+    required String expectedFileText,
   }) async {
     persistedAppends.addAll(appendedPgns);
     return true;
+  }
+}
+
+class _BlockingPersistRepository extends LocalChessDatabaseRepository {
+  _BlockingPersistRepository() : super(database: _unusedDatabase);
+
+  final firstPersistStarted = Completer<void>();
+  final releaseFirstPersist = Completer<void>();
+  final persistedFingerprints = <String>{};
+  var persistCalls = 0;
+
+  @override
+  Future<Set<String>?> localDatabaseMatchingPgnFingerprints({
+    required String databasePath,
+    required Iterable<String> fingerprints,
+    bool preferDirectDatabase = false,
+  }) async => persistedFingerprints.intersection(fingerprints.toSet());
+
+  @override
+  Future<bool> persistAppendedPgnGames({
+    required String databasePath,
+    required List<LocalChessAppendedPgn> appendedPgns,
+    required String expectedPreviousFileText,
+    required String expectedFileText,
+  }) async {
+    persistCalls++;
+    if (persistCalls == 1) {
+      firstPersistStarted.complete();
+      await releaseFirstPersist.future;
+    }
+    persistedFingerprints.addAll(
+      appendedPgns.map((entry) => localChessPgnFingerprint(entry.rawPgn)),
+    );
+    return true;
+  }
+}
+
+class _BlockingFingerprintRepository extends LocalChessDatabaseRepository {
+  _BlockingFingerprintRepository() : super(database: _unusedDatabase);
+
+  final lookupStarted = Completer<void>();
+  final releaseLookup = Completer<void>();
+  var persistCalls = 0;
+
+  @override
+  Future<Set<String>?> localDatabaseMatchingPgnFingerprints({
+    required String databasePath,
+    required Iterable<String> fingerprints,
+    bool preferDirectDatabase = false,
+  }) async {
+    lookupStarted.complete();
+    await releaseLookup.future;
+    return <String>{};
+  }
+
+  @override
+  Future<bool> persistAppendedPgnGames({
+    required String databasePath,
+    required List<LocalChessAppendedPgn> appendedPgns,
+    required String expectedPreviousFileText,
+    required String expectedFileText,
+  }) async {
+    persistCalls++;
+    return true;
+  }
+}
+
+class _FailingThenPersistRepository extends LocalChessDatabaseRepository {
+  _FailingThenPersistRepository() : super(database: _unusedDatabase);
+
+  var persistCalls = 0;
+
+  @override
+  Future<Set<String>?> localDatabaseMatchingPgnFingerprints({
+    required String databasePath,
+    required Iterable<String> fingerprints,
+    bool preferDirectDatabase = false,
+  }) async => <String>{};
+
+  @override
+  Future<bool> persistAppendedPgnGames({
+    required String databasePath,
+    required List<LocalChessAppendedPgn> appendedPgns,
+    required String expectedPreviousFileText,
+    required String expectedFileText,
+  }) async {
+    persistCalls++;
+    if (persistCalls == 1) {
+      throw StateError('simulated cache persistence failure');
+    }
+    return true;
+  }
+}
+
+class _RollbackConflictRepository extends LocalChessDatabaseRepository {
+  _RollbackConflictRepository({required this.file, required super.database});
+
+  final File file;
+  var persistCalls = 0;
+
+  @override
+  Future<bool> persistAppendedPgnGames({
+    required String databasePath,
+    required List<LocalChessAppendedPgn> appendedPgns,
+    required String expectedPreviousFileText,
+    required String expectedFileText,
+  }) async {
+    persistCalls++;
+    if (persistCalls == 1) {
+      final current = await file.readAsString();
+      await file.writeAsString(
+        '${current.trim()}\n\n${_thirdPgn.trim()}\n',
+        flush: true,
+      );
+      throw StateError('simulated cache persistence failure');
+    }
+    return super.persistAppendedPgnGames(
+      databasePath: databasePath,
+      appendedPgns: appendedPgns,
+      expectedPreviousFileText: expectedPreviousFileText,
+      expectedFileText: expectedFileText,
+    );
+  }
+}
+
+class _SuccessfulExternalEditRepository extends LocalChessDatabaseRepository {
+  _SuccessfulExternalEditRepository({
+    required this.file,
+    required super.database,
+  });
+
+  final File file;
+  var persistCalls = 0;
+
+  @override
+  Future<bool> persistAppendedPgnGames({
+    required String databasePath,
+    required List<LocalChessAppendedPgn> appendedPgns,
+    required String expectedPreviousFileText,
+    required String expectedFileText,
+  }) async {
+    persistCalls++;
+    if (persistCalls == 1) {
+      final current = await file.readAsString();
+      await file.writeAsString(
+        '${current.trim()}\n\n${_thirdPgn.trim()}\n',
+        flush: true,
+      );
+    }
+    return super.persistAppendedPgnGames(
+      databasePath: databasePath,
+      appendedPgns: appendedPgns,
+      expectedPreviousFileText: expectedPreviousFileText,
+      expectedFileText: expectedFileText,
+    );
   }
 }
 

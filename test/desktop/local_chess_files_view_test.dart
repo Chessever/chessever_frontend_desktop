@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -239,6 +240,173 @@ void main() {
     expect(find.text('Copy PGN'), findsOneWidget);
     expect(find.text('Paste games'), findsOneWidget);
     expect(find.text('Delete game'), findsOneWidget);
+  });
+
+  testWidgets('Shift-click selects an inclusive local database range', (
+    tester,
+  ) async {
+    final games = List<LocalChessGame>.generate(
+      3,
+      (index) => _localGame(
+        id: 'database-$index',
+        white: 'Database Player $index',
+        black: 'Opponent $index',
+        sourcePath: '/tmp/view.pgn',
+        indexInFile: index,
+      ),
+    );
+    final source = _sourceWithGame(games.first, gameCount: games.length);
+    final repository = _FakeLocalChessDatabaseRepository(
+      page: LocalChessGameQueryPage(
+        games: games,
+        totalCount: games.length,
+        pageNumber: 0,
+        pageSize: games.length,
+      ),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localChessDatabaseRepositoryProvider.overrideWithValue(repository),
+          localChessLibraryProvider.overrideWith(
+            (ref) => LocalChessLibraryNotifier(),
+          ),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 1100,
+              height: 700,
+              child: LocalChessFilesView(
+                selectedPath: source.root.path,
+                onSelectPath: (_) {},
+                stateOverride: LocalChessLibraryState(
+                  source: source,
+                  selectedPath: source.root.path,
+                ),
+                onRefreshOverride: () async {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final firstRow = find.byKey(
+      const ValueKey<String>('local-game-table-database-0'),
+    );
+    final middleRow = find.byKey(
+      const ValueKey<String>('local-game-table-database-1'),
+    );
+    final lastRow = find.byKey(
+      const ValueKey<String>('local-game-table-database-2'),
+    );
+    tester
+        .widget<GestureDetector>(
+          find.descendant(of: firstRow, matching: find.byType(GestureDetector)),
+        )
+        .onTapDown!(TapDownDetails());
+    await tester.pump();
+    expect((tester.widget(firstRow) as dynamic).selected, isTrue);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    expect(
+      HardwareKeyboard.instance.logicalKeysPressed,
+      contains(LogicalKeyboardKey.shiftLeft),
+    );
+    tester
+        .widget<GestureDetector>(
+          find.descendant(of: lastRow, matching: find.byType(GestureDetector)),
+        )
+        .onTapDown!(TapDownDetails());
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+
+    expect((tester.widget(firstRow) as dynamic).selected, isTrue);
+    expect((tester.widget(middleRow) as dynamic).selected, isTrue);
+    expect((tester.widget(lastRow) as dynamic).selected, isTrue);
+  });
+
+  testWidgets('Ctrl-click additively selects local database rows', (
+    tester,
+  ) async {
+    final games = List<LocalChessGame>.generate(
+      3,
+      (index) => _localGame(
+        id: 'database-$index',
+        white: 'Database Player $index',
+        black: 'Opponent $index',
+        sourcePath: '/tmp/view.pgn',
+        indexInFile: index,
+      ),
+    );
+    final source = _sourceWithGame(games.first, gameCount: games.length);
+    final repository = _FakeLocalChessDatabaseRepository(
+      page: LocalChessGameQueryPage(
+        games: games,
+        totalCount: games.length,
+        pageNumber: 0,
+        pageSize: games.length,
+      ),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localChessDatabaseRepositoryProvider.overrideWithValue(repository),
+          localChessLibraryProvider.overrideWith(
+            (ref) => LocalChessLibraryNotifier(),
+          ),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 1100,
+              height: 700,
+              child: LocalChessFilesView(
+                selectedPath: source.root.path,
+                onSelectPath: (_) {},
+                stateOverride: LocalChessLibraryState(
+                  source: source,
+                  selectedPath: source.root.path,
+                ),
+                onRefreshOverride: () async {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    Finder row(String id) =>
+        find.byKey(ValueKey<String>('local-game-table-$id'));
+    void tapRow(Finder finder) {
+      tester
+          .widget<GestureDetector>(
+            find.descendant(of: finder, matching: find.byType(GestureDetector)),
+          )
+          .onTapDown!(TapDownDetails());
+    }
+
+    final firstRow = row('database-0');
+    final middleRow = row('database-1');
+    final lastRow = row('database-2');
+    tapRow(firstRow);
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    tapRow(lastRow);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+
+    expect((tester.widget(firstRow) as dynamic).selected, isTrue);
+    expect((tester.widget(middleRow) as dynamic).selected, isFalse);
+    expect((tester.widget(lastRow) as dynamic).selected, isTrue);
   });
 
   testWidgets(
@@ -911,8 +1079,7 @@ class _HoldingTreeBuildRepository extends _FakeLocalChessDatabaseRepository {
   bool buildWasCanceled = false;
 
   @override
-  Future<LocalChessOpeningTreeRebuildResult?>
-  rebuildOpeningTreeFromPgnFile({
+  Future<LocalChessOpeningTreeRebuildResult?> rebuildOpeningTreeFromPgnFile({
     required String databasePath,
     void Function(LocalChessScanProgress progress)? onProgress,
     OperationCancellationToken? cancellationToken,

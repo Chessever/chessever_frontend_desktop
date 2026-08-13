@@ -48,6 +48,7 @@ Future<_AppendLocalPgnResult> _appendPgnPartsToLocalChessFile({
   required String filePath,
   required List<String> parts,
   Set<String>? existingFingerprints,
+  bool Function()? canWrite,
 }) async {
   _assertLocalPgnPath(filePath, action: 'Local paste');
 
@@ -62,10 +63,16 @@ Future<_AppendLocalPgnResult> _appendPgnPartsToLocalChessFile({
   final fingerprints = <String>{
     ...?existingFingerprints?.where((hash) => hash.trim().isNotEmpty),
   };
-  if (existingFingerprints == null) {
-    for (final part in splitPgnGames(existingText.trim())) {
-      final pgn = part.trim();
-      if (pgn.isNotEmpty) fingerprints.add(localChessPgnFingerprint(pgn));
+  final fileFingerprints = <String>{};
+  // Cache/preview fingerprints are only hints. Always inspect the source file
+  // inside the serialized write lifetime so a just-finished append cannot be
+  // admitted again while its cache view is still catching up.
+  for (final part in splitPgnGames(existingText.trim())) {
+    final pgn = part.trim();
+    if (pgn.isNotEmpty) {
+      final fingerprint = localChessPgnFingerprint(pgn);
+      fileFingerprints.add(fingerprint);
+      fingerprints.add(fingerprint);
     }
   }
 
@@ -75,7 +82,9 @@ Future<_AppendLocalPgnResult> _appendPgnPartsToLocalChessFile({
       uniqueParts.add(part);
     }
   }
-  if (uniqueParts.isEmpty) return const _AppendLocalPgnResult();
+  if (uniqueParts.isEmpty) {
+    return _AppendLocalPgnResult(existingFileFingerprints: fileFingerprints);
+  }
 
   final existingLength = await file.length();
   final prefix = existingLength > 0 ? '\n\n' : '';
@@ -97,12 +106,22 @@ Future<_AppendLocalPgnResult> _appendPgnPartsToLocalChessFile({
     );
     cursor = end;
   }
-  await writeLocalPgnAtomically(
+  final nextText = '$existingText$prefix${uniqueParts.join('\n\n')}\n';
+  final written = await writeLocalPgnAtomically(
     file: file,
     expectedText: existingText,
-    nextText: '$existingText$prefix${uniqueParts.join('\n\n')}\n',
+    nextText: nextText,
+    canReplace: canWrite,
   );
-  return _AppendLocalPgnResult(appended: appended);
+  if (!written) {
+    return _AppendLocalPgnResult(existingFileFingerprints: fileFingerprints);
+  }
+  return _AppendLocalPgnResult(
+    appended: appended,
+    previousText: existingText,
+    writtenText: nextText,
+    existingFileFingerprints: fileFingerprints,
+  );
 }
 
 Future<int> appendPgnTextToLocalChessDatabaseFile({
@@ -110,30 +129,89 @@ Future<int> appendPgnTextToLocalChessDatabaseFile({
   required String filePath,
   required String text,
   Set<String>? fallbackFingerprints,
+  bool Function()? isCurrentOwner,
 }) async {
   final parts = appendableLocalPgnParts(text);
   if (parts.isEmpty) return 0;
 
-  final candidateFingerprints = <String>{
-    for (final part in parts) localChessPgnFingerprint(part),
-  };
-  final cachedFingerprints = await repository
-      .localDatabaseMatchingPgnFingerprints(
-        databasePath: filePath,
-        fingerprints: candidateFingerprints,
-      );
-  final result = await _appendPgnPartsToLocalChessFile(
-    filePath: filePath,
-    parts: parts,
-    existingFingerprints: cachedFingerprints ?? fallbackFingerprints,
-  );
-  if (result.appended.isNotEmpty && cachedFingerprints != null) {
-    await repository.persistAppendedPgnGames(
-      databasePath: filePath,
-      appendedPgns: result.appended,
+  final outcome = await repository.runLocalPgnWriteQueued(() async {
+    if (isCurrentOwner?.call() == false) {
+      return const _AppendLocalPgnDatabaseOutcome();
+    }
+    final candidateFingerprints = <String>{
+      for (final part in parts) localChessPgnFingerprint(part),
+    };
+    final cachedFingerprints = await repository
+        .localDatabaseMatchingPgnFingerprints(
+          databasePath: filePath,
+          fingerprints: candidateFingerprints,
+        );
+    if (isCurrentOwner?.call() == false) {
+      return const _AppendLocalPgnDatabaseOutcome();
+    }
+    final result = await _appendPgnPartsToLocalChessFile(
+      filePath: filePath,
+      parts: parts,
+      existingFingerprints: cachedFingerprints ?? fallbackFingerprints,
+      canWrite: isCurrentOwner,
     );
+    final staleOnDiskFingerprints =
+        cachedFingerprints == null
+            ? const <String>{}
+            : candidateFingerprints
+                .intersection(result.existingFileFingerprints)
+                .difference(cachedFingerprints);
+    if (staleOnDiskFingerprints.isNotEmpty) {
+      return _AppendLocalPgnDatabaseOutcome(
+        count: result.count,
+        reconcileCache: true,
+      );
+    }
+    if (result.appended.isNotEmpty && cachedFingerprints != null) {
+      try {
+        final persisted = await repository.persistAppendedPgnGames(
+          databasePath: filePath,
+          appendedPgns: result.appended,
+          expectedPreviousFileText: result.previousText!,
+          expectedFileText: result.writtenText!,
+        );
+        if (!persisted) {
+          throw StateError('Local PGN append was not persisted to the cache.');
+        }
+      } on LocalChessPgnSourceChangedDuringAppend {
+        return _AppendLocalPgnDatabaseOutcome(
+          count: result.count,
+          reconcileCache: true,
+        );
+      } catch (error, stackTrace) {
+        try {
+          await writeLocalPgnAtomically(
+            file: File(filePath),
+            expectedText: result.writtenText!,
+            nextText: result.previousText!,
+          );
+        } catch (_) {
+          return _AppendLocalPgnDatabaseOutcome(
+            count: result.count,
+            reconcileCache: true,
+          );
+        }
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+    }
+    return _AppendLocalPgnDatabaseOutcome(count: result.count);
+  });
+  if (outcome.reconcileCache) {
+    final reconciled = await repository.reconcileLocalPgnCacheFromFile(
+      databasePath: filePath,
+    );
+    if (!reconciled) {
+      throw StateError(
+        'The PGN was saved, but its local cache could not be reconciled.',
+      );
+    }
   }
-  return result.count;
+  return outcome.count;
 }
 
 Future<int> removeLocalPgnGamesFromFile({
@@ -201,9 +279,25 @@ void _assertLocalPgnPath(String filePath, {required String action}) {
 class _AppendLocalPgnResult {
   const _AppendLocalPgnResult({
     this.appended = const <LocalChessAppendedPgn>[],
+    this.previousText,
+    this.writtenText,
+    this.existingFileFingerprints = const <String>{},
   });
 
   final List<LocalChessAppendedPgn> appended;
+  final String? previousText;
+  final String? writtenText;
+  final Set<String> existingFileFingerprints;
 
   int get count => appended.length;
+}
+
+class _AppendLocalPgnDatabaseOutcome {
+  const _AppendLocalPgnDatabaseOutcome({
+    this.count = 0,
+    this.reconcileCache = false,
+  });
+
+  final int count;
+  final bool reconcileCache;
 }

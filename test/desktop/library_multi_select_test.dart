@@ -1,7 +1,27 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:chessever/desktop/utils/library_multi_select.dart';
 
 void main() {
+  test('range modifier accepts generic and sided Shift keys', () {
+    for (final key in <LogicalKeyboardKey>{
+      LogicalKeyboardKey.shift,
+      LogicalKeyboardKey.shiftLeft,
+      LogicalKeyboardKey.shiftRight,
+    }) {
+      expect(
+        LibraryMultiSelect.rangeModifierPressed(<LogicalKeyboardKey>{key}),
+        isTrue,
+      );
+    }
+    expect(
+      LibraryMultiSelect.rangeModifierPressed(<LogicalKeyboardKey>{
+        LogicalKeyboardKey.controlLeft,
+      }),
+      isFalse,
+    );
+  });
+
   test('range selects inclusively in either direction', () {
     final rows = ['a', 'b', 'c', 'd'];
     expect(LibraryMultiSelect.range(rowIds: rows, from: 1, to: 3), {

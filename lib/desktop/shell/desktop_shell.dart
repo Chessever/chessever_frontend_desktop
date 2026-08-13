@@ -45,6 +45,7 @@ import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/pane_keyboard_scroll.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_board_shortcuts.dart';
+import 'package:chessever/desktop/state/active_database_workspace_paste.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/board_explorer_scope.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
@@ -112,6 +113,9 @@ class DesktopShell extends HookConsumerWidget {
         activeBoardShortcutDispatcher?.tabId == tabsState.activeId
             ? activeBoardShortcutDispatcher
             : null;
+    final activeDatabaseWorkspacePasteDispatcher = ref.watch(
+      activeDatabaseWorkspacePasteDispatcherProvider,
+    );
     final boardShortcutMap =
         boardShortcutsActive
             ? (ref.watch(keyboardShortcutsProvider).valueOrNull ??
@@ -376,6 +380,15 @@ class DesktopShell extends HookConsumerWidget {
         }
 
         Future<void> pastePgnFromClipboard() async {
+          final databasePaste = dispatchActiveDatabaseWorkspacePaste(
+            activeTabKind: tabsState.active?.kind,
+            activeTabId: tabsState.activeId,
+            dispatcher: activeDatabaseWorkspacePasteDispatcher,
+          );
+          if (databasePaste !=
+              DatabaseWorkspacePasteDispatch.notDatabaseWorkspace) {
+            return;
+          }
           if (tabsState.active?.kind == TabKind.board) {
             foregroundBoardShortcutDispatcher?.invoke(BoardActionKey.pastePgn);
             return;
