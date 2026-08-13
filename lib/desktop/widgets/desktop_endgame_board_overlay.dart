@@ -260,6 +260,8 @@ class _FallenKing extends StatelessWidget {
                   (squareSize * MediaQuery.devicePixelRatioOf(context)).round(),
                   image,
                 ),
+                width: squareSize,
+                height: squareSize,
                 fit: BoxFit.contain,
               ),
             ),

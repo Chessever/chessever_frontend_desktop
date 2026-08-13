@@ -127,6 +127,12 @@ import 'package:chessever/utils/chess_title_utils.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:chessever/widgets/player_initials_avatar.dart';
 
+/// First-use proportions for contextual games: games, board, analysis.
+/// [ResizableSplitView] restores the unchanged persisted context key over
+/// these values once the user has customized the workspace.
+@visibleForTesting
+const List<double> boardPaneContextInitialWeights = <double>[0.22, 0.53, 0.25];
+
 /// Applies a recognized broadcast status to PGN metadata.
 ///
 /// Missing or future server status values are intentionally ignored. A
@@ -4445,7 +4451,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                 SplitChild(
                   minSize: 220,
                   maxSize: 520,
-                  initialWeight: 0.29,
+                  initialWeight: boardPaneContextInitialWeights[0],
                   label: 'Games',
                   collapsedIcon: Icons.view_list_rounded,
                   dismissible: true,
@@ -4457,7 +4463,12 @@ class _BoardPaneContent extends HookConsumerWidget {
                 ),
               SplitChild(
                 minSize: 380,
-                initialWeight: boardFocusMode ? _boardFocusBoardWeight : 0.41,
+                initialWeight:
+                    boardFocusMode
+                        ? _boardFocusBoardWeight
+                        : showGameRail
+                        ? boardPaneContextInitialWeights[1]
+                        : 0.41,
                 label: 'Board',
                 collapsedIcon: Icons.grid_on_rounded,
                 dismissible: false,
@@ -4616,7 +4627,11 @@ class _BoardPaneContent extends HookConsumerWidget {
               SplitChild(
                 minSize: 280,
                 initialWeight:
-                    boardFocusMode ? _boardFocusRightPaneWeight : 0.30,
+                    boardFocusMode
+                        ? _boardFocusRightPaneWeight
+                        : showGameRail
+                        ? boardPaneContextInitialWeights[2]
+                        : 0.30,
                 label: 'Analysis',
                 collapsedIcon: Icons.analytics_outlined,
                 child: KeyedSubtree(
@@ -9600,6 +9615,8 @@ class _FallenKingOverlayState extends State<_FallenKingOverlay> {
                           .round(),
                       widget.pieceImage,
                     ),
+                    width: widget.squareSize,
+                    height: widget.squareSize,
                     fit: BoxFit.contain,
                   ),
                 ),

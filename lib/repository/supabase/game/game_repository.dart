@@ -94,9 +94,9 @@ const String _gameListSelectColumns = '''
           pgn
         ''';
 
-/// Board-rail rows intentionally omit PGN, search, and clocks. The focused
-/// game owns PGN hydration and its single-game stream; the rail only needs
-/// stable display metadata and the latest FEN/status.
+/// Board-rail rows intentionally omit PGN and search. The focused game owns
+/// PGN hydration, while the rail keeps the two scalar clock columns needed to
+/// render every game's trusted recorded times.
 const String _eventRailGameSelectColumns = '''
           id,
           round_id,
@@ -112,6 +112,8 @@ const String _eventRailGameSelectColumns = '''
           round_schedule:rounds!games_round_id_fkey(name,starts_at),
           board_nr,
           last_move_time,
+          last_clock_white,
+          last_clock_black,
           game_day,
           eco,
           opening_name

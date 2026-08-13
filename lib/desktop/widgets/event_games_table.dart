@@ -44,8 +44,8 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/round_orderin
 import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
-import 'package:chessever/utils/time_utils.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
+import 'package:chessever/widgets/atomic_countdown_text.dart';
 
 const Duration _kSidebarLiveActivityWindow = Duration(minutes: 120);
 
@@ -54,23 +54,38 @@ typedef _EventRoundExpansionKey = ({String id, bool initiallyExpanded});
 final _eventRoundExpandedProvider = StateProvider.autoDispose
     .family<bool, _EventRoundExpansionKey>((ref, key) => key.initiallyExpanded);
 
-/// The one expanded Event-rail round, per Board tab. `null` means "top-most";
-/// the empty string means the user collapsed everything.
-final _eventRailExpandedRoundProvider = StateProvider.autoDispose
-    .family<String?, String>((ref, scope) => null);
+/// Independently expanded Event-rail rounds, scoped per Board tab and event.
+/// `null` means first use, when only the top-most round opens by default; an
+/// empty set means the user explicitly collapsed every round.
+final _eventRailExpandedRoundsProvider = StateProvider.autoDispose
+    .family<Set<String>?, String>((ref, scope) => null);
 
-/// Resolves the stored choice against the rounds on screen, so a stale id falls
-/// back to the top-most round rather than collapsing the rail.
-@visibleForTesting
-String? resolveExpandedEventRoundId({
-  required String? stored,
+Set<String> _resolveExpandedEventRoundIds({
+  required Set<String>? stored,
   required List<String> orderedRoundIds,
 }) {
-  if (stored != null) {
-    if (stored.isEmpty) return null;
-    if (orderedRoundIds.contains(stored)) return stored;
+  if (stored == null) {
+    return orderedRoundIds.isEmpty
+        ? const <String>{}
+        : <String>{orderedRoundIds.first};
   }
-  return orderedRoundIds.isEmpty ? null : orderedRoundIds.first;
+  return stored.where(orderedRoundIds.contains).toSet();
+}
+
+@visibleForTesting
+Set<String> eventRailExpandedRoundIdsAfterNavigation({
+  required Set<String>? stored,
+  required List<String> orderedRoundIds,
+  required String destinationRoundId,
+}) {
+  final next = _resolveExpandedEventRoundIds(
+    stored: stored,
+    orderedRoundIds: orderedRoundIds,
+  );
+  if (orderedRoundIds.contains(destinationRoundId)) {
+    next.add(destinationRoundId);
+  }
+  return Set<String>.unmodifiable(next);
 }
 
 final _gameRailTabProvider = StateProvider.autoDispose
@@ -210,7 +225,7 @@ List<TournamentGameSummary> eventRailWindowContinuationGamesForTesting({
 class EventGamesTable extends ConsumerStatefulWidget {
   const EventGamesTable({super.key, required this.tabId, this.onClose});
 
-  static const double width = 360;
+  static const double width = 320;
 
   final String tabId;
 
@@ -244,8 +259,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
   String? _rangeAnchorGameId;
   Set<String> _highlightedGameIds = const <String>{};
   Future<void> _highlightNavigationTail = Future<void>.value();
-  String? _lastSourceCanonicalSelectionId;
-  ({String staleId, String canonicalId})? _pendingSourceHighlightSync;
+  String? _lastCanonicalSelectionId;
+  ({String staleId, String canonicalId})? _pendingHighlightSync;
   String? _databaseLoadError;
   String? _loadingContinuationKey;
   String? _continuationLoadErrorKey;
@@ -433,12 +448,13 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       }
     }
 
-    final limit = _eventRailVisibleLimit
-        .clamp(
-          _eventRailRenderPageSize,
-          math.max(_eventRailRenderPageSize, games.length),
-        )
-        .toInt();
+    final limit =
+        _eventRailVisibleLimit
+            .clamp(
+              _eventRailRenderPageSize,
+              math.max(_eventRailRenderPageSize, games.length),
+            )
+            .toInt();
     _eventRailWindowTotal = games.length;
     final end = math.min(games.length, limit);
     return _EventRailWindow(
@@ -724,35 +740,35 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     );
   }
 
-  /// The source rail has a deliberately local keyboard/multiselect cursor.
-  /// Keep that cursor while the user moves through rows in the rail, but drop
-  /// it when the board's own Cmd/Ctrl navigation changes the canonical source
-  /// selection. Otherwise Enter would reopen the row highlighted before the
-  /// external navigation rather than the game currently shown on the board.
-  void _synchronizeSourceHighlight({
+  /// Source and event rails have a deliberately local keyboard/multiselect
+  /// cursor. Keep that cursor while the user moves through rows in the rail,
+  /// but drop it when the board's own Cmd/Ctrl navigation changes the canonical
+  /// selection. Otherwise the stale local cursor keeps overriding the game now
+  /// shown on the board.
+  void _synchronizeHighlight({
     required String? canonicalSelectionId,
-    required List<TournamentGameSummary> sourceGames,
+    required List<TournamentGameSummary> games,
   }) {
     final canonicalId = canonicalSelectionId?.trim();
     final normalizedCanonicalId =
         canonicalId == null || canonicalId.isEmpty ? null : canonicalId;
-    final previousCanonicalId = _lastSourceCanonicalSelectionId;
-    _lastSourceCanonicalSelectionId = normalizedCanonicalId;
+    final previousCanonicalId = _lastCanonicalSelectionId;
+    _lastCanonicalSelectionId = normalizedCanonicalId;
 
     final highlightedId = _highlightedGameId;
     if (highlightedId == null ||
         normalizedCanonicalId == null ||
         previousCanonicalId == normalizedCanonicalId ||
         highlightedId == normalizedCanonicalId ||
-        !sourceGames.any((game) => game.id == normalizedCanonicalId)) {
+        !games.any((game) => game.id == normalizedCanonicalId)) {
       return;
     }
 
     final sync = (staleId: highlightedId, canonicalId: normalizedCanonicalId);
-    _pendingSourceHighlightSync = sync;
+    _pendingHighlightSync = sync;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _pendingSourceHighlightSync != sync) return;
-      _pendingSourceHighlightSync = null;
+      if (!mounted || _pendingHighlightSync != sync) return;
+      _pendingHighlightSync = null;
       // Do not overwrite a new row selection the user made while this frame
       // was settling.
       if (_highlightedGameId != sync.staleId) return;
@@ -764,9 +780,9 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     });
   }
 
-  void _clearSourceHighlightTracking() {
-    _lastSourceCanonicalSelectionId = null;
-    _pendingSourceHighlightSync = null;
+  void _clearHighlightTracking() {
+    _lastCanonicalSelectionId = null;
+    _pendingHighlightSync = null;
   }
 
   void _scheduleSelectedScroll({
@@ -1370,13 +1386,14 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
         shouldStreamVisibleRail && resolved.kind == _GameListKind.event,
       );
     }
-    if (resolved.kind == _GameListKind.source) {
-      _synchronizeSourceHighlight(
+    if (resolved.kind == _GameListKind.source ||
+        resolved.kind == _GameListKind.event) {
+      _synchronizeHighlight(
         canonicalSelectionId: resolved.selectedGameId,
-        sourceGames: resolved.games,
+        games: resolved.games,
       );
     } else {
-      _clearSourceHighlightTracking();
+      _clearHighlightTracking();
     }
     final preserveEventInputOrder =
         resolved.kind == _GameListKind.event &&
@@ -1456,29 +1473,29 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
               resolved.kind == _GameListKind.event,
         ),
     };
-    // One round open at a time, defaulting to the top-most. Each expanded round
-    // builds all of its rows, so several at once multiplied the rail's build and
-    // paint cost.
+    // Start with the top-most round only, then preserve each user-controlled
+    // expansion independently. The event window still bounds how many rows can
+    // be built and streamed at once for large broadcasts.
     final expandedRoundScope =
         '$activeTabId:${eventRailProviderKey?.eventKey.tourId.trim() ?? eventTourId ?? resolved.title}';
-    final storedExpandedRoundId =
+    final storedExpandedRoundIds =
         isEventRail
-            ? ref.watch(_eventRailExpandedRoundProvider(expandedRoundScope))
+            ? ref.watch(_eventRailExpandedRoundsProvider(expandedRoundScope))
             : null;
-    final expandedRoundId =
+    final expandedRoundIds =
         isEventRail
-            ? resolveExpandedEventRoundId(
-              stored: storedExpandedRoundId,
+            ? _resolveExpandedEventRoundIds(
+              stored: storedExpandedRoundIds,
               orderedRoundIds: <String>[
                 for (final group in roundGroups) group.id,
               ],
             )
-            : null;
+            : const <String>{};
     final expandedByGroup = <String, bool>{
       for (final group in roundGroups)
         group.id:
             isEventRail
-                ? group.id == expandedRoundId
+                ? expandedRoundIds.contains(group.id)
                 : ref.watch(
                   _eventRoundExpandedProvider(expansionKeys[group.id]!),
                 ),
@@ -1623,16 +1640,6 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          width: 4,
-                          height: 20,
-                          margin: const EdgeInsets.only(top: 1),
-                          decoration: BoxDecoration(
-                            color: kPrimaryColor,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
                         Expanded(
                           child: DesktopTooltip(
                             message:
@@ -1753,6 +1760,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                           activeContinuation: activeContinuation,
                           isEventRail: isEventRail,
                           expandedRoundScope: expandedRoundScope,
+                          expandedRoundIds: expandedRoundIds,
                           eventWindow: eventPage,
                           hasEventRailPagination:
                               resolved.kind == _GameListKind.event &&
@@ -1791,6 +1799,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     required BoardTabGamesContinuation? activeContinuation,
     required bool isEventRail,
     required String expandedRoundScope,
+    required Set<String> expandedRoundIds,
     required _EventRailWindow? eventWindow,
     required bool hasEventRailPagination,
     required bool isLoadingMoreContinuation,
@@ -1812,13 +1821,19 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
           expanded: expanded,
           onToggle: () {
             if (isEventRail) {
+              final nextExpandedRoundIds = <String>{...expandedRoundIds};
+              if (expanded) {
+                nextExpandedRoundIds.remove(group.id);
+              } else {
+                nextExpandedRoundIds.add(group.id);
+              }
               ref
                   .read(
-                    _eventRailExpandedRoundProvider(
+                    _eventRailExpandedRoundsProvider(
                       expandedRoundScope,
                     ).notifier,
                   )
-                  .state = expanded ? '' : group.id;
+                  .state = Set<String>.unmodifiable(nextExpandedRoundIds);
               return;
             }
             ref.read(_eventRoundExpandedProvider(expansionKey).notifier).state =
@@ -2106,6 +2121,7 @@ Future<void> _navigateActiveEventGameNow(
   var resolved = rail.resolve(
     _normalizeRailTab(ref.read(_gameRailTabProvider(activeTabId)), rail),
   );
+  var navigationRoundCatalog = const <EventRailRoundMetadata>[];
   if (resolved == null || resolved.games.isEmpty) return;
 
   // A keyed event rail may still be publishing its initial bounded page.
@@ -2140,6 +2156,9 @@ Future<void> _navigateActiveEventGameNow(
     final notifier = ref.read(provider.notifier);
     notifier.updateSelection(initialEventKey);
     await notifier.ensureNavigationAdjacency(delta);
+    navigationRoundCatalog =
+        ref.read(provider).valueOrNull?.roundCatalog ??
+        const <EventRailRoundMetadata>[];
     activeArgs = _readNavigationBoardArgs(ref, activeTabId);
     legacy = activeArgs == null ? ref.read(tournamentGamesProvider) : null;
     rail = _resolveGameRail(activeArgs, legacy);
@@ -2149,7 +2168,11 @@ Future<void> _navigateActiveEventGameNow(
     if (resolved == null || resolved.games.isEmpty) return;
   }
 
-  var navigation = _navigationOrdering(resolved, activeArgs);
+  var navigation = _navigationOrdering(
+    resolved,
+    activeArgs,
+    roundCatalog: navigationRoundCatalog,
+  );
   var orderedGames = navigation.orderedGames;
   var groupsForOrdering = navigation.groups;
   if (orderedGames.isEmpty) return;
@@ -2184,7 +2207,14 @@ Future<void> _navigateActiveEventGameNow(
         _normalizeRailTab(ref.read(_gameRailTabProvider(activeTabId)), rail),
       );
       if (resolved == null || resolved.games.isEmpty) return;
-      navigation = _navigationOrdering(resolved, activeArgs);
+      navigationRoundCatalog =
+          ref.read(provider).valueOrNull?.roundCatalog ??
+          navigationRoundCatalog;
+      navigation = _navigationOrdering(
+        resolved,
+        activeArgs,
+        roundCatalog: navigationRoundCatalog,
+      );
       orderedGames = navigation.orderedGames;
       groupsForOrdering = navigation.groups;
       currentIdx = _navigationSelectedIndex(resolved, orderedGames);
@@ -2203,22 +2233,28 @@ Future<void> _navigateActiveEventGameNow(
 
   final nextGame = orderedGames[nextIdx];
 
-  // The round/day section containing the next game may have been
-  // collapsed by the user; expand it so the row scrolls into view once
-  // the active tab re-renders.
+  // The round/day section containing the next game may have been collapsed by
+  // the user. Add it to the Event rail's independent expansion set so keyboard
+  // navigation reveals the row without collapsing any other open round.
   if (resolved.kind == _GameListKind.event) {
     final roundKey = _roundKeyResolverFor(resolved.games)(nextGame);
-    final roundGroup = groupsForOrdering.firstWhere(
-      (group) => group.id == roundKey,
+    final displayGroups = _buildRoundGroups(
+      resolved.games,
+      groupByRound: true,
+      preserveInputOrder: preserveEventInputOrder,
     );
-    final expansionKey = _eventRoundExpansionKey(
-      roundGroup,
-      groups: groupsForOrdering,
-      collapseUpcomingDuringActiveRound: true,
+    final orderedRoundIds = <String>[
+      for (final group in displayGroups) group.id,
+    ];
+    final expansionScope =
+        '$activeTabId:${activeArgs?.eventGamesKey?.tourId.trim() ?? resolved.title}';
+    final expansionProvider = _eventRailExpandedRoundsProvider(expansionScope);
+    final expandedRoundIds = eventRailExpandedRoundIdsAfterNavigation(
+      stored: ref.read(expansionProvider),
+      orderedRoundIds: orderedRoundIds,
+      destinationRoundId: roundKey,
     );
-    if (!ref.read(_eventRoundExpandedProvider(expansionKey))) {
-      ref.read(_eventRoundExpandedProvider(expansionKey).notifier).state = true;
-    }
+    ref.read(expansionProvider.notifier).state = expandedRoundIds;
   } else if (resolved.kind == _GameListKind.favorites) {
     final bucket = nextGame.lastMoveTime ?? nextGame.startsAt;
     final dayKey =
@@ -2324,8 +2360,9 @@ BoardTabGameArgs? _readNavigationBoardArgs(WidgetRef ref, String activeTabId) {
 ({List<_EventRoundGroup> groups, List<TournamentGameSummary> orderedGames})
 _navigationOrdering(
   _ResolvedEventGames resolved,
-  BoardTabGameArgs? activeArgs,
-) {
+  BoardTabGameArgs? activeArgs, {
+  List<EventRailRoundMetadata> roundCatalog = const <EventRailRoundMetadata>[],
+}) {
   final preserveEventInputOrder =
       resolved.kind == _GameListKind.event &&
       activeArgs?.viewSource == ChessboardView.playerProfile;
@@ -2337,11 +2374,13 @@ _navigationOrdering(
       groupByRound: true,
       preserveInputOrder: true,
     ),
-    // Event prev/next must walk chronological board order, not the rail's
-    // display order (which promotes the active/latest round to the top).
-    // Otherwise << on board 1 of the active round is a no-op even when
-    // earlier rounds are already loaded in memory.
-    _GameListKind.event => _buildNavigationRoundGroups(resolved.games),
+    // Prev/next follows the same flattened order the user sees in the Event
+    // rail, including the catalog's started-then-upcoming partition.
+    _GameListKind.event => _buildRoundGroups(
+      resolved.games,
+      groupByRound: true,
+      roundCatalog: roundCatalog,
+    ),
     _GameListKind.source || _GameListKind.database => _buildRoundGroups(
       resolved.games,
       groupByRound: false,
@@ -2351,68 +2390,6 @@ _navigationOrdering(
     groups: groups,
     orderedGames: groups.expand((round) => round.games).toList(growable: false),
   );
-}
-
-/// Chronological round groups for Board prev/next game navigation.
-///
-/// Display helpers promote the live/latest round to the front of the rail.
-/// Game-stepping must ignore that promotion and walk startsAt / board order
-/// so << / >> match the tournament sequence users expect.
-List<_EventRoundGroup> _buildNavigationRoundGroups(
-  List<TournamentGameSummary> games,
-) {
-  if (games.isEmpty) return const <_EventRoundGroup>[];
-
-  final keyFor = _roundKeyResolverFor(games);
-  final byRound = <String, List<TournamentGameSummary>>{};
-  for (final game in games) {
-    byRound
-        .putIfAbsent(keyFor(game), () => <TournamentGameSummary>[])
-        .add(game);
-  }
-
-  final groups = <_EventRoundGroup>[];
-  for (final entry in byRound.entries) {
-    final visible =
-        entry.value.where(_isBoardVisibleEventGame).toList()
-          ..sort(_compareEventGamesInRound);
-    final rows =
-        visible.isNotEmpty
-            ? visible
-            : (entry.value.where(_hasResolvedPlayers).toList()
-              ..sort(_comparePairingGames));
-    if (rows.isEmpty) {
-      // Keep unfiltered rows so navigation still works for pairings that
-      // fail the board-visible heuristics but are openable from the rail.
-      final fallback = List<TournamentGameSummary>.of(entry.value)
-        ..sort(_compareEventGamesInRound);
-      if (fallback.isEmpty) continue;
-      groups.add(_eventRoundGroupFor(entry.key, fallback));
-      continue;
-    }
-    groups.add(
-      _eventRoundGroupFor(
-        entry.key,
-        rows,
-        pairingOnly: visible.isEmpty,
-      ),
-    );
-  }
-
-  groups.sort((a, b) {
-    final aAt = a.startsAt;
-    final bAt = b.startsAt;
-    if (aAt != null && bAt != null) {
-      final byTime = aAt.compareTo(bAt);
-      if (byTime != 0) return byTime;
-    } else if (aAt != null) {
-      return -1;
-    } else if (bAt != null) {
-      return 1;
-    }
-    return a.id.compareTo(b.id);
-  });
-  return groups;
 }
 
 int _navigationSelectedIndex(
@@ -2816,6 +2793,8 @@ TournamentGameSummary _mergeFreshEventGameSummary(
         fresh.whiteRating > 0 ? fresh.whiteRating : current.whiteRating,
     blackRating:
         fresh.blackRating > 0 ? fresh.blackRating : current.blackRating,
+    whiteClockSeconds: fresh.whiteClockSeconds ?? current.whiteClockSeconds,
+    blackClockSeconds: fresh.blackClockSeconds ?? current.blackClockSeconds,
     whiteFideId: fresh.whiteFideId ?? current.whiteFideId,
     blackFideId: fresh.blackFideId ?? current.blackFideId,
     fen: fresh.fen ?? current.fen,
@@ -3610,55 +3589,152 @@ TournamentGameSummary _watchArbitratedEventSummary(
   );
 }
 
-/// Realtime is deliberately consumed at the status cell, not at the rail or
-/// round level. One clock/status push therefore dirties one tiny leaf instead
-/// of rebuilding every board in a large event.
-class _EventGameStatusCell extends ConsumerWidget {
-  const _EventGameStatusCell({required this.game, this.liveBatchKey});
-
-  final TournamentGameSummary game;
-  final LiveGamesBatchKey? liveBatchKey;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final displayed = _watchArbitratedEventSummary(ref, game, liveBatchKey);
-    final status = displayed.status;
-    final hasStarted = displayed.hasStarted;
-    final isLive = _isActualLiveGame(
-      status: status,
-      hasStarted: hasStarted,
-      lastMoveTime: displayed.lastMoveTime,
-    );
-    return _StatusPill(status: status, isLive: isLive, hasStarted: hasStarted);
-  }
-}
-
-class _EventGamePlayerCell extends ConsumerWidget {
-  const _EventGamePlayerCell({
+/// Realtime is deliberately consumed once per visible matchup, not at the rail
+/// or round level. One clock/status push therefore dirties one compact row leaf
+/// instead of rebuilding every board in a large event.
+class _EventGameMatchupCell extends ConsumerWidget {
+  const _EventGameMatchupCell({
     required this.game,
-    required this.isWhite,
     required this.selected,
     this.liveBatchKey,
   });
 
   final TournamentGameSummary game;
-  final bool isWhite;
   final bool selected;
   final LiveGamesBatchKey? liveBatchKey;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final displayed = _watchArbitratedEventSummary(ref, game, liveBatchKey);
-    return _PlayerCell(
-      name: isWhite ? displayed.whitePlayer : displayed.blackPlayer,
-      federation:
-          isWhite ? displayed.whiteFederation : displayed.blackFederation,
-      fideId: isWhite ? displayed.whiteFideId : displayed.blackFideId,
-      title: isWhite ? displayed.whiteTitle : displayed.blackTitle,
-      rating: isWhite ? displayed.whiteRating : displayed.blackRating,
-      selected: selected,
+    final isLive = _isActualLiveGame(
+      status: displayed.status,
+      hasStarted: displayed.hasStarted,
+      lastMoveTime: displayed.lastMoveTime,
+    );
+    final fenParts = displayed.fen?.trim().split(RegExp(r'\s+'));
+    final bool? whiteToMove =
+        fenParts != null && fenParts.length > 1
+            ? switch (fenParts[1]) {
+              'w' => true,
+              'b' => false,
+              _ => null,
+            }
+            : null;
+
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _EventGamePlayerLine(
+                game: displayed,
+                isWhite: true,
+                selected: selected,
+                clockActive: isLive && whiteToMove == true,
+              ),
+              const SizedBox(height: 2),
+              _EventGamePlayerLine(
+                game: displayed,
+                isWhite: false,
+                selected: selected,
+                clockActive: isLive && whiteToMove == false,
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
+}
+
+class _EventGamePlayerLine extends StatelessWidget {
+  const _EventGamePlayerLine({
+    required this.game,
+    required this.isWhite,
+    required this.selected,
+    required this.clockActive,
+  });
+
+  final TournamentGameSummary game;
+  final bool isWhite;
+  final bool selected;
+  final bool clockActive;
+
+  @override
+  Widget build(BuildContext context) {
+    final clockSeconds =
+        isWhite ? game.whiteClockSeconds : game.blackClockSeconds;
+    final result = _eventGamePlayerResult(game.status, isWhite: isWhite);
+    final trailingStyle = TextStyle(
+      color:
+          result != null
+              ? _eventGameResultColor(result)
+              : clockSeconds != null && clockActive
+              ? kPrimaryColor
+              : kWhiteColor70,
+      fontSize: 11.5,
+      fontWeight:
+          result == null && clockSeconds != null && clockActive
+              ? FontWeight.w700
+              : FontWeight.w600,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
+    return Row(
+      key: Key('event-game-${game.id}-${isWhite ? 'white' : 'black'}-line'),
+      children: [
+        Expanded(
+          child: _PlayerCell(
+            name: isWhite ? game.whitePlayer : game.blackPlayer,
+            federation: isWhite ? game.whiteFederation : game.blackFederation,
+            fideId: isWhite ? game.whiteFideId : game.blackFideId,
+            title: isWhite ? game.whiteTitle : game.blackTitle,
+            rating: isWhite ? game.whiteRating : game.blackRating,
+            selected: selected,
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 48,
+          child:
+              result != null
+                  ? Text(
+                    result,
+                    textAlign: TextAlign.right,
+                    style: trailingStyle,
+                  )
+                  : Align(
+                    alignment: Alignment.centerRight,
+                    child: AtomicCountdownText(
+                      clockSeconds: clockSeconds,
+                      clockCentiseconds: 0,
+                      lastMoveTime: game.lastMoveTime,
+                      isActive: clockSeconds != null && clockActive,
+                      style: trailingStyle,
+                    ),
+                  ),
+        ),
+      ],
+    );
+  }
+}
+
+Color _eventGameResultColor(String result) {
+  return switch (result) {
+    '1' => kPrimaryColor,
+    '0' => kRedColor,
+    '½' => kLightGreyColor,
+    _ => kLightGreyColor,
+  };
+}
+
+String? _eventGamePlayerResult(GameStatus status, {required bool isWhite}) {
+  return switch (status) {
+    GameStatus.whiteWins => isWhite ? '1' : '0',
+    GameStatus.blackWins => isWhite ? '0' : '1',
+    GameStatus.draw => '½',
+    _ => null,
+  };
 }
 
 String _formatDayHeader(String dateKey) {
@@ -4730,11 +4806,8 @@ class _DatabaseGameRowState extends State<_DatabaseGameRow> {
   }
 }
 
-/// Per-round table block. Wraps [AdaptiveGamesTable] in `useFixedRowAlignment`
-/// mode so the round's games render inside one [Table] (no inner scroll —
-/// the outer ListView in [EventGamesTable] owns vertical scrolling). Lets
-/// the framework compute column widths from the actual flag chips, name
-/// strings, and Elo digits per round.
+/// Per-round compact matchup block. Each game is one stacked White/Black row;
+/// the outer ListView in [EventGamesTable] owns vertical scrolling.
 class _EventRoundTable extends StatelessWidget {
   const _EventRoundTable({
     required this.games,
@@ -4798,38 +4871,14 @@ class _EventRoundTable extends StatelessWidget {
               (_, game) => _BoardBadge(game: game, selected: _isSelected(game)),
         ),
       AdaptiveColumn<TournamentGameSummary>(
-        id: 'white',
-        label: 'WHITE',
+        id: 'matchup',
+        label: 'GAME',
         flex: 1,
+        minWidth: 210,
         cellBuilder:
-            (_, game) => _EventGamePlayerCell(
+            (_, game) => _EventGameMatchupCell(
               game: game,
-              isWhite: true,
               selected: _isSelected(game),
-              liveBatchKey: liveBatchKeyByGameId[game.id],
-            ),
-      ),
-      AdaptiveColumn<TournamentGameSummary>(
-        id: 'black',
-        label: 'BLACK',
-        flex: 1,
-        cellBuilder:
-            (_, game) => _EventGamePlayerCell(
-              game: game,
-              isWhite: false,
-              selected: _isSelected(game),
-              liveBatchKey: liveBatchKeyByGameId[game.id],
-            ),
-      ),
-      AdaptiveColumn<TournamentGameSummary>(
-        id: 'status',
-        label: 'RES',
-        minWidth: 38,
-        headerAlignment: Alignment.center,
-        cellAlignment: Alignment.center,
-        cellBuilder:
-            (_, game) => _EventGameStatusCell(
-              game: game,
               liveBatchKey: liveBatchKeyByGameId[game.id],
             ),
       ),
@@ -4849,12 +4898,12 @@ class _EventRoundTable extends StatelessWidget {
             // align *across* rows too, which is what the user expects within a
             // round.
             useFixedRowAlignment: true,
-            minTableWidth: EventGamesTable.width,
+            minTableWidth: 280,
             scrollController: verticalController,
             horizontalScrollController: horizontalController,
             showHeader: false,
             padding: const EdgeInsets.symmetric(horizontal: 6),
-            rowMinHeight: 34,
+            rowMinHeight: 48,
             rowKeyBuilder:
                 (game) => game.id == _activeSelectionId ? selectedRowKey : null,
             onRowTap: (
@@ -4931,29 +4980,33 @@ class _EventRoundTable extends StatelessWidget {
             },
             rowDecorationBuilder: (game, hovered) {
               final selected = _isSelected(game);
+              final hasFollowingGame = game.id != games.last.id;
               return BoxDecoration(
                 color:
                     selected
-                        ? kPrimaryColor.withValues(alpha: 0.18)
+                        ? null
                         : (hovered ? kBlack3Color : Colors.transparent),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color:
-                      selected
-                          ? kPrimaryColor.withValues(alpha: 0.72)
-                          : Colors.transparent,
-                  width: selected ? 1.2 : 1,
-                ),
-                boxShadow:
+                gradient:
                     selected
-                        ? [
-                          BoxShadow(
-                            color: kPrimaryColor.withValues(alpha: 0.18),
-                            blurRadius: 14,
-                            offset: const Offset(0, 3),
-                          ),
-                        ]
+                        ? LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: <Color>[
+                            kPrimaryColor,
+                            kPrimaryColor,
+                            kPrimaryColor.withValues(alpha: 0.11),
+                            kPrimaryColor.withValues(alpha: 0.11),
+                          ],
+                          stops: const <double>[0, 0.007, 0.007, 1],
+                        )
                         : null,
+                borderRadius: BorderRadius.circular(6),
+                border: Border(
+                  bottom:
+                      hasFollowingGame
+                          ? const BorderSide(color: kDividerColor, width: 0.5)
+                          : BorderSide.none,
+                ),
               );
             },
           ),
@@ -5222,9 +5275,9 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
   Widget build(BuildContext context) {
     final group = widget.group;
     final subtitle =
-        group.startsAt == null
+        group.status != RoundStatus.upcoming || group.startsAt == null
             ? ''
-            : TimeUtils.formatRoundDateTime(group.startsAt);
+            : DateFormat('MMM d · HH:mm').format(group.startsAt!.toLocal());
 
     return ClickCursor(
       child: MouseRegion(
@@ -5264,11 +5317,6 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
               ),
               child: Row(
                 children: [
-                  if (group.status == RoundStatus.live ||
-                      group.status == RoundStatus.upcoming) ...[
-                    _EventRoundStatusChip(status: group.status),
-                    const SizedBox(width: 7),
-                  ],
                   Expanded(
                     child: Text(
                       group.title,
@@ -5313,55 +5361,6 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _EventRoundStatusChip extends StatelessWidget {
-  const _EventRoundStatusChip({required this.status});
-
-  final RoundStatus status;
-
-  @override
-  Widget build(BuildContext context) {
-    final (label, color) = switch (status) {
-      RoundStatus.live => ('LIVE', kRedColor),
-      RoundStatus.ongoing => ('', kGreenColor),
-      RoundStatus.completed => ('DONE', kLightGreyColor),
-      RoundStatus.upcoming => ('SOON', kPrimaryColor),
-    };
-
-    if (label.isEmpty) return const SizedBox.shrink();
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(3),
-        border: Border.all(color: color.withValues(alpha: 0.42)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (status == RoundStatus.live) ...[
-            Container(
-              width: 5,
-              height: 5,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 4),
-          ],
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 8.5,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.4,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -5490,8 +5489,8 @@ class _PlayerCell extends StatelessWidget {
         BackfilledFederationFlag(
           federation: federation,
           fideId: fideId,
-          width: 13,
-          height: 9,
+          width: 16,
+          height: 11,
           borderRadius: BorderRadius.circular(2),
         ),
         const SizedBox(width: 4),
@@ -5503,7 +5502,7 @@ class _PlayerCell extends StatelessWidget {
             softWrap: false,
             style: const TextStyle(
               color: kPrimaryColor,
-              fontSize: 9.5,
+              fontSize: 10.5,
               fontWeight: FontWeight.w800,
               letterSpacing: 0.2,
             ),
@@ -5517,7 +5516,7 @@ class _PlayerCell extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: selected ? kWhiteColor : kWhiteColor70,
-              fontSize: 11.5,
+              fontSize: 12.5,
               fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
             ),
           ),
@@ -5531,7 +5530,7 @@ class _PlayerCell extends StatelessWidget {
             softWrap: false,
             style: const TextStyle(
               color: kLightGreyColor,
-              fontSize: 10.5,
+              fontSize: 11,
               fontWeight: FontWeight.w600,
               fontFeatures: [FontFeature.tabularFigures()],
             ),
@@ -5589,29 +5588,15 @@ class _LiveBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Container(
-          width: 6,
-          height: 6,
-          decoration: const BoxDecoration(
-            color: kPrimaryColor,
-            shape: BoxShape.circle,
-          ),
-        ),
-        const SizedBox(width: 5),
-        const Text(
-          'LIVE',
-          style: TextStyle(
-            color: kPrimaryColor,
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.6,
-          ),
-        ),
-      ],
+    return const Text(
+      'LIVE',
+      style: TextStyle(
+        color: kPrimaryColor,
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.35,
+        height: 1,
+      ),
     );
   }
 }
@@ -5638,13 +5623,10 @@ class _ResultText extends StatelessWidget {
       height: 1.0,
     );
     final strong = base.copyWith(
-      color: kWhiteColor,
+      color: kPrimaryColor,
       fontWeight: FontWeight.w700,
     );
-    final weak = base.copyWith(
-      color: kWhiteColor.withValues(alpha: 0.32),
-      fontWeight: FontWeight.w500,
-    );
+    final weak = base.copyWith(color: kRedColor, fontWeight: FontWeight.w700);
     final neutral = base.copyWith(
       color: kWhiteColor.withValues(alpha: 0.62),
       fontWeight: FontWeight.w600,
