@@ -4,12 +4,14 @@ import 'dart:math' as math;
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/event_rail_games.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
+import 'package:chessever/desktop/utils/desktop_smart_game_sections.dart';
 import 'package:chessever/desktop/widgets/event_games_table.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
+import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -139,6 +141,128 @@ void main() {
     expect(repository.roundPageCalls, isEmpty);
     expect(repository.selectedGameCalls, isEmpty);
     expect(repository.countCalls, isEmpty);
+  });
+
+  testWidgets('GM Source Ctrl navigation follows the visible Smart order', (
+    tester,
+  ) async {
+    final day = DateTime(2026, 8, 13);
+    final rawProviderGames = <Games>[
+      _smartGmGame(
+        id: 'selected-petrosyan-di-benedetto',
+        boardNumber: 2,
+        averageRating: 2800,
+        whiteName: 'Petrosyan',
+        blackName: 'Di Benedetto',
+        day: day,
+      ),
+      _smartGmGame(
+        id: 'previous-chasin-sargsyan',
+        boardNumber: 1,
+        averageRating: 2700,
+        whiteName: 'Chasin',
+        blackName: 'Sargsyan',
+        day: day,
+      ),
+      _smartGmGame(
+        id: 'next-costa-muthaiah',
+        boardNumber: 3,
+        averageRating: 2600,
+        whiteName: 'Costa',
+        blackName: 'Muthaiah',
+        day: day,
+      ),
+    ];
+    final visibleGames = orderedDesktopSmartGames(
+      rawProviderGames.map(GamesTourModel.fromGame).toList(growable: false),
+      type: PremiumGamesType.gm,
+      now: day,
+    ).map(TournamentGameSummary.fromGamesTourModel).toList(growable: false);
+    expect(visibleGames.map((game) => game.id), <String>[
+      'previous-chasin-sargsyan',
+      'selected-petrosyan-di-benedetto',
+      'next-costa-muthaiah',
+    ]);
+
+    final selected = visibleGames[1];
+    final args = BoardTabGameArgs(
+      gameId: selected.id,
+      pgn: '',
+      label: selected.name,
+      whiteName: selected.whitePlayer,
+      blackName: selected.blackPlayer,
+      routeTitle: 'GM',
+      routeGames: visibleGames,
+      routeGamesContinuation: const BoardTabGamesContinuation.smartGames(
+        PremiumGamesType.gm,
+      ),
+      gameListSelectedId: selected.id,
+    );
+    final repository = _FakeGameRepository(
+      firstTourPage: const <Games>[],
+      selectedRoundPage: const <Games>[],
+      totalCount: 0,
+      smartDay: day,
+      smartGames: rawProviderGames,
+    );
+    WidgetRef? capturedRef;
+    BuildContext? capturedContext;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          gameRepositoryProvider.overrideWithValue(repository),
+          boardTabGameArgsByTabIdProvider.overrideWith(
+            (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+          ),
+        ],
+        child: MaterialApp(
+          home: Consumer(
+            builder: (context, ref, child) {
+              capturedRef = ref;
+              capturedContext = context;
+              ref.watch(premiumGamesProvider(PremiumGamesType.gm));
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      ),
+    );
+    final container = ProviderScope.containerOf(capturedContext!);
+    for (var attempt = 0; attempt < 10; attempt++) {
+      await tester.pump();
+      if (container
+              .read(premiumGamesProvider(PremiumGamesType.gm))
+              .valueOrNull !=
+          null) {
+        break;
+      }
+    }
+
+    await navigateActiveEventGame(
+      capturedRef!,
+      context: capturedContext!,
+      delta: 1,
+    );
+    await tester.pump();
+    var opened =
+        container.read(boardTabGameArgsByTabIdProvider)['tournaments-default'];
+    expect(opened?.gameId, 'next-costa-muthaiah');
+    expect(opened?.eventGamesKey, isNull);
+
+    container.read(boardTabGameArgsByTabIdProvider.notifier).state = {
+      'tournaments-default': args,
+    };
+    await navigateActiveEventGame(
+      capturedRef!,
+      context: capturedContext!,
+      delta: -1,
+    );
+    await tester.pump();
+    opened =
+        container.read(boardTabGameArgsByTabIdProvider)['tournaments-default'];
+    expect(opened?.gameId, 'previous-chasin-sargsyan');
+    expect(opened?.eventGamesKey, isNull);
   });
 
   testWidgets('keyboard navigation crosses a lazy page without a full fetch', (
@@ -2813,6 +2937,8 @@ class _FakeGameRepository implements GameRepository {
     this.roundPagesByOffset = const <int, List<Games>>{},
     this.roundCatalog = const <EventRailRoundMetadata>[],
     this.allRoundGames = const <Games>[],
+    this.smartDay,
+    this.smartGames = const <Games>[],
   });
 
   List<Games> firstTourPage;
@@ -2828,6 +2954,8 @@ class _FakeGameRepository implements GameRepository {
   Map<int, List<Games>> roundPagesByOffset;
   List<EventRailRoundMetadata> roundCatalog;
   List<Games> allRoundGames;
+  DateTime? smartDay;
+  List<Games> smartGames;
   Object? roundPageError;
   Object? countError;
 
@@ -2964,6 +3092,28 @@ class _FakeGameRepository implements GameRepository {
     final error = countError;
     if (error != null) return Future<int>.error(error);
     return countFuture ?? Future<int>.value(totalCount);
+  }
+
+  @override
+  Future<DateTime?> getCurrentSmartEventDay({
+    bool liveOnly = false,
+    bool requiresMove = false,
+    int? minGameAverageElo,
+    DateTime? before,
+  }) async {
+    if (before != null) return null;
+    return smartDay;
+  }
+
+  @override
+  Future<CurrentSmartEventDayPage> getCurrentSmartEventGamesOnDay({
+    required DateTime day,
+    bool liveOnly = false,
+    bool requiresMove = false,
+    int? minGameAverageElo,
+    List<String>? eventTimeControls,
+  }) async {
+    return CurrentSmartEventDayPage(day: day, games: smartGames, nextDay: null);
   }
 
   @override
@@ -3115,5 +3265,48 @@ Games _game({
     boardNr: boardNumber,
     roundName: roundName,
     roundStartsAt: roundStartsAt,
+  );
+}
+
+Games _smartGmGame({
+  required String id,
+  required int boardNumber,
+  required int averageRating,
+  required String whiteName,
+  required String blackName,
+  required DateTime day,
+}) {
+  return Games(
+    id: id,
+    roundId: 'smart-round',
+    roundSlug: 'smart-round',
+    tourId: 'smart-tour-$boardNumber',
+    tourSlug: 'smart-tour-$boardNumber',
+    name: '$whiteName - $blackName',
+    players: <Player>[
+      Player(
+        name: whiteName,
+        title: 'GM',
+        rating: averageRating,
+        fideId: boardNumber * 2,
+        fed: 'TUR',
+        clock: 0,
+        team: '',
+      ),
+      Player(
+        name: blackName,
+        title: 'GM',
+        rating: averageRating,
+        fideId: boardNumber * 2 + 1,
+        fed: 'TUR',
+        clock: 0,
+        team: '',
+      ),
+    ],
+    status: '*',
+    lastMove: 'e2e4',
+    lastMoveTime: day.add(Duration(minutes: boardNumber)),
+    gameDay: day,
+    boardNr: boardNumber,
   );
 }

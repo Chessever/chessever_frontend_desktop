@@ -1541,8 +1541,11 @@ BoardTabGameArgs buildTournamentBoardTabArgs(
   final pgn = pgnHasMoves(game.pgn) ? game.pgn!.trim() : '';
   final normalizedGame = _withFreshestFen(game, pgnOverride: pgn);
   final eventTourId = normalizedGame.tourId.trim();
+  final sourceOwnsSmartCollection =
+      routeGamesContinuation?.kind == BoardTabGamesContinuationKind.smartGames;
   final eventGamesKey =
       !includeServerEventRail ||
+              sourceOwnsSmartCollection ||
               viewSource == ChessboardView.favScorecard ||
               eventTourId.isEmpty
           ? null

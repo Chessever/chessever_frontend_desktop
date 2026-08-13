@@ -1,6 +1,7 @@
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart';
 import 'package:chessever/screens/chessboard/provider/chess_board_screen_provider_new.dart';
+import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -233,6 +234,55 @@ void main() {
         expect(
           args!.eventGames.map((game) => game.id),
           playerGames.map((game) => game.gameId),
+        );
+      },
+    );
+
+    testWidgets(
+      'GM Smart Events remain the Board Source and never widen to scheduled event games',
+      (tester) async {
+        final smartGames = <GamesTourModel>[
+          for (var index = 0; index < 12; index++)
+            _game(
+              gameId: 'smart-game-$index',
+              boardNumber: index + 1,
+              pgn: _fullPgn,
+            ),
+        ];
+        BoardTabGameArgs? args;
+
+        await tester.pumpWidget(
+          ProviderScope(
+            child: Consumer(
+              builder: (context, ref, child) {
+                args = buildTournamentBoardTabArgs(
+                  smartGames[5],
+                  'Smart Event',
+                  routeTitle: 'GM',
+                  routeGames: smartGames,
+                  routeGamesContinuation:
+                      const BoardTabGamesContinuation.smartGames(
+                        PremiumGamesType.gm,
+                      ),
+                  viewSource: ChessboardView.tour,
+                );
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        );
+
+        expect(args, isNotNull);
+        expect(args!.eventGamesKey, isNull);
+        expect(args!.routeTitle, 'GM');
+        expect(
+          args!.routeGamesContinuation?.kind,
+          BoardTabGamesContinuationKind.smartGames,
+        );
+        expect(args!.routeGamesContinuation?.argument, PremiumGamesType.gm);
+        expect(
+          args!.routeGames.map((game) => game.id),
+          smartGames.map((game) => game.gameId),
         );
       },
     );

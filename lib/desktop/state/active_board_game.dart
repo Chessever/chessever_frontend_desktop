@@ -343,6 +343,7 @@ class BoardTabEventGamesKey {
 }
 
 enum BoardTabGamesContinuationKind {
+  smartGames,
   favorites,
   countrymen,
   playerProfile,
@@ -352,6 +353,10 @@ enum BoardTabGamesContinuationKind {
 @immutable
 class BoardTabGamesContinuation {
   const BoardTabGamesContinuation({required this.kind, this.argument});
+
+  const BoardTabGamesContinuation.smartGames(Object premiumGamesType)
+    : kind = BoardTabGamesContinuationKind.smartGames,
+      argument = premiumGamesType;
 
   const BoardTabGamesContinuation.favorites()
     : kind = BoardTabGamesContinuationKind.favorites,
@@ -377,6 +382,7 @@ class BoardTabGamesContinuation {
   final Object? argument;
 
   String get signature => switch (kind) {
+    BoardTabGamesContinuationKind.smartGames => 'smartGames:$argument',
     BoardTabGamesContinuationKind.favorites => 'favorites',
     BoardTabGamesContinuationKind.countrymen => 'countrymen',
     BoardTabGamesContinuationKind.playerProfile => 'playerProfile:$argument',
