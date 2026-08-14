@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:intl/intl.dart';
 
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart'
     show tournamentDetailGamesSearchByTabIdProvider;
@@ -16,6 +18,7 @@ import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
@@ -44,10 +47,12 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/round_orderin
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
+import 'package:chessever/screens/tour_detail/bracket/utils/knockout_stage_parser.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart'
     show pgnHasMoves;
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/widgets/backfilled_federation_flag.dart';
 
 /// Per-round expansion for the desktop Games tab.
 ///
@@ -69,6 +74,107 @@ final _tournamentRoundExpandedProvider = StateProvider.autoDispose
 
 final _tournamentMatchExpandedProvider = StateProvider.autoDispose
     .family<bool, _TournamentMatchExpansionKey>((ref, key) => true);
+
+enum DesktopKnockoutGamesPresentation { matchSeries, allBoards }
+
+final tournamentKnockoutGamesPresentationByTabIdProvider =
+    StateProvider.family<DesktopKnockoutGamesPresentation, String>(
+      (ref, tabId) => DesktopKnockoutGamesPresentation.matchSeries,
+    );
+
+@visibleForTesting
+bool shouldShowKnockoutMatchSections({
+  required bool isKnockout,
+  required bool canGroup,
+  required DesktopKnockoutGamesPresentation presentation,
+}) =>
+    isKnockout &&
+    canGroup &&
+    presentation == DesktopKnockoutGamesPresentation.matchSeries;
+
+/// Orders match sections by elimination stage, then by pairing start time with
+/// the latest pairing first. Some feeds number matches in their slug
+/// (`quarterfinals-match-3-4`); treating that match number as a round number
+/// puts quarterfinal boards ahead of a later semifinal/final.
+///
+/// Stay conservative for legacy feeds: unless at least two distinct named
+/// stages can be resolved, do not apply stage ranking. Missing or equal start
+/// times preserve the detector's insertion order.
+@visibleForTesting
+List<MapEntry<String, List<GamesTourModel>>>
+orderedKnockoutMatchEntriesForDisplay(List<GamesTourModel> games) {
+  final entries = KnockoutMatchDetector.groupByMatches(
+    games,
+  ).entries.toList(growable: false);
+  if (entries.length <= 1) return entries;
+
+  final ranked = <
+    ({
+      MapEntry<String, List<GamesTourModel>> entry,
+      int index,
+      int? stageOrder,
+      DateTime? startsAt,
+    })
+  >[
+    for (var index = 0; index < entries.length; index += 1)
+      (
+        entry: entries[index],
+        index: index,
+        stageOrder: _latestKnockoutStageOrder(entries[index].value),
+        startsAt:
+            KnockoutMatchDetector.createMatchHeader(
+              entries[index].key,
+              entries[index].value,
+            ).startsAt,
+      ),
+  ];
+  final resolvedStageOrders =
+      ranked.map((item) => item.stageOrder).whereType<int>().toSet();
+  final shouldOrderByStage = resolvedStageOrders.length > 1;
+
+  ranked.sort((left, right) {
+    if (shouldOrderByStage) {
+      final leftStage = left.stageOrder;
+      final rightStage = right.stageOrder;
+      if (leftStage != null && rightStage != null) {
+        final stageOrder = rightStage.compareTo(leftStage);
+        if (stageOrder != 0) return stageOrder;
+      } else if (leftStage != null) {
+        return -1;
+      } else if (rightStage != null) {
+        return 1;
+      }
+    }
+
+    final leftStart = left.startsAt;
+    final rightStart = right.startsAt;
+    if (leftStart != null && rightStart != null) {
+      final startOrder = rightStart.compareTo(leftStart);
+      if (startOrder != 0) return startOrder;
+    } else if (leftStart != null) {
+      return -1;
+    } else if (rightStart != null) {
+      return 1;
+    }
+    return left.index.compareTo(right.index);
+  });
+  return ranked.map((item) => item.entry).toList(growable: false);
+}
+
+int? _latestKnockoutStageOrder(List<GamesTourModel> matchGames) {
+  int? latest;
+  for (final game in matchGames) {
+    final stage = resolveLogicalKnockoutStage(
+      '',
+      game.roundSlug ?? '',
+      tourName: game.tourName,
+    );
+    if (stage != null && (latest == null || stage.sortOrder > latest)) {
+      latest = stage.sortOrder;
+    }
+  }
+  return latest;
+}
 
 /// Games sub-view of the Tournament Detail.
 ///
@@ -333,6 +439,9 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                 _lastStableGrouped != null
             ? _lastStableGrouped!
             : watchedGrouped;
+    final knockoutPresentation = ref.watch(
+      tournamentKnockoutGamesPresentationByTabIdProvider(widget.tabId),
+    );
     if (!watchedGrouped.isLoading && !isRestoringSearch) {
       _lastStableGrouped = watchedGrouped;
     }
@@ -439,15 +548,18 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
       final roundGames =
           grouped.gamesByRound[round.id] ?? const <GamesTourModel>[];
       final visibleRoundGames = <GamesTourModel>[];
-      final showMatches =
-          grouped.isKnockoutTournament &&
-          KnockoutMatchDetector.isKnockoutMatchFormat(roundGames);
+      final showMatches = shouldShowKnockoutMatchSections(
+        isKnockout: grouped.isKnockoutTournament,
+        canGroup: KnockoutMatchDetector.canGroupConfirmedKnockout(roundGames),
+        presentation: knockoutPresentation,
+      );
       if (expanded) {
         if (!showMatches) {
           visibleRoundGames.addAll(roundGames);
         } else {
-          for (final entry
-              in KnockoutMatchDetector.groupByMatches(roundGames).entries) {
+          for (final entry in orderedKnockoutMatchEntriesForDisplay(
+            roundGames,
+          )) {
             final expansionKey = (
               scopeId: tournamentScopeId,
               roundId: round.id,
@@ -518,6 +630,19 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
         else ...[
           searchField(padding: const EdgeInsets.fromLTRB(24, 12, 24, 4)),
           const SizedBox(height: 4),
+          if (grouped.isKnockoutTournament)
+            _KnockoutPresentationSwitcher(
+              selected: knockoutPresentation,
+              onChanged:
+                  (next) =>
+                      ref
+                          .read(
+                            tournamentKnockoutGamesPresentationByTabIdProvider(
+                              widget.tabId,
+                            ).notifier,
+                          )
+                          .state = next,
+            ),
           if (grouped.filteredRounds.isEmpty &&
               grouped.matchFormatHeader == null)
             Expanded(
@@ -536,7 +661,10 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                   // Match/knockout/team rounds aren't a uniform grid, so keep the
                   // flat single-step walk there.
                   final isMatchStyle =
-                      grouped.isKnockoutTournament || isTeamEvent;
+                      (grouped.isKnockoutTournament &&
+                          knockoutPresentation ==
+                              DesktopKnockoutGamesPresentation.matchSeries) ||
+                      isTeamEvent;
                   final contentWidth =
                       (constraints.maxWidth - 48)
                           .clamp(0, double.infinity)
@@ -581,7 +709,9 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                               // A small overscan keeps wheel/trackpad scrolling
                               // smooth without mounting an entire 1,000-board
                               // broadcast and its realtime subscriptions.
-                              cacheExtent: 400,
+                              scrollCacheExtent: const ScrollCacheExtent.pixels(
+                                400,
+                              ),
                               slivers: [
                                 SliverPadding(
                                   padding: const EdgeInsets.fromLTRB(
@@ -594,7 +724,10 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                                     slivers: [
                                       // Match-format tournaments (e.g. "12-game Match" —
                                       // Carlsen vs Nepo) get one summary above the rounds.
-                                      if (grouped.matchFormatHeader != null)
+                                      if (grouped.matchFormatHeader != null &&
+                                          knockoutPresentation ==
+                                              DesktopKnockoutGamesPresentation
+                                                  .matchSeries)
                                         SliverToBoxAdapter(
                                           child: _MatchHeaderBanner(
                                             match: grouped.matchFormatHeader!,
@@ -631,7 +764,10 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                                           layout: layout,
                                           columns: cardColumns,
                                           isKnockout:
-                                              grouped.isKnockoutTournament,
+                                              grouped.isKnockoutTournament &&
+                                              knockoutPresentation ==
+                                                  DesktopKnockoutGamesPresentation
+                                                      .matchSeries,
                                           isTeamEvent: isTeamEvent,
                                           roundStartsAtById: roundStartsAtById,
                                           roundNameById: roundNameById,
@@ -695,6 +831,53 @@ class _NoSearchResults extends StatelessWidget {
 }
 
 enum _TournamentGamesQuickFilter { all, live }
+
+class _KnockoutPresentationSwitcher extends StatelessWidget {
+  const _KnockoutPresentationSwitcher({
+    required this.selected,
+    required this.onChanged,
+  });
+
+  final DesktopKnockoutGamesPresentation selected;
+  final ValueChanged<DesktopKnockoutGamesPresentation> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+      child: Row(
+        children: [
+          const Text(
+            'VIEW',
+            style: TextStyle(
+              color: kWhiteColor70,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.55,
+            ),
+          ),
+          const SizedBox(width: 10),
+          DesktopSegmentedTabs<DesktopKnockoutGamesPresentation>(
+            tabs: const [
+              DesktopSegmentedTab(
+                value: DesktopKnockoutGamesPresentation.matchSeries,
+                label: 'Match series',
+                icon: Icons.account_tree_outlined,
+              ),
+              DesktopSegmentedTab(
+                value: DesktopKnockoutGamesPresentation.allBoards,
+                label: 'All boards',
+                icon: Icons.grid_view_outlined,
+              ),
+            ],
+            selected: selected,
+            onChanged: onChanged,
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 /// Game-count label rendered next to the segment tabs so the controllers
 /// can hug the right edge of the bar without a leading text block pushing
@@ -856,10 +1039,11 @@ class _RoundSliverSection extends ConsumerWidget {
     final expansionKey = (id: round.id, initiallyExpanded: initiallyExpanded);
     final expanded = ref.watch(_tournamentRoundExpandedProvider(expansionKey));
 
-    // For knockout-style stages, group repeated head-to-head games into
-    // match cards (Carlsen vs Nepo: Game 1 / Game 2 / Tiebreak).
+    // For knockout-style stages, group games by player pairing. Tournament
+    // state is already the trusted format signal; modern feeds may publish a
+    // whole playoff stage without legacy `game-N` round slugs.
     final showMatches =
-        isKnockout && KnockoutMatchDetector.isKnockoutMatchFormat(games);
+        isKnockout && KnockoutMatchDetector.canGroupConfirmedKnockout(games);
     final showTeamMatches = isTeamEvent && games.isNotEmpty;
 
     final contentSlivers = <Widget>[];
@@ -888,8 +1072,7 @@ class _RoundSliverSection extends ConsumerWidget {
             ..add(const SliverToBoxAdapter(child: SizedBox(height: 12)));
         }
       } else if (showMatches) {
-        for (final entry
-            in KnockoutMatchDetector.groupByMatches(games).entries) {
+        for (final entry in orderedKnockoutMatchEntriesForDisplay(games)) {
           contentSlivers.add(
             _MatchSliverSection(
               key: ValueKey<String>('${round.id}:${entry.key}'),
@@ -1210,7 +1393,7 @@ Widget buildLazyTournamentGamesViewportForTesting({
         keysByGameId: batchKeys,
         child: CustomScrollView(
           controller: scrollController,
-          cacheExtent: cacheExtent,
+          scrollCacheExtent: ScrollCacheExtent.pixels(cacheExtent),
           slivers: [
             SliverPadding(
               padding: const EdgeInsets.all(24),
@@ -1314,6 +1497,10 @@ class _MatchSliverSection extends ConsumerWidget {
   }
 }
 
+@visibleForTesting
+Widget buildKnockoutMatchSectionHeaderForTesting(MatchHeaderModel header) =>
+    _MatchSectionHeader(header: header, expanded: true, onToggle: () {});
+
 class _MatchSectionHeader extends StatefulWidget {
   const _MatchSectionHeader({
     required this.header,
@@ -1335,6 +1522,7 @@ class _MatchSectionHeaderState extends State<_MatchSectionHeader> {
   @override
   Widget build(BuildContext context) {
     final h = widget.header;
+    final startsAt = h.startsAt;
     return ClickCursor(
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
@@ -1344,7 +1532,7 @@ class _MatchSectionHeaderState extends State<_MatchSectionHeader> {
           onTap: widget.onToggle,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 100),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
               color: _hovered ? kBlack3Color : kBlack2Color,
               borderRadius: BorderRadius.circular(8),
@@ -1357,68 +1545,97 @@ class _MatchSectionHeaderState extends State<_MatchSectionHeader> {
             ),
             child: Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color:
-                        h.isComplete
-                            ? kPrimaryColor.withValues(alpha: 0.15)
-                            : kGreenColor.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(
-                      color:
-                          h.isComplete
-                              ? kPrimaryColor.withValues(alpha: 0.4)
-                              : kGreenColor.withValues(alpha: 0.4),
-                    ),
-                  ),
-                  child: Text(
-                    h.isComplete ? 'MATCH' : 'IN PROGRESS',
-                    style: TextStyle(
-                      color: h.isComplete ? kPrimaryColor : kGreenColor,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.6,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
                 Expanded(
-                  child: Text(
-                    h.matchTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: kWhiteColor,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: _MatchPlayerIdentity(player: h.player1Card),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 7),
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 180),
+                          switchInCurve: Curves.easeOutCubic,
+                          switchOutCurve: Curves.easeInCubic,
+                          transitionBuilder:
+                              (child, animation) => FadeTransition(
+                                opacity: animation,
+                                child: SlideTransition(
+                                  position: Tween<Offset>(
+                                    begin: const Offset(0, 0.35),
+                                    end: Offset.zero,
+                                  ).animate(animation),
+                                  child: child,
+                                ),
+                              ),
+                          child:
+                              h.hasReportedScore
+                                  ? Row(
+                                    key: const ValueKey<String>('scores'),
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      _MatchScoreText(
+                                        label: h.player1ScoreLabel,
+                                        tone: h.player1ResultTone,
+                                      ),
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 7,
+                                        ),
+                                        child: Text(
+                                          '–',
+                                          style: TextStyle(
+                                            color: kWhiteColor.withValues(
+                                              alpha: 0.42,
+                                            ),
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      _MatchScoreText(
+                                        label: h.player2ScoreLabel,
+                                        tone: h.player2ResultTone,
+                                      ),
+                                    ],
+                                  )
+                                  : Text(
+                                    'vs',
+                                    key: ValueKey<bool>(h.hasReportedScore),
+                                    style: TextStyle(
+                                      color: kWhiteColor.withValues(
+                                        alpha: 0.42,
+                                      ),
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                        ),
+                      ),
+                      Flexible(
+                        child: _MatchPlayerIdentity(player: h.player2Card),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
+                if (startsAt != null) ...[
+                  const SizedBox(width: 16),
+                  Icon(
+                    Icons.schedule_rounded,
+                    size: 13,
+                    color: kWhiteColor.withValues(alpha: 0.36),
                   ),
-                  decoration: BoxDecoration(
-                    color: kBackgroundColor,
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: kDividerColor),
-                  ),
-                  child: Text(
-                    h.scoreDisplay,
-                    style: const TextStyle(
-                      color: kWhiteColor,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      fontFeatures: [FontFeature.tabularFigures()],
+                  const SizedBox(width: 5),
+                  Text(
+                    DateFormat('MMM d · HH:mm').format(startsAt.toLocal()),
+                    style: TextStyle(
+                      color: kWhiteColor.withValues(alpha: 0.46),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
-                ),
+                ],
                 const SizedBox(width: 12),
                 Text(
                   '${h.games.length} game${h.games.length == 1 ? '' : 's'}',
@@ -1436,6 +1653,89 @@ class _MatchSectionHeaderState extends State<_MatchSectionHeader> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _MatchPlayerIdentity extends StatelessWidget {
+  const _MatchPlayerIdentity({required this.player});
+
+  final PlayerCard player;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasFlag =
+        player.federation.trim().isNotEmpty || (player.fideId ?? 0) > 0;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (hasFlag) ...[
+          BackfilledFederationFlag(
+            federation: player.federation,
+            fideId: player.fideId,
+            playerName: player.name,
+            width: 18,
+            height: 12,
+            borderRadius: BorderRadius.circular(2),
+          ),
+          const SizedBox(width: 6),
+        ],
+        if (player.title.trim().isNotEmpty) ...[
+          DesktopPlainPlayerTitle(title: player.title, compact: true),
+          const SizedBox(width: 5),
+        ],
+        Flexible(
+          child: Text(
+            player.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            softWrap: false,
+            style: const TextStyle(
+              color: kWhiteColor,
+              fontSize: 13.5,
+              fontWeight: FontWeight.w700,
+              height: 1.15,
+            ),
+          ),
+        ),
+        if (player.rating > 0) ...[
+          const SizedBox(width: 5),
+          Text(
+            '(${player.rating})',
+            style: TextStyle(
+              color: kWhiteColor.withValues(alpha: 0.48),
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _MatchScoreText extends StatelessWidget {
+  const _MatchScoreText({required this.label, required this.tone});
+
+  final String label;
+  final MatchPlayerResultTone tone;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (tone) {
+      MatchPlayerResultTone.leading => kPrimaryColor,
+      MatchPlayerResultTone.trailing => kRedColor,
+      MatchPlayerResultTone.neutral => kWhiteColor,
+    };
+    return Text(
+      label,
+      style: TextStyle(
+        color: color,
+        fontSize: 13.5,
+        fontWeight: FontWeight.w800,
+        fontFeatures: const [FontFeature.tabularFigures()],
       ),
     );
   }

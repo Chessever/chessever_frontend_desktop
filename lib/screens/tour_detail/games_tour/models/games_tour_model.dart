@@ -81,6 +81,7 @@ class GamesTourModel {
   final String? eventName;
   final DateTime? lastMoveTime;
   final DateTime? dateStart;
+  final String? timeStart;
   final DateTime? gameDay;
 
   /// Canonical scheduled start for the round that owns this game, propagated
@@ -125,6 +126,7 @@ class GamesTourModel {
     this.boardNr,
     this.lastMoveTime,
     this.dateStart,
+    this.timeStart,
     this.gameDay,
     this.roundStartsAt,
     this.eco,
@@ -175,6 +177,7 @@ class GamesTourModel {
     DateTime? lastMoveTime,
     bool clearLastMoveTime = false,
     DateTime? dateStart,
+    String? timeStart,
     DateTime? gameDay,
     DateTime? roundStartsAt,
     String? eco,
@@ -217,6 +220,7 @@ class GamesTourModel {
       lastMoveTime:
           clearLastMoveTime ? null : lastMoveTime ?? this.lastMoveTime,
       dateStart: dateStart ?? this.dateStart,
+      timeStart: timeStart ?? this.timeStart,
       gameDay: gameDay ?? this.gameDay,
       roundStartsAt: roundStartsAt ?? this.roundStartsAt,
       eco: eco ?? this.eco,
@@ -355,6 +359,7 @@ class GamesTourModel {
         // Prefer lastMoveTime, then gameDay (round start), then dateStart.
         lastMoveTime: game.lastMoveTime ?? game.gameDay ?? game.dateStart,
         dateStart: game.dateStart,
+        timeStart: game.timeStart,
         gameDay: game.gameDay,
         roundStartsAt: game.roundStartsAt,
         eco: resolvedEco,

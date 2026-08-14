@@ -6,10 +6,8 @@ import 'package:chessever/repository/local_storage/auto_pin_preferences/auto_pin
 import 'package:chessever/repository/local_storage/tournament/games/pin_games_local_storage.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
-import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_auto_pin_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
-import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tournament_state_provider.dart';
 import 'package:chessever/screens/tour_detail/player_tour/player_tour_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:flutter/foundation.dart';
@@ -237,21 +235,24 @@ class _GamesPinController extends StateNotifier<GamesPinState> {
           .map((tourModel) => tourModel.tour.id);
 
       for (final stageId in relatedStageIds) {
+        // The selected tour has its own raw-games listener below.
+        if (stageId == tourId) continue;
         // Avoid wiring duplicate listeners
         if (_stageListeners.contains(stageId)) continue;
         _stageListeners.add(stageId);
 
-        ref.listen<KnockoutTournamentState>(
-          knockoutTournamentStateProvider(stageId),
-          (previous, next) {
-            final previousGames =
-                previous?.allGames ?? const <GamesTourModel>[];
-            if (_didGameListChange(previousGames, next.allGames)) {
-              computeAutoPins();
-            }
-          },
-          fireImmediately: true,
-        );
+        ref.listen<AsyncValue<List<Games>>>(gamesTourProvider(stageId), (
+          previous,
+          next,
+        ) {
+          if (!next.hasValue) return;
+          final nextGames = next.value ?? const <Games>[];
+          final previousGames = previous?.valueOrNull;
+          if (previousGames == null ||
+              _didRawGamesChange(previousGames, nextGames)) {
+            computeAutoPins();
+          }
+        }, fireImmediately: true);
       }
     }, fireImmediately: true);
   }
@@ -320,19 +321,6 @@ class _GamesPinController extends StateNotifier<GamesPinState> {
 
     final previousIds = previous.map((game) => game.id).toSet();
     final nextIds = next.map((game) => game.id).toSet();
-    return !setEquals(previousIds, nextIds);
-  }
-
-  bool _didGameListChange(
-    List<GamesTourModel> previous,
-    List<GamesTourModel> next,
-  ) {
-    if (previous.length != next.length) {
-      return true;
-    }
-
-    final previousIds = previous.map((game) => game.gameId).toSet();
-    final nextIds = next.map((game) => game.gameId).toSet();
     return !setEquals(previousIds, nextIds);
   }
 

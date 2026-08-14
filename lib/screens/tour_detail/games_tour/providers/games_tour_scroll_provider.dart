@@ -1,8 +1,11 @@
 import 'dart:async';
 
+import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_app_bar_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_stage_round_resolver.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/games_tour_content_provider.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
@@ -384,13 +387,28 @@ class _GamesTourScrollProvider extends StateNotifier<ItemScrollController> {
 
     final allGames = gamesData.gamesTourModels;
 
-    // For multi-stage knockout rounds (knockout-stage-{tourId}), get games from that specific stage
+    // Synthetic stage rows may represent a sibling tour or one logical stage
+    // inside the selected tour. Resolve them from the app-bar model's source
+    // round IDs instead of treating every suffix as a database tour ID.
     if (roundId.startsWith('$kKnockoutStagePrefix-')) {
-      final stageTourId = roundId.replaceFirst('$kKnockoutStagePrefix-', '');
-      final stageKnockoutState = _ref.read(
-        knockoutTournamentStateProvider(stageTourId),
+      final appBarData = _ref.read(gamesAppBarProvider).valueOrNull;
+      final round =
+          appBarData?.gamesAppBarModels
+              .where((model) => model.id == roundId)
+              .firstOrNull;
+      final tourDetail = _ref.read(tourDetailScreenProvider).valueOrNull;
+      final selectedTourId = tourDetail?.aboutTourModel.id;
+      if (round == null || selectedTourId == null || selectedTourId.isEmpty) {
+        return const [];
+      }
+      return itemsForTournamentDisplayRound<GamesTourModel>(
+        round: round,
+        selectedTourId: selectedTourId,
+        knownTourIds: tourDetail!.tours.map((tourModel) => tourModel.tour.id),
+        selectedTourItems: allGames,
+        sourceRoundIdOf: (game) => game.roundId,
+        siblingTourItems: _readTourGameModels,
       );
-      return stageKnockoutState.allGames;
     }
 
     // For legacy knockout rounds or regular rounds
@@ -399,6 +417,21 @@ class _GamesTourScrollProvider extends StateNotifier<ItemScrollController> {
     }
 
     return allGames.where((g) => g.roundId == roundId).toList();
+  }
+
+  List<GamesTourModel> _readTourGameModels(String sourceTourId) {
+    final rawGames =
+        _ref.read(gamesTourProvider(sourceTourId)).valueOrNull ??
+        const <Games>[];
+    final models = <GamesTourModel>[];
+    for (final game in rawGames) {
+      try {
+        models.add(GamesTourModel.fromGame(game));
+      } catch (_) {
+        // A malformed source row must not break retained scroll indexing.
+      }
+    }
+    return models;
   }
 
   bool _isKnockoutRoundId(String roundId) {
