@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:chessever/desktop/panes/board_pane.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/widgets/board_context_menu.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +8,45 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 void main() {
+  test('annotated Event games save a detached user copy', () {
+    expect(
+      shouldUsePristineEventSourceForLibrarySave(
+        canSaveSource: true,
+        dirtySinceLoad: false,
+        hasUserNags: false,
+        hasCompletedReport: false,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldUsePristineEventSourceForLibrarySave(
+        canSaveSource: true,
+        dirtySinceLoad: true,
+        hasUserNags: false,
+        hasCompletedReport: false,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldUsePristineEventSourceForLibrarySave(
+        canSaveSource: true,
+        dirtySinceLoad: false,
+        hasUserNags: true,
+        hasCompletedReport: false,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldUsePristineEventSourceForLibrarySave(
+        canSaveSource: true,
+        dirtySinceLoad: false,
+        hasUserNags: false,
+        hasCompletedReport: true,
+      ),
+      isFalse,
+    );
+  });
+
   testWidgets('board menu exposes the board focus toggle', (tester) async {
     var toggled = false;
 

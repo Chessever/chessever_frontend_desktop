@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:chessground/chessground.dart' as cg;
+import 'package:dartchess/dartchess.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -19,6 +21,7 @@ import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/event_games_table.dart';
+import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
@@ -484,6 +487,406 @@ void main() {
     },
   );
 
+  testWidgets(
+    'event Board keeps private moves, comments, and evaluations across canonical updates',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(const <String, Object>{});
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1800, 1000);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+
+      final activeUpdates = StreamController<Map<String, dynamic>?>.broadcast(
+        sync: true,
+      );
+      addTearDown(activeUpdates.close);
+      final moveTime = DateTime.utc(2026, 7, 14, 18);
+      final sourceGame = _forYouSourceGame(moveTime);
+      final args = BoardTabGameArgs(
+        gameId: sourceGame.gameId,
+        pgn: _livePgn,
+        label: 'White 1 - Black 1',
+        whiteName: 'White 1',
+        blackName: 'Black 1',
+        tournamentTitle: 'Titled Tuesday',
+        fenSeed: _liveFen,
+        sourceGame: sourceGame,
+        viewSource: ChessboardView.forYou,
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            boardTabGameArgsByTabIdProvider.overrideWith(
+              (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+            ),
+            boardSettingsProviderNew.overrideWith(
+              _TestBoardSettingsNotifier.new,
+            ),
+            engineSettingsProviderNew.overrideWith(
+              _TestEngineSettingsNotifier.new,
+            ),
+            keyboardShortcutsProvider.overrideWith(
+              _TestKeyboardShortcutsNotifier.new,
+            ),
+            liveGameUpdateArrivalStreamProvider.overrideWith(
+              (ref, gameId) => _typedArrivals(activeUpdates.stream, gameId),
+            ),
+            dateTimeProvider.overrideWith(
+              (ref) => Stream<DateTime>.value(moveTime),
+            ),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: BoardPane(tabId: 'tournaments-default')),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final d2 = _boardSquareOffset(tester, Square.d2);
+      final d4 = _boardSquareOffset(tester, Square.d4);
+      final drag = await tester.startGesture(
+        d2,
+        pointer: 1,
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump();
+      await drag.moveTo(d4);
+      await drag.up();
+      await tester.pump();
+      await tester.pump();
+
+      var notation = tester.widget<NotationLadderView>(
+        find.byType(NotationLadderView),
+      );
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(BoardPane)),
+      );
+      var session =
+          container.read(
+            boardPaneSessionByTabIdProvider,
+          )['tournaments-default'];
+      expect(session, isNotNull);
+      expect(session!.pointer, <int>[1, 0, 0]);
+      expect(notation.game.mainline[1].variations!.single.single.uci, 'd2d4');
+      notation.onSetMoveComment!(const <int>[0], 'Private event note');
+      notation.onToggleUserNag!(0, 16);
+      await tester.pump();
+
+      notation = tester.widget<NotationLadderView>(
+        find.byType(NotationLadderView),
+      );
+      expect(
+        notation.game.mainline.first.comments,
+        contains('Private event note'),
+      );
+      expect(notation.userNags[0], contains(16));
+
+      activeUpdates.add(_nextMoveUpdate(sourceGame.gameId, moveTime));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      notation = tester.widget<NotationLadderView>(
+        find.byType(NotationLadderView),
+      );
+      expect(notation.game.mainline, hasLength(3));
+      expect(notation.game.mainline.map((move) => move.uci), <String>[
+        'e2e4',
+        'e7e5',
+        'g1f3',
+      ]);
+      expect(notation.game.mainline[1].variations!.single.single.uci, 'd2d4');
+      session =
+          container.read(
+            boardPaneSessionByTabIdProvider,
+          )['tournaments-default'];
+      expect(session, isNotNull);
+      expect(session!.pointer, <int>[1, 0, 0]);
+      expect(
+        notation.game.mainline.first.comments,
+        contains('Private event note'),
+      );
+      expect(notation.userNags[0], contains(16));
+    },
+  );
+
+  testWidgets(
+    'finished Event rail supports consecutive private analysis moves',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(const <String, Object>{});
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1800, 1000);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+
+      final activeUpdates = StreamController<Map<String, dynamic>?>.broadcast();
+      addTearDown(activeUpdates.close);
+
+      final sourceGame = _forYouSourceGame(
+        DateTime.utc(2026, 8, 14, 9),
+      ).copyWith(
+        gameStatus: GameStatus.whiteWins,
+        pgn: _finishedEventPgn,
+        fen: _finishedEventFen,
+        lastMove: 'e5e6',
+      );
+      final args = BoardTabGameArgs(
+        gameId: sourceGame.gameId,
+        pgn: _finishedEventPgn,
+        label: 'Firouzja 1 - Niemann 0',
+        whiteName: 'Firouzja',
+        blackName: 'Niemann',
+        tournamentTitle: 'Esports World Cup 2026',
+        sourceGame: sourceGame,
+        viewSource: ChessboardView.forYou,
+        eventGames: <TournamentGameSummary>[
+          TournamentGameSummary.fromGamesTourModel(sourceGame),
+        ],
+        gameListSelectedId: sourceGame.gameId,
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            boardTabGameArgsByTabIdProvider.overrideWith(
+              (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+            ),
+            boardSettingsProviderNew.overrideWith(
+              _TestBoardSettingsNotifier.new,
+            ),
+            engineSettingsProviderNew.overrideWith(
+              _TestEngineSettingsNotifier.new,
+            ),
+            keyboardShortcutsProvider.overrideWith(
+              _TestKeyboardShortcutsNotifier.new,
+            ),
+            liveGameUpdateArrivalStreamProvider.overrideWith(
+              (ref, gameId) => _typedArrivals(activeUpdates.stream, gameId),
+            ),
+            dateTimeProvider.overrideWith(
+              (ref) => Stream<DateTime>.value(DateTime.utc(2026, 8, 14, 9)),
+            ),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: BoardPane(tabId: 'tournaments-default')),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      var notation = tester.widget<NotationLadderView>(
+        find.byType(NotationLadderView),
+      );
+      final finalPointer = <int>[notation.game.mainline.length - 1];
+      notation.onJump(finalPointer);
+      await tester.pump();
+
+      final fallenKingBackground = find.byWidgetPredicate(
+        (widget) =>
+            widget is ColoredBox && widget.color == const Color(0xCCF53236),
+        description: 'fallen-king result square',
+      );
+      expect(fallenKingBackground, findsOneWidget);
+
+      final board = tester.widget<DesktopChessBoard>(
+        find.byType(DesktopChessBoard),
+      );
+      expect(board.playerSide, cg.PlayerSide.black);
+      expect(board.validMoves, isNotEmpty);
+      final source = Square.h8;
+      expect(board.validMoves[source], isNotEmpty);
+      final destination = board.validMoves[source]!.first;
+
+      final drag = await tester.startGesture(
+        _boardSquareOffset(tester, source),
+        pointer: 1,
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump();
+      await drag.moveTo(_boardSquareOffset(tester, destination));
+      await drag.up();
+      await tester.pump();
+      await tester.pump();
+
+      notation = tester.widget<NotationLadderView>(
+        find.byType(NotationLadderView),
+      );
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(BoardPane)),
+      );
+      final session =
+          container.read(
+            boardPaneSessionByTabIdProvider,
+          )['tournaments-default'];
+      expect(session, isNotNull);
+      expect(session!.pointer, isNot(finalPointer));
+      expect(notation.activePointer, session.pointer);
+      expect(notation.game.mainline, hasLength(finalPointer.first + 2));
+      expect(fallenKingBackground, findsNothing);
+      final firstPrivateMove = notation.game.mainline.last.uci;
+
+      activeUpdates.add(<String, dynamic>{
+        'id': sourceGame.gameId,
+        'pgn': _finishedEventPgn,
+        'fen': _finishedEventFen,
+        'status': '1-0',
+        'last_move': 'e5e6',
+        'last_move_time': DateTime.utc(2026, 8, 14, 9, 0, 1).toIso8601String(),
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      notation = tester.widget<NotationLadderView>(
+        find.byType(NotationLadderView),
+      );
+      expect(notation.game.mainline, hasLength(finalPointer.first + 2));
+      expect(notation.game.mainline.last.uci, firstPrivateMove);
+      expect(notation.activePointer, <int>[notation.game.mainline.length - 1]);
+      expect(fallenKingBackground, findsNothing);
+
+      await tester.pump(const Duration(milliseconds: 250));
+      final nextBoard = tester.widget<DesktopChessBoard>(
+        find.byType(DesktopChessBoard),
+      );
+      expect(nextBoard.sideToMove, Side.white);
+      expect(nextBoard.playerSide, cg.PlayerSide.white);
+      expect(nextBoard.validMoves, isNotEmpty);
+      final nextSource = nextBoard.validMoves.keys.first;
+      final nextDestination = nextBoard.validMoves[nextSource]!.first;
+      final nextDrag = await tester.startGesture(
+        _boardSquareOffset(tester, nextSource),
+        pointer: 2,
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump();
+      activeUpdates.add(<String, dynamic>{
+        'id': sourceGame.gameId,
+        'pgn': _finishedEventPgn,
+        'fen': _finishedEventFen,
+        'status': '1-0',
+        'last_move': 'e5e6',
+        'last_move_time': DateTime.utc(2026, 8, 14, 9, 0, 2).toIso8601String(),
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await nextDrag.moveTo(_boardSquareOffset(tester, nextDestination));
+      await nextDrag.up();
+      await tester.pump();
+      await tester.pump();
+
+      notation = tester.widget<NotationLadderView>(
+        find.byType(NotationLadderView),
+      );
+      expect(notation.game.mainline, hasLength(finalPointer.first + 3));
+      expect(
+        notation.game.mainline
+            .skip(finalPointer.first + 1)
+            .map((move) => move.uci),
+        <String>[firstPrivateMove, notation.game.mainline.last.uci],
+      );
+      expect(notation.activePointer, <int>[notation.game.mainline.length - 1]);
+      expect(fallenKingBackground, findsNothing);
+
+      final containerArgs =
+          ProviderScope.containerOf(
+            tester.element(find.byType(BoardPane)),
+          ).read(boardTabGameArgsByTabIdProvider)['tournaments-default'];
+      expect(containerArgs?.pgn, _finishedEventPgn);
+    },
+  );
+
+  testWidgets(
+    'drawn Event Board shows peace icons until private analysis moves away',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(const <String, Object>{});
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1800, 1000);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+
+      final sourceGame = _forYouSourceGame(
+        DateTime.utc(2026, 8, 14, 9),
+      ).copyWith(
+        gameStatus: GameStatus.draw,
+        pgn: _drawnEventPgn,
+        fen: _drawnEventFen,
+        lastMove: 'b8c6',
+      );
+      final args = BoardTabGameArgs(
+        gameId: sourceGame.gameId,
+        pgn: _drawnEventPgn,
+        label: 'White ½ - Black ½',
+        whiteName: 'White',
+        blackName: 'Black',
+        sourceGame: sourceGame,
+        viewSource: ChessboardView.forYou,
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            boardTabGameArgsByTabIdProvider.overrideWith(
+              (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+            ),
+            boardSettingsProviderNew.overrideWith(
+              _TestBoardSettingsNotifier.new,
+            ),
+            engineSettingsProviderNew.overrideWith(
+              _TestEngineSettingsNotifier.new,
+            ),
+            keyboardShortcutsProvider.overrideWith(
+              _TestKeyboardShortcutsNotifier.new,
+            ),
+            dateTimeProvider.overrideWith(
+              (ref) => Stream<DateTime>.value(DateTime.utc(2026, 8, 14, 9)),
+            ),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: BoardPane(tabId: 'tournaments-default')),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      var notation = tester.widget<NotationLadderView>(
+        find.byType(NotationLadderView),
+      );
+      final finalPointer = <int>[notation.game.mainline.length - 1];
+      notation.onJump(finalPointer);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('🕊️'), findsNWidgets(2));
+
+      final board = tester.widget<DesktopChessBoard>(
+        find.byType(DesktopChessBoard),
+      );
+      expect(board.playerSide, cg.PlayerSide.white);
+      expect(board.validMoves, isNotEmpty);
+      final source = board.validMoves.keys.first;
+      final destination = board.validMoves[source]!.first;
+      final drag = await tester.startGesture(
+        _boardSquareOffset(tester, source),
+        pointer: 1,
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump();
+      await drag.moveTo(_boardSquareOffset(tester, destination));
+      await drag.up();
+      await tester.pump();
+      await tester.pump();
+
+      notation = tester.widget<NotationLadderView>(
+        find.byType(NotationLadderView),
+      );
+      expect(notation.activePointer, isNot(finalPointer));
+      expect(find.text('🕊️'), findsNothing);
+    },
+  );
+
   testWidgets('large event rails start at 64 rows and grow by scrolling', (
     tester,
   ) async {
@@ -564,12 +967,13 @@ void main() {
     // Row 65 lives past the opening window and appears once the user scrolls.
     expect(find.text('White 65'), findsNothing);
 
-    final railScrollable = find
-        .descendant(
-          of: find.byType(EventGamesTable),
-          matching: find.byType(Scrollable),
-        )
-        .first;
+    final railScrollable =
+        find
+            .descendant(
+              of: find.byType(EventGamesTable),
+              matching: find.byType(Scrollable),
+            )
+            .first;
 
     // Each time the user reaches the bottom the rail reveals another slice, so
     // repeated scrolling walks deeper into the event.
@@ -887,6 +1291,34 @@ const String _nextMovePgn = '''
 1. e4 e5 2. Nf3 *
 ''';
 
+const String _finishedEventPgn = '''
+[Event "Esports World Cup 2026"]
+[White "Firouzja"]
+[Black "Niemann"]
+[Result "1-0"]
+
+1. d4 Nf6 2. Nf3 d5 3. Bf4 e6 4. Nbd2 c5 5. e3 Qb6 6. Rb1 Bd6
+7. dxc5 Qxc5 8. Bg5 Nbd7 9. b4 Qc7 10. c4 b6 11. Nd4 a6 12. cxd5 Nxd5
+13. Rc1 Qb7 14. a3 O-O 15. Ne4 Be7 16. Bd3 Ne5 17. Bb1 f5 18. Bxe7 Qxe7
+19. Nd2 Bb7 20. O-O Rad8 21. Qe2 Qf6 22. Ba2 Kh8 23. h3 g5 24. Nc4 Ng6
+25. Qb2 Ba8 26. Nxe6 1-0
+''';
+
+const String _finishedEventFen =
+    'b2r1r1k/7p/pp2Nqn1/3n1pp1/1PN5/P3P2P/BQ3PP1/2R2RK1 b - - 0 26';
+
+const String _drawnEventPgn = '''
+[Event "Drawn event"]
+[White "White"]
+[Black "Black"]
+[Result "1/2-1/2"]
+
+1. e4 e5 2. Nf3 Nc6 1/2-1/2
+''';
+
+const String _drawnEventFen =
+    'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3';
+
 const String _liveFen =
     'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2';
 
@@ -965,6 +1397,15 @@ Stream<LiveStreamArrival<LiveGameUpdate?>> _typedArrivals(
       isFallback: false,
     );
   }
+}
+
+Offset _boardSquareOffset(WidgetTester tester, Square square) {
+  final rect = tester.getRect(find.byKey(const ValueKey('board-container')));
+  final squareSize = rect.width / 8;
+  return Offset(
+    rect.left + (square.file * squareSize) + squareSize / 2,
+    rect.top + ((7 - square.rank) * squareSize) + squareSize / 2,
+  );
 }
 
 Map<String, dynamic> _nextMoveUpdate(String gameId, DateTime moveTime) {
