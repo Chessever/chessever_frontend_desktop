@@ -34,6 +34,16 @@ import 'package:chessever/utils/local_pgn_metadata.dart';
 export 'package:chessever/repository/sqlite/local_chess_schema.dart'
     show createLocalChessDatabaseSchema;
 
+final class LocalChessPgnSourceChangedDuringAppend implements Exception {
+  const LocalChessPgnSourceChangedDuringAppend(this.path);
+
+  final String path;
+
+  @override
+  String toString() =>
+      'Local PGN changed before its incremental cache update: $path';
+}
+
 class LocalChessResqliteDatabase {
   LocalChessResqliteDatabase._();
 
@@ -3075,6 +3085,49 @@ class LocalChessDatabaseRepository {
     return _runLocalCacheWriteQueued(() => db.execute(statement, parameters));
   }
 
+  /// Serializes a local PGN file mutation with every write to the shared local
+  /// chess cache. The action must cover its complete read, file replacement,
+  /// and cache-persistence lifetime so overlapping commands cannot derive
+  /// decisions from the same stale source snapshot.
+  Future<T> runLocalPgnWriteQueued<T>(Future<T> Function() action) =>
+      _runLocalCacheWriteQueued(action);
+
+  /// Rebuilds one cached PGN from its authoritative on-disk snapshot.
+  ///
+  /// Callers must invoke this after releasing [runLocalPgnWriteQueued]: the
+  /// importer opens its session before acquiring the shared writer queue so
+  /// database initialization can never wait on a lock held by its caller.
+  Future<bool> reconcileLocalPgnCacheFromFile({
+    required String databasePath,
+  }) async {
+    final cleanPath = databasePath.trim();
+    if (cleanPath.isEmpty) return false;
+    if (Zone.current[_localCacheWriteQueueZoneKey] == true) {
+      throw StateError(
+        'Local PGN cache reconciliation must start outside the write queue.',
+      );
+    }
+    final databaseId = _databaseId(cleanPath);
+    final db = await _openDatabase();
+    final rows = await db.select(
+      '''
+      SELECT label
+      FROM $localChessDatabasesTable
+      WHERE id = ?
+      LIMIT 1
+      ''',
+      <Object?>[databaseId],
+    );
+    final cachedLabel =
+        rows.isEmpty ? null : rows.single['label']?.toString().trim();
+    final source = await importSingleFileSource(
+      path: cleanPath,
+      sourceLabel:
+          cachedLabel == null || cachedLabel.isEmpty ? null : cachedLabel,
+    );
+    return source != null;
+  }
+
   /// Test-only access to the global write lock so serialization can be asserted
   /// without spinning up isolates.
   @visibleForTesting
@@ -4601,14 +4654,20 @@ class LocalChessDatabaseRepository {
   Future<bool> persistAppendedPgnGames({
     required String databasePath,
     required List<LocalChessAppendedPgn> appendedPgns,
+    required String expectedPreviousFileText,
+    required String expectedFileText,
   }) async {
     _throwIfCacheSourceDeletionInProgress(databasePath);
     if (appendedPgns.isEmpty) return false;
+    final expectedBytes = Uint8List.fromList(utf8.encode(expectedFileText));
+    final expectedContentFingerprint = computeLocalChessBytesContentFingerprint(
+      expectedBytes,
+    );
     final databaseId = _databaseId(databasePath);
     final db = await _database();
     final databaseRows = await db.select(
       '''
-      SELECT label
+      SELECT label, content_fingerprint
       FROM $localChessDatabasesTable
       WHERE id = ? AND deleted_at_ms IS NULL
       LIMIT 1
@@ -4616,6 +4675,15 @@ class LocalChessDatabaseRepository {
       <Object?>[databaseId],
     );
     if (databaseRows.isEmpty) return false;
+    final expectedPreviousFingerprint =
+        computeLocalChessBytesContentFingerprint(
+          Uint8List.fromList(utf8.encode(expectedPreviousFileText)),
+        );
+    final cachedContentFingerprint =
+        databaseRows.single['content_fingerprint']?.toString().trim() ?? '';
+    if (cachedContentFingerprint != expectedPreviousFingerprint) {
+      throw LocalChessPgnSourceChangedDuringAppend(databasePath);
+    }
 
     final existingCountRows = await db.select(
       '''
@@ -4694,11 +4762,22 @@ class LocalChessDatabaseRepository {
       games: treeInputs,
     );
     final index = buildResult.index;
-    final stat = await File(databasePath).stat();
-    final contentFingerprint = await computeLocalChessFileContentFingerprint(
-      databasePath,
-      stat: stat,
-    );
+    final sourceFile = File(databasePath);
+    final beforeRead = await sourceFile.stat();
+    if (beforeRead.type != FileSystemEntityType.file ||
+        beforeRead.size != expectedBytes.length) {
+      throw LocalChessPgnSourceChangedDuringAppend(databasePath);
+    }
+    final currentText = await sourceFile.readAsString();
+    final stat = await sourceFile.stat();
+    if (currentText != expectedFileText ||
+        stat.type != FileSystemEntityType.file ||
+        stat.size != expectedBytes.length ||
+        stat.size != beforeRead.size ||
+        stat.modified != beforeRead.modified ||
+        stat.changed != beforeRead.changed) {
+      throw LocalChessPgnSourceChangedDuringAppend(databasePath);
+    }
     final now = DateTime.now().millisecondsSinceEpoch;
 
     await _lockedTransaction(db, (txn) async {
@@ -4793,7 +4872,7 @@ class LocalChessDatabaseRepository {
         <Object?>[
           stat.size,
           stat.modified.millisecondsSinceEpoch,
-          contentFingerprint,
+          expectedContentFingerprint,
           games.length,
           nextPositionCount,
           updateOpeningTree ? treeMaxPly : null,
@@ -4802,6 +4881,13 @@ class LocalChessDatabaseRepository {
         ],
       );
     });
+
+    final afterCommit = await sourceFile.stat();
+    if (afterCommit.type != FileSystemEntityType.file ||
+        afterCommit.size != expectedBytes.length ||
+        await sourceFile.readAsString() != expectedFileText) {
+      throw LocalChessPgnSourceChangedDuringAppend(databasePath);
+    }
 
     return true;
   }

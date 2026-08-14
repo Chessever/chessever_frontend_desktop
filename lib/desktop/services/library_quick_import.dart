@@ -101,6 +101,7 @@ Future<int> quickImportClipboardToFolder({
   required BuildContext context,
   required WidgetRef ref,
   required LibraryFolder folder,
+  bool Function()? isCurrentOwner,
 }) async {
   _quickImportLog('clipboard import start folder=${folder.id}');
   if (!isWritableLibraryFolder(folder)) {
@@ -109,6 +110,7 @@ Future<int> quickImportClipboardToFolder({
     return 0;
   }
   final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
+  if (isCurrentOwner?.call() == false) return 0;
   final text = clipboard?.text?.trim();
   if (text == null || text.isEmpty) {
     _quickImportLog('clipboard import abort empty');
@@ -124,6 +126,7 @@ Future<int> quickImportClipboardToFolder({
   _quickImportLog('clipboard import parse dispatch chars=${text.length}');
   final games =
       (await parsePgnsToChessGamesAsync(text)).map((e) => e.chessGame).toList();
+  if (isCurrentOwner?.call() == false) return 0;
   _quickImportLog('clipboard import parsed games=${games.length}');
   if (games.isEmpty) {
     if (context.mounted) {
@@ -142,6 +145,7 @@ Future<int> quickImportClipboardToFolder({
     folder: folder,
     games: games,
     verb: 'Pasted',
+    isCurrentOwner: isCurrentOwner,
   );
   _quickImportLog('clipboard import saved=$saved folder=${folder.id}');
   return saved;
@@ -213,6 +217,7 @@ Future<int> _saveAndToast({
   required LibraryFolder folder,
   required List<ChessGame> games,
   required String verb,
+  bool Function()? isCurrentOwner,
 }) async {
   try {
     final saved = await _bulkSave(
@@ -220,8 +225,9 @@ Future<int> _saveAndToast({
       ref: ref,
       folder: folder,
       games: games,
+      isCurrentOwner: isCurrentOwner,
     );
-    if (saved > 0 && context.mounted) {
+    if (saved > 0 && context.mounted && isCurrentOwner?.call() != false) {
       showDesktopToast(
         context,
         '$verb $saved ${saved == 1 ? 'game' : 'games'} into "${folder.name}".',
@@ -245,9 +251,12 @@ Future<int> _bulkSave({
   required WidgetRef ref,
   required LibraryFolder folder,
   required List<ChessGame> games,
+  bool Function()? isCurrentOwner,
 }) async {
   final allowed = await canSaveMoreGames(context, gamesToAdd: games.length);
-  if (!allowed || !context.mounted) return 0;
+  if (!allowed || !context.mounted || isCurrentOwner?.call() == false) {
+    return 0;
+  }
 
   final repo = ref.read(libraryRepositoryProvider);
   final userId = repo.supabase.auth.currentUser?.id;
@@ -275,13 +284,18 @@ Future<int> _bulkSave({
   ];
 
   const chunkSize = 250;
+  var saved = 0;
   for (var i = 0; i < rows.length; i += chunkSize) {
+    if (isCurrentOwner?.call() == false) break;
     final end = math.min(i + chunkSize, rows.length);
     await repo.createSavedAnalysesBulk(rows.sublist(i, end));
+    saved = end;
   }
-  ref.invalidate(libraryFoldersStreamProvider);
-  ref.invalidate(subscribedBooksProvider);
-  return rows.length;
+  if (saved > 0) {
+    ref.invalidate(libraryFoldersStreamProvider);
+    ref.invalidate(subscribedBooksProvider);
+  }
+  return saved;
 }
 
 Future<({List<ChessGame> games, String? fileError})> _parseChessGamesFromPaths(

@@ -924,6 +924,7 @@ void main() {
       expect(fallbackMoves.map((move) => move.total), everyElement(1));
 
       final appendedRawPgn = _metadataPgn.trim();
+      final previousFileText = await pgnFile.readAsString();
       await pgnFile.writeAsString(
         '\n\n$appendedRawPgn\n',
         mode: FileMode.append,
@@ -935,6 +936,8 @@ void main() {
           appendedPgns: <LocalChessAppendedPgn>[
             LocalChessAppendedPgn(rawPgn: appendedRawPgn),
           ],
+          expectedPreviousFileText: previousFileText,
+          expectedFileText: await pgnFile.readAsString(),
         ),
         isTrue,
       );

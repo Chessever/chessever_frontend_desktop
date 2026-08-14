@@ -516,6 +516,46 @@ void main() {
     },
   );
 
+  testWidgets('event rail keeps hour clocks on one right-aligned line', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: 'hour-clock-game',
+          pgn: '1. e4 e5 *',
+          label: 'Hour clock game',
+          whiteName: 'White',
+          blackName: 'Black',
+          tournamentTitle: 'Event',
+          eventGames: [
+            _summary(
+              id: 'hour-clock-game',
+              roundLabel: 'Round 1',
+              status: GameStatus.ongoing,
+              whiteClockSeconds: 3758,
+              blackClockSeconds: 3661,
+            ),
+          ],
+          gameListSelectedId: 'hour-clock-game',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final clockText = find.text('01:02:38');
+    final trailing = find.byKey(
+      const Key('event-game-hour-clock-game-white-trailing'),
+    );
+    expect(clockText, findsOneWidget);
+    expect(tester.getSize(clockText).height, lessThan(20));
+    expect(tester.getSize(trailing).width, 64);
+    expect(
+      tester.getTopRight(clockText).dx,
+      closeTo(tester.getTopRight(trailing).dx, 0.5),
+    );
+  });
+
   testWidgets('event rail title has no decorative primary bar', (tester) async {
     await tester.pumpWidget(
       _wrap(
@@ -587,7 +627,7 @@ void main() {
     expect(firstDecoration.gradient, isA<LinearGradient>());
     expect(firstBorder.left, BorderSide.none);
     expect(firstBorder.bottom.color, kDividerColor);
-    expect(firstBorder.bottom.width, 0.5);
+    expect(firstBorder.bottom.width, 1);
 
     final lastDecoration = gameTable.children.last.decoration! as BoxDecoration;
     final lastBorder = lastDecoration.border! as Border;

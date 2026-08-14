@@ -4,11 +4,13 @@ import 'package:path/path.dart' as p;
 
 /// Replaces a local PGN through a sibling temporary file after confirming that
 /// the source still matches the text the caller inspected.
-Future<void> writeLocalPgnAtomically({
+Future<bool> writeLocalPgnAtomically({
   required File file,
   required String expectedText,
   required String nextText,
+  bool Function()? canReplace,
 }) async {
+  if (canReplace?.call() == false) return false;
   final currentText = await file.exists() ? await file.readAsString() : '';
   if (currentText != expectedText) {
     throw StateError(
@@ -35,8 +37,10 @@ Future<void> writeLocalPgnAtomically({
         'and try again.',
       );
     }
+    if (canReplace?.call() == false) return false;
 
     await temp.rename(file.path);
+    return true;
   } finally {
     if (await temp.exists()) {
       await temp.delete();
