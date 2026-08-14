@@ -14,6 +14,8 @@ import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
+import 'package:chessever/screens/chessboard/notation/notation_tree.dart'
+    show exportGameToPgn;
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
@@ -556,6 +558,422 @@ void main() {
         (comment) => comment.contains('local note'),
       ),
       isFalse,
+    );
+  });
+
+  test(
+    'canonical event refresh preserves proven user edits on unchanged moves',
+    () {
+      const previousPgn = '[Result "*"]\n\n1. e4 e5 *';
+      final previous = ChessGame.fromPgn('game-1', previousPgn);
+      final privateLine = ChessGame.fromPgn(
+        'private-line',
+        '[Result "*"]\n\n1. e4 e5 2. d4 d5 *',
+      ).mainline.sublist(2);
+      final current = previous.copyWith(
+        mainline: <ChessMove>[
+          previous.mainline.first.copyWith(
+            comments: const <String>['Private event-game note'],
+          ),
+          previous.mainline[1].copyWith(
+            variations: <ChessLine>[privateLine],
+            overrideVariations: true,
+          ),
+        ],
+      );
+      final fresh = ChessGame.fromPgn(
+        'game-1',
+        '[Result "*"]\n\n1. e4 e5 2. Nf3 *',
+      );
+
+      final reconciled = reconcileCanonicalBroadcastLocalAnnotationsForTesting(
+        previousBroadcastPgn: previousPgn,
+        currentGame: current,
+        freshGame: fresh,
+        userNags: const <int, List<int>>{
+          0: <int>[16],
+        },
+      );
+
+      expect(reconciled.game.mainline.map((move) => move.uci), <String>[
+        'e2e4',
+        'e7e5',
+        'g1f3',
+      ]);
+      expect(
+        reconciled.game.mainline.first.comments,
+        contains('Private event-game note'),
+      );
+      expect(
+        reconciled.game.mainline[1].variations!.single.map((move) => move.uci),
+        <String>['d2d4', 'd7d5'],
+      );
+      expect(reconciled.userNags, <int, List<int>>{
+        0: <int>[16],
+      });
+      expect(reconciled.hasLocalEdits, isTrue);
+    },
+  );
+
+  test(
+    'finished Event echo retains a private continuation after the canonical tip',
+    () {
+      const previousPgn = '[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 1-0';
+      final current = ChessGame.fromPgn(
+        'game-1',
+        '[Result "1-0"]\n\n'
+            '1. e4 e5 2. Nf3 Nc6 3. Bb5 \$16 {Private continuation} 1-0',
+      );
+      final fresh = ChessGame.fromPgn('game-1', previousPgn);
+
+      final reconciled = reconcileCanonicalBroadcastLocalAnnotationsForTesting(
+        previousBroadcastPgn: previousPgn,
+        currentGame: current,
+        freshGame: fresh,
+        userNags: const <int, List<int>>{
+          4: <int>[16],
+        },
+      );
+
+      expect(reconciled.game.mainline.map((move) => move.uci), <String>[
+        'e2e4',
+        'e7e5',
+        'g1f3',
+        'b8c6',
+        'f1b5',
+      ]);
+      expect(
+        reconciled.game.mainline.last.comments,
+        contains('Private continuation'),
+      );
+      expect(reconciled.userNags, <int, List<int>>{
+        4: <int>[16],
+      });
+      expect(reconciled.hasLocalEdits, isTrue);
+    },
+  );
+
+  test(
+    'canonical correction drops commentary after move identity diverges',
+    () {
+      const previousPgn = '[Result "*"]\n\n1. e4 e5 2. Nf3 *';
+      final previous = ChessGame.fromPgn('game-1', previousPgn);
+      final retainedPrivateLine = ChessGame.fromPgn(
+        'retained-private-line',
+        '[Result "*"]\n\n1. e4 d6 *',
+      ).mainline.sublist(1);
+      final droppedPrivateLine = ChessGame.fromPgn(
+        'dropped-private-line',
+        '[Result "*"]\n\n1. e4 e5 2. Nf3 Nc6 *',
+      ).mainline.sublist(3);
+      final current = previous.copyWith(
+        mainline: <ChessMove>[
+          previous.mainline.first.copyWith(
+            comments: const <String>['Keep this note'],
+            variations: <ChessLine>[retainedPrivateLine],
+            overrideVariations: true,
+          ),
+          previous.mainline[1],
+          previous.mainline[2].copyWith(
+            comments: const <String>['Drop this stale note'],
+            variations: <ChessLine>[droppedPrivateLine],
+            overrideVariations: true,
+          ),
+        ],
+      );
+      final corrected = ChessGame.fromPgn(
+        'game-1',
+        '[Result "*"]\n\n1. e4 c5 2. Nf3 *',
+      );
+
+      final reconciled = reconcileCanonicalBroadcastLocalAnnotationsForTesting(
+        previousBroadcastPgn: previousPgn,
+        currentGame: current,
+        freshGame: corrected,
+        userNags: const <int, List<int>>{
+          0: <int>[16],
+          2: <int>[18],
+        },
+      );
+
+      expect(
+        reconciled.game.mainline.first.comments,
+        contains('Keep this note'),
+      );
+      expect(
+        reconciled.game.mainline.first.variations!.single.single.uci,
+        'd7d6',
+      );
+      expect(reconciled.game.mainline[2].comments, isNull);
+      expect(reconciled.game.mainline[2].variations, isNull);
+      expect(reconciled.userNags, <int, List<int>>{
+        0: <int>[16],
+      });
+    },
+  );
+
+  test(
+    'canonical refresh preserves a private extension of a source variation',
+    () {
+      final previousBase = ChessGame.fromPgn(
+        'game-1',
+        '[Result "*"]\n\n1. e4 e5 2. Nf3 *',
+      );
+      final sourceVariation = <ChessMove>[
+        ChessGame.fromPgn(
+          'source-variation',
+          '[Result "*"]\n\n1. e4 e5 2. d4 *',
+        ).mainline[2],
+      ];
+      final previous = previousBase.copyWith(
+        mainline: <ChessMove>[
+          previousBase.mainline.first,
+          previousBase.mainline[1].copyWith(
+            variations: <ChessLine>[sourceVariation],
+            overrideVariations: true,
+          ),
+          previousBase.mainline[2],
+        ],
+      );
+      final previousPgn = exportGameToPgn(previous);
+      final reparsedPrevious = ChessGame.fromPgn('game-1', previousPgn);
+      expect(
+        <int>[
+          for (var index = 0; index < reparsedPrevious.mainline.length; index++)
+            if (reparsedPrevious.mainline[index].variations?.isNotEmpty == true)
+              index,
+        ],
+        <int>[1],
+        reason: previousPgn,
+      );
+      final navigator = ChessGameNavigator(previous)
+        ..goToMovePointerUnchecked(<int>[1, 0, 0]);
+
+      navigator.makeOrGoToMove('d7d5');
+
+      expect(navigator.state.movePointer, <int>[1, 0, 1]);
+      final currentVariation = List<ChessMove>.of(
+        navigator.state.game.mainline[1].variations!.single,
+      );
+      currentVariation[0] = currentVariation[0].copyWith(nags: const <int>[16]);
+      final currentMainline = List<ChessMove>.of(navigator.state.game.mainline);
+      currentMainline[1] = currentMainline[1].copyWith(
+        variations: <ChessLine>[currentVariation],
+        overrideVariations: true,
+      );
+      final currentGame = navigator.state.game.copyWith(
+        mainline: currentMainline,
+      );
+      expect(
+        currentGame.mainline[1].variations!.single.map((move) => move.uci),
+        <String>['d2d4', 'd7d5'],
+      );
+
+      final freshBase = ChessGame.fromPgn(
+        'game-1',
+        '[Result "*"]\n\n1. e4 e5 2. Nf3 Nc6 *',
+      );
+      final fresh = freshBase.copyWith(
+        mainline: <ChessMove>[
+          freshBase.mainline.first,
+          freshBase.mainline[1].copyWith(
+            variations: <ChessLine>[sourceVariation],
+            overrideVariations: true,
+          ),
+          freshBase.mainline[2],
+          freshBase.mainline[3],
+        ],
+      );
+      final reconciled = reconcileCanonicalBroadcastLocalAnnotationsForTesting(
+        previousBroadcastPgn: previousPgn,
+        currentGame: currentGame,
+        freshGame: fresh,
+        userNags: const <int, List<int>>{},
+      );
+
+      expect(reconciled.game.mainline.map((move) => move.uci), <String>[
+        'e2e4',
+        'e7e5',
+        'g1f3',
+        'b8c6',
+      ]);
+      expect(
+        reconciled.game.mainline[1].variations!.single.map((move) => move.uci),
+        <String>['d2d4', 'd7d5'],
+      );
+      expect(reconciled.game.mainline[1].variations!.single.first.nags, <int>[
+        16,
+      ]);
+      expect(reconciled.hasLocalEdits, isTrue);
+
+      final corrected = reconcileCanonicalBroadcastLocalAnnotationsForTesting(
+        previousBroadcastPgn: previousPgn,
+        currentGame: currentGame,
+        freshGame: freshBase,
+        userNags: const <int, List<int>>{},
+      );
+      expect(
+        corrected.game.mainline[1].variations,
+        isNull,
+        reason:
+            'A corrected-away source branch must not survive merely because '
+            'the user extended it locally.',
+      );
+    },
+  );
+
+  test('canonical confirmation folds a private prediction into mainline', () {
+    const previousPgn = '[Result "*"]\n\n1. e4 e5 *';
+    final previous = ChessGame.fromPgn('game-1', previousPgn);
+    final localPrediction = ChessGame.fromPgn(
+      'local-prediction',
+      '[Result "*"]\n\n1. e4 e5 2. Nf3 d5 *',
+    ).mainline.sublist(2);
+    final current = previous.copyWith(
+      mainline: <ChessMove>[
+        previous.mainline.first,
+        previous.mainline[1].copyWith(
+          variations: <ChessLine>[localPrediction],
+          overrideVariations: true,
+        ),
+      ],
+    );
+    final fresh = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 e5 2. Nf3 Nc6 *',
+    );
+
+    final reconciled = reconcileCanonicalBroadcastLocalAnnotationsForTesting(
+      previousBroadcastPgn: previousPgn,
+      currentGame: current,
+      freshGame: fresh,
+      userNags: const <int, List<int>>{},
+    );
+
+    expect(reconciled.game.mainline.map((move) => move.uci), <String>[
+      'e2e4',
+      'e7e5',
+      'g1f3',
+      'b8c6',
+    ]);
+    expect(
+      reconciled.game.mainline[1].variations,
+      isNull,
+      reason: 'The newly canonical Nf3 must not remain as a duplicate branch.',
+    );
+    expect(
+      reconciled.game.mainline[3].variations!.single.single.uci,
+      'd7d5',
+      reason: 'Private analysis beyond the confirmed move must survive.',
+    );
+  });
+
+  test('canonical promotion keeps private work on a source variation', () {
+    final previousBase = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 e5 2. Nf3 *',
+    );
+    final sourceVariation = ChessGame.fromPgn(
+      'source-variation',
+      '[Result "*"]\n\n1. e4 e5 2. d4 *',
+    ).mainline.sublist(2);
+    final previous = previousBase.copyWith(
+      mainline: <ChessMove>[
+        previousBase.mainline.first,
+        previousBase.mainline[1].copyWith(
+          variations: <ChessLine>[sourceVariation],
+          overrideVariations: true,
+        ),
+        previousBase.mainline[2],
+      ],
+    );
+    final currentVariation = <ChessMove>[
+      ...sourceVariation,
+      ChessGame.fromPgn(
+        'private-suffix',
+        '[Result "*"]\n\n1. e4 e5 2. d4 d5 *',
+      ).mainline[3],
+    ];
+    final current = previous.copyWith(
+      mainline: <ChessMove>[
+        previous.mainline.first,
+        previous.mainline[1].copyWith(
+          variations: <ChessLine>[currentVariation],
+          overrideVariations: true,
+        ),
+        previous.mainline[2],
+      ],
+    );
+    final fresh = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 e5 2. d4 Nf6 *',
+    );
+
+    final reconciled = reconcileCanonicalBroadcastLocalAnnotationsForTesting(
+      previousBroadcastPgn: exportGameToPgn(previous),
+      currentGame: current,
+      freshGame: fresh,
+      userNags: const <int, List<int>>{},
+    );
+
+    expect(reconciled.game.mainline.map((move) => move.uci), <String>[
+      'e2e4',
+      'e7e5',
+      'd2d4',
+      'g8f6',
+    ]);
+    expect(reconciled.game.mainline[2].variations!.single.single.uci, 'd7d5');
+    expect(reconciled.hasLocalEdits, isTrue);
+  });
+
+  test('pointer remaps by move identity when variation indices shift', () {
+    final base = ChessGame.fromPgn('game-1', '[Result "*"]\n\n1. e4 e5 *');
+    ChessMove moveAfter(String san) =>
+        ChessGame.fromPgn(
+          san,
+          '[Result "*"]\n\n1. e4 e5 2. $san *',
+        ).mainline[2];
+    final reshaped = base.copyWith(
+      mainline: <ChessMove>[
+        base.mainline.first,
+        base.mainline[1].copyWith(
+          variations: <ChessLine>[
+            <ChessMove>[moveAfter('c3')],
+            <ChessMove>[moveAfter('d4')],
+          ],
+          overrideVariations: true,
+        ),
+      ],
+    );
+
+    expect(
+      pointerForUciPathForTesting(reshaped, const <String>[
+        'e2e4',
+        'e7e5',
+        'd2d4',
+      ]),
+      <int>[1, 1, 0],
+    );
+
+    final withoutPrivateMove = ChessGame.fromPgn(
+      'game-1',
+      '[Result "*"]\n\n1. e4 e5 2. c3 *',
+    );
+    expect(
+      pointerForLongestSurvivingUciPrefixForTesting(
+        withoutPrivateMove,
+        const <String>['e2e4', 'e7e5', 'd2d4'],
+      ),
+      <int>[1],
+      reason: 'A removed branch should return to its last surviving position.',
+    );
+    expect(
+      pointerForLongestSurvivingUciPrefixForTesting(
+        ChessGame.fromPgn('game-1', '[Result "*"]\n\n1. d4 *'),
+        const <String>['e2e4', 'e7e5', 'd2d4'],
+      ),
+      isEmpty,
+      reason: 'If no move survives, selection should return to neutral root.',
     );
   });
 

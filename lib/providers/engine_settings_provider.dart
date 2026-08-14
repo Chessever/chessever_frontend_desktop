@@ -174,7 +174,7 @@ class EngineSettings {
   const EngineSettings({
     this.showEngineGauge = true,
     this.showDepthOverlay = true,
-    this.showPvArrows = false,
+    this.showPvArrows = true,
     this.showEngineAnalysis = false,
     this.autoGameAnalysis = true,
     this.searchTimeIndex = 0,

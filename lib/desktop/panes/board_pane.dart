@@ -208,6 +208,14 @@ bool isDatabaseBoardSnapshot(BoardTabGameArgs? args) {
 }
 
 @visibleForTesting
+bool shouldUsePristineEventSourceForLibrarySave({
+  required bool canSaveSource,
+  required bool dirtySinceLoad,
+  required bool hasUserNags,
+  required bool hasCompletedReport,
+}) => canSaveSource && !dirtySinceLoad && !hasUserNags && !hasCompletedReport;
+
+@visibleForTesting
 String? resolveInitialBoardPgnLiveStatus({
   required String? acceptedLiveStatus,
   required bool isDatabaseSnapshot,
@@ -1100,6 +1108,13 @@ class _BoardPaneContent extends HookConsumerWidget {
 
       final oldGame = chessGame.value;
       final oldPointer = pointer.value;
+      final oldPointerPath = _pathFromPointer(oldGame, oldPointer);
+      final oldPointerUciPath = <String>[
+        for (final move in oldPointerPath) move.uci,
+      ];
+      final oldRenderedPositionKey = _fenPositionKey(
+        _pliesFromPath(oldGame.startingFen, oldPointerPath).last.position.fen,
+      );
       final oldMainlineLen = oldGame.mainline.length;
       final wasAtMainlineTip =
           oldPointer.length == 1 &&
@@ -1114,24 +1129,35 @@ class _BoardPaneContent extends HookConsumerWidget {
       final hasRetainedTree =
           oldMainlineLen > 0 ||
           (oldGame.detachedRootAnalysis?.isNotEmpty ?? false);
+      final localAnnotations =
+          isCanonicalBroadcastSource
+              ? _reconcileCanonicalBroadcastLocalAnnotations(
+                previousBroadcastPgn: lastAppliedPgn.value,
+                currentGame: oldGame,
+                freshGame: freshGame,
+                userNags: currentUserNags,
+              )
+              : null;
       final game =
-          shouldMergeBroadcastTree(gameId: gameId, currentGame: oldGame)
+          localAnnotations != null
+              ? localAnnotations.game
+              : shouldMergeBroadcastTree(gameId: gameId, currentGame: oldGame)
               ? _mergeBroadcastUpdate(
                 oldGame,
                 freshGame,
-                preserveExistingAnalysis: !isCanonicalBroadcastSource,
+                preserveExistingAnalysis: true,
               )
               : freshGame;
 
       final keepLocalEdits =
-          !isCanonicalBroadcastSource &&
-          gameId != null &&
-          hasRetainedTree &&
-          dirtySinceLoad.value;
+          localAnnotations?.hasLocalEdits ??
+          (gameId != null && hasRetainedTree && dirtySinceLoad.value);
       if (isCanonicalBroadcastSource) {
         suppressUserNagUndoSnapshot.value = true;
         try {
-          ref.read(userMoveNagsProvider.notifier).clearTab(notationStateTabId);
+          ref
+              .read(userMoveNagsProvider.notifier)
+              .restoreTab(notationStateTabId, localAnnotations!.userNags);
         } finally {
           suppressUserNagUndoSnapshot.value = false;
         }
@@ -1175,23 +1201,37 @@ class _BoardPaneContent extends HookConsumerWidget {
       } else if (wasAtMainlineTip) {
         newPointer = <int>[game.mainline.length - 1];
       } else {
-        newPointer =
-            _isPointerValid(game, oldPointer)
-                ? oldPointer
-                : <int>[game.mainline.length - 1];
+        newPointer = _pointerForLongestSurvivingUciPrefix(
+          game,
+          oldPointerUciPath,
+        );
       }
 
       // Remount the board (instant cut) unless this apply is a single live
-      // move appended at the tip. Opening a card seeds from the cached card
-      // snapshot, then the live-seed refresh re-applies the fresh PGN here;
-      // both land under the same `loaded` render-key, so without a remount
-      // chessground slides every piece across the gap. A +1 tip append keeps
-      // the same key so the single-move animation still plays.
+      // move appended at the tip or reconciliation kept the exact position
+      // already on screen. Opening a card seeds from the cached card snapshot,
+      // then the live-seed refresh re-applies the fresh PGN here; both land
+      // under the same `loaded` render-key, so a real position jump still needs
+      // a cut. A matching canonical echo behind private analysis must not cut:
+      // it can otherwise dispose chessground between pointer-down and
+      // pointer-up, dropping the user's next analysis move.
       final isPlainTipAppend =
           oldMainlineLen > 0 &&
           game.mainline.length == oldMainlineLen + 1 &&
           wasAtMainlineTip;
-      if (!isPlainTipAppend) {
+      final newPointerPath = _pathFromPointer(game, newPointer);
+      final keepsRenderedPosition =
+          _uciPathsEqual(oldPointerUciPath, <String>[
+            for (final move in newPointerPath) move.uci,
+          ]) &&
+          oldRenderedPositionKey ==
+              _fenPositionKey(
+                _pliesFromPath(
+                  game.startingFen,
+                  newPointerPath,
+                ).last.position.fen,
+              );
+      if (!isPlainTipAppend && !keepsRenderedPosition) {
         boardCutEpoch.value++;
       }
 
@@ -1332,14 +1372,24 @@ class _BoardPaneContent extends HookConsumerWidget {
           .rememberGameEndingPlyIndex(oldGame.mainline.length);
       final initialFenKey = _nullableFenPositionKey(boardArgs?.initialFen);
       final notationStateTabId = activeTabId ?? 'board-default';
+      final currentUserNags =
+          ref.read(userMoveNagsProvider)[notationStateTabId] ??
+          const <int, List<int>>{};
+      final retainedUserNags = <int, List<int>>{
+        for (final entry in currentUserNags.entries)
+          if (entry.key >= 0 && entry.key < oldMainlineLen)
+            entry.key: List<int>.unmodifiable(entry.value),
+      };
       suppressUserNagUndoSnapshot.value = true;
       try {
-        ref.read(userMoveNagsProvider.notifier).clearTab(notationStateTabId);
+        ref
+            .read(userMoveNagsProvider.notifier)
+            .restoreTab(notationStateTabId, retainedUserNags);
       } finally {
         suppressUserNagUndoSnapshot.value = false;
       }
       undoStack.value.clear();
-      dirtySinceLoad.value = false;
+      dirtySinceLoad.value = retainedUserNags.isNotEmpty;
       lastAppliedPgn.value = pgn;
       lastAppliedInitialFenKey.value = initialFenKey;
       lastAppliedGameId.value = gameId;
@@ -2547,6 +2597,15 @@ class _BoardPaneContent extends HookConsumerWidget {
       return mergeGameReportAnnotationsForGif(game, report.moves);
     }
 
+    Map<int, List<int>> currentUserNags() =>
+        ref.read(userMoveNagsProvider)[editsTabId] ?? const <int, List<int>>{};
+
+    ChessGame hydrateGameForUserOutput(ChessGame game) =>
+        mergeUserMainlineNagsForGif(
+          hydrateGameWithReport(game),
+          currentUserNags(),
+        );
+
     Future<void> copyPgnAction() async {
       if (!gameHasMainline()) {
         showToast('No PGN to copy yet — load a game first.');
@@ -2558,14 +2617,9 @@ class _BoardPaneContent extends HookConsumerWidget {
         // export must carry classic-glyph classifications (mobile parity).
         final report = completedReportForCurrentGame();
         final String pgn;
-        if (report != null) {
-          final hydrated = hydrateGameWithReport(chessGame.value);
-          final withUserNags = mergeUserMainlineNagsForGif(
-            hydrated,
-            ref.read(userMoveNagsProvider)[editsTabId] ??
-                const <int, List<int>>{},
-          );
-          pgn = exportGameToPgn(withUserNags);
+        final userNags = currentUserNags();
+        if (report != null || userNags.isNotEmpty) {
+          pgn = exportGameToPgn(hydrateGameForUserOutput(chessGame.value));
         } else {
           pgn = boardClipboardPgn(
             game: chessGame.value,
@@ -2635,7 +2689,15 @@ class _BoardPaneContent extends HookConsumerWidget {
       // resolution + metadata enrichment identical across surfaces.
       final source = boardArgs?.sourceGame;
       final tournamentTitle = boardArgs?.tournamentTitle ?? '';
-      if (source != null && canSaveDesktopGameToLibrary(source)) {
+      final userNags = currentUserNags();
+      final completedReport = completedReportForCurrentGame();
+      if (source != null &&
+          shouldUsePristineEventSourceForLibrarySave(
+            canSaveSource: canSaveDesktopGameToLibrary(source),
+            dirtySinceLoad: dirtySinceLoad.value,
+            hasUserNags: userNags.isNotEmpty,
+            hasCompletedReport: completedReport != null,
+          )) {
         await saveDesktopGameToLibrary(
           context: context,
           ref: ref,
@@ -2654,18 +2716,21 @@ class _BoardPaneContent extends HookConsumerWidget {
         // Bake a finished report into the saved moves, exactly as Copy PGN
         // does. The library row is what syncs to mobile, so without this the
         // classifications would stay on this machine only.
-        final pgn = exportGameToPgn(hydrateGameWithReport(chessGame.value));
+        final pgn = exportGameToPgn(hydrateGameForUserOutput(chessGame.value));
         final headers = pgnHeaders.value;
         final snapshot = ChessGame.fromPgn(
           activeGameId ??
               'desktop-board-${DateTime.now().microsecondsSinceEpoch}',
           pgn,
         );
-        final metadata = metadataWithRecognizedBoardEco(
+        var metadata = metadataWithRecognizedBoardEco(
           metadata: snapshot.metadata,
           startingFen: snapshot.startingFen,
           movesUci: boardEcoMainlineUcis(snapshot),
         );
+        if (source != null) {
+          metadata = mergeDesktopGameMetadataForLibrary(metadata, source);
+        }
         metadata[ChessGame.metadataIsLiveKey] = false;
         metadata[ChessGame.metadataAllowMainlineExtensionKey] = false;
         final eventLabel = headers['Event']?.trim();
@@ -2751,7 +2816,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       }
       try {
         // Same hydrate as Copy PGN: a .pgn written to disk carries the report.
-        final pgn = exportGameToPgn(hydrateGameWithReport(chessGame.value));
+        final pgn = exportGameToPgn(hydrateGameForUserOutput(chessGame.value));
         final headers = pgnHeaders.value;
         final defaultName = _suggestPgnFileName(headers);
         final path = await FilePicker.platform.saveFile(
@@ -3754,11 +3819,10 @@ class _BoardPaneContent extends HookConsumerWidget {
     final boardAnnotationSquare = currentPly.lastMoveSquare;
     final pgnShapes = _shapesFromPgnComments(currentPly.comments).toList();
 
-    // End-of-game effect: only fires on the PGN's original decided ply.
-    // If the user manually extends a finished game to analyze after the
-    // final position, the stored ending ply stays behind so the stale
-    // king-tilt / peace-icon overlay disappears immediately. Navigating
-    // back to the actual game-ending move brings the overlay back.
+    // End-of-game effect: only fires on the PGN's original decided ply. The
+    // overlay is IgnorePointer, so the result animation remains visible without
+    // blocking analysis moves. Once the user moves away from the ending ply,
+    // the stored index stays behind and the animation disappears immediately.
     final gameEndingPlyIndex = chessGame.value.gameEndingPlyIndex;
     final showFinishedResult = shouldShowFinishedBoardResult(
       pointer.value,
@@ -5459,6 +5523,427 @@ ChessGame _mergeBroadcastUpdate(
   return mergedGame;
 }
 
+({ChessGame game, Map<int, List<int>> userNags, bool hasLocalEdits})
+_reconcileCanonicalBroadcastLocalAnnotations({
+  required String? previousBroadcastPgn,
+  required ChessGame currentGame,
+  required ChessGame freshGame,
+  required Map<int, List<int>> userNags,
+}) {
+  final previousPgn = previousBroadcastPgn?.trim();
+  if (previousPgn == null || previousPgn.isEmpty) {
+    return (
+      game: freshGame,
+      userNags: const <int, List<int>>{},
+      hasLocalEdits: false,
+    );
+  }
+
+  final ChessGame previousGame;
+  try {
+    previousGame = ChessGame.fromPgn(currentGame.gameId, previousPgn);
+  } catch (_) {
+    return (
+      game: freshGame,
+      userNags: const <int, List<int>>{},
+      hasLocalEdits: false,
+    );
+  }
+
+  var reconciledGame = freshGame;
+  final reconciledNags = <int, List<int>>{};
+  var hasLocalComment = false;
+  var hasLocalVariation = false;
+  var matchedCanonicalPlies = 0;
+  final commonLength = math.min(
+    previousGame.mainline.length,
+    math.min(currentGame.mainline.length, freshGame.mainline.length),
+  );
+  for (var ply = 0; ply < commonLength; ply++) {
+    final previousMove = previousGame.mainline[ply];
+    final currentMove = currentGame.mainline[ply];
+    final freshMove = freshGame.mainline[ply];
+    if (previousMove.uci != currentMove.uci ||
+        previousMove.uci != freshMove.uci) {
+      break;
+    }
+    matchedCanonicalPlies++;
+
+    final previousComment = _firstEditableComment(previousMove.comments);
+    final currentComment = _firstEditableComment(currentMove.comments);
+    if (currentComment != previousComment) {
+      reconciledGame = _setMoveCommentAtPointer(reconciledGame, <int>[
+        ply,
+      ], currentComment);
+      hasLocalComment = true;
+    }
+
+    // The broadcast owns the mainline, but moves played by the user on a live
+    // Board are private analysis branches. Only carry branches that were added
+    // after the previous canonical snapshot, and only while their mainline
+    // anchor still belongs to the unchanged canonical prefix. This prevents a
+    // feed correction from resurfacing stale broadcast history as analysis.
+    final freshCanonicalContinuation =
+        ply + 1 < freshGame.mainline.length
+            ? freshGame.mainline.sublist(ply + 1)
+            : null;
+    final canonicalizedVariation =
+        freshCanonicalContinuation == null
+            ? null
+            : _variationMatchingCanonicalContinuation(
+              previousVariations: previousMove.variations,
+              currentVariations: currentMove.variations,
+              freshContinuation: freshCanonicalContinuation,
+            );
+    if (canonicalizedVariation != null) {
+      final continuationReconciliation =
+          canonicalizedVariation.previousLine == null
+              ? _mergeNewlyCanonicalLocalLine(
+                canonicalizedVariation.currentLine,
+                freshCanonicalContinuation!,
+              )
+              : _reconcileCanonicalVariationLine(
+                previousLine: canonicalizedVariation.previousLine!,
+                currentLine: canonicalizedVariation.currentLine,
+                freshLine: freshCanonicalContinuation!,
+              );
+      if (continuationReconciliation.hasLocalEdits) {
+        reconciledGame = reconciledGame.copyWith(
+          mainline: <ChessMove>[
+            ...reconciledGame.mainline.take(ply + 1),
+            ...continuationReconciliation.line,
+          ],
+        );
+        hasLocalVariation = true;
+      }
+    }
+
+    final variationReconciliation = _reconcileCanonicalVariationLists(
+      previousVariations: previousMove.variations,
+      currentVariations: currentMove.variations,
+      freshVariations: freshMove.variations,
+      canonicalContinuationUci: freshCanonicalContinuation?.first.uci,
+    );
+    if (variationReconciliation.hasLocalEdits) {
+      final reconciledMove = reconciledGame.mainline[ply];
+      final mainline = List<ChessMove>.of(reconciledGame.mainline);
+      mainline[ply] = reconciledMove.copyWith(
+        variations: variationReconciliation.variations,
+        overrideVariations: true,
+      );
+      reconciledGame = reconciledGame.copyWith(mainline: mainline);
+      hasLocalVariation = true;
+    }
+
+    final localNags = userNags[ply];
+    if (localNags != null && localNags.isNotEmpty) {
+      reconciledNags[ply] = List<int>.unmodifiable(localNags);
+    }
+  }
+
+  final completePreviousMainlineMatched =
+      matchedCanonicalPlies == previousGame.mainline.length &&
+      currentGame.mainline.length >= previousGame.mainline.length &&
+      freshGame.mainline.length >= previousGame.mainline.length;
+  if (completePreviousMainlineMatched &&
+      currentGame.mainline.length > previousGame.mainline.length) {
+    final canonicalLength = previousGame.mainline.length;
+    final localSuffix = currentGame.mainline.sublist(canonicalLength);
+    if (freshGame.mainline.length == canonicalLength) {
+      // Finished Event analysis extends the private in-memory line past the
+      // canonical result. A newer metadata/clock echo with the same canonical
+      // moves must not snap that continuation back to the broadcast tip.
+      reconciledGame = reconciledGame.copyWith(
+        mainline: <ChessMove>[
+          ...reconciledGame.mainline.take(canonicalLength),
+          ...localSuffix,
+        ],
+      );
+      hasLocalVariation = true;
+    } else if (localSuffix.isNotEmpty && canonicalLength > 0) {
+      if (localSuffix.first.uci == freshGame.mainline[canonicalLength].uci) {
+        final mergedSuffix = _mergeBroadcastLine(
+          localSuffix,
+          freshGame.mainline.sublist(canonicalLength),
+        );
+        reconciledGame = reconciledGame.copyWith(
+          mainline: <ChessMove>[
+            ...reconciledGame.mainline.take(canonicalLength),
+            ...mergedSuffix,
+          ],
+        );
+      } else {
+        // The broadcast also extended or corrected the canonical line. Keep
+        // the private continuation as a branch of the last still-proven move;
+        // never promote it into the shared Event mainline.
+        final anchorIndex = canonicalLength - 1;
+        final mainline = List<ChessMove>.of(reconciledGame.mainline);
+        final anchor = mainline[anchorIndex];
+        mainline[anchorIndex] = anchor.copyWith(
+          variations: _mergeBroadcastVariations(
+            oldVariations: <ChessLine>[localSuffix],
+            freshVariations: anchor.variations,
+          ),
+          overrideVariations: true,
+        );
+        reconciledGame = reconciledGame.copyWith(mainline: mainline);
+      }
+      hasLocalVariation = true;
+    }
+
+    for (
+      var ply = canonicalLength;
+      ply < reconciledGame.mainline.length;
+      ply++
+    ) {
+      final localNags = userNags[ply];
+      if (localNags != null && localNags.isNotEmpty) {
+        reconciledNags[ply] = List<int>.unmodifiable(localNags);
+      }
+    }
+  }
+
+  return (
+    game: reconciledGame,
+    userNags: Map<int, List<int>>.unmodifiable(reconciledNags),
+    hasLocalEdits:
+        hasLocalComment || hasLocalVariation || reconciledNags.isNotEmpty,
+  );
+}
+
+({List<ChessLine>? variations, bool hasLocalEdits})
+_reconcileCanonicalVariationLists({
+  required List<ChessLine>? previousVariations,
+  required List<ChessLine>? currentVariations,
+  required List<ChessLine>? freshVariations,
+  String? canonicalContinuationUci,
+}) {
+  final previous = <ChessLine>[...?previousVariations];
+  final current = <ChessLine>[...?currentVariations];
+  final merged = <ChessLine>[...?freshVariations];
+  var hasLocalEdits = false;
+
+  for (final currentLine in current) {
+    if (currentLine.isEmpty) continue;
+    final previousIndex = previous.indexWhere(
+      (line) => line.isNotEmpty && line.first.uci == currentLine.first.uci,
+    );
+    final freshIndex = merged.indexWhere(
+      (line) => line.isNotEmpty && line.first.uci == currentLine.first.uci,
+    );
+
+    if (previousIndex < 0) {
+      if (currentLine.first.uci == canonicalContinuationUci) {
+        // This private prediction is now the canonical mainline continuation.
+        // Its local suffix was folded into that continuation by the caller;
+        // keeping it here as well would duplicate the confirmed move.
+        continue;
+      }
+      // The complete branch was created locally. If the new feed independently
+      // publishes the same head, merge the private continuation into that fresh
+      // source line instead of rendering a duplicate variation.
+      if (freshIndex < 0) {
+        merged.add(currentLine);
+      } else {
+        merged[freshIndex] = _mergeBroadcastLine(
+          currentLine,
+          merged[freshIndex],
+        );
+      }
+      hasLocalEdits = true;
+      continue;
+    }
+
+    // A source variation can itself contain private continuations and nested
+    // branches. Reconcile it recursively only while the source head still
+    // exists; a removed/corrected source line is not a safe anchor.
+    if (freshIndex < 0) continue;
+    final lineReconciliation = _reconcileCanonicalVariationLine(
+      previousLine: previous[previousIndex],
+      currentLine: currentLine,
+      freshLine: merged[freshIndex],
+    );
+    merged[freshIndex] = lineReconciliation.line;
+    hasLocalEdits = hasLocalEdits || lineReconciliation.hasLocalEdits;
+  }
+
+  return (
+    variations: merged.isEmpty ? null : merged,
+    hasLocalEdits: hasLocalEdits,
+  );
+}
+
+({ChessLine line, bool hasLocalEdits}) _reconcileCanonicalVariationLine({
+  required ChessLine previousLine,
+  required ChessLine currentLine,
+  required ChessLine freshLine,
+}) {
+  final merged = List<ChessMove>.of(freshLine);
+  final commonLength = math.min(
+    previousLine.length,
+    math.min(currentLine.length, freshLine.length),
+  );
+  var matchedLength = 0;
+  var hasLocalEdits = false;
+
+  for (var index = 0; index < commonLength; index++) {
+    final previousMove = previousLine[index];
+    final currentMove = currentLine[index];
+    final freshMove = freshLine[index];
+    if (previousMove.uci != currentMove.uci ||
+        previousMove.uci != freshMove.uci) {
+      break;
+    }
+
+    var reconciledMove = freshMove;
+    final previousComment = _firstEditableComment(previousMove.comments);
+    final currentComment = _firstEditableComment(currentMove.comments);
+    if (currentComment != previousComment) {
+      reconciledMove = _withEditableComment(reconciledMove, currentComment);
+      hasLocalEdits = true;
+    }
+
+    final nagReconciliation = _reconcileLocalNagEdits(
+      previousNags: previousMove.nags,
+      currentNags: currentMove.nags,
+      freshNags: freshMove.nags,
+    );
+    if (nagReconciliation.hasLocalEdits) {
+      reconciledMove = reconciledMove.copyWith(nags: nagReconciliation.nags);
+      hasLocalEdits = true;
+    }
+
+    final nested = _reconcileCanonicalVariationLists(
+      previousVariations: previousMove.variations,
+      currentVariations: currentMove.variations,
+      freshVariations: freshMove.variations,
+    );
+    if (nested.hasLocalEdits) {
+      reconciledMove = reconciledMove.copyWith(
+        variations: nested.variations,
+        overrideVariations: true,
+      );
+      hasLocalEdits = true;
+    }
+    merged[index] = reconciledMove;
+    matchedLength++;
+  }
+
+  final completePreviousPrefixMatched =
+      matchedLength == previousLine.length &&
+      currentLine.length >= previousLine.length &&
+      freshLine.length >= previousLine.length;
+  if (completePreviousPrefixMatched &&
+      currentLine.length > previousLine.length) {
+    final localSuffix = currentLine.sublist(previousLine.length);
+    if (freshLine.length == previousLine.length) {
+      // The source line itself is unchanged; moves appended by the user remain
+      // a linear continuation of that variation.
+      merged.addAll(localSuffix);
+      hasLocalEdits = true;
+    } else if (localSuffix.isNotEmpty && previousLine.isNotEmpty) {
+      // The feed also extended the source variation. Preserve a differing
+      // private continuation as a branch at the last unchanged source move.
+      // If both chose the same move, the generic line merge deduplicates the
+      // head and carries the remaining private work forward.
+      if (localSuffix.first.uci == freshLine[previousLine.length].uci) {
+        final mergedSuffix = _mergeBroadcastLine(
+          localSuffix,
+          freshLine.sublist(previousLine.length),
+        );
+        merged
+          ..removeRange(previousLine.length, merged.length)
+          ..addAll(mergedSuffix);
+      } else {
+        final anchorIndex = previousLine.length - 1;
+        final anchor = merged[anchorIndex];
+        final variations = _mergeBroadcastVariations(
+          oldVariations: <ChessLine>[localSuffix],
+          freshVariations: anchor.variations,
+        );
+        merged[anchorIndex] = anchor.copyWith(
+          variations: variations,
+          overrideVariations: true,
+        );
+      }
+      hasLocalEdits = true;
+    }
+  }
+
+  return (line: merged, hasLocalEdits: hasLocalEdits);
+}
+
+({ChessLine currentLine, ChessLine? previousLine})?
+_variationMatchingCanonicalContinuation({
+  required List<ChessLine>? previousVariations,
+  required List<ChessLine>? currentVariations,
+  required ChessLine freshContinuation,
+}) {
+  if (freshContinuation.isEmpty) return null;
+  for (final line in <ChessLine>[...?currentVariations]) {
+    if (line.isNotEmpty && line.first.uci == freshContinuation.first.uci) {
+      final previousIndex = <ChessLine>[...?previousVariations].indexWhere(
+        (previousLine) =>
+            previousLine.isNotEmpty && previousLine.first.uci == line.first.uci,
+      );
+      return (
+        currentLine: line,
+        previousLine:
+            previousIndex < 0 ? null : previousVariations![previousIndex],
+      );
+    }
+  }
+  return null;
+}
+
+({ChessLine line, bool hasLocalEdits}) _mergeNewlyCanonicalLocalLine(
+  ChessLine localLine,
+  ChessLine freshCanonicalLine,
+) {
+  final merged = _mergeBroadcastLine(localLine, freshCanonicalLine);
+  return (
+    line: merged,
+    hasLocalEdits: !_broadcastLinesMatch(merged, freshCanonicalLine),
+  );
+}
+
+({List<int> nags, bool hasLocalEdits}) _reconcileLocalNagEdits({
+  required List<int>? previousNags,
+  required List<int>? currentNags,
+  required List<int>? freshNags,
+}) {
+  final previous = <int>{...?previousNags};
+  final current = <int>{...?currentNags};
+  if (previous.length == current.length && previous.containsAll(current)) {
+    return (nags: <int>[...?freshNags], hasLocalEdits: false);
+  }
+
+  final additions = current.difference(previous);
+  final removals = previous.difference(current);
+  final reconciled = <int>[
+    for (final nag in <int>[...?freshNags])
+      if (!removals.contains(nag)) nag,
+  ];
+  for (final nag in additions) {
+    if (!reconciled.contains(nag)) reconciled.add(nag);
+  }
+  return (nags: List<int>.unmodifiable(reconciled), hasLocalEdits: true);
+}
+
+@visibleForTesting
+({ChessGame game, Map<int, List<int>> userNags, bool hasLocalEdits})
+reconcileCanonicalBroadcastLocalAnnotationsForTesting({
+  required String? previousBroadcastPgn,
+  required ChessGame currentGame,
+  required ChessGame freshGame,
+  required Map<int, List<int>> userNags,
+}) => _reconcileCanonicalBroadcastLocalAnnotations(
+  previousBroadcastPgn: previousBroadcastPgn,
+  currentGame: currentGame,
+  freshGame: freshGame,
+  userNags: userNags,
+);
+
 @visibleForTesting
 bool shouldMergeBroadcastTree({
   required String? gameId,
@@ -6192,6 +6677,74 @@ List<ChessMove> _pathFromPointer(ChessGame game, ChessMovePointer pointer) {
     }
   }
   return path;
+}
+
+/// Finds the same analyzed move after a canonical refresh reshapes variation
+/// indices. Numeric pointers are tree coordinates, so fresh source variations
+/// inserted before a private branch can make an old pointer resolve to the
+/// wrong line even though it remains structurally valid. The played UCI path is
+/// the stable identity for the position the user was analyzing.
+ChessMovePointer? _pointerForUciPath(ChessGame game, List<String> targetUcis) {
+  if (targetUcis.isEmpty) return const <int>[];
+
+  ChessMovePointer? visitLine(ChessLine line, List<int> prefix) {
+    for (var moveIndex = 0; moveIndex < line.length; moveIndex++) {
+      final candidate = <int>[...prefix, moveIndex];
+      final candidateUcis = <String>[
+        for (final move in _pathFromPointer(game, candidate)) move.uci,
+      ];
+      if (_uciPathsEqual(candidateUcis, targetUcis)) {
+        return List<int>.unmodifiable(candidate);
+      }
+
+      final variations = line[moveIndex].variations;
+      for (
+        var variationIndex = 0;
+        variationIndex < (variations?.length ?? 0);
+        variationIndex++
+      ) {
+        final found = visitLine(variations![variationIndex], <int>[
+          ...candidate,
+          variationIndex,
+        ]);
+        if (found != null) return found;
+      }
+    }
+    return null;
+  }
+
+  return visitLine(game.mainline, const <int>[]);
+}
+
+ChessMovePointer _pointerForLongestSurvivingUciPrefix(
+  ChessGame game,
+  List<String> targetUcis,
+) {
+  for (var length = targetUcis.length; length > 0; length--) {
+    final pointer = _pointerForUciPath(game, targetUcis.sublist(0, length));
+    if (pointer != null) return pointer;
+  }
+  return const <int>[];
+}
+
+@visibleForTesting
+ChessMovePointer? pointerForUciPathForTesting(
+  ChessGame game,
+  List<String> targetUcis,
+) => _pointerForUciPath(game, targetUcis);
+
+@visibleForTesting
+ChessMovePointer pointerForLongestSurvivingUciPrefixForTesting(
+  ChessGame game,
+  List<String> targetUcis,
+) => _pointerForLongestSurvivingUciPrefix(game, targetUcis);
+
+bool _uciPathsEqual(List<String> left, List<String> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
 }
 
 /// Replay [path] (a list of moves from the starting position) into a

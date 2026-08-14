@@ -125,8 +125,7 @@ void main() {
     });
 
     test('uses one threat target for the gauge and disables PV play', () {
-      const fen =
-          'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
+      const fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
 
       final target = activeBoardEvalTarget(
         fen: fen,
@@ -202,6 +201,10 @@ void main() {
 
     test('defaults engine analysis off until explicitly enabled', () {
       expect(const EngineSettings().showEngineAnalysis, isFalse);
+    });
+
+    test('defaults PV arrows on', () {
+      expect(const EngineSettings().showPvArrows, isTrue);
     });
 
     test('defaults automatic whole-game analysis on', () {
