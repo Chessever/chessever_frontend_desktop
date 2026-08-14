@@ -3738,7 +3738,10 @@ class _EventGamePlayerLine extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         SizedBox(
-          width: 48,
+          key: Key(
+            'event-game-${game.id}-${isWhite ? 'white' : 'black'}-trailing',
+          ),
+          width: 64,
           child:
               result != null
                   ? Text(
@@ -3748,12 +3751,16 @@ class _EventGamePlayerLine extends StatelessWidget {
                   )
                   : Align(
                     alignment: Alignment.centerRight,
-                    child: AtomicCountdownText(
-                      clockSeconds: clockSeconds,
-                      clockCentiseconds: 0,
-                      lastMoveTime: game.lastMoveTime,
-                      isActive: clockSeconds != null && clockActive,
-                      style: trailingStyle,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: AtomicCountdownText(
+                        clockSeconds: clockSeconds,
+                        clockCentiseconds: 0,
+                        lastMoveTime: game.lastMoveTime,
+                        isActive: clockSeconds != null && clockActive,
+                        style: trailingStyle,
+                      ),
                     ),
                   ),
         ),
@@ -5053,7 +5060,7 @@ class _EventRoundTable extends StatelessWidget {
                 border: Border(
                   bottom:
                       hasFollowingGame
-                          ? const BorderSide(color: kDividerColor, width: 0.5)
+                          ? const BorderSide(color: kDividerColor)
                           : BorderSide.none,
                 ),
               );
