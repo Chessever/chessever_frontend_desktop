@@ -22,6 +22,7 @@ class Games {
   final int? lastClockWhite;
   final int? lastClockBlack;
   final DateTime? dateStart;
+  final String? timeStart;
   final DateTime? roundStartsAt;
   final String? roundName;
   final String? eco;
@@ -56,6 +57,7 @@ class Games {
     this.lastClockWhite,
     this.lastClockBlack,
     this.dateStart,
+    this.timeStart,
     this.roundStartsAt,
     this.roundName,
     this.eco,
@@ -87,6 +89,7 @@ class Games {
     int? lastClockWhite,
     int? lastClockBlack,
     DateTime? dateStart,
+    String? timeStart,
     DateTime? roundStartsAt,
     String? roundName,
     String? eco,
@@ -117,6 +120,7 @@ class Games {
       lastClockWhite: lastClockWhite ?? this.lastClockWhite,
       lastClockBlack: lastClockBlack ?? this.lastClockBlack,
       dateStart: dateStart ?? this.dateStart,
+      timeStart: timeStart ?? this.timeStart,
       roundStartsAt: roundStartsAt ?? this.roundStartsAt,
       roundName: roundName ?? this.roundName,
       eco: eco ?? this.eco,
@@ -223,6 +227,7 @@ class Games {
             json['date_start'] != null
                 ? DateTime.parse(json['date_start'] as String)
                 : null,
+        timeStart: json['time_start']?.toString(),
         roundStartsAt:
             roundStartsAtRaw is String && roundStartsAtRaw.isNotEmpty
                 ? DateTime.parse(roundStartsAtRaw)
@@ -265,6 +270,7 @@ class Games {
       if (lastClockBlack != null) 'last_clock_black': lastClockBlack,
       if (dateStart != null)
         'date_start': dateStart!.toIso8601String().split('T').first,
+      if (timeStart != null) 'time_start': timeStart,
       if (roundStartsAt != null || roundName != null)
         'round_schedule': {
           if (roundName != null) 'name': roundName,

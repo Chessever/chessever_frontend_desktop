@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -5,46 +7,43 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/state/active_tournament.dart';
+import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/widgets/tournament_about_view.dart';
+import 'package:chessever/desktop/widgets/tournament_bracket_view.dart';
 import 'package:chessever/desktop/widgets/tournament_category_switcher.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart';
 import 'package:chessever/desktop/widgets/tournament_standings_view.dart';
+import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/repository/supabase/group_broadcast/group_broadcast.dart';
+import 'package:chessever/screens/tour_detail/bracket/models/knockout_bracket.dart';
+import 'package:chessever/screens/tour_detail/bracket/providers/knockout_bracket_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tournament_state_provider.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
+import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 
-/// Single-tournament detail view, mirroring mobile's tour_detail screen.
-///
-/// Three segments — About / Games / Standings — shown via a desktop
-/// segmented switcher. Reads the focused tournament from
-/// `activeTournamentProvider`; the Tournaments list pane writes there when
-/// the user activates a row.
-class TournamentDetailPane extends HookConsumerWidget {
-  const TournamentDetailPane({super.key, required this.tabId});
+class TournamentDetailContextOwner extends HookConsumerWidget {
+  const TournamentDetailContextOwner({super.key, required this.tabId});
 
   final String tabId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tournament = ref.watch(tournamentForTabProvider(tabId));
-    final segment = ref.watch(tournamentDetailSegmentByTabIdProvider(tabId));
-    final gamesHeaderCollapsed = useState(false);
-    final bodyFocusNode = useFocusNode(debugLabel: 'tournament-detail-body');
-    final bodyKey = useMemoized(
-      () => GlobalKey(debugLabel: 'tournament-detail-body-root'),
+    final activeTabId = ref.watch(
+      desktopTabsProvider.select((state) => state.activeId),
     );
 
-    // When the user switches between Tournament-Detail tabs, the active
-    // tournament changes — re-point the mobile broadcast provider at the
-    // newly focused tournament so the rounds/games/standings chain
-    // recomputes for it.
     useEffect(() {
       final next = tournament;
-      if (next == null) return null;
+      if (next == null || activeTabId != tabId) return null;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!context.mounted) return;
+        if (ref.read(desktopTabsProvider).activeId != tabId) return;
+        if (ref.read(tournamentForTabProvider(tabId))?.id != next.id) return;
         final selected = ref.read(selectedBroadcastModelProvider);
         if (selected?.id == next.id) return;
         ref
@@ -57,7 +56,75 @@ class TournamentDetailPane extends HookConsumerWidget {
         );
       });
       return null;
-    }, [tournament?.id]);
+    }, [tournament?.id, activeTabId]);
+
+    return const SizedBox.shrink();
+  }
+}
+
+/// Single-tournament detail view, mirroring mobile's tour_detail screen.
+///
+/// About / Games / Standings, plus Bracket for proven individual knockouts,
+/// shown via a desktop segmented switcher. Reads the focused tournament from
+/// `activeTournamentProvider`; the Tournaments list pane writes there when
+/// the user activates a row.
+class TournamentDetailPane extends HookConsumerWidget {
+  const TournamentDetailPane({super.key, required this.tabId});
+
+  final String tabId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tournament = ref.watch(tournamentForTabProvider(tabId));
+    final segment = ref.watch(tournamentDetailSegmentByTabIdProvider(tabId));
+    final selectedBroadcastId = ref.watch(
+      selectedBroadcastModelProvider.select((value) => value?.id),
+    );
+    final detailState = ref.watch(tourDetailScreenProvider);
+    final gamesHeaderCollapsed = useState(false);
+    final bodyFocusNode = useFocusNode(debugLabel: 'tournament-detail-body');
+    final bodyKey = useMemoized(
+      () => GlobalKey(debugLabel: 'tournament-detail-body-root'),
+    );
+    final layoutTracker = useMemoized(TournamentDetailLayoutTracker.new, [
+      tabId,
+    ]);
+
+    final ownsSelectedContext =
+        tournament != null && selectedBroadcastId == tournament.id;
+    final selectedTourId =
+        ownsSelectedContext ? detailState.valueOrNull?.aboutTourModel.id : null;
+    final knockoutState = ref.watch(
+      knockoutTournamentStateProvider(selectedTourId),
+    );
+    final detectionPending =
+        selectedTourId == null || knockoutState.isDetectionPending;
+    final layout = layoutTracker.resolve(
+      // A pending host-event identity prevents a previous event in this shell
+      // tab from lending its remembered Bracket layout to a newly opened one.
+      tourId:
+          selectedTourId ??
+          (tournament == null ? null : 'pending:${tournament.id}'),
+      isTeam: knockoutState.isTeamEvent,
+      isKnockout: knockoutState.isKnockout,
+      isDetectionPending: detectionPending,
+      unresolvedLayout: provisionalTournamentDetailLayoutForSegment(segment),
+    );
+    final visibleSegments = tournamentDetailSegmentsForLayout(layout);
+    final effectiveSegment =
+        visibleSegments.contains(segment)
+            ? segment
+            : TournamentDetailSegment.games;
+
+    useEffect(() {
+      if (tournament == null || effectiveSegment == segment) return null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        ref.read(tournamentDetailSegmentByTabIdProvider(tabId).notifier).state =
+            effectiveSegment;
+      });
+      return null;
+    }, [tournament?.id, segment, effectiveSegment, selectedTourId]);
 
     // Refocus the body when the segment switches so keyboard scroll keeps
     // working after the user clicks Games / About / Standings (each segment
@@ -70,20 +137,22 @@ class TournamentDetailPane extends HookConsumerWidget {
         }
       });
       return null;
-    }, [segment]);
+    }, [effectiveSegment]);
 
     if (tournament == null) {
       return const _EmptyState();
     }
 
     final collapseTopChrome =
-        segment == TournamentDetailSegment.games && gamesHeaderCollapsed.value;
+        effectiveSegment == TournamentDetailSegment.games &&
+        gamesHeaderCollapsed.value;
 
     return Container(
       color: kBackgroundColor,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          TournamentDetailContextOwner(tabId: tabId),
           ClipRect(
             child: AnimatedSize(
               duration: const Duration(milliseconds: 140),
@@ -100,15 +169,23 @@ class TournamentDetailPane extends HookConsumerWidget {
                             dates: tournament.dates,
                           ),
                           _SegmentBar(
-                            segments: TournamentDetailSegment.values,
-                            selected: segment,
+                            segments: visibleSegments,
+                            selected: effectiveSegment,
                             info:
-                                segment == TournamentDetailSegment.games
+                                effectiveSegment ==
+                                        TournamentDetailSegment.games
                                     ? const TournamentGamesCountLabel()
                                     : null,
                             trailing:
-                                segment == TournamentDetailSegment.games
-                                    ? const TournamentGamesHeaderControls()
+                                effectiveSegment ==
+                                        TournamentDetailSegment.games
+                                    ? TournamentGamesHeaderControls(
+                                      tabId: tabId,
+                                      showKnockoutPresentation:
+                                          layout ==
+                                          TournamentDetailLayout
+                                              .individualKnockout,
+                                    )
                                     : null,
                             onSelect:
                                 (next) =>
@@ -193,11 +270,12 @@ class TournamentDetailPane extends HookConsumerWidget {
                   child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 120),
                     child: KeyedSubtree(
-                      key: ValueKey(segment),
+                      key: ValueKey(effectiveSegment),
                       child: _segmentBody(
-                        segment,
+                        effectiveSegment,
                         tournament.id,
                         tournament.title,
+                        selectedTourId,
                         gamesHeaderCollapsed,
                       ),
                     ),
@@ -215,6 +293,7 @@ class TournamentDetailPane extends HookConsumerWidget {
     TournamentDetailSegment segment,
     String tournamentId,
     String tournamentTitle,
+    String? selectedTourId,
     ValueNotifier<bool> gamesHeaderCollapsed,
   ) {
     switch (segment) {
@@ -227,6 +306,13 @@ class TournamentDetailPane extends HookConsumerWidget {
           onHeaderCollapsedChanged:
               (collapsed) => gamesHeaderCollapsed.value = collapsed,
         );
+      case TournamentDetailSegment.bracket:
+        return _TournamentBracketSegment(
+          tabId: tabId,
+          eventId: tournamentId,
+          eventTitle: tournamentTitle,
+          selectedTourId: selectedTourId,
+        );
       case TournamentDetailSegment.standings:
         return TournamentStandingsView(
           tabId: tabId,
@@ -237,6 +323,144 @@ class TournamentDetailPane extends HookConsumerWidget {
   }
 }
 
+class _TournamentBracketSegment extends ConsumerWidget {
+  const _TournamentBracketSegment({
+    required this.tabId,
+    required this.eventId,
+    required this.eventTitle,
+    required this.selectedTourId,
+  });
+
+  final String tabId;
+  final String eventId;
+  final String eventTitle;
+  final String? selectedTourId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final selectedBroadcastId = ref.watch(
+      selectedBroadcastModelProvider.select((value) => value?.id),
+    );
+    final resolvedTourId = ref.watch(
+      tourDetailScreenProvider.select(
+        (state) => state.valueOrNull?.aboutTourModel.id,
+      ),
+    );
+    final ownsContext =
+        selectedBroadcastId == eventId &&
+        selectedTourId != null &&
+        selectedTourId == resolvedTourId;
+    final bracketState =
+        ownsContext
+            ? ref.watch(knockoutBracketProvider)
+            : const AsyncValue<KnockoutBracket>.loading();
+    final bracket = bracketState.valueOrNull;
+    final allModels = _displayModelsForGames(
+      bracket?.stages
+              .expand((stage) => stage.matches)
+              .expand((match) => match.games) ??
+          const <Games>[],
+    );
+
+    return DesktopTournamentBracketContent(
+      state: bracketState,
+      cameraKey: '$tabId::${selectedTourId ?? eventId}',
+      onRetry: () => retryKnockoutBracket(ref),
+      onOpenGame: (game) {
+        if (!ownsContext) return;
+        final selectedModel = _displayModelForGame(game);
+        if (selectedModel == null) return;
+        final stage =
+            bracket?.stages
+                .where(
+                  (candidate) => candidate.matches.any(
+                    (match) => match.games.any((leg) => leg.id == game.id),
+                  ),
+                )
+                .firstOrNull;
+        final stageModels = _displayModelsForGames(
+          stage?.matches.expand((match) => match.games) ?? const <Games>[],
+        );
+        final expectedTourId = selectedTourId!;
+        final epochNotifier = ref.read(
+          tournamentBracketOpenEpochByTabIdProvider(tabId).notifier,
+        );
+        final previousEpoch = epochNotifier.state;
+        final canStart = canCommitTournamentBracketOpen(
+          tabs: ref.read(desktopTabsProvider),
+          originTabId: tabId,
+          originEventId: ref.read(tournamentForTabProvider(tabId))?.id,
+          expectedEventId: eventId,
+          expectedTourId: expectedTourId,
+          selectedBroadcastId: ref.read(selectedBroadcastModelProvider)?.id,
+          resolvedTourId:
+              ref.read(tourDetailScreenProvider).valueOrNull?.aboutTourModel.id,
+          currentSegment: ref.read(
+            tournamentDetailSegmentByTabIdProvider(tabId),
+          ),
+          expectedEpoch: previousEpoch,
+          currentEpoch: previousEpoch,
+        );
+        if (!canStart) return;
+        final commandEpoch = previousEpoch + 1;
+        epochNotifier.state = commandEpoch;
+        unawaited(
+          openTournamentGameTab(
+            ref,
+            selectedModel,
+            eventTitle,
+            eventGames: allModels,
+            routeTitle: stage?.label ?? 'Bracket',
+            routeGames: stageModels,
+            eventBroadcastId: eventId,
+            canCommitOpen:
+                (container) => canCommitTournamentBracketOpen(
+                  tabs: container.read(desktopTabsProvider),
+                  originTabId: tabId,
+                  originEventId:
+                      container.read(tournamentForTabProvider(tabId))?.id,
+                  expectedEventId: eventId,
+                  expectedTourId: expectedTourId,
+                  selectedBroadcastId:
+                      container.read(selectedBroadcastModelProvider)?.id,
+                  resolvedTourId:
+                      container
+                          .read(tourDetailScreenProvider)
+                          .valueOrNull
+                          ?.aboutTourModel
+                          .id,
+                  currentSegment: container.read(
+                    tournamentDetailSegmentByTabIdProvider(tabId),
+                  ),
+                  expectedEpoch: commandEpoch,
+                  currentEpoch: container.read(
+                    tournamentBracketOpenEpochByTabIdProvider(tabId),
+                  ),
+                ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+GamesTourModel? _displayModelForGame(Games game) {
+  try {
+    return GamesTourModel.fromGame(game);
+  } catch (_) {
+    return null;
+  }
+}
+
+List<GamesTourModel> _displayModelsForGames(Iterable<Games> games) {
+  final byId = <String, GamesTourModel>{};
+  for (final game in games) {
+    final model = _displayModelForGame(game);
+    if (model != null) byId[model.gameId] = model;
+  }
+  return byId.values.toList(growable: false);
+}
+
 /// Search text per tournament-detail tab. Survives the tab.kind flip when
 /// the user opens a game from this tab (which disposes the entire detail
 /// subtree) so the search field is restored on goBack.
@@ -245,6 +469,9 @@ final tournamentDetailGamesSearchByTabIdProvider =
 
 final tournamentDetailStandingsSearchByTabIdProvider =
     StateProvider.family<String, String>((ref, _) => '');
+
+final tournamentBracketOpenEpochByTabIdProvider =
+    StateProvider.family<int, String>((ref, _) => 0);
 
 /// Scroll offset for the About segment, keyed by tab id. Games and
 /// Standings restore their offsets via PageStorage; the About panel uses a
@@ -357,30 +584,54 @@ class _SegmentBar extends StatelessWidget {
         color: kBackgroundColor,
         border: Border(bottom: BorderSide(color: kDividerColor)),
       ),
-      child: Row(
-        children: [
-          const SizedBox(width: 16),
-          for (final s in segments)
-            _SegmentTab(
-              label: s.label,
-              selected: s == selected,
-              onTap: () => onSelect(s),
-            ),
-          if (info != null) ...[
-            const SizedBox(width: 16),
-            // Constrain info to its intrinsic width so the Spacer below
-            // can claim 100% of the remaining row, anchoring trailing to
-            // the far right. A `Flexible` here splits remaining width
-            // 50/50 with the Spacer and parks trailing near the middle.
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 200),
-              child: info!,
-            ),
+      child: TournamentSegmentBarLayout(
+        navigation: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final s in segments)
+              _SegmentTab(
+                label: s.label,
+                selected: s == selected,
+                onTap: () => onSelect(s),
+              ),
           ],
-          const Spacer(),
-          if (trailing != null) ...[trailing!, const SizedBox(width: 24)],
-        ],
+        ),
+        info: info,
+        trailing: trailing,
       ),
+    );
+  }
+}
+
+@visibleForTesting
+class TournamentSegmentBarLayout extends StatelessWidget {
+  const TournamentSegmentBarLayout({
+    super.key,
+    required this.navigation,
+    this.info,
+    this.trailing,
+  });
+
+  final Widget navigation;
+  final Widget? info;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const SizedBox(width: 16),
+        navigation,
+        if (info != null) ...[
+          const SizedBox(width: 16),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 200),
+            child: info!,
+          ),
+        ],
+        const Spacer(),
+        if (trailing != null) ...[trailing!, const SizedBox(width: 24)],
+      ],
     );
   }
 }

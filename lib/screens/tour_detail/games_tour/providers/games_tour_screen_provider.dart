@@ -9,7 +9,7 @@ import 'package:chessever/screens/tour_detail/games_tour/providers/game_display_
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_pin_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_app_bar_provider.dart';
-import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tournament_state_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_stage_round_resolver.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:flutter/foundation.dart';
@@ -608,12 +608,19 @@ class GamesTourScreenProvider
 
     final rounds =
         gamesAppBar.value?.gamesAppBarModels ?? const <GamesAppBarModel>[];
+    final knownTourIds =
+        ref
+            .read(tourDetailScreenProvider)
+            .valueOrNull
+            ?.tours
+            .map((tour) => tour.tour.id) ??
+        const <String>[];
     final stageTourIds =
-        rounds
-            .where((round) => round.id.startsWith('$kKnockoutStagePrefix-'))
-            .map((round) => round.id.replaceFirst('$kKnockoutStagePrefix-', ''))
-            .where((id) => id.isNotEmpty)
-            .toSet();
+        siblingKnockoutStageTourIds(
+          rounds: rounds,
+          selectedTourId: aboutTourModel!.id,
+          knownTourIds: knownTourIds,
+        ).toSet();
 
     if (stageTourIds.isEmpty) {
       return baseGames;

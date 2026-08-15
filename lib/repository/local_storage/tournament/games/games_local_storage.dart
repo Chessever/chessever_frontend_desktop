@@ -205,7 +205,7 @@ class GamesLocalStorage {
       return games;
     } catch (error, st) {
       ref.read(loggerProvider).logError(error, st);
-      return <Games>[];
+      rethrow;
     }
   }
 

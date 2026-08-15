@@ -1,6 +1,9 @@
 import 'package:chessever/repository/supabase/game/games.dart';
+import 'package:chessever/repository/supabase/round/round.dart';
+import 'package:chessever/repository/supabase/round/round_repository.dart';
 import 'package:chessever/repository/supabase/tour/tour.dart';
 import 'package:chessever/screens/group_event/model/tour_detail_view_model.dart';
+import 'package:chessever/screens/tour_detail/bracket/utils/knockout_stage_parser.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
@@ -11,13 +14,18 @@ const String kKnockoutStagePrefix = 'knockout-stage';
 
 class KnockoutTournamentState {
   final bool isKnockout;
+
+  /// True when this tour is a team event (`N-team` format or every player
+  /// teamed and not an explicit `N-player` knockout). Drives the 4-tab layout.
   final bool isTeamEvent;
+  final bool isDetectionPending;
   final String? stageName;
   final List<GamesTourModel> allGames;
 
   const KnockoutTournamentState({
     required this.isKnockout,
     required this.isTeamEvent,
+    this.isDetectionPending = false,
     required this.stageName,
     required this.allGames,
   });
@@ -25,87 +33,130 @@ class KnockoutTournamentState {
   const KnockoutTournamentState.empty()
     : isKnockout = false,
       isTeamEvent = false,
+      isDetectionPending = false,
       stageName = null,
       allGames = const <GamesTourModel>[];
 }
 
-final knockoutTournamentStateProvider = Provider.autoDispose
-    .family<KnockoutTournamentState, String?>((ref, tourId) {
-      if (tourId == null || tourId.isEmpty) {
-        return const KnockoutTournamentState.empty();
-      }
+final knockoutTournamentStateProvider = Provider.autoDispose.family<
+  KnockoutTournamentState,
+  String?
+>((ref, tourId) {
+  if (tourId == null || tourId.isEmpty) {
+    return const KnockoutTournamentState.empty();
+  }
 
-      final tourDetailAsync = ref.watch(tourDetailScreenProvider);
-      final tourDetail = tourDetailAsync.valueOrNull;
-      final Tour? tourMetadata = _findTourById(tourDetail, tourId);
-      final formatString = tourMetadata?.info.format;
-      final tourName = tourDetail?.aboutTourModel.name ?? '';
+  final tourDetailAsync = ref.watch(tourDetailScreenProvider);
+  final tourDetail = tourDetailAsync.valueOrNull;
+  final Tour? tourMetadata = _findTourById(tourDetail, tourId);
+  final formatString = tourMetadata?.info.format;
+  final metadataRequest = resolveKnockoutRoundMetadataRequest(
+    tourDetail: tourDetail,
+    tourId: tourId,
+  );
+  final tourName = metadataRequest.tourName;
+  final roundEvidenceAsync = ref.watch(
+    knockoutRoundMetadataEvidenceProvider(metadataRequest),
+  );
+  final hasExplicitNonKnockoutFormat = formatRulesOutKnockout(formatString);
+  final hasTourNameStageEvidence = hasTrustworthyKnockoutStageMetadata(
+    rounds: const <Round>[],
+    tourName: tourName,
+  );
+  final hasRoundMetadataEvidence =
+      !hasExplicitNonKnockoutFormat &&
+      (hasTourNameStageEvidence || (roundEvidenceAsync.valueOrNull ?? false));
 
-      final gamesAsync = ref.watch(gamesTourProvider(tourId));
-      final rawGames = gamesAsync.valueOrNull ?? const <Games>[];
+  final gamesAsync = ref.watch(gamesTourProvider(tourId));
+  final rawGames = gamesAsync.valueOrNull ?? const <Games>[];
 
-      final models = <GamesTourModel>[];
-      for (final game in rawGames) {
-        try {
-          models.add(GamesTourModel.fromGame(game));
-        } catch (_) {
-          // Ignore games that fail to parse into display models
-        }
-      }
+  final models = <GamesTourModel>[];
+  for (final game in rawGames) {
+    try {
+      models.add(GamesTourModel.fromGame(game));
+    } catch (_) {
+      // Ignore games that fail to parse into display models
+    }
+  }
 
-      final teamPlayers = (tourMetadata?.players.isNotEmpty ?? false)
+  // Team brackets must never use the player-knockout view: grouping their
+  // many boards by player pairing would destroy the team-vs-team structure.
+  // Prefer Lichess's teamTable signal, then preserve the phone heuristics for
+  // older rows that predate that field.
+  final teamPlayers =
+      (tourMetadata?.players.isNotEmpty ?? false)
           ? tourMetadata!.players
-          : tourDetail?.aboutTourModel.players ?? const <TournamentPlayer>[];
-      final lowerFormat = (formatString ?? '').toLowerCase();
-      final isTeamEvent = resolveTeamEventClassification(
-        teamTable: tourMetadata?.info.teamTable,
-        formatSaysTeam: lowerFormat.contains('team'),
-        formatSaysPlayer: lowerFormat.contains('player'),
-        allPlayersHaveTeam:
-            teamPlayers.isNotEmpty &&
-            teamPlayers.every((player) => player.team != null),
-      );
+          : (tourDetail?.aboutTourModel.players ?? const <TournamentPlayer>[]);
+  final lowerFormat = (formatString ?? '').toLowerCase();
+  final formatSaysTeam = lowerFormat.contains('team');
+  final formatSaysPlayer = lowerFormat.contains('player');
+  final allPlayersHaveTeam =
+      teamPlayers.isNotEmpty && teamPlayers.every((p) => p.team != null);
+  final isTeamEvent = resolveTeamEventClassification(
+    teamTable: tourMetadata?.info.teamTable,
+    formatSaysTeam: formatSaysTeam,
+    formatSaysPlayer: formatSaysPlayer,
+    allPlayersHaveTeam: allPlayersHaveTeam,
+  );
 
-      // Check format string first (fast), only analyze games if inconclusive
-      final explicitKnockout =
-          !isTeamEvent && _formatSuggestsKnockout(formatString);
-      final inferredKnockout =
-          !isTeamEvent &&
-          !explicitKnockout &&
-          models.isNotEmpty &&
-          KnockoutMatchDetector.isKnockoutMatchFormat(models);
-      final isKnockout = explicitKnockout || inferredKnockout;
+  // Check format first, then trustworthy stage metadata, then game structure.
+  final explicitKnockout = !isTeamEvent && formatSupportsKnockout(formatString);
+  final inferredKnockout =
+      !isTeamEvent &&
+      !explicitKnockout &&
+      !hasExplicitNonKnockoutFormat &&
+      !hasRoundMetadataEvidence &&
+      models.isNotEmpty &&
+      KnockoutMatchDetector.isKnockoutMatchFormat(models);
+  final isKnockout = isIndividualKnockoutFromEvidence(
+    isTeamEvent: isTeamEvent,
+    explicitFormat: explicitKnockout,
+    explicitNonKnockoutFormat: hasExplicitNonKnockoutFormat,
+    roundMetadata: hasRoundMetadataEvidence,
+    inferredFromGames: inferredKnockout,
+  );
+  final metadataDetectionIsLoading =
+      !hasTourNameStageEvidence && roundEvidenceAsync.isLoading;
+  final gamesDetectionIsLoading = !gamesAsync.hasValue && !gamesAsync.hasError;
+  final isDetectionPending =
+      !isTeamEvent &&
+      !hasExplicitNonKnockoutFormat &&
+      !isKnockout &&
+      (metadataDetectionIsLoading || gamesDetectionIsLoading);
 
-      if (models.isEmpty && !explicitKnockout) {
-        return KnockoutTournamentState(
-          isKnockout: false,
-          isTeamEvent: isTeamEvent,
-          stageName: null,
-          allGames: models,
-        );
-      }
+  if (models.isEmpty && !isKnockout) {
+    return KnockoutTournamentState(
+      isKnockout: false,
+      isTeamEvent: isTeamEvent,
+      isDetectionPending: isDetectionPending,
+      stageName: null,
+      allGames: models,
+    );
+  }
 
-      if (!isKnockout) {
-        return KnockoutTournamentState(
-          isKnockout: false,
-          isTeamEvent: isTeamEvent,
-          stageName: null,
-          allGames: models,
-        );
-      }
+  if (!isKnockout) {
+    return KnockoutTournamentState(
+      isKnockout: false,
+      isTeamEvent: isTeamEvent,
+      isDetectionPending: isDetectionPending,
+      stageName: null,
+      allGames: models,
+    );
+  }
 
-      final stageName = _resolveStageName(
-        tourName: tourName,
-        formatString: formatString,
-      );
+  final stageName = _resolveStageName(
+    tourName: tourName,
+    formatString: formatString,
+  );
 
-      return KnockoutTournamentState(
-        isKnockout: true,
-        isTeamEvent: false,
-        stageName: stageName,
-        allGames: models,
-      );
-    });
+  return KnockoutTournamentState(
+    isKnockout: true,
+    isTeamEvent: false,
+    isDetectionPending: false,
+    stageName: stageName,
+    allGames: models,
+  );
+});
 
 /// Prefer Lichess's explicit `tour.teamTable` signal. The older heuristics are
 /// retained only for rows ingested before the data hub preserved that field.
@@ -115,8 +166,111 @@ bool resolveTeamEventClassification({
   required bool formatSaysPlayer,
   required bool allPlayersHaveTeam,
 }) =>
-    teamTable ??
-    (formatSaysTeam || (!formatSaysPlayer && allPlayersHaveTeam));
+    teamTable ?? (formatSaysTeam || (!formatSaysPlayer && allPlayersHaveTeam));
+
+typedef KnockoutRoundMetadataRequest = ({String tourId, String tourName});
+
+KnockoutRoundMetadataRequest resolveKnockoutRoundMetadataRequest({
+  required TourDetailViewModel? tourDetail,
+  required String tourId,
+}) => (
+  tourId: tourId,
+  tourName:
+      _findTourById(tourDetail, tourId)?.name ??
+      tourDetail?.aboutTourModel.name ??
+      '',
+);
+
+final knockoutRoundMetadataEvidenceProvider = FutureProvider.autoDispose
+    .family<bool, KnockoutRoundMetadataRequest>((ref, request) async {
+      final rounds = await ref
+          .watch(roundRepositoryProvider)
+          .getRoundsByTourId(request.tourId);
+      return hasTrustworthyKnockoutStageMetadata(
+        rounds: rounds,
+        tourName: request.tourName,
+      );
+    });
+
+bool isIndividualKnockoutFromEvidence({
+  required bool isTeamEvent,
+  required bool explicitFormat,
+  bool explicitNonKnockoutFormat = false,
+  required bool roundMetadata,
+  required bool inferredFromGames,
+}) =>
+    !isTeamEvent &&
+    !explicitNonKnockoutFormat &&
+    (explicitFormat || roundMetadata || inferredFromGames);
+
+/// Conservative evidence that a feed is an elimination event before enough
+/// games exist for repeated-matchup detection.
+///
+/// Plain `Round 3` metadata is intentionally insufficient because Swiss and
+/// round-robin feeds use it too. Decimal/tiebreak legs, named elimination
+/// stages, stage-bearing slugs, and stage-scoped tour names are trustworthy.
+bool hasTrustworthyKnockoutStageMetadata({
+  required Iterable<Round> rounds,
+  required String tourName,
+}) {
+  final tourDescriptor = parseKnockoutTourStageDescriptor(tourName);
+  final tourHasStage = tourDescriptor.stage != null;
+  if (tourHasStage &&
+      (tourName.contains('|') || _containsNamedEliminationStage(tourName))) {
+    return true;
+  }
+
+  for (final round in rounds) {
+    final name = round.name.trim();
+    final slug = round.slug.trim().toLowerCase();
+    final resolved = resolveLogicalKnockoutStage(
+      name,
+      slug,
+      tourName: tourName,
+    );
+    if (resolved == null) continue;
+
+    if (RegExp(r'^round\s+\d+[._]\d+', caseSensitive: false).hasMatch(name) ||
+        RegExp(
+          r'\b(?:tie[ -]?breaks?|rapid|blitz|armageddon)\b',
+          caseSensitive: false,
+        ).hasMatch(name) ||
+        _containsNamedEliminationStage(name) ||
+        slug.contains('--') ||
+        slug.startsWith('stage-') ||
+        (tourHasStage && _isGenericKnockoutLeg(name, slug))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool _containsNamedEliminationStage(String value) => RegExp(
+  r'\b(?:round\s+of\s+\d+|last\s+\d+|quarter[ -]?finals?|semi[ -]?finals?|finals?|third[ -]?place|bronze)\b',
+  caseSensitive: false,
+).hasMatch(value);
+
+bool _isGenericKnockoutLeg(String name, String slug) {
+  final normalizedName = name.trim().toLowerCase();
+  final normalizedSlug = slug.replaceAll('_', '-');
+  return RegExp(
+        r'^(?:game|leg|tie[ -]?breaks?|rapid|blitz|armageddon)\b',
+        caseSensitive: false,
+      ).hasMatch(normalizedName) ||
+      RegExp(
+        r'^(?:game|leg|tie-?breaks?|rapid|blitz|armageddon)(?:-|$)',
+      ).hasMatch(normalizedSlug);
+}
+
+/// True when the current tour is a team event.
+final isTeamEventProvider = Provider.autoDispose.family<bool, String?>((
+  ref,
+  tourId,
+) {
+  if (tourId == null || tourId.isEmpty) return false;
+  return ref.watch(knockoutTournamentStateProvider(tourId)).isTeamEvent;
+});
 
 Tour? _findTourById(TourDetailViewModel? viewModel, String tourId) {
   if (viewModel == null) return null;
@@ -128,12 +282,21 @@ Tour? _findTourById(TourDetailViewModel? viewModel, String tourId) {
   return null;
 }
 
-bool _formatSuggestsKnockout(String? format) {
+bool formatSupportsKnockout(String? format) {
   if (format == null || format.isEmpty) return false;
   final lower = format.toLowerCase();
   return lower.contains('knockout') ||
       lower.contains('single-elimination') ||
       lower.contains('elimination');
+}
+
+bool formatRulesOutKnockout(String? format) {
+  if (format == null || format.isEmpty) return false;
+  final lower = format.toLowerCase().replaceAll('_', ' ').replaceAll('-', ' ');
+  return lower.contains('swiss') ||
+      lower.contains('round robin') ||
+      lower.contains('all play all') ||
+      lower.contains('league');
 }
 
 String? _resolveStageName({

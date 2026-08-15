@@ -7,11 +7,11 @@ import 'package:chessever/repository/local_storage/auto_pin_preferences/auto_pin
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
-import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tournament_state_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/player_tour/player_tour_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:country_code/country_code.dart';
+import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 final autoPinLogicProvider = AutoDisposeProvider<_AutoPinLogController>(
@@ -37,9 +37,7 @@ class _AutoPinLogController {
       return (true, <String>[]);
     }
 
-    final prefs =
-        await ref.read(autoPinPreferencesProvider.future) ??
-        AutoPinPreferences.defaults;
+    final prefs = await ref.read(autoPinPreferencesProvider.future);
 
     if (!prefs.favoritePlayersAutoPinEnabled &&
         !prefs.countrymenAutoPinEnabled) {
@@ -114,7 +112,7 @@ class _AutoPinLogController {
     final cachedCountryCode = await db.getString('selected_country_code');
 
     if (cachedCountryCode != null && cachedCountryCode.isNotEmpty) {
-      print('🎯 Auto-pin: Using cached country code: $cachedCountryCode');
+      debugPrint('🎯 Auto-pin: Using cached country code: $cachedCountryCode');
       return cachedCountryCode;
     }
 
@@ -122,25 +120,25 @@ class _AutoPinLogController {
     final countryAsync = ref.read(countryDropdownProvider);
     if (countryAsync.hasValue && countryAsync.value != null) {
       final countryCode = countryAsync.value!.countryCode;
-      print('🎯 Auto-pin: Using provider country code: $countryCode');
+      debugPrint('🎯 Auto-pin: Using provider country code: $countryCode');
       return countryCode;
     }
 
     // Wait up to 3 seconds for country to load
-    print('⚠️ Auto-pin: Country not cached, waiting for provider...');
+    debugPrint('⚠️ Auto-pin: Country not cached, waiting for provider...');
     var attempts = 0;
     while (attempts < 30) {
       await Future.delayed(const Duration(milliseconds: 100));
       final retry = ref.read(countryDropdownProvider);
       if (retry.hasValue && retry.value != null) {
         final countryCode = retry.value!.countryCode;
-        print('🎯 Auto-pin: Provider loaded, using: $countryCode');
+        debugPrint('🎯 Auto-pin: Provider loaded, using: $countryCode');
         return countryCode;
       }
       attempts++;
     }
 
-    print('❌ Auto-pin: Country still not loaded after 3s');
+    debugPrint('❌ Auto-pin: Country still not loaded after 3s');
     return null;
   }
 
@@ -192,7 +190,7 @@ class _AutoPinLogController {
       return allGames; // Not multi-stage
     }
 
-    print(
+    debugPrint(
       '🎯 Auto-pin: Detected ${allToursInGroup.length} stages in multi-stage knockout',
     );
 
@@ -206,8 +204,16 @@ class _AutoPinLogController {
       final stageTourId = tourModel.tour.id;
       if (stageTourId == tourId) continue; // Skip main tour (already added)
 
-      final stageState = ref.read(knockoutTournamentStateProvider(stageTourId));
-      for (final game in stageState.allGames) {
+      final stageGamesRaw =
+          ref.read(gamesTourProvider(stageTourId)).valueOrNull ??
+          const <Games>[];
+      for (final rawGame in stageGamesRaw) {
+        final GamesTourModel game;
+        try {
+          game = GamesTourModel.fromGame(rawGame);
+        } catch (_) {
+          continue;
+        }
         if (!stageGamesSet.contains(game.gameId)) {
           allGames.add(game);
           stageGamesSet.add(game.gameId);
@@ -215,7 +221,7 @@ class _AutoPinLogController {
       }
     }
 
-    print(
+    debugPrint(
       '🎯 Auto-pin: Collected ${allGames.length} total games from all stages',
     );
     return allGames;

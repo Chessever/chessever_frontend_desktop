@@ -34,9 +34,30 @@ final tournamentForTabProvider = Provider.family<GroupEventCardModel?, String>((
   return byTab[tabId];
 });
 
-/// Sub-view shown inside the Tournament Detail pane. Mirrors the mobile
-/// segmented switcher (about / games / standings).
-enum TournamentDetailSegment { about, games, standings }
+/// Sub-view shown inside the Tournament Detail pane.
+enum TournamentDetailSegment { about, games, bracket, standings }
+
+enum TournamentDetailLayout { regular, individualKnockout, team }
+
+bool canCommitTournamentBracketOpen({
+  required DesktopTabsState tabs,
+  required String originTabId,
+  required String? originEventId,
+  required String expectedEventId,
+  required String expectedTourId,
+  required String? selectedBroadcastId,
+  required String? resolvedTourId,
+  required TournamentDetailSegment currentSegment,
+  required int expectedEpoch,
+  required int currentEpoch,
+}) =>
+    tabs.activeId == originTabId &&
+    tabs.active?.kind == TabKind.tournamentDetail &&
+    originEventId == expectedEventId &&
+    selectedBroadcastId == expectedEventId &&
+    resolvedTourId == expectedTourId &&
+    currentSegment == TournamentDetailSegment.bracket &&
+    currentEpoch == expectedEpoch;
 
 extension TournamentDetailSegmentLabel on TournamentDetailSegment {
   String get label {
@@ -45,9 +66,113 @@ extension TournamentDetailSegmentLabel on TournamentDetailSegment {
         return 'About';
       case TournamentDetailSegment.games:
         return 'Games';
+      case TournamentDetailSegment.bracket:
+        return 'Bracket';
       case TournamentDetailSegment.standings:
         return 'Standings';
     }
+  }
+}
+
+const _regularTournamentDetailSegments = <TournamentDetailSegment>[
+  TournamentDetailSegment.about,
+  TournamentDetailSegment.games,
+  TournamentDetailSegment.standings,
+];
+
+const _knockoutTournamentDetailSegments = <TournamentDetailSegment>[
+  TournamentDetailSegment.about,
+  TournamentDetailSegment.games,
+  TournamentDetailSegment.bracket,
+  TournamentDetailSegment.standings,
+];
+
+List<TournamentDetailSegment> tournamentDetailSegmentsForLayout(
+  TournamentDetailLayout layout,
+) => switch (layout) {
+  TournamentDetailLayout.individualKnockout =>
+    _knockoutTournamentDetailSegments,
+  TournamentDetailLayout.regular ||
+  TournamentDetailLayout.team => _regularTournamentDetailSegments,
+};
+
+/// Visible Desktop tournament-detail segments for the resolved competition
+/// type. Individual knockout is the only layout that exposes Bracket; team and
+/// ordinary events retain the established three-segment Desktop surface.
+List<TournamentDetailSegment> tournamentDetailSegmentsFor({
+  required bool isKnockout,
+  required bool isTeamEvent,
+}) => tournamentDetailSegmentsForLayout(
+  tournamentDetailLayoutForDetection(
+    isTeam: isTeamEvent,
+    isKnockout: isKnockout,
+  ),
+);
+
+TournamentDetailLayout tournamentDetailLayoutForDetection({
+  required bool isTeam,
+  required bool isKnockout,
+}) {
+  if (isTeam) return TournamentDetailLayout.team;
+  if (isKnockout) return TournamentDetailLayout.individualKnockout;
+  return TournamentDetailLayout.regular;
+}
+
+TournamentDetailLayout provisionalTournamentDetailLayoutForSegment(
+  TournamentDetailSegment segment,
+) => switch (segment) {
+  TournamentDetailSegment.bracket => TournamentDetailLayout.individualKnockout,
+  TournamentDetailSegment.about ||
+  TournamentDetailSegment.games ||
+  TournamentDetailSegment.standings => TournamentDetailLayout.regular,
+};
+
+/// Remembers the structural layout independently for each selected tour.
+///
+/// Detection can briefly return its default while providers reload. Once a
+/// tour resolves as team or individual knockout, a pending emission therefore
+/// cannot make Bracket flicker away. A new category ID resolves independently.
+class TournamentDetailLayoutTracker {
+  final Map<String, TournamentDetailLayout> _layoutsByTour = {};
+
+  String? _activeTourId;
+
+  TournamentDetailLayout resolve({
+    required String? tourId,
+    bool isTeam = false,
+    bool isKnockout = false,
+    bool isDetectionPending = false,
+    TournamentDetailLayout unresolvedLayout = TournamentDetailLayout.regular,
+  }) {
+    final normalizedTourId = tourId?.trim();
+    if (normalizedTourId != null && normalizedTourId.isNotEmpty) {
+      _activeTourId = normalizedTourId;
+      final detected = tournamentDetailLayoutForDetection(
+        isTeam: isTeam,
+        isKnockout: isKnockout,
+      );
+      final remembered = _layoutsByTour[normalizedTourId];
+
+      if (!isDetectionPending) {
+        final shouldRemember =
+            remembered == null ||
+            (detected == TournamentDetailLayout.team &&
+                remembered != TournamentDetailLayout.team) ||
+            (remembered == TournamentDetailLayout.regular &&
+                detected == TournamentDetailLayout.individualKnockout);
+        if (shouldRemember) {
+          _layoutsByTour[normalizedTourId] = detected;
+        }
+      }
+
+      if (remembered == null && isDetectionPending) {
+        return unresolvedLayout;
+      }
+    }
+
+    final activeTourId = _activeTourId;
+    if (activeTourId == null) return TournamentDetailLayout.regular;
+    return _layoutsByTour[activeTourId] ?? TournamentDetailLayout.regular;
   }
 }
 

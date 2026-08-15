@@ -1,8 +1,13 @@
 import 'dart:async';
 
+import 'package:chessever/repository/local_storage/tournament/games/games_local_storage.dart';
+import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 Games _game(String id) {
   return Games(
@@ -15,6 +20,19 @@ Games _game(String id) {
 }
 
 void main() {
+  setUpAll(() async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    SharedPreferences.setMockInitialValues({});
+    try {
+      Supabase.instance.client;
+    } catch (_) {
+      await Supabase.initialize(
+        url: 'https://placeholder.supabase.co',
+        anonKey: 'placeholder-anon-key',
+      );
+    }
+  });
+
   group('initial tournament game loading', () {
     test('publishes cached games without waiting for the network', () async {
       var freshFetches = 0;
@@ -56,6 +74,64 @@ void main() {
       expect(cacheReads, 0);
     });
 
+    test(
+      'refreshes a cache that ends exactly on a response-page boundary',
+      () async {
+        var freshFetches = 0;
+        final cached = List<Games>.generate(
+          3,
+          (index) => _game('cached-$index'),
+        );
+
+        final games = await loadInitialTournamentGames(
+          readCachedGames: () async => cached,
+          fetchFreshGames: () async {
+            freshFetches += 1;
+            return List<Games>.generate(4, (index) => _game('fresh-$index'));
+          },
+          suspectPageSize: 3,
+        );
+
+        expect(games, hasLength(4));
+        expect(games.last.id, 'fresh-3');
+        expect(freshFetches, 1);
+      },
+    );
+
+    test(
+      'keeps a page-boundary cache when its healing refresh fails',
+      () async {
+        final cached = List<Games>.generate(
+          3,
+          (index) => _game('cached-$index'),
+        );
+
+        final games = await loadInitialTournamentGames(
+          readCachedGames: () async => cached,
+          fetchFreshGames: () async => throw StateError('offline'),
+          suspectPageSize: 3,
+        );
+
+        expect(games, same(cached));
+      },
+    );
+
+    test('real cache wrapper preserves repository fetch failures', () async {
+      final container = ProviderContainer(
+        overrides: [
+          gameRepositoryProvider.overrideWithValue(_ThrowingGameRepository()),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await expectLater(
+        container
+            .read(gamesLocalStorage)
+            .fetchAndSaveGames('failing-tour', forceRefresh: true),
+        throwsA(isA<StateError>()),
+      );
+    });
+
     test('stops waiting when the tournament feed does not respond', () async {
       final pending = Completer<List<Games>>();
 
@@ -69,4 +145,15 @@ void main() {
       );
     });
   });
+}
+
+class _ThrowingGameRepository extends GameRepository {
+  @override
+  Future<List<Games>> getGamesByTourId(
+    String tourId, {
+    int? limit,
+    int offset = 0,
+  }) async {
+    throw StateError('offline');
+  }
 }
